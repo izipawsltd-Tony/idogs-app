@@ -84,21 +84,21 @@ export function calculateLifeStage(dob: string): LifeStage {
 }
 
 export const LIFE_STAGE_LABELS: Record<LifeStage, string> = {
-  whelp: 'Whelp',
+  whelp: 'Born',
   puppy: 'Puppy',
-  young_adult: 'Young adult',
+  young_adult: 'Passport',
   adult: 'Adult',
   senior: 'Senior',
-  remembered: 'Remembered',
+  remembered: 'Forever',
 }
 
 export const LIFE_STAGE_EMOJI: Record<LifeStage, string> = {
   whelp: '🐣',
   puppy: '🐶',
-  young_adult: '🐕',
+  young_adult: '📘',
   adult: '🐕',
   senior: '🌅',
-  remembered: '🕊️',
+  remembered: '♥️',
 }
 
 // ── BREED LIST ─────────────────────────────────────────────────
