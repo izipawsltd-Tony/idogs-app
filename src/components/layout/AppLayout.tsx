@@ -26,6 +26,8 @@ const BASE_BOTTOM_NAV = [
   { path: '/app/dogs', icon: '🐕', label: 'Dogs' },
   { path: '/app/litters', icon: '🐣', label: 'Litters', littersItem: true },
   { path: '/app/reminders', icon: '🔔', label: 'Reminders', remindersItem: true },
+  { path: '/app/export', icon: '📊', label: 'Export' },
+  { path: '/app/audit', icon: '📋', label: 'Audit' },
 ]
 
 export default function AppLayout({ toast }: Props) {
@@ -211,14 +213,6 @@ export default function AppLayout({ toast }: Props) {
             <span>{item.label}</span>
           </NavLink>
         ))}
-        <button
-          onClick={handleLogout}
-          className="bottom-nav-item"
-          style={{ background: 'none', border: 'none', cursor: 'pointer' }}
-        >
-          <span>↩</span>
-          <span>Sign out</span>
-        </button>
       </nav>
     </div>
   )
