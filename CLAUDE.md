@@ -1,4 +1,23 @@
-# iDogs.com.au — Claude Project Context
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. It also contains a "Working Method" section for chat-based Claude (claude.ai) — see the protected block near the end.
+
+---
+
+## Commands
+
+```powershell
+npm run dev        # local dev server (Vite)
+npm run build      # tsc + vite build (run before every deploy)
+npm run preview    # preview production build locally
+vercel deploy --prod   # deploy to production (NEVER use vercel --prod)
+```
+
+No test framework is configured — verify changes by running `npm run build` and testing in browser.
+
+Path alias: `@` resolves to `/src` (configured in `vite.config.ts`).
+
+---
 
 ## Strategic Overview
 
@@ -8,7 +27,7 @@ iDogs.com.au is a **freemium consumer SaaS** serving as the **top-of-funnel acqu
 - iDogs → free for pet owners (1-2 dogs), paid for breeders ($5-29/month)
 - iziPaws → B2B SaaS for professional Dogs Australia / ANKC breeders ($50-200/month)
 - iDogs feeds iziPaws: buyer receives dog via iDogs transfer → discovers iziPaws
-- Trademark "iDogs": NN Global Pty Ltd as trustee for NN Investment Trust (TM Headstart filed Jun 2026, Class 42, $200 AUD paid, Coupon ID: cNTx0rfT)
+- Trademark "iDogs": NN Global Pty Ltd as trustee for NN Investment Trust (TM Headstart filed Jun 2026, Class 42, $200 AUD paid)
 - Trademark "iziPaws": iziPaws Pty Ltd
 
 **ANKC Note:** ANKC rebranded consumer face to **Dogs Australia** (2021). State bodies: Dogs SA, Dogs NSW, Dogs QLD, Dogs VIC, Dogs West, Dogs ACT, Dogs TAS, Dogs NT. Pedigree certs now show "Dogs SA" not "ANKC". All iDogs references use "Dogs Australia (ANKC)".
@@ -16,80 +35,122 @@ iDogs.com.au is a **freemium consumer SaaS** serving as the **top-of-funnel acqu
 ## Live URLs
 - Production: https://idogs.com.au
 - Vercel alias: https://idogs-app.vercel.app
-- Deploy: `vercel deploy --prod` from project root (NOT `vercel --prod`)
 
 ## Tech Stack
 - **Frontend:** React 18 + TypeScript + Vite
 - **Auth:** Firebase Auth (global)
 - **Database:** Firestore (asia-southeast1 — Singapore)
 - **Storage:** Firebase Storage (asia-southeast1)
-- **Email:** Resend — domain `idogs.com.au` VERIFIED ✅ — from `noreply@idogs.com.au`
+- **Email:** Resend — domain `idogs.com.au` VERIFIED — from `noreply@idogs.com.au`
 - **Payments:** Stripe (test mode) — webhook active at `/api/stripe-webhook`
-- **SMS:** AWS SNS — IAM user `idogs-sns` (ARN: arn:aws:iam::104091534992:user/idogs-sns) — Alphanumeric sender "iDogs"
+- **SMS:** AWS SNS — IAM user `idogs-sns` — Alphanumeric sender "iDogs"
 - **Deploy:** Vercel (serverless functions in `/api/`)
 - **Domain:** DNS managed by Cloudflare (nameservers: gemma.ns.cloudflare.com + memphis.ns.cloudflare.com)
-- **Email routing:** Cloudflare Email Routing — `info@idogs.com.au` → `izipawsltd@gmail.com` (Active ✅)
+- **Email routing:** Cloudflare Email Routing — `info@idogs.com.au` → `izipawsltd@gmail.com` (Active)
 - **Cron:** GitHub Actions — daily 8am AEST → `/api/send-reminders`
 
 ## Project Structure
+
 ```
-C:\Users\Tom\Downloads\idogs-app-phase1\
-├── .github/
-│   └── workflows/
-│       └── daily-reminders.yml  — GitHub Actions cron 8am AEST
+├── .github/workflows/daily-reminders.yml  — GitHub Actions cron 8am AEST
 ├── api/
-│   ├── scan.js                  — AI document scan (claude-sonnet-4-6)
-│   ├── send-email.js            — Resend email sender (noreply@idogs.com.au)
-│   ├── send-sms.js              — AWS SNS SMS sender (AlphaNumeric "iDogs") ✅ NEW
-│   ├── send-reminders.js        — Daily cron: email + SMS reminders ✅ NEW
-│   ├── survey.js                — Survey responses + duplicate check ✅ NEW
-│   ├── upload-document.js       — Firebase Storage upload (serverless)
-│   ├── upload-photo.js          — Dog profile photo upload (serverless)
-│   ├── export-report.js         — PDF/CSV compliance report
-│   ├── create-checkout.js       — Stripe checkout (4 plans + SMS addon)
-│   └── stripe-webhook.js        — Stripe webhook handler
+│   ├── scan.js               — AI document scan (claude-sonnet-4-6)
+│   ├── send-email.js         — Resend email sender
+│   ├── send-sms.js           — AWS SNS SMS sender
+│   ├── send-reminders.js     — Daily cron: email + SMS reminders
+│   ├── survey.js             — Survey responses + duplicate check
+│   ├── upload-document.js    — Firebase Storage upload (serverless)
+│   ├── upload-photo.js       — Dog profile photo upload (serverless)
+│   ├── export-report.js      — PDF/CSV compliance report
+│   ├── create-checkout.js    — Stripe checkout (4 plans + SMS addon)
+│   └── stripe-webhook.js     — Stripe webhook handler
 ├── src/
 │   ├── components/
-│   │   ├── App.tsx              — routing + auth protection
-│   │   ├── layout/AppLayout.tsx — sidebar nav (dynamic)
+│   │   ├── App.tsx                        — routing + auth protection
+│   │   ├── layout/AppLayout.tsx           — sidebar nav (dynamic)
 │   │   └── ui/
-│   │       ├── AIScan.tsx       — AI scan + upload
-│   │       ├── PhotoUpload.tsx  — Dog avatar upload
-│   │       └── Toast.tsx
+│   │       ├── AIScan.tsx                 — AI scan + upload
+│   │       ├── PhotoUpload.tsx            — Dog avatar upload
+│   │       ├── Toast.tsx
+│   │       └── TransferOwnershipModal.tsx
 │   ├── pages/
-│   │   ├── LandingPage.tsx      — marketing page (freemium pricing + survey CTA)
+│   │   ├── LandingPage.tsx         — marketing page (freemium pricing + survey CTA)
 │   │   ├── LoginPage.tsx
-│   │   ├── SignupPage.tsx       — Breeder/Owner selector + mandatory Terms checkbox
-│   │   ├── SurveyPage.tsx       — 2 paths: Breeder (10Q, 3 steps) + Owner (5Q) ✅ NEW
-│   │   ├── AdminSurveyPage.tsx  — /app/admin/survey — tony only ✅ NEW
+│   │   ├── SignupPage.tsx          — Breeder/Owner selector + mandatory Terms checkbox
+│   │   ├── VerifyEmailPage.tsx     — post-signup email verification flow
+│   │   ├── SurveyPage.tsx          — 2 paths: Breeder (10Q, 3 steps) + Owner (5Q)
+│   │   ├── AdminSurveyPage.tsx     — /app/admin/survey — tony only
 │   │   ├── DashboardPage.tsx
-│   │   ├── DogListPage.tsx      — hides transferred dogs
+│   │   ├── DogListPage.tsx         — hides transferred dogs
 │   │   ├── DogNewPage.tsx
-│   │   ├── DogDetailPage.tsx    — tabs: Overview/AI Scan/Vaccines/Health/Reminders/QR/Timeline/Documents
-│   │   ├── LittersPage.tsx      — Breeder: full / Owner: Past Litters read-only
+│   │   ├── DogDetailPage.tsx       — tabs: Overview/AI Scan/Vaccines/Health/Reminders/QR/Timeline/Documents
+│   │   ├── LittersPage.tsx         — Breeder: full / Owner: Past Litters read-only
 │   │   ├── RemindersPage.tsx
 │   │   ├── DocumentsPage.tsx
-│   │   ├── AuditPage.tsx        — full audit trail
-│   │   ├── ExportPage.tsx       — PDF/CSV export
-│   │   ├── BillingPage.tsx      — 4 plans + SMS addon toggle (hidden — coming soon)
+│   │   ├── AuditPage.tsx           — full audit trail
+│   │   ├── ExportPage.tsx          — PDF/CSV export
+│   │   ├── BillingPage.tsx         — 4 plans + SMS addon toggle (hidden — coming soon)
 │   │   ├── SettingsPage.tsx
-│   │   ├── PassportPublicPage.tsx — public QR (3 tabs: Vaccines/Health/Info)
-│   │   ├── TermsPage.tsx        — SA jurisdiction, NN Global trademark clause
-│   │   └── PrivacyPage.tsx      — Australian Privacy Act 1988
+│   │   ├── PassportPublicPage.tsx  — public QR (3 tabs: Vaccines/Health/Info)
+│   │   ├── TermsPage.tsx           — SA jurisdiction, NN Global trademark clause
+│   │   └── PrivacyPage.tsx         — Australian Privacy Act 1988
 │   ├── hooks/useAuth.tsx
 │   ├── lib/
 │   │   ├── firebase.ts
-│   │   ├── db.ts                — Firestore CRUD + logAudit() + getAuditLogs()
+│   │   ├── db.ts           — Firestore CRUD + logAudit() + getAuditLogs()
 │   │   ├── email.ts
 │   │   └── utils.ts
 │   ├── types/index.ts
-│   └── index.css                — design tokens + global styles
-├── .env.local                   — Firebase config (not committed)
-├── vercel.json                  — SPA routing rewrites
-└── CLAUDE.md                    — this file
+│   ├── main.tsx            — React entry point
+│   └── index.css           — design tokens + global styles
+├── vercel.json             — SPA routing rewrites
+└── deploy.bat              — runs npm run build then vercel deploy --prod
 ```
 
+**`App.tsx` warning:** Always confirm destination is `src/components/App.tsx` — NOT `src/components/ui/App.tsx` (past mistake that caused a build failure).
+
+## Routes Quick Reference
+
+| URL | Page |
+|---|---|
+| `/` | Landing page |
+| `/survey` | Breeder/Owner survey (public) |
+| `/signup` | Signup |
+| `/login` | Login |
+| `/verify-email` | Email verification waiting page |
+| `/p/:passportId` | Public QR passport |
+| `/terms` | Terms of Service |
+| `/privacy` | Privacy Policy |
+| `/app/dashboard` | Dashboard |
+| `/app/dogs` | Dog list |
+| `/app/dogs/new` | Add dog |
+| `/app/dogs/:id` | Dog detail |
+| `/app/litters` | Litters |
+| `/app/reminders` | Reminders |
+| `/app/documents` | Documents |
+| `/app/audit` | Audit trail |
+| `/app/export` | Export PDF/CSV |
+| `/app/billing` | Billing & plans |
+| `/app/settings` | Settings |
+| `/app/admin/survey` | Survey admin (tony only) |
+
+## API Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/scan` | AI document scan |
+| `POST /api/send-email` | Send email via Resend |
+| `POST /api/send-sms` | Send SMS via AWS SNS |
+| `POST /api/send-reminders` | Daily cron reminders |
+| `POST /api/survey` | Save survey response |
+| `POST /api/upload-document` | Upload doc to Firebase Storage |
+| `POST /api/upload-photo` | Upload photo to Firebase Storage |
+| `POST /api/export-report` | Generate PDF/CSV report |
+| `POST /api/create-checkout` | Stripe checkout session |
+| `POST /api/stripe-webhook` | Stripe webhook handler |
+
 ## Design System
+
 ```css
 --green: #085041        /* Primary brand */
 --green-mid: #1D9E75    /* Accent */
@@ -102,9 +163,11 @@ C:\Users\Tom\Downloads\idogs-app-phase1\
 --light: #9A9891        /* Text tertiary */
 --border: #E2DFD8
 ```
+
 Fonts: `Plus Jakarta Sans` (display) + `Inter` (body)
 
 ## Firestore Collections
+
 - `dogs` — dog profiles (tenantId, passportId, currentOwnerId, status, buyerEmail, buyerName, microchipCertUrl)
 - `users` — user profiles (role, plan, hideLitters, hideDocuments, hideReminders, emailReminders, reminderDays, smsAddon, phone, stripeCustomerId, stripeSubscriptionId)
 - `vaccineRecords` — (dogId, documentUrl)
@@ -116,21 +179,23 @@ Fonts: `Plus Jakarta Sans` (display) + `Inter` (body)
 - `documents` — (dogId, tenantId, documentType, fileUrl)
 - `scanLogs` — QR scan audit (dogId, passportId)
 - `auditLogs` — full audit (tenantId, dogId, action, details, performedBy, createdAt)
-- `surveyResponses` — breeder/owner survey (email, userType, status: pending|code_sent) ✅ NEW
+- `surveyResponses` — breeder/owner survey (email, userType, status: pending|code_sent)
 
 ## CRITICAL: Firestore Rules
-**NEVER use orderBy()** — requires composite indexes not auto-created. Use `where()` only, sort client-side.
+
+**NEVER use `orderBy()`** — requires composite indexes not auto-created. Use `where()` only, sort client-side.
 
 ```typescript
-// ✅ CORRECT
+// CORRECT
 const q = query(collection(db, 'dogs'), where('tenantId', '==', uid))
-// ❌ WRONG
+// WRONG
 const q = query(collection(db, 'dogs'), where('tenantId', '==', uid), orderBy('createdAt'))
 ```
 
 Timestamps: `data.createdAt?.toDate?.()?.toISOString() || data.createdAt || ''`
 
 ## Firestore Security Rules
+
 ```javascript
 rules_version = '2';
 service cloud.firestore {
@@ -144,54 +209,39 @@ service cloud.firestore {
 ```
 
 ## Firestore Indexes
-- `auditLogs`: tenantId (Asc) + createdAt (Desc) — CREATED ✅
+- `auditLogs`: tenantId (Asc) + createdAt (Desc) — CREATED
 
-## Environment Variables
-### .env.local (Frontend)
-```
-VITE_FIREBASE_API_KEY=AIzaSyAXFhks1YZkocs8CBw_QTfBp9GCPw3YUyc
-VITE_FIREBASE_AUTH_DOMAIN=idogs-app.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=idogs-app
-VITE_FIREBASE_STORAGE_BUCKET=idogs-app.firebasestorage.app
-VITE_FIREBASE_MESSAGING_SENDER_ID=404409556051
-VITE_FIREBASE_APP_ID=1:404409556051:web:6cccd12e3ace9b5a047aa6
-```
+## File Upload (CRITICAL)
 
-### Vercel Environment Variables (Production + Preview)
-```
-ANTHROPIC_API_KEY           — Claude API
-RESEND_API_KEY              — re_Ff5tyJZr_E77wAkoDVnGphL3LZKnzorxp
-FIREBASE_PROJECT_ID         — idogs-app
-FIREBASE_CLIENT_EMAIL       — firebase-adminsdk-fbsvc@idogs-app.iam.gserviceaccount.com
-FIREBASE_PRIVATE_KEY        — PKCS8 format (BEGIN PRIVATE KEY)
-FIREBASE_STORAGE_BUCKET     — idogs-app.firebasestorage.app
-STRIPE_SECRET_KEY           — sk_test_51TiU0W5lmfxrCiH3...
-STRIPE_PUBLISHABLE_KEY      — pk_test_51TiU0W5lmfxrCiH3...
-STRIPE_WEBHOOK_SECRET       — whsec_...
-AWS_SNS_ACCESS_KEY_ID       — AKIARQPCWY2INKYK2K4X
-AWS_SNS_SECRET_ACCESS_KEY   — (encrypted)
-AWS_SNS_REGION              — ap-southeast-2
-CRON_SECRET                 — UGiiAgLe51WDylGkmKFQs3xRTxUat0tGq3GOLgcgK0w
-```
+**NEVER upload directly from browser to Firebase Storage — CORS error.**
+Always use serverless: `/api/upload-document` or `/api/upload-photo`
 
-### GitHub Secrets
-```
-CRON_SECRET                 — UGiiAgLe51WDylGkmKFQs3xRTxUat0tGq3GOLgcgK0w
-```
+## TypeScript Gotchas
 
-## Stripe Configuration (Test Mode)
-- Webhook: `https://idogs.com.au/api/stripe-webhook` — Active ✅
-- Coupon: `EARLYBREEDER3M` (ID: cNTx0rfT) — 100% off × 3 months, max 100, expires Dec 31 2026
+- No apostrophes in JSX strings → use `&apos;` or double quotes
+- No `React.useState` in function components → use `useState` from import
+- Implicit `any` → type explicitly: `(p: typeof form) =>`
+- `serverTimestamp` from firebase-admin → use `FieldValue.serverTimestamp()`
+- When a state setter type is a union, pass the correct string literal value
 
-### Price IDs (Test)
-```
-basic:     price_1TiaZn5lmfxrCiH3GCzSSuAy  — $5 AUD/month
-pro:       price_1Tiabb5lmfxrCiH3kBdaQsRH  — $12 AUD/month
-kennel:    price_1TiU7j5lmfxrCiH3J1WbbrLR  — $29 AUD/month
-sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
-```
+## Legal & Content Rules
+
+- Data storage text: "stored securely in Asia-Pacific" — **NEVER mention Singapore or "stored in Australia"**
+- ANKC → always "Dogs Australia (ANKC)" or "Dogs Australia / ANKC"
+- Company: iziPaws Pty Ltd (ABN: 42 693 563 745)
+- IP holding: NN Global Pty Ltd as trustee for NN Investment Trust (ABN: 32 693 675 491)
+- Terms: SA jurisdiction — NN Global trademark clause in Section 7
+- Privacy: Australian Privacy Act 1988
+- Footer/legal copy must credit "NN Global Pty Ltd as trustee for NN Investment Trust" for the iDogs trademark — not iziPaws Pty Ltd. No copyright year, no claims of specific server location (Sydney/Australia) — say "Asia-Pacific" only. No fabricated stats or club endorsements anywhere on the landing page.
+
+## QR Passport
+
+- passportId format: `NNG-2023-LM3W`
+- Public URL: `https://idogs.com.au/p/{passportId}`
+- 3 tabs: Vaccines / Health Tests / Info
 
 ## Pricing Model (Freemium)
+
 | Plan | Price | Dogs | Key Features |
 |---|---|---|---|
 | Free | $0 | 1-2 | QR Passport, health records, email reminders — forever free |
@@ -202,7 +252,20 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 
 **SMS Add-on toggle is HIDDEN in BillingPage — uncomment when SMS fully tested.**
 
+## Stripe Configuration (Test Mode)
+
+- Webhook: `https://idogs.com.au/api/stripe-webhook` — Active
+- Coupon: `EARLYBREEDER3M` — 100% off x 3 months, max 100, expires Dec 31 2026
+
+```
+basic:     price_1TiaZn5lmfxrCiH3GCzSSuAy  — $5 AUD/month
+pro:       price_1Tiabb5lmfxrCiH3kBdaQsRH  — $12 AUD/month
+kennel:    price_1TiU7j5lmfxrCiH3J1WbbrLR  — $29 AUD/month
+sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
+```
+
 ## Survey System (Market Validation)
+
 - URL: `/survey` — public, no login required
 - 2 paths: **Breeder** (10Q, 3 steps) + **Pet Owner** (5Q, 1 step)
 - Saves to Firestore `surveyResponses`
@@ -210,138 +273,98 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 - Auto-sends confirmation email to respondent + notification to `info@izipaws.com.au`
 - Admin panel: `/app/admin/survey` — tony only (`trunghieungo@gmail.com`)
 - Admin can send promo code `EARLYBREEDER3M` → updates status to `code_sent`
-- Validation: required fields enforced before Next/Submit
-- Landing page CTA: "Every dog deserves a story — help us tell it better"
-- Offer: 3 months free (survey) + 3 months more (if interview booked)
-
-## AWS SNS SMS System
-- IAM user: `idogs-sns` (ARN: arn:aws:iam::104091534992:user/idogs-sns)
-- Access Key: `AKIARQPCWY2INKYK2K4X`
-- Region: `ap-southeast-2` (Sydney)
-- Sender: AlphaNumeric "iDogs" (free, no phone number needed)
-- Cost: ~$0.10 AUD/SMS, $0 fixed monthly cost
-- `api/send-sms.js` — sends single SMS
-- `api/send-reminders.js` — daily cron, checks Firestore, sends email + SMS
-- GitHub Actions cron: `.github/workflows/daily-reminders.yml` — 8am AEST daily
-- CRON_SECRET protects endpoint from unauthorized access
-
-## Email Routing
-- Cloudflare Email Routing: `info@idogs.com.au` → `izipawsltd@gmail.com` — Active ✅
-- DNS managed by Cloudflare (nameservers updated at whois.com — may need 24-48h propagation)
-- Resend sends FROM `noreply@idogs.com.au` (for app emails)
-- Replies TO `info@izipaws.com.au` (contact email)
-
-## Legal & IP
-- Company: iziPaws Pty Ltd (ABN: 42 693 563 745)
-- IP holding: NN Global Pty Ltd as trustee for NN Investment Trust (ABN: 32 693 675 491)
-- Trademark "iDogs": NN Global Pty Ltd as trustee — TM Headstart filed June 2026, Class 42, $200 paid
-- Trademark "iziPaws": iziPaws Pty Ltd
-- **After TM Headstart approval → pay $330 for formal application**
-- **Need License Agreement: NN Global → iziPaws Pty Ltd for "iDogs" trademark**
-- Data storage text: "stored securely in Asia-Pacific" — NEVER mention Singapore
-- Terms: SA jurisdiction — NN Global trademark clause in Section 7
-- Privacy: Australian Privacy Act 1988
-
-## File Upload (CRITICAL)
-**NEVER upload directly from browser to Firebase Storage — CORS error.**
-Always use serverless: `/api/upload-document` or `/api/upload-photo`
-
-## QR Passport
-- passportId format: `NNG-2023-LM3W`
-- Public URL: `https://idogs.com.au/p/{passportId}`
-- 3 tabs: Vaccines / Health Tests / Info
-
-## Deploy Command
-```powershell
-cd C:\Users\Tom\Downloads\idogs-app-phase1
-npm run build
-vercel deploy --prod
-```
-⚠️ Use `vercel deploy --prod` NOT `vercel --prod`
 
 ## GitHub Setup
-- Repo: https://github.com/izipawsltd-Tony/idogs-app — created ✅
+
+- Repo: https://github.com/izipawsltd-Tony/idogs-app
 - Branch: `master` (not `main`)
-- GitHub secret `CRON_SECRET` added ✅
-- Daily Reminders cron active — 8am AEST (22:00 UTC)
-- Manual trigger: https://github.com/izipawsltd-Tony/idogs-app/actions → Daily Reminders → Run workflow
+- Daily Reminders cron: 8am AEST (22:00 UTC)
+- Manual trigger: GitHub Actions → Daily Reminders → Run workflow
 
-## Pending Items (Next Sessions)
-### 🔴 Critical
-- [ ] Stripe go-live — verify business, create live products (currently test mode only — cannot collect real payments yet)
-- [ ] Run full end-to-end test pass (see iDogs_E2E_Test_Plan.docx) and triage bugs found
+## Pending Items
 
-### 🟡 Important
-- [ ] iziPaws CTA in iDogs — BLOCKED until iziPaws has at least a landing page/waitlist to link to (ALTEK build not done)
-- [ ] License Agreement — NN Global Pty Ltd → iziPaws Pty Ltd (draft prepared, needs AU solicitor review before signing)
-- [ ] TM Headstart formal application ($330) — waiting on IP Australia feedback (~5 business days), check nninvestmenttrust@gmail.com
+### Critical
+- [ ] Stripe go-live — verify business, create live products (currently test mode only)
+- [ ] Run full end-to-end test pass (see iDogs_E2E_Test_Plan.docx)
+- [ ] Set up a separate staging Firebase project + Vercel preview deploys before testing risky changes against production data
 
-### 🟢 Nice to Have
-- [x] Delete dog UI — already implemented (button + confirm + audit log in DogDetailPage.tsx)
-- [x] Worming records in Export — already implemented (CSV + PDF in export-report.js)
-- [x] Mobile bottom nav — Export + Audit Trail added (sign-out removed from bottom nav, still in mobile top bar)
-- [ ] Stripe go-live (duplicate of critical item above)
+### Important
+- [ ] iziPaws CTA in iDogs — BLOCKED until iziPaws has a landing page/waitlist (ALTEK build not done)
+- [ ] License Agreement — NN Global Pty Ltd → iziPaws Pty Ltd (draft prepared, needs AU solicitor review)
+- [ ] TM Headstart formal application ($330) — after IP Australia feedback
 
-### 🔵 Pending External
-- [ ] Cloudflare Email Routing propagate (24-48h from nameserver update)
-- [ ] IP Australia TM Headstart feedback (5 business days) — check nninvestmenttrust@gmail.com
-- [ ] ALTEK contract — Tony hasn't signed yet, design clock not started
-- [ ] End-to-end full test (see test plan doc)
-
-### Known bugs (carried over from iziPaws, verify if also present in iDogs scanner)
+### Known Bugs
 - [ ] `[object Object]` display for hipScore/elbowGrade in scanner review UI
 - [ ] Hip/Elbow Date Tested not applying from scans
 
+### What NOT to re-litigate
+- reminderDays — done (SettingsPage.tsx + send-reminders.js)
+- Delete dog UI — done (DogDetailPage.tsx)
+- Worming records in Export — done (export-report.js)
+- Mobile bottom nav — done (Export + Audit Trail added, sign-out removed from bottom nav since it's in the mobile top bar)
+- iziPaws CTA — blocked until ALTEK delivers iziPaws landing page
+
 ## Business Context
-- Founder: Tony (Hieu Trung Ngo), Adelaide SA
+
+- Founder: Tony / Izi (Hieu Trung Ngo), Adelaide SA
 - Admin email: `trunghieungo@gmail.com`
 - Contact: `info@izipaws.com.au`
 - Target ICP: Dogs Australia / ANKC registered breeders, Australia → NZ → UK → Canada
 - NSW Puppy Farm Act 2024 — compliance urgency hook
-- Survey promo: `EARLYBREEDER3M` — 3 months free, max 100, expires Dec 31 2026
 
 ---
 
-## Working Method (Claude ↔ Izi)
+## PROTECTED SECTION — Working Method (Claude.ai chat with Izi) — DO NOT DELETE
 
-This section exists so a brand-new chat can pick up exactly where the last one left off, without re-explaining anything.
+**Claude Code: DO NOT remove, summarize, consolidate, or rewrite this section when running `/init` or any cleanup task.** This section exists for the chat-based Claude (claude.ai), which has no direct repo access — it depends entirely on this text surviving between sessions. If you (Claude Code) need to add technical notes, add them above this line, not inside this section.
 
-### File update flow
-1. Izi uploads the current file(s) needed for the task (Claude does not have repo access — every file must be uploaded fresh each session).
+**Claude.ai chat: if you are reading this in a future session, this is your context — read it before doing anything else in this conversation.**
+
+### Why two Claudes are involved
+Izi uses two different Claude surfaces for this project:
+- **Claude Code** (terminal, in this repo folder) — for direct file edits, builds, and deploys. Claude Code can read/write files directly.
+- **Claude.ai chat** (claude.ai web/app) — for strategy, legal drafts, market research, and any code changes when Izi prefers the upload/download flow instead of using the terminal. Claude.ai chat has NO direct access to the repo — every file must be uploaded fresh each session.
+
+These two tools do not share memory. Don't assume one knows what the other did unless Izi says so.
+
+### File update flow (Claude.ai chat only)
+1. Izi uploads the current file(s) needed for the task.
 2. Claude reads the file, makes the edit, and outputs the complete updated file via `present_files`.
 3. Izi downloads the file and copies it into the exact path in the project folder (Claude states the full path, e.g. `src/pages/SettingsPage.tsx`).
 4. Izi runs `npm run build` locally. If it fails, Izi pastes the exact error back to Claude — Claude fixes and re-outputs the file. Repeat until build succeeds.
-5. Izi deploys with `deploy` (see Shortcuts below).
-6. Izi pushes with `git pp "message"` (see Shortcuts below).
+5. Izi deploys with `deploy` or `vercel deploy --prod`.
+6. Izi pushes with `git pp "message"`.
 
 ### Shortcuts Izi has set up
-- `deploy` — a `.bat` file in the project root that runs `npm run build` then `vercel deploy --prod` (aborts deploy if build fails). Use this instead of typing the two commands separately.
-- `git pp "message"` — a global git alias equivalent to `git add . && git commit -m "message" && git push`. Already configured on Izi's machine.
-- Izi works in **cmd or PowerShell**, not exclusively cmd — both work for git and npm commands on this machine.
-
-### Conventions Claude should follow automatically
-- Always give the **exact destination path** for every file Claude outputs (e.g. `src/lib/utils.ts`, not just "utils.ts").
-- Never assume a file's current content — if it hasn't been uploaded in this session, ask for it before editing. Do not guess at code that hasn't been shown.
-- When multiple files need uploading, name the exact folder too (e.g. "Upload `src/hooks/useAuth.tsx` and `src/components/App.tsx`") since Izi has asked for this before.
-- Default deploy command reminder, if ever needed without the shortcut:
-  ```
-  cd C:\Users\Tom\Downloads\idogs-app-phase1
-  npm run build
-  vercel deploy --prod
-  ```
+- `deploy` — a `.bat` file in the project root that runs `npm run build` then `vercel deploy --prod` (aborts deploy if build fails).
+- `git pp "message"` — a global git alias equivalent to `git add . && git commit -m "message" && git push`.
+- Izi works in both cmd and PowerShell — either works for git/npm commands on this machine.
 - Branch is `master`, not `main`.
+
+### Conventions Claude.ai chat should follow automatically
+- Always give the exact destination path for every file Claude outputs (e.g. `src/lib/utils.ts`, not just "utils.ts").
+- Never assume a file's current content — if it hasn't been uploaded in this session, ask for it before editing. Do not guess at code that hasn't been shown.
+- When multiple files need uploading, name the exact folder too.
 - After any change to `App.tsx`, double check it's destined for `src/components/App.tsx` — NOT `src/components/ui/App.tsx` (a past mistake that caused a build failure).
 - Before creating any file/document/code, check `/mnt/skills/public/` for a relevant skill first (docx, pptx, xlsx, pdf, frontend-design, etc.).
-- For anything code-related, Claude should treat CLAUDE.md as ground truth for project structure/stack/conventions, but should verify pending items against actual uploaded code before assuming something is unfinished — this file can lag behind real progress (e.g. reminderDays and Worming-in-Export were marked pending here but were already fully implemented in code).
+- Treat the rest of this CLAUDE.md as ground truth for project structure/stack/conventions, but verify pending items against actual uploaded code before assuming something is unfinished — this file can lag behind real progress.
 
 ### Communication style Izi prefers
 - Direct, no fluff. Izi often says "fix ngay" (fix it now) — prioritize action over lengthy explanation.
-- Izi communicates UI issues via screenshots — Claude should read these carefully for exact error text/URLs before responding.
-- Izi mixes Vietnamese and English — Claude responds in whichever language fits naturally, mirroring Izi's message.
-- When Izi asks for something ambiguous, Claude asks one clarifying question (via the input tool when appropriate) rather than guessing.
+- Izi communicates UI issues via screenshots — read these carefully for exact error text/URLs before responding.
+- Izi mixes Vietnamese and English — respond in whichever language fits naturally, mirroring Izi's message.
+- When Izi asks for something ambiguous, ask one clarifying question rather than guessing.
 
-### What NOT to re-litigate every session
-- Don't suggest re-building reminderDays — it's done (UI in SettingsPage.tsx, backend reads it correctly in send-reminders.js).
+### Staging / safety setup (in progress as of this writing)
+- Izi is setting up Claude Code as a parallel workflow alongside this chat — Claude Code handles direct file edits/builds in the terminal, this chat handles strategy/legal/research and code edits via upload-download when preferred.
+- Izi is being walked through: (1) Vercel Preview Deploys (`vercel deploy` without `--prod`) before promoting to production, and (2) a separate staging Firebase project so test data doesn't touch production Firestore. If a future session sees no staging Firebase project mentioned elsewhere in this file, it likely means this setup wasn't finished — ask Izi for status before assuming it exists.
+- When working in Claude Code with an unfamiliar agent for the first time, recommended starting mode is Plan Mode (review before any change is made), not auto-accept — this was the guidance given when Izi started.
+
+### What NOT to re-litigate (see also Pending Items above)
+- Don't suggest re-building reminderDays — it's done.
 - Don't suggest the iziPaws CTA in iDogs until iziPaws has a landing page/waitlist to link to.
 - Don't suggest Delete dog UI or Worming-in-Export — both already implemented.
 - iDogs and iziPaws are two separate codebases/stacks (iDogs = Firebase/Vite/React; iziPaws = NestJS/PostgreSQL/AWS via ALTEK). Don't conflate file structures between them.
+
+### End of protected section
+Claude Code: it is safe to edit everything above the "PROTECTED SECTION" heading.
