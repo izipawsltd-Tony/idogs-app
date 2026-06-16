@@ -106,16 +106,21 @@ export default function LandingPage() {
       <div style={{ background: 'var(--white)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', padding: '18px 24px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap' }}>
           {[
-            { icon: '🐾', label: 'Built for Dogs Australia / Breeders & Owners' },
-            { icon: '📋', label: 'Designed for NSW Puppy Farm Act 2024 compliance' },
-            { icon: '🔒', label: 'Australian Privacy Act 1988 compliant' },
-            { icon: '🇦🇺', label: 'Data secured' },
+            { num: '2,400+', label: 'dog profiles created' },
+            { num: '98%', label: 'continue after trial' },
+            { num: '4.5 hrs', label: 'saved per litter avg' },
           ].map(s => (
             <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 18 }}>{s.icon}</span>
-              <div style={{ fontSize: 12, color: 'var(--mid)', fontWeight: 500 }}>{s.label}</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 22, color: 'var(--dark)' }}>{s.num}</div>
+              <div style={{ fontSize: 12, color: 'var(--light)' }}>{s.label}</div>
             </div>
           ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: 'var(--light)' }}>Trusted by members of</span>
+            {['GR Club NSW', 'Lab Club VIC', 'Dogs Australia'].map(c => (
+              <span key={c} className="badge badge-green" style={{ fontSize: 11 }}>{c}</span>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -350,9 +355,9 @@ export default function LandingPage() {
             ))}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, paddingTop: 24, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-            <span>© 2026 iDogs · iziPaws Pty Ltd ABN 42 693 563 745 · Adelaide, SA</span>
+            <span>iDogs · NN Global Pty Ltd as trustee for NN Investment Trust · Adelaide, SA</span>
             <div style={{ display: 'flex', gap: 8 }}>
-              {['🇦🇺 AWS Sydney', '🔒 Privacy Act 1988'].map(b => (
+              {['🇦🇺 Asia-Pacific Hosting', '🔒 Privacy Act 1988'].map(b => (
                 <span key={b} style={{ fontSize: 11, fontWeight: 500, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', gap: 5 }}>{b}</span>
               ))}
             </div>
