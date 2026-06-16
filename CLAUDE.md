@@ -285,8 +285,8 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 
 ### Critical
 - [ ] Stripe go-live — verify business, create live products (currently test mode only)
-- [ ] Run full end-to-end test pass (see iDogs_E2E_Test_Plan.docx)
-- [ ] Set up a separate staging Firebase project + Vercel preview deploys before testing risky changes against production data
+- [ ] Run full end-to-end test pass (see iDogs_E2E_Test_Plan.docx) — now safe to run against the staging environment
+- [ ] Establish a code review habit before pushing (self-review via `git diff`, or send the diff to Claude.ai chat for a second opinion) — not yet a consistent practice
 
 ### Important
 - [ ] iziPaws CTA in iDogs — BLOCKED until iziPaws has a landing page/waitlist (ALTEK build not done)
@@ -355,10 +355,16 @@ These two tools do not share memory. Don't assume one knows what the other did u
 - Izi mixes Vietnamese and English — respond in whichever language fits naturally, mirroring Izi's message.
 - When Izi asks for something ambiguous, ask one clarifying question rather than guessing.
 
-### Staging / safety setup (in progress as of this writing)
-- Izi is setting up Claude Code as a parallel workflow alongside this chat — Claude Code handles direct file edits/builds in the terminal, this chat handles strategy/legal/research and code edits via upload-download when preferred.
-- Izi is being walked through: (1) Vercel Preview Deploys (`vercel deploy` without `--prod`) before promoting to production, and (2) a separate staging Firebase project so test data doesn't touch production Firestore. If a future session sees no staging Firebase project mentioned elsewhere in this file, it likely means this setup wasn't finished — ask Izi for status before assuming it exists.
-- When working in Claude Code with an unfamiliar agent for the first time, recommended starting mode is Plan Mode (review before any change is made), not auto-accept — this was the guidance given when Izi started.
+### Staging / safety setup — COMPLETED
+- Izi uses Claude Code as a parallel workflow alongside this chat — Claude Code handles direct file edits/builds in the terminal, this chat handles strategy/legal/research and code edits via upload-download when preferred.
+- **Staging environment is fully set up and confirmed working:**
+  - Separate Firebase project `idogs-app-staging` (Auth + Firestore + Storage all enabled, region asia-southeast1, Blaze plan via Google Cloud Free Trial — $420 credit, 85 days as of setup).
+  - `.env.staging` file created at project root with the staging Firebase config, and protected via `.gitignore` (`.env*` pattern covers all env files).
+  - 6 `VITE_FIREBASE_*` environment variables added in Vercel → Settings → Environment Variables, scoped to **Preview only** (not Production, not Development). The Production scope still points to the original `idogs-app` Firebase project — unchanged.
+  - Workflow: `vercel deploy` (no `--prod` flag) creates a Preview deployment that uses the staging Firebase config. `vercel deploy --prod` or `deploy.bat` still deploys to production using the original Firebase project, exactly as before.
+  - Verified end-to-end: signed up a test user (`ptnncom@gmail.com`) on a Preview URL and confirmed the user landed in `idogs-app-staging`'s Authentication — not in production's `idogs-app`.
+- **For any future risky change** (schema changes, new Firestore writes, anything that could corrupt data): test on a Preview deploy first (`vercel deploy`), confirm it behaves correctly against `idogs-app-staging`, THEN promote to production (`vercel deploy --prod`).
+- Recommended starting mode in Claude Code for an unfamiliar agent: Plan Mode (review before any change is made), not auto-accept — this was the guidance given when Izi started using Claude Code.
 
 ### What NOT to re-litigate (see also Pending Items above)
 - Don't suggest re-building reminderDays — it's done.
