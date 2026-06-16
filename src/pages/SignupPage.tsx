@@ -50,8 +50,8 @@ export default function SignupPage({ toast }: Props) {
         kennelName: accountType === 'breeder' ? form.kennelName : `${form.firstName} ${form.lastName}`,
 
       })
-      toast('Welcome to iDogs! Your 30-day trial has started.')
-      navigate('/app/dashboard')
+      toast('Account created! Please check your email to verify your address.')
+      navigate('/verify-email')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : ''
       if (msg.includes('email-already-in-use')) {

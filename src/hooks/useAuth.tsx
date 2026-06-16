@@ -5,6 +5,8 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  sendEmailVerification,
+  reload,
   User
 } from 'firebase/auth'
 import { auth } from '../lib/firebase'
@@ -21,6 +23,8 @@ interface AuthContextType {
   resetPassword: (email: string) => Promise<void>
   refreshProfile: () => Promise<void>
   upgradeToBreeder: () => Promise<void>
+  resendVerificationEmail: () => Promise<void>
+  checkEmailVerified: () => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthContextType | null>(null)
@@ -46,6 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function signup({ email, password, firstName, lastName, kennelName, role }: SignupFormData & { role?: string }) {
     const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password)
+    await sendEmailVerification(newUser)
     await createUserProfile(newUser.uid, {
       email,
       firstName,
@@ -84,8 +89,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(p)
   }
 
+  async function resendVerificationEmail() {
+    if (!auth.currentUser) return
+    await sendEmailVerification(auth.currentUser)
+  }
+
+  // Reloads the Firebase user and reports whether email is now verified.
+  // Also forces a state update so ProtectedRoute re-evaluates immediately.
+  async function checkEmailVerified(): Promise<boolean> {
+    if (!auth.currentUser) return false
+    await reload(auth.currentUser)
+    const verified = auth.currentUser.emailVerified
+    setUser(auth.currentUser)
+    return verified
+  }
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signup, login, logout, resetPassword, refreshProfile, upgradeToBreeder }}>
+    <AuthContext.Provider value={{ user, profile, loading, signup, login, logout, resetPassword, refreshProfile, upgradeToBreeder, resendVerificationEmail, checkEmailVerified }}>
       {children}
     </AuthContext.Provider>
   )

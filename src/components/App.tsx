@@ -8,6 +8,7 @@ import ToastContainer from './ui/Toast'
 import LandingPage from '../pages/LandingPage'
 import LoginPage from '../pages/LoginPage'
 import SignupPage from '../pages/SignupPage'
+import VerifyEmailPage from '../pages/VerifyEmailPage'
 import DashboardPage from '../pages/DashboardPage'
 import DogListPage from '../pages/DogListPage'
 import DogDetailPage from '../pages/DogDetailPage'
@@ -32,6 +33,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) return <LoadingScreen />
   if (!user) return <Navigate to="/login" replace />
+  if (!user.emailVerified) return <Navigate to="/verify-email" replace />
   return <>{children}</>
 }
 
@@ -73,6 +75,7 @@ export default function App() {
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/survey" element={<SurveyPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
 
         {/* Protected — app */}
         <Route path="/app" element={
