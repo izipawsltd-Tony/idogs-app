@@ -1,0 +1,135 @@
+// api/send-reminders.js — Daily cron: check due dates and send reminders
+// Called by GitHub Actions cron job daily at 8am AEST
+
+import { initializeApp, getApps, cert } from 'firebase-admin/app'
+import { getFirestore } from 'firebase-admin/firestore'
+import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
+
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    }),
+  })
+}
+
+const db = getFirestore()
+const sns = new SNSClient({
+  region: process.env.AWS_SNS_REGION || 'ap-southeast-2',
+  credentials: {
+    accessKeyId: process.env.AWS_SNS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SNS_SECRET_ACCESS_KEY,
+  },
+})
+
+async function sendSMS(phone, message) {
+  const command = new PublishCommand({
+    Message: message,
+    PhoneNumber: phone,
+    MessageAttributes: {
+      'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: 'iDogs' },
+      'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },
+    },
+  })
+  return sns.send(command)
+}
+
+function formatDate(str) {
+  if (!str) return ''
+  try {
+    return new Date(str).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
+  } catch { return str }
+}
+
+export default async function handler(req, res) {
+  // Security: only allow from GitHub Actions or internal
+  const authHeader = req.headers['x-cron-secret']
+  if (authHeader !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+
+  try {
+    const today = new Date()
+    let smsSent = 0
+    let emailSent = 0
+
+    // Get all users with SMS enabled and phone number
+    const usersSnap = await db.collection('users')
+      .where('emailReminders', '!=', false)
+      .get()
+
+    for (const userDoc of usersSnap.docs) {
+      const user = userDoc.data()
+      const tenantId = userDoc.id
+      const reminderDays = user.reminderDays || 7
+      const hasSmsAddon = user.smsAddon === true
+      const phone = user.phone
+
+      // Get all dogs for this user
+      const dogsSnap = await db.collection('dogs')
+        .where('tenantId', '==', tenantId)
+        .where('status', '!=', 'transferred')
+        .get()
+
+      for (const dogDoc of dogsSnap.docs) {
+        const dog = dogDoc.data()
+
+        // Check vaccine records
+        const vaccinesSnap = await db.collection('vaccineRecords')
+          .where('dogId', '==', dogDoc.id)
+          .get()
+
+        for (const vDoc of vaccinesSnap.docs) {
+          const vaccine = vDoc.data()
+          if (!vaccine.nextDue) continue
+
+          const dueDate = new Date(vaccine.nextDue)
+          const daysUntilDue = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24))
+
+          if (daysUntilDue === reminderDays || daysUntilDue === 1) {
+            const msg = `🐾 iDogs Reminder: ${dog.name}'s ${vaccine.name} is due ${daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`} (${formatDate(vaccine.nextDue)}). Book your vet now.`
+
+            // Send email reminder
+            if (user.email) {
+              try {
+                await fetch(`${process.env.APP_URL || 'https://idogs.com.au'}/api/send-email`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    to: user.email,
+                    subject: `🐾 Reminder: ${dog.name}'s ${vaccine.name} due ${daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`}`,
+                    html: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s ${vaccine.name}</strong> is due on <strong>${formatDate(vaccine.nextDue)}</strong>.</p><p>Book your vet appointment soon to keep ${dog.name} protected.</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s records →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
+                  }),
+                })
+                emailSent++
+              } catch (e) {
+                console.error('Email reminder error:', e)
+              }
+            }
+
+            // Send SMS if addon enabled and phone exists
+            if (hasSmsAddon && phone) {
+              try {
+                // Format AU phone to E.164
+                const e164 = phone.replace(/\s/g, '').replace(/^0/, '+61')
+                await sendSMS(e164, msg)
+                smsSent++
+              } catch (e) {
+                console.error('SMS reminder error:', e)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return res.status(200).json({ success: true, smsSent, emailSent })
+  } catch (err) {
+    console.error('Reminders error:', err)
+    return res.status(500).json({ error: 'Failed to send reminders', message: String(err) })
+  }
+}

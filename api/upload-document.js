@@ -1,0 +1,74 @@
+// api/upload-document.js — Vercel serverless
+// Receives file as base64, uploads to Firebase Storage via Admin SDK
+
+import { initializeApp, getApps, cert } from 'firebase-admin/app'
+import { getStorage } from 'firebase-admin/storage'
+import { getFirestore } from 'firebase-admin/firestore'
+
+// Init Firebase Admin (once)
+if (!getApps().length) {
+  // Firebase private key: replace escaped newlines and convert RSA → PKCS8 if needed
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY || ''
+  privateKey = privateKey.replace(/\\n/g, '\n')
+  
+  initializeApp({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey,
+    }),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'idogs-app.firebasestorage.app',
+  })
+}
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+
+  const { base64, mediaType, dogId, tenantId, documentType, extractedData } = req.body
+
+  if (!base64 || !dogId || !tenantId) {
+    return res.status(400).json({ error: 'Missing required fields' })
+  }
+
+  try {
+    const ext = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
+    const fileName = `${documentType || 'document'}_${Date.now()}.${ext}`
+    const filePath = `documents/${tenantId}/${dogId}/${fileName}`
+
+    // Upload to Firebase Storage
+    const bucket = getStorage().bucket('idogs-app.firebasestorage.app')
+    const file = bucket.file(filePath)
+    const buffer = Buffer.from(base64, 'base64')
+
+    await file.save(buffer, {
+      metadata: { contentType: mediaType || 'image/jpeg' },
+    })
+
+    // Make file publicly readable
+    await file.makePublic()
+    const fileUrl = `https://storage.googleapis.com/${bucket.name}/${filePath}`
+
+    // Save metadata to Firestore
+    const db = getFirestore()
+    await db.collection('documents').add({
+      dogId,
+      tenantId,
+      fileName,
+      fileUrl,
+      filePath,
+      fileType: ext === 'pdf' ? 'pdf' : 'image',
+      documentType: documentType || 'other',
+      uploadedAt: new Date(),
+      extractedData: extractedData || {},
+    })
+
+    return res.status(200).json({ success: true, fileUrl })
+  } catch (err) {
+    console.error('Upload error full:', JSON.stringify({
+      message: err.message,
+      code: err.code,
+      stack: err.stack?.slice(0, 500),
+    }))
+    return res.status(500).json({ error: 'Upload failed', message: err.message, code: err.code })
+  }
+}

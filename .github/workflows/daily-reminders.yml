@@ -1,0 +1,19 @@
+name: Daily Reminders
+
+on:
+  schedule:
+    - cron: '0 22 * * *'  # 8am AEST (UTC+10) = 10pm UTC
+  workflow_dispatch:       # Allow manual trigger
+
+jobs:
+  send-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger reminders API
+        run: |
+          curl -X POST https://idogs.com.au/api/send-reminders \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            --fail \
+            --silent \
+            --show-error

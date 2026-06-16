@@ -1,0 +1,8 @@
+﻿[
+  {
+    "origin": ["https://idogs.com.au", "https://www.idogs.com.au", "http://localhost:5173"],
+    "method": ["GET", "POST", "PUT", "DELETE"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type", "Authorization"]
+  }
+]
