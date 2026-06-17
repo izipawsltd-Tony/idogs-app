@@ -17,12 +17,13 @@ const FREE_PLANS = ['free', 'trial']
 
 export default function DogNewPage({ toast }: Props) {
   const navigate = useNavigate()
-  const { profile } = useAuth()
+  const { user, profile } = useAuth()
   const [step, setStep] = useState<Step>('scan')
   const [loading, setLoading] = useState(true)
   const [blocked, setBlocked] = useState(false)
   const [activeDogCount, setActiveDogCount] = useState(0)
   const [scannedDocs, setScannedDocs] = useState<any[]>([])
+  const [pendingFiles, setPendingFiles] = useState<Array<{ base64: string; mediaType: string; documentType: string }>>([])
   const [form, setForm] = useState<DogFormData>({
     name: '', breed: '', sex: 'female',
     dateOfBirth: '', colour: '', microchip: '', ankc: '', notes: '',
@@ -52,12 +53,26 @@ export default function DogNewPage({ toast }: Props) {
     setForm(prev => ({ ...prev, [field]: value }))
   }
 
-  function handleScanResult(result: any) {
+  function matchBreed(scannedBreed: string): string {
+    const normalized = scannedBreed.trim().toLowerCase()
+    const exact = AU_TOP_BREEDS.find(b => b.toLowerCase() === normalized)
+    if (exact) return exact
+    // Try partial match (e.g. scanned "Labrador" matches "Labrador Retriever")
+    const partial = AU_TOP_BREEDS.find(b => b.toLowerCase().includes(normalized) || normalized.includes(b.toLowerCase()))
+    if (partial) return partial
+    // Not in our fixed list — still keep the scanned value rather than
+    // discarding real data from the document. The breed <select> falls
+    // back to a free-text-like value; user can correct it in the form.
+    return scannedBreed.trim()
+  }
+
+  function handleScanResult(result: any, _fileUrl?: string, rawFile?: { base64: string; mediaType: string; documentType: string }) {
     setScannedDocs(prev => [...prev, result])
+    if (rawFile) setPendingFiles(prev => [...prev, rawFile])
     setForm(prev => ({
       ...prev,
       name: result.dogName || prev.name,
-      breed: result.breed && AU_TOP_BREEDS.includes(result.breed) ? result.breed : prev.breed,
+      breed: result.breed ? matchBreed(result.breed) : prev.breed,
       dateOfBirth: result.dateOfBirth || prev.dateOfBirth,
       microchip: result.microchip || prev.microchip,
       ankc: result.ankc || prev.ankc,
@@ -78,6 +93,33 @@ export default function DogNewPage({ toast }: Props) {
     setLoading(true)
     try {
       const dogId = await createDog(form)
+
+      // Now that the dog exists, upload any files that were scanned before
+      // we had a dogId to attach them to (fixes "fail to save file" when
+      // scanning during dog creation).
+      let filesSaved = 0
+      if (user?.uid && pendingFiles.length > 0) {
+        for (const f of pendingFiles) {
+          try {
+            const uploadRes = await fetch('/api/upload-document', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                base64: f.base64,
+                mediaType: f.mediaType,
+                dogId,
+                tenantId: user.uid,
+                documentType: f.documentType,
+                extractedData: { dogName: form.name },
+              }),
+            })
+            if (uploadRes.ok) filesSaved++
+          } catch {
+            // continue trying remaining files even if one upload fails
+          }
+        }
+      }
+
       for (const doc of scannedDocs) {
         if (doc.vaccines) {
           for (const v of doc.vaccines) {
@@ -105,7 +147,8 @@ export default function DogNewPage({ toast }: Props) {
         }
       }
       const totalVaccines = scannedDocs.reduce((sum, d) => sum + (d.vaccines?.length || 0), 0)
-      toast(`${form.name} added with ${totalVaccines} vaccine record(s)!`)
+      const fileNote = pendingFiles.length > 0 ? `, ${filesSaved}/${pendingFiles.length} document(s) saved` : ''
+      toast(`${form.name} added with ${totalVaccines} vaccine record(s)${fileNote}!`)
       navigate(`/app/dogs/${dogId}`)
     } catch {
       toast('Failed to create dog profile', 'error')
@@ -138,7 +181,7 @@ export default function DogNewPage({ toast }: Props) {
             The free plan supports up to {FREE_DOG_LIMIT} dogs.
           </p>
           <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 28, lineHeight: 1.6 }}>
-            Upgrade to add more dogs, unlock AI scanning, documents, and ownership transfer.
+            Upgrade to add more dogs, unlock iDogs Scan, documents, and ownership transfer.
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link to="/app/billing" className="btn btn-primary">
@@ -249,6 +292,9 @@ export default function DogNewPage({ toast }: Props) {
               <label className="form-label">Breed *</label>
               <select className="form-select" value={form.breed} onChange={e => set('breed', e.target.value)} required>
                 <option value="">Select breed…</option>
+                {form.breed && !AU_TOP_BREEDS.includes(form.breed) && (
+                  <option value={form.breed}>{form.breed} (from scan)</option>
+                )}
                 {AU_TOP_BREEDS.map(b => <option key={b} value={b}>{b}</option>)}
               </select>
             </div>
@@ -268,7 +314,7 @@ export default function DogNewPage({ toast }: Props) {
                 <input className="form-input" type="text" placeholder="956000012345678" value={form.microchip} onChange={e => set('microchip', e.target.value)} />
               </div>
               <div className="form-group">
-                <label className="form-label">ANKC registration</label>
+                <label className="form-label">Dogs Australia Registration</label>
                 <input className="form-input" type="text" placeholder="3100012345" value={form.ankc} onChange={e => set('ankc', e.target.value)} />
               </div>
             </div>

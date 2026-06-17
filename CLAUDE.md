@@ -10,8 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run dev        # local dev server (Vite)
 npm run build      # tsc + vite build (run before every deploy)
 npm run preview    # preview production build locally
-vercel deploy --prod   # deploy to production (NEVER use vercel --prod)
+vercel deploy           # Preview deployment — uses STAGING Firebase, safe default
+vercel deploy --prod    # Production deployment — goes live on idogs.com.au
 ```
+
+Default to `vercel deploy` (no flag) for anything not yet verified. Only use `--prod` after confirming the Preview URL behaves correctly. `deploy.bat` always runs `--prod` — it's a deliberate shortcut for confident, already-tested changes, not a safe default to reach for automatically.
 
 No test framework is configured — verify changes by running `npm run build` and testing in browser.
 
@@ -128,17 +131,18 @@ iDogs.com.au is a **freemium consumer SaaS** serving as the **top-of-funnel acqu
 | `/app/litters` | Litters |
 | `/app/reminders` | Reminders |
 | `/app/documents` | Documents |
-| `/app/audit` | Audit trail |
+| `/app/audit` | Activity (user-facing, scoped to own tenancy only) |
 | `/app/export` | Export PDF/CSV |
 | `/app/billing` | Billing & plans |
 | `/app/settings` | Settings |
-| `/app/admin/survey` | Survey admin (tony only) |
+| `/app/admin/survey` | Survey admin (trunghieungo@gmail.com only) |
+| `/app/admin/audit` | Full cross-tenant audit history (trunghieungo@gmail.com only) |
 
 ## API Endpoints
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/scan` | AI document scan |
+| `POST /api/scan` | iDogs Scan — AI document extraction (claude-sonnet-4-6) |
 | `POST /api/send-email` | Send email via Resend |
 | `POST /api/send-sms` | Send SMS via AWS SNS |
 | `POST /api/send-reminders` | Daily cron reminders |
@@ -178,7 +182,7 @@ Fonts: `Plus Jakarta Sans` (display) + `Inter` (body)
 - `litters` — (tenantId, puppyIds[])
 - `documents` — (dogId, tenantId, documentType, fileUrl)
 - `scanLogs` — QR scan audit (dogId, passportId)
-- `auditLogs` — full audit (tenantId, dogId, action, details, performedBy, createdAt)
+- `auditLogs` — full audit (tenantId, dogId, action, details, performedBy, createdAt). Two-tier access: `getAuditLogs(tenantId, dogId?)` is user-facing and naturally scoped to the caller's own tenancy (after an ownership transfer, the dog's tenantId changes, so a buyer never sees a breeder's pre-transfer activity and vice versa — this is intentional, not a bug). `getFullAuditHistoryForDog(dogId)` is admin-only, returns full cross-tenant history spanning any transfers, and is used exclusively by `/app/admin/audit` (gated to `trunghieungo@gmail.com`). Never call the admin function from regular user-facing UI.
 - `surveyResponses` — breeder/owner survey (email, userType, status: pending|code_sent)
 
 ## CRITICAL: Firestore Rules
@@ -233,6 +237,7 @@ Always use serverless: `/api/upload-document` or `/api/upload-photo`
 - Terms: SA jurisdiction — NN Global trademark clause in Section 7
 - Privacy: Australian Privacy Act 1988
 - Footer/legal copy must credit "NN Global Pty Ltd as trustee for NN Investment Trust" for the iDogs trademark — not iziPaws Pty Ltd. No copyright year, no claims of specific server location (Sydney/Australia) — say "Asia-Pacific" only. No fabricated stats or club endorsements anywhere on the landing page.
+- The document-scanning feature is called "iDogs Scan" everywhere in user-facing text (tab label, headings, button states, empty-state copy) — never "AI Scan". This was a deliberate rebrand (June 2026); don't reintroduce "AI Scan" wording in new copy. Old Firestore `auditLogs` records were already migrated to match.
 
 ## QR Passport
 
@@ -285,24 +290,30 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 
 ### Critical
 - [ ] Stripe go-live — verify business, create live products (currently test mode only)
-- [ ] Run full end-to-end test pass (see iDogs_E2E_Test_Plan.docx) — now safe to run against the staging environment
+- [ ] Finish E2E test pass: Billing (Stripe test mode), Transfer ownership, and Mobile sections still not explicitly run (see iDogs_E2E_Test_Plan.docx) — Add Dog / iDogs Scan / Vaccines sections already tested and fixed
 - [ ] Establish a code review habit before pushing (self-review via `git diff`, or send the diff to Claude.ai chat for a second opinion) — not yet a consistent practice
 
 ### Important
 - [ ] iziPaws CTA in iDogs — BLOCKED until iziPaws has a landing page/waitlist (ALTEK build not done)
 - [ ] License Agreement — NN Global Pty Ltd → iziPaws Pty Ltd (draft prepared, needs AU solicitor review)
 - [ ] TM Headstart formal application ($330) — after IP Australia feedback
+- [ ] AWS Textract as an OCR pre-processing layer for `api/scan.js`, to improve accuracy on handwritten vaccine cards (printed documents already scan reliably; handwriting is the remaining weak point, partially mitigated by stricter uncertain-flagging + yellow highlighting in the meantime)
 
 ### Known Bugs
-- [ ] `[object Object]` display for hipScore/elbowGrade in scanner review UI
-- [ ] Hip/Elbow Date Tested not applying from scans
+(none currently tracked — the two previously listed here, the `[object Object]` hipScore/elbowGrade display and Hip/Elbow Date Tested not applying from scans, should be re-verified next session since several scan.js and DogDetailPage.tsx changes have landed since they were last checked)
 
 ### What NOT to re-litigate
 - reminderDays — done (SettingsPage.tsx + send-reminders.js)
 - Delete dog UI — done (DogDetailPage.tsx)
 - Worming records in Export — done (export-report.js)
-- Mobile bottom nav — done (Export + Audit Trail added, sign-out removed from bottom nav since it's in the mobile top bar)
+- Mobile bottom nav — done (Export + Activity added, sign-out removed from bottom nav since it's in the mobile top bar)
 - iziPaws CTA — blocked until ALTEK delivers iziPaws landing page
+- Staging environment — fully set up and verified (see Working Method section)
+- Vaccine record Edit UI — done (DogDetailPage.tsx, inline edit form with uncertain auto-clear on save)
+- Overdue badge superseded-by-newer-dose logic — done (groups by vaccine name, only the latest record per name can show Overdue/Current)
+- "ANKC" display label — renamed to "Dogs Australia Registration" everywhere (underlying field name `ankc` unchanged)
+- "AI Scan" branding — renamed to "iDogs Scan" everywhere, including historical auditLogs data (one-time migration script already run)
+- Two-tier audit trail (user Activity vs admin Full History) — done, see Firestore Collections section above
 
 ## Business Context
 

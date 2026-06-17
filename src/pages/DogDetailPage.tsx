@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import {
   getDog, getVaccineRecords, getWormingRecords, getHealthTests,
   getReminders, getActivityNotes, addActivityNote,
-  addVaccineRecord, deleteVaccineRecord, addHealthTest, completeReminder,
+  addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, completeReminder,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, logAudit
 } from '../lib/db'
 import {
@@ -148,7 +148,7 @@ export default function DogDetailPage({ toast }: Props) {
             dogId,
             dogName: dog.name,
             action: 'vaccine_added',
-            details: `Vaccine "${v.name}" added via AI Scan (given: ${v.dateGiven || '—'})`,
+            details: `Vaccine "${v.name}" added via iDogs Scan (given: ${v.dateGiven || '—'})`,
             performedBy: user?.uid || '',
             performedByEmail: user?.email || '',
           })
@@ -186,7 +186,7 @@ export default function DogDetailPage({ toast }: Props) {
         dogId,
         dogName: dog.name,
         action: 'health_test_added',
-        details: `Health test "${result.healthTest.testType?.toUpperCase()}" added via AI Scan — result: ${result.healthTest.result}`,
+        details: `Health test "${result.healthTest.testType?.toUpperCase()}" added via iDogs Scan — result: ${result.healthTest.result}`,
         performedBy: user?.uid || '',
         performedByEmail: user?.email || '',
       })
@@ -261,7 +261,7 @@ export default function DogDetailPage({ toast }: Props) {
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
-    { id: 'scan', label: '📸 AI Scan' },
+    { id: 'scan', label: '📸 iDogs Scan' },
     { id: 'vaccines', label: `Vaccines (${vaccines.length})` },
     { id: 'health', label: 'Health tests' },
     { id: 'reminders', label: `Reminders (${reminders.filter(r => r.status !== 'completed').length})` },
@@ -299,7 +299,7 @@ export default function DogDetailPage({ toast }: Props) {
           <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
             <span className="badge badge-gray">{LIFE_STAGE_EMOJI[dog.lifeStage]} {LIFE_STAGE_LABELS[dog.lifeStage]}</span>
             {dog.microchip && <span className="badge badge-gray">Chip: {dog.microchip}</span>}
-            {dog.ankc && <span className="badge badge-gray">ANKC: {dog.ankc}</span>}
+            {dog.ankc && <span className="badge badge-gray">Dogs Australia Reg: {dog.ankc}</span>}
             <span className={`badge ${vaccStatus === 'current' ? 'badge-green' : vaccStatus === 'overdue' ? 'badge-red' : 'badge-gold'}`}>
               Vaccines: {vaccStatus === 'current' ? 'Current' : vaccStatus === 'overdue' ? 'Overdue' : vaccStatus === 'due_soon' ? 'Due soon' : 'Unknown'}
             </span>
@@ -349,8 +349,8 @@ export default function DogDetailPage({ toast }: Props) {
       {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} />}
       {tab === 'scan' && (
         <div style={{ maxWidth: 480 }}>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>AI Document Scan</h2>
-          <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 20 }}>Photograph a vaccine card, pedigree cert, or health test result. AI reads it and adds the records automatically.</p>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>iDogs Document Scan</h2>
+          <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 20 }}>Photograph a Pedigree Certificate, Health Certificate, Hip and Elbow Dysplasia Report, or Vaccination Record. AI reads it and adds the records automatically.</p>
           <AIScan onResult={handleScanResult} toast={toast} dogId={dog.id} tenantId={user?.uid} />
         </div>
       )}
@@ -522,7 +522,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount }: {
             <a href={(dog as any).microchipCertUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none' }}>📄 View cert</a>
           </div>
         )}
-        <InfoRow label="ANKC" value={dog.ankc || '—'} />
+        <InfoRow label="Dogs Australia Registration" value={dog.ankc || '—'} />
         <InfoRow label="Passport ID" value={dog.passportId} mono />
       </InfoSection>
       <InfoSection title="Health summary">
@@ -574,6 +574,54 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
   const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  function startEdit(v: VaccineRecord) {
+    setEditingId(v.id)
+    setEditForm({
+      name: v.name || '',
+      dateGiven: v.dateGiven || '',
+      nextDue: v.nextDue || '',
+      vetClinic: v.vetClinic || '',
+    })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+  }
+
+  async function handleSaveEdit() {
+    if (!editingId || !editForm.name || !editForm.dateGiven) return
+    setSavingEdit(true)
+    try {
+      await updateVaccineRecord(editingId, {
+        name: editForm.name,
+        dateGiven: editForm.dateGiven,
+        nextDue: editForm.nextDue,
+        vetClinic: editForm.vetClinic,
+        uncertain: false,
+      })
+      await logAudit({
+        tenantId: tenantId || '',
+        dogId,
+        dogName: dogName,
+        action: 'vaccine_added',
+        details: `Vaccine "${editForm.name}" edited (given: ${editForm.dateGiven || '—'}, due: ${editForm.nextDue || '—'})`,
+        performedBy: tenantId || '',
+        performedByEmail: userEmail || '',
+      })
+      const updated = await getVaccineRecords(dogId)
+      setVaccines(updated)
+      setEditingId(null)
+      toast('Vaccine record updated')
+    } catch {
+      toast('Failed to update vaccine', 'error')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
 
   async function handleAdd() {
     if (!form.name || !form.dateGiven) return
@@ -654,36 +702,96 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
         <div className="empty-state">
           <div className="empty-state-icon">💉</div>
           <div className="empty-state-title">No vaccine records</div>
-          <div className="empty-state-desc">Use AI Scan tab to photograph a vaccine card, or add manually.</div>
+          <div className="empty-state-desc">Use iDogs Scan tab to photograph a vaccine card, or add manually.</div>
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          {vaccines.map((v, i) => (
-            <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderBottom: i < vaccines.length - 1 ? '1px solid var(--border)' : 'none' }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>
-                  {v.name}
-                  {v.uncertain && <span style={{ fontSize: 11, color: 'var(--warning)', marginLeft: 6 }}>⚠ uncertain</span>}
+          {(() => {
+            // Determine the most recent record per vaccine name (by dateGiven).
+            // Only the latest record of each name is eligible to show as Overdue —
+            // older records that have since been superseded by a newer dose are
+            // shown as a plain history entry instead.
+            const latestByName: Record<string, string> = {}
+            for (const v of vaccines) {
+              const key = v.name.trim().toLowerCase()
+              const current = latestByName[key]
+              if (!current) { latestByName[key] = v.id; continue }
+              const currentRecord = vaccines.find(x => x.id === current)
+              if (currentRecord && v.dateGiven > currentRecord.dateGiven) {
+                latestByName[key] = v.id
+              }
+            }
+            const isLatestOfItsName = (v: VaccineRecord) => latestByName[v.name.trim().toLowerCase()] === v.id
+
+            return vaccines.map((v, i) => {
+              if (editingId === v.id) {
+                return (
+                  <div key={v.id} className="card" style={{ margin: 12, padding: 14 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                      <div className="form-group">
+                        <label className="form-label">Vaccine name *</label>
+                        <input className="form-input" value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Date given *</label>
+                        <input className="form-input" type="date" value={editForm.dateGiven} onChange={e => setEditForm(p => ({ ...p, dateGiven: e.target.value }))} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Next due date</label>
+                        <input className="form-input" type="date" value={editForm.nextDue} onChange={e => setEditForm(p => ({ ...p, nextDue: e.target.value }))} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Vet clinic</label>
+                        <input className="form-input" value={editForm.vetClinic} onChange={e => setEditForm(p => ({ ...p, vetClinic: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn btn-primary btn-sm" onClick={handleSaveEdit} disabled={savingEdit}>{savingEdit ? <span className="spinner" /> : 'Save changes'}</button>
+                      <button className="btn btn-secondary btn-sm" onClick={cancelEdit}>Cancel</button>
+                    </div>
+                  </div>
+                )
+              }
+
+              const showOverdueBadge = v.nextDue && isLatestOfItsName(v)
+
+              return (
+                <div key={v.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px',
+                  borderBottom: i < vaccines.length - 1 ? '1px solid var(--border)' : 'none',
+                  background: v.uncertain ? '#FDF6E3' : 'transparent',
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>
+                      {v.name}
+                      {v.uncertain && <span style={{ fontSize: 11, color: 'var(--gold)', marginLeft: 6, fontWeight: 600 }}>⚠ Date uncertain — please verify</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: v.uncertain ? 'var(--gold)' : 'var(--light)', fontWeight: v.uncertain ? 600 : 400 }}>
+                      Given: {formatDate(v.dateGiven)}{v.nextDue ? ` · Due: ${formatDate(v.nextDue)}` : ''}{v.vetClinic ? ` · ${v.vetClinic}` : ''}
+                    </div>
+                  </div>
+                  {showOverdueBadge ? (
+                    <span className={`badge ${v.nextDue && isOverdue(v.nextDue) ? 'badge-red' : 'badge-green'}`}>{v.nextDue && isOverdue(v.nextDue) ? 'Overdue' : 'Current'}</span>
+                  ) : v.nextDue ? (
+                    <span className="badge badge-gray">Superseded</span>
+                  ) : null}
+                  {(v as any).documentUrl && (
+                    <a
+                      href={(v as any).documentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-secondary btn-sm"
+                      style={{ padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
+                    >
+                      📄 View
+                    </a>
+                  )}
+                  <button onClick={() => startEdit(v)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
+                  <button onClick={() => handleDelete(v.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--light)' }}>
-                  Given: {formatDate(v.dateGiven)}{v.nextDue ? ` · Due: ${formatDate(v.nextDue)}` : ''}{v.vetClinic ? ` · ${v.vetClinic}` : ''}
-                </div>
-              </div>
-              {v.nextDue && <span className={`badge ${isOverdue(v.nextDue) ? 'badge-red' : 'badge-green'}`}>{isOverdue(v.nextDue) ? 'Overdue' : 'Current'}</span>}
-              {(v as any).documentUrl && (
-                <a
-                  href={(v as any).documentUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn-secondary btn-sm"
-                  style={{ padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
-                >
-                  📄 View
-                </a>
-              )}
-              <button onClick={() => handleDelete(v.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
-            </div>
-          ))}
+              )
+            })
+          })()}
         </div>
       )}
     </div>
@@ -700,7 +808,7 @@ function HealthTab({ healthTests }: { healthTests: HealthTest[] }) {
         <div className="empty-state">
           <div className="empty-state-icon">🔬</div>
           <div className="empty-state-title">No health tests recorded</div>
-          <div className="empty-state-desc">Use AI Scan to photograph an OFA certificate or hip/elbow result.</div>
+          <div className="empty-state-desc">Use iDogs Scan to photograph an OFA certificate or hip/elbow result.</div>
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -846,7 +954,7 @@ function DocumentsTab({ documents, dogName }: { documents: any[]; dogName: strin
         <div className="empty-state">
           <div className="empty-state-icon">📄</div>
           <div className="empty-state-title">No documents yet</div>
-          <div className="empty-state-desc">Scan a vaccine card, pedigree cert, or health test using the AI Scan tab.</div>
+          <div className="empty-state-desc">Scan a vaccine card, pedigree cert, or health test using the iDogs Scan tab.</div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

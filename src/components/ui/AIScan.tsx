@@ -177,7 +177,7 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
         {scanning ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
             <div className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
-            <div style={{ fontSize: 14, color: 'var(--green)', fontWeight: 500 }}>AI scanning document…</div>
+            <div style={{ fontSize: 14, color: 'var(--green)', fontWeight: 500 }}>iDogs Scan in progress…</div>
             <div style={{ fontSize: 12, color: 'var(--light)' }}>Reading fields automatically</div>
           </div>
         ) : (
@@ -187,7 +187,7 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
               Photograph or upload a document
             </div>
             <div style={{ fontSize: 13, color: 'var(--light)' }}>
-              Vaccine card · Pedigree cert · OFA certificate · Vet record
+              Pedigree Certificate · Health Certificate · Hip/Elbow Dysplasia Report · Vaccination Record
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', fontWeight: 500 }}>📷 Photo</span>

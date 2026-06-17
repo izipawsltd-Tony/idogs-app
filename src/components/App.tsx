@@ -22,6 +22,7 @@ import AuditPage from '../pages/AuditPage'
 import BillingPage from '../pages/BillingPage'
 import SurveyPage from '../pages/SurveyPage'
 import AdminSurveyPage from '../pages/AdminSurveyPage'
+import AdminAuditPage from '../pages/AdminAuditPage'
 import TermsPage from '../pages/TermsPage'
 import PrivacyPage from '../pages/PrivacyPage'
 import PassportPublicPage from '../pages/PassportPublicPage'
@@ -96,6 +97,7 @@ export default function App() {
           <Route path="audit" element={<AuditPage toast={toast} />} />
           <Route path="billing" element={<BillingPage toast={toast} />} />
           <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
+          <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
         </Route>
 
         <Route path="*" element={<NotFoundPage />} />

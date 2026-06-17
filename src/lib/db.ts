@@ -319,6 +319,14 @@ export async function logAudit(entry: Omit<AuditEntry, 'id' | 'createdAt'>): Pro
   }
 }
 
+// USER-FACING: scoped to the current tenant only. After an ownership
+// transfer, the dog's tenantId changes to the new owner — so this
+// naturally only returns events recorded under the caller's own tenancy.
+// A breeder never sees a buyer's post-transfer activity, and a buyer
+// never sees the breeder's pre-transfer activity. This is intentional:
+// full cross-tenant history is an admin-only concern (see
+// getFullAuditHistoryForDog below), not something either party should
+// see about the other in the product UI.
 export async function getAuditLogs(tenantId: string, dogId?: string): Promise<AuditEntry[]> {
   const q = dogId
     ? query(collection(db, 'auditLogs'), where('tenantId', '==', tenantId), where('dogId', '==', dogId))
@@ -328,6 +336,24 @@ export async function getAuditLogs(tenantId: string, dogId?: string): Promise<Au
     .map(d => {
       const data = d.data()
       // Handle Firestore Timestamp
+      const createdAt = data.createdAt?.toDate?.()?.toISOString() || data.createdAt || ''
+      return { ...data, id: d.id, createdAt } as AuditEntry
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+// ADMIN-ONLY: full audit history for a dog across ALL tenants it has ever
+// belonged to (i.e. spanning ownership transfers). Use this for
+// compliance, dispute resolution, or third-party verification requests —
+// never expose this directly in the normal user-facing UI, since it
+// would let a buyer see a breeder's internal activity (or vice versa).
+// Gate any caller of this function behind an admin check.
+export async function getFullAuditHistoryForDog(dogId: string): Promise<AuditEntry[]> {
+  const q = query(collection(db, 'auditLogs'), where('dogId', '==', dogId))
+  const snap = await getDocs(q)
+  return snap.docs
+    .map(d => {
+      const data = d.data()
       const createdAt = data.createdAt?.toDate?.()?.toISOString() || data.createdAt || ''
       return { ...data, id: d.id, createdAt } as AuditEntry
     })

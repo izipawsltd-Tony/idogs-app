@@ -66,8 +66,13 @@ export default function AuditPage({ toast }: Props) {
   return (
     <div style={{ padding: 32, maxWidth: 760 }}>
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>Audit Trail</h1>
-        <p style={{ fontSize: 14, color: 'var(--light)' }}>{logs.length} events recorded — full history of all changes.</p>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>Activity</h1>
+        <p style={{ fontSize: 14, color: 'var(--light)' }}>
+          {logs.length} update{logs.length !== 1 ? 's' : ''} on your dogs — a record of what's been added, changed, or removed.
+        </p>
+        <p style={{ fontSize: 12, color: 'var(--light)', marginTop: 6 }}>
+          This only shows activity from your own account. If a dog is transferred to a new owner, they start their own activity history — your past entries stay private to you.
+        </p>
       </div>
 
       {/* Filters */}
@@ -92,8 +97,8 @@ export default function AuditPage({ toast }: Props) {
       {filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">📋</div>
-          <div className="empty-state-title">{logs.length === 0 ? 'No audit events yet' : 'No matching events'}</div>
-          <div className="empty-state-desc">{logs.length === 0 ? 'Actions like adding vaccines, transferring dogs, and uploading documents will appear here.' : 'Try clearing the filters.'}</div>
+          <div className="empty-state-title">{logs.length === 0 ? 'No activity yet' : 'No matching activity'}</div>
+          <div className="empty-state-desc">{logs.length === 0 ? 'Adding vaccines, uploading documents, and other updates will show up here.' : 'Try clearing the filters.'}</div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
