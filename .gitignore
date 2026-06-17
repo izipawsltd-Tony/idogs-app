@@ -2,3 +2,4 @@
 .env
 .env.*
 WORKFLOW.md
+fix-script/

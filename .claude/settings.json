@@ -4,7 +4,8 @@
       "Bash(node dry-run.cjs)",
       "Bash(dir \"c:\\\\Users\\\\Tom\\\\Downloads\\\\idogs-app-phase1\\\\fix-script\")",
       "Bash(node update.cjs)",
-      "Bash(git pp *)"
+      "Bash(git pp *)",
+      "Bash(git rm *)"
     ]
   }
 }
