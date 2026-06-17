@@ -24,6 +24,7 @@ export default function DogNewPage({ toast }: Props) {
   const [activeDogCount, setActiveDogCount] = useState(0)
   const [scannedDocs, setScannedDocs] = useState<any[]>([])
   const [pendingFiles, setPendingFiles] = useState<Array<{ base64: string; mediaType: string; documentType: string }>>([])
+  const [duplicateWarning, setDuplicateWarning] = useState<{ matchedBy: 'microchip' | 'name'; existingDogName: string } | null>(null)
   const [form, setForm] = useState<DogFormData>({
     name: '', breed: '', sex: 'female',
     dateOfBirth: '', colour: '', microchip: '', ankc: '', notes: '',
@@ -90,6 +91,36 @@ export default function DogNewPage({ toast }: Props) {
       toast('Please fill in name, breed and date of birth', 'error')
       return
     }
+
+    // Check for a likely duplicate before creating — same microchip is a
+    // strong signal (microchips are physically unique to one dog), same
+    // name is a weaker signal but still worth a heads-up. This warns
+    // rather than blocks, since two unrelated dogs can coincidentally
+    // share a name, and the breeder may have a legitimate reason to
+    // re-enter a dog (e.g. correcting a mistaken delete).
+    try {
+      const existingDogs = await getDogs()
+      const active = existingDogs.filter((d: any) => d.status !== 'transferred')
+      const microchipMatch = form.microchip && active.find((d: any) => d.microchip && d.microchip === form.microchip)
+      const nameMatch = !microchipMatch && active.find((d: any) => d.name.trim().toLowerCase() === form.name.trim().toLowerCase())
+      if (microchipMatch) {
+        setDuplicateWarning({ matchedBy: 'microchip', existingDogName: microchipMatch.name })
+        return
+      }
+      if (nameMatch) {
+        setDuplicateWarning({ matchedBy: 'name', existingDogName: nameMatch.name })
+        return
+      }
+    } catch (err) {
+      console.error('Duplicate check failed:', err)
+      // if the duplicate check itself fails, don't block dog creation —
+      // proceed as normal
+    }
+
+    await proceedWithCreate()
+  }
+
+  async function proceedWithCreate() {
     setLoading(true)
     try {
       const dogId = await createDog(form)
@@ -343,6 +374,45 @@ export default function DogNewPage({ toast }: Props) {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Duplicate dog warning modal */}
+      {duplicateWarning && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div className="card" style={{ maxWidth: 420, padding: 28 }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
+            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>
+              Possible duplicate dog
+            </h3>
+            <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 20, lineHeight: 1.6 }}>
+              {duplicateWarning.matchedBy === 'microchip'
+                ? <>A dog with this <strong>microchip number</strong> already exists in your account, named <strong>{duplicateWarning.existingDogName}</strong>. Microchips should be unique to one dog — please double check before continuing.</>
+                : <>A dog named <strong>{duplicateWarning.existingDogName}</strong> already exists in your account. If this is a different dog that happens to share the same name, you can safely continue.</>}
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                onClick={() => {
+                  setDuplicateWarning(null)
+                  proceedWithCreate()
+                }}
+              >
+                Add anyway
+              </button>
+              <button
+                className="btn btn-secondary"
+                style={{ flex: 1 }}
+                onClick={() => setDuplicateWarning(null)}
+              >
+                Go back & check
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

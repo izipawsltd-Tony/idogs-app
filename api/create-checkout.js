@@ -13,7 +13,7 @@ const PRICE_IDS = {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  const { plan, userId, userEmail } = req.body
+  const { plan, userId, userEmail, smsAddon } = req.body
   if (!plan || !userId || !userEmail) return res.status(400).json({ error: 'Missing params' })
 
   const priceId = PRICE_IDS[plan]

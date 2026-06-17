@@ -288,7 +288,7 @@ export default function SettingsPage({ toast }: Props) {
       <div className="card">
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Data & Privacy</div>
         <div style={{ fontSize: 13, color: 'var(--green)', background: 'var(--green-light)', padding: '10px 14px', borderRadius: 8, marginBottom: 12 }}>
-          🇦🇺 Your data is stored in Australia (Firebase asia-southeast1) and is compliant with the Australian Privacy Act 1988.
+          🔒 Your data is stored securely in the Asia-Pacific region and is compliant with the Australian Privacy Act 1988.
         </div>
         <div style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6 }}>
           Your dog profiles, health records, and documents are private by default. Public passport pages only show information you choose to share via QR code.
