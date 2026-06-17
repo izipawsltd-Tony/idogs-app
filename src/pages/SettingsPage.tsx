@@ -30,6 +30,7 @@ export default function SettingsPage({ toast }: Props) {
   const hideReminders = (profile as any)?.hideReminders === true
   const emailReminders = (profile as any)?.emailReminders !== false // default true
   const reminderDays = (profile as any)?.reminderDays || 7
+  const reminderFrequency = (profile as any)?.reminderFrequency || 'once'
 
   async function toggle(field: string, current: boolean, onMsg: string, offMsg: string) {
     if (!user) return
@@ -52,6 +53,20 @@ export default function SettingsPage({ toast }: Props) {
       await updateUserProfile(user.uid, { reminderDays: days } as any)
       await refreshProfile()
       toast(`Reminder lead time set to ${days} days`)
+    } catch {
+      toast('Failed to save setting', 'error')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  async function setReminderFrequency(freq: 'once' | 'daily') {
+    if (!user) return
+    setSaving('reminderFrequency')
+    try {
+      await updateUserProfile(user.uid, { reminderFrequency: freq } as any)
+      await refreshProfile()
+      toast(freq === 'once' ? 'You\'ll get one reminder per due date' : 'You\'ll get a daily reminder until the due date')
     } catch {
       toast('Failed to save setting', 'error')
     } finally {
@@ -276,6 +291,35 @@ export default function SettingsPage({ toast }: Props) {
                     }}
                   >
                     {days}d
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Reminder frequency */}
+          {emailReminders && (
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>🔁 Reminder frequency</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How often to remind you once a due date is approaching.</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {([
+                  { id: 'once', label: 'Once' },
+                  { id: 'daily', label: 'Daily until due' },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setReminderFrequency(opt.id)}
+                    disabled={saving === 'reminderFrequency'}
+                    style={{
+                      padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 500,
+                      border: `1.5px solid ${reminderFrequency === opt.id ? 'var(--green)' : 'var(--border)'}`,
+                      background: reminderFrequency === opt.id ? 'var(--green-light)' : 'var(--white)',
+                      color: reminderFrequency === opt.id ? 'var(--green)' : 'var(--mid)',
+                      cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                  >
+                    {opt.label}
                   </button>
                 ))}
               </div>

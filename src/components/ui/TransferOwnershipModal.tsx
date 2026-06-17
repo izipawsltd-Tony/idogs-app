@@ -112,6 +112,7 @@ export default function TransferOwnershipModal({
             />
             <p className="form-hint">
               They'll receive an email with the passport link and instructions to create their account.
+              💡 If they don't see it within a few minutes, ask them to check their Spam/Junk folder.
             </p>
           </div>
 

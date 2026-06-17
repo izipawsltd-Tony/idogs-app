@@ -367,7 +367,10 @@ export default function DogNewPage({ toast }: Props) {
             )}
             <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
               <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading}>
-                {loading ? <span className="spinner" /> : `Add dog & create passport${scannedDocs.length > 0 ? ` (${scannedDocs.reduce((s, d) => s + (d.vaccines?.length || 0), 0)} records)` : ''}`}
+                {loading ? <span className="spinner" /> : (() => {
+                  const recordCount = scannedDocs.reduce((s, d) => s + (d.vaccines?.length || 0), 0)
+                  return `Add dog & create passport${recordCount > 0 ? ` (${recordCount} records)` : ''}`
+                })()}
               </button>
               <button type="button" onClick={() => setStep('scan')} className="btn btn-secondary" style={{ height: 46 }}>
                 ← Scan more

@@ -102,8 +102,11 @@ export default function VerifyEmailPage({ toast }: Props) {
           <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 20 }}>
             {user?.email}
           </p>
-          <p style={{ fontSize: 13, color: 'var(--light)', lineHeight: 1.6, marginBottom: 24 }}>
+          <p style={{ fontSize: 13, color: 'var(--light)', lineHeight: 1.6, marginBottom: 8 }}>
             Click the link in that email, then come back here and press the button below.
+          </p>
+          <p style={{ fontSize: 12, color: 'var(--gold)', lineHeight: 1.6, marginBottom: 24, background: 'var(--gold-light)', padding: '8px 12px', borderRadius: 8 }}>
+            💡 Can't find it? Check your <strong>Spam</strong> or <strong>Junk</strong> folder — verification emails sometimes end up there.
           </p>
 
           <button onClick={handleCheck} className="btn btn-primary" style={{ width: '100%', height: 46 }} disabled={checking}>

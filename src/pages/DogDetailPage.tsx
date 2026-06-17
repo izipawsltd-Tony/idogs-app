@@ -6,6 +6,7 @@ import {
   getDog, getVaccineRecords, getWormingRecords, getHealthTests,
   getReminders, getActivityNotes, addActivityNote,
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, completeReminder,
+  addWormingRecord, deleteWormingRecord,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, logAudit
 } from '../lib/db'
 import {
@@ -23,7 +24,7 @@ interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
-type Tab = 'overview' | 'vaccines' | 'health' | 'reminders' | 'passport' | 'timeline' | 'scan' | 'documents'
+type Tab = 'overview' | 'vaccines' | 'worming' | 'health' | 'reminders' | 'passport' | 'timeline' | 'scan' | 'documents'
 
 export default function DogDetailPage({ toast }: Props) {
   const { dogId } = useParams<{ dogId: string }>()
@@ -263,6 +264,7 @@ export default function DogDetailPage({ toast }: Props) {
     { id: 'overview', label: 'Overview' },
     { id: 'scan', label: '📸 iDogs Scan' },
     { id: 'vaccines', label: `Vaccines (${vaccines.length})` },
+    { id: 'worming', label: `Worming (${wormings.length})` },
     { id: 'health', label: 'Health tests' },
     { id: 'reminders', label: `Reminders (${reminders.filter(r => r.status !== 'completed').length})` },
     { id: 'passport', label: 'QR Passport' },
@@ -355,7 +357,8 @@ export default function DogDetailPage({ toast }: Props) {
         </div>
       )}
       {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={() => setTab('documents')} />}
-      {tab === 'health' && <HealthTab healthTests={healthTests} />}
+      {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} />}
+      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} />}
       {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} />}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} toast={toast} />}
       {tab === 'documents' && <DocumentsTab documents={documents} dogName={dog.name} />}
@@ -798,17 +801,235 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
   )
 }
 
-// ── HEALTH TAB ────────────────────────────────────────────────
+// ── WORMING TAB ───────────────────────────────────────────────
 
-function HealthTab({ healthTests }: { healthTests: HealthTest[] }) {
+function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings, toast }: {
+  dogId: string;
+  dogName: string;
+  tenantId: string;
+  userEmail: string;
+  wormings: WormingRecord[];
+  setWormings: (w: WormingRecord[]) => void;
+  toast: (msg: string, type?: ToastMessage['type']) => void
+}) {
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
+  const [saving, setSaving] = useState(false)
+
+  async function handleAdd() {
+    if (!form.product || !form.dateGiven) {
+      toast('Please fill in product and date given', 'error')
+      return
+    }
+    setSaving(true)
+    try {
+      await addWormingRecord({
+        dogId,
+        product: form.product,
+        dateGiven: form.dateGiven,
+        nextDue: form.nextDue || undefined,
+        weightKg: form.weightKg ? Number(form.weightKg) : undefined,
+      })
+      await logAudit({
+        tenantId,
+        dogId,
+        dogName,
+        action: 'worming_added',
+        details: `Worming "${form.product}" added (given: ${form.dateGiven})`,
+        performedBy: tenantId,
+        performedByEmail: userEmail,
+      })
+      const updated = await getWormingRecords(dogId)
+      setWormings(updated)
+      setForm({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
+      setShowForm(false)
+      toast('Worming record added ✓')
+    } catch {
+      toast('Failed to add worming record', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete(id: string) {
+    const w = wormings.find(x => x.id === id)
+    await deleteWormingRecord(id)
+    setWormings(wormings.filter(x => x.id !== id))
+    await logAudit({
+      tenantId,
+      dogId,
+      dogName,
+      action: 'worming_deleted',
+      details: `Worming "${w?.product || id}" deleted`,
+      performedBy: tenantId,
+      performedByEmail: userEmail,
+    })
+    toast('Worming record deleted')
+  }
+
   return (
     <div>
-      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Health testing</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Worming</h2>
+        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)}>
+          {showForm ? 'Cancel' : '+ Add manually'}
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="card" style={{ marginBottom: 16, padding: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">Product *</label>
+              <input className="form-input" type="text" placeholder="e.g. Drontal, Milbemax" value={form.product} onChange={e => setForm(p => ({ ...p, product: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Date given *</label>
+              <input className="form-input" type="date" value={form.dateGiven} onChange={e => setForm(p => ({ ...p, dateGiven: e.target.value }))} max={new Date().toISOString().split('T')[0]} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Next due date</label>
+              <input className="form-input" type="date" value={form.nextDue} onChange={e => setForm(p => ({ ...p, nextDue: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Weight (kg)</label>
+              <input className="form-input" type="number" step="0.1" placeholder="e.g. 4.2" value={form.weightKg} onChange={e => setForm(p => ({ ...p, weightKg: e.target.value }))} />
+            </div>
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={saving}>
+            {saving ? <span className="spinner" /> : 'Save worming record'}
+          </button>
+        </div>
+      )}
+
+      {wormings.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">💊</div>
+          <div className="empty-state-title">No worming records</div>
+          <div className="empty-state-desc">Add a worming treatment manually to start tracking.</div>
+        </div>
+      ) : (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          {wormings.map((w, i) => (
+            <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderBottom: i < wormings.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{w.product}</div>
+                <div style={{ fontSize: 12, color: 'var(--light)' }}>
+                  Given: {formatDate(w.dateGiven)}{w.nextDue ? ` · Next due: ${formatDate(w.nextDue)}` : ''}{w.weightKg ? ` · ${w.weightKg}kg` : ''}
+                </div>
+              </div>
+              {w.nextDue && <span className={`badge ${isOverdue(w.nextDue) ? 'badge-red' : 'badge-green'}`}>{isOverdue(w.nextDue) ? 'Overdue' : 'Current'}</span>}
+              <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── HEALTH TAB ────────────────────────────────────────────────
+
+function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast }: {
+  dogId: string;
+  dogName: string;
+  tenantId: string;
+  userEmail: string;
+  healthTests: HealthTest[];
+  setHealthTests: (h: HealthTest[]) => void;
+  toast: (msg: string, type?: ToastMessage['type']) => void
+}) {
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ testType: 'hip', result: '', dateTested: '', lab: '', certNumber: '' })
+  const [saving, setSaving] = useState(false)
+
+  async function handleAdd() {
+    if (!form.testType || !form.result || !form.dateTested) {
+      toast('Please fill in test type, result, and date', 'error')
+      return
+    }
+    setSaving(true)
+    try {
+      await addHealthTest({
+        dogId,
+        testType: form.testType as HealthTest['testType'],
+        result: form.result,
+        dateTested: form.dateTested,
+        lab: form.lab,
+        certNumber: form.certNumber,
+      })
+      await logAudit({
+        tenantId,
+        dogId,
+        dogName,
+        action: 'health_test_added',
+        details: `Health test "${form.testType.toUpperCase()}" added manually — result: ${form.result}`,
+        performedBy: tenantId,
+        performedByEmail: userEmail,
+      })
+      const updated = await getHealthTests(dogId)
+      setHealthTests(updated)
+      setForm({ testType: 'hip', result: '', dateTested: '', lab: '', certNumber: '' })
+      setShowForm(false)
+      toast('Health test added ✓')
+    } catch {
+      toast('Failed to add health test', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Health testing</h2>
+        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)}>
+          {showForm ? 'Cancel' : '+ Add manually'}
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="card" style={{ marginBottom: 16, padding: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div className="form-group">
+              <label className="form-label">Test type *</label>
+              <select className="form-select" value={form.testType} onChange={e => setForm(p => ({ ...p, testType: e.target.value }))}>
+                <option value="hip">Hip</option>
+                <option value="elbow">Elbow</option>
+                <option value="eye">Eye</option>
+                <option value="dna">DNA</option>
+                <option value="cardiac">Cardiac</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Date tested *</label>
+              <input className="form-input" type="date" value={form.dateTested} onChange={e => setForm(p => ({ ...p, dateTested: e.target.value }))} max={new Date().toISOString().split('T')[0]} />
+            </div>
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">Result *</label>
+              <input className="form-input" type="text" placeholder="e.g. Excellent, Normal, Clear" value={form.result} onChange={e => setForm(p => ({ ...p, result: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Lab / clinic</label>
+              <input className="form-input" type="text" placeholder="e.g. OFA, PennHIP" value={form.lab} onChange={e => setForm(p => ({ ...p, lab: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Certificate number</label>
+              <input className="form-input" type="text" value={form.certNumber} onChange={e => setForm(p => ({ ...p, certNumber: e.target.value }))} />
+            </div>
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={saving}>
+            {saving ? <span className="spinner" /> : 'Save health test'}
+          </button>
+        </div>
+      )}
+
       {healthTests.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">🔬</div>
           <div className="empty-state-title">No health tests recorded</div>
-          <div className="empty-state-desc">Use iDogs Scan to photograph an OFA certificate or hip/elbow result.</div>
+          <div className="empty-state-desc">Use iDogs Scan to photograph an OFA certificate or hip/elbow result, or add manually.</div>
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

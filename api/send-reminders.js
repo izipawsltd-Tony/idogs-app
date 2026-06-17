@@ -66,6 +66,7 @@ export default async function handler(req, res) {
       const user = userDoc.data()
       const tenantId = userDoc.id
       const reminderDays = user.reminderDays || 7
+      const reminderFrequency = user.reminderFrequency || 'once' // 'once' | 'daily'
       const hasSmsAddon = user.smsAddon === true
       const phone = user.phone
 
@@ -90,8 +91,28 @@ export default async function handler(req, res) {
           const dueDate = new Date(vaccine.nextDue)
           const daysUntilDue = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24))
 
-          if (daysUntilDue === reminderDays || daysUntilDue === 1) {
-            const msg = `🐾 iDogs Reminder: ${dog.name}'s ${vaccine.name} is due ${daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`} (${formatDate(vaccine.nextDue)}). Book your vet now.`
+          // Fire once the reminder window has been reached (daysUntilDue
+          // <= reminderDays) rather than requiring an exact match. An
+          // exact-match comparison meant that if the cron job missed the
+          // single day a reminder was due to fire (server downtime, a
+          // failed deploy, GitHub Actions being delayed, etc.), that
+          // reminder would never fire again — daysUntilDue only ever
+          // equals a specific number once. Using <= means a missed day
+          // is recovered on the next run instead of being lost forever.
+          //
+          // Whether we then re-send on subsequent days depends on the
+          // user's reminderFrequency preference: 'once' sends a single
+          // email per vaccine record (any existing lastReminderSentAt
+          // blocks further sends), 'daily' sends every day the window is
+          // active, capped at one per ~20h to avoid double-sends if the
+          // cron job somehow runs twice in a day.
+          const hasSentBefore = Boolean(vaccine.lastReminderSentAt)
+          const sentWithinLast20h = hasSentBefore &&
+            (today - new Date(vaccine.lastReminderSentAt)) < 1000 * 60 * 60 * 20
+          const blockedByFrequencyPref = reminderFrequency === 'once' ? hasSentBefore : sentWithinLast20h
+
+          if (daysUntilDue <= reminderDays && daysUntilDue >= 0 && !blockedByFrequencyPref) {
+            const msg = `🐾 iDogs Reminder: ${dog.name}'s ${vaccine.name} is due ${daysUntilDue === 0 ? 'today' : daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`} (${formatDate(vaccine.nextDue)}). Book your vet now.`
 
             // Send email reminder
             if (user.email) {
@@ -101,7 +122,7 @@ export default async function handler(req, res) {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     to: user.email,
-                    subject: `🐾 Reminder: ${dog.name}'s ${vaccine.name} due ${daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`}`,
+                    subject: `🐾 Reminder: ${dog.name}'s ${vaccine.name} due ${daysUntilDue === 0 ? 'today' : daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`}`,
                     html: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s ${vaccine.name}</strong> is due on <strong>${formatDate(vaccine.nextDue)}</strong>.</p><p>Book your vet appointment soon to keep ${dog.name} protected.</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s records →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
                   }),
                 })
@@ -121,6 +142,17 @@ export default async function handler(req, res) {
               } catch (e) {
                 console.error('SMS reminder error:', e)
               }
+            }
+
+            // Record when this reminder fired so we don't re-send it
+            // again tomorrow for the same vaccine — without this, every
+            // run from now until the due date would re-trigger the email.
+            try {
+              await db.collection('vaccineRecords').doc(vDoc.id).update({
+                lastReminderSentAt: today.toISOString(),
+              })
+            } catch (e) {
+              console.error('Failed to record lastReminderSentAt:', e)
             }
           }
         }
