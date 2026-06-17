@@ -168,6 +168,7 @@ export interface ActivityNote {
   id: string
   dogId: string
   note: string
+  photoUrl?: string
   createdBy: string
   createdAt: string
 }

@@ -7,11 +7,12 @@ import {
   getReminders, getActivityNotes, addActivityNote,
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, completeReminder,
   addWormingRecord, deleteWormingRecord,
-  getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, logAudit
+  getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, logAudit, syncLifeStage,
+  getAuditLogs, type AuditEntry
 } from '../lib/db'
 import {
   formatDate, getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS,
-  getVaccineStatus, isOverdue
+  getVaccineStatus, isOverdue, getTodaysMilestone, type Milestone
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import PhotoUpload from '../components/ui/PhotoUpload'
@@ -37,10 +38,13 @@ export default function DogDetailPage({ toast }: Props) {
   const [healthTests, setHealthTests] = useState<HealthTest[]>([])
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [notes, setNotes] = useState<ActivityNote[]>([])
+  const [lifeStageEvents, setLifeStageEvents] = useState<AuditEntry[]>([])
   const [qrUrl, setQrUrl] = useState('')
   const [scanCount, setScanCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [newNote, setNewNote] = useState('')
+  const [notePhoto, setNotePhoto] = useState<{ base64: string; mediaType: string; preview: string } | null>(null)
+  const [uploadingNotePhoto, setUploadingNotePhoto] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
@@ -53,7 +57,18 @@ export default function DogDetailPage({ toast }: Props) {
         const d = await getDog(dogId!)
         if (!d) { navigate('/app/dogs'); return }
         setDog(d)
-        const [v, w, h, r, n, sc, docs] = await Promise.all([
+        // Re-sync lifeStage in case it's drifted out of date (dogs were
+        // previously assigned a fixed lifeStage at creation time with
+        // nothing updating it afterwards as they aged).
+        syncLifeStage(d).then(updatedStage => {
+          if (updatedStage !== d.lifeStage) {
+            setDog(prev => prev ? { ...prev, lifeStage: updatedStage } : prev)
+          }
+        }).catch(() => {
+          // non-critical — if this fails, the page still works, just
+          // with a possibly-stale lifeStage badge until next visit
+        })
+        const [v, w, h, r, n, sc, docs, auditLogs] = await Promise.all([
           getVaccineRecords(dogId!).catch(() => [] as VaccineRecord[]),
           getWormingRecords(dogId!).catch(() => [] as WormingRecord[]),
           getHealthTests(dogId!).catch(() => [] as HealthTest[]),
@@ -61,6 +76,7 @@ export default function DogDetailPage({ toast }: Props) {
           getActivityNotes(dogId!).catch(() => [] as ActivityNote[]),
           getScanCount(dogId!).catch(() => 0),
           getDogDocuments(dogId!).catch(() => []),
+          getAuditLogs(d.tenantId, dogId!).catch(() => [] as AuditEntry[]),
         ])
         setVaccines(v)
         setWormings(w)
@@ -69,6 +85,7 @@ export default function DogDetailPage({ toast }: Props) {
         setNotes(n)
         setScanCount(sc)
         if (docs) setDocuments(docs)
+        setLifeStageEvents(auditLogs.filter(e => e.action === 'life_stage_changed'))
         const publicUrl = `${window.location.origin}/p/${d.passportId}`
         const url = await QRCode.toDataURL(publicUrl, {
           width: 200, margin: 2, errorCorrectionLevel: 'H',
@@ -89,10 +106,37 @@ export default function DogDetailPage({ toast }: Props) {
     if (!newNote.trim() || !dogId) return
     setSavingNote(true)
     try {
-      await addActivityNote(dogId, newNote.trim())
+      let photoUrl: string | undefined
+      if (notePhoto && user?.uid) {
+        setUploadingNotePhoto(true)
+        try {
+          const res = await fetch('/api/upload-note-photo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              base64: notePhoto.base64,
+              mediaType: notePhoto.mediaType,
+              dogId,
+              userId: user.uid,
+            }),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            photoUrl = data.fileUrl
+          } else {
+            toast('Photo upload failed — note saved without photo', 'info')
+          }
+        } catch {
+          toast('Photo upload failed — note saved without photo', 'info')
+        } finally {
+          setUploadingNotePhoto(false)
+        }
+      }
+      await addActivityNote(dogId, newNote.trim(), photoUrl)
       const n = await getActivityNotes(dogId)
       setNotes(n)
       setNewNote('')
+      setNotePhoto(null)
       toast('Note added')
     } catch {
       toast('Failed to add note', 'error')
@@ -259,6 +303,7 @@ export default function DogDetailPage({ toast }: Props) {
   const vaccStatus = getVaccineStatus(latestVaccine?.nextDue)
   const overdueReminders = reminders.filter(r => r.status === 'overdue' || (r.status === 'pending' && isOverdue(r.dueDate)))
   const isTransferred = (dog as any).status === 'transferred' && (dog as any).buyerEmail
+  const todaysMilestone = getTodaysMilestone(dog.dateOfBirth, dog.createdAt)
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
@@ -275,6 +320,19 @@ export default function DogDetailPage({ toast }: Props) {
   return (
     <div style={{ padding: 32 }}>
       <Link to="/app/dogs" style={{ fontSize: 13, color: 'var(--light)', textDecoration: 'none' }}>← My dogs</Link>
+
+      {todaysMilestone && (
+        <div style={{
+          marginTop: 16, padding: '14px 20px', borderRadius: 12,
+          background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.2)',
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontSize: 22 }}>{todaysMilestone.kind === 'birthday' ? '🎉' : '🏠'}</span>
+          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--gold)' }}>
+            {dog.name}'s {todaysMilestone.label}
+          </span>
+        </div>
+      )}
 
       {/* Dog header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, marginTop: 16, marginBottom: 28 }}>
@@ -362,7 +420,7 @@ export default function DogDetailPage({ toast }: Props) {
       {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} />}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} toast={toast} />}
       {tab === 'documents' && <DocumentsTab documents={documents} dogName={dog.name} />}
-      {tab === 'timeline' && <TimelineTab notes={notes} newNote={newNote} setNewNote={setNewNote} onAddNote={handleAddNote} saving={savingNote} />}
+      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} />}
 
       {/* Transfer Ownership Modal */}
       {showTransfer && dog && (
@@ -1229,29 +1287,186 @@ function DocumentsTab({ documents, dogName }: { documents: any[]; dogName: strin
 
 // ── TIMELINE TAB ──────────────────────────────────────────────
 
-function TimelineTab({ notes, newNote, setNewNote, onAddNote, saving }: {
-  notes: ActivityNote[]; newNote: string; setNewNote: (v: string) => void;
-  onAddNote: () => void; saving: boolean
+type StoryEvent = {
+  date: string
+  icon: string
+  title: string
+  detail?: string
+  photoUrl?: string
+  kind: 'birth' | 'vaccine' | 'worming' | 'health' | 'stage' | 'transfer' | 'note'
+}
+
+/**
+ * Generates one event per past birthday and one per past join-anniversary,
+ * from year 1 up to (but not including) the current year — used to
+ * populate the story timeline with milestone history, separate from
+ * getTodaysMilestone which only checks "is it today right now".
+ */
+function getPastMilestoneEvents(dateOfBirth: string, createdAt: string): StoryEvent[] {
+  const events: StoryEvent[] = []
+  const now = new Date()
+
+  if (dateOfBirth) {
+    const birth = new Date(dateOfBirth)
+    for (let y = 1; y <= now.getFullYear() - birth.getFullYear(); y++) {
+      const occurredOn = new Date(birth.getFullYear() + y, birth.getMonth(), birth.getDate())
+      if (occurredOn > now) break
+      events.push({ date: occurredOn.toISOString(), icon: '🎂', title: `${y === 1 ? '1st' : `${y}th`} birthday`, kind: 'stage' })
+    }
+  }
+
+  if (createdAt) {
+    const joined = new Date(createdAt)
+    for (let y = 1; y <= now.getFullYear() - joined.getFullYear(); y++) {
+      const occurredOn = new Date(joined.getFullYear() + y, joined.getMonth(), joined.getDate())
+      if (occurredOn > now) break
+      events.push({ date: occurredOn.toISOString(), icon: '🏠', title: `${y} year${y > 1 ? 's' : ''} on iDogs`, kind: 'stage' })
+    }
+  }
+
+  return events
+}
+
+function buildStoryEvents(dog: Dog, vaccines: VaccineRecord[], wormings: WormingRecord[], healthTests: HealthTest[], lifeStageEvents: AuditEntry[], notes: ActivityNote[]): StoryEvent[] {
+  const events: StoryEvent[] = []
+
+  if (dog.dateOfBirth) {
+    events.push({ date: dog.dateOfBirth, icon: '🐣', title: `${dog.name} was born`, kind: 'birth' })
+  }
+
+  vaccines.forEach(v => {
+    if (v.dateGiven) {
+      events.push({ date: v.dateGiven, icon: '💉', title: `Vaccinated — ${v.name}`, kind: 'vaccine' })
+    }
+  })
+
+  wormings.forEach(w => {
+    if (w.dateGiven) {
+      events.push({ date: w.dateGiven, icon: '💊', title: `Worming — ${w.product}`, kind: 'worming' })
+    }
+  })
+
+  healthTests.forEach(h => {
+    if (h.dateTested) {
+      events.push({ date: h.dateTested, icon: '🔬', title: `Health test — ${h.testType.toUpperCase()}`, detail: h.result, kind: 'health' })
+    }
+  })
+
+  lifeStageEvents.forEach(e => {
+    events.push({ date: e.createdAt, icon: '🌟', title: e.details, kind: 'stage' })
+  })
+
+  if ((dog as any).transferredAt) {
+    events.push({ date: (dog as any).transferredAt, icon: '🏠', title: `Transferred to ${(dog as any).buyerName || 'new owner'}`, kind: 'transfer' })
+  }
+
+  notes.forEach(n => {
+    events.push({ date: n.createdAt, icon: '📝', title: n.note, photoUrl: n.photoUrl, kind: 'note' })
+  })
+
+  events.push(...getPastMilestoneEvents(dog.dateOfBirth, dog.createdAt))
+
+  return events.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+}
+
+const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
+  birth: 'var(--gold)',
+  vaccine: '#0F6E56',
+  worming: '#1D9E75',
+  health: '#085041',
+  stage: 'var(--gold)',
+  transfer: 'var(--mid)',
+  note: 'var(--green)',
+}
+
+function TimelineTab({ dog, notes, newNote, setNewNote, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto }: {
+  dog: Dog; notes: ActivityNote[]; newNote: string; setNewNote: (v: string) => void;
+  onAddNote: () => void; saving: boolean;
+  vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; lifeStageEvents: AuditEntry[];
+  notePhoto: { base64: string; mediaType: string; preview: string } | null;
+  setNotePhoto: (p: { base64: string; mediaType: string; preview: string } | null) => void;
+  uploadingNotePhoto: boolean
 }) {
+  const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
+
+  function handlePhotoSelect(e: { target: { files: FileList | null } }) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      const base64 = result.split(',')[1]
+      setNotePhoto({ base64, mediaType: file.type, preview: result })
+    }
+    reader.readAsDataURL(file)
+  }
+
   return (
     <div>
-      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Activity timeline</h2>
-      <div className="card" style={{ marginBottom: 16 }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>{dog.name}'s story</h2>
+      <p style={{ fontSize: 13, color: 'var(--light)', marginBottom: 16 }}>Every milestone, automatically gathered in one place.</p>
+
+      <div className="card" style={{ marginBottom: 20 }}>
         <textarea className="form-textarea" placeholder="Add a note about today…" value={newNote} onChange={e => setNewNote(e.target.value)} style={{ minHeight: 72, marginBottom: 10 }} />
-        <button className="btn btn-primary btn-sm" onClick={onAddNote} disabled={saving || !newNote.trim()}>
-          {saving ? <span className="spinner" /> : 'Add note'}
-        </button>
+
+        {notePhoto ? (
+          <div style={{ position: 'relative', display: 'inline-block', marginBottom: 10 }}>
+            <img src={notePhoto.preview} alt="Selected" style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)' }} />
+            <button
+              type="button"
+              onClick={() => setNotePhoto(null)}
+              style={{
+                position: 'absolute', top: -8, right: -8,
+                width: 22, height: 22, borderRadius: '50%',
+                background: 'var(--dark)', color: '#fff', border: 'none',
+                fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >✕</button>
+          </div>
+        ) : (
+          <label className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', marginBottom: 10, cursor: 'pointer' }}>
+            📷 Add a photo
+            <input type="file" accept="image/*" onChange={handlePhotoSelect} style={{ display: 'none' }} />
+          </label>
+        )}
+
+        <div>
+          <button className="btn btn-primary btn-sm" onClick={onAddNote} disabled={saving || !newNote.trim()}>
+            {saving ? <span className="spinner" /> : uploadingNotePhoto ? 'Uploading photo…' : 'Add note'}
+          </button>
+        </div>
       </div>
-      {notes.length === 0 ? (
-        <div className="empty-state"><div className="empty-state-icon">📝</div><div className="empty-state-title">No notes yet</div></div>
+
+      {events.length === 0 ? (
+        <div className="empty-state"><div className="empty-state-icon">📝</div><div className="empty-state-title">No story yet</div><div className="empty-state-desc">Add a note, or scan a document, to begin {dog.name}'s story.</div></div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {notes.map(n => (
-            <div key={n.id} className="card" style={{ padding: '12px 16px' }}>
-              <div style={{ fontSize: 14, color: 'var(--dark)', lineHeight: 1.6, marginBottom: 6 }}>{n.note}</div>
-              <div style={{ fontSize: 12, color: 'var(--light)' }}>{formatDate(n.createdAt)}</div>
-            </div>
-          ))}
+        <div style={{ position: 'relative', paddingLeft: 28 }}>
+          {/* Vertical timeline line */}
+          <div style={{ position: 'absolute', left: 11, top: 6, bottom: 6, width: 2, background: 'var(--border)' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {events.map((e, i) => (
+              <div key={i} style={{ position: 'relative' }}>
+                {/* Dot on the timeline */}
+                <div style={{
+                  position: 'absolute', left: -28, top: 2,
+                  width: 22, height: 22, borderRadius: '50%',
+                  background: STORY_EVENT_COLOR[e.kind], color: '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 12, border: '2px solid var(--white)',
+                }}>
+                  {e.icon}
+                </div>
+                <div className="card" style={{ padding: '12px 16px' }}>
+                  {e.photoUrl && (
+                    <img src={e.photoUrl} alt="" style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, marginBottom: 10 }} />
+                  )}
+                  <div style={{ fontSize: 14, color: 'var(--dark)', lineHeight: 1.6, marginBottom: 4 }}>{e.title}</div>
+                  {e.detail && <div style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 4 }}>{e.detail}</div>}
+                  <div style={{ fontSize: 12, color: 'var(--light)' }}>{formatDate(e.date)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

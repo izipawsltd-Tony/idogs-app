@@ -70,16 +70,128 @@ export function getVaccineStatus(nextDue: string | undefined): 'current' | 'due_
   return 'current'
 }
 
+// ── MILESTONES (birthdays & anniversaries) ──────────────────────
+
+export type Milestone = {
+  kind: 'birthday' | 'anniversary'
+  years: number
+  label: string
+}
+
+/**
+ * Checks whether today is the dog's birthday or the anniversary of
+ * joining the family (based on createdAt, i.e. when the profile was
+ * first added to iDogs). Returns null if today isn't either of those.
+ * Matches month+day only, ignoring year, ignoring time-of-day.
+ */
+export function getTodaysMilestone(dateOfBirth: string, createdAt: string): Milestone | null {
+  const today = new Date()
+
+  if (dateOfBirth) {
+    const birth = new Date(dateOfBirth)
+    if (birth.getMonth() === today.getMonth() && birth.getDate() === today.getDate()) {
+      const years = today.getFullYear() - birth.getFullYear()
+      // Only celebrate from year 1 onwards — a dog born today isn't
+      // having its "0th birthday", that's just being born.
+      if (years > 0) {
+        return { kind: 'birthday', years, label: `🎂 ${years === 1 ? '1st' : `${years}th`} birthday today!` }
+      }
+    }
+  }
+
+  if (createdAt) {
+    const joined = new Date(createdAt)
+    if (joined.getMonth() === today.getMonth() && joined.getDate() === today.getDate()) {
+      const years = today.getFullYear() - joined.getFullYear()
+      if (years > 0) {
+        return { kind: 'anniversary', years, label: `🏠 ${years} year${years > 1 ? 's' : ''} on iDogs today!` }
+      }
+    }
+  }
+
+  return null
+}
+
 // ── LIFE STAGE ────────────────────────────────────────────────
 
-export function calculateLifeStage(dob: string): LifeStage {
+export type DogSize = 'small' | 'medium' | 'large' | 'giant'
+
+// Size classification based on adult weight, adjusted from pure breed
+// standard figures to match how the Australian pet industry (boarding,
+// insurance, breed clubs) commonly categorises borderline breeds —
+// e.g. French Bulldog and Beagle are usually treated as Medium in
+// practice despite sitting near the Small/Medium weight boundary, and
+// Siberian Husky / Rottweiler are usually treated as Large.
+export const BREED_SIZE: Record<string, DogSize> = {
+  'Cavalier King Charles Spaniel': 'small',
+  'Poodle (Miniature)': 'small',
+  'Maltese': 'small',
+  'Shih Tzu': 'small',
+  'Border Terrier': 'small',
+  'Jack Russell Terrier': 'small',
+  'Dachshund': 'small',
+
+  'French Bulldog': 'medium',
+  'Beagle': 'medium',
+  'Border Collie': 'medium',
+  'Australian Shepherd': 'medium',
+  'Staffordshire Bull Terrier': 'medium',
+  'Cocker Spaniel': 'medium',
+  'Bull Terrier': 'medium',
+  'Whippet': 'medium',
+  'English Springer Spaniel': 'medium',
+
+  'Golden Retriever': 'large',
+  'Labrador Retriever': 'large',
+  'German Shepherd': 'large',
+  'Poodle (Standard)': 'large',
+  'Boxer': 'large',
+  'Dobermann': 'large',
+  'Irish Setter': 'large',
+  'Pointer': 'large',
+  'Dalmatian': 'large',
+  'Weimaraner': 'large',
+  'Siberian Husky': 'large',
+  'Rottweiler': 'large',
+
+  'Great Dane': 'giant',
+  'Bernese Mountain Dog': 'giant',
+}
+
+export function getBreedSize(breed: string): DogSize {
+  return BREED_SIZE[breed] || 'medium' // unknown/"Other" breeds default to medium
+}
+
+// Age bracket boundaries in months, by size. Senior has no upper bound.
+// Sourced from multiple veterinary life-stage references and adjusted
+// per industry feedback to smooth the adult→senior transition rather
+// than having it jump sharply between size classes.
+const LIFE_STAGE_MONTHS: Record<DogSize, { puppyEnd: number; youngAdultEnd: number; seniorStart: number }> = {
+  small:  { puppyEnd: 12, youngAdultEnd: 24, seniorStart: 120 }, // senior ~10y
+  medium: { puppyEnd: 12, youngAdultEnd: 24, seniorStart: 108 }, // senior ~9y
+  large:  { puppyEnd: 14, youngAdultEnd: 24, seniorStart: 96 },  // senior ~8y
+  giant:  { puppyEnd: 18, youngAdultEnd: 24, seniorStart: 84 },  // senior ~7y
+}
+
+/**
+ * Calculates life stage using breed-aware age brackets. Falls back to
+ * the medium-size brackets if no breed is provided or the breed isn't
+ * recognised — this keeps existing callers (that only pass dob) working
+ * without changes, while new callers can pass breed for more accurate
+ * staging of large/giant breeds (who mature slower as puppies but reach
+ * "senior" earlier than small breeds).
+ */
+export function calculateLifeStage(dob: string, breed?: string): LifeStage {
   if (!dob) return 'puppy'
   const birth = new Date(dob)
   const months = differenceInMonths(new Date(), birth)
-  if (months < 3) return 'whelp'
-  if (months < 12) return 'puppy'
-  if (months < 24) return 'young_adult'
-  if (months < 84) return 'adult'
+  const size = breed ? getBreedSize(breed) : 'medium'
+  const { puppyEnd, youngAdultEnd, seniorStart } = LIFE_STAGE_MONTHS[size]
+
+  if (months < 2) return 'whelp'
+  if (months < puppyEnd) return 'puppy'
+  if (months < youngAdultEnd) return 'young_adult'
+  if (months < seniorStart) return 'adult'
   return 'senior'
 }
 

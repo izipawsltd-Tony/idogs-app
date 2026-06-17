@@ -43,6 +43,36 @@ function formatDate(str) {
   } catch { return str }
 }
 
+// Server-side equivalent of getTodaysMilestone in src/lib/utils.ts —
+// duplicated rather than imported since this file runs in a different
+// module environment (Vercel serverless function) than the frontend
+// bundle. Keep both in sync if the milestone logic changes.
+function getTodaysDogMilestone(dateOfBirth, createdAt) {
+  const today = new Date()
+
+  if (dateOfBirth) {
+    const birth = new Date(dateOfBirth)
+    if (birth.getMonth() === today.getMonth() && birth.getDate() === today.getDate()) {
+      const years = today.getFullYear() - birth.getFullYear()
+      if (years > 0) {
+        return { kind: 'birthday', years, label: years === 1 ? '1st birthday' : `${years}th birthday` }
+      }
+    }
+  }
+
+  if (createdAt) {
+    const joined = new Date(createdAt)
+    if (joined.getMonth() === today.getMonth() && joined.getDate() === today.getDate()) {
+      const years = today.getFullYear() - joined.getFullYear()
+      if (years > 0) {
+        return { kind: 'anniversary', years, label: `${years} year${years > 1 ? 's' : ''}` }
+      }
+    }
+  }
+
+  return null
+}
+
 export default async function handler(req, res) {
   // Security: only allow from GitHub Actions or internal
   const authHeader = req.headers['x-cron-secret']
@@ -78,6 +108,30 @@ export default async function handler(req, res) {
 
       for (const dogDoc of dogsSnap.docs) {
         const dog = dogDoc.data()
+
+        // Birthday / join-anniversary check — separate from the vaccine
+        // due-date logic below, this fires at most once per dog per day
+        // regardless of how many vaccine records exist.
+        if (user.email) {
+          const dogCreatedAt = dog.createdAt?.toDate ? dog.createdAt.toDate() : new Date(dog.createdAt)
+          const milestone = getTodaysDogMilestone(dog.dateOfBirth, dogCreatedAt)
+          if (milestone) {
+            try {
+              await fetch(`${process.env.APP_URL || 'https://idogs.com.au'}/api/send-email`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  to: user.email,
+                  subject: `${milestone.kind === 'birthday' ? '🎂' : '🏠'} ${dog.name}'s ${milestone.label}`,
+                  html: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}</strong> ${milestone.kind === 'birthday' ? `is celebrating their ${milestone.label} today!` : `joined iDogs ${milestone.label} ago today!`} 🎉</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s story →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
+                }),
+              })
+              emailSent++
+            } catch (e) {
+              console.error('Milestone email error:', e)
+            }
+          }
+        }
 
         // Check vaccine records
         const vaccinesSnap = await db.collection('vaccineRecords')

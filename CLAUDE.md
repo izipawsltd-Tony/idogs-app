@@ -64,6 +64,7 @@ iDogs.com.au is a **freemium consumer SaaS** serving as the **top-of-funnel acqu
 │   ├── survey.js             — Survey responses + duplicate check
 │   ├── upload-document.js    — Firebase Storage upload (serverless)
 │   ├── upload-photo.js       — Dog profile photo upload (serverless)
+│   ├── upload-note-photo.js  — ActivityNote photo upload (separate from upload-photo.js — does NOT touch profilePhoto)
 │   ├── export-report.js      — PDF/CSV compliance report
 │   ├── create-checkout.js    — Stripe checkout (4 plans + SMS addon)
 │   └── stripe-webhook.js     — Stripe webhook handler
@@ -149,6 +150,7 @@ iDogs.com.au is a **freemium consumer SaaS** serving as the **top-of-funnel acqu
 | `POST /api/survey` | Save survey response |
 | `POST /api/upload-document` | Upload doc to Firebase Storage |
 | `POST /api/upload-photo` | Upload photo to Firebase Storage |
+| `POST /api/upload-note-photo` | Upload an ActivityNote photo — separate from upload-photo, does not overwrite the dog's profilePhoto |
 | `POST /api/export-report` | Generate PDF/CSV report |
 | `POST /api/create-checkout` | Stripe checkout session |
 | `POST /api/stripe-webhook` | Stripe webhook handler |
@@ -172,13 +174,13 @@ Fonts: `Plus Jakarta Sans` (display) + `Inter` (body)
 
 ## Firestore Collections
 
-- `dogs` — dog profiles (tenantId, passportId, currentOwnerId, status, buyerEmail, buyerName, microchipCertUrl)
+- `dogs` — dog profiles (tenantId, passportId, currentOwnerId, status, buyerEmail, buyerName, microchipCertUrl). `lifeStage` is breed-aware (calculated from `dateOfBirth` + `breed` via `calculateLifeStage()` in utils.ts, using a small/medium/large/giant size mapping) and is kept in sync by `syncLifeStage()` in db.ts, called once when DogDetailPage loads — if it's drifted from the stored value, it gets updated and an audit entry (`life_stage_changed`) is written. DogListPage calculates it fresh in real time for display instead of trusting the stored field, so the list view is never stale even for dogs whose detail page hasn't been opened recently.
 - `users` — user profiles (role, plan, hideLitters, hideDocuments, hideReminders, emailReminders, reminderDays, smsAddon, phone, stripeCustomerId, stripeSubscriptionId)
 - `vaccineRecords` — (dogId, documentUrl)
 - `wormingRecords` — (dogId)
 - `healthTests` — (dogId, documentUrl)
 - `reminders` — (dogId)
-- `activityNotes` — timeline (dogId)
+- `activityNotes` — timeline (dogId, note, optional photoUrl, createdBy, createdAt). Powers the "[Dog]'s story" view in DogDetailPage, merged with vaccines/worming/health tests/life stage transitions/transfers into one chronological timeline.
 - `litters` — (tenantId, puppyIds[])
 - `documents` — (dogId, tenantId, documentType, fileUrl)
 - `scanLogs` — QR scan audit (dogId, passportId)
@@ -288,14 +290,17 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 
 ## Pending Items
 
-### Critical
+### Critical — needs Izi to copy/build/deploy (code already written, see chat history June 17)
+- [ ] Copy 7 files into the project and deploy: `src/lib/utils.ts`, `src/lib/db.ts`, `src/types/index.ts`, `src/pages/DogDetailPage.tsx`, `src/pages/DogListPage.tsx`, `api/send-reminders.js`, `api/upload-note-photo.js` (new file) — this is the full "Dog Life Story" feature (breed-aware life stage, story timeline, note photos, birthday/anniversary milestones)
 - [ ] Stripe go-live — verify business, create live products (currently test mode only)
-- [ ] Finish E2E test pass: Billing (Stripe test mode), Transfer ownership, and Mobile sections still not explicitly run (see iDogs_E2E_Test_Plan.docx) — Add Dog / iDogs Scan / Vaccines sections already tested and fixed
+- [ ] Finish E2E test pass: Billing (Stripe live flow once go-live), Transfer ownership, and Mobile sections still not explicitly run (see iDogs_E2E_Test_Plan.docx) — every other section has now been tested and fixed
 - [ ] Establish a code review habit before pushing (self-review via `git diff`, or send the diff to Claude.ai chat for a second opinion) — not yet a consistent practice
 
 ### Important
+- [ ] Convert iDogs to a PWA (manifest.json + service worker + icons) — agreed next step once the bug list above is confirmed stable; reuses the existing codebase, no separate project. React Native + Expo is the planned step after that, once there's real traffic and push notifications become valuable (especially since email reminders can land in Spam)
+- [ ] Dog Life Story — manual milestone UI (e.g. "learned to sit") not yet built; auto milestones (birthdays, anniversaries, life stage transitions) are done, but there's no way for a user to add their own custom milestone yet
 - [ ] iziPaws CTA in iDogs — BLOCKED until iziPaws has a landing page/waitlist (ALTEK build not done)
-- [ ] License Agreement — NN Global Pty Ltd → iziPaws Pty Ltd (draft prepared, needs AU solicitor review)
+- [ ] License Agreement — NN Global Pty Ltd → iziPaws Pty Ltd (draft prepared, needs AU solicitor review — when discussing execution, ask the solicitor whether to use a contract or a deed, since South Australia requires an independent witness for deeds signed by individuals, though company execution under Corporations Act s.127 doesn't need one regardless of document type)
 - [ ] TM Headstart formal application ($330) — after IP Australia feedback
 - [ ] AWS Textract as an OCR pre-processing layer for `api/scan.js`, to improve accuracy on handwritten vaccine cards (printed documents already scan reliably; handwriting is the remaining weak point, partially mitigated by stricter uncertain-flagging + yellow highlighting in the meantime)
 
@@ -304,6 +309,7 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 
 ### What NOT to re-litigate
 - reminderDays — done (SettingsPage.tsx + send-reminders.js)
+- reminderFrequency (once vs daily) — done (SettingsPage.tsx UI + send-reminders.js reads user.reminderFrequency)
 - Delete dog UI — done (DogDetailPage.tsx)
 - Worming records in Export — done (export-report.js)
 - Mobile bottom nav — done (Export + Activity added, sign-out removed from bottom nav since it's in the mobile top bar)
@@ -314,6 +320,15 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 - "ANKC" display label — renamed to "Dogs Australia Registration" everywhere (underlying field name `ankc` unchanged)
 - "AI Scan" branding — renamed to "iDogs Scan" everywhere, including historical auditLogs data (one-time migration script already run)
 - Two-tier audit trail (user Activity vs admin Full History) — done, see Firestore Collections section above
+- Duplicate dog warning — done (DogNewPage.tsx, checks microchip + name against active dogs, warns but doesn't block, modal with "Add anyway" / "Go back & check")
+- Stripe checkout `smsAddon` ReferenceError bug — fixed (`api/create-checkout.js` was missing `smsAddon` in the request body destructure, crashing every checkout attempt)
+- Health test "Add manually" button — done (DogDetailPage.tsx, HealthTab)
+- Worming Record tab — done (DogDetailPage.tsx, new WormingTab — `addWormingRecord`/`deleteWormingRecord` existed in db.ts already, just had no UI before)
+- "Stored in Australia" legal text — fixed (SettingsPage.tsx now says "Asia-Pacific region", no specific location named)
+- Spam folder notes on verification/transfer emails — done (VerifyEmailPage.tsx, TransferOwnershipModal.tsx)
+- "(0 records)" showing even when nothing was scanned — fixed (DogNewPage.tsx submit button now checks actual computed record count > 0, not just whether any document was scanned)
+- Dogs stuck showing "Puppy" forever — fixed (lifeStage was only ever set once at dog creation with nothing updating it afterwards; added `syncLifeStage()` in db.ts, called from DogDetailPage on load, and breed-aware real-time calculation in DogListPage for the list view)
+- Dog Life Story feature (breed-aware life stage, story timeline, note photos, birthday/anniversary milestones) — fully built, see Critical pending item above for the file copy step
 
 ## Business Context
 

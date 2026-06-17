@@ -3,8 +3,8 @@ import {
   query, where, serverTimestamp, setDoc, Timestamp
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
-import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter } from '../types'
-import { nanoid } from './utils'
+import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage } from '../types'
+import { nanoid, calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
 
 function uid(): string {
   return auth.currentUser?.uid ?? ''
@@ -78,7 +78,7 @@ export async function createDog(data: DogFormData): Promise<string> {
     originBreederId: uid(),
     currentOwnerId: uid(),
     passportId,
-    lifeStage: 'puppy',
+    lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
     isDeceased: false,
     photos: [],
     notes: data.notes || '',
@@ -91,6 +91,45 @@ export async function createDog(data: DogFormData): Promise<string> {
 
 export async function updateDog(id: string, data: Partial<Dog>): Promise<void> {
   await updateDoc(doc(db, 'dogs', id), { ...data, updatedAt: serverTimestamp() })
+}
+
+/**
+ * Re-calculates a dog's life stage from its current age and breed, and
+ * if it differs from what's stored, updates Firestore and writes an
+ * audit entry recording the transition (e.g. "puppy → adult"). This is
+ * how lifeStage stays accurate over time without needing a separate
+ * cron job — dogs were previously stuck at whatever lifeStage they were
+ * created with ('puppy'), since nothing ever updated it afterwards.
+ *
+ * Call this once when a dog's detail page loads (not from list views,
+ * to avoid an unnecessary Firestore write/read + audit log entry every
+ * time the user just glances at their dog list).
+ *
+ * Returns the up-to-date life stage so the caller can immediately
+ * reflect it in local state without waiting for a re-fetch.
+ */
+export async function syncLifeStage(dog: Dog): Promise<LifeStage> {
+  if (dog.isDeceased) return 'remembered' // deceased dogs are always "Forever", regardless of age math
+  const calculated = calculateLifeStage(dog.dateOfBirth, dog.breed)
+  if (calculated === dog.lifeStage) return dog.lifeStage // already correct, nothing to do
+
+  try {
+    await updateDog(dog.id, { lifeStage: calculated })
+    await logAudit({
+      tenantId: dog.tenantId,
+      dogId: dog.id,
+      dogName: dog.name,
+      action: 'life_stage_changed',
+      details: `Life stage updated: ${LIFE_STAGE_LABELS[dog.lifeStage]} → ${LIFE_STAGE_LABELS[calculated]}`,
+      performedBy: 'system',
+      performedByEmail: 'system@idogs.com.au',
+    })
+  } catch (err) {
+    console.error('Failed to sync life stage:', err)
+    return dog.lifeStage // if the write fails, don't claim the new stage took effect
+  }
+
+  return calculated
 }
 
 export async function deleteDog(id: string): Promise<void> {
@@ -261,9 +300,10 @@ export async function getActivityNotes(dogId: string): Promise<ActivityNote[]> {
   return snap.docs.map(d => ({ ...d.data(), id: d.id } as ActivityNote))
 }
 
-export async function addActivityNote(dogId: string, note: string): Promise<string> {
+export async function addActivityNote(dogId: string, note: string, photoUrl?: string): Promise<string> {
   const ref = await addDoc(collection(db, 'activityNotes'), {
-    dogId, note, createdBy: uid(), createdAt: serverTimestamp()
+    dogId, note, createdBy: uid(), createdAt: serverTimestamp(),
+    ...(photoUrl ? { photoUrl } : {}),
   })
   return ref.id
 }
@@ -295,6 +335,7 @@ export type AuditAction =
   | 'document_uploaded'
   | 'reminder_completed'
   | 'litter_created' | 'puppy_added'
+  | 'life_stage_changed'
 
 export interface AuditEntry {
   id: string

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getDogs } from '../lib/db'
-import { getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS } from '../lib/utils'
+import { getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS, calculateLifeStage } from '../lib/utils'
 import type { Dog, LifeStage, ToastMessage } from '../types'
 
 interface Props {
@@ -24,7 +24,8 @@ export default function DogListPage({ toast }: Props) {
 
   const filtered = (showTransferred ? dogs : activeDogs).filter(d => {
     const matchSearch = !search || d.name.toLowerCase().includes(search.toLowerCase()) || d.breed.toLowerCase().includes(search.toLowerCase())
-    const matchStage = filterStage === 'all' || d.lifeStage === filterStage
+    const actualStage = d.isDeceased ? 'remembered' : calculateLifeStage(d.dateOfBirth, d.breed)
+    const matchStage = filterStage === 'all' || actualStage === filterStage
     return matchSearch && matchStage
   })
 
@@ -116,6 +117,7 @@ export default function DogListPage({ toast }: Props) {
 
 function DogCard({ dog }: { dog: Dog }) {
   const isTransferred = (dog as any).status === 'transferred'
+  const actualStage = dog.isDeceased ? 'remembered' : calculateLifeStage(dog.dateOfBirth, dog.breed)
   return (
     <Link to={`/app/dogs/${dog.id}`} style={{ textDecoration: 'none' }}>
       <div className="card" style={{
@@ -136,7 +138,7 @@ function DogCard({ dog }: { dog: Dog }) {
           fontSize: 44,
           position: 'relative',
         }}>
-          {!dog.profilePhoto && LIFE_STAGE_EMOJI[dog.lifeStage]}
+          {!dog.profilePhoto && LIFE_STAGE_EMOJI[actualStage]}
           {isTransferred && (
             <div style={{
               position: 'absolute', inset: 0,
@@ -168,7 +170,7 @@ function DogCard({ dog }: { dog: Dog }) {
                 <span className="badge badge-green" style={{ fontSize: 10 }}>QR ✓</span>
               )}
               <span className="badge badge-gray" style={{ fontSize: 10 }}>
-                {LIFE_STAGE_EMOJI[dog.lifeStage]} {LIFE_STAGE_LABELS[dog.lifeStage]}
+                {LIFE_STAGE_EMOJI[actualStage]} {LIFE_STAGE_LABELS[actualStage]}
               </span>
             </div>
           </div>
