@@ -48,19 +48,12 @@ Return ONLY a JSON object with these exact fields (use null if not found):
 }
 
 IMPORTANT extraction rules:
-- Australian documents ALWAYS use DD/MM/YYYY format (day first, then month, then year) — NEVER MM/DD/YYYY. Convert to YYYY-MM-DD for output.
-- Example: "03/04/2025" on an Australian document means 3 April 2025, NOT March 4th. Output as "2025-04-03".
-- Example: "25/12/2024" means 25 December 2024. Output as "2024-12-25".
-- If a date appears ambiguous (e.g. could be parsed either way) but one of the two numbers is greater than 12, that number MUST be the day, confirming DD/MM/YYYY — use this to resolve ambiguity confidently.
-- Some Australian vaccine cards print treatment rows upside-down relative to each other on the same page (e.g. rotated 180°) so the booklet can be folded — mentally rotate the text as needed to read it correctly, don't transcribe upside-down digits as-is.
-- Handwritten dates are sometimes written as a run of digits without clear separators (e.g. "22526" meaning "22/5/26" or "6826" meaning "6/8/26"). Parse these carefully digit-by-digit using DD/M/YY or DD/MM/YY logic, and mark uncertain:true whenever the digit grouping is genuinely ambiguous.
-- HANDWRITTEN DATES ARE HIGH RISK. If a date is handwritten (not printed/typed), be much more conservative: only set uncertain:false if every digit is unambiguous and clearly formed. If digits could plausibly be read more than one way (e.g. a "1" that could be a "7", a "5" that could be a "6" or "8", a "2" that could be a "26" vs "25"), set uncertain:true even if you have a best guess — your best guess still goes in the field, but flagged.
-- If a date format is genuinely unclear or the document quality makes a date hard to read, set "uncertain": true on that vaccine entry rather than guessing confidently.
-- Double-check that "dateGiven" is chronologically BEFORE "nextDue" for every vaccine. If a parsed date would place "nextDue" before "dateGiven", you have likely misread a digit — re-examine the handwriting and, if still unclear after re-checking, set uncertain:true rather than forcing a date order that doesn't make sense.
+- Australian date format is DD/MM/YYYY — convert to YYYY-MM-DD
 - Extract "colour" from fields like "Colour: Yellow", "Color: Black", etc.
 - Extract "sex" from fields like "Sex: Female", "Sex: Male", "Bitch", "Dog"
-- Extract "breed" from "Breed:" field on pedigree certificates. Use the exact full breed name as commonly registered in Australia (e.g. "Labrador Retriever" not "Labrador", "Staffordshire Bull Terrier" not "Staffy").
+- Extract "breed" from "Breed:" field on pedigree certificates
 - Extract "ankc" from registration numbers on pedigree certificates
+- IMPORTANT: "ankc" and "healthTest.result" are separate fields and must never contain the same value. Health test certificates (hip/elbow/eye/cardiac scores) often also print the dog's ANKC registration number somewhere on the page for identification purposes — that number belongs in "ankc" only, never in "healthTest.result". "healthTest.result" must be the actual test outcome only (e.g. a hip/elbow score or grade such as "Excellent", "Good", "9/9", or a left/right breakdown like "Left: Excellent, Right: Good" — never a registration or certificate number on its own)
 - Extract "microchip" from microchip/chip numbers
 - If document is a microchip registration or implant certificate, set documentType to "microchip_cert"
 - For vaccines: extract each vaccine as a separate entry in the vaccines array
@@ -104,19 +97,6 @@ IMPORTANT extraction rules:
     try {
       const clean = text.replace(/```json\n?|\n?```/g, '').trim()
       const extracted = JSON.parse(clean)
-
-      // Safety net: if a vaccine's dateGiven is after its nextDue, the model
-      // likely mixed up day/month somewhere. Don't silently trust it — flag
-      // as uncertain so the user reviews it instead of acting on a bad date.
-      if (Array.isArray(extracted.vaccines)) {
-        extracted.vaccines = extracted.vaccines.map((v) => {
-          if (v.dateGiven && v.nextDue && v.dateGiven > v.nextDue) {
-            return { ...v, uncertain: true }
-          }
-          return v
-        })
-      }
-
       return res.status(200).json(extracted)
     } catch {
       return res.status(200).json({ documentType: 'other', vaccines: [], healthTest: null, raw: text })

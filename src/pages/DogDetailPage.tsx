@@ -5,14 +5,14 @@ import { useAuth } from '../hooks/useAuth'
 import {
   getDog, getVaccineRecords, getWormingRecords, getHealthTests,
   getReminders, getActivityNotes, addActivityNote,
-  addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, completeReminder,
+  addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder,
   addWormingRecord, deleteWormingRecord,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, logAudit, syncLifeStage,
   getAuditLogs, type AuditEntry
 } from '../lib/db'
 import {
   formatDate, getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS,
-  getVaccineStatus, isOverdue, getTodaysMilestone, type Milestone
+  getVaccineStatus, isOverdue, getTodaysMilestone, ordinal, BREEDER_ID_CONFIG, type Milestone
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import PhotoUpload from '../components/ui/PhotoUpload'
@@ -43,6 +43,7 @@ export default function DogDetailPage({ toast }: Props) {
   const [scanCount, setScanCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [newNote, setNewNote] = useState('')
+  const [newNoteDate, setNewNoteDate] = useState(() => new Date().toISOString().split('T')[0])
   const [notePhoto, setNotePhoto] = useState<{ base64: string; mediaType: string; preview: string } | null>(null)
   const [uploadingNotePhoto, setUploadingNotePhoto] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
@@ -132,10 +133,11 @@ export default function DogDetailPage({ toast }: Props) {
           setUploadingNotePhoto(false)
         }
       }
-      await addActivityNote(dogId, newNote.trim(), photoUrl)
+      await addActivityNote(dogId, newNote.trim(), photoUrl, newNoteDate)
       const n = await getActivityNotes(dogId)
       setNotes(n)
       setNewNote('')
+      setNewNoteDate(new Date().toISOString().split('T')[0])
       setNotePhoto(null)
       toast('Note added')
     } catch {
@@ -204,34 +206,106 @@ export default function DogDetailPage({ toast }: Props) {
     }
 
     // Save health test
-    if (result.healthTest?.testType && result.healthTest?.result) {
-      await addHealthTest({
+    // FIX (bug: hipScore/elbowGrade rendering as "[object Object]"):
+    // the AI scan occasionally returns `result` as a nested object
+    // (e.g. { left: "Excellent", right: "Good" } for hip/elbow scores,
+    // which often have separate left/right readings on the source
+    // document) even though the documented schema says result is a
+    // plain string. Coerce defensively here so a string is always what
+    // gets saved and rendered, regardless of what shape the AI returns.
+    const rawResult = result.healthTest?.result
+    let safeResult = typeof rawResult === 'string'
+      ? rawResult
+      : rawResult && typeof rawResult === 'object'
+        ? Object.entries(rawResult).map(([k, v]) => `${k}: ${v}`).join(', ')
+        : ''
+
+    // FIX (bug: "Health test result still showing ANKC"): some hip/elbow
+    // certificates also print the dog's ANKC registration number on the
+    // same page, and the AI occasionally wrote that number into
+    // healthTest.result instead of (or alongside) the actual test
+    // outcome — the scan.js prompt has been clarified to prevent this
+    // going forward, but this guards the save step too. If the extracted
+    // result exactly matches the dog's known ANKC number, or looks like a
+    // bare registration number (digits/letters with no result wording),
+    // drop it rather than saving a "result" that's actually a duplicate
+    // ANKC number.
+    // FIX: the previous check only matched when safeResult was an exact
+    // character-for-character match to dog.ankc — but the AI can return
+    // the same number wrapped differently, e.g. "ANKC 4100353152" or
+    // "ANKC: 4100353152" instead of the bare "4100353152" stored on the
+    // dog, so an exact-match comparison silently failed to catch these
+    // variants. Now checks whether the ANKC digits appear anywhere
+    // inside the result, which catches the wrapped forms too.
+    if (safeResult && dog.ankc) {
+      const ankcDigits = dog.ankc.trim()
+      if (ankcDigits && safeResult.includes(ankcDigits)) {
+        safeResult = ''
+      }
+    }
+
+    // FIX (bug: "Date Tested not applying from scans"): the previous
+    // condition required BOTH testType AND result to be truthy before
+    // saving anything, so a scanned document with a date but no clearly
+    // extracted result (e.g. result pending, or the AI couldn't parse a
+    // plain-text result) silently dropped the entire health test,
+    // including the date. Now we save as long as we have a testType,
+    // using whatever we could extract for the rest — dateTested included
+    // even when result is blank, instead of losing it.
+    if (result.healthTest?.testType) {
+      // FIX (bug: re-scanning the same document silently creates an
+      // exact duplicate record with no warning): check for an existing
+      // health test with the same type + date + cert number (when a
+      // cert number is present, that's the strongest signal of "this is
+      // literally the same certificate") before saving. This came up
+      // directly from re-scanning a HIP report to recover a missing
+      // documentUrl — the old record should be deleted, not left
+      // alongside an identical new one.
+      const possibleDuplicate = healthTests.find(h =>
+        h.testType === result.healthTest.testType &&
+        h.dateTested === (result.healthTest.dateTested || '') &&
+        (
+          (result.healthTest.certNumber && h.certNumber === result.healthTest.certNumber) ||
+          (!result.healthTest.certNumber && formatHealthResult(h.result) === safeResult)
+        )
+      )
+      if (possibleDuplicate) {
+        const confirmed = window.confirm(
+          `This looks like a duplicate of an existing ${result.healthTest.testType.toUpperCase()} test from ${result.healthTest.dateTested || 'the same date'} (Cert: ${result.healthTest.certNumber || 'n/a'}).\n\nAdd it anyway? If you're trying to attach a document to the existing record, cancel this and delete the old record instead, or use Edit on the existing one.`
+        )
+        if (!confirmed) {
+          toast('Scan cancelled — duplicate not added', 'info')
+          return
+        }
+      }
+
+      const newHealthTestId = await addHealthTest({
         dogId,
         testType: result.healthTest.testType,
-        result: result.healthTest.result,
+        result: safeResult,
         dateTested: result.healthTest.dateTested || '',
         lab: result.healthTest.lab || '',
         certNumber: result.healthTest.certNumber || '',
-      }).catch(() => {})
+      }).catch(() => null)
+      healthSaved = true
+      // Update health test record with documentUrl. FIX: previously this
+      // grabbed the "last" item from getHealthTests(dogId) and assumed
+      // that was the just-created record — but that query has no
+      // orderBy, so Firestore doesn't guarantee insertion order, and the
+      // documentUrl could end up attached to an unrelated older health
+      // test instead. Using the ID returned directly from addHealthTest
+      // removes the guesswork entirely.
+      if (fileUrl && newHealthTestId) {
+        await updateDoc(doc(db, 'healthTests', newHealthTestId), { documentUrl: fileUrl }).catch(() => {})
+      }
       const updatedHealth = await getHealthTests(dogId)
       setHealthTests(updatedHealth)
-      healthSaved = true
-      // Update health test record with documentUrl
-      if (fileUrl) {
-        const latestHealth = updatedHealth[updatedHealth.length - 1]
-        if (latestHealth) {
-          await updateDoc(doc(db, 'healthTests', latestHealth.id), { documentUrl: fileUrl }).catch(() => {})
-          // refresh
-          const refreshed = await getHealthTests(dogId)
-          setHealthTests(refreshed)
-        }
-      }
       await logAudit({
         tenantId: user?.uid || '',
         dogId,
         dogName: dog.name,
         action: 'health_test_added',
-        details: `Health test "${result.healthTest.testType?.toUpperCase()}" added via iDogs Scan — result: ${result.healthTest.result}`,
+        details: `Health test "${result.healthTest.testType?.toUpperCase()}" added via iDogs Scan — result: ${safeResult || '(not extracted)'}`,
         performedBy: user?.uid || '',
         performedByEmail: user?.email || '',
       })
@@ -393,20 +467,32 @@ export default function DogDetailPage({ toast }: Props) {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 2, marginBottom: 24, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
-            padding: '10px 14px', border: 'none',
-            borderBottom: tab === t.id ? '2px solid var(--green)' : '2px solid transparent',
-            background: 'transparent',
-            color: tab === t.id ? 'var(--green)' : 'var(--mid)',
-            fontSize: 13, fontWeight: tab === t.id ? 500 : 400,
-            cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap',
-          }}>{t.label}</button>
-        ))}
+      <div style={{ position: 'relative', marginBottom: 24 }}>
+        <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              padding: '10px 14px', border: 'none',
+              borderBottom: tab === t.id ? '2px solid var(--green)' : '2px solid transparent',
+              background: 'transparent',
+              color: tab === t.id ? 'var(--green)' : 'var(--mid)',
+              fontSize: 13, fontWeight: tab === t.id ? 500 : 400,
+              cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap', flexShrink: 0,
+            }}>{t.label}</button>
+          ))}
+        </div>
+        {/* Fade hints on both edges so narrow screens (especially iOS
+            Safari, which hides scrollbars by default) show there are more
+            tabs to scroll to — without this, tabs further down the list
+            like Timeline can sit off-screen with no visual indication a
+            user needs to swipe to reach them. */}
+        <div style={{ position: 'absolute', top: 0, bottom: 1, left: 0, width: 16, background: 'linear-gradient(to right, var(--white), transparent)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} />}
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+        await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
+        setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
+      }} />}
       {tab === 'scan' && (
         <div style={{ maxWidth: 480 }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>iDogs Document Scan</h2>
@@ -420,7 +506,7 @@ export default function DogDetailPage({ toast }: Props) {
       {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} />}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} toast={toast} />}
       {tab === 'documents' && <DocumentsTab documents={documents} dogName={dog.name} />}
-      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} />}
+      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} />}
 
       {/* Transfer Ownership Modal */}
       {showTransfer && dog && (
@@ -565,9 +651,29 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, onUpdateBreederId }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number
+  toast: (msg: string, type?: ToastMessage['type']) => void
+  onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
 }) {
+  const [editingBreederId, setEditingBreederId] = useState(false)
+  const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
+  const [breederIdValue, setBreederIdValue] = useState(dog.breederIdValue || '')
+  const [savingBreederId, setSavingBreederId] = useState(false)
+
+  async function handleSaveBreederId() {
+    setSavingBreederId(true)
+    try {
+      await onUpdateBreederId(breederIdType, breederIdType === 'NONE' ? '' : breederIdValue)
+      setEditingBreederId(false)
+      toast('Breeder ID updated')
+    } catch {
+      toast('Failed to update Breeder ID', 'error')
+    } finally {
+      setSavingBreederId(false)
+    }
+  }
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
       <InfoSection title="Details">
@@ -584,6 +690,60 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount }: {
           </div>
         )}
         <InfoRow label="Dogs Australia Registration" value={dog.ankc || '—'} />
+        {editingBreederId ? (
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+            <label style={{ fontSize: 12, color: 'var(--light)', display: 'block', marginBottom: 4 }}>Breeder ID type</label>
+            <select
+              className="form-input"
+              value={breederIdType}
+              onChange={e => setBreederIdType(e.target.value as NonNullable<Dog['breederIdType']>)}
+              style={{ marginBottom: 8 }}
+            >
+              {(Object.keys(BREEDER_ID_CONFIG) as Array<keyof typeof BREEDER_ID_CONFIG>).map(key => (
+                <option key={key} value={key}>{BREEDER_ID_CONFIG[key].label}</option>
+              ))}
+            </select>
+            {breederIdType !== 'NONE' && (
+              <>
+                <label style={{ fontSize: 12, color: 'var(--light)', display: 'block', marginBottom: 4 }}>ID value</label>
+                <input
+                  className="form-input"
+                  value={breederIdValue}
+                  onChange={e => setBreederIdValue(e.target.value)}
+                  placeholder="e.g. B123456789"
+                  style={{ marginBottom: 8 }}
+                />
+              </>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveBreederId} disabled={savingBreederId}>{savingBreederId ? <span className="spinner" /> : 'Save'}</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => { setEditingBreederId(false); setBreederIdType(dog.breederIdType || 'NONE'); setBreederIdValue(dog.breederIdValue || '') }}>Cancel</button>
+            </div>
+          </div>
+        ) : dog.breederIdType && dog.breederIdType !== 'NONE' && dog.breederIdValue ? (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+            <span style={{ color: 'var(--light)' }}>{BREEDER_ID_CONFIG[dog.breederIdType].label}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: 'var(--dark)', fontWeight: 500 }}>{dog.breederIdValue}</span>
+              {BREEDER_ID_CONFIG[dog.breederIdType].verifyUrl && (
+                <a
+                  href={BREEDER_ID_CONFIG[dog.breederIdType].verifyUrl!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none', fontSize: 12 }}
+                >
+                  Verify ↗
+                </a>
+              )}
+              <button onClick={() => setEditingBreederId(true)} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px', fontSize: 12 }}>✎</button>
+            </span>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+            <span style={{ color: 'var(--light)' }}>Breeder ID</span>
+            <button onClick={() => setEditingBreederId(true)} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--green)' }}>+ Add</button>
+          </div>
+        )}
         <InfoRow label="Passport ID" value={dog.passportId} mono />
       </InfoSection>
       <InfoSection title="Health summary">
@@ -988,6 +1148,19 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
 
 // ── HEALTH TAB ────────────────────────────────────────────────
 
+// Defensive formatter for HealthTest.result — protects against legacy
+// records saved before the AI Scan fix above, where `result` could have
+// been stored as a nested object (e.g. left/right hip scores) instead of
+// a plain string, which rendered as "[object Object]" in the UI. Safe to
+// call on already-correct string values too (returns them unchanged).
+function formatHealthResult(result: unknown): string {
+  if (typeof result === 'string') return result
+  if (result && typeof result === 'object') {
+    return Object.entries(result as Record<string, unknown>).map(([k, v]) => `${k}: ${v}`).join(', ')
+  }
+  return ''
+}
+
 function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast }: {
   dogId: string;
   dogName: string;
@@ -1000,6 +1173,71 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ testType: 'hip', result: '', dateTested: '', lab: '', certNumber: '' })
   const [saving, setSaving] = useState(false)
+
+  // Edit/delete state for Health Test, mirroring the existing Vaccine
+  // edit pattern in VaccineTab — health tests previously had no way to
+  // correct a mistake after saving (e.g. fixing a typo'd result) without
+  // deleting and re-adding manually.
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ testType: 'hip' as HealthTest['testType'], result: '', dateTested: '', lab: '', certNumber: '' })
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  function startEdit(h: HealthTest) {
+    setEditingId(h.id)
+    setEditForm({
+      testType: h.testType,
+      result: formatHealthResult(h.result),
+      dateTested: h.dateTested || '',
+      lab: h.lab || '',
+      certNumber: h.certNumber || '',
+    })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+  }
+
+  async function handleSaveEdit() {
+    if (!editingId || !editForm.testType || !editForm.dateTested) return
+    setSavingEdit(true)
+    try {
+      await updateHealthTest(editingId, {
+        testType: editForm.testType,
+        result: editForm.result,
+        dateTested: editForm.dateTested,
+        lab: editForm.lab,
+        certNumber: editForm.certNumber,
+      })
+      await logAudit({
+        tenantId,
+        dogId,
+        dogName,
+        action: 'health_test_added',
+        details: `Health test "${editForm.testType.toUpperCase()}" edited — result: ${editForm.result || '(not extracted)'}`,
+        performedBy: tenantId,
+        performedByEmail: userEmail,
+      })
+      const updated = await getHealthTests(dogId)
+      setHealthTests(updated)
+      setEditingId(null)
+      toast('Health test updated')
+    } catch {
+      toast('Failed to update health test', 'error')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteHealthTest(id)
+      const updated = await getHealthTests(dogId)
+      setHealthTests(updated)
+      toast('Health test deleted')
+    } catch {
+      toast('Failed to delete health test', 'error')
+    }
+  }
 
   async function handleAdd() {
     if (!form.testType || !form.result || !form.dateTested) {
@@ -1091,10 +1329,51 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          {healthTests.map((h, i) => (
+          {healthTests.map((h, i) => {
+            if (editingId === h.id) {
+              return (
+                <div key={h.id} className="card" style={{ margin: 12, padding: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                    <div className="form-group">
+                      <label className="form-label">Test type *</label>
+                      <select className="form-input" value={editForm.testType} onChange={e => setEditForm(p => ({ ...p, testType: e.target.value as HealthTest['testType'] }))}>
+                        <option value="hip">Hip</option>
+                        <option value="elbow">Elbow</option>
+                        <option value="eye">Eye</option>
+                        <option value="dna">DNA</option>
+                        <option value="cardiac">Cardiac</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Date tested *</label>
+                      <input className="form-input" type="date" value={editForm.dateTested} onChange={e => setEditForm(p => ({ ...p, dateTested: e.target.value }))} max={new Date().toISOString().split('T')[0]} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Result</label>
+                      <input className="form-input" value={editForm.result} onChange={e => setEditForm(p => ({ ...p, result: e.target.value }))} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Lab</label>
+                      <input className="form-input" value={editForm.lab} onChange={e => setEditForm(p => ({ ...p, lab: e.target.value }))} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Cert number</label>
+                      <input className="form-input" value={editForm.certNumber} onChange={e => setEditForm(p => ({ ...p, certNumber: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn btn-primary btn-sm" onClick={handleSaveEdit} disabled={savingEdit}>{savingEdit ? <span className="spinner" /> : 'Save changes'}</button>
+                    <button className="btn btn-secondary btn-sm" onClick={cancelEdit}>Cancel</button>
+                  </div>
+                </div>
+              )
+            }
+
+            return (
             <div key={h.id} style={{ padding: '12px 16px', borderBottom: i < healthTests.length - 1 ? '1px solid var(--border)' : 'none', display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{h.testType.toUpperCase()} — {h.result}</div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{h.testType.toUpperCase()} — {formatHealthResult(h.result)}</div>
                 <div style={{ fontSize: 12, color: 'var(--light)' }}>Tested: {formatDate(h.dateTested)}{h.lab ? ` · ${h.lab}` : ''}</div>
                 {h.certNumber && <div style={{ fontSize: 12, color: 'var(--light)' }}>Cert: {h.certNumber}</div>}
               </div>
@@ -1111,9 +1390,12 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
                     📄 View
                   </a>
                 )}
+                <button onClick={() => startEdit(h)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
+                <button onClick={() => handleDelete(h.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
@@ -1311,7 +1593,7 @@ function getPastMilestoneEvents(dateOfBirth: string, createdAt: string): StoryEv
     for (let y = 1; y <= now.getFullYear() - birth.getFullYear(); y++) {
       const occurredOn = new Date(birth.getFullYear() + y, birth.getMonth(), birth.getDate())
       if (occurredOn > now) break
-      events.push({ date: occurredOn.toISOString(), icon: '🎂', title: `${y === 1 ? '1st' : `${y}th`} birthday`, kind: 'stage' })
+      events.push({ date: occurredOn.toISOString(), icon: '🎂', title: `${ordinal(y)} birthday`, kind: 'stage' })
     }
   }
 
@@ -1348,7 +1630,7 @@ function buildStoryEvents(dog: Dog, vaccines: VaccineRecord[], wormings: Worming
 
   healthTests.forEach(h => {
     if (h.dateTested) {
-      events.push({ date: h.dateTested, icon: '🔬', title: `Health test — ${h.testType.toUpperCase()}`, detail: h.result, kind: 'health' })
+      events.push({ date: h.dateTested, icon: '🔬', title: `Health test — ${h.testType.toUpperCase()}`, detail: formatHealthResult(h.result), kind: 'health' })
     }
   })
 
@@ -1361,12 +1643,31 @@ function buildStoryEvents(dog: Dog, vaccines: VaccineRecord[], wormings: Worming
   }
 
   notes.forEach(n => {
-    events.push({ date: n.createdAt, icon: '📝', title: n.note, photoUrl: n.photoUrl, kind: 'note' })
+    // Use noteDate (the date the user says the event happened) for
+    // Timeline ordering/display, not createdAt (the date the note record
+    // was saved) — falls back to createdAt for notes added before this
+    // field existed.
+    events.push({ date: n.noteDate || n.createdAt, icon: '📝', title: n.note, photoUrl: n.photoUrl, kind: 'note' })
   })
 
   events.push(...getPastMilestoneEvents(dog.dateOfBirth, dog.createdAt))
 
-  return events.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+  // FIX (crash: "(l.date || '').localeCompare is not a function"): the
+  // root cause was getActivityNotes() returning a raw Firestore Timestamp
+  // object for createdAt instead of a string (now fixed in db.ts), but
+  // sorting defensively here too in case any other date source (vaccines,
+  // worming, health tests, audit log entries) ever comes through
+  // un-converted — a Timestamp object is truthy, so `date || ''` doesn't
+  // catch it, and .localeCompare only exists on strings.
+  const toDateString = (d: unknown): string => {
+    if (typeof d === 'string') return d
+    if (d && typeof d === 'object' && 'toDate' in d && typeof (d as any).toDate === 'function') {
+      return (d as any).toDate().toISOString()
+    }
+    return ''
+  }
+
+  return events.sort((a, b) => toDateString(a.date).localeCompare(toDateString(b.date)))
 }
 
 const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
@@ -1379,8 +1680,9 @@ const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
   note: 'var(--green)',
 }
 
-function TimelineTab({ dog, notes, newNote, setNewNote, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto }: {
+function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto }: {
   dog: Dog; notes: ActivityNote[]; newNote: string; setNewNote: (v: string) => void;
+  newNoteDate: string; setNewNoteDate: (v: string) => void;
   onAddNote: () => void; saving: boolean;
   vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; lifeStageEvents: AuditEntry[];
   notePhoto: { base64: string; mediaType: string; preview: string } | null;
@@ -1389,16 +1691,65 @@ function TimelineTab({ dog, notes, newNote, setNewNote, onAddNote, saving, vacci
 }) {
   const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
 
-  function handlePhotoSelect(e: { target: { files: FileList | null } }) {
+  // FIX (bug: iPhone photos ~3MB fail to upload): there was no
+  // resize/compression step before base64-encoding. Base64 inflates size
+  // by ~33%, so a 3MB photo becomes ~4MB as base64 — right at the edge of
+  // Vercel's default ~4.5MB serverless function body limit once JSON
+  // overhead (dogId, userId, mediaType) is added, and easily over it for
+  // anything slightly larger. Resizing down to a max dimension and
+  // re-encoding as JPEG at a reasonable quality keeps note photos small
+  // without a visible quality loss at the sizes they're displayed.
+  function resizeImage(file: File, maxDimension = 1600, quality = 0.82): Promise<{ base64: string; mediaType: string; preview: string }> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const img = new Image()
+        img.onload = () => {
+          let { width, height } = img
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width)
+              width = maxDimension
+            } else {
+              width = Math.round((width * maxDimension) / height)
+              height = maxDimension
+            }
+          }
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          if (!ctx) { reject(new Error('Canvas not supported')); return }
+          ctx.drawImage(img, 0, 0, width, height)
+          const dataUrl = canvas.toDataURL('image/jpeg', quality)
+          resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg', preview: dataUrl })
+        }
+        img.onerror = () => reject(new Error('Failed to load image'))
+        img.src = reader.result as string
+      }
+      reader.onerror = () => reject(new Error('Failed to read file'))
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async function handlePhotoSelect(e: { target: { files: FileList | null } }) {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result as string
-      const base64 = result.split(',')[1]
-      setNotePhoto({ base64, mediaType: file.type, preview: result })
+    try {
+      const resized = await resizeImage(file)
+      setNotePhoto(resized)
+    } catch {
+      // Fall back to the original unresized file rather than silently
+      // failing — better to attempt the original upload than block the
+      // user entirely if canvas resizing fails for some reason.
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        const base64 = result.split(',')[1]
+        setNotePhoto({ base64, mediaType: file.type, preview: result })
+      }
+      reader.readAsDataURL(file)
     }
-    reader.readAsDataURL(file)
   }
 
   return (
@@ -1407,6 +1758,15 @@ function TimelineTab({ dog, notes, newNote, setNewNote, onAddNote, saving, vacci
       <p style={{ fontSize: 13, color: 'var(--light)', marginBottom: 16 }}>Every milestone, automatically gathered in one place.</p>
 
       <div className="card" style={{ marginBottom: 20 }}>
+        <label style={{ fontSize: 12, color: 'var(--light)', display: 'block', marginBottom: 4 }}>When did this happen?</label>
+        <input
+          className="form-input"
+          type="date"
+          value={newNoteDate}
+          onChange={e => setNewNoteDate(e.target.value)}
+          max={new Date().toISOString().split('T')[0]}
+          style={{ marginBottom: 10, maxWidth: 200 }}
+        />
         <textarea className="form-textarea" placeholder="Add a note about today…" value={newNote} onChange={e => setNewNote(e.target.value)} style={{ minHeight: 72, marginBottom: 10 }} />
 
         {notePhoto ? (
@@ -1440,25 +1800,32 @@ function TimelineTab({ dog, notes, newNote, setNewNote, onAddNote, saving, vacci
       {events.length === 0 ? (
         <div className="empty-state"><div className="empty-state-icon">📝</div><div className="empty-state-title">No story yet</div><div className="empty-state-desc">Add a note, or scan a document, to begin {dog.name}'s story.</div></div>
       ) : (
-        <div style={{ position: 'relative', paddingLeft: 28 }}>
+        <div style={{ position: 'relative', paddingLeft: 36 }}>
           {/* Vertical timeline line */}
-          <div style={{ position: 'absolute', left: 11, top: 6, bottom: 6, width: 2, background: 'var(--border)' }} />
+          <div style={{ position: 'absolute', left: 15, top: 6, bottom: 6, width: 2, background: 'var(--border)' }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {events.map((e, i) => (
               <div key={i} style={{ position: 'relative' }}>
                 {/* Dot on the timeline */}
                 <div style={{
-                  position: 'absolute', left: -28, top: 2,
-                  width: 22, height: 22, borderRadius: '50%',
+                  position: 'absolute', left: -36, top: 0,
+                  width: 32, height: 32, borderRadius: '50%',
                   background: STORY_EVENT_COLOR[e.kind], color: '#fff',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 12, border: '2px solid var(--white)',
+                  fontSize: 18, border: '2px solid var(--white)',
                 }}>
                   {e.icon}
                 </div>
                 <div className="card" style={{ padding: '12px 16px' }}>
                   {e.photoUrl && (
-                    <img src={e.photoUrl} alt="" style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, marginBottom: 10 }} />
+                    <img
+                      src={e.photoUrl}
+                      alt=""
+                      style={{
+                        width: '100%', maxHeight: 320, objectFit: 'contain',
+                        background: 'var(--sand)', borderRadius: 8, marginBottom: 10,
+                      }}
+                    />
                   )}
                   <div style={{ fontSize: 14, color: 'var(--dark)', lineHeight: 1.6, marginBottom: 4 }}>{e.title}</div>
                   {e.detail && <div style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 4 }}>{e.detail}</div>}

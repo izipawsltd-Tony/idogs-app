@@ -130,10 +130,24 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
           if (uploadRes.ok) {
             const uploadData = await uploadRes.json()
             fileUrl = uploadData.fileUrl
+            toast('Document scanned & saved! ✓')
+          } else {
+            // FIX: previously this branch was silently skipped and the
+            // generic success toast below still fired regardless, so a
+            // failed document save (e.g. /api/upload-document erroring)
+            // looked identical to a successful one — the only visible
+            // symptom was the "View" button quietly missing later on the
+            // Health tab, with no indication why.
+            const errBody = await uploadRes.json().catch(() => ({}))
+            console.error('Document upload failed:', uploadRes.status, errBody)
+            toast('Scanned, but the document file could not be saved — record added without a viewable file', 'info')
           }
-          toast('Document scanned & saved! ✓')
-        } catch {
-          toast('Scanned but file not saved', 'error')
+        } catch (uploadErr) {
+          // FIX: this catch block previously swallowed the error
+          // entirely with no logging, making it impossible to diagnose
+          // why documentUrl ended up missing on saved records.
+          console.error('Document upload error:', uploadErr)
+          toast('Scanned, but the document file could not be saved — record added without a viewable file', 'info')
         }
       } else {
         toast('Document scanned!')
@@ -177,7 +191,7 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
         {scanning ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
             <div className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
-            <div style={{ fontSize: 14, color: 'var(--green)', fontWeight: 500 }}>iDogs Scan in progress…</div>
+            <div style={{ fontSize: 14, color: 'var(--green)', fontWeight: 500 }}>AI scanning document…</div>
             <div style={{ fontSize: 12, color: 'var(--light)' }}>Reading fields automatically</div>
           </div>
         ) : (
@@ -187,7 +201,7 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
               Photograph or upload a document
             </div>
             <div style={{ fontSize: 13, color: 'var(--light)' }}>
-              Pedigree Certificate · Health Certificate · Hip/Elbow Dysplasia Report · Vaccination Record
+              Vaccine card · Pedigree cert · OFA certificate · Vet record
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', fontWeight: 500 }}>📷 Photo</span>
@@ -229,7 +243,7 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
             {result.breed && <ResultRow label="Breed" value={result.breed} />}
             {result.dateOfBirth && <ResultRow label="Date of birth" value={result.dateOfBirth} />}
             {result.microchip && <ResultRow label="Microchip" value={result.microchip} />}
-            {result.ankc && <ResultRow label="ANKC" value={result.ankc} />}
+            {result.ankc && result.documentType === 'pedigree' && <ResultRow label="Dogs Australia Registration" value={result.ankc} />}
             {result.vaccines?.length > 0 && (
               <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--sand)' }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--light)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>
@@ -255,7 +269,20 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
               <div style={{ padding: '8px 16px' }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--light)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>Health test</div>
                 {result.healthTest.testType && <ResultRow label="Type" value={result.healthTest.testType.toUpperCase()} />}
-                {result.healthTest.result && <ResultRow label="Result" value={result.healthTest.result} />}
+                {result.healthTest.result && (() => {
+                  const raw = result.healthTest.result as unknown
+                  const safe = typeof raw === 'string' ? raw
+                    : raw && typeof raw === 'object' ? Object.entries(raw as Record<string, unknown>).map(([k, v]) => `${k}: ${v}`).join(', ')
+                    : ''
+                  const looksLikeAnkc = !!result.ankc && result.ankc.trim() !== '' && safe.includes(result.ankc.trim())
+                  return looksLikeAnkc ? (
+                    <div style={{ padding: '7px 16px', fontSize: 12, color: 'var(--warning)' }}>
+                      ⚠ Result looked like the ANKC number — not saved as the test result, please check the document and enter the result manually
+                    </div>
+                  ) : (
+                    <ResultRow label="Result" value={safe} />
+                  )
+                })()}
                 {result.healthTest.dateTested && <ResultRow label="Date" value={result.healthTest.dateTested} />}
               </div>
             )}

@@ -84,6 +84,24 @@ export type Milestone = {
  * first added to iDogs). Returns null if today isn't either of those.
  * Matches month+day only, ignoring year, ignoring time-of-day.
  */
+// FIX (bug found via staging screenshot: Timeline showing "2th birthday",
+// "3th birthday", "4th birthday" instead of "2nd", "3rd", "4th"): the
+// previous logic only special-cased 1 ("1st") and hardcoded "th" for
+// every other number, which is wrong English grammar for 2, 3, 4, 21,
+// 22, 23, etc. This correctly handles the standard 1st/2nd/3rd/4th...
+// pattern, including the 11/12/13 exception (these always use "th" even
+// though they end in 1, 2, 3 — "11th" not "11st").
+export function ordinal(n: number): string {
+  const lastTwoDigits = n % 100
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 13) return `${n}th`
+  switch (n % 10) {
+    case 1: return `${n}st`
+    case 2: return `${n}nd`
+    case 3: return `${n}rd`
+    default: return `${n}th`
+  }
+}
+
 export function getTodaysMilestone(dateOfBirth: string, createdAt: string): Milestone | null {
   const today = new Date()
 
@@ -94,7 +112,7 @@ export function getTodaysMilestone(dateOfBirth: string, createdAt: string): Mile
       // Only celebrate from year 1 onwards — a dog born today isn't
       // having its "0th birthday", that's just being born.
       if (years > 0) {
-        return { kind: 'birthday', years, label: `🎂 ${years === 1 ? '1st' : `${years}th`} birthday today!` }
+        return { kind: 'birthday', years, label: `🎂 ${ordinal(years)} birthday today!` }
       }
     }
   }
@@ -229,6 +247,49 @@ export const AU_TOP_BREEDS = [
 // ── AU STATES ─────────────────────────────────────────────────
 
 export const AU_STATES = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT']
+
+// ── BREEDER ID (state-issued breeder identification numbers) ──────
+//
+// Per the NSW Puppy Farming Act 2024 and equivalent VIC/QLD/SA/ACT laws,
+// buyers are increasingly expected to verify a breeder's official ID
+// before purchasing. verifyUrl is null where the public lookup URL
+// hasn't been independently confirmed (SA, ACT) or where no official
+// state-level system exists at all (TAS/WA/NT only have optional breed
+// association membership numbers, not government-issued IDs) — these
+// should not be guessed, since sending a buyer to a wrong/made-up URL is
+// worse than no link at all.
+export type BreederIdType = 'BIN_NSW' | 'BIN_ACT' | 'SOURCE_NUMBER_VIC' | 'SUPPLY_NUMBER_QLD' | 'DACO_SA' | 'ASSOC_MEMBER_TAS' | 'ASSOC_MEMBER_WA' | 'ASSOC_MEMBER_NT' | 'NONE'
+
+export const BREEDER_ID_CONFIG: Record<BreederIdType, { label: string; verifyUrl: string | null }> = {
+  BIN_NSW: { label: 'Breeder Identification Number (NSW)', verifyUrl: 'https://www.petregistry.nsw.gov.au' },
+  BIN_ACT: { label: 'Breeder Identification Number (ACT)', verifyUrl: null },
+  SOURCE_NUMBER_VIC: { label: 'Pet Exchange Register Source Number (VIC)', verifyUrl: 'https://per.animalwelfare.vic.gov.au/search' },
+  SUPPLY_NUMBER_QLD: { label: 'Supply Number (QLD)', verifyUrl: 'https://qdbr.daf.qld.gov.au/supply-number-search' },
+  DACO_SA: { label: 'DACO Breeder Number (SA)', verifyUrl: null },
+  ASSOC_MEMBER_TAS: { label: 'Dogs Tasmania / MDBA member number', verifyUrl: null },
+  ASSOC_MEMBER_WA: { label: 'Dogs West member number', verifyUrl: null },
+  ASSOC_MEMBER_NT: { label: 'Dogs NT member number', verifyUrl: null },
+  NONE: { label: 'No official ID yet', verifyUrl: null },
+}
+
+// Per spec Section 1.3: suggests a sensible default breederIdType based
+// on the breeder's registered state, since UserProfile.state already
+// exists. This is a convenience default only — the breeder can always
+// pick a different type (e.g. an interstate ANKC breeder using a
+// different state's ID).
+export function suggestBreederIdType(breederState?: string): BreederIdType {
+  switch (breederState) {
+    case 'NSW': return 'BIN_NSW'
+    case 'ACT': return 'BIN_ACT'
+    case 'VIC': return 'SOURCE_NUMBER_VIC'
+    case 'QLD': return 'SUPPLY_NUMBER_QLD'
+    case 'SA': return 'DACO_SA'
+    case 'TAS': return 'ASSOC_MEMBER_TAS'
+    case 'WA': return 'ASSOC_MEMBER_WA'
+    case 'NT': return 'ASSOC_MEMBER_NT'
+    default: return 'NONE'
+  }
+}
 
 // ── MISC ──────────────────────────────────────────────────────
 

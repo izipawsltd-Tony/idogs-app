@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore'
-import { db } from '../lib/firebase'
 import { formatDate, getDogAge, getVaccineStatus, LIFE_STAGE_EMOJI } from '../lib/utils'
 import type { Dog, VaccineRecord, HealthTest } from '../types'
 
@@ -18,30 +16,14 @@ export default function PassportPublicPage() {
     if (!passportId) return
     async function load() {
       try {
-        const q = query(collection(db, 'dogs'), where('passportId', '==', passportId))
-        const snap = await getDocs(q)
-        if (snap.empty) { setNotFound(true); return }
+        const response = await fetch(`/api/passport?passportId=${encodeURIComponent(passportId!)}`)
+        if (response.status === 404) { setNotFound(true); return }
+        if (!response.ok) { setNotFound(true); return }
 
-        const d = snap.docs[0]
-        const dogData = { ...d.data(), id: d.id } as Dog
-        setDog(dogData)
-
-        const [vSnap, hSnap] = await Promise.all([
-          getDocs(query(collection(db, 'vaccineRecords'), where('dogId', '==', d.id))),
-          getDocs(query(collection(db, 'healthTests'), where('dogId', '==', d.id))),
-        ])
-        setVaccines(vSnap.docs.map(v => ({ ...v.data(), id: v.id } as VaccineRecord)))
-        setHealthTests(hSnap.docs.map(h => ({ ...h.data(), id: h.id } as HealthTest)))
-
-        // Log scan
-        try {
-          await addDoc(collection(db, 'scanLogs'), {
-            dogId: d.id, passportId,
-            scannedAt: serverTimestamp(),
-            result: 'public_view',
-          })
-        } catch {}
-
+        const data = await response.json()
+        setDog(data.dog as Dog)
+        setVaccines(data.vaccines as VaccineRecord[])
+        setHealthTests(data.healthTests as HealthTest[])
       } catch {
         setNotFound(true)
       } finally {

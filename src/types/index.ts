@@ -22,6 +22,15 @@ export interface Dog {
   profilePhoto?: string
   photos: string[]
   notes: string
+  // State-issued Breeder ID (per the NSW Puppy Farming Act 2024 and
+  // equivalent VIC/QLD/SA/ACT laws) — a generic field rather than 8
+  // state-specific ones, since a breeder only has one Breeder ID tied to
+  // where they're registered, regardless of which state the buyer is in.
+  // 'NONE' covers breeders in TAS/WA/NT, which have no official state-
+  // level Breeder ID system, plus breeders who simply haven't filled it
+  // in yet — both are valid "nothing to show" states, not errors.
+  breederIdType?: 'BIN_NSW' | 'BIN_ACT' | 'SOURCE_NUMBER_VIC' | 'SUPPLY_NUMBER_QLD' | 'DACO_SA' | 'ASSOC_MEMBER_TAS' | 'ASSOC_MEMBER_WA' | 'ASSOC_MEMBER_NT' | 'NONE'
+  breederIdValue?: string
   createdAt: string
   updatedAt: string
 }
@@ -171,6 +180,7 @@ export interface ActivityNote {
   photoUrl?: string
   createdBy: string
   createdAt: string
+  noteDate?: string
 }
 
 export interface UserProfile {
@@ -187,6 +197,14 @@ export interface UserProfile {
   role: 'breeder' | 'owner' | 'admin'
   plan: 'trial' | 'starter' | 'professional' | 'kennel'
   trialEndsAt: string
+  // Account-level Breeder ID (e.g. DACO number for SA breeders). Mandatory
+  // for active breeders in most states, but some breeders genuinely don't
+  // have one yet (e.g. dogs too young to be bred from yet) — so this is
+  // optional, not required at signup. Per-dog breederIdType/breederIdValue
+  // on Dog still exists separately for cases where a dog's own record
+  // needs to show a different/overriding value.
+  breederIdType?: Dog['breederIdType']
+  breederIdValue?: string
   createdAt: string
 }
 
@@ -215,6 +233,8 @@ export interface DogFormData {
   microchip: string
   ankc: string
   notes: string
+  breederIdType?: Dog['breederIdType']
+  breederIdValue?: string
 }
 
 export interface AuthFormData {

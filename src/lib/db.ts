@@ -241,6 +241,10 @@ export async function addHealthTest(data: Omit<HealthTest, 'id' | 'createdAt'>):
   return ref.id
 }
 
+export async function updateHealthTest(id: string, data: Partial<HealthTest>): Promise<void> {
+  await updateDoc(doc(db, 'healthTests', id), data)
+}
+
 export async function deleteHealthTest(id: string): Promise<void> {
   await deleteDoc(doc(db, 'healthTests', id))
 }
@@ -297,12 +301,30 @@ export async function deleteReminder(id: string): Promise<void> {
 export async function getActivityNotes(dogId: string): Promise<ActivityNote[]> {
   const q = query(collection(db, 'activityNotes'), where('dogId', '==', dogId))
   const snap = await getDocs(q)
-  return snap.docs.map(d => ({ ...d.data(), id: d.id } as ActivityNote))
+  // FIX (crash: "(l.date || '').localeCompare is not a function" when
+  // building the Timeline): createdAt comes back from Firestore as a
+  // Timestamp object, not a string. Other read functions (e.g.
+  // getAuditLogs below) already convert this with toDate().toISOString(),
+  // but this one didn't — so any code sorting/comparing ActivityNote
+  // dates as strings would crash the moment a new note was added and
+  // the Timeline re-rendered. Apply the same conversion here.
+  return snap.docs.map(d => {
+    const data = d.data()
+    const createdAt = data.createdAt?.toDate?.()?.toISOString() || data.createdAt || ''
+    return { ...data, id: d.id, createdAt } as ActivityNote
+  })
 }
 
-export async function addActivityNote(dogId: string, note: string, photoUrl?: string): Promise<string> {
+export async function addActivityNote(dogId: string, note: string, photoUrl?: string, noteDate?: string): Promise<string> {
   const ref = await addDoc(collection(db, 'activityNotes'), {
     dogId, note, createdBy: uid(), createdAt: serverTimestamp(),
+    // FIX (missing feature: no way to backdate an Activity Note): users
+    // want to log something that happened yesterday or earlier, not just
+    // "right now". createdAt stays as serverTimestamp() (true record-
+    // creation time, kept for audit purposes), while noteDate — when
+    // provided — is the date the EVENT actually happened, and is what
+    // the Timeline should sort/display by for this note.
+    ...(noteDate ? { noteDate } : {}),
     ...(photoUrl ? { photoUrl } : {}),
   })
   return ref.id

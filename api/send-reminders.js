@@ -43,6 +43,23 @@ function formatDate(str) {
   } catch { return str }
 }
 
+// Server-side equivalent of ordinal() in src/lib/utils.ts — duplicated
+// rather than imported for the same reason as getTodaysDogMilestone
+// below. FIX (bug found via staging screenshot: Timeline showing "2th
+// birthday", "3th birthday" instead of "2nd", "3rd"): the previous
+// inline logic only special-cased 1, hardcoding "th" for every other
+// number.
+function ordinal(n) {
+  const lastTwoDigits = n % 100
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 13) return `${n}th`
+  switch (n % 10) {
+    case 1: return `${n}st`
+    case 2: return `${n}nd`
+    case 3: return `${n}rd`
+    default: return `${n}th`
+  }
+}
+
 // Server-side equivalent of getTodaysMilestone in src/lib/utils.ts —
 // duplicated rather than imported since this file runs in a different
 // module environment (Vercel serverless function) than the frontend
@@ -55,7 +72,7 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
     if (birth.getMonth() === today.getMonth() && birth.getDate() === today.getDate()) {
       const years = today.getFullYear() - birth.getFullYear()
       if (years > 0) {
-        return { kind: 'birthday', years, label: years === 1 ? '1st birthday' : `${years}th birthday` }
+        return { kind: 'birthday', years, label: `${ordinal(years)} birthday` }
       }
     }
   }

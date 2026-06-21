@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
+import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
 import type { ToastMessage } from '../types'
 
 interface Props {
@@ -20,6 +21,8 @@ export default function SettingsPage({ toast }: Props) {
     kennelName: profile?.kennelName || '',
     phone: (profile as any)?.phone || '',
     state: profile?.state || 'SA',
+    breederIdType: profile?.breederIdType || 'NONE',
+    breederIdValue: profile?.breederIdValue || '',
   })
   const [savingProfile, setSavingProfile] = useState(false)
   const [changingRole, setChangingRole] = useState(false)
@@ -95,6 +98,10 @@ export default function SettingsPage({ toast }: Props) {
         kennelName: profileForm.kennelName.trim(),
         phone: profileForm.phone.trim(),
         state: profileForm.state as any,
+        ...(!isOwner && {
+          breederIdType: profileForm.breederIdType as any,
+          breederIdValue: profileForm.breederIdType === 'NONE' ? '' : profileForm.breederIdValue.trim(),
+        }),
       })
       await refreshProfile()
       setEditingProfile(false)
@@ -139,6 +146,8 @@ export default function SettingsPage({ toast }: Props) {
                 kennelName: profile?.kennelName || '',
                 phone: (profile as any)?.phone || '',
                 state: profile?.state || 'SA',
+                breederIdType: profile?.breederIdType || 'NONE',
+                breederIdValue: profile?.breederIdValue || '',
               })
               setEditingProfile(true)
             }}>✏️ Edit</button>
@@ -170,11 +179,51 @@ export default function SettingsPage({ toast }: Props) {
               </div>
               <div className="form-group">
                 <label className="form-label">State</label>
-                <select className="form-select" style={{ width: 90 }} value={profileForm.state} onChange={e => setProfileForm(p => ({ ...p, state: e.target.value as any }))}>
+                <select
+                  className="form-select"
+                  style={{ width: 90 }}
+                  value={profileForm.state}
+                  onChange={e => {
+                    const newState = e.target.value
+                    setProfileForm(p => ({
+                      ...p,
+                      state: newState as any,
+                      // Only re-suggest if breeder hasn't touched the
+                      // Breeder ID field yet — never overwrite a value
+                      // they've already started filling in.
+                      breederIdType: (p.breederIdType === 'NONE' && !p.breederIdValue)
+                        ? suggestBreederIdType(newState)
+                        : p.breederIdType,
+                    }))
+                  }}
+                >
                   {AU_STATES.map(s => <option key={s}>{s}</option>)}
                 </select>
               </div>
             </div>
+            {!isOwner && (
+              <div style={{ display: 'grid', gridTemplateColumns: profileForm.breederIdType !== 'NONE' ? '1fr 1fr' : '1fr', gap: 12 }}>
+                <div className="form-group">
+                  <label className="form-label">Breeder ID type</label>
+                  <select
+                    className="form-select"
+                    value={profileForm.breederIdType}
+                    onChange={e => setProfileForm(p => ({ ...p, breederIdType: e.target.value as any }))}
+                  >
+                    {(Object.keys(BREEDER_ID_CONFIG) as Array<keyof typeof BREEDER_ID_CONFIG>).map(key => (
+                      <option key={key} value={key}>{BREEDER_ID_CONFIG[key].label}</option>
+                    ))}
+                  </select>
+                  <span className="form-hint">e.g. DACO number for SA breeders. Leave as "No official ID yet" if your dogs aren't old enough to breed from yet.</span>
+                </div>
+                {profileForm.breederIdType !== 'NONE' && (
+                  <div className="form-group">
+                    <label className="form-label">Breeder ID value</label>
+                    <input className="form-input" placeholder="e.g. B123456789" value={profileForm.breederIdValue} onChange={e => setProfileForm(p => ({ ...p, breederIdValue: e.target.value }))} />
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <button className="btn btn-primary btn-sm" onClick={saveProfile} disabled={savingProfile}>
                 {savingProfile ? <span className="spinner" style={{ width: 14, height: 14, borderTopColor: '#fff' }} /> : 'Save changes'}
@@ -206,6 +255,26 @@ export default function SettingsPage({ toast }: Props) {
             {!isOwner && <SettingRow label="Kennel name" value={profile?.kennelName || '—'} />}
             <SettingRow label="Phone" value={(profile as any)?.phone || '—'} />
             <SettingRow label="State" value={profile?.state || '—'} />
+            {!isOwner && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 14, paddingBottom: 12, borderBottom: '1px solid var(--sand)' }}>
+                <span style={{ color: 'var(--light)' }}>
+                  {profile?.breederIdType && profile.breederIdType !== 'NONE' ? BREEDER_ID_CONFIG[profile.breederIdType].label : 'Breeder ID'}
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: 'var(--dark)', fontWeight: 500 }}>{profile?.breederIdValue || '—'}</span>
+                  {profile?.breederIdType && profile.breederIdType !== 'NONE' && BREEDER_ID_CONFIG[profile.breederIdType].verifyUrl && (
+                    <a
+                      href={BREEDER_ID_CONFIG[profile.breederIdType].verifyUrl!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none', fontSize: 12 }}
+                    >
+                      Verify ↗
+                    </a>
+                  )}
+                </span>
+              </div>
+            )}
             <SettingRow label="Plan" value={profile?.plan === 'trial' ? '30-day free trial' : profile?.plan || '—'} />
           </div>
         )}

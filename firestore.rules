@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwnerUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // A dog "belongs to" whoever is its breeder (tenantId) or its current
+    // owner (currentOwnerId) — both should be able to see/manage it.
+    function dogBelongsToUser(dogId) {
+      let dog = get(/databases/$(database)/documents/dogs/$(dogId)).data;
+      return isSignedIn() &&
+        (dog.tenantId == request.auth.uid || dog.currentOwnerId == request.auth.uid);
+    }
+
+    // ── users/{uid} — only the account owner can read/write their own profile ──
+    match /users/{userId} {
+      allow read, write: if isOwnerUser(userId);
+    }
+
+    // ── dogs/{dogId} ──
+    // NOTE: if there is a public QR "passport" view of a dog (scan a QR code
+    // to see public-safe details without logging in), this rule will BREAK
+    // it, because read now requires being the tenant or current owner.
+    // Public passport viewing needs to go through a server API route (using
+    // Admin SDK, which bypasses these rules) that returns only the fields
+    // allowed by PassportVisibility — never a direct client-side Firestore
+    // read of the full dog document. Flag this before deploying if such a
+    // page exists.
+    match /dogs/{dogId} {
+      allow read, update, delete: if isSignedIn() &&
+        (resource.data.tenantId == request.auth.uid || resource.data.currentOwnerId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+    }
+
+    // ── Records keyed by dogId — access follows the parent dog's ownership ──
+    match /vaccineRecords/{id} {
+      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow create: if dogBelongsToUser(request.resource.data.dogId);
+    }
+    match /wormingRecords/{id} {
+      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow create: if dogBelongsToUser(request.resource.data.dogId);
+    }
+    match /healthTests/{id} {
+      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow create: if dogBelongsToUser(request.resource.data.dogId);
+    }
+    match /activityNotes/{id} {
+      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow create: if dogBelongsToUser(request.resource.data.dogId);
+    }
+
+    // ── Records keyed by tenantId directly ──
+    match /documents/{id} {
+      allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+    }
+    match /reminders/{id} {
+      allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+    }
+    match /litters/{id} {
+      allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+    }
+
+    // ── auditLogs — append-only, never editable/deletable by clients ──
+    match /auditLogs/{id} {
+      allow read: if isSignedIn() && resource.data.tenantId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ── scanLogs — written whenever ANYONE scans a public QR passport, so
+    // create must stay open to unauthenticated requests. But scan logs
+    // should never be readable, editable, or deletable by clients (only via
+    // Admin SDK / a server route, if you ever need to show scan history to
+    // the breeder) — otherwise this becomes a stalking/tracking leak.
+    match /scanLogs/{id} {
+      allow create: if true;
+      allow read, update, delete: if false;
+    }
+
+    // ── Deny everything else by default ──
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

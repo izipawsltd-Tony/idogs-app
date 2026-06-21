@@ -1,7 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { createDog, addVaccineRecord, addHealthTest, getDogs } from '../lib/db'
-import { AU_TOP_BREEDS } from '../lib/utils'
+import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
 import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
@@ -28,6 +28,7 @@ export default function DogNewPage({ toast }: Props) {
   const [form, setForm] = useState<DogFormData>({
     name: '', breed: '', sex: 'female',
     dateOfBirth: '', colour: '', microchip: '', ankc: '', notes: '',
+    breederIdType: 'NONE', breederIdValue: '',
   })
 
   // Check free tier limit on mount
@@ -49,6 +50,18 @@ export default function DogNewPage({ toast }: Props) {
     }
     checkLimit()
   }, [profile])
+
+  // Auto-suggest a sensible default Breeder ID type based on the
+  // breeder's registered state (profile.state), once the profile has
+  // loaded. Only applies while the field is still untouched (NONE +
+  // empty value) so it never overwrites something the user already
+  // started filling in or a value pulled in from a scan.
+  useEffect(() => {
+    if (!profile?.state) return
+    setForm(prev => (prev.breederIdType === 'NONE' && !prev.breederIdValue)
+      ? { ...prev, breederIdType: suggestBreederIdType(profile.state) }
+      : prev)
+  }, [profile?.state])
 
   function set(field: keyof DogFormData, value: string) {
     setForm(prev => ({ ...prev, [field]: value }))
@@ -123,7 +136,10 @@ export default function DogNewPage({ toast }: Props) {
   async function proceedWithCreate() {
     setLoading(true)
     try {
-      const dogId = await createDog(form)
+      const dogId = await createDog({
+        ...form,
+        breederIdValue: form.breederIdType === 'NONE' ? '' : form.breederIdValue,
+      })
 
       // Now that the dog exists, upload any files that were scanned before
       // we had a dogId to attach them to (fixes "fail to save file" when
@@ -348,6 +364,22 @@ export default function DogNewPage({ toast }: Props) {
                 <label className="form-label">Dogs Australia Registration</label>
                 <input className="form-input" type="text" placeholder="3100012345" value={form.ankc} onChange={e => set('ankc', e.target.value)} />
               </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: form.breederIdType !== 'NONE' ? '1fr 1fr' : '1fr', gap: 14 }}>
+              <div className="form-group">
+                <label className="form-label">Breeder ID type</label>
+                <select className="form-select" value={form.breederIdType} onChange={e => set('breederIdType', e.target.value)}>
+                  {(Object.keys(BREEDER_ID_CONFIG) as Array<keyof typeof BREEDER_ID_CONFIG>).map(key => (
+                    <option key={key} value={key}>{BREEDER_ID_CONFIG[key].label}</option>
+                  ))}
+                </select>
+              </div>
+              {form.breederIdType !== 'NONE' && (
+                <div className="form-group">
+                  <label className="form-label">Breeder ID value</label>
+                  <input className="form-input" type="text" placeholder="e.g. B123456789" value={form.breederIdValue} onChange={e => set('breederIdValue', e.target.value)} />
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label className="form-label">Notes</label>
