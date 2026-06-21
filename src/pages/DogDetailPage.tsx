@@ -170,13 +170,13 @@ export default function DogDetailPage({ toast }: Props) {
     }
   }
 
-  async function handleScanResult(result: any, fileUrl?: string) {
+  async function handleScanResult(result: any, filePath?: string) {
     if (!dogId || !dog) return
 
     let vaccineCount = 0
     let healthSaved = false
 
-    // Save vaccines with fileUrl from scanned document
+    // Save vaccines with filePath from scanned document
     if (result.vaccines && result.vaccines.length > 0) {
       for (const v of result.vaccines) {
         if (v.name) {
@@ -187,7 +187,7 @@ export default function DogDetailPage({ toast }: Props) {
             nextDue: v.nextDue || '',
             vetClinic: v.vetClinic || '',
             uncertain: v.uncertain || false,
-            documentUrl: fileUrl || null,
+            documentPath: filePath || null,
           } as any).catch(() => {})
           vaccineCount++
           await logAudit({
@@ -295,8 +295,8 @@ export default function DogDetailPage({ toast }: Props) {
       // documentUrl could end up attached to an unrelated older health
       // test instead. Using the ID returned directly from addHealthTest
       // removes the guesswork entirely.
-      if (fileUrl && newHealthTestId) {
-        await updateDoc(doc(db, 'healthTests', newHealthTestId), { documentUrl: fileUrl }).catch(() => {})
+      if (filePath && newHealthTestId) {
+        await updateDoc(doc(db, 'healthTests', newHealthTestId), { documentPath: filePath }).catch(() => {})
       }
       const updatedHealth = await getHealthTests(dogId)
       setHealthTests(updatedHealth)
@@ -319,8 +319,8 @@ export default function DogDetailPage({ toast }: Props) {
     if (result.colour && !dog.colour) updates.colour = result.colour
     if (result.sex && !dog.sex) updates.sex = result.sex
     if (result.dateOfBirth && !dog.dateOfBirth) updates.dateOfBirth = result.dateOfBirth
-    // Save microchip cert URL if scanned
-    if (fileUrl && result.microchip) (updates as any).microchipCertUrl = fileUrl
+    // Save microchip cert path if scanned
+    if (filePath && result.microchip) (updates as any).microchipCertPath = filePath
     if (Object.keys(updates).length > 0) {
       await updateDog(dogId, updates)
       setDog(prev => prev ? { ...prev, ...updates } : prev)
@@ -336,6 +336,40 @@ export default function DogDetailPage({ toast }: Props) {
     // Navigate to relevant tab
     if (healthSaved && vaccineCount === 0) setTab('health')
     else if (vaccineCount > 0) setTab('vaccines')
+  }
+
+  // Documents are now stored privately (see upload-document.js) — viewing
+  // one requires fetching a short-lived signed URL from the server, which
+  // also checks the requester actually owns/breeds this dog. Old records
+  // that only have a legacy public `documentUrl`/`fileUrl` (from before
+  // this change) still open directly, since those files are already
+  // public and there's no path to sign.
+  async function viewDocument(path?: string | null, legacyUrl?: string | null) {
+    if (!path) {
+      if (legacyUrl) window.open(legacyUrl, '_blank', 'noopener,noreferrer')
+      return
+    }
+    if (!user) {
+      toast('Please sign in to view this document', 'error')
+      return
+    }
+    try {
+      const idToken = await user.getIdToken()
+      const response = await fetch('/api/get-signed-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ filePath: path }),
+      })
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        toast(err.error || 'Could not open document', 'error')
+        return
+      }
+      const { url } = await response.json()
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch {
+      toast('Could not open document', 'error')
+    }
   }
 
   async function handleTransfer(buyerName: string, buyerEmail: string) {
@@ -489,7 +523,7 @@ export default function DogDetailPage({ toast }: Props) {
         <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} onViewDoc={viewDocument} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} />}
@@ -500,12 +534,12 @@ export default function DogDetailPage({ toast }: Props) {
           <AIScan onResult={handleScanResult} toast={toast} dogId={dog.id} tenantId={user?.uid} />
         </div>
       )}
-      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={() => setTab('documents')} />}
+      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDocument} />}
       {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} />}
-      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} />}
+      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} onViewDoc={viewDocument} />}
       {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} />}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} toast={toast} />}
-      {tab === 'documents' && <DocumentsTab documents={documents} dogName={dog.name} />}
+      {tab === 'documents' && <DocumentsTab documents={documents} dogName={dog.name} onViewDoc={viewDocument} />}
       {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} />}
 
       {/* Transfer Ownership Modal */}
@@ -651,10 +685,11 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, onUpdateBreederId }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, onUpdateBreederId, onViewDoc }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number
   toast: (msg: string, type?: ToastMessage['type']) => void
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
+  onViewDoc: (path?: string | null, url?: string | null) => void
 }) {
   const [editingBreederId, setEditingBreederId] = useState(false)
   const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
@@ -683,10 +718,15 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
         <InfoRow label="Sex" value={dog.sex === 'female' ? 'Female' : 'Male'} />
         <InfoRow label="Colour" value={dog.colour || '—'} />
         <InfoRow label="Microchip" value={dog.microchip || '—'} />
-        {(dog as any).microchipCertUrl && (
+        {((dog as any).microchipCertPath || (dog as any).microchipCertUrl) && (
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
             <span style={{ color: 'var(--light)' }}>Microchip cert</span>
-            <a href={(dog as any).microchipCertUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none' }}>📄 View cert</a>
+            <button
+              onClick={() => onViewDoc((dog as any).microchipCertPath, (dog as any).microchipCertUrl)}
+              style={{ color: 'var(--green)', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13 }}
+            >
+              📄 View cert
+            </button>
           </div>
         )}
         <InfoRow label="Dogs Australia Registration" value={dog.ankc || '—'} />
@@ -790,7 +830,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
   setVaccines: (v: VaccineRecord[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
   documents: any[]
-  onViewDoc: () => void
+  onViewDoc: (path?: string | null, url?: string | null) => void
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
@@ -996,16 +1036,14 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
                   ) : v.nextDue ? (
                     <span className="badge badge-gray">Superseded</span>
                   ) : null}
-                  {(v as any).documentUrl && (
-                    <a
-                      href={(v as any).documentUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                  {((v as any).documentPath || (v as any).documentUrl) && (
+                    <button
+                      onClick={() => onViewDoc((v as any).documentPath, (v as any).documentUrl)}
                       className="btn btn-secondary btn-sm"
-                      style={{ padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
+                      style={{ padding: '4px 10px', fontSize: 12 }}
                     >
                       📄 View
-                    </a>
+                    </button>
                   )}
                   <button onClick={() => startEdit(v)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
                   <button onClick={() => handleDelete(v.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
@@ -1161,7 +1199,7 @@ function formatHealthResult(result: unknown): string {
   return ''
 }
 
-function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast }: {
+function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast, onViewDoc }: {
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -1169,6 +1207,7 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
   healthTests: HealthTest[];
   setHealthTests: (h: HealthTest[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
+  onViewDoc: (path?: string | null, url?: string | null) => void
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ testType: 'hip', result: '', dateTested: '', lab: '', certNumber: '' })
@@ -1379,16 +1418,14 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                 <span className="badge badge-green">Verified</span>
-                {(h as any).documentUrl && (
-                  <a
-                    href={(h as any).documentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                {((h as any).documentPath || (h as any).documentUrl) && (
+                  <button
+                    onClick={() => onViewDoc((h as any).documentPath, (h as any).documentUrl)}
                     className="btn btn-secondary btn-sm"
-                    style={{ padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
+                    style={{ padding: '4px 10px', fontSize: 12 }}
                   >
                     📄 View
-                  </a>
+                  </button>
                 )}
                 <button onClick={() => startEdit(h)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
                 <button onClick={() => handleDelete(h.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
@@ -1489,7 +1526,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
 
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
-function DocumentsTab({ documents, dogName }: { documents: any[]; dogName: string }) {
+function DocumentsTab({ documents, dogName, onViewDoc }: { documents: any[]; dogName: string; onViewDoc: (path?: string | null, url?: string | null) => void }) {
   function getDocIcon(type: string) {
     if (type === 'vaccine_card') return '💉'
     if (type === 'health_test') return '🔬'
@@ -1551,14 +1588,12 @@ function DocumentsTab({ documents, dogName }: { documents: any[]; dogName: strin
                   </div>
                 )}
               </div>
-              <a
-                href={doc.fileUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                onClick={() => onViewDoc((doc as any).filePath, doc.fileUrl)}
                 className="btn btn-secondary btn-sm"
               >
                 View ↗
-              </a>
+              </button>
             </div>
           ))}
         </div>

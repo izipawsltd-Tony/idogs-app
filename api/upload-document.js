@@ -44,9 +44,17 @@ export default async function handler(req, res) {
       metadata: { contentType: mediaType || 'image/jpeg' },
     })
 
-    // Make file publicly readable
-    await file.makePublic()
-    const fileUrl = `https://storage.googleapis.com/${bucket.name}/${filePath}`
+    // SECURITY FIX: files used to be made public via file.makePublic(),
+    // which generates a permanent, unauthenticated, never-expiring public
+    // URL (storage.googleapis.com/...) — anyone who ever obtained that
+    // URL (browser history, a shared screenshot, server logs, etc.) could
+    // view the document forever, with no way to revoke access short of
+    // deleting the file. Documents often contain personal info (vet
+    // records / pedigree certs print the owner's name/address). Files now
+    // stay private; viewing requires /api/get-signed-url, which checks
+    // the requester actually owns/breeds the dog and issues a short-lived
+    // (10 min) signed URL instead.
+    const fileUrl = null
 
     // Save metadata to Firestore
     const db = getFirestore()
@@ -62,7 +70,7 @@ export default async function handler(req, res) {
       extractedData: extractedData || {},
     })
 
-    return res.status(200).json({ success: true, fileUrl })
+    return res.status(200).json({ success: true, filePath })
   } catch (err) {
     console.error('Upload error full:', JSON.stringify({
       message: err.message,

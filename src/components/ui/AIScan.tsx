@@ -26,7 +26,7 @@ interface ScanResult {
 }
 
 interface Props {
-  onResult: (result: ScanResult, fileUrl?: string) => void
+  onResult: (result: ScanResult, filePath?: string) => void
   toast: (msg: string, type?: ToastMessage['type']) => void
   dogId?: string
   tenantId?: string
@@ -107,8 +107,8 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
       const data: ScanResult = await response.json()
       setResult(data)
 
-      // Upload document FIRST, get fileUrl, THEN call onResult with fileUrl
-      let fileUrl: string | undefined
+      // Upload document FIRST, get filePath, THEN call onResult with filePath
+      let filePath: string | undefined
       if (dogId && tenantId) {
         try {
           const uploadRes = await fetch('/api/upload-document', {
@@ -129,7 +129,7 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
           })
           if (uploadRes.ok) {
             const uploadData = await uploadRes.json()
-            fileUrl = uploadData.fileUrl
+            filePath = uploadData.filePath
             toast('Document scanned & saved! ✓')
           } else {
             // FIX: previously this branch was silently skipped and the
@@ -153,8 +153,8 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
         toast('Document scanned!')
       }
 
-      // Call onResult AFTER upload so fileUrl is available for saving to records
-      onResult(data, fileUrl)
+      // Call onResult AFTER upload so filePath is available for saving to records
+      onResult(data, filePath)
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Scan failed', 'error')
     } finally {

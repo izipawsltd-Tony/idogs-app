@@ -31,6 +31,12 @@ export interface Dog {
   // in yet — both are valid "nothing to show" states, not errors.
   breederIdType?: 'BIN_NSW' | 'BIN_ACT' | 'SOURCE_NUMBER_VIC' | 'SUPPLY_NUMBER_QLD' | 'DACO_SA' | 'ASSOC_MEMBER_TAS' | 'ASSOC_MEMBER_WA' | 'ASSOC_MEMBER_NT' | 'NONE'
   breederIdValue?: string
+  // Legacy: old microchip cert scans stored a permanent public Storage
+  // URL here directly (microchipCertUrl). New scans instead store
+  // microchipCertPath (a private Storage path) and a short-lived signed
+  // URL is fetched on demand — see viewDocument() in DogDetailPage.tsx.
+  microchipCertUrl?: string
+  microchipCertPath?: string
   createdAt: string
   updatedAt: string
 }
@@ -45,6 +51,7 @@ export interface VaccineRecord {
   batchNumber?: string
   uncertain?: boolean
   documentUrl?: string | null
+  documentPath?: string | null
   createdAt: string
 }
 
@@ -67,6 +74,7 @@ export interface HealthTest {
   certNumber?: string
   lab?: string
   documentUrl?: string
+  documentPath?: string
   createdAt: string
 }
 
@@ -87,7 +95,8 @@ export interface Document {
   dogId: string
   category: 'pedigree' | 'vaccine_cert' | 'health_test' | 'contract' | 'photo' | 'other'
   name: string
-  fileUrl: string
+  fileUrl?: string
+  filePath?: string
   fileType: string
   fileSizeMb: number
   isPublic: boolean
