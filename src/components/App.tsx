@@ -26,6 +26,7 @@ import AdminAuditPage from '../pages/AdminAuditPage'
 import TermsPage from '../pages/TermsPage'
 import PrivacyPage from '../pages/PrivacyPage'
 import PassportPublicPage from '../pages/PassportPublicPage'
+import ForgotPasswordPage from '../pages/ForgotPasswordPage'
 import NotFoundPage from '../pages/NotFoundPage'
 
 import AppLayout from './layout/AppLayout'
@@ -77,6 +78,7 @@ export default function App() {
         <Route path="/survey" element={<SurveyPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
         {/* Protected — app */}
         <Route path="/app" element={

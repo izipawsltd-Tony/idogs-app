@@ -18,7 +18,7 @@ export default function SignupPage({ toast }: Props) {
   const [form, setForm] = useState({
     firstName: '', lastName: '', kennelName: '',
     email: '', password: '', confirmPassword: '',
-    state: 'NSW',
+    state: 'NSW', breederNumber: '',
   })
 
   function set(field: string, value: string) {
@@ -48,7 +48,8 @@ export default function SignupPage({ toast }: Props) {
         firstName: form.firstName,
         lastName: form.lastName,
         kennelName: accountType === 'breeder' ? form.kennelName : `${form.firstName} ${form.lastName}`,
-
+        state: form.state,
+        breederNumber: form.breederNumber || undefined,
       })
       toast('Account created! Please check your email to verify your address.')
       navigate('/verify-email')
@@ -170,6 +171,20 @@ export default function SignupPage({ toast }: Props) {
                 </select>
               </div>
             </div>
+
+            {accountType === 'breeder' && (
+              <div className="form-group">
+                <label className="form-label">Breeder registration number <span style={{ fontWeight: 400, color: 'var(--light)' }}>(optional)</span></label>
+                <input
+                  className="form-input"
+                  type="text"
+                  placeholder="e.g. 12345678"
+                  value={form.breederNumber}
+                  onChange={e => set('breederNumber', e.target.value)}
+                />
+                <span className="form-hint">e.g. Dogs SA membership no. or NSW BIN — you can add this later in Settings</span>
+              </div>
+            )}
 
             <div className="form-group">
               <label className="form-label">Password</label>

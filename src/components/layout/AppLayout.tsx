@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import { getLitters } from '../../lib/db'
-import { getInitials } from '../../lib/utils'
-import type { ToastMessage } from '../../types'
+import { getLitters, updateUserProfile } from '../../lib/db'
+import { getInitials, AU_STATES } from '../../lib/utils'
+import type { ToastMessage, UserProfile } from '../../types'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -31,17 +31,45 @@ const BASE_BOTTOM_NAV = [
 ]
 
 export default function AppLayout({ toast }: Props) {
-  const { profile, logout } = useAuth()
+  const { user, profile, logout, refreshProfile } = useAuth()
   const navigate = useNavigate()
 
   const isOwner = profile?.role === 'owner'
   const hideLitters = (profile as any)?.hideLitters === true
   const [litterCount, setLitterCount] = useState<number | null>(null)
 
+  // Backfill modal for existing users missing state
+  const [showStateModal, setShowStateModal] = useState(false)
+  const [stateModalState, setStateModalState] = useState('NSW')
+  const [stateModalBreederNumber, setStateModalBreederNumber] = useState('')
+  const [savingStateModal, setSavingStateModal] = useState(false)
+
   useEffect(() => {
     if (!isOwner) { setLitterCount(null); return }
     getLitters().then(l => setLitterCount(l.length)).catch(() => setLitterCount(0))
   }, [isOwner])
+
+  useEffect(() => {
+    if (profile && !profile.state) setShowStateModal(true)
+  }, [profile])
+
+  async function saveStateModal() {
+    if (!user) return
+    setSavingStateModal(true)
+    try {
+      await updateUserProfile(user.uid, {
+        state: stateModalState as UserProfile['state'],
+        ...(stateModalBreederNumber.trim() && { breederIdValue: stateModalBreederNumber.trim() }),
+      })
+      await refreshProfile()
+      setShowStateModal(false)
+      toast('Profile updated ✓', 'success')
+    } catch {
+      toast('Failed to save', 'error')
+    } finally {
+      setSavingStateModal(false)
+    }
+  }
 
   // Owner: show litters tab only if they have past litters
   const ownerHasLitters = isOwner && litterCount !== null && litterCount > 0
@@ -73,6 +101,43 @@ export default function AppLayout({ toast }: Props) {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--sand)' }}>
+
+      {/* ── STATE BACKFILL MODAL ── */}
+      {showStateModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div className="card" style={{ width: '100%', maxWidth: 400, padding: '32px 28px' }}>
+            <h2 style={{ fontSize: 20, fontFamily: 'var(--font-display)', marginBottom: 8, color: 'var(--dark)' }}>One quick update</h2>
+            <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 24 }}>
+              We've added state-based breeding compliance. Please select your state to continue.
+            </p>
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label className="form-label">Your state <span style={{ color: 'var(--error)' }}>*</span></label>
+              <select className="form-select" value={stateModalState} onChange={e => setStateModalState(e.target.value)}>
+                {AU_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="form-group" style={{ marginBottom: 24 }}>
+              <label className="form-label">Breeder registration number <span style={{ fontWeight: 400, color: 'var(--light)' }}>(optional)</span></label>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="e.g. 12345678"
+                value={stateModalBreederNumber}
+                onChange={e => setStateModalBreederNumber(e.target.value)}
+              />
+              <span className="form-hint">e.g. Dogs SA membership no. or NSW BIN</span>
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', height: 44 }}
+              onClick={saveStateModal}
+              disabled={savingStateModal}
+            >
+              {savingStateModal ? <span className="spinner" /> : 'Save and continue'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── SIDEBAR (desktop only) ── */}
       <aside style={{

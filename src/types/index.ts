@@ -256,4 +256,6 @@ export interface SignupFormData extends AuthFormData {
   firstName: string
   lastName: string
   kennelName: string
+  state?: string
+  breederNumber?: string
 }
