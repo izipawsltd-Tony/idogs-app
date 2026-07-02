@@ -242,6 +242,7 @@ export interface DogFormData {
   microchip: string
   ankc: string
   notes: string
+  pedigreeRegister?: string
   breederIdType?: Dog['breederIdType']
   breederIdValue?: string
 }

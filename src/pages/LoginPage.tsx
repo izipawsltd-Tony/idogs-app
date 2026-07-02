@@ -47,9 +47,12 @@ export default function LoginPage({ toast }: Props) {
 
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <Link to="/" style={{ display: 'inline-flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
-            <div style={{ width: 40, height: 40, background: 'var(--green)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>🐾</div>
-            <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, color: 'var(--dark)' }}>iDogs</span>
+          <Link to="/" style={{ display: 'inline-block', textDecoration: 'none' }}>
+            <img
+              src="/logo.png"
+              alt="iDogs"
+              style={{ height: 72, width: 240, objectFit: 'contain' }}
+            />
           </Link>
         </div>
 

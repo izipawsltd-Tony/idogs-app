@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import { useAuth } from '../../hooks/useAuth'
 import type { ToastMessage } from '../../types'
 
 interface ScanResult {
@@ -69,7 +70,8 @@ async function readPDF(file: File): Promise<{ base64: string; mediaType: string 
   })
 }
 
-export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
+export default function AIScan({ onResult, toast, dogId }: Props) {
+  const { user } = useAuth()
   const [scanning, setScanning] = useState(false)
   const [preview, setPreview] = useState<string | null>(null)
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | null>(null)
@@ -93,9 +95,15 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
         ? await readPDF(file)
         : await resizeImage(file)
 
+      if (!user) {
+        toast('Please sign in to scan documents', 'error')
+        setScanning(false)
+        return
+      }
+      const scanIdToken = await user.getIdToken()
       const response = await fetch('/api/scan', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${scanIdToken}` },
         body: JSON.stringify({ image: base64, mediaType }),
       })
 
@@ -109,16 +117,16 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
 
       // Upload document FIRST, get filePath, THEN call onResult with filePath
       let filePath: string | undefined
-      if (dogId && tenantId) {
+      if (dogId && user) {
         try {
+          const idToken = await user.getIdToken()
           const uploadRes = await fetch('/api/upload-document', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
             body: JSON.stringify({
               base64,
               mediaType,
               dogId,
-              tenantId,
               documentType: data.documentType || 'other',
               extractedData: {
                 dogName: data.dogName,
@@ -277,7 +285,7 @@ export default function AIScan({ onResult, toast, dogId, tenantId }: Props) {
                   const looksLikeAnkc = !!result.ankc && result.ankc.trim() !== '' && safe.includes(result.ankc.trim())
                   return looksLikeAnkc ? (
                     <div style={{ padding: '7px 16px', fontSize: 12, color: 'var(--warning)' }}>
-                      ⚠ Result looked like the ANKC number — not saved as the test result, please check the document and enter the result manually
+                      ⚠ Result looked like the Dogs Australia registration number — not saved as the test result, please check the document and enter the result manually
                     </div>
                   ) : (
                     <ResultRow label="Result" value={safe} />

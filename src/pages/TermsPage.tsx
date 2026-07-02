@@ -32,7 +32,7 @@ export default function TermsPage() {
               <li>AI-powered document scanning</li>
               <li>Vaccination and worming reminders</li>
               <li>Ownership transfer management</li>
-              <li>Compliance export reports for Dogs Australia / ANKC and Australian state regulations</li>
+              <li>Compliance export reports for Dogs Australia and Australian state regulations</li>
             </ul>
           </LegalSection>
 

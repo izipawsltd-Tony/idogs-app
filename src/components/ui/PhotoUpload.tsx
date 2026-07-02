@@ -9,11 +9,30 @@ interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
-async function resizeImage(file: File, maxPx = 800): Promise<{ base64: string; mediaType: string }> {
+// FIX: iPhone photos saved as .heic/.heif can't be decoded by <img> in
+// Chrome/Firefox/Edge (only Safari supports it natively) — img.onload
+// never fires for these, so the upload silently hung forever with no
+// error and no spinner timeout. Detect HEIC up front and fail fast with
+// a clear, actionable message instead.
+function isHeic(file: File): boolean {
+  const type = file.type.toLowerCase()
+  const name = file.name.toLowerCase()
+  return type === 'image/heic' || type === 'image/heif' || name.endsWith('.heic') || name.endsWith('.heif')
+}
+
+async function resizeImage(file: File | Blob, maxPx = 800): Promise<{ base64: string; mediaType: string }> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const url = URL.createObjectURL(file)
+    // Safety net: if neither onload nor onerror fires within 10s (seen
+    // happen with some unsupported formats even beyond HEIC), fail
+    // instead of leaving the spinner stuck forever with no feedback.
+    const timeout = setTimeout(() => {
+      URL.revokeObjectURL(url)
+      reject(new Error('Image could not be read — it may be an unsupported format'))
+    }, 10000)
     img.onload = () => {
+      clearTimeout(timeout)
       URL.revokeObjectURL(url)
       let { width, height } = img
       if (width > maxPx || height > maxPx) {
@@ -26,8 +45,21 @@ async function resizeImage(file: File, maxPx = 800): Promise<{ base64: string; m
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
       resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg' })
     }
-    img.onerror = reject
+    img.onerror = () => {
+      clearTimeout(timeout)
+      URL.revokeObjectURL(url)
+      reject(new Error('Image could not be read'))
+    }
     img.src = url
+  })
+}
+
+function readAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve((reader.result as string).split(',')[1])
+    reader.onerror = reject
+    reader.readAsDataURL(file)
   })
 }
 
@@ -38,14 +70,27 @@ export default function PhotoUpload({ dogId, currentPhoto, onUpload, toast }: Pr
 
   async function handleFile(file: File) {
     if (!file || !user) return
+
     setUploading(true)
     try {
-      const { base64, mediaType } = await resizeImage(file)
+      let base64: string
+      let mediaType: string
 
-      const res = await fetch('/api/upload-photo', {
+      if (isHeic(file)) {
+        // Send raw HEIC to server \u2014 sharp handles conversion server-side
+        base64 = await readAsBase64(file)
+        mediaType = file.type || 'image/heic'
+      } else {
+        const resized = await resizeImage(file)
+        base64 = resized.base64
+        mediaType = resized.mediaType
+      }
+
+      const idToken = await user.getIdToken()
+      const res = await fetch('/api/upload', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64, mediaType, dogId, userId: user.uid }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ base64, mediaType, dogId }),
       })
 
       if (!res.ok) throw new Error('Upload failed')

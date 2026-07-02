@@ -79,10 +79,16 @@ export default async function handler(req, res) {
     if (!isAuthorized) {
       return res.status(403).json({ error: 'Not authorized to view this document' })
     }
-    // Sanity check: the path's tenant segment should match the dog's
-    // actual tenantId (catches a stale/tampered filePath pointing at a
-    // mismatched folder).
-    if (pathTenantId !== dog.tenantId) {
+    // Sanity check: the path's tenant segment should match whoever
+    // actually has access to this dog — either its breeder (tenantId)
+    // or its current owner (currentOwnerId). NOTE: upload-document.js
+    // writes this path segment using the uid of whoever was logged in
+    // at scan time, which can be the owner rather than the breeder (e.g.
+    // an Owner account scanning a vaccine card for a dog transferred to
+    // them) — so this must NOT be a strict dog.tenantId-only match, or
+    // it incorrectly blocks legitimate owners from viewing their own
+    // scans.
+    if (pathTenantId !== dog.tenantId && pathTenantId !== dog.currentOwnerId) {
       return res.status(403).json({ error: 'Path does not match dog record' })
     }
 

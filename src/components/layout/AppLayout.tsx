@@ -87,18 +87,14 @@ export default function AppLayout({ toast }: Props) {
       }}>
         {/* Logo */}
         <div style={{
-          padding: '20px 20px 16px',
+          padding: '16px 20px',
           borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 10,
         }}>
-          <div style={{
-            width: 32, height: 32, background: 'var(--green)', borderRadius: 8,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
-          }}>🐾</div>
-          <div>
-            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)' }}>iDogs</div>
-            <div style={{ fontSize: 11, color: 'var(--light)' }}>Kennel manager</div>
-          </div>
+          <img
+            src="/logo.png"
+            alt="iDogs"
+            style={{ height: 50, width: 'auto', display: 'block', objectFit: 'contain' }}
+          />
         </div>
 
         {/* Nav */}
@@ -196,8 +192,7 @@ export default function AppLayout({ toast }: Props) {
           position: 'sticky', top: 0, zIndex: 40,
         }} className="mobile-topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 28, height: 28, background: 'var(--green)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>🐾</div>
-            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)' }}>iDogs</span>
+            <img src="/logo.png" alt="iDogs" style={{ height: 28, width: 96, objectFit: 'contain' }} />
           </div>
           <button onClick={handleLogout} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--mid)', cursor: 'pointer' }}>Sign out</button>
         </div>

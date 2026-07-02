@@ -1,6 +1,8 @@
 // src/lib/email.ts
 // Sends email via Vercel serverless /api/send-email (Resend backend)
 
+import { getAuth } from 'firebase/auth'
+
 async function sendEmail(params: {
   to_email: string
   to_name: string
@@ -8,9 +10,15 @@ async function sendEmail(params: {
   message: string
   action_url?: string
 }) {
+  const currentUser = getAuth().currentUser
+  if (!currentUser) {
+    throw new Error('Must be signed in to send email')
+  }
+  const idToken = await currentUser.getIdToken()
+
   const res = await fetch('/api/send-email', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
     body: JSON.stringify(params),
   })
   if (!res.ok) {

@@ -27,7 +27,7 @@ export default function DogNewPage({ toast }: Props) {
   const [duplicateWarning, setDuplicateWarning] = useState<{ matchedBy: 'microchip' | 'name'; existingDogName: string } | null>(null)
   const [form, setForm] = useState<DogFormData>({
     name: '', breed: '', sex: 'female',
-    dateOfBirth: '', colour: '', microchip: '', ankc: '', notes: '',
+    dateOfBirth: '', colour: '', microchip: '', ankc: '', notes: '', pedigreeRegister: 'main',
     breederIdType: 'NONE', breederIdValue: '',
   })
 
@@ -363,6 +363,27 @@ export default function DogNewPage({ toast }: Props) {
               <div className="form-group">
                 <label className="form-label">Dogs Australia Registration</label>
                 <input className="form-input" type="text" placeholder="3100012345" value={form.ankc} onChange={e => set('ankc', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Pedigree / Registration status</label>
+                <select className="form-select" value={(form as any).pedigreeRegister || 'main'} onChange={e => set('pedigreeRegister', e.target.value)}>
+                  <option value="main">🔵 Main Register (Blue) — eligible to breed &amp; show</option>
+                  <option value="limited">🟠 Limited Register (Orange) — NOT eligible to breed</option>
+                  <option value="no_pedigree">No pedigree — purebred without papers</option>
+                  <option value="mixed">Mixed breed / crossbreed</option>
+                  <option value="rescue">Rescue / unknown background</option>
+                </select>
+                {(form as any).pedigreeRegister === 'limited' && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--error)', background: '#FFF8F8', border: '1px solid #F09595', borderRadius: 6, padding: '6px 10px' }}>
+                    ⚠️ Limited Register — this dog cannot be used for breeding under Dogs Australia rules.
+                  </div>
+                )}
+                {(form as any).pedigreeRegister === 'main' && (
+                  <span className="form-hint">Main Register (Blue certificate) — eligible to breed with other Main Register dogs</span>
+                )}
+                {['no_pedigree', 'mixed', 'rescue'].includes((form as any).pedigreeRegister) && (
+                  <span className="form-hint">iDogs will still track health records, vaccines and reminders for this dog.</span>
+                )}
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: form.breederIdType !== 'NONE' ? '1fr 1fr' : '1fr', gap: 14 }}>

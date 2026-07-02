@@ -7,11 +7,11 @@ interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
-type Scope = 'dog' | 'litter' | 'kennel'
+type Scope = 'dog' | 'litter' | 'kennel' | 'breeding'
 type Format = 'pdf' | 'csv'
 
 export default function ExportPage({ toast }: Props) {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [dogs, setDogs] = useState<Dog[]>([])
   const [litters, setLitters] = useState<Litter[]>([])
   const [loading, setLoading] = useState(true)
@@ -19,6 +19,10 @@ export default function ExportPage({ toast }: Props) {
   const [selectedDogId, setSelectedDogId] = useState('')
   const [selectedLitterId, setSelectedLitterId] = useState('')
   const [exporting, setExporting] = useState<Format | null>(null)
+  const userState = (profile as any)?.state || 'SA'
+
+  // Female dogs only for breeding compliance
+  const femaleDogs = dogs.filter(d => d.sex === 'female' && (d as any).status !== 'transferred')
 
   useEffect(() => {
     if (!user) return
@@ -32,6 +36,7 @@ export default function ExportPage({ toast }: Props) {
     if (!user) return
     if (scope === 'dog' && !selectedDogId) { toast('Please select a dog', 'error'); return }
     if (scope === 'litter' && !selectedLitterId) { toast('Please select a litter', 'error'); return }
+    if (scope === 'breeding' && !selectedDogId) { toast('Please select a female dog', 'error'); return }
 
     setExporting(format)
     try {
@@ -40,9 +45,10 @@ export default function ExportPage({ toast }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           scope,
-          id: scope === 'dog' ? selectedDogId : scope === 'litter' ? selectedLitterId : null,
+          id: scope === 'dog' ? selectedDogId : scope === 'litter' ? selectedLitterId : scope === 'breeding' ? selectedDogId : null,
           tenantId: user.uid,
           format,
+          userState,
         }),
       })
 
@@ -60,7 +66,6 @@ export default function ExportPage({ toast }: Props) {
         URL.revokeObjectURL(url)
         toast('CSV downloaded ✓', 'success')
       } else {
-        // PDF: open HTML in new window and trigger print
         const { html, filename } = await res.json()
         const win = window.open('', '_blank')
         if (win) {
@@ -87,12 +92,12 @@ export default function ExportPage({ toast }: Props) {
   )
 
   return (
-    <div style={{ padding: 32, maxWidth: 600 }}>
+    <div style={{ padding: 32, maxWidth: 640 }}>
       <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>
         Export & Compliance Reports
       </h1>
       <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 32 }}>
-        Generate audit reports for ANKC inspections, state compliance, and personal records.
+        Generate audit reports for Dogs Australia inspections, state compliance, and personal records.
       </p>
 
       {/* Compliance notice */}
@@ -105,15 +110,16 @@ export default function ExportPage({ toast }: Props) {
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
           Step 1 — What to export
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 10 }}>
           {([
-            { id: 'dog', icon: '🐕', label: 'Single Dog', desc: 'Health record for 1 dog' },
-            { id: 'litter', icon: '🐣', label: 'Litter', desc: 'All puppies in a litter' },
-            { id: 'kennel', icon: '🏠', label: 'Full Kennel', desc: 'All dogs + litters' },
+            { id: 'dog',     icon: '🐕', label: 'Single Dog',    desc: 'Health record for 1 dog' },
+            { id: 'litter',  icon: '🐣', label: 'Litter',        desc: 'All puppies in a litter' },
+            { id: 'kennel',  icon: '🏠', label: 'Full Kennel',   desc: 'All dogs + litters' },
+            { id: 'breeding',icon: '🌸', label: 'Breeding Compliance', desc: 'Heat cycles, litter history & state rules' },
           ] as const).map(opt => (
             <button
               key={opt.id}
-              onClick={() => setScope(opt.id)}
+              onClick={() => { setScope(opt.id); setSelectedDogId('') }}
               style={{
                 padding: '14px 10px', borderRadius: 12, textAlign: 'center',
                 border: `2px solid ${scope === opt.id ? 'var(--green)' : 'var(--border)'}`,
@@ -150,9 +156,39 @@ export default function ExportPage({ toast }: Props) {
           </div>
         )}
 
+        {/* Kennel summary */}
         {scope === 'kennel' && (
           <div style={{ marginTop: 12, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', padding: '10px 14px', borderRadius: 8 }}>
             📊 Will include <strong>{dogs.length} dogs</strong> and <strong>{litters.length} litters</strong> — all health records, vaccines, and transfers.
+          </div>
+        )}
+
+        {/* Breeding compliance — female dog selector */}
+        {scope === 'breeding' && (
+          <div style={{ marginTop: 16 }}>
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label className="form-label">Select female dog</label>
+              <select className="form-select" value={selectedDogId} onChange={e => setSelectedDogId(e.target.value)}>
+                <option value="">— Choose a female dog —</option>
+                {femaleDogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed})</option>)}
+              </select>
+              {femaleDogs.length === 0 && (
+                <span className="form-hint">No female dogs in your account.</span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--mid)', background: 'var(--sand)', padding: '10px 14px', borderRadius: 8, lineHeight: 1.6 }}>
+              🌸 <strong>Breeding Compliance Report includes:</strong>
+              <ul style={{ marginTop: 6, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <li>Current compliance status ({userState} state rules)</li>
+                <li>Lifetime litter count vs. state maximum</li>
+                <li>C-section history and limits (NSW-specific)</li>
+                <li>Heat cycle records — actual dates, mating method, sire details</li>
+                <li>Whelping history — dates, method, puppies born/alive</li>
+                <li>Next eligible breeding date</li>
+                <li>Predicted future heat cycle dates</li>
+                <li>Dogs Australia / state law reference</li>
+              </ul>
+            </div>
           </div>
         )}
       </div>
@@ -163,12 +199,14 @@ export default function ExportPage({ toast }: Props) {
           Step 2 — Download
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-
-          {/* PDF */}
           <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
             <div style={{ fontSize: 20, marginBottom: 8 }}>📄</div>
             <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 4 }}>PDF Report</div>
-            <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>Professional formatted report — print or save as PDF for inspectors.</div>
+            <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
+              {scope === 'breeding'
+                ? 'Formatted breeding compliance report — suitable for Dogs Australia inspections.'
+                : 'Professional formatted report — print or save as PDF for inspectors.'}
+            </div>
             <button
               className="btn btn-primary btn-sm"
               style={{ width: '100%' }}
@@ -181,16 +219,19 @@ export default function ExportPage({ toast }: Props) {
             </button>
           </div>
 
-          {/* CSV */}
-          <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+          <div style={{ border: `1px solid ${scope === 'breeding' ? 'var(--border)' : 'var(--border)'}`, borderRadius: 12, padding: 16, opacity: scope === 'breeding' ? 0.5 : 1 }}>
             <div style={{ fontSize: 20, marginBottom: 8 }}>📊</div>
             <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 4 }}>CSV / Excel</div>
-            <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>Raw data export — open in Excel, Numbers, or Google Sheets.</div>
+            <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
+              {scope === 'breeding'
+                ? 'CSV not available for breeding compliance — use PDF.'
+                : 'Raw data export — open in Excel, Numbers, or Google Sheets.'}
+            </div>
             <button
               className="btn btn-secondary btn-sm"
               style={{ width: '100%' }}
-              onClick={() => handleExport('csv')}
-              disabled={exporting !== null}
+              onClick={() => scope === 'breeding' ? toast('Use PDF for breeding compliance reports', 'error') : handleExport('csv')}
+              disabled={exporting !== null || scope === 'breeding'}
             >
               {exporting === 'csv'
                 ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Generating…</>

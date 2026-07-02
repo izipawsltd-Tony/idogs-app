@@ -372,7 +372,7 @@ export default function LittersPage({ toast }: Props) {
                 <input className="form-input" placeholder="Champion Max" value={form.sireName} onChange={e => setForm(p => ({ ...p, sireName: e.target.value }))} />
               </div>
               <div className="form-group">
-                <label className="form-label">Sire ANKC</label>
+                <label className="form-label">Sire Dogs Australia Reg</label>
                 <input className="form-input" placeholder="2100123456" value={form.sireAnkc} onChange={e => setForm(p => ({ ...p, sireAnkc: e.target.value }))} />
               </div>
             </div>

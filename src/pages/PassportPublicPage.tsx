@@ -214,7 +214,7 @@ export default function PassportPublicPage() {
                 { label: 'Sex', value: dog.sex === 'female' ? '♀ Female' : '♂ Male' },
                 { label: 'Colour', value: dog.colour || '—' },
                 { label: 'Microchip', value: dog.microchip || '—', mono: true },
-                { label: 'ANKC', value: dog.ankc || '—', mono: true },
+                { label: 'Dogs Australia Reg', value: dog.ankc || '—', mono: true },
                 { label: 'Passport ID', value: dog.passportId, mono: true },
               ].map((row, i, arr) => (
                 <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', borderBottom: i < arr.length - 1 ? '1px solid #F5F0E8' : 'none', fontSize: 14 }}>

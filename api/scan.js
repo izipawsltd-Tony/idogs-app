@@ -1,6 +1,36 @@
+import { initializeApp, getApps, cert } from 'firebase-admin/app'
+import { getAuth } from 'firebase-admin/auth'
+
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    }),
+  })
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  // SECURITY FIX: this endpoint had no auth check at all — since it
+  // spends real money on every call (calls the Anthropic API using our
+  // own API key), anyone who found the URL (trivial via browser DevTools
+  // Network tab) could script unlimited free OCR requests against our
+  // API budget. Now requires a valid Firebase ID token from a signed-in
+  // iDogs user before doing anything.
+  const authHeader = req.headers.authorization || ''
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!idToken) {
+    return res.status(401).json({ error: 'Missing Authorization header' })
+  }
+  try {
+    await getAuth().verifyIdToken(idToken)
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token' })
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY

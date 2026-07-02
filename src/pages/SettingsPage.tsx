@@ -34,6 +34,7 @@ export default function SettingsPage({ toast }: Props) {
   const emailReminders = (profile as any)?.emailReminders !== false // default true
   const reminderDays = (profile as any)?.reminderDays || 7
   const reminderFrequency = (profile as any)?.reminderFrequency || 'once'
+  const heatReminderDays = (profile as any)?.heatReminderDays || 14
 
   async function toggle(field: string, current: boolean, onMsg: string, offMsg: string) {
     if (!user) return
@@ -70,6 +71,20 @@ export default function SettingsPage({ toast }: Props) {
       await updateUserProfile(user.uid, { reminderFrequency: freq } as any)
       await refreshProfile()
       toast(freq === 'once' ? 'You\'ll get one reminder per due date' : 'You\'ll get a daily reminder until the due date')
+    } catch {
+      toast('Failed to save setting', 'error')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  async function setHeatReminderDays(days: number) {
+    if (!user) return
+    setSaving('heatReminderDays')
+    try {
+      await updateUserProfile(user.uid, { heatReminderDays: days } as any)
+      await refreshProfile()
+      toast(`Heat cycle reminder set to ${days} days before`)
     } catch {
       toast('Failed to save setting', 'error')
     } finally {
@@ -391,6 +406,37 @@ export default function SettingsPage({ toast }: Props) {
                     {opt.label}
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Heat cycle reminder lead time */}
+          {emailReminders && (
+            <div style={{ paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 4 }}>🌸 Heat cycle reminder lead time</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>
+                How many days before a predicted heat cycle to send a reminder. Set higher than vaccine reminders so you have time to prepare.
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {[7, 14, 21, 30].map(days => (
+                  <button
+                    key={days}
+                    onClick={() => setHeatReminderDays(days)}
+                    disabled={saving === 'heatReminderDays'}
+                    style={{
+                      padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 500,
+                      border: `1.5px solid ${heatReminderDays === days ? 'var(--green)' : 'var(--border)'}`,
+                      background: heatReminderDays === days ? 'var(--green-light)' : 'var(--white)',
+                      color: heatReminderDays === days ? 'var(--green)' : 'var(--mid)',
+                      cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                  >
+                    {days}d
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--light)' }}>
+                Currently: <strong>{heatReminderDays} days</strong> before predicted heat · Default is 14 days
               </div>
             </div>
           )}

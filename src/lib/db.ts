@@ -45,11 +45,9 @@ export async function updateUserProfile(userId: string, data: Partial<UserProfil
 // ── DOGS ──────────────────────────────────────────────────────
 
 export async function getDogs(): Promise<Dog[]> {
-  const q = query(
-    collection(db, 'dogs'),
-    where('tenantId', '==', uid())
-  )
-  const snap = await getDocs(q)
+  const currentUid = uid()
+  if (!currentUid) return []
+  const snap = await getDocs(query(collection(db, 'dogs'), where('tenantId', '==', currentUid)))
   return snap.docs.map(d => ({ ...d.data(), id: d.id } as Dog))
 }
 
@@ -163,22 +161,27 @@ export async function getDogsByBuyerEmail(email: string): Promise<Dog[]> {
   return snap.docs.map(d => ({ ...d.data(), id: d.id } as Dog))
 }
 
-// Call once after buyer creates account — reassigns transferred dogs to their uid
-export async function claimTransferredDogs(userId: string, email: string): Promise<number> {
-  const dogs = await getDogsByBuyerEmail(email)
-  const transferredDogs = dogs.filter((d: any) => d.status === 'transferred')
-  await Promise.all(
-    transferredDogs.map((d: any) =>
-      updateDoc(doc(db, 'dogs', d.id), {
-        tenantId: userId,
-        currentOwnerId: userId,
-        status: 'active',
-        claimedAt: new Date().toISOString(),
-        updatedAt: serverTimestamp(),
-      })
-    )
-  )
-  return transferredDogs.length
+// Call once after buyer creates account — reassigns transferred dogs to
+// their uid. Routed through /api/claim-transferred-dogs (server-side,
+// Admin SDK) rather than writing directly here, because firestore.rules
+// correctly blocks a buyer from reading/updating a dog they don't own
+// yet — that's exactly the gap this claim operation needs to cross, so
+// it has to happen server-side with the buyer's identity verified via
+// their Firebase ID token instead of a client-supplied email/uid.
+export async function claimTransferredDogs(_userId: string, _email: string): Promise<number> {
+  if (!auth.currentUser) return 0
+  try {
+    const idToken = await auth.currentUser.getIdToken()
+    const res = await fetch('/api/claim-transferred-dogs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    })
+    if (!res.ok) return 0
+    const data = await res.json()
+    return data.claimed || 0
+  } catch {
+    return 0
+  }
 }
 
 // ── VACCINE RECORDS ───────────────────────────────────────────
@@ -272,11 +275,12 @@ export async function getAllPendingReminders(): Promise<Reminder[]> {
   if (dogIds.size === 0) return []
   const q = query(
     collection(db, 'reminders'),
-    where('status', 'in', ['pending', 'overdue'])
+    where('tenantId', '==', uid())
   )
   const snap = await getDocs(q)
-  const allReminders = snap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
-  return allReminders.filter(r => dogIds.has(r.dogId))
+  return snap.docs
+    .map(d => ({ ...d.data(), id: d.id } as Reminder))
+    .filter(r => dogIds.has(r.dogId) && ['pending', 'overdue'].includes(r.status))
 }
 
 export async function addReminder(data: Omit<Reminder, 'id' | 'createdAt'>): Promise<string> {

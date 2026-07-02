@@ -16,7 +16,9 @@ export default function DogListPage({ toast }: Props) {
   const [showTransferred, setShowTransferred] = useState(false)
 
   useEffect(() => {
-    getDogs().then(setDogs).catch(() => toast('Failed to load dogs', 'error')).finally(() => setLoading(false))
+    getDogs()
+      .then(result => { setDogs(result); setLoading(false) })
+      .catch(() => { toast('Failed to load dogs', 'error'); setLoading(false) })
   }, [])
 
   const activeDogs = dogs.filter(d => (d as any).status !== 'transferred')
@@ -129,28 +131,24 @@ function DogCard({ dog }: { dog: Dog }) {
         onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'none' }}
       >
         {/* Photo banner */}
-        <div style={{
-          height: 100,
-          background: dog.profilePhoto
-            ? `url(${dog.profilePhoto}) center/cover`
-            : 'linear-gradient(135deg, var(--green-light), var(--sand))',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 44,
-          position: 'relative',
-        }}>
-          {!dog.profilePhoto && LIFE_STAGE_EMOJI[actualStage]}
-          {isTransferred && (
-            <div style={{
-              position: 'absolute', inset: 0,
-              background: 'rgba(255,255,255,0.5)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', background: 'rgba(255,255,255,0.9)', padding: '4px 10px', borderRadius: 20, border: '1px solid var(--border)' }}>
-                Transferred
-              </span>
-            </div>
-          )}
-        </div>
+        {dog.profilePhoto ? (
+          <div style={{ position: 'relative', height: 160, overflow: 'hidden' }}>
+            <img
+              src={dog.profilePhoto}
+              alt={dog.name}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block' }}
+            />
+            {isTransferred && (
+              <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', background: 'rgba(255,255,255,0.9)', padding: '4px 10px', borderRadius: 20, border: '1px solid var(--border)' }}>Transferred</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ height: 160, background: 'linear-gradient(135deg, var(--green-light), var(--sand))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 44 }}>
+            {LIFE_STAGE_EMOJI[actualStage]}
+          </div>
+        )}
 
         <div style={{ padding: '14px 16px' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -163,11 +161,28 @@ function DogCard({ dog }: { dog: Dog }) {
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ fontSize: 12, color: 'var(--light)' }}>{getDogAge(dog.dateOfBirth)}</div>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {isTransferred ? (
                 <span className="badge badge-gray" style={{ fontSize: 10 }}>→ {(dog as any).buyerName}</span>
               ) : (
                 <span className="badge badge-green" style={{ fontSize: 10 }}>QR ✓</span>
+              )}
+              {/* Pedigree Register badge */}
+              {(dog as any).pedigreeRegister === 'limited' && (
+                <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 20, background: '#FFF3E0', color: '#E65100', border: '1px solid #FFCC80' }}>🟠 Limited</span>
+              )}
+              {(dog as any).pedigreeRegister === 'mixed' && (
+                <span className="badge badge-gray" style={{ fontSize: 10 }}>Mixed</span>
+              )}
+              {(dog as any).pedigreeRegister === 'rescue' && (
+                <span className="badge badge-gray" style={{ fontSize: 10 }}>Rescue</span>
+              )}
+              {(dog as any).pedigreeRegister === 'no_pedigree' && (
+                <span className="badge badge-gray" style={{ fontSize: 10 }}>No papers</span>
+              )}
+              {/* Feature D: Breeder ID badge */}
+              {(dog as any).breederIdType && (dog as any).breederIdType !== 'NONE' && (dog as any).breederIdValue && (
+                <span className="badge badge-gold" style={{ fontSize: 10 }}>🏷️ {(dog as any).breederIdValue}</span>
               )}
               <span className="badge badge-gray" style={{ fontSize: 10 }}>
                 {LIFE_STAGE_EMOJI[actualStage]} {LIFE_STAGE_LABELS[actualStage]}

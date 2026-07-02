@@ -275,7 +275,7 @@ export const BREEDER_ID_CONFIG: Record<BreederIdType, { label: string; verifyUrl
 // Per spec Section 1.3: suggests a sensible default breederIdType based
 // on the breeder's registered state, since UserProfile.state already
 // exists. This is a convenience default only — the breeder can always
-// pick a different type (e.g. an interstate ANKC breeder using a
+// pick a different type (e.g. an interstate Dogs Australia breeder using a
 // different state's ID).
 export function suggestBreederIdType(breederState?: string): BreederIdType {
   switch (breederState) {

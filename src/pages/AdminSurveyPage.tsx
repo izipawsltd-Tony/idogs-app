@@ -156,7 +156,7 @@ export default function AdminSurveyPage({ toast }: Props) {
           { label: 'Pending review', value: stats.pending, color: 'var(--gold)' },
           { label: 'Code sent', value: stats.sent, color: 'var(--green)' },
           { label: 'NSW breeders', value: stats.nsw, color: '#085041' },
-          { label: 'ANKC registered', value: stats.ankc, color: '#1D9E75' },
+          { label: 'Dogs Australia registered', value: stats.ankc, color: '#1D9E75' },
         ].map(stat => (
           <div key={stat.label} style={{ background: 'var(--white)', borderRadius: 12, padding: '16px', border: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: stat.color }}>{stat.value}</div>
@@ -195,7 +195,7 @@ export default function AdminSurveyPage({ toast }: Props) {
                   <div style={{ fontSize: 12, color: 'var(--light)' }}>{r.email} · {r.state} · {r.dogCount} dogs · {r.litterCount} litters/yr</div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-                  {r.ankc === 'Yes' && <span style={{ fontSize: 11, background: 'var(--green-light)', color: 'var(--green)', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>ANKC</span>}
+                  {r.ankc === 'Yes' && <span style={{ fontSize: 11, background: 'var(--green-light)', color: 'var(--green)', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>Dogs Australia</span>}
                   <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 10, fontWeight: 600,
                     background: r.status === 'pending' ? 'var(--gold-light)' : r.status === 'code_sent' ? 'var(--green-light)' : 'var(--sand)',
                     color: r.status === 'pending' ? 'var(--gold)' : r.status === 'code_sent' ? 'var(--green)' : 'var(--mid)' }}>

@@ -1,9 +1,61 @@
 // api/send-email.js — Vercel serverless function
 // Sends email via Resend API
 
+// SECURITY FIX: this endpoint had no auth check at all — anyone could
+// POST here with any to_email/subject/message and the server would send
+// it from noreply@idogs.com.au using our Resend API key. Risk: phishing
+// emails sent under our domain (reputation damage, could get the domain
+// blacklisted), plus wasted Resend usage.
+//
+// This endpoint is called from two different places, so it accepts
+// EITHER of two auth methods:
+//   1. A Firebase ID token (Authorization: Bearer ...) — for
+//      user-triggered emails, e.g. sendTransferEmail() in lib/email.ts
+//      when a breeder transfers a dog to a buyer.
+//   2. The shared cron secret (x-cron-secret header) — for
+//      api/send-reminders.js, which runs as a scheduled job with no
+//      signed-in user, so it can't supply a Firebase ID token. Reuses
+//      the same CRON_SECRET already used to protect send-reminders.js
+//      itself, rather than introducing a new secret.
+
+import { initializeApp, getApps, cert } from 'firebase-admin/app'
+import { getAuth } from 'firebase-admin/auth'
+
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    }),
+  })
+}
+
+async function isAuthorized(req) {
+  const cronSecret = req.headers['x-cron-secret']
+  if (cronSecret && cronSecret === process.env.CRON_SECRET) {
+    return true
+  }
+
+  const authHeader = req.headers.authorization || ''
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!idToken) return false
+
+  try {
+    await getAuth().verifyIdToken(idToken)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  if (!(await isAuthorized(req))) {
+    return res.status(401).json({ error: 'Unauthorized' })
   }
 
   const { to_email, to_name, subject, message, action_url } = req.body

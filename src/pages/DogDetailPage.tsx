@@ -12,25 +12,59 @@ import {
 } from '../lib/db'
 import {
   formatDate, getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS,
-  getVaccineStatus, isOverdue, getTodaysMilestone, ordinal, BREEDER_ID_CONFIG, type Milestone
+  getVaccineStatus, isOverdue, isDueSoon, getTodaysMilestone, ordinal, BREEDER_ID_CONFIG, type Milestone
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
-import { doc, updateDoc } from 'firebase/firestore'
+import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
-type Tab = 'overview' | 'vaccines' | 'worming' | 'health' | 'reminders' | 'passport' | 'timeline' | 'scan' | 'documents'
+type Tab = 'overview' | 'vaccines' | 'worming' | 'health' | 'reminders' | 'passport' | 'timeline' | 'scan' | 'documents' | 'breeding'
+
+async function viewDocument(
+  user: { getIdToken: () => Promise<string> } | null | undefined,
+  toast: (msg: string, type?: ToastMessage['type']) => void,
+  path?: string | null,
+  legacyUrl?: string | null,
+) {
+  if (!path) {
+    if (legacyUrl) window.open(legacyUrl, '_blank', 'noopener,noreferrer')
+    return
+  }
+  if (!user) {
+    toast('Please sign in to view this document', 'error')
+    return
+  }
+  try {
+    const idToken = await user.getIdToken()
+    const response = await fetch('/api/get-signed-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ filePath: path }),
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      toast(err.error || 'Could not open document', 'error')
+      return
+    }
+    const { url } = await response.json()
+    window.open(url, '_blank', 'noopener,noreferrer')
+  } catch {
+    toast('Could not open document', 'error')
+  }
+}
 
 export default function DogDetailPage({ toast }: Props) {
   const { dogId } = useParams<{ dogId: string }>()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  const userState: string = (profile as any)?.state || 'SA'
   const [tab, setTab] = useState<Tab>('overview')
   const [dog, setDog] = useState<Dog | null>(null)
   const [vaccines, setVaccines] = useState<VaccineRecord[]>([])
@@ -111,14 +145,14 @@ export default function DogDetailPage({ toast }: Props) {
       if (notePhoto && user?.uid) {
         setUploadingNotePhoto(true)
         try {
-          const res = await fetch('/api/upload-note-photo', {
+          const idToken = await user.getIdToken()
+          const res = await fetch('/api/upload?type=note', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
             body: JSON.stringify({
               base64: notePhoto.base64,
               mediaType: notePhoto.mediaType,
               dogId,
-              userId: user.uid,
             }),
           })
           if (res.ok) {
@@ -180,6 +214,23 @@ export default function DogDetailPage({ toast }: Props) {
     if (result.vaccines && result.vaccines.length > 0) {
       for (const v of result.vaccines) {
         if (v.name) {
+          // FIX: vaccines had no duplicate-rescan guard at all (unlike
+          // health tests, which already check before saving) — re-scanning
+          // the same vaccine card silently created an exact duplicate
+          // record with no warning. Same logic as the health test guard:
+          // same name + same dateGiven is the strongest signal this is
+          // literally the same vaccination event being re-entered.
+          const possibleDuplicateVaccine = vaccines.find(existing =>
+            existing.name.trim().toLowerCase() === v.name.trim().toLowerCase() &&
+            existing.dateGiven === (v.dateGiven || '')
+          )
+          if (possibleDuplicateVaccine) {
+            const confirmed = window.confirm(
+              `This looks like a duplicate of an existing "${v.name}" vaccine given on ${v.dateGiven || 'the same date'}.\n\nAdd it anyway? If you're trying to fix a wrong date, cancel this and use Edit on the existing record instead.`
+            )
+            if (!confirmed) continue
+          }
+
           await addVaccineRecord({
             dogId,
             name: v.name,
@@ -338,39 +389,8 @@ export default function DogDetailPage({ toast }: Props) {
     else if (vaccineCount > 0) setTab('vaccines')
   }
 
-  // Documents are now stored privately (see upload-document.js) — viewing
-  // one requires fetching a short-lived signed URL from the server, which
-  // also checks the requester actually owns/breeds this dog. Old records
-  // that only have a legacy public `documentUrl`/`fileUrl` (from before
-  // this change) still open directly, since those files are already
-  // public and there's no path to sign.
-  async function viewDocument(path?: string | null, legacyUrl?: string | null) {
-    if (!path) {
-      if (legacyUrl) window.open(legacyUrl, '_blank', 'noopener,noreferrer')
-      return
-    }
-    if (!user) {
-      toast('Please sign in to view this document', 'error')
-      return
-    }
-    try {
-      const idToken = await user.getIdToken()
-      const response = await fetch('/api/get-signed-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ filePath: path }),
-      })
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}))
-        toast(err.error || 'Could not open document', 'error')
-        return
-      }
-      const { url } = await response.json()
-      window.open(url, '_blank', 'noopener,noreferrer')
-    } catch {
-      toast('Could not open document', 'error')
-    }
-  }
+  const viewDoc = (path?: string | null, legacyUrl?: string | null) =>
+    viewDocument(user, toast, path, legacyUrl)
 
   async function handleTransfer(buyerName: string, buyerEmail: string) {
     if (!dogId || !dog) return
@@ -407,8 +427,31 @@ export default function DogDetailPage({ toast }: Props) {
   if (!dog) return null
 
   const publicUrl = `${window.location.origin}/p/${dog.passportId}`
-  const latestVaccine = vaccines[0]
-  const vaccStatus = getVaccineStatus(latestVaccine?.nextDue)
+
+  // Only consider the latest record per vaccine group for the header status.
+  // A record is "superseded" if a newer dose of the same type was given —
+  // same logic as the VaccinesTab isLatestOfItsName function.
+  const groupKeyHeader = (name: string) => {
+    const n = name.trim().toLowerCase()
+    return /\bc[3-5]\b/.test(n) ? '__core_combo__' : n
+  }
+  const latestByNameHeader: Record<string, VaccineRecord> = {}
+  for (const v of vaccines) {
+    const key = groupKeyHeader(v.name)
+    const current = latestByNameHeader[key]
+    if (!current || v.dateGiven > current.dateGiven) {
+      latestByNameHeader[key] = v
+    }
+  }
+  const activeVaccines = Object.values(latestByNameHeader)
+  // Pick the worst status across all active (non-superseded) vaccines
+  const vaccStatus = (() => {
+    if (activeVaccines.length === 0) return 'unknown' as const
+    if (activeVaccines.some(v => v.nextDue && isOverdue(v.nextDue))) return 'overdue' as const
+    if (activeVaccines.some(v => v.nextDue && isDueSoon(v.nextDue))) return 'due_soon' as const
+    if (activeVaccines.every(v => !v.nextDue)) return 'unknown' as const
+    return 'current' as const
+  })()
   const overdueReminders = reminders.filter(r => r.status === 'overdue' || (r.status === 'pending' && isOverdue(r.dueDate)))
   const isTransferred = (dog as any).status === 'transferred' && (dog as any).buyerEmail
   const todaysMilestone = getTodaysMilestone(dog.dateOfBirth, dog.createdAt)
@@ -423,6 +466,7 @@ export default function DogDetailPage({ toast }: Props) {
     { id: 'passport', label: 'QR Passport' },
     { id: 'timeline', label: 'Timeline' },
     { id: 'documents', label: `📄 Documents (${documents.length})` },
+    ...(dog.sex === 'female' ? [{ id: 'breeding' as Tab, label: '🌸 Breeding' }] : []),
   ]
 
   return (
@@ -523,7 +567,7 @@ export default function DogDetailPage({ toast }: Props) {
         <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} onViewDoc={viewDocument} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} />}
@@ -534,19 +578,27 @@ export default function DogDetailPage({ toast }: Props) {
           <AIScan onResult={handleScanResult} toast={toast} dogId={dog.id} tenantId={user?.uid} />
         </div>
       )}
-      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDocument} />}
+      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} />}
       {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} />}
-      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} onViewDoc={viewDocument} />}
+      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} />}
       {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} />}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} toast={toast} />}
-      {tab === 'documents' && <DocumentsTab documents={documents} dogName={dog.name} onViewDoc={viewDocument} />}
-      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} />}
+      {tab === 'documents' && <DocumentsTab documents={documents} dogName={dog.name} toast={toast} />}
+      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} />}
+
+      {tab === 'breeding' && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
+        await updateDog(dogId!, updates)
+        setDog(prev => prev ? { ...prev, ...updates } : prev)
+        toast('Breeding record updated')
+      }} toast={toast} />}
 
       {/* Transfer Ownership Modal */}
       {showTransfer && dog && (
         <TransferModal
           dogName={dog.name}
           dogBreed={dog.breed}
+          breederIdType={dog.breederIdType}
+          breederIdValue={dog.breederIdValue}
           onClose={() => setShowTransfer(false)}
           onTransfer={handleTransfer}
         />
@@ -560,11 +612,15 @@ export default function DogDetailPage({ toast }: Props) {
 function TransferModal({
   dogName,
   dogBreed,
+  breederIdType,
+  breederIdValue,
   onClose,
   onTransfer,
 }: {
   dogName: string
   dogBreed: string
+  breederIdType?: Dog['breederIdType']
+  breederIdValue?: string
   onClose: () => void
   onTransfer: (name: string, email: string) => Promise<void>
 }) {
@@ -619,6 +675,15 @@ function TransferModal({
             <div>
               <div style={{ fontWeight: 600, color: 'var(--dark)' }}>{dogName}</div>
               <div style={{ fontSize: '0.85rem', color: 'var(--mid)' }}>{dogBreed}</div>
+              {/* Feature C: Breeder ID in Transfer modal */}
+              {breederIdType && breederIdType !== 'NONE' && breederIdValue && (
+                <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ fontSize: 11 }}>🏷️</span>
+                  <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 500 }}>
+                    {BREEDER_ID_CONFIG[breederIdType]?.label}: {breederIdValue}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -685,12 +750,12 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, onUpdateBreederId, onViewDoc }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, onUpdateBreederId }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number
   toast: (msg: string, type?: ToastMessage['type']) => void
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
-  onViewDoc: (path?: string | null, url?: string | null) => void
 }) {
+  const { user } = useAuth()
   const [editingBreederId, setEditingBreederId] = useState(false)
   const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
   const [breederIdValue, setBreederIdValue] = useState(dog.breederIdValue || '')
@@ -722,7 +787,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
             <span style={{ color: 'var(--light)' }}>Microchip cert</span>
             <button
-              onClick={() => onViewDoc((dog as any).microchipCertPath, (dog as any).microchipCertUrl)}
+              onClick={() => viewDocument(user, toast, (dog as any).microchipCertPath, (dog as any).microchipCertUrl)}
               style={{ color: 'var(--green)', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13 }}
             >
               📄 View cert
@@ -730,6 +795,48 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
           </div>
         )}
         <InfoRow label="Dogs Australia Registration" value={dog.ankc || '—'} />
+        {/* Pedigree Register */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', gap: 8 }}>
+          <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Pedigree / Registration</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {(dog as any).pedigreeRegister === 'limited' ? (
+              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: '#FFF3E0', color: '#E65100', border: '1px solid #FFCC80' }}>
+                🟠 Limited — not eligible to breed
+              </span>
+            ) : (dog as any).pedigreeRegister === 'no_pedigree' ? (
+              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
+                No pedigree (purebred)
+              </span>
+            ) : (dog as any).pedigreeRegister === 'mixed' ? (
+              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
+                Mixed breed
+              </span>
+            ) : (dog as any).pedigreeRegister === 'rescue' ? (
+              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
+                Rescue / unknown
+              </span>
+            ) : (
+              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', border: '1px solid rgba(8,80,65,0.15)' }}>
+                🔵 Main Register — eligible to breed
+              </span>
+            )}
+            <select
+              className="form-select"
+              value={(dog as any).pedigreeRegister || 'main'}
+              onChange={async e => {
+                await updateDog(dog.id, { pedigreeRegister: e.target.value } as any)
+                toast('Pedigree status updated')
+              }}
+              style={{ height: 28, fontSize: 12, padding: '0 28px 0 8px', minWidth: 100 }}
+            >
+              <option value="main">🔵 Main</option>
+              <option value="limited">🟠 Limited</option>
+              <option value="no_pedigree">No pedigree</option>
+              <option value="mixed">Mixed breed</option>
+              <option value="rescue">Rescue</option>
+            </select>
+          </div>
+        </div>
         {editingBreederId ? (
           <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
             <label style={{ fontSize: 12, color: 'var(--light)', display: 'block', marginBottom: 4 }}>Breeder ID type</label>
@@ -830,7 +937,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
   setVaccines: (v: VaccineRecord[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
   documents: any[]
-  onViewDoc: (path?: string | null, url?: string | null) => void
+  onViewDoc: (path?: string | null, legacyUrl?: string | null) => void
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
@@ -968,13 +1075,29 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {(() => {
-            // Determine the most recent record per vaccine name (by dateGiven).
-            // Only the latest record of each name is eligible to show as Overdue —
-            // older records that have since been superseded by a newer dose are
-            // shown as a plain history entry instead.
+            // Determine the most recent record per vaccine "family" (by
+            // dateGiven). Core combo vaccines (C3/C4/C5 — e.g. "Protech
+            // C3", "Nobivac C4") are grouped together regardless of
+            // valency, since a later dose of any of these supersedes an
+            // earlier one in practice (the breeder gave a newer core
+            // shot, whatever its exact valency). Non-core vaccines (e.g.
+            // Kennel Cough, Rabies) are still grouped strictly by exact
+            // name, since those are genuinely separate vaccination
+            // schedules that shouldn't be conflated.
+            //
+            // Only the latest record of each group is eligible to show
+            // as Overdue — older records that have since been
+            // superseded by a newer dose are shown as a plain history
+            // entry instead. Comparing dateGiven directly (not entry
+            // order) means this stays correct even if records were
+            // added/corrected out of chronological order.
+            const groupKey = (name: string) => {
+              const n = name.trim().toLowerCase()
+              return /\bc[3-5]\b/.test(n) ? '__core_combo__' : n
+            }
             const latestByName: Record<string, string> = {}
             for (const v of vaccines) {
-              const key = v.name.trim().toLowerCase()
+              const key = groupKey(v.name)
               const current = latestByName[key]
               if (!current) { latestByName[key] = v.id; continue }
               const currentRecord = vaccines.find(x => x.id === current)
@@ -982,7 +1105,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
                 latestByName[key] = v.id
               }
             }
-            const isLatestOfItsName = (v: VaccineRecord) => latestByName[v.name.trim().toLowerCase()] === v.id
+            const isLatestOfItsName = (v: VaccineRecord) => latestByName[groupKey(v.name)] === v.id
 
             return vaccines.map((v, i) => {
               if (editingId === v.id) {
@@ -1025,7 +1148,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>
                       {v.name}
-                      {v.uncertain && <span style={{ fontSize: 11, color: 'var(--gold)', marginLeft: 6, fontWeight: 600 }}>⚠ Date uncertain — please verify</span>}
+                      {v.uncertain && <span style={{ fontSize: 11, color: 'var(--gold)', marginLeft: 6, fontWeight: 600 }}>⚠ Unclear from scan — please verify</span>}
                     </div>
                     <div style={{ fontSize: 12, color: v.uncertain ? 'var(--gold)' : 'var(--light)', fontWeight: v.uncertain ? 600 : 400 }}>
                       Given: {formatDate(v.dateGiven)}{v.nextDue ? ` · Due: ${formatDate(v.nextDue)}` : ''}{v.vetClinic ? ` · ${v.vetClinic}` : ''}
@@ -1199,7 +1322,7 @@ function formatHealthResult(result: unknown): string {
   return ''
 }
 
-function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast, onViewDoc }: {
+function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast }: {
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -1207,8 +1330,8 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
   healthTests: HealthTest[];
   setHealthTests: (h: HealthTest[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
-  onViewDoc: (path?: string | null, url?: string | null) => void
 }) {
+  const { user } = useAuth()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ testType: 'hip', result: '', dateTested: '', lab: '', certNumber: '' })
   const [saving, setSaving] = useState(false)
@@ -1420,7 +1543,7 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
                 <span className="badge badge-green">Verified</span>
                 {((h as any).documentPath || (h as any).documentUrl) && (
                   <button
-                    onClick={() => onViewDoc((h as any).documentPath, (h as any).documentUrl)}
+                    onClick={() => viewDocument(user, toast, (h as any).documentPath, (h as any).documentUrl)}
                     className="btn btn-secondary btn-sm"
                     style={{ padding: '4px 10px', fontSize: 12 }}
                   >
@@ -1498,6 +1621,24 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginBottom: 14 }}>{dog.breed} · {getDogAge(dog.dateOfBirth)}</div>
           {qrUrl && <div style={{ background: '#fff', borderRadius: 10, padding: 10, marginBottom: 10 }}><img src={qrUrl} alt="QR" style={{ width: '100%' }} /></div>}
           <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textAlign: 'center' }}>Scan with any phone camera</div>
+          {/* Feature B: Breeder ID banner in QR Passport card */}
+          {dog.breederIdType && dog.breederIdType !== 'NONE' && dog.breederIdValue && (
+            <div style={{
+              marginTop: 10, padding: '6px 10px', borderRadius: 8,
+              background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ fontSize: 12 }}>🏷️</span>
+              <div>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', letterSpacing: '.06em', textTransform: 'uppercase' }}>
+                  {BREEDER_ID_CONFIG[dog.breederIdType]?.label}
+                </div>
+                <div style={{ fontSize: 11, color: '#fff', fontWeight: 600, letterSpacing: '.02em' }}>
+                  {dog.breederIdValue}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button className="btn btn-primary btn-sm" onClick={downloadQR} style={{ width: '100%' }}>⬇ Download QR PNG</button>
@@ -1526,7 +1667,8 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
 
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
-function DocumentsTab({ documents, dogName, onViewDoc }: { documents: any[]; dogName: string; onViewDoc: (path?: string | null, url?: string | null) => void }) {
+function DocumentsTab({ documents, dogName, toast }: { documents: any[]; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void }) {
+  const { user } = useAuth()
   function getDocIcon(type: string) {
     if (type === 'vaccine_card') return '💉'
     if (type === 'health_test') return '🔬'
@@ -1589,7 +1731,7 @@ function DocumentsTab({ documents, dogName, onViewDoc }: { documents: any[]; dog
                 )}
               </div>
               <button
-                onClick={() => onViewDoc((doc as any).filePath, doc.fileUrl)}
+                onClick={() => viewDocument(user, toast, (doc as any).filePath, doc.fileUrl)}
                 className="btn btn-secondary btn-sm"
               >
                 View ↗
@@ -1715,14 +1857,15 @@ const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
   note: 'var(--green)',
 }
 
-function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto }: {
+function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast }: {
   dog: Dog; notes: ActivityNote[]; newNote: string; setNewNote: (v: string) => void;
   newNoteDate: string; setNewNoteDate: (v: string) => void;
   onAddNote: () => void; saving: boolean;
   vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; lifeStageEvents: AuditEntry[];
   notePhoto: { base64: string; mediaType: string; preview: string } | null;
   setNotePhoto: (p: { base64: string; mediaType: string; preview: string } | null) => void;
-  uploadingNotePhoto: boolean
+  uploadingNotePhoto: boolean;
+  toast: (msg: string, type?: ToastMessage['type']) => void
 }) {
   const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
 
@@ -1734,7 +1877,17 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   // anything slightly larger. Resizing down to a max dimension and
   // re-encoding as JPEG at a reasonable quality keeps note photos small
   // without a visible quality loss at the sizes they're displayed.
-  function resizeImage(file: File, maxDimension = 1600, quality = 0.82): Promise<{ base64: string; mediaType: string; preview: string }> {
+  // FIX (same as PhotoUpload.tsx): iPhone .heic/.heif photos can't be
+  // decoded by <img> in Chrome/Firefox/Edge — img.onload never fires, so
+  // without this check the old fallback below would silently send raw
+  // unusable HEIC bytes to the server instead of failing clearly.
+  function isHeic(file: File): boolean {
+    const type = file.type.toLowerCase()
+    const name = file.name.toLowerCase()
+    return type === 'image/heic' || type === 'image/heif' || name.endsWith('.heic') || name.endsWith('.heif')
+  }
+
+  function resizeImage(file: File | Blob, maxDimension = 1600, quality = 0.82): Promise<{ base64: string; mediaType: string; preview: string }> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => {
@@ -1770,13 +1923,27 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   async function handlePhotoSelect(e: { target: { files: FileList | null } }) {
     const file = e.target.files?.[0]
     if (!file) return
+
+    if (isHeic(file)) {
+      // Send raw HEIC to server \u2014 sharp handles conversion server-side
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        setNotePhoto({ base64: result.split(',')[1], mediaType: file.type || 'image/heic', preview: result })
+      }
+      reader.readAsDataURL(file)
+      return
+    }
+
     try {
       const resized = await resizeImage(file)
       setNotePhoto(resized)
     } catch {
       // Fall back to the original unresized file rather than silently
       // failing — better to attempt the original upload than block the
-      // user entirely if canvas resizing fails for some reason.
+      // user entirely if canvas resizing fails for some reason. (HEIC is
+      // already handled above by this point, so this fallback is only
+      // for non-HEIC formats the canvas couldn't process.)
       const reader = new FileReader()
       reader.onload = () => {
         const result = reader.result as string
@@ -1871,6 +2038,818 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── BREEDING TAB ─────────────────────────────────────────────
+// Dogs SA / Dogs Australia compliance rules for SA breeders:
+// • Min age 12 months before first mating (Dogs SA Code of Ethics + SA Standards)
+// • Max 2 litters in any 18-month period (Dogs Australia Reg 8.2 / Dogs SA)
+// • Max 5 litters lifetime (SA breeder licensing scheme 2026)
+// • Max breeding age 8 years (vet certificate required, Dogs SA)
+// • Large breeds recommended min 18 months / heat 2-3 before first mating
+// • Heat cycle: avg every 6 months (4-12 months depending on breed/size)
+
+const LARGE_BREEDS_LIST = [
+  'Labrador Retriever','Golden Retriever','German Shepherd','Rottweiler',
+  'Bernese Mountain Dog','Great Dane','Irish Wolfhound','St Bernard',
+  'Alaskan Malamute','Newfoundland','Leonberger','Dobermann',
+  'Weimaraner','Vizsla','Rhodesian Ridgeback','Boxer','Dalmatian',
+  'Standard Poodle','Afghan Hound','Greyhound','Bloodhound',
+]
+const GIANT_BREEDS_LIST = [
+  'Great Dane','Irish Wolfhound','St Bernard','Alaskan Malamute',
+  'Newfoundland','Leonberger','Mastiff','Bullmastiff','Tibetan Mastiff',
+]
+const SMALL_BREEDS_LIST = [
+  'Chihuahua','Pomeranian','Maltese','Yorkshire Terrier','Toy Poodle',
+  'Shih Tzu','Cavalier King Charles Spaniel','Pug','French Bulldog',
+  'Boston Terrier','Papillon','Miniature Pinscher',
+]
+
+function getBreedSize(breed: string): 'small' | 'medium' | 'large' | 'giant' {
+  if (GIANT_BREEDS_LIST.includes(breed)) return 'giant'
+  if (LARGE_BREEDS_LIST.includes(breed)) return 'large'
+  if (SMALL_BREEDS_LIST.includes(breed)) return 'small'
+  return 'medium'
+}
+function getHeatIntervalMonths(breed: string): number {
+  const s = getBreedSize(breed)
+  if (s === 'giant') return 10
+  if (s === 'large') return 7
+  if (s === 'small') return 5
+  return 6
+}
+function getFirstHeatMonths(breed: string): number {
+  const s = getBreedSize(breed)
+  if (s === 'giant') return 18
+  if (s === 'large') return 10
+  if (s === 'small') return 6
+  return 8
+}
+function addMonths(date: Date, months: number): Date {
+  const d = new Date(date)
+  d.setMonth(d.getMonth() + months)
+  return d
+}
+function fmtDate(date: Date): string {
+  return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+function ageAtDate(dob: string, date: Date): string {
+  const birth = new Date(dob)
+  const mo = (date.getFullYear() - birth.getFullYear()) * 12 + (date.getMonth() - birth.getMonth())
+  if (mo < 12) return `${mo} months`
+  const y = Math.floor(mo / 12); const r = mo % 12
+  return r > 0 ? `${y}yr ${r}mo` : `${y} years`
+}
+
+
+// ── BREEDING COMPLIANCE RULES BY STATE ───────────────────────
+interface StateRules {
+  stateName: string
+  minBreedingMonths: number
+  minBreedingMonthsLarge: number
+  maxLifetimeLitters: number
+  maxLittersIn18Months: number
+  maxCsections: number | null
+  csectionVetRequired: number | null
+  maxAgeYears: number
+  vetCertAfterAge: number
+  requiresBIN: boolean
+  notes: string
+  sourceUrl: string
+  sourceName: string
+}
+
+const STATE_RULES: Record<string, StateRules> = {
+  SA:  { stateName: 'South Australia',          minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs SA membership (DACO) required. No specific C-section limit under SA law.', sourceUrl: 'https://www.dogssa.com.au/about/policies/dogs-sa-code-of-ethics-for-members-part-xv-codes/', sourceName: 'Dogs SA Code of Ethics' },
+  NSW: { stateName: 'New South Wales',           minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 999, maxCsections: 3,    csectionVetRequired: 2,    maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: true,  notes: 'BIN mandatory from 1 Dec 2025. Max 5 litters OR 3 C-sections lifetime, whichever first. Vet cert required before 3rd C-section pregnancy.', sourceUrl: 'https://www.olg.nsw.gov.au/pets/nsw-pet-registry/breeders/changes-dog-breeding-laws', sourceName: 'NSW Prevention of Cruelty to Animals Act 1979 (amended 2024)' },
+  VIC: { stateName: 'Victoria',                  minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Victoria AO status: up to 10 fertile females. PER source number required for all ads.', sourceUrl: 'https://dogsvictoria.org.au/media/6000/dv-code-of-practice-effective-150224.pdf', sourceName: 'Dogs Victoria Code of Practice' },
+  QLD: { stateName: 'Queensland',                minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Register as breeder within 28 days of litter. Supply number required for all ads.', sourceUrl: 'https://www.business.qld.gov.au/industries/farms-fishing-forestry/agriculture/animal/industries/dogs', sourceName: 'Animal Care and Protection Act 2001 (QLD)' },
+  WA:  { stateName: 'Western Australia',         minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 999, maxCsections: null, csectionVetRequired: null, maxAgeYears: 7, vetCertAfterAge: 7, requiresBIN: false, notes: 'WA: max breeding age 7 years (stricter than other states). Dogs West (CAWA) membership required.', sourceUrl: 'https://www.dogswest.com', sourceName: 'CAWA H Regulations + Animal Welfare Act 2002 (WA)' },
+  ACT: { stateName: 'Australian Capital Territory', minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2, maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Australia rules apply via Dogs ACT.', sourceUrl: 'https://www.dogsact.org.au', sourceName: 'Dogs Australia + Animal Welfare Act 1992 (ACT)' },
+  NT:  { stateName: 'Northern Territory',        minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Australia rules apply via Dogs NT.', sourceUrl: 'https://www.dogsnt.com.au', sourceName: 'Dogs Australia + Animal Welfare Act 1999 (NT)' },
+  TAS: { stateName: 'Tasmania',                  minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Australia rules apply via Dogs Tasmania.', sourceUrl: 'https://www.dogstasmania.com.au', sourceName: 'Dogs Australia + Animal Welfare Act 1993 (TAS)' },
+}
+
+// Mating methods taxonomy
+const MATING_METHODS = [
+  { value: 'natural',           label: 'Natural mating (supervised)',   group: 'Natural' },
+  { value: 'natural_unsup',     label: 'Natural mating (unsupervised)', group: 'Natural' },
+  { value: 'vaginal_ai_fresh',  label: 'Vaginal AI — Fresh semen',      group: 'AI' },
+  { value: 'vaginal_ai_chilled',label: 'Vaginal AI — Fresh-chilled',    group: 'AI' },
+  { value: 'tci_fresh',         label: 'TCI — Fresh semen',             group: 'TCI' },
+  { value: 'tci_chilled',       label: 'TCI — Fresh-chilled semen',     group: 'TCI' },
+  { value: 'tci_frozen',        label: 'TCI — Frozen-thawed semen',     group: 'TCI' },
+  { value: 'other',             label: 'Other',                         group: 'Other' },
+]
+
+const WHELPING_METHODS = [
+  { value: 'natural',            label: 'Natural whelp' },
+  { value: 'assisted',           label: 'Assisted whelp' },
+  { value: 'csection_elective',  label: 'C-section (elective)' },
+  { value: 'csection_emergency', label: 'C-section (emergency)' },
+]
+
+interface HeatCycle {
+  id?: string
+  heatNumber: number
+  heatStartDate: string
+  heatEndDate?: string
+  // Mating
+  matingDate?: string
+  matingMethod?: string
+  semenType?: string
+  sireName?: string
+  sireReg?: string
+  sireId?: string
+  sirePedigreeRegister?: string
+  vetClinic?: string
+  progesteroneTested?: boolean
+  // Pregnancy
+  pregnancyConfirmed?: boolean
+  ultrasoundDate?: string
+  whelpingEstimate?: string
+  whelpingActual?: string
+  whelpingMethod?: string
+  // Litter outcome
+  puppiesBorn?: number
+  puppiesAlive?: number
+  notes?: string
+  createdAt?: string
+}
+
+function calcWhelpingEstimate(matingDate: string): string {
+  if (!matingDate) return ''
+  const d = new Date(matingDate)
+  d.setDate(d.getDate() + 63)
+  return d.toISOString().split('T')[0]
+}
+
+function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
+  dog: Dog
+  dogId: string
+  userState: string
+  onUpdate: (updates: Partial<Dog>) => Promise<void>
+  toast: (msg: string, type?: ToastMessage['type']) => void
+}) {
+  const [selectedState, setSelectedState] = useState(userState)
+  const [heatCycles, setHeatCycles] = useState<HeatCycle[]>([])
+  const [loadingCycles, setLoadingCycles] = useState(true)
+  const [showAddHeat, setShowAddHeat] = useState(false)
+  const [editingCycle, setEditingCycle] = useState<HeatCycle | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [allDogs, setAllDogs] = useState<Dog[]>([])
+
+  // Litter record state
+  const [litterCount, setLitterCount] = useState<number>((dog as any).litterCount ?? 0)
+  const [last18mLitters, setLast18mLitters] = useState<number>((dog as any).last18mLitters ?? 0)
+  const [cSectionCount, setCSectionCount] = useState<number>((dog as any).cSectionCount ?? 0)
+  const [lastLitterDate, setLastLitterDate] = useState((dog as any).lastLitterDate || '')
+  const [editingLitters, setEditingLitters] = useState(false)
+
+  // Heat predictor state
+  const [firstHeatDate, setFirstHeatDate] = useState((dog as any).firstHeatDate || '')
+  const [editingHeat, setEditingHeat] = useState(false)
+
+  const rules = STATE_RULES[selectedState] || STATE_RULES['SA']
+  const breedSize = getBreedSize(dog.breed)
+  const heatInterval = getHeatIntervalMonths(dog.breed)
+  const firstHeatMo = getFirstHeatMonths(dog.breed)
+  const dob = dog.dateOfBirth ? new Date(dog.dateOfBirth) : null
+  const today = new Date()
+  const ageMo = dob ? (today.getFullYear() - dob.getFullYear()) * 12 + (today.getMonth() - dob.getMonth()) : 0
+  const ageYrs = ageMo / 12
+
+  // Load heat cycles and all dogs from Firestore
+  useEffect(() => {
+    if (!dogId) return
+    async function load() {
+      try {
+        const [cyclesSnap, dogsData] = await Promise.all([
+          getDocs(query(collection(db, 'heatCycles'), where('dogId', '==', dogId))),
+          getDocs(query(collection(db, 'dogs'), where('tenantId', '==', dog.tenantId))),
+        ])
+        const cycles = cyclesSnap.docs.map(d => ({ id: d.id, ...d.data() } as HeatCycle))
+        cycles.sort((a, b) => a.heatNumber - b.heatNumber)
+        setHeatCycles(cycles)
+        setAllDogs(dogsData.docs.map(d => ({ id: d.id, ...d.data() } as Dog)))
+      } catch (e) {
+        console.error('Failed to load heat cycles:', e)
+      } finally {
+        setLoadingCycles(false)
+      }
+    }
+    load()
+  }, [dogId])
+
+  // Predicted heats from DOB
+  const predictedHeats: { n: number; date: Date; label: string }[] = []
+  if (dob) {
+    const anchor = firstHeatDate ? new Date(firstHeatDate) : addMonths(dob, firstHeatMo)
+    for (let i = 0; i < 6; i++) {
+      predictedHeats.push({
+        n: i + 1,
+        date: addMonths(anchor, heatInterval * i),
+        label: i === 0 ? (firstHeatDate ? 'Heat 1 (actual)' : 'Heat 1 (estimated)') : `Heat ${i + 1} (estimated)`,
+      })
+    }
+  }
+
+  function heatCompliance(ageAtHeatMo: number) {
+    const minAge = (breedSize === 'large' || breedSize === 'giant') ? rules.minBreedingMonthsLarge : rules.minBreedingMonths
+    if (ageAtHeatMo < rules.minBreedingMonths) return { status: 'blocked', msg: `❌ Under ${rules.minBreedingMonths}mo`, color: 'var(--error)' }
+    if (ageAtHeatMo < minAge) return { status: 'caution', msg: `⚠️ Under ${minAge}mo (${breedSize})`, color: 'var(--gold)' }
+    if (ageAtHeatMo >= rules.vetCertAfterAge * 12) return { status: 'warn', msg: `⚠️ Vet cert required`, color: 'var(--gold)' }
+    return { status: 'ok', msg: '✓ Eligible', color: 'var(--green)' }
+  }
+
+  // Compliance summary
+  const isUnder12 = ageMo < rules.minBreedingMonths
+  const minForBreed = (breedSize === 'large' || breedSize === 'giant') ? rules.minBreedingMonthsLarge : rules.minBreedingMonths
+  const isOver = ageYrs >= rules.maxAgeYears
+  const littersOk = litterCount < rules.maxLifetimeLitters
+  const last18Ok = rules.maxLittersIn18Months === 999 || last18mLitters < rules.maxLittersIn18Months
+  const csectionOk = rules.maxCsections === null || cSectionCount < rules.maxCsections
+  const csectionVetNeeded = rules.csectionVetRequired !== null && cSectionCount >= rules.csectionVetRequired
+  const isLimitedRegister = (dog as any).pedigreeRegister === 'limited'
+  const isNoPedigree = ['no_pedigree', 'mixed', 'rescue'].includes((dog as any).pedigreeRegister || '')
+  const overallOk = !isUnder12 && !isOver && littersOk && last18Ok && csectionOk && !isLimitedRegister && !isNoPedigree
+  const overallMsg = isNoPedigree ? `ℹ️ No Dogs Australia pedigree — cannot register litters with Dogs Australia`
+    : isLimitedRegister ? '❌ Limited Register — not eligible to breed under Dogs Australia rules'
+    : isUnder12 ? `❌ Not eligible — under ${rules.minBreedingMonths} months`
+    : isOver ? `⚠️ Over ${rules.maxAgeYears} years — vet certificate required`
+    : !littersOk ? `❌ Lifetime litter limit reached (${rules.maxLifetimeLitters} max)`
+    : !csectionOk ? `❌ C-section limit reached (${rules.maxCsections} max)`
+    : !last18Ok ? `❌ ${rules.maxLittersIn18Months} litters already in last 18 months`
+    : csectionVetNeeded ? `⚠️ Vet certificate required before next C-section pregnancy`
+    : ageMo < minForBreed ? `⚠️ Eligible but ${breedSize} breed — recommended wait until ${minForBreed} months`
+    : '✓ Currently eligible to breed'
+
+  async function saveLitters() {
+    setSaving(true)
+    try {
+      await onUpdate({ litterCount, last18mLitters, lastLitterDate, cSectionCount } as any)
+      setEditingLitters(false)
+    } finally { setSaving(false) }
+  }
+
+  async function saveFirstHeat() {
+    setSaving(true)
+    try { await onUpdate({ firstHeatDate } as any); setEditingHeat(false) }
+    finally { setSaving(false) }
+  }
+
+  async function saveHeatCycle(cycle: HeatCycle) {
+    setSaving(true)
+    try {
+      const data = { ...cycle, dogId, tenantId: dog.tenantId, updatedAt: new Date().toISOString() }
+      if (cycle.id) {
+        await updateDoc(doc(db, 'heatCycles', cycle.id), data)
+        setHeatCycles(prev => prev.map(c => c.id === cycle.id ? { ...data, id: cycle.id } : c))
+      } else {
+        data.createdAt = new Date().toISOString()
+        const ref = await addDoc(collection(db, 'heatCycles'), data)
+        setHeatCycles(prev => [...prev, { ...data, id: ref.id }].sort((a, b) => a.heatNumber - b.heatNumber))
+        // Update firstHeatDate if this is heat 1
+        if (cycle.heatNumber === 1 && cycle.heatStartDate && !firstHeatDate) {
+          await onUpdate({ firstHeatDate: cycle.heatStartDate } as any)
+          setFirstHeatDate(cycle.heatStartDate)
+        }
+      }
+      // Auto-update litter count if whelping recorded
+      if (cycle.whelpingActual && cycle.whelpingMethod) {
+        const isCS = cycle.whelpingMethod?.startsWith('csection')
+        const newLitterCount = heatCycles.filter(c => c.whelpingActual && c.id !== cycle.id).length + 1
+        const newCS = heatCycles.filter(c => c.whelpingMethod?.startsWith('csection') && c.id !== cycle.id).length + (isCS ? 1 : 0)
+        await onUpdate({ litterCount: newLitterCount, cSectionCount: newCS, lastLitterDate: cycle.whelpingActual } as any)
+        setLitterCount(newLitterCount)
+        setCSectionCount(newCS)
+        setLastLitterDate(cycle.whelpingActual)
+      }
+      setEditingCycle(null)
+      setShowAddHeat(false)
+      toast('Heat cycle saved', 'success')
+    } catch (e) {
+      console.error(e)
+      toast('Failed to save', 'error')
+    } finally { setSaving(false) }
+  }
+
+  async function deleteHeatCycle(id: string) {
+    if (!confirm('Delete this heat cycle record?')) return
+    try {
+      await deleteDoc(doc(db, 'heatCycles', id))
+      setHeatCycles(prev => prev.filter(c => c.id !== id))
+      toast('Deleted', 'success')
+    } catch { toast('Failed to delete', 'error') }
+  }
+
+  const rulesTable = [
+    { rule: 'Pedigree / Registration', value: (dog as any).pedigreeRegister === 'limited' ? '🟠 Limited Register — not eligible to breed' : (dog as any).pedigreeRegister === 'no_pedigree' ? 'No pedigree (purebred without papers)' : (dog as any).pedigreeRegister === 'mixed' ? 'Mixed breed' : (dog as any).pedigreeRegister === 'rescue' ? 'Rescue / unknown' : '🔵 Main Register — eligible to breed', source: 'Dogs Australia Regulations Part 6', st: isLimitedRegister ? 'fail' : isNoPedigree ? 'info' : 'ok' },
+    { rule: 'Minimum breeding age',              value: `${rules.minBreedingMonths} months`,      st: !isUnder12 ? 'ok' : 'fail' },
+    { rule: `Recommended min age (${breedSize})`,value: `${minForBreed} months`,                 st: ageMo >= minForBreed ? 'ok' : 'warn' },
+    { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No specific rule' : `${rules.maxLittersIn18Months} litters`, st: last18Ok ? 'ok' : 'fail' },
+    { rule: 'Max litters in lifetime',           value: `${rules.maxLifetimeLitters} litters`,    st: littersOk ? 'ok' : 'fail' },
+    ...(rules.maxCsections !== null ? [
+      { rule: 'Max C-section litters',           value: `${rules.maxCsections} C-sections`,       st: csectionOk ? 'ok' : 'fail' },
+      { rule: 'Vet cert before C-section',       value: `After ${rules.csectionVetRequired} C-sections`, st: !csectionVetNeeded ? 'ok' : 'warn' },
+    ] : [{ rule: 'C-section limit', value: 'No specific state rule', st: 'info' }]),
+    { rule: 'Maximum breeding age',              value: `${rules.maxAgeYears} years`,              st: !isOver ? 'ok' : 'warn' },
+    { rule: 'Minimum puppy sale age',            value: '8 weeks',                                st: 'info' },
+    { rule: 'Skip first heat',                   value: 'Do not breed on first heat',             st: 'info' },
+    ...(rules.requiresBIN ? [{ rule: 'Breeder ID Number (BIN)', value: 'Mandatory (NSW)', st: 'info' }] : []),
+  ]
+
+  return (
+    <div style={{ maxWidth: 800 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Breeding Compliance</h2>
+          <span className="badge badge-green">Dogs Australia / State Law</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--light)' }}>Rules for:</span>
+          <select className="form-select" value={selectedState} onChange={e => setSelectedState(e.target.value)} style={{ height: 34, fontSize: 13, paddingRight: 32, minWidth: 180 }}>
+            {Object.entries(STATE_RULES).map(([code, r]) => <option key={code} value={code}>{r.stateName}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Source note */}
+      <div style={{ fontSize: 12, color: 'var(--mid)', marginBottom: 16, padding: '8px 12px', background: 'var(--sand)', borderRadius: 8 }}>
+        📋 <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--green)' }}>{rules.sourceName}</a>
+        {selectedState !== userState && <span style={{ marginLeft: 8, color: 'var(--gold)', fontWeight: 500 }}>⚠️ Profile state: {STATE_RULES[userState]?.stateName}</span>}
+      </div>
+
+      {/* Overall status */}
+      {isNoPedigree ? (
+        <div style={{ padding: '16px 20px', borderRadius: 12, marginBottom: 20, background: 'var(--sand)', border: '1.5px solid var(--border)' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, marginBottom: 8, color: 'var(--mid)' }}>
+            ℹ️ {(dog as any).pedigreeRegister === 'mixed' ? 'Mixed breed' : (dog as any).pedigreeRegister === 'rescue' ? 'Rescue / unknown background' : 'No pedigree (purebred without papers)'}
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6, marginBottom: 8 }}>
+            This dog does not have Dogs Australia pedigree papers. Litters cannot be registered with Dogs Australia, and offspring will not be eligible for Main Register pedigree certificates.
+          </p>
+          <p style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6 }}>
+            iDogs still tracks <strong>health records, vaccines, worming, reminders and documents</strong> for this dog. Use the Heat Cycle Records below to record mating and whelping history.
+          </p>
+          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--light)' }}>
+            To obtain Dogs Australia pedigree papers, contact your state body:
+            {' '}<a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--green)' }}>{rules.sourceName}</a>
+          </div>
+        </div>
+      ) : (
+      <div style={{
+        padding: '16px 20px', borderRadius: 12, marginBottom: 20,
+        background: overallOk ? 'var(--green-light)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#FFF8F8' : 'var(--gold-light)',
+        border: `1.5px solid ${overallOk ? 'var(--green-mid)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#F09595' : 'rgba(200,151,31,0.4)'}`,
+      }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, marginBottom: 10, color: overallOk ? 'var(--green)' : !littersOk || !csectionOk || !last18Ok || isUnder12 ? 'var(--error)' : 'var(--gold)' }}>
+          {overallMsg}
+        </div>
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+          {[
+            { l: 'Register', v: (dog as any).pedigreeRegister === 'limited' ? '🟠 Limited' : (dog as any).pedigreeRegister === 'none' ? 'None' : '🔵 Main', ok: !isLimitedRegister },
+            { l: 'Age', v: `${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo`, ok: !isUnder12 && !isOver },
+            { l: 'Breed size', v: breedSize.charAt(0).toUpperCase() + breedSize.slice(1), ok: true },
+            { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: littersOk },
+            ...(rules.maxLittersIn18Months !== 999 ? [{ l: 'Last 18 months', v: `${last18mLitters} / ${rules.maxLittersIn18Months}`, ok: last18Ok }] : []),
+            ...(rules.maxCsections !== null ? [{ l: 'C-sections', v: `${cSectionCount} / ${rules.maxCsections}`, ok: csectionOk }] : []),
+          ].map(x => (
+            <div key={x.l} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ fontSize: 12, color: 'var(--light)' }}>{x.l}:</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: x.ok ? 'var(--dark)' : 'var(--error)' }}>{x.v}</span>
+            </div>
+          ))}
+        </div>
+        {rules.notes && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--mid)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 8 }}>ℹ️ {rules.notes}</div>}
+      </div>
+      )}
+
+      {/* Rules table — only for pedigree dogs */}
+      {!isNoPedigree && (
+      <div className="card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 500, color: 'var(--mid)', display: 'flex', justifyContent: 'space-between' }}>
+          <span>{rules.stateName} Breeding Rules</span>
+          <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: 'var(--green)', textDecoration: 'none' }}>Source ↗</a>
+        </div>
+        {rulesTable.map((row, i, arr) => (
+          <div key={row.rule} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: 'var(--dark)' }}>{row.rule}</div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontSize: 13, color: 'var(--dark)', marginBottom: 3 }}>{row.value}</div>
+              <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: row.st === 'ok' ? 'var(--green-light)' : row.st === 'fail' ? '#FDEDED' : row.st === 'warn' ? 'var(--gold-light)' : 'var(--sand)', color: row.st === 'ok' ? 'var(--green)' : row.st === 'fail' ? 'var(--error)' : row.st === 'warn' ? 'var(--gold)' : 'var(--mid)' }}>
+                {row.st === 'ok' ? '✓ Compliant' : row.st === 'fail' ? '✕ Non-compliant' : row.st === 'warn' ? '⚠ Review' : 'ℹ Info'}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+      )} {/* end !isNoPedigree rules table */}
+
+      {/* Litter & C-section record */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)' }}>Litter & Birth Record</div>
+          <button onClick={() => setEditingLitters(!editingLitters)} className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}>{editingLitters ? 'Cancel' : '✎ Edit'}</button>
+        </div>
+        {editingLitters ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="form-group">
+                <label className="form-label">Total litters (lifetime)</label>
+                <input className="form-input" type="number" min={0} max={10} value={litterCount} onChange={e => setLitterCount(parseInt(e.target.value) || 0)} />
+                <span className="form-hint">Max {rules.maxLifetimeLitters} under {selectedState}</span>
+              </div>
+              {rules.maxLittersIn18Months !== 999 && (
+                <div className="form-group">
+                  <label className="form-label">Litters in last 18 months</label>
+                  <input className="form-input" type="number" min={0} max={5} value={last18mLitters} onChange={e => setLast18mLitters(parseInt(e.target.value) || 0)} />
+                  <span className="form-hint">Max {rules.maxLittersIn18Months}</span>
+                </div>
+              )}
+              <div className="form-group">
+                <label className="form-label">C-section litters</label>
+                <input className="form-input" type="number" min={0} max={10} value={cSectionCount} onChange={e => setCSectionCount(parseInt(e.target.value) || 0)} />
+                <span className="form-hint">{rules.maxCsections !== null ? `Max ${rules.maxCsections} under ${selectedState}` : 'No state limit'}</span>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Last litter date</label>
+                <input className="form-input" type="date" value={lastLitterDate} onChange={e => setLastLitterDate(e.target.value)} max={today.toISOString().split('T')[0]} />
+              </div>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={saveLitters} disabled={saving}>{saving ? <span className="spinner" /> : 'Save'}</button>
+          </div>
+        ) : (
+          <div>
+            {[
+              { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: littersOk },
+              ...(rules.maxLittersIn18Months !== 999 ? [{ l: 'Last 18 months', v: `${last18mLitters} / ${rules.maxLittersIn18Months}`, ok: last18Ok }] : []),
+              { l: 'C-section litters', v: rules.maxCsections !== null ? `${cSectionCount} / ${rules.maxCsections}` : `${cSectionCount} (no state limit)`, ok: csectionOk },
+              { l: 'Last litter date', v: lastLitterDate ? fmtDate(new Date(lastLitterDate)) : '—', ok: true },
+              { l: 'Next eligible', v: !littersOk ? `Limit reached` : !csectionOk ? `C-section limit reached` : !last18Ok && lastLitterDate ? `After ${fmtDate(addMonths(new Date(lastLitterDate), 18))}` : '✓ No restriction', ok: littersOk && csectionOk && last18Ok },
+            ].map((row, i, arr) => (
+              <div key={row.l} style={{ display: 'flex', justifyContent: 'space-between', padding: '9px 0', borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none', fontSize: 13 }}>
+                <span style={{ color: 'var(--light)' }}>{row.l}</span>
+                <span style={{ fontWeight: 500, color: row.ok ? 'var(--dark)' : 'var(--error)' }}>{row.v}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── HEAT CYCLE RECORDS ── */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)' }}>🌸 Heat Cycle Records</div>
+          <button onClick={() => { setEditingCycle({ heatNumber: heatCycles.length + 1, heatStartDate: '' }); setShowAddHeat(true) }} className="btn btn-primary btn-sm">
+            + Add Heat Cycle
+          </button>
+        </div>
+
+        {loadingCycles ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><div className="spinner" /></div>
+        ) : heatCycles.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '20px 0', fontSize: 13, color: 'var(--light)' }}>
+            No heat cycles recorded yet. Add the first heat cycle to track mating, whelping and litter history.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {heatCycles.map(cycle => {
+              const ageAtHeat = dob && cycle.heatStartDate ? (new Date(cycle.heatStartDate).getFullYear() - dob.getFullYear()) * 12 + (new Date(cycle.heatStartDate).getMonth() - dob.getMonth()) : 0
+              const comp = dob && cycle.heatStartDate ? heatCompliance(ageAtHeat) : null
+              return (
+                <div key={cycle.id} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+                  {/* Heat header */}
+                  <div style={{ padding: '10px 14px', background: 'var(--sand)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 14, color: 'var(--dark)' }}>Heat {cycle.heatNumber}</span>
+                      {cycle.heatStartDate && <span style={{ fontSize: 12, color: 'var(--mid)' }}>{fmtDate(new Date(cycle.heatStartDate))}</span>}
+                      {comp && <span style={{ fontSize: 11, fontWeight: 600, color: comp.color }}>{comp.msg}</span>}
+                      {cycle.whelpingActual && <span className="badge badge-green" style={{ fontSize: 10 }}>✓ Whelped {fmtDate(new Date(cycle.whelpingActual))}</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => { setEditingCycle(cycle); setShowAddHeat(true) }} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>✎ Edit</button>
+                      <button onClick={() => cycle.id && deleteHeatCycle(cycle.id)} className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--error)' }}>✕</button>
+                    </div>
+                  </div>
+                  {/* Heat details */}
+                  <div style={{ padding: '10px 14px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
+                    {[
+                      { l: 'Mating date', v: cycle.matingDate ? fmtDate(new Date(cycle.matingDate)) : '—' },
+                      { l: 'Mating method', v: cycle.matingMethod ? MATING_METHODS.find(m => m.value === cycle.matingMethod)?.label || cycle.matingMethod : '—' },
+                      { l: 'Sire', v: cycle.sireName || '—' },
+                      { l: 'Whelping estimate', v: cycle.whelpingEstimate ? fmtDate(new Date(cycle.whelpingEstimate)) : '—' },
+                      { l: 'Whelping actual', v: cycle.whelpingActual ? fmtDate(new Date(cycle.whelpingActual)) : '—' },
+                      { l: 'Whelping method', v: cycle.whelpingMethod ? WHELPING_METHODS.find(m => m.value === cycle.whelpingMethod)?.label || cycle.whelpingMethod : '—' },
+                      { l: 'Puppies born', v: cycle.puppiesBorn !== undefined ? `${cycle.puppiesBorn} (${cycle.puppiesAlive ?? '?'} alive)` : '—' },
+                    ].map(row => (
+                      <div key={row.l}>
+                        <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 1 }}>{row.l}</div>
+                        <div style={{ fontSize: 13, color: 'var(--dark)', fontWeight: 500 }}>{row.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {cycle.notes && <div style={{ padding: '0 14px 10px', fontSize: 12, color: 'var(--mid)', fontStyle: 'italic' }}>📝 {cycle.notes}</div>}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Heat Cycle Predictor */}
+      {dob && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)' }}>Heat Cycle Predictor (estimate only)</div>
+            <button onClick={() => setEditingHeat(!editingHeat)} className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}>
+              {editingHeat ? 'Cancel' : firstHeatDate ? '✎ Edit anchor date' : '+ Add first heat date'}
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
+            {firstHeatDate ? 'Anchored to actual first heat' : 'Estimated from DOB'} · {breedSize} breed · ~{heatInterval}-month cycle
+          </div>
+          {editingHeat && (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginBottom: 14, padding: '12px', background: 'var(--sand)', borderRadius: 8 }}>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Date of first heat</label>
+                <input className="form-input" type="date" value={firstHeatDate} onChange={e => setFirstHeatDate(e.target.value)} max={today.toISOString().split('T')[0]} />
+              </div>
+              <button className="btn btn-primary btn-sm" onClick={saveFirstHeat} disabled={saving} style={{ marginBottom: 1 }}>{saving ? <span className="spinner" /> : 'Save'}</button>
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {predictedHeats.map((heat, i) => {
+              const isPast = heat.date < today
+              const isSoon = !isPast && heat.date < addMonths(today, 2)
+              const ageAtHeatMo = dob ? (heat.date.getFullYear() - dob.getFullYear()) * 12 + (heat.date.getMonth() - dob.getMonth()) : 0
+              const c = heatCompliance(ageAtHeatMo)
+              const recorded = heatCycles.find(h => h.heatNumber === heat.n)
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 8, background: isSoon ? 'var(--gold-light)' : isPast ? 'var(--sand)' : 'var(--white)', border: `1px solid ${isSoon ? 'rgba(200,151,31,0.3)' : 'var(--border)'}`, opacity: isPast ? 0.65 : 1 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, background: c.status === 'ok' ? 'var(--green-light)' : c.status === 'blocked' ? '#FDEDED' : 'var(--gold-light)', color: c.status === 'ok' ? 'var(--green)' : c.status === 'blocked' ? 'var(--error)' : 'var(--gold)' }}>{heat.n}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--dark)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {heat.label}
+                      {isSoon && <span style={{ fontSize: 10, background: 'var(--gold)', color: '#fff', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>Upcoming</span>}
+                      {recorded && <span style={{ fontSize: 10, background: 'var(--green)', color: '#fff', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>✓ Recorded</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--light)' }}>{fmtDate(heat.date)} · Age: {ageAtDate(dog.dateOfBirth, heat.date)}</div>
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 500, color: c.color, textAlign: 'right', maxWidth: 180 }}>{c.msg}</div>
+                </div>
+              )
+            })}
+          </div>
+          <div style={{ marginTop: 12, padding: '8px 12px', background: 'var(--sand)', borderRadius: 8, fontSize: 12, color: 'var(--mid)' }}>
+            💡 Use "Add Heat Cycle" above to record actual dates. The predictor will auto-anchor to recorded heat 1 date.
+          </div>
+        </div>
+      )}
+
+      {/* Disclaimer */}
+      <div style={{ fontSize: 12, color: 'var(--light)', lineHeight: 1.7, padding: '12px 16px', background: 'var(--sand)', borderRadius: 8 }}>
+        ⚠️ <strong>Disclaimer:</strong> Based on state legislation and Dogs Australia regulations as at June 2026. Always verify with your state canine body before breeding. Heat predictions are estimates only.
+      </div>
+
+      {/* Add/Edit Heat Cycle Modal */}
+      {showAddHeat && editingCycle && (
+        <HeatCycleModal
+          cycle={editingCycle}
+          allDogs={allDogs}
+          onClose={() => { setShowAddHeat(false); setEditingCycle(null) }}
+          onSave={saveHeatCycle}
+          saving={saving}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── HEAT CYCLE MODAL ─────────────────────────────────────────
+
+function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
+  cycle: HeatCycle
+  allDogs: Dog[]
+  onClose: () => void
+  onSave: (c: HeatCycle) => Promise<void>
+  saving: boolean
+}) {
+  const [form, setForm] = useState<HeatCycle>({ ...cycle })
+  const [sireMode, setSireMode] = useState<'list' | 'manual'>(cycle.sireName ? 'manual' : 'list')
+
+  // Male dogs in the system (exclude current dog)
+  const maleDogs = allDogs.filter(d => d.sex === 'male' && (d as any).status !== 'transferred')
+
+  function set(field: keyof HeatCycle, value: any) {
+    setForm(prev => {
+      const next = { ...prev, [field]: value }
+      if (field === 'matingDate' && value) {
+        next.whelpingEstimate = calcWhelpingEstimate(value)
+      }
+      return next
+    })
+  }
+
+  function selectSireFromList(dogId: string) {
+    const d = allDogs.find(x => x.id === dogId)
+    if (!d) return
+    set('sireName', d.name)
+    set('sireReg', (d as any).ankc || '')
+    set('sireId', dogId)
+    set('sirePedigreeRegister', (d as any).pedigreeRegister || 'main')
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 580, maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600 }}>
+            {cycle.id ? `Edit Heat ${cycle.heatNumber}` : `Add Heat Cycle`}
+          </h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--light)' }}>×</button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* HEAT */}
+          <section>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 10 }}>🌸 Heat</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="form-group">
+                <label className="form-label">Heat number</label>
+                <input className="form-input" type="number" min={1} value={form.heatNumber} onChange={e => set('heatNumber', parseInt(e.target.value) || 1)} />
+              </div>
+              <div />
+              <div className="form-group">
+                <label className="form-label">Heat start date *</label>
+                <input className="form-input" type="date" value={form.heatStartDate} onChange={e => set('heatStartDate', e.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Heat end date</label>
+                <input className="form-input" type="date" value={form.heatEndDate || ''} onChange={e => set('heatEndDate', e.target.value)} />
+              </div>
+            </div>
+          </section>
+
+          {/* MATING */}
+          <section>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 10 }}>🐕 Mating</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="form-group">
+                <label className="form-label">Mating date</label>
+                <input className="form-input" type="date" value={form.matingDate || ''} onChange={e => set('matingDate', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Mating method</label>
+                <select className="form-select" value={form.matingMethod || ''} onChange={e => set('matingMethod', e.target.value)}>
+                  <option value="">Select…</option>
+                  {['Natural', 'AI', 'TCI', 'Other'].map(group => (
+                    <optgroup key={group} label={group}>
+                      {MATING_METHODS.filter(m => m.group === group).map(m => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+              {/* Sire selector */}
+              <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="form-label">Sire</label>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setSireMode('list')}
+                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: `1.5px solid ${sireMode === 'list' ? 'var(--green)' : 'var(--border)'}`, background: sireMode === 'list' ? 'var(--green-light)' : 'var(--white)', color: sireMode === 'list' ? 'var(--green)' : 'var(--mid)', cursor: 'pointer' }}
+                  >From my dogs</button>
+                  <button
+                    type="button"
+                    onClick={() => setSireMode('manual')}
+                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: `1.5px solid ${sireMode === 'manual' ? 'var(--green)' : 'var(--border)'}`, background: sireMode === 'manual' ? 'var(--green-light)' : 'var(--white)', color: sireMode === 'manual' ? 'var(--green)' : 'var(--mid)', cursor: 'pointer' }}
+                  >Enter manually</button>
+                </div>
+                {sireMode === 'list' ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <select
+                        className="form-select"
+                        onChange={e => selectSireFromList(e.target.value)}
+                        defaultValue=""
+                      >
+                        <option value="">Select sire from my dogs…</option>
+                        {maleDogs.length === 0
+                          ? <option disabled>No male dogs in your account</option>
+                          : maleDogs.map(d => (
+                            <option key={d.id} value={d.id}>
+                              {d.name} — {d.breed} {(d as any).pedigreeRegister === 'limited' ? '⚠️ Limited Reg' : ''} {(d as any).ankc ? `(${(d as any).ankc})` : ''}
+                            </option>
+                          ))
+                        }
+                      </select>
+                      {(form as any).sirePedigreeRegister === 'limited' && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--error)', background: '#FFF8F8', border: '1px solid #F09595', borderRadius: 6, padding: '6px 10px' }}>
+                          ⚠️ <strong>Limited Register sire</strong> — progeny cannot be registered on the Main Register under Dogs Australia rules.
+                        </div>
+                      )}
+                      <span className="form-hint">Or switch to "Enter manually" for external sires</span>
+                    </div>
+                    <div>
+                      {form.sireName && (
+                        <div style={{ padding: '8px 12px', background: 'var(--green-light)', borderRadius: 8, fontSize: 13 }}>
+                          <div style={{ fontWeight: 600, color: 'var(--green)' }}>{form.sireName}</div>
+                          {form.sireReg && <div style={{ color: 'var(--mid)', fontSize: 12 }}>Reg: {form.sireReg}</div>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="form-group">
+                      <label className="form-label">Sire name</label>
+                      <input className="form-input" placeholder="e.g. CH STARRUN GOLD" value={form.sireName || ''} onChange={e => set('sireName', e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Sire registration</label>
+                      <input className="form-input" placeholder="e.g. 5100012345" value={form.sireReg || ''} onChange={e => set('sireReg', e.target.value)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Vet / clinic (if AI/TCI)</label>
+                <input className="form-input" placeholder="e.g. Adelaide Vet Reproduction" value={form.vetClinic || ''} onChange={e => set('vetClinic', e.target.value)} />
+              </div>
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 22 }}>
+                <input type="checkbox" id="progesterone" checked={form.progesteroneTested || false} onChange={e => set('progesteroneTested', e.target.checked)} style={{ width: 16, height: 16 }} />
+                <label htmlFor="progesterone" style={{ fontSize: 13, color: 'var(--dark)', cursor: 'pointer' }}>Progesterone test done</label>
+              </div>
+            </div>
+          </section>
+
+          {/* PREGNANCY */}
+          <section>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 10 }}>🤰 Pregnancy</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 4 }}>
+                <input type="checkbox" id="pregnant" checked={form.pregnancyConfirmed || false} onChange={e => set('pregnancyConfirmed', e.target.checked)} style={{ width: 16, height: 16 }} />
+                <label htmlFor="pregnant" style={{ fontSize: 13, color: 'var(--dark)', cursor: 'pointer' }}>Pregnancy confirmed (ultrasound)</label>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Ultrasound date</label>
+                <input className="form-input" type="date" value={form.ultrasoundDate || ''} onChange={e => set('ultrasoundDate', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Whelping estimate (auto)</label>
+                <input className="form-input" type="date" value={form.whelpingEstimate || ''} onChange={e => set('whelpingEstimate', e.target.value)} style={{ background: 'var(--sand)' }} />
+                <span className="form-hint">Auto-calculated: mating date + 63 days</span>
+              </div>
+              <div />
+            </div>
+          </section>
+
+          {/* WHELPING */}
+          <section>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 10 }}>🐣 Whelping</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="form-group">
+                <label className="form-label">Actual whelping date</label>
+                <input className="form-input" type="date" value={form.whelpingActual || ''} onChange={e => set('whelpingActual', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Whelping method</label>
+                <select className="form-select" value={form.whelpingMethod || ''} onChange={e => set('whelpingMethod', e.target.value)}>
+                  <option value="">Select…</option>
+                  {WHELPING_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Puppies born</label>
+                <input className="form-input" type="number" min={0} max={20} value={form.puppiesBorn ?? ''} onChange={e => set('puppiesBorn', parseInt(e.target.value) || 0)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Puppies alive</label>
+                <input className="form-input" type="number" min={0} max={20} value={form.puppiesAlive ?? ''} onChange={e => set('puppiesAlive', parseInt(e.target.value) || 0)} />
+              </div>
+            </div>
+          </section>
+
+          {/* NOTES */}
+          <div className="form-group">
+            <label className="form-label">Notes</label>
+            <textarea className="form-textarea" placeholder="e.g. Good pregnancy, no complications" value={form.notes || ''} onChange={e => set('notes', e.target.value)} style={{ minHeight: 72 }} />
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 4 }}>
+            <button onClick={onClose} className="btn btn-secondary" disabled={saving}>Cancel</button>
+            <button onClick={() => onSave(form)} className="btn btn-primary" disabled={!form.heatStartDate || saving}>
+              {saving ? <span className="spinner" /> : cycle.id ? 'Save changes' : 'Add heat cycle'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

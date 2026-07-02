@@ -16,18 +16,12 @@ export default function DashboardPage({ toast }: Props) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    async function load() {
-      try {
-        const [d, r] = await Promise.all([getDogs(), getAllPendingReminders()])
-        setDogs(d)
-        setReminders(r.slice(0, 5))
-      } catch {
-        toast('Failed to load data', 'error')
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
+    Promise.all([
+      getDogs(),
+      getAllPendingReminders().catch(() => [] as Reminder[]),
+    ])
+      .then(([d, r]) => { setDogs(d); setReminders(r.slice(0, 5)); setLoading(false) })
+      .catch(() => { toast('Failed to load data', 'error'); setLoading(false) })
   }, [])
 
   // Auto-claim any dogs transferred to this user's email

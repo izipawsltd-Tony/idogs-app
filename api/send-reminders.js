@@ -104,16 +104,18 @@ export default async function handler(req, res) {
     let smsSent = 0
     let emailSent = 0
 
-    // Get all users with SMS enabled and phone number
-    const usersSnap = await db.collection('users')
-      .where('emailReminders', '!=', false)
-      .get()
+    // Get all users — emailReminders check is done per-user below
+    // to avoid Firestore inequality query issues when the field is absent
+    const usersSnap = await db.collection('users').get()
 
     for (const userDoc of usersSnap.docs) {
       const user = userDoc.data()
+      // Skip users who have explicitly disabled email reminders
+      if (user.emailReminders === false) continue
       const tenantId = userDoc.id
       const reminderDays = user.reminderDays || 7
       const reminderFrequency = user.reminderFrequency || 'once' // 'once' | 'daily'
+      const heatReminderDays = user.heatReminderDays || 14 // separate setting for heat cycles
       const hasSmsAddon = user.smsAddon === true
       const phone = user.phone
 
@@ -136,11 +138,12 @@ export default async function handler(req, res) {
             try {
               await fetch(`${process.env.APP_URL || 'https://idogs.com.au'}/api/send-email`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                 body: JSON.stringify({
-                  to: user.email,
+                  to_email: user.email,
+                  to_name: user.firstName || 'there',
                   subject: `${milestone.kind === 'birthday' ? '🎂' : '🏠'} ${dog.name}'s ${milestone.label}`,
-                  html: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}</strong> ${milestone.kind === 'birthday' ? `is celebrating their ${milestone.label} today!` : `joined iDogs ${milestone.label} ago today!`} 🎉</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s story →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
+                  message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}</strong> ${milestone.kind === 'birthday' ? `is celebrating their ${milestone.label} today!` : `joined iDogs ${milestone.label} ago today!`} 🎉</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s story →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
                 }),
               })
               emailSent++
@@ -155,9 +158,53 @@ export default async function handler(req, res) {
           .where('dogId', '==', dogDoc.id)
           .get()
 
+        // Auto-resolve reminders for superseded vaccines.
+        // A vaccine is superseded if another record of the same "group"
+        // (C3/C4/C5 share one group; other vaccines match by name) has a
+        // later dateGiven. We mark the reminder completed so it stops
+        // showing as overdue in the UI without the user needing to do it manually.
+        const allVaccines = vaccinesSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+        const groupKey = (name) => {
+          const n = (name || '').trim().toLowerCase()
+          return /\bc[3-5]\b/.test(n) ? '__core_combo__' : n
+        }
+        const latestByGroup = {}
+        for (const v of allVaccines) {
+          const key = groupKey(v.name)
+          if (!latestByGroup[key] || v.dateGiven > latestByGroup[key].dateGiven) {
+            latestByGroup[key] = v
+          }
+        }
+        for (const v of allVaccines) {
+          const key = groupKey(v.name)
+          const isSuperseded = latestByGroup[key]?.id !== v.id
+          if (isSuperseded) {
+            // Mark the reminder for this vaccine as completed
+            try {
+              const reminderId = `vaccine_${dogDoc.id}_${v.id}`
+              const reminderRef = db.collection('reminders').doc(reminderId)
+              const existing = await reminderRef.get()
+              if (existing.exists && existing.data()?.status !== 'completed') {
+                await reminderRef.update({
+                  status: 'completed',
+                  completedAt: today.toISOString(),
+                  completedReason: 'superseded_by_newer_vaccine',
+                  updatedAt: today.toISOString(),
+                })
+              }
+            } catch (e) {
+              // non-critical
+            }
+          }
+        }
+
         for (const vDoc of vaccinesSnap.docs) {
           const vaccine = vDoc.data()
           if (!vaccine.nextDue) continue
+
+          // Skip superseded vaccines — their reminders were resolved above
+          const key = groupKey(vaccine.name)
+          if (latestByGroup[key]?.id !== vDoc.id) continue
 
           const dueDate = new Date(vaccine.nextDue)
           const daysUntilDue = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24))
@@ -182,48 +229,226 @@ export default async function handler(req, res) {
             (today - new Date(vaccine.lastReminderSentAt)) < 1000 * 60 * 60 * 20
           const blockedByFrequencyPref = reminderFrequency === 'once' ? hasSentBefore : sentWithinLast20h
 
-          if (daysUntilDue <= reminderDays && daysUntilDue >= 0 && !blockedByFrequencyPref) {
-            const msg = `🐾 iDogs Reminder: ${dog.name}'s ${vaccine.name} is due ${daysUntilDue === 0 ? 'today' : daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`} (${formatDate(vaccine.nextDue)}). Book your vet now.`
+          // FIX 1: extend window to -30 so overdue vaccines are still
+          // caught (previously daysUntilDue >= 0 silently dropped any
+          // vaccine that had already passed its due date).
+          const isInWindow = daysUntilDue <= reminderDays && daysUntilDue >= -365
 
-            // Send email reminder
-            if (user.email) {
-              try {
-                await fetch(`${process.env.APP_URL || 'https://idogs.com.au'}/api/send-email`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    to: user.email,
-                    subject: `🐾 Reminder: ${dog.name}'s ${vaccine.name} due ${daysUntilDue === 0 ? 'today' : daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`}`,
-                    html: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s ${vaccine.name}</strong> is due on <strong>${formatDate(vaccine.nextDue)}</strong>.</p><p>Book your vet appointment soon to keep ${dog.name} protected.</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s records →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
-                  }),
-                })
-                emailSent++
-              } catch (e) {
-                console.error('Email reminder error:', e)
-              }
-            }
+          if (isInWindow) {
+            const isOverdue = daysUntilDue < 0
+            const dueLabelShort = isOverdue
+              ? `overdue by ${Math.abs(daysUntilDue)} day${Math.abs(daysUntilDue) !== 1 ? 's' : ''}`
+              : daysUntilDue === 0 ? 'today'
+              : daysUntilDue === 1 ? 'tomorrow'
+              : `in ${daysUntilDue} days`
 
-            // Send SMS if addon enabled and phone exists
-            if (hasSmsAddon && phone) {
-              try {
-                // Format AU phone to E.164
-                const e164 = phone.replace(/\s/g, '').replace(/^0/, '+61')
-                await sendSMS(e164, msg)
-                smsSent++
-              } catch (e) {
-                console.error('SMS reminder error:', e)
-              }
-            }
-
-            // Record when this reminder fired so we don't re-send it
-            // again tomorrow for the same vaccine — without this, every
-            // run from now until the due date would re-trigger the email.
+            // FIX 2: upsert a reminder record into Firestore so the
+            // Reminders tab in the app shows the due/overdue item.
+            // Key by dogId + vaccineId so re-runs don't create duplicates.
             try {
-              await db.collection('vaccineRecords').doc(vDoc.id).update({
-                lastReminderSentAt: today.toISOString(),
-              })
+              const reminderId = `vaccine_${dogDoc.id}_${vDoc.id}`
+              const reminderRef = db.collection('reminders').doc(reminderId)
+              const existingReminder = await reminderRef.get()
+
+              // Only create/update if not already completed by the user
+              if (!existingReminder.exists || existingReminder.data()?.status !== 'completed') {
+                await reminderRef.set({
+                  id: reminderId,
+                  dogId: dogDoc.id,
+                  tenantId,
+                  title: `${vaccine.name} due ${dueLabelShort}`,
+                  dueDate: vaccine.nextDue,
+                  type: 'vaccine',
+                  vaccineId: vDoc.id,
+                  status: isOverdue ? 'overdue' : 'pending',
+                  createdAt: today.toISOString(),
+                  updatedAt: today.toISOString(),
+                }, { merge: true })
+              }
             } catch (e) {
-              console.error('Failed to record lastReminderSentAt:', e)
+              console.error('Failed to upsert reminder record:', e)
+            }
+
+            // Only send email/SMS once (or per frequency pref) —
+            // but always upsert the Firestore record above regardless
+            if (!blockedByFrequencyPref) {
+              const msg = `🐾 iDogs Reminder: ${dog.name}'s ${vaccine.name} is ${dueLabelShort} (${formatDate(vaccine.nextDue)}). Book your vet now.`
+
+              // Send email reminder
+              if (user.email) {
+                try {
+                  await fetch(`${process.env.APP_URL || 'https://idogs.com.au'}/api/send-email`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
+                    body: JSON.stringify({
+                      to_email: user.email,
+                      to_name: user.firstName || 'there',
+                      subject: isOverdue
+                        ? `⚠️ ${dog.name}'s ${vaccine.name} is overdue!`
+                        : `🐾 Reminder: ${dog.name}'s ${vaccine.name} due ${dueLabelShort}`,
+                      message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s ${vaccine.name}</strong> ${isOverdue ? `was due on <strong>${formatDate(vaccine.nextDue)}</strong> and is now overdue.` : `is due on <strong>${formatDate(vaccine.nextDue)}</strong>.`}</p><p>Book your vet appointment ${isOverdue ? 'as soon as possible' : 'soon'} to keep ${dog.name} protected.</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s records →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
+                    }),
+                  })
+                  emailSent++
+                } catch (e) {
+                  console.error('Email reminder error:', e)
+                }
+              }
+
+              // Send SMS if addon enabled and phone exists
+              if (hasSmsAddon && phone) {
+                try {
+                  const e164 = phone.replace(/\s/g, '').replace(/^0/, '+61')
+                  await sendSMS(e164, msg)
+                  smsSent++
+                } catch (e) {
+                  console.error('SMS reminder error:', e)
+                }
+              }
+
+              // Record when this reminder fired
+              try {
+                await db.collection('vaccineRecords').doc(vDoc.id).update({
+                  lastReminderSentAt: today.toISOString(),
+                })
+              } catch (e) {
+                console.error('Failed to record lastReminderSentAt:', e)
+              }
+            }
+          } else if (daysUntilDue > reminderDays) {
+            // Vaccine not yet due — ensure any old reminder is marked pending
+            // (handles the case where a due date was edited to be further away)
+            try {
+              const reminderId = `vaccine_${dogDoc.id}_${vDoc.id}`
+              const reminderRef = db.collection('reminders').doc(reminderId)
+              const existing = await reminderRef.get()
+              if (existing.exists && existing.data()?.status === 'overdue') {
+                await reminderRef.update({ status: 'pending', updatedAt: today.toISOString() })
+              }
+            } catch (e) {
+              // non-critical
+            }
+          }
+        }
+
+        // ── HEAT CYCLE REMINDERS (female dogs only) ──────────────────
+        // Predict upcoming heats from DOB + breed, upsert reminder records
+        // and send email/SMS when a heat is within reminderDays window.
+        if (dog.sex === 'female' && dog.dateOfBirth && dog.status !== 'transferred') {
+          const LARGE_BREEDS = ['Labrador Retriever','Golden Retriever','German Shepherd','Rottweiler','Bernese Mountain Dog','Great Dane','Irish Wolfhound','St Bernard','Alaskan Malamute','Newfoundland','Leonberger','Dobermann','Weimaraner','Vizsla','Rhodesian Ridgeback','Boxer','Dalmatian','Standard Poodle','Afghan Hound','Greyhound','Bloodhound']
+          const GIANT_BREEDS = ['Great Dane','Irish Wolfhound','St Bernard','Alaskan Malamute','Newfoundland','Leonberger','Mastiff','Bullmastiff','Tibetan Mastiff']
+          const SMALL_BREEDS = ['Chihuahua','Pomeranian','Maltese','Yorkshire Terrier','Toy Poodle','Shih Tzu','Cavalier King Charles Spaniel','Pug','French Bulldog','Boston Terrier','Papillon','Miniature Pinscher']
+
+          const breedSize = GIANT_BREEDS.includes(dog.breed) ? 'giant' : LARGE_BREEDS.includes(dog.breed) ? 'large' : SMALL_BREEDS.includes(dog.breed) ? 'small' : 'medium'
+          const firstHeatMonths = breedSize === 'giant' ? 18 : breedSize === 'large' ? 10 : breedSize === 'small' ? 6 : 8
+          const heatIntervalMonths = breedSize === 'giant' ? 10 : breedSize === 'large' ? 7 : breedSize === 'small' ? 5 : 6
+          const minBreedingMonths = (breedSize === 'large' || breedSize === 'giant') ? 18 : 12
+
+          function addMonthsLocal(date, months) {
+            const d = new Date(date)
+            d.setMonth(d.getMonth() + months)
+            return d
+          }
+
+          const dob = new Date(dog.dateOfBirth)
+          const anchorDate = dog.firstHeatDate ? new Date(dog.firstHeatDate) : addMonthsLocal(dob, firstHeatMonths)
+
+          // Generate next 4 heats from anchor
+          for (let i = 0; i < 4; i++) {
+            const heatDate = addMonthsLocal(anchorDate, heatIntervalMonths * i)
+            const heatNum = i + 1
+            const daysUntil = Math.ceil((heatDate - today) / (1000 * 60 * 60 * 24))
+
+            // Only process heats within window or upcoming in next 60 days
+            if (daysUntil < -14 || daysUntil > 60) continue
+
+            // Compliance check
+            const ageAtHeatMonths = (heatDate.getFullYear() - dob.getFullYear()) * 12 + (heatDate.getMonth() - dob.getMonth())
+            const isEligible = ageAtHeatMonths >= minBreedingMonths
+            const isFirstHeat = heatNum === 1
+
+            const heatLabel = isFirstHeat ? 'First heat (skip — Dogs SA rule)' :
+              !isEligible ? `Heat ${heatNum} (not yet eligible — under ${minBreedingMonths} months)` :
+              `Heat ${heatNum} — eligible to breed`
+
+            const reminderId = `heat_${dogDoc.id}_cycle${heatNum}`
+            const status = daysUntil < 0 ? 'overdue' : 'pending'
+
+            // Upsert reminder record
+            try {
+              const reminderRef = db.collection('reminders').doc(reminderId)
+              const existing = await reminderRef.get()
+              if (!existing.exists || existing.data()?.status !== 'completed') {
+                await reminderRef.set({
+                  id: reminderId,
+                  dogId: dogDoc.id,
+                  tenantId,
+                  title: `${dog.name} — ${heatLabel}`,
+                  dueDate: heatDate.toISOString().split('T')[0],
+                  type: 'heat',
+                  heatNumber: heatNum,
+                  isEligible,
+                  isFirstHeat,
+                  status,
+                  createdAt: today.toISOString(),
+                  updatedAt: today.toISOString(),
+                }, { merge: true })
+              }
+            } catch (e) {
+              console.error('Failed to upsert heat reminder:', e)
+            }
+
+            // Send email/SMS notification when within heatReminderDays window
+            if (daysUntil <= heatReminderDays && daysUntil >= -7) {
+              const sentKey = `lastHeatReminderSentAt_cycle${heatNum}`
+              const lastSent = dog[sentKey]
+              const sentWithin20h = lastSent && (today - new Date(lastSent)) < 1000 * 60 * 60 * 20
+
+              if (!sentWithin20h) {
+                const dueLabel = daysUntil === 0 ? 'today' : daysUntil < 0 ? `${Math.abs(daysUntil)} days ago` : daysUntil === 1 ? 'tomorrow' : `in ${daysUntil} days`
+                const complianceNote = isFirstHeat
+                  ? '⚠️ This is her first heat — Dogs SA rules require skipping the first cycle before breeding.'
+                  : !isEligible
+                  ? `⚠️ She will be ${ageAtHeatMonths} months old — Dogs SA requires at least ${minBreedingMonths} months for ${breedSize} breeds.`
+                  : `✓ She will be ${ageAtHeatMonths} months old — eligible to breed under Dogs SA rules.`
+
+                if (user.email) {
+                  try {
+                    await fetch(`${process.env.APP_URL || 'https://idogs.com.au'}/api/send-email`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
+                      body: JSON.stringify({
+                        to_email: user.email,
+                        to_name: user.firstName || 'there',
+                        subject: `🌸 ${dog.name}'s Heat ${heatNum} expected ${dueLabel}`,
+                        message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s Heat ${heatNum}</strong> is expected ${dueLabel} (${formatDate(heatDate.toISOString().split('T')[0])}).</p><p>${complianceNote}</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s breeding record →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
+                      }),
+                    })
+                    emailSent++
+                  } catch (e) {
+                    console.error('Heat email error:', e)
+                  }
+                }
+
+                if (hasSmsAddon && phone) {
+                  try {
+                    const e164 = phone.replace(/\s/g, '').replace(/^0/, '+61')
+                    await sendSMS(e164, `🌸 iDogs: ${dog.name}'s Heat ${heatNum} expected ${dueLabel}. ${isFirstHeat ? 'Skip first heat (Dogs SA rule).' : isEligible ? '✓ Eligible to breed.' : `Not eligible yet — ${minBreedingMonths}mo min.`}`)
+                    smsSent++
+                  } catch (e) {
+                    console.error('Heat SMS error:', e)
+                  }
+                }
+
+                // Record send time on dog document
+                try {
+                  await db.collection('dogs').doc(dogDoc.id).update({
+                    [sentKey]: today.toISOString(),
+                  })
+                } catch (e) {
+                  console.error('Failed to record heat reminder sent:', e)
+                }
+              }
             }
           }
         }
