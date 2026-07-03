@@ -1,5 +1,6 @@
 /* ── DESIGN TOKENS ── */
 :root {
+  /* Palette */
   --green: #085041;
   --green-mid: #1D9E75;
   --green-light: #E1F5EE;
@@ -16,15 +17,39 @@
   --success: #1D9E75;
   --warning: #C8971F;
   --error: #C0392B;
+
+  /* Typography */
   --font-display: 'Plus Jakarta Sans', -apple-system, sans-serif;
   --font-body: 'Inter', -apple-system, sans-serif;
+
+  /* Radii */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
   --radius-xl: 24px;
+
+  /* Shadows */
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
   --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.1);
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.04), 0 2px 8px rgba(0,0,0,0.06);
+
+  /* Layout */
+  --page-bg: #F4F6F8;
+  --sidebar-bg: #FFFFFF;
+  --topbar-h: 60px;
+  --sidebar-w: 240px;
+
+  /* Spacing scale */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
 }
 
 /* ── RESET ── */
@@ -116,6 +141,7 @@ h1, h2, h3, h4, h5, h6 {
 /* ── CARD ── */
 .card { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px 24px; }
 .card-sm { padding: 14px 16px; border-radius: var(--radius-md); }
+.card-shadow { box-shadow: var(--shadow-card); }
 
 /* ── BADGE ── */
 .badge {
@@ -123,10 +149,13 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 11px; font-weight: 600; padding: 3px 9px;
   border-radius: 20px; letter-spacing: 0.01em;
 }
-.badge-green { background: var(--green-light); color: var(--green); }
-.badge-gold { background: var(--gold-light); color: var(--gold); }
-.badge-red { background: #FDEDED; color: var(--error); }
-.badge-gray { background: var(--sand); color: var(--mid); }
+.badge-green  { background: var(--green-light); color: var(--green); }
+.badge-gold   { background: var(--gold-light);  color: var(--gold);  }
+.badge-red    { background: #FDEDED;             color: var(--error); }
+.badge-gray   { background: var(--sand);         color: var(--mid);   }
+/* Domain aliases */
+.badge-active { background: var(--green-light); color: var(--green); }
+.badge-closed { background: var(--sand);        color: var(--mid);   }
 
 /* ── LAYOUT ── */
 .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
