@@ -29,7 +29,7 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 ## Milestones
 - [x] M1 — Design tokens: palette/typography/spacing/button/card/badge components dùng chung
 - [x] M2 — Layout shell: sidebar mới + topbar + plan widget (nav items Puppies/Buyers/Reports trỏ placeholder "Coming soon")
-- [ ] M3 — Dashboard: 6 stat cards + panels Recent Dogs / Upcoming Reminders / Litters Overview / Documents / Recent Activity + NSW compliance banner
+- [x] M3 — Dashboard: 6 stat cards + panels Recent Dogs / Upcoming Reminders / Litters Overview / Documents / Recent Activity + NSW compliance banner
 - [ ] M4 — My Dogs + Dog Detail reskin (GIỮ NGUYÊN logic compliance tab, chỉ đổi vỏ)
 - [ ] M5 — Litters + Reminders + Documents pages reskin
 - [ ] M6 — QA: empty states, loading states, responsive tablet, dark-data edge cases
@@ -43,3 +43,4 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 | 2026-07-03 | M1 — Design tokens | https://idogs-i3xfqr2zk-izipawsltd-tonys-projects.vercel.app | Bổ sung tokens (page-bg, sidebar-bg, spacing scale, shadow-card, badge-active/closed); tạo Card/Badge/Button/StatCard components |
 | 2026-07-03 | M1b — Brand palette | https://idogs-m7pocapkd-izipawsltd-tonys-projects.vercel.app | Chuẩn hoá brand-900/600/300/50, gold-500/50, gray-100, success/warning/danger/info; map btn-primary + badges sang tokens mới; thay hardcoded hex trong 7 files |
 | 2026-07-03 | M2 — Layout shell | https://idogs-p5qbug410-izipawsltd-tonys-projects.vercel.app | Sidebar 240px trắng + logo + tagline "Every dog's story, forever." + nav groups (MAIN/BREEDING/MANAGE/ACCOUNT) + brand-600 active state; Topbar 60px greeting+date+bell+user menu dropdown; Plan widget (dogCount/limit, progress bar, Upgrade CTA); ComingSoonPage cho Puppies/Buyers/Reports; page-bg var(--gray-100); responsive mobile giữ nguyên |
+| 2026-07-03 | M3 — Dashboard | https://idogs-brrm0m11e-izipawsltd-tonys-projects.vercel.app | 6 stat cards clickable (Dogs/Active/Overdue/Puppies/Litters/Documents) + PanelCard component; panels: Recent Dogs (top 5 + badge-active/closed) / Litters Overview (status badge + puppy count) / Upcoming Reminders / Documents summary / Recent Activity (audit log, timeAgo) / NSW compliance banner reskin sang brand tokens; fetch getAllDocumentsForUser + getLitters + getAuditLogs trên dashboard |
