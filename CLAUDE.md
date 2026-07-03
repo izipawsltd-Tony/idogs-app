@@ -8,6 +8,13 @@
 5. Không tự đọc files ngoài phạm vi task được giao. Không tự tạo recap về project khác.
 6. Deploy workflow: `npm run build` → `git pp` (cmd) → `vercel deploy` (staging) → user test → `vercel deploy --prod`.
 
+## 🎨 UI REDESIGN MODE (branch feature/ui-redesign, từ 3/7/2026)
+1. CHỈ làm việc trên branch `feature/ui-redesign`. KHÔNG checkout main, KHÔNG merge, KHÔNG `vercel deploy --prod`.
+2. Deploy duy nhất: `vercel deploy` (staging Preview).
+3. CHỈ sửa UI: `src/components`, `src/pages`, styles, assets. KHÔNG sửa: `api/*`, `src/lib/breedingCompliance.ts`, logic Firestore queries, auth logic, billing.
+4. Đầu mỗi session: đọc `UI_REDESIGN.md` → làm milestone tiếp theo chưa done → cập nhật checklist → DỪNG.
+5. Mỗi milestone kết thúc: `npm run build` pass → `vercel deploy` → ghi staging URL vào `UI_REDESIGN.md`.
+
 ---
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. It also contains a "Working Method" section for chat-based Claude (claude.ai) — see the protected block near the end.
