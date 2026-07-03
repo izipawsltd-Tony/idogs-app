@@ -284,8 +284,12 @@ h1, h2, h3, h4, h5, h6 {
   /* Hide desktop sidebar */
   aside { display: none !important; }
 
+  /* Hide desktop topbar */
+  .desktop-topbar { display: none !important; }
+
   /* Main content full width + bottom padding for nav */
-  main { margin-left: 0 !important; padding-bottom: 72px !important; }
+  .main-area { margin-left: 0 !important; }
+  main { padding-bottom: 72px !important; }
 
   /* Show mobile top bar */
   .mobile-topbar { display: flex !important; }

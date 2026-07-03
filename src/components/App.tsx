@@ -28,6 +28,7 @@ import PrivacyPage from '../pages/PrivacyPage'
 import PassportPublicPage from '../pages/PassportPublicPage'
 import ForgotPasswordPage from '../pages/ForgotPasswordPage'
 import NotFoundPage from '../pages/NotFoundPage'
+import ComingSoonPage from '../pages/ComingSoonPage'
 
 import AppLayout from './layout/AppLayout'
 
@@ -100,6 +101,9 @@ export default function App() {
           <Route path="billing" element={<BillingPage toast={toast} />} />
           <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
           <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
+          <Route path="puppies" element={<ComingSoonPage feature="Puppies" />} />
+          <Route path="buyers"  element={<ComingSoonPage feature="Buyers" />} />
+          <Route path="reports" element={<ComingSoonPage feature="Reports" />} />
         </Route>
 
         <Route path="*" element={<NotFoundPage />} />
