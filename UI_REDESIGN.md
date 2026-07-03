@@ -40,3 +40,4 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 | Ngày | Milestone | Staging URL | Notes |
 |------|-----------|-------------|-------|
 | 2026-07-03 | M1 — Design tokens | https://idogs-i3xfqr2zk-izipawsltd-tonys-projects.vercel.app | Bổ sung tokens (page-bg, sidebar-bg, spacing scale, shadow-card, badge-active/closed); tạo Card/Badge/Button/StatCard components |
+| 2026-07-03 | M1b — Brand palette | https://idogs-m7pocapkd-izipawsltd-tonys-projects.vercel.app | Chuẩn hoá brand-900/600/300/50, gold-500/50, gray-100, success/warning/danger/info; map btn-primary + badges sang tokens mới; thay hardcoded hex trong 7 files |
