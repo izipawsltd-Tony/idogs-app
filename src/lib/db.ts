@@ -42,6 +42,33 @@ export async function updateUserProfile(userId: string, data: Partial<UserProfil
   await updateDoc(doc(db, 'users', userId), { ...data, updatedAt: serverTimestamp() })
 }
 
+export async function deleteUserData(userId: string): Promise<void> {
+  // 1. Collect all dog IDs for this tenant
+  const dogSnap = await getDocs(query(collection(db, 'dogs'), where('tenantId', '==', userId)))
+  const dogIds = dogSnap.docs.map(d => d.id)
+
+  // 2. Delete all per-dog records across linked collections
+  const perDogCols = ['vaccineRecords', 'wormingRecords', 'healthTests', 'reminders', 'activityNotes', 'documents']
+  for (const dogId of dogIds) {
+    for (const col of perDogCols) {
+      const snap = await getDocs(query(collection(db, col), where('dogId', '==', dogId)))
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)))
+    }
+  }
+
+  // 3. Delete dog documents
+  await Promise.all(dogSnap.docs.map(d => deleteDoc(d.ref)))
+
+  // 4. Delete tenant-level collections
+  for (const col of ['litters', 'auditLogs']) {
+    const snap = await getDocs(query(collection(db, col), where('tenantId', '==', userId)))
+    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)))
+  }
+
+  // 5. Delete user profile document
+  await deleteDoc(doc(db, 'users', userId))
+}
+
 // ── DOGS ──────────────────────────────────────────────────────
 
 export async function getDogs(): Promise<Dog[]> {

@@ -1,5 +1,15 @@
 # CLAUDE.md
 
+## ⚠️ SESSION RULES — ĐỌC TRƯỚC KHI LÀM GÌ
+1. Session này CHỈ làm việc trong `E:\idogs-app-phase1`. KHÔNG `cd` sang project khác. Cần repo khác → user sẽ mở session riêng.
+2. Vercel env vars: `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` / `FIREBASE_PRIVATE_KEY` có 2 bản mỗi var — Preview = `idogs-app-staging`, Production = `idogs-app`. KHÔNG BAO GIỜ sửa bản Production.
+3. Resend `from` address = `noreply@idogs.com.au` — KHÔNG ĐỔI sang bất kỳ domain nào khác (đây là domain duy nhất verified trên Resend free plan).
+4. Staging dùng Firebase project `idogs-app-staging`; production dùng `idogs-app`. Mọi thao tác console/data phải nêu rõ project nào.
+5. Không tự đọc files ngoài phạm vi task được giao. Không tự tạo recap về project khác.
+6. Deploy workflow: `npm run build` → `git pp` (cmd) → `vercel deploy` (staging) → user test → `vercel deploy --prod`.
+
+---
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. It also contains a "Working Method" section for chat-based Claude (claude.ai) — see the protected block near the end.
 
 ---
@@ -305,7 +315,18 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 - [ ] AWS Textract as an OCR pre-processing layer for `api/scan.js`, to improve accuracy on handwritten vaccine cards (printed documents already scan reliably; handwriting is the remaining weak point, partially mitigated by stricter uncertain-flagging + yellow highlighting in the meantime)
 
 ### Known Bugs
-(none currently tracked — the two previously listed here, the `[object Object]` hipScore/elbowGrade display and Hip/Elbow Date Tested not applying from scans, should be re-verified next session since several scan.js and DogDetailPage.tsx changes have landed since they were last checked)
+- **Orphaned Firestore profile blocks re-signup** (backlog, not yet fixed) — if a Firebase Auth user is deleted from the console but the Firestore `users/{uid}` doc remains, a new signup attempt with the same email gets "email already registered" from Auth, but the profile doc has no matching Auth user. Workaround: manually delete the orphaned Firestore doc. Fix in progress: signup rollback (delete Auth user if `createUserProfile` fails) is already committed to staging; full `deleteAccount()` also written but not yet exposed in UI.
+
+### Fixed — deployed to Production
+- `hipScore`/`elbowGrade` displaying as `[object Object]` — fixed in `api/scan.js` + `DogDetailPage.tsx`
+- Hip/Elbow "Date Tested" not populating from AI scan — fixed in `api/scan.js`
+- Breeding compliance engine — `src/lib/breedingCompliance.ts` (3-layer ANKC/state rules), wired into `DogDetailPage.tsx` BreedingTab
+
+### Fixed — on staging, pending production deploy
+- Forgot password flow — `ForgotPasswordPage.tsx` + `/forgot-password` route
+- Signup form: State (required) + Breeder Number (optional) fields added; passed through `useAuth.signup()` → Firestore profile
+- Backfill modal in `AppLayout.tsx` — triggers for existing users missing `state` field
+- Vercel env `FIREBASE_*` split into Preview (staging) + Production scopes — fixes iDogs Scan failing on staging Preview URLs
 
 ### What NOT to re-litigate
 - reminderDays — done (SettingsPage.tsx + send-reminders.js)
@@ -322,6 +343,11 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 - Two-tier audit trail (user Activity vs admin Full History) — done, see Firestore Collections section above
 - Duplicate dog warning — done (DogNewPage.tsx, checks microchip + name against active dogs, warns but doesn't block, modal with "Add anyway" / "Go back & check")
 - Stripe checkout `smsAddon` ReferenceError bug — fixed (`api/create-checkout.js` was missing `smsAddon` in the request body destructure, crashing every checkout attempt)
+- `hipScore`/`elbowGrade` `[object Object]` display bug — fixed (`api/scan.js` + `DogDetailPage.tsx`)
+- Hip/Elbow "Date Tested" not applying from iDogs Scan — fixed (`api/scan.js`)
+- Breeding compliance engine (`src/lib/breedingCompliance.ts`) — built and wired into DogDetailPage BreedingTab
+- Forgot password flow — `ForgotPasswordPage.tsx`, `/forgot-password` route
+- Signup State + Breeder Number fields + backfill modal for existing users missing `state`
 - Health test "Add manually" button — done (DogDetailPage.tsx, HealthTab)
 - Worming Record tab — done (DogDetailPage.tsx, new WormingTab — `addWormingRecord`/`deleteWormingRecord` existed in db.ts already, just had no UI before)
 - "Stored in Australia" legal text — fixed (SettingsPage.tsx now says "Asia-Pacific region", no specific location named)
@@ -389,6 +415,7 @@ These two tools do not share memory. Don't assume one knows what the other did u
   - 6 `VITE_FIREBASE_*` environment variables added in Vercel → Settings → Environment Variables, scoped to **Preview only** (not Production, not Development). The Production scope still points to the original `idogs-app` Firebase project — unchanged.
   - Workflow: `vercel deploy` (no `--prod` flag) creates a Preview deployment that uses the staging Firebase config. `vercel deploy --prod` or `deploy.bat` still deploys to production using the original Firebase project, exactly as before.
   - Verified end-to-end: signed up a test user (`ptnncom@gmail.com`) on a Preview URL and confirmed the user landed in `idogs-app-staging`'s Authentication — not in production's `idogs-app`.
+  - Staging Firebase Auth test accounts (all in `idogs-app-staging`, NOT production): `izipawsltd@gmail.com`, `trunghieungo@gmail.com`, `ptnncom@gmail.com`.
 - **For any future risky change** (schema changes, new Firestore writes, anything that could corrupt data): test on a Preview deploy first (`vercel deploy`), confirm it behaves correctly against `idogs-app-staging`, THEN promote to production (`vercel deploy --prod`).
 - Recommended starting mode in Claude Code for an unfamiliar agent: Plan Mode (review before any change is made), not auto-accept — this was the guidance given when Izi started using Claude Code.
 
