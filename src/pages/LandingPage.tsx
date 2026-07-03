@@ -653,7 +653,7 @@ function PhoneMockup() {
         <div style={{ background: '#111', height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: 80, height: 18, background: '#222', borderRadius: '0 0 12px 12px' }} />
         </div>
-        <div style={{ background: 'linear-gradient(135deg,#085041,#1D9E75)', padding: 16, color: '#fff' }}>
+        <div style={{ background: 'linear-gradient(135deg, var(--brand-900), var(--brand-600))', padding: 16, color: '#fff' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
             <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'rgba(255,255,255,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>🐕</div>
             <div>
@@ -663,18 +663,18 @@ function PhoneMockup() {
           </div>
           <div style={{ background: '#fff', borderRadius: 8, padding: 10, marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="80" height="80" viewBox="0 0 60 60">
-              <rect x="0" y="0" width="18" height="18" fill="none" stroke="#085041" strokeWidth="2"/>
-              <rect x="3" y="3" width="12" height="12" fill="#085041"/>
-              <rect x="42" y="0" width="18" height="18" fill="none" stroke="#085041" strokeWidth="2"/>
-              <rect x="45" y="3" width="12" height="12" fill="#085041"/>
-              <rect x="0" y="42" width="18" height="18" fill="none" stroke="#085041" strokeWidth="2"/>
-              <rect x="3" y="45" width="12" height="12" fill="#085041"/>
-              <rect x="22" y="2" width="4" height="3" fill="#085041"/><rect x="27" y="2" width="6" height="3" fill="#085041"/>
-              <rect x="35" y="2" width="5" height="3" fill="#085041"/><rect x="22" y="7" width="5" height="3" fill="#085041"/>
-              <rect x="2" y="22" width="5" height="4" fill="#085041"/><rect x="9" y="22" width="3" height="7" fill="#085041"/>
-              <rect x="22" y="22" width="5" height="4" fill="#085041"/><rect x="29" y="22" width="6" height="3" fill="#085041"/>
-              <rect x="22" y="42" width="3" height="14" fill="#085041"/><rect x="27" y="42" width="7" height="3" fill="#085041"/>
-              <rect x="42" y="42" width="3" height="6" fill="#085041"/><rect x="47" y="42" width="10" height="3" fill="#085041"/>
+              <rect x="0" y="0" width="18" height="18" fill="none" stroke="#2E7D4E" strokeWidth="2"/>
+              <rect x="3" y="3" width="12" height="12" fill="#2E7D4E"/>
+              <rect x="42" y="0" width="18" height="18" fill="none" stroke="#2E7D4E" strokeWidth="2"/>
+              <rect x="45" y="3" width="12" height="12" fill="#2E7D4E"/>
+              <rect x="0" y="42" width="18" height="18" fill="none" stroke="#2E7D4E" strokeWidth="2"/>
+              <rect x="3" y="45" width="12" height="12" fill="#2E7D4E"/>
+              <rect x="22" y="2" width="4" height="3" fill="#2E7D4E"/><rect x="27" y="2" width="6" height="3" fill="#2E7D4E"/>
+              <rect x="35" y="2" width="5" height="3" fill="#2E7D4E"/><rect x="22" y="7" width="5" height="3" fill="#2E7D4E"/>
+              <rect x="2" y="22" width="5" height="4" fill="#2E7D4E"/><rect x="9" y="22" width="3" height="7" fill="#2E7D4E"/>
+              <rect x="22" y="22" width="5" height="4" fill="#2E7D4E"/><rect x="29" y="22" width="6" height="3" fill="#2E7D4E"/>
+              <rect x="22" y="42" width="3" height="14" fill="#2E7D4E"/><rect x="27" y="42" width="7" height="3" fill="#2E7D4E"/>
+              <rect x="42" y="42" width="3" height="6" fill="#2E7D4E"/><rect x="47" y="42" width="10" height="3" fill="#2E7D4E"/>
             </svg>
           </div>
           <div style={{ display: 'flex', gap: 4 }}>

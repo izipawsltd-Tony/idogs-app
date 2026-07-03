@@ -20,7 +20,7 @@ export default function StatCard({ value, label, icon, color, href }: Props) {
         {href && (
           <Link
             to={href}
-            style={{ fontSize: 12, color: 'var(--green)', textDecoration: 'none', fontWeight: 500 }}
+            style={{ fontSize: 12, color: 'var(--brand-600)', textDecoration: 'none', fontWeight: 500 }}
           >
             View all →
           </Link>

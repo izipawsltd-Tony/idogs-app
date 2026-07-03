@@ -9,6 +9,22 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 - Plan usage widget cuối sidebar (plan name, dogs x/50, storage, Upgrade button)
 - Status badges: Active (xanh), Closed (xám)
 
+### Brand palette — vai trò màu
+
+| Token | Hex | Dùng cho | KHÔNG dùng cho |
+|-------|-----|----------|----------------|
+| `--brand-900` | #1A3A2A | Sidebar text, headings, QR dark pixels | Nền rộng |
+| `--brand-600` | #2E7D4E | **Action duy nhất**: buttons, links, active nav, focus ring | Text phụ, decoration |
+| `--brand-300` | #6BAE7B | Decorative dot, divider accent | Text trên nền trắng (contrast thấp) |
+| `--brand-50` | #F3F8F4 | Hover/selected bg, badge tint | Không |
+| `--gold-500` | #D4AF37 | **Premium chỉ**: Kennel plan badge, Upgrade CTA, crown icon | Action thường |
+| `--gold-50` | #FAF7EB | Badge bg premium | Không |
+| `--success` | #2E7D4E | Status "Active", confirm toast | Không dùng thay brand-600 |
+| `--warning` | #B45309 | Vaccine uncertain, compliance amber | Không |
+| `--danger` | #B91C1C | Xóa, overdue, error state | Không |
+| `--info` | #1D4ED8 | Info toast, help link | Không |
+| `--gray-100` | #F2F4F7 | Page background | Card bg (dùng white) |
+
 ## Milestones
 - [x] M1 — Design tokens: palette/typography/spacing/button/card/badge components dùng chung
 - [ ] M2 — Layout shell: sidebar mới + topbar + plan widget (nav items Puppies/Buyers/Reports trỏ placeholder "Coming soon")

@@ -30,7 +30,7 @@ const PLANS = [
     name: 'Basic',
     price: 5,
     icon: '🐕',
-    color: '#085041',
+    color: 'var(--brand-600)',
     description: 'For casual breeders and growing families',
     features: [
       'Up to 10 dogs',
@@ -46,7 +46,7 @@ const PLANS = [
     name: 'Pro',
     price: 12,
     icon: '🏆',
-    color: '#1D9E75',
+    color: 'var(--brand-300)',
     description: 'For active breeders and growing kennels',
     popular: true,
     features: [
@@ -63,7 +63,7 @@ const PLANS = [
     name: 'Kennel',
     price: 29,
     icon: '🏠',
-    color: '#C8971F',
+    color: 'var(--gold-500)',
     description: 'For professional kennels',
     features: [
       'Unlimited dogs',

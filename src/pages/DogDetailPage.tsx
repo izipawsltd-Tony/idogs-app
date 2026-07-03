@@ -124,7 +124,7 @@ export default function DogDetailPage({ toast }: Props) {
         const publicUrl = `${window.location.origin}/p/${d.passportId}`
         const url = await QRCode.toDataURL(publicUrl, {
           width: 200, margin: 2, errorCorrectionLevel: 'H',
-          color: { dark: '#085041', light: '#FFFFFF' }
+          color: { dark: '#2E7D4E', light: '#FFFFFF' }
         })
         setQrUrl(url)
       } catch (err) {
@@ -1615,7 +1615,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 24, alignItems: 'start' }}>
       <div>
-        <div style={{ background: 'linear-gradient(135deg, #085041, #1D9E75)', borderRadius: 16, padding: 20, marginBottom: 12 }}>
+        <div style={{ background: 'linear-gradient(135deg, var(--brand-900), var(--brand-600))', borderRadius: 16, padding: 20, marginBottom: 12 }}>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 10, fontWeight: 500 }}>🐾 iDogs Digital Passport</div>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: '#fff', marginBottom: 2 }}>{dog.name}</div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginBottom: 14 }}>{dog.breed} · {getDogAge(dog.dateOfBirth)}</div>
@@ -1848,13 +1848,13 @@ function buildStoryEvents(dog: Dog, vaccines: VaccineRecord[], wormings: Worming
 }
 
 const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
-  birth: 'var(--gold)',
-  vaccine: '#0F6E56',
-  worming: '#1D9E75',
-  health: '#085041',
-  stage: 'var(--gold)',
+  birth: 'var(--gold-500)',
+  vaccine: 'var(--brand-600)',
+  worming: 'var(--brand-300)',
+  health: 'var(--brand-900)',
+  stage: 'var(--gold-500)',
   transfer: 'var(--mid)',
-  note: 'var(--green)',
+  note: 'var(--brand-600)',
 }
 
 function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast }: {

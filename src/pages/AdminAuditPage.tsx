@@ -19,20 +19,20 @@ interface DogOption {
 const ADMIN_EMAIL = 'trunghieungo@gmail.com'
 
 const ACTION_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
-  dog_created:        { icon: '🐕', color: '#085041', label: 'Dog added' },
-  dog_updated:        { icon: '✏️', color: '#5C5A54', label: 'Dog updated' },
-  dog_deleted:        { icon: '🗑', color: '#C0392B', label: 'Dog deleted' },
-  dog_transferred:    { icon: '🔄', color: '#C8971F', label: 'Ownership transferred' },
-  vaccine_added:      { icon: '💉', color: '#085041', label: 'Vaccine added' },
-  vaccine_deleted:    { icon: '💉', color: '#C0392B', label: 'Vaccine deleted' },
-  health_test_added:  { icon: '🔬', color: '#085041', label: 'Health test added' },
-  health_test_deleted:{ icon: '🔬', color: '#C0392B', label: 'Health test deleted' },
-  worming_added:      { icon: '💊', color: '#085041', label: 'Worming added' },
-  worming_deleted:    { icon: '💊', color: '#C0392B', label: 'Worming deleted' },
-  document_uploaded:  { icon: '📄', color: '#085041', label: 'Document uploaded' },
-  reminder_completed: { icon: '✅', color: '#085041', label: 'Reminder completed' },
-  litter_created:     { icon: '🐣', color: '#085041', label: 'Litter created' },
-  puppy_added:        { icon: '🐶', color: '#085041', label: 'Puppy added' },
+  dog_created:        { icon: '🐕', color: 'var(--brand-600)', label: 'Dog added' },
+  dog_updated:        { icon: '✏️', color: '#5C5A54',           label: 'Dog updated' },
+  dog_deleted:        { icon: '🗑', color: 'var(--danger)',      label: 'Dog deleted' },
+  dog_transferred:    { icon: '🔄', color: 'var(--gold-500)',    label: 'Ownership transferred' },
+  vaccine_added:      { icon: '💉', color: 'var(--brand-600)', label: 'Vaccine added' },
+  vaccine_deleted:    { icon: '💉', color: 'var(--danger)',      label: 'Vaccine deleted' },
+  health_test_added:  { icon: '🔬', color: 'var(--brand-600)', label: 'Health test added' },
+  health_test_deleted:{ icon: '🔬', color: 'var(--danger)',      label: 'Health test deleted' },
+  worming_added:      { icon: '💊', color: 'var(--brand-600)', label: 'Worming added' },
+  worming_deleted:    { icon: '💊', color: 'var(--danger)',      label: 'Worming deleted' },
+  document_uploaded:  { icon: '📄', color: 'var(--brand-600)', label: 'Document uploaded' },
+  reminder_completed: { icon: '✅', color: 'var(--brand-600)', label: 'Reminder completed' },
+  litter_created:     { icon: '🐣', color: 'var(--brand-600)', label: 'Litter created' },
+  puppy_added:        { icon: '🐶', color: 'var(--brand-600)', label: 'Puppy added' },
 }
 
 export default function AdminAuditPage({ toast }: Props) {

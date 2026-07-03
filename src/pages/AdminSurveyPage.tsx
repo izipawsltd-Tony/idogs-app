@@ -79,7 +79,7 @@ export default function AdminSurveyPage({ toast }: Props) {
           subject: '🎁 Your 3-month free promo code for iDogs',
           html: `
             <div style="font-family:sans-serif;max-width:560px;margin:0 auto">
-              <div style="background:#085041;padding:24px;border-radius:12px 12px 0 0;text-align:center">
+              <div style="background:#2E7D4E;padding:24px;border-radius:12px 12px 0 0;text-align:center">
                 <span style="font-size:32px">🐾</span>
                 <h1 style="color:#fff;font-size:22px;margin:8px 0 0">Your promo code is here!</h1>
               </div>
@@ -88,13 +88,13 @@ export default function AdminSurveyPage({ toast }: Props) {
                 <p style="color:#5C5A54;font-size:15px;line-height:1.6">
                   Thank you so much for your valuable feedback. Here is your <strong>3-month free promo code</strong>:
                 </p>
-                <div style="background:#E1F5EE;border:2px dashed #085041;border-radius:12px;padding:20px;text-align:center;margin:20px 0">
-                  <div style="font-size:28px;font-weight:700;color:#085041;letter-spacing:0.1em">${PROMO_CODE}</div>
+                <div style="background:#F3F8F4;border:2px dashed #2E7D4E;border-radius:12px;padding:20px;text-align:center;margin:20px 0">
+                  <div style="font-size:28px;font-weight:700;color:#2E7D4E;letter-spacing:0.1em">${PROMO_CODE}</div>
                   <div style="font-size:13px;color:#5C5A54;margin-top:6px">3 months free on any paid plan · Expires Dec 31, 2026</div>
                 </div>
                 <p style="color:#5C5A54;font-size:14px;line-height:1.6">
                   <strong>How to use:</strong><br/>
-                  1. <a href="https://idogs.com.au/signup" style="color:#085041">Create your free account</a> (or log in)<br/>
+                  1. <a href="https://idogs.com.au/signup" style="color:#2E7D4E">Create your free account</a> (or log in)<br/>
                   2. Go to Billing → choose a plan<br/>
                   3. Enter code <strong>${PROMO_CODE}</strong> at checkout
                 </p>
@@ -155,8 +155,8 @@ export default function AdminSurveyPage({ toast }: Props) {
           { label: 'Total', value: stats.total, color: 'var(--dark)' },
           { label: 'Pending review', value: stats.pending, color: 'var(--gold)' },
           { label: 'Code sent', value: stats.sent, color: 'var(--green)' },
-          { label: 'NSW breeders', value: stats.nsw, color: '#085041' },
-          { label: 'Dogs Australia registered', value: stats.ankc, color: '#1D9E75' },
+          { label: 'NSW breeders', value: stats.nsw, color: '#2E7D4E' },
+          { label: 'Dogs Australia registered', value: stats.ankc, color: '#6BAE7B' },
         ].map(stat => (
           <div key={stat.label} style={{ background: 'var(--white)', borderRadius: 12, padding: '16px', border: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: stat.color }}>{stat.value}</div>
