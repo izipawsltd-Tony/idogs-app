@@ -8,6 +8,7 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 - Cards trắng bo góc, shadow nhẹ, stat cards hàng ngang trên cùng có "View all →"
 - Plan usage widget cuối sidebar (plan name, dogs x/50, storage, Upgrade button)
 - Status badges: Active (xanh), Closed (xám)
+- **Tagline iDogs: "Every dog's story, forever."** — mockup ghi "One dog. One identity." là SAI, bỏ qua. Hiển thị tagline đúng dưới logo sidebar (nếu vừa chiều ngang) và giữ nguyên vị trí hiện có trên hero landing page. KHÔNG dùng tagline này cho iziPaws.
 
 ### Brand palette — vai trò màu
 
