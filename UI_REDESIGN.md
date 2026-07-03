@@ -10,7 +10,7 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 - Status badges: Active (xanh), Closed (xám)
 
 ## Milestones
-- [ ] M1 — Design tokens: palette/typography/spacing/button/card/badge components dùng chung
+- [x] M1 — Design tokens: palette/typography/spacing/button/card/badge components dùng chung
 - [ ] M2 — Layout shell: sidebar mới + topbar + plan widget (nav items Puppies/Buyers/Reports trỏ placeholder "Coming soon")
 - [ ] M3 — Dashboard: 6 stat cards + panels Recent Dogs / Upcoming Reminders / Litters Overview / Documents / Recent Activity + NSW compliance banner
 - [ ] M4 — My Dogs + Dog Detail reskin (GIỮ NGUYÊN logic compliance tab, chỉ đổi vỏ)
@@ -20,3 +20,7 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 
 ## Log
 (mỗi session ghi: ngày, milestone, staging URL, notes)
+
+| Ngày | Milestone | Staging URL | Notes |
+|------|-----------|-------------|-------|
+| 2026-07-03 | M1 — Design tokens | https://idogs-i3xfqr2zk-izipawsltd-tonys-projects.vercel.app | Bổ sung tokens (page-bg, sidebar-bg, spacing scale, shadow-card, badge-active/closed); tạo Card/Badge/Button/StatCard components |
