@@ -34,6 +34,11 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 - [ ] M5 — Litters + Reminders + Documents pages reskin
 - [ ] M6 — QA: empty states, loading states, responsive tablet, dark-data edge cases
 - [ ] M7 (sau cùng, tách riêng): modules Buyers/Puppies/Reports thật — cần bàn data model trước, KHÔNG tự làm
+  - [x] M7 #1 — Insights (Reports V1): Breeding Overview (reuse breedingCompliance.checkDamCompliance) + Litter Production + Health Test Coverage + Sales & Transfers. Route /app/reports, label hiển thị "Insights". Sales funnel chờ M7 #2.
+  - [ ] M7 #2 — Puppy lifecycle fields (availabilityStatus/reservedFor*/deposit*/buyer*/status → promote lên Dog type §7a). Tham chiếu M7_DATA_MODEL.md
+  - [ ] M7 #3 — Reservation UI. Tham chiếu M7_DATA_MODEL.md
+  - [ ] M7 #4 — Deposit UI. Tham chiếu M7_DATA_MODEL.md
+  - [ ] M7 #5 — Buyers derived view. Tham chiếu M7_DATA_MODEL.md
 
 ## Log
 (mỗi session ghi: ngày, milestone, staging URL, notes)
@@ -44,3 +49,4 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 | 2026-07-03 | M1b — Brand palette | https://idogs-m7pocapkd-izipawsltd-tonys-projects.vercel.app | Chuẩn hoá brand-900/600/300/50, gold-500/50, gray-100, success/warning/danger/info; map btn-primary + badges sang tokens mới; thay hardcoded hex trong 7 files |
 | 2026-07-03 | M2 — Layout shell | https://idogs-p5qbug410-izipawsltd-tonys-projects.vercel.app | Sidebar 240px trắng + logo + tagline "Every dog's story, forever." + nav groups (MAIN/BREEDING/MANAGE/ACCOUNT) + brand-600 active state; Topbar 60px greeting+date+bell+user menu dropdown; Plan widget (dogCount/limit, progress bar, Upgrade CTA); ComingSoonPage cho Puppies/Buyers/Reports; page-bg var(--gray-100); responsive mobile giữ nguyên |
 | 2026-07-03 | M3 — Dashboard | https://idogs-brrm0m11e-izipawsltd-tonys-projects.vercel.app | 6 stat cards clickable (Dogs/Active/Overdue/Puppies/Litters/Documents) + PanelCard component; panels: Recent Dogs (top 5 + badge-active/closed) / Litters Overview (status badge + puppy count) / Upcoming Reminders / Documents summary / Recent Activity (audit log, timeAgo) / NSW compliance banner reskin sang brand tokens; fetch getAllDocumentsForUser + getLitters + getAuditLogs trên dashboard |
+| 2026-07-04 | M7 #1 Insights | https://idogs-d6l74jr7h-izipawsltd-tonys-projects.vercel.app | ReportsPage.tsx + lib/reports.ts; nav "Reports"→"Insights"; commit 516d6bd1 on feature/ui-redesign; NOT on prod (UI Redesign freeze) |
