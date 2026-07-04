@@ -90,7 +90,7 @@ export default function DashboardPage({ toast }: Props) {
     ])
       .then(([d, r, l, docs, audit]) => {
         setDogs(d)
-        setReminders(r.slice(0, 5))
+        setReminders(r)
         setLitters(l)
         setDocuments(docs)
         setRecentActivity(audit.slice(0, 5))
@@ -110,7 +110,8 @@ export default function DashboardPage({ toast }: Props) {
   }, [user])
 
   const activeDogs   = dogs.filter(d => (d as any).status !== 'transferred')
-  const overdueCount = reminders.filter(r => isOverdue(r.dueDate)).length
+  const overdueCount = reminders.filter(r => r.status !== 'completed' && isOverdue(r.dueDate)).length
+  const visibleReminders = reminders.slice(0, 5)
 
   if (loading) return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
@@ -216,18 +217,18 @@ export default function DashboardPage({ toast }: Props) {
           <PanelCard title="Upcoming Reminders" viewAllTo="/app/reminders" viewAllLabel="View all →"
             badge={overdueCount > 0 ? <span className="badge badge-red">{overdueCount} overdue</span> : undefined}
           >
-            {reminders.length === 0 ? (
+            {visibleReminders.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '16px 0' }}>
                 <div style={{ fontSize: 24, marginBottom: 4 }}>✓</div>
                 <div style={{ fontSize: 13, color: 'var(--light)' }}>All up to date</div>
               </div>
             ) : (
               <div>
-                {reminders.map((r, i) => (
+                {visibleReminders.map((r, i) => (
                   <div key={r.id} style={{
                     display: 'flex', gap: 10, alignItems: 'flex-start',
                     padding: '10px 0',
-                    borderBottom: i < reminders.length - 1 ? '1px solid var(--border)' : 'none',
+                    borderBottom: i < visibleReminders.length - 1 ? '1px solid var(--border)' : 'none',
                   }}>
                     <div style={{
                       width: 7, height: 7, borderRadius: '50%', flexShrink: 0, marginTop: 5,

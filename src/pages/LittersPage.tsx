@@ -143,12 +143,18 @@ export default function LittersPage({ toast }: Props) {
   }
 
   async function handleAddPuppy(litterId: string, litter: Litter) {
-    if (!puppyForm.name) { toast('Puppy name required', 'error'); return }
     setSavingPuppy(true)
     try {
       const dam = dogs.find(d => d.id === litter.damId)
+      const trimmed = puppyForm.name.trim()
+      const sexWord = puppyForm.sex === 'male' ? 'Boy' : 'Girl'
+      const puppyIndex = (litter.puppyIds?.length || 0) + 1
+      const fallbackName = puppyForm.collarColour
+        ? `${puppyForm.collarColour} ${sexWord}`
+        : `${dam?.name ? dam.name + ' ' : ''}Pup ${puppyIndex}`
+      const finalName = trimmed || fallbackName
       const dogId = await createDog({
-        name: puppyForm.name,
+        name: finalName,
         breed: dam?.breed || '',
         sex: puppyForm.sex,
         dateOfBirth: litter.actualBirthDate || '',
@@ -168,7 +174,7 @@ export default function LittersPage({ toast }: Props) {
       setDogs(updatedDogs.filter(d => !d.isDeceased))
       setPuppyForm(emptyPuppy)
       setShowAddPuppy(null)
-      toast(`${puppyForm.name} added — QR Passport created!`)
+      toast(`${finalName} added — QR Passport created!`)
     } catch {
       toast('Failed to add puppy', 'error')
     } finally {
@@ -707,8 +713,8 @@ function PuppyFormFields({ form, onChange }: { form: PuppyForm; onChange: (f: Pu
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <div className="form-group">
-        <label className="form-label">Puppy name *</label>
-        <input className="form-input" placeholder="e.g. Red Girl, Blue Boy" value={form.name} onChange={e => set('name', e.target.value)} />
+        <label className="form-label">Puppy name <span style={{ fontWeight: 400, color: 'var(--light)' }}>(optional — auto-named by collar if blank)</span></label>
+        <input className="form-input" placeholder="Leave blank — e.g. Blue Boy auto-set" value={form.name} onChange={e => set('name', e.target.value)} />
       </div>
       <div className="form-group">
         <label className="form-label">Sex</label>
