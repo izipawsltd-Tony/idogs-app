@@ -117,6 +117,22 @@ export interface Litter {
   createdAt: string
 }
 
+// ═════════════════════════════════════════════════════════════
+// ⚠ IZIPAWS-TARGET SCHEMA — NOT USED BY iDogs V1 (satellite).
+//
+// These four types are legacy from the original IZIPAWS-first plan.
+// iDogs is now a lightweight satellite: it stores CURRENT commercial
+// state as optional fields on `Dog` (availabilityStatus / reservedFor*
+// / deposit* / buyer*) and derives Buyers as a view — NO Buyers or
+// Sales collection. See M7_DATA_MODEL.md §1 & §7b.
+//
+// Kept (not deleted) as the migration TARGET for when iDogs data later
+// graduates to the IZIPAWS identity layer (real Buyers, sales history,
+// invite-based ownership transfer, QR passport permissions).
+//
+// DO NOT build iDogs V1 features, collections, APIs or CRUD on these.
+// They have zero runtime usage by design.
+// ═════════════════════════════════════════════════════════════
 export interface BuyerRecord {
   id: string
   tenantId: string
@@ -172,6 +188,7 @@ export interface PassportVisibility {
   ownerPhone: boolean
 }
 
+// ── end IZIPAWS-target block ── (types below are ACTIVE in iDogs V1)
 export interface ScanLog {
   id: string
   dogId: string

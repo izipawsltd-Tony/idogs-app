@@ -308,7 +308,7 @@ export default function LittersPage({ toast }: Props) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <span style={{ fontSize: 28 }}>🐣</span>
                     <div>
-                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)' }}>{litter.name}</div>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{litter.name}</div>
                       {litter.actualBirthDate && <div style={{ fontSize: 13, color: 'var(--light)' }}>Born {litter.actualBirthDate}</div>}
                     </div>
                   </div>
@@ -318,7 +318,7 @@ export default function LittersPage({ toast }: Props) {
                   <div style={{ padding: '12px 20px' }}>
                     {puppies.map(puppy => (
                       <div key={puppy.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--sand)' }}>
-                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--green-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🐶</div>
+                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🐶</div>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{puppy.name}</div>
                           <div style={{ fontSize: 12, color: 'var(--light)' }}>{puppy.sex === 'female' ? '♀' : '♂'} · {puppy.colour}</div>
@@ -431,9 +431,9 @@ export default function LittersPage({ toast }: Props) {
                     style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}
                     onClick={() => setExpandedLitter(isExpanded ? null : litter.id)}
                   >
-                    <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--green-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>🐣</div>
+                    <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>🐣</div>
                     <div>
-                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)' }}>{litter.name}</div>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{litter.name}</div>
                       <div style={{ fontSize: 13, color: 'var(--light)', marginTop: 2 }}>
                         Dam: {dam?.name || '—'} · {litter.actualBirthDate ? `Born ${formatDate(litter.actualBirthDate)}` : litter.expectedDueDate ? `Due ${formatDate(litter.expectedDueDate)}` : 'Date TBC'}
                       </div>
@@ -443,7 +443,7 @@ export default function LittersPage({ toast }: Props) {
                     <span className="badge badge-green">{litter.puppyIds?.length || 0} puppies</span>
                     <button
                       className="btn btn-sm"
-                      style={{ background: '#FCEBEB', color: 'var(--error)', border: '1px solid #F09595' }}
+                      style={{ background: '#FDEDED', color: 'var(--danger)', border: '1px solid #F3B0B0' }}
                       onClick={() => handleDeleteLitter(litter.id, litter.name)}
                     >🗑️</button>
                     <button
@@ -510,7 +510,7 @@ export default function LittersPage({ toast }: Props) {
                         {dam && (
                           <div>
                             <div style={{ fontSize: 11, color: 'var(--light)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Dam</div>
-                            <Link to={`/app/dogs/${dam.id}`} style={{ fontSize: 13, color: 'var(--green)', fontWeight: 500, textDecoration: 'none' }}>{dam.name}</Link>
+                            <Link to={`/app/dogs/${dam.id}`} style={{ fontSize: 13, color: 'var(--brand-600)', fontWeight: 500, textDecoration: 'none' }}>{dam.name}</Link>
                             <div style={{ fontSize: 12, color: 'var(--light)' }}>{dam.breed}</div>
                           </div>
                         )}
@@ -579,7 +579,7 @@ export default function LittersPage({ toast }: Props) {
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px' }}>
                                   <div style={{
                                     width: 36, height: 36, borderRadius: '50%',
-                                    background: puppy.profilePhoto ? `url(${puppy.profilePhoto}) center/cover` : 'var(--green-light)',
+                                    background: puppy.profilePhoto ? `url(${puppy.profilePhoto}) center/cover` : 'var(--brand-50)',
                                     display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0,
                                   }}>
                                     {!puppy.profilePhoto && (collarMatch ? COLLAR_EMOJI[collarMatch[1]] || '🐶' : '🐶')}
@@ -605,7 +605,7 @@ export default function LittersPage({ toast }: Props) {
                                     {(puppy as any).status !== 'transferred' ? (
                                       <button
                                         className="btn btn-sm"
-                                        style={{ background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid #E8C46A' }}
+                                        style={{ background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid var(--brand-300)' }}
                                         onClick={() => { setTransferPuppy(puppy); setTransferError('') }}
                                       >🔄 Transfer</button>
                                     ) : (
@@ -613,7 +613,7 @@ export default function LittersPage({ toast }: Props) {
                                     )}
                                     <button
                                       className="btn btn-sm"
-                                      style={{ background: '#FCEBEB', color: 'var(--error)', border: '1px solid #F09595' }}
+                                      style={{ background: '#FDEDED', color: 'var(--danger)', border: '1px solid #F3B0B0' }}
                                       onClick={() => handleDeletePuppy(puppy.id, litter)}
                                     >✕</button>
                                   </div>
@@ -657,14 +657,14 @@ export default function LittersPage({ toast }: Props) {
               <button onClick={() => setTransferPuppy(null)} style={{ background: 'none', border: 'none', fontSize: '1rem', color: 'var(--mid)', cursor: 'pointer', padding: '4px 8px' }}>✕</button>
             </div>
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--green-light)', borderRadius: 10, padding: '0.875rem 1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--brand-50)', borderRadius: 10, padding: '0.875rem 1rem' }}>
                 <span style={{ fontSize: '1.5rem' }}>🐾</span>
                 <div>
                   <div style={{ fontWeight: 600, color: 'var(--dark)' }}>{transferPuppy.name}</div>
                   <div style={{ fontSize: '0.85rem', color: 'var(--mid)' }}>{transferPuppy.breed}</div>
                 </div>
               </div>
-              <div style={{ fontSize: '0.85rem', color: '#b45309', background: '#fef9ee', border: '1px solid #f6d860', borderRadius: 8, padding: '0.75rem 1rem' }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--warning)', background: '#FBF3E4', border: '1px solid #EBD9A8', borderRadius: 8, padding: '0.75rem 1rem' }}>
                 ⚠️ Once transferred, the new owner will have full control of this puppy's profile.
               </div>
               <div className="form-group">
@@ -677,18 +677,18 @@ export default function LittersPage({ toast }: Props) {
                 <p className="form-hint">They'll receive an email with the passport link and signup instructions.</p>
               </div>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.625rem', fontSize: '0.875rem', color: 'var(--dark)', cursor: 'pointer', lineHeight: 1.4 }}>
-                <input type="checkbox" checked={transferConfirm} onChange={e => setTransferConfirm(e.target.checked)} style={{ marginTop: 2, accentColor: 'var(--green)', width: 16, height: 16, flexShrink: 0 }} />
+                <input type="checkbox" checked={transferConfirm} onChange={e => setTransferConfirm(e.target.checked)} style={{ marginTop: 2, accentColor: 'var(--brand-600)', width: 16, height: 16, flexShrink: 0 }} />
                 <span>I confirm I want to transfer <strong>{transferPuppy.name}</strong> to this buyer. This cannot be undone.</span>
               </label>
               {transferError && <p className="form-error">{transferError}</p>}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', padding: '16px 24px', borderTop: '1px solid var(--border)', background: '#fafaf9' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--gray-100)' }}>
               <button className="btn btn-secondary btn-sm" onClick={() => setTransferPuppy(null)} disabled={transferring}>Cancel</button>
               <button
                 className="btn btn-sm"
                 onClick={handleTransferPuppy}
                 disabled={transferring || !transferConfirm}
-                style={{ background: !transferConfirm || transferring ? '#f5f5f4' : '#dc2626', color: !transferConfirm || transferring ? 'var(--light)' : '#fff', border: 'none' }}
+                style={{ background: !transferConfirm || transferring ? 'var(--gray-100)' : 'var(--danger)', color: !transferConfirm || transferring ? 'var(--light)' : '#fff', border: 'none' }}
               >
                 {transferring ? <><span className="spinner" style={{ width: 14, height: 14, borderTopColor: '#fff' }} /> Transferring…</> : 'Transfer Ownership'}
               </button>

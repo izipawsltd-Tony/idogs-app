@@ -124,7 +124,7 @@ export default function DogDetailPage({ toast }: Props) {
         const publicUrl = `${window.location.origin}/p/${d.passportId}`
         const url = await QRCode.toDataURL(publicUrl, {
           width: 200, margin: 2, errorCorrectionLevel: 'H',
-          color: { dark: '#2E7D4E', light: '#FFFFFF' }
+          color: { dark: '#1A3A2A', light: '#FFFFFF' }
         })
         setQrUrl(url)
       } catch (err) {
@@ -476,11 +476,11 @@ export default function DogDetailPage({ toast }: Props) {
       {todaysMilestone && (
         <div style={{
           marginTop: 16, padding: '14px 20px', borderRadius: 12,
-          background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.2)',
+          background: 'var(--brand-50)', border: '1px solid var(--brand-300)',
           display: 'flex', alignItems: 'center', gap: 10,
         }}>
           <span style={{ fontSize: 22 }}>{todaysMilestone.kind === 'birthday' ? '🎉' : '🏠'}</span>
-          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--gold)' }}>
+          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--brand-600)' }}>
             {dog.name}'s {todaysMilestone.label}
           </span>
         </div>
@@ -496,7 +496,7 @@ export default function DogDetailPage({ toast }: Props) {
         />
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)' }}>{dog.name}</h1>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.name}</h1>
             {isTransferred ? (
               <span className="badge badge-gray">Transferred</span>
             ) : (
@@ -528,7 +528,7 @@ export default function DogDetailPage({ toast }: Props) {
             <button
               onClick={() => setShowTransfer(true)}
               className="btn btn-sm"
-              style={{ background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid #E8C46A' }}
+              style={{ background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid var(--brand-300)' }}
             >
               🔄 Transfer
             </button>
@@ -537,7 +537,7 @@ export default function DogDetailPage({ toast }: Props) {
             onClick={handleDelete}
             disabled={deleting}
             className="btn btn-sm"
-            style={{ background: 'var(--redL, #FCEBEB)', color: 'var(--error)', border: '1px solid #F09595' }}
+            style={{ background: 'var(--redL, #FDEDED)', color: 'var(--error)', border: '1px solid #F3B0B0' }}
           >
             {deleting ? <span className="spinner" /> : '🗑 Delete'}
           </button>
@@ -550,9 +550,9 @@ export default function DogDetailPage({ toast }: Props) {
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{
               padding: '10px 14px', border: 'none',
-              borderBottom: tab === t.id ? '2px solid var(--green)' : '2px solid transparent',
+              borderBottom: tab === t.id ? '2px solid var(--brand-600)' : '2px solid transparent',
               background: 'transparent',
-              color: tab === t.id ? 'var(--green)' : 'var(--mid)',
+              color: tab === t.id ? 'var(--brand-600)' : 'var(--mid)',
               fontSize: 13, fontWeight: tab === t.id ? 500 : 400,
               cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap', flexShrink: 0,
             }}>{t.label}</button>
@@ -670,7 +670,7 @@ function TransferModal({
         {/* Body */}
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {/* Dog info */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--green-light)', borderRadius: 10, padding: '0.875rem 1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--brand-50)', borderRadius: 10, padding: '0.875rem 1rem' }}>
             <span style={{ fontSize: '1.5rem' }}>🐾</span>
             <div>
               <div style={{ fontWeight: 600, color: 'var(--dark)' }}>{dogName}</div>
@@ -679,7 +679,7 @@ function TransferModal({
               {breederIdType && breederIdType !== 'NONE' && breederIdValue && (
                 <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
                   <span style={{ fontSize: 11 }}>🏷️</span>
-                  <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 500 }}>
+                  <span style={{ fontSize: 11, color: 'var(--brand-600)', fontWeight: 500 }}>
                     {BREEDER_ID_CONFIG[breederIdType]?.label}: {breederIdValue}
                   </span>
                 </div>
@@ -688,7 +688,7 @@ function TransferModal({
           </div>
 
           {/* Warning */}
-          <div style={{ fontSize: '0.85rem', color: '#b45309', background: '#fef9ee', border: '1px solid #f6d860', borderRadius: 8, padding: '0.75rem 1rem' }}>
+          <div style={{ fontSize: '0.85rem', color: 'var(--warning)', background: '#FBF3E4', border: '1px solid #EBD9A8', borderRadius: 8, padding: '0.75rem 1rem' }}>
             ⚠️ Once transferred, the new owner will have full control of this dog's profile. You will see it in read-only mode.
           </div>
 
@@ -723,7 +723,7 @@ function TransferModal({
               type="checkbox"
               checked={confirm}
               onChange={e => setConfirm(e.target.checked)}
-              style={{ marginTop: 2, accentColor: 'var(--green)', width: 16, height: 16, flexShrink: 0 }}
+              style={{ marginTop: 2, accentColor: 'var(--brand-600)', width: 16, height: 16, flexShrink: 0 }}
             />
             <span>I confirm I want to transfer <strong>{dogName}</strong> to this buyer. This action cannot be undone.</span>
           </label>
@@ -732,13 +732,13 @@ function TransferModal({
         </div>
 
         {/* Footer */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', padding: '16px 24px', borderTop: '1px solid var(--border)', background: '#fafaf9' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--gray-100)' }}>
           <button className="btn btn-secondary btn-sm" onClick={onClose} disabled={loading}>Cancel</button>
           <button
             className="btn btn-sm"
             onClick={handleSubmit}
             disabled={loading || !confirm}
-            style={{ background: !confirm || loading ? '#f5f5f4' : '#dc2626', color: !confirm || loading ? 'var(--light)' : '#fff', border: 'none' }}
+            style={{ background: !confirm || loading ? 'var(--gray-100)' : 'var(--danger)', color: !confirm || loading ? 'var(--light)' : '#fff', border: 'none' }}
           >
             {loading ? <><span className="spinner" style={{ borderTopColor: '#fff', width: 14, height: 14 }} /> Transferring…</> : 'Transfer Ownership'}
           </button>
@@ -788,7 +788,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
             <span style={{ color: 'var(--light)' }}>Microchip cert</span>
             <button
               onClick={() => viewDocument(user, toast, (dog as any).microchipCertPath, (dog as any).microchipCertUrl)}
-              style={{ color: 'var(--green)', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13 }}
+              style={{ color: 'var(--brand-600)', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13 }}
             >
               📄 View cert
             </button>
@@ -816,7 +816,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
                 Rescue / unknown
               </span>
             ) : (
-              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', border: '1px solid rgba(8,80,65,0.15)' }}>
+              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid rgba(8,80,65,0.15)' }}>
                 🔵 Main Register — eligible to breed
               </span>
             )}
@@ -877,7 +877,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
                   href={BREEDER_ID_CONFIG[dog.breederIdType].verifyUrl!}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none', fontSize: 12 }}
+                  style={{ color: 'var(--brand-600)', fontWeight: 500, textDecoration: 'none', fontSize: 12 }}
                 >
                   Verify ↗
                 </a>
@@ -888,7 +888,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
         ) : (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
             <span style={{ color: 'var(--light)' }}>Breeder ID</span>
-            <button onClick={() => setEditingBreederId(true)} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--green)' }}>+ Add</button>
+            <button onClick={() => setEditingBreederId(true)} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--brand-600)' }}>+ Add</button>
           </div>
         )}
         <InfoRow label="Passport ID" value={dog.passportId} mono />
@@ -1143,14 +1143,14 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
                 <div key={v.id} style={{
                   display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px',
                   borderBottom: i < vaccines.length - 1 ? '1px solid var(--border)' : 'none',
-                  background: v.uncertain ? '#FDF6E3' : 'transparent',
+                  background: v.uncertain ? '#FBF3E4' : 'transparent',
                 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>
                       {v.name}
-                      {v.uncertain && <span style={{ fontSize: 11, color: 'var(--gold)', marginLeft: 6, fontWeight: 600 }}>⚠ Unclear from scan — please verify</span>}
+                      {v.uncertain && <span style={{ fontSize: 11, color: 'var(--warning)', marginLeft: 6, fontWeight: 600 }}>⚠ Unclear from scan — please verify</span>}
                     </div>
-                    <div style={{ fontSize: 12, color: v.uncertain ? 'var(--gold)' : 'var(--light)', fontWeight: v.uncertain ? 600 : 400 }}>
+                    <div style={{ fontSize: 12, color: v.uncertain ? 'var(--warning)' : 'var(--light)', fontWeight: v.uncertain ? 600 : 400 }}>
                       Given: {formatDate(v.dateGiven)}{v.nextDue ? ` · Due: ${formatDate(v.nextDue)}` : ''}{v.vetClinic ? ` · ${v.vetClinic}` : ''}
                     </div>
                   </div>
@@ -1585,7 +1585,7 @@ function RemindersTab({ reminders, setReminders, toast }: {
           {active.map((r, i) => {
             const overdue = isOverdue(r.dueDate)
             return (
-              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: i < active.length - 1 ? '1px solid var(--border)' : 'none', background: overdue ? '#FFF8F8' : undefined }}>
+              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: i < active.length - 1 ? '1px solid var(--border)' : 'none', background: overdue ? '#FDEDED' : undefined }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: overdue ? 'var(--error)' : 'var(--warning)', flexShrink: 0 }} />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{r.title}</div>
@@ -1656,7 +1656,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
         </div>
         <div className="card">
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)', marginBottom: 8 }}>Privacy</div>
-          <div style={{ fontSize: 13, color: 'var(--green)', background: 'var(--green-light)', padding: '8px 12px', borderRadius: 8 }}>
+          <div style={{ fontSize: 13, color: 'var(--brand-600)', background: 'var(--brand-50)', padding: '8px 12px', borderRadius: 8 }}>
             ✓ Data stored in Australia · Australian Privacy Act 1988 compliant
           </div>
         </div>
@@ -1706,7 +1706,7 @@ function DocumentsTab({ documents, dogName, toast }: { documents: any[]; dogName
             }}>
               <div style={{
                 width: 44, height: 44, borderRadius: 10,
-                background: 'var(--green-light)',
+                background: 'var(--brand-50)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '1.4rem', flexShrink: 0,
               }}>
@@ -1720,12 +1720,12 @@ function DocumentsTab({ documents, dogName, toast }: { documents: any[]; dogName
                   {doc.fileType?.toUpperCase()} · {doc.uploadedAt?.toDate?.()?.toLocaleDateString('en-AU') || 'Recently uploaded'}
                 </div>
                 {doc.extractedData?.vaccines > 0 && (
-                  <div style={{ fontSize: 12, color: 'var(--green)', marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: 'var(--brand-600)', marginTop: 2 }}>
                     💉 {doc.extractedData.vaccines} vaccine(s) extracted
                   </div>
                 )}
                 {doc.extractedData?.healthTest && (
-                  <div style={{ fontSize: 12, color: 'var(--green)', marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: 'var(--brand-600)', marginTop: 2 }}>
                     🔬 {doc.extractedData.healthTest} test extracted
                   </div>
                 )}
@@ -2260,9 +2260,9 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   function heatCompliance(ageAtHeatMo: number) {
     const minAge = (breedSize === 'large' || breedSize === 'giant') ? rules.minBreedingMonthsLarge : rules.minBreedingMonths
     if (ageAtHeatMo < rules.minBreedingMonths) return { status: 'blocked', msg: `❌ Under ${rules.minBreedingMonths}mo`, color: 'var(--error)' }
-    if (ageAtHeatMo < minAge) return { status: 'caution', msg: `⚠️ Under ${minAge}mo (${breedSize})`, color: 'var(--gold)' }
-    if (ageAtHeatMo >= rules.vetCertAfterAge * 12) return { status: 'warn', msg: `⚠️ Vet cert required`, color: 'var(--gold)' }
-    return { status: 'ok', msg: '✓ Eligible', color: 'var(--green)' }
+    if (ageAtHeatMo < minAge) return { status: 'caution', msg: `⚠️ Under ${minAge}mo (${breedSize})`, color: 'var(--warning)' }
+    if (ageAtHeatMo >= rules.vetCertAfterAge * 12) return { status: 'warn', msg: `⚠️ Vet cert required`, color: 'var(--warning)' }
+    return { status: 'ok', msg: '✓ Eligible', color: 'var(--brand-600)' }
   }
 
   // Compliance summary
@@ -2380,8 +2380,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
 
       {/* Source note */}
       <div style={{ fontSize: 12, color: 'var(--mid)', marginBottom: 16, padding: '8px 12px', background: 'var(--sand)', borderRadius: 8 }}>
-        📋 <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--green)' }}>{rules.sourceName}</a>
-        {selectedState !== userState && <span style={{ marginLeft: 8, color: 'var(--gold)', fontWeight: 500 }}>⚠️ Profile state: {STATE_RULES[userState]?.stateName}</span>}
+        📋 <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-600)' }}>{rules.sourceName}</a>
+        {selectedState !== userState && <span style={{ marginLeft: 8, color: 'var(--warning)', fontWeight: 500 }}>⚠️ Profile state: {STATE_RULES[userState]?.stateName}</span>}
       </div>
 
       {/* Overall status */}
@@ -2398,16 +2398,16 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
           </p>
           <div style={{ marginTop: 12, fontSize: 12, color: 'var(--light)' }}>
             To obtain Dogs Australia pedigree papers, contact your state body:
-            {' '}<a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--green)' }}>{rules.sourceName}</a>
+            {' '}<a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-600)' }}>{rules.sourceName}</a>
           </div>
         </div>
       ) : (
       <div style={{
         padding: '16px 20px', borderRadius: 12, marginBottom: 20,
-        background: overallOk ? 'var(--green-light)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#FFF8F8' : 'var(--gold-light)',
-        border: `1.5px solid ${overallOk ? 'var(--green-mid)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#F09595' : 'rgba(200,151,31,0.4)'}`,
+        background: overallOk ? 'var(--brand-50)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#FDEDED' : '#FBF3E4',
+        border: `1.5px solid ${overallOk ? 'var(--brand-300)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#F3B0B0' : '#EBD9A8'}`,
       }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, marginBottom: 10, color: overallOk ? 'var(--green)' : !littersOk || !csectionOk || !last18Ok || isUnder12 ? 'var(--error)' : 'var(--gold)' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, marginBottom: 10, color: overallOk ? 'var(--brand-600)' : !littersOk || !csectionOk || !last18Ok || isUnder12 ? 'var(--error)' : 'var(--warning)' }}>
           {overallMsg}
         </div>
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
@@ -2434,14 +2434,14 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       <div className="card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 500, color: 'var(--mid)', display: 'flex', justifyContent: 'space-between' }}>
           <span>{rules.stateName} Breeding Rules</span>
-          <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: 'var(--green)', textDecoration: 'none' }}>Source ↗</a>
+          <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: 'var(--brand-600)', textDecoration: 'none' }}>Source ↗</a>
         </div>
         {rulesTable.map((row, i, arr) => (
           <div key={row.rule} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
             <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: 'var(--dark)' }}>{row.rule}</div>
             <div style={{ textAlign: 'right', flexShrink: 0 }}>
               <div style={{ fontSize: 13, color: 'var(--dark)', marginBottom: 3 }}>{row.value}</div>
-              <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: row.st === 'ok' ? 'var(--green-light)' : row.st === 'fail' ? '#FDEDED' : row.st === 'warn' ? 'var(--gold-light)' : 'var(--sand)', color: row.st === 'ok' ? 'var(--green)' : row.st === 'fail' ? 'var(--error)' : row.st === 'warn' ? 'var(--gold)' : 'var(--mid)' }}>
+              <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: row.st === 'ok' ? 'var(--brand-50)' : row.st === 'fail' ? '#FDEDED' : row.st === 'warn' ? '#FBF3E4' : 'var(--sand)', color: row.st === 'ok' ? 'var(--brand-600)' : row.st === 'fail' ? 'var(--error)' : row.st === 'warn' ? 'var(--warning)' : 'var(--mid)' }}>
                 {row.st === 'ok' ? '✓ Compliant' : row.st === 'fail' ? '✕ Non-compliant' : row.st === 'warn' ? '⚠ Review' : 'ℹ Info'}
               </span>
             </div>
@@ -2590,13 +2590,13 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
               const c = heatCompliance(ageAtHeatMo)
               const recorded = heatCycles.find(h => h.heatNumber === heat.n)
               return (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 8, background: isSoon ? 'var(--gold-light)' : isPast ? 'var(--sand)' : 'var(--white)', border: `1px solid ${isSoon ? 'rgba(200,151,31,0.3)' : 'var(--border)'}`, opacity: isPast ? 0.65 : 1 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, background: c.status === 'ok' ? 'var(--green-light)' : c.status === 'blocked' ? '#FDEDED' : 'var(--gold-light)', color: c.status === 'ok' ? 'var(--green)' : c.status === 'blocked' ? 'var(--error)' : 'var(--gold)' }}>{heat.n}</div>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 8, background: isSoon ? '#FBF3E4' : isPast ? 'var(--sand)' : 'var(--white)', border: `1px solid ${isSoon ? '#EBD9A8' : 'var(--border)'}`, opacity: isPast ? 0.65 : 1 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, background: c.status === 'ok' ? 'var(--brand-50)' : c.status === 'blocked' ? '#FDEDED' : '#FBF3E4', color: c.status === 'ok' ? 'var(--brand-600)' : c.status === 'blocked' ? 'var(--error)' : 'var(--warning)' }}>{heat.n}</div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--dark)', display: 'flex', alignItems: 'center', gap: 6 }}>
                       {heat.label}
-                      {isSoon && <span style={{ fontSize: 10, background: 'var(--gold)', color: '#fff', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>Upcoming</span>}
-                      {recorded && <span style={{ fontSize: 10, background: 'var(--green)', color: '#fff', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>✓ Recorded</span>}
+                      {isSoon && <span style={{ fontSize: 10, background: 'var(--warning)', color: '#fff', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>Upcoming</span>}
+                      {recorded && <span style={{ fontSize: 10, background: 'var(--brand-600)', color: '#fff', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>✓ Recorded</span>}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--light)' }}>{fmtDate(heat.date)} · Age: {ageAtDate(dog.dateOfBirth, heat.date)}</div>
                   </div>
@@ -2677,7 +2677,7 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* HEAT */}
           <section>
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 10 }}>🌸 Heat</div>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--brand-600)', marginBottom: 10 }}>🌸 Heat</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="form-group">
                 <label className="form-label">Heat number</label>
@@ -2697,7 +2697,7 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
 
           {/* MATING */}
           <section>
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 10 }}>🐕 Mating</div>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--brand-600)', marginBottom: 10 }}>🐕 Mating</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="form-group">
                 <label className="form-label">Mating date</label>
@@ -2723,12 +2723,12 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
                   <button
                     type="button"
                     onClick={() => setSireMode('list')}
-                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: `1.5px solid ${sireMode === 'list' ? 'var(--green)' : 'var(--border)'}`, background: sireMode === 'list' ? 'var(--green-light)' : 'var(--white)', color: sireMode === 'list' ? 'var(--green)' : 'var(--mid)', cursor: 'pointer' }}
+                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: `1.5px solid ${sireMode === 'list' ? 'var(--brand-600)' : 'var(--border)'}`, background: sireMode === 'list' ? 'var(--brand-50)' : 'var(--white)', color: sireMode === 'list' ? 'var(--brand-600)' : 'var(--mid)', cursor: 'pointer' }}
                   >From my dogs</button>
                   <button
                     type="button"
                     onClick={() => setSireMode('manual')}
-                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: `1.5px solid ${sireMode === 'manual' ? 'var(--green)' : 'var(--border)'}`, background: sireMode === 'manual' ? 'var(--green-light)' : 'var(--white)', color: sireMode === 'manual' ? 'var(--green)' : 'var(--mid)', cursor: 'pointer' }}
+                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: `1.5px solid ${sireMode === 'manual' ? 'var(--brand-600)' : 'var(--border)'}`, background: sireMode === 'manual' ? 'var(--brand-50)' : 'var(--white)', color: sireMode === 'manual' ? 'var(--brand-600)' : 'var(--mid)', cursor: 'pointer' }}
                   >Enter manually</button>
                 </div>
                 {sireMode === 'list' ? (
@@ -2750,7 +2750,7 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
                         }
                       </select>
                       {(form as any).sirePedigreeRegister === 'limited' && (
-                        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--error)', background: '#FFF8F8', border: '1px solid #F09595', borderRadius: 6, padding: '6px 10px' }}>
+                        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--error)', background: '#FDEDED', border: '1px solid #F3B0B0', borderRadius: 6, padding: '6px 10px' }}>
                           ⚠️ <strong>Limited Register sire</strong> — progeny cannot be registered on the Main Register under Dogs Australia rules.
                         </div>
                       )}
@@ -2758,8 +2758,8 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
                     </div>
                     <div>
                       {form.sireName && (
-                        <div style={{ padding: '8px 12px', background: 'var(--green-light)', borderRadius: 8, fontSize: 13 }}>
-                          <div style={{ fontWeight: 600, color: 'var(--green)' }}>{form.sireName}</div>
+                        <div style={{ padding: '8px 12px', background: 'var(--brand-50)', borderRadius: 8, fontSize: 13 }}>
+                          <div style={{ fontWeight: 600, color: 'var(--brand-600)' }}>{form.sireName}</div>
                           {form.sireReg && <div style={{ color: 'var(--mid)', fontSize: 12 }}>Reg: {form.sireReg}</div>}
                         </div>
                       )}
@@ -2791,7 +2791,7 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
 
           {/* PREGNANCY */}
           <section>
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 10 }}>🤰 Pregnancy</div>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--brand-600)', marginBottom: 10 }}>🤰 Pregnancy</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 4 }}>
                 <input type="checkbox" id="pregnant" checked={form.pregnancyConfirmed || false} onChange={e => set('pregnancyConfirmed', e.target.checked)} style={{ width: 16, height: 16 }} />
@@ -2812,7 +2812,7 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
 
           {/* WHELPING */}
           <section>
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 10 }}>🐣 Whelping</div>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--brand-600)', marginBottom: 10 }}>🐣 Whelping</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="form-group">
                 <label className="form-label">Actual whelping date</label>

@@ -56,6 +56,18 @@ iDogs.com.au is a **freemium consumer SaaS** serving as the **top-of-funnel acqu
 - Production: https://idogs.com.au
 - Vercel alias: https://idogs-app.vercel.app
 
+## Trạng thái production (idogs.com.au — branch main) — 3/7/2026
+- Auth fixes deployed: forgot password flow, signup form có State (required) + Breeder Number (optional), modal backfill state cho user cũ
+- Breeding compliance engine live: `src/lib/breedingCompliance.ts` (3-layer ANKC/state, verified flags), wired vào DogDetailPage BreedingTab
+- hipScore display + Hip/Elbow Date Tested từ AI scan: đã fix
+- **Production FROZEN** cho đến khi UI redesign hoàn thành — mọi thay đổi chỉ trên branch `feature/ui-redesign`, KHÔNG merge, KHÔNG `vercel deploy --prod`
+
+## Staging (idogs-app-staging) — bản sao live từ 3/7/2026
+- 283 docs copied (17 dogs, 41 vaccineRecords, 93 auditLogs...), Auth users imported giữ nguyên uid production
+- Account chính: `trunghieungo@gmail.com` uid `iQnWhpEy3sUvRuBwneukJgQ3WBt2` (uid production; bản staging cũ `4ZcrPyvM...` đã xóa cả Auth lẫn Firestore profile)
+- Script copy: `scripts/copy-prod-to-staging.mjs` (dry-run mặc định, `--execute` để chạy, hard guard chống ghi vào production). Chạy lại cần generate 2 service account keys mới (không lưu keys trong Downloads)
+- Vercel env `FIREBASE_*`: 2 bản mỗi var — Preview = `idogs-app-staging`, Production = `idogs-app`. Private key format: 1 dòng với `\n` literal (`api/scan.js` tự replace)
+
 ## Tech Stack
 - **Frontend:** React 18 + TypeScript + Vite
 - **Auth:** Firebase Auth (global)
@@ -321,19 +333,22 @@ sms_addon: price_1Tialb5lmfxrCiH3pe82Abps  — $3 AUD/month
 - [ ] TM Headstart formal application ($330) — after IP Australia feedback
 - [ ] AWS Textract as an OCR pre-processing layer for `api/scan.js`, to improve accuracy on handwritten vaccine cards (printed documents already scan reliably; handwriting is the remaining weak point, partially mitigated by stricter uncertain-flagging + yellow highlighting in the meantime)
 
-### Known Bugs
-- **Orphaned Firestore profile blocks re-signup** (backlog, not yet fixed) — if a Firebase Auth user is deleted from the console but the Firestore `users/{uid}` doc remains, a new signup attempt with the same email gets "email already registered" from Auth, but the profile doc has no matching Auth user. Workaround: manually delete the orphaned Firestore doc. Fix in progress: signup rollback (delete Auth user if `createUserProfile` fails) is already committed to staging; full `deleteAccount()` also written but not yet exposed in UI.
+### Known Bugs / Backlog
+- **Orphaned Firestore profile blocks re-signup** (backlog) — if a Firebase Auth user is deleted from the console but the Firestore `users/{uid}` doc remains, a new signup attempt with the same email gets "email already registered" from Auth, but the profile doc has no matching Auth user. Workaround: manually delete the orphaned Firestore doc. Fix in progress: signup rollback (delete Auth user if `createUserProfile` fails) is already committed to staging; full `deleteAccount()` also written but not yet exposed in UI.
+- **Dashboard panels fetch toàn bộ rồi slice** — cần `limit()` ở Firestore query, QA trong M6
+- **3 test dogs mồ côi trong staging Firestore** (uid `4ZcrPyvM...` đã xóa) — dọn khi rảnh
+- **NNGOLDEN LULU/SIGMA breed ghi Labrador** — verify đúng breed trên production
+
+### Lessons
+- Firebase `auth:import` email trùng khác uid → tồn tại song song 2 users; user DISABLED chặn forgot-password email im lặng — phải DELETE hẳn bản thừa
+- Copy Firestore mà không import Auth giữ uid = data vô hình (tenantId mismatch)
 
 ### Fixed — deployed to Production
+- Auth fixes: forgot password flow (`ForgotPasswordPage.tsx` + `/forgot-password` route), signup State (required) + Breeder Number (optional) fields, backfill modal in `AppLayout.tsx` for existing users missing `state`
+- Vercel env `FIREBASE_*` split into Preview (staging) + Production scopes — fixes iDogs Scan failing on staging Preview URLs
 - `hipScore`/`elbowGrade` displaying as `[object Object]` — fixed in `api/scan.js` + `DogDetailPage.tsx`
 - Hip/Elbow "Date Tested" not populating from AI scan — fixed in `api/scan.js`
 - Breeding compliance engine — `src/lib/breedingCompliance.ts` (3-layer ANKC/state rules), wired into `DogDetailPage.tsx` BreedingTab
-
-### Fixed — on staging, pending production deploy
-- Forgot password flow — `ForgotPasswordPage.tsx` + `/forgot-password` route
-- Signup form: State (required) + Breeder Number (optional) fields added; passed through `useAuth.signup()` → Firestore profile
-- Backfill modal in `AppLayout.tsx` — triggers for existing users missing `state` field
-- Vercel env `FIREBASE_*` split into Preview (staging) + Production scopes — fixes iDogs Scan failing on staging Preview URLs
 
 ### What NOT to re-litigate
 - reminderDays — done (SettingsPage.tsx + send-reminders.js)

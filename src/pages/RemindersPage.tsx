@@ -150,8 +150,8 @@ export default function RemindersPage({ toast }: Props) {
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
-        <div style={{ background: overdueCount > 0 ? '#fff5f5' : 'var(--white)', border: `1px solid ${overdueCount > 0 ? '#fca5a5' : 'var(--border)'}`, borderRadius: 'var(--radius-md)', padding: '16px', textAlign: 'center' }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: overdueCount > 0 ? '#dc2626' : 'var(--dark)', lineHeight: 1 }}>{overdueCount}</div>
+        <div style={{ background: overdueCount > 0 ? '#FDEDED' : 'var(--white)', border: `1px solid ${overdueCount > 0 ? '#F3B0B0' : 'var(--border)'}`, borderRadius: 'var(--radius-md)', padding: '16px', textAlign: 'center' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: overdueCount > 0 ? 'var(--danger)' : 'var(--dark)', lineHeight: 1 }}>{overdueCount}</div>
           <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>Overdue</div>
         </div>
         <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '16px', textAlign: 'center' }}>
@@ -171,8 +171,8 @@ export default function RemindersPage({ toast }: Props) {
             key={f}
             onClick={() => setFilter(f)}
             style={{
-              background: filter === f ? 'var(--green)' : 'var(--white)',
-              border: `1px solid ${filter === f ? 'var(--green)' : 'var(--border)'}`,
+              background: filter === f ? 'var(--brand-600)' : 'var(--white)',
+              border: `1px solid ${filter === f ? 'var(--brand-600)' : 'var(--border)'}`,
               color: filter === f ? '#fff' : 'var(--mid)',
               borderRadius: 20, padding: '6px 14px',
               fontSize: 13, fontWeight: 500, cursor: 'pointer',
@@ -182,7 +182,7 @@ export default function RemindersPage({ toast }: Props) {
           >
             {f.charAt(0).toUpperCase() + f.slice(1)}
             {f === 'overdue' && overdueCount > 0 && (
-              <span style={{ background: filter === f ? 'rgba(255,255,255,0.25)' : '#dc2626', color: '#fff', borderRadius: 10, fontSize: 11, padding: '1px 6px', minWidth: 18, textAlign: 'center' }}>
+              <span style={{ background: filter === f ? 'rgba(255,255,255,0.25)' : 'var(--danger)', color: '#fff', borderRadius: 10, fontSize: 11, padding: '1px 6px', minWidth: 18, textAlign: 'center' }}>
                 {overdueCount}
               </span>
             )}
@@ -209,9 +209,9 @@ export default function RemindersPage({ toast }: Props) {
               <div
                 key={reminder.id}
                 style={{
-                  background: done ? '#fafaf9' : 'var(--white)',
-                  border: `1px solid ${overdue ? '#fca5a5' : 'var(--border)'}`,
-                  borderLeft: overdue ? '3px solid #dc2626' : undefined,
+                  background: done ? 'var(--gray-100)' : 'var(--white)',
+                  border: `1px solid ${overdue ? '#F3B0B0' : 'var(--border)'}`,
+                  borderLeft: overdue ? '3px solid var(--danger)' : undefined,
                   borderRadius: 'var(--radius-md)',
                   padding: '14px 16px',
                   display: 'flex', alignItems: 'center', gap: 14,
@@ -220,7 +220,7 @@ export default function RemindersPage({ toast }: Props) {
               >
                 <div style={{
                   width: 40, height: 40, borderRadius: '50%',
-                  background: 'var(--green-light)',
+                  background: 'var(--brand-50)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: '1.2rem', flexShrink: 0,
                 }}>
@@ -235,9 +235,9 @@ export default function RemindersPage({ toast }: Props) {
                     ) : overdue ? (
                       <span className="badge badge-red" style={{ fontSize: 11 }}>Overdue {Math.abs(days)}d</span>
                     ) : days === 0 ? (
-                      <span style={{ background: '#fff7ed', color: '#ea580c', border: '1px solid #fdba74', borderRadius: 20, fontSize: 11, fontWeight: 600, padding: '2px 8px' }}>Due Today</span>
+                      <span style={{ background: '#FBF3E4', color: 'var(--warning)', border: '1px solid #EBD9A8', borderRadius: 20, fontSize: 11, fontWeight: 600, padding: '2px 8px' }}>Due Today</span>
                     ) : days <= 3 ? (
-                      <span style={{ background: '#fefce8', color: '#ca8a04', border: '1px solid #fde047', borderRadius: 20, fontSize: 11, fontWeight: 600, padding: '2px 8px' }}>In {days}d</span>
+                      <span style={{ background: '#FBF3E4', color: 'var(--warning)', border: '1px solid #EBD9A8', borderRadius: 20, fontSize: 11, fontWeight: 600, padding: '2px 8px' }}>In {days}d</span>
                     ) : (
                       <span className="badge badge-green" style={{ fontSize: 11 }}>In {days}d</span>
                     )}
@@ -251,8 +251,8 @@ export default function RemindersPage({ toast }: Props) {
                     onClick={() => markDone(reminder.id)}
                     title="Mark as done"
                     style={{
-                      background: 'var(--green-light)', border: '1px solid var(--green-mid)',
-                      color: 'var(--green)', borderRadius: 8,
+                      background: 'var(--brand-50)', border: '1px solid var(--brand-300)',
+                      color: 'var(--brand-600)', borderRadius: 8,
                       width: 36, height: 36, fontSize: '1rem', fontWeight: 700,
                       cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
                       flexShrink: 0,

@@ -93,9 +93,9 @@ export default function DocumentsPage({ toast }: Props) {
             onClick={() => setFilter(type)}
             style={{
               padding: '7px 14px', borderRadius: 20, border: '1.5px solid',
-              borderColor: filter === type ? 'var(--green)' : 'var(--border)',
-              background: filter === type ? 'var(--green-light)' : 'var(--white)',
-              color: filter === type ? 'var(--green)' : 'var(--mid)',
+              borderColor: filter === type ? 'var(--brand-600)' : 'var(--border)',
+              background: filter === type ? 'var(--brand-50)' : 'var(--white)',
+              color: filter === type ? 'var(--brand-600)' : 'var(--mid)',
               fontSize: 13, fontWeight: 500, cursor: 'pointer',
             }}
           >
@@ -116,7 +116,7 @@ export default function DocumentsPage({ toast }: Props) {
             <div className="empty-state-title">No documents yet</div>
             <div className="empty-state-desc">
               {filter === 'all'
-                ? 'Upload a document or use the AI Scan tab in a dog profile to scan and save records.'
+                ? 'Upload a document or use the iDogs Scan tab in a dog profile to scan and save records.'
                 : `No ${getDocLabel(filter).toLowerCase()} documents yet.`}
             </div>
             {filter === 'all' && (
@@ -139,7 +139,7 @@ export default function DocumentsPage({ toast }: Props) {
               }}>
                 <div style={{
                   width: 48, height: 48, borderRadius: 12,
-                  background: 'var(--green-light)',
+                  background: 'var(--brand-50)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: '1.5rem', flexShrink: 0,
                 }}>
@@ -154,11 +154,11 @@ export default function DocumentsPage({ toast }: Props) {
                       {(doc.fileType || 'FILE').toUpperCase()}
                     </span>
                     {doc.source === 'manual' && (
-                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', fontWeight: 500 }}>Manual upload</span>
+                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)', fontWeight: 500 }}>Manual upload</span>
                     )}
                   </div>
                   {dog && (
-                    <Link to={`/app/dogs/${doc.dogId}`} style={{ fontSize: 13, color: 'var(--green)', textDecoration: 'none', fontWeight: 500 }}>
+                    <Link to={`/app/dogs/${doc.dogId}`} style={{ fontSize: 13, color: 'var(--brand-600)', textDecoration: 'none', fontWeight: 500 }}>
                       🐾 {dog.name}
                     </Link>
                   )}
@@ -167,7 +167,7 @@ export default function DocumentsPage({ toast }: Props) {
                     {uploadDate || 'Recently uploaded'}
                   </div>
                   {doc.extractedData?.vaccines > 0 && (
-                    <div style={{ fontSize: 12, color: 'var(--green)', marginTop: 2 }}>
+                    <div style={{ fontSize: 12, color: 'var(--brand-600)', marginTop: 2 }}>
                       💉 {doc.extractedData.vaccines} vaccine(s) extracted
                     </div>
                   )}
@@ -309,9 +309,9 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
             onDragLeave={() => setDragOver(false)}
             onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileChange(f) }}
             style={{
-              border: `2px dashed ${dragOver ? 'var(--green)' : file ? 'var(--green-mid)' : 'var(--border)'}`,
+              border: `2px dashed ${dragOver ? 'var(--brand-600)' : file ? 'var(--brand-300)' : 'var(--border)'}`,
               borderRadius: 12, padding: '24px 16px', textAlign: 'center', cursor: 'pointer',
-              background: dragOver ? 'var(--green-pale)' : file ? 'var(--green-light)' : 'var(--sand)',
+              background: dragOver ? 'var(--brand-50)' : file ? 'var(--brand-50)' : 'var(--sand)',
               transition: 'all 0.15s',
             }}
           >
@@ -325,7 +325,7 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
             {file ? (
               <>
                 <div style={{ fontSize: 28, marginBottom: 6 }}>✅</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--green)', marginBottom: 2 }}>{file.name}</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--brand-600)', marginBottom: 2 }}>{file.name}</div>
                 <div style={{ fontSize: 12, color: 'var(--light)' }}>{(file.size / 1024).toFixed(0)} KB · Click to change</div>
               </>
             ) : (
@@ -366,7 +366,7 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
                 <span>Uploading…</span><span>{progress}%</span>
               </div>
               <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${progress}%`, background: 'var(--green)', borderRadius: 3, transition: 'width 0.2s' }} />
+                <div style={{ height: '100%', width: `${progress}%`, background: 'var(--brand-600)', borderRadius: 3, transition: 'width 0.2s' }} />
               </div>
             </div>
           )}

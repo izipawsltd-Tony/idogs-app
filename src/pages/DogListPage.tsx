@@ -25,7 +25,7 @@ export default function DogListPage({ toast }: Props) {
   const transferredDogs = dogs.filter(d => (d as any).status === 'transferred')
 
   const filtered = (showTransferred ? dogs : activeDogs).filter(d => {
-    const matchSearch = !search || d.name.toLowerCase().includes(search.toLowerCase()) || d.breed.toLowerCase().includes(search.toLowerCase())
+    const matchSearch = !search || (d.name || '').toLowerCase().includes(search.toLowerCase()) || (d.breed || '').toLowerCase().includes(search.toLowerCase())
     const actualStage = d.isDeceased ? 'remembered' : calculateLifeStage(d.dateOfBirth, d.breed)
     const matchStage = filterStage === 'all' || actualStage === filterStage
     return matchSearch && matchStage
@@ -60,9 +60,9 @@ export default function DogListPage({ toast }: Props) {
                 padding: '7px 14px',
                 borderRadius: 20,
                 border: '1.5px solid',
-                borderColor: filterStage === stage ? 'var(--green)' : 'var(--border)',
-                background: filterStage === stage ? 'var(--green-light)' : 'var(--white)',
-                color: filterStage === stage ? 'var(--green)' : 'var(--mid)',
+                borderColor: filterStage === stage ? 'var(--brand-600)' : 'var(--border)',
+                background: filterStage === stage ? 'var(--brand-50)' : 'var(--white)',
+                color: filterStage === stage ? 'var(--brand-600)' : 'var(--mid)',
                 fontSize: 13,
                 fontWeight: 500,
                 cursor: 'pointer',
@@ -127,7 +127,7 @@ function DogCard({ dog }: { dog: Dog }) {
         transition: 'border-color 0.15s, transform 0.15s',
         opacity: isTransferred ? 0.6 : 1,
       }}
-        onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--green)'; e.currentTarget.style.transform = 'translateY(-2px)' }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--brand-600)'; e.currentTarget.style.transform = 'translateY(-2px)' }}
         onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'none' }}
       >
         {/* Photo banner */}
@@ -145,16 +145,16 @@ function DogCard({ dog }: { dog: Dog }) {
             )}
           </div>
         ) : (
-          <div style={{ height: 160, background: 'linear-gradient(135deg, var(--green-light), var(--sand))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 44 }}>
+          <div style={{ height: 160, background: 'linear-gradient(135deg, var(--brand-50), var(--sand))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 44 }}>
             {LIFE_STAGE_EMOJI[actualStage]}
           </div>
         )}
 
         <div style={{ padding: '14px 16px' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
-            <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)' }}>{dog.name}</div>
-              <div style={{ fontSize: 13, color: 'var(--light)' }}>{dog.breed}</div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.name}</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.breed}</div>
             </div>
             <span style={{ fontSize: 13, color: 'var(--mid)' }}>{dog.sex === 'female' ? '♀' : '♂'}</span>
           </div>

@@ -347,6 +347,21 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
+/* ── TABLET (769–1024px) ── */
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* Slim the sidebar so content isn't squeezed. --sidebar-w covers shells that
+     read the var; the explicit aside/.main-area rules cover shells that hardcode 240px. */
+  :root { --sidebar-w: 200px; }
+  aside { width: 200px !important; }
+  .main-area { margin-left: 200px !important; }
+
+  /* Tighten page padding (pages use inline padding: 32) */
+  div[style*="padding: 32"] { padding: 20px !important; }
+
+  /* Stack the dashboard 2-col so the 340px rail doesn't crush the main panel */
+  div[style*="1fr 340px"] { grid-template-columns: 1fr !important; }
+}
+
 @media (min-width: 769px) {
   .mobile-topbar { display: none !important; }
   .bottom-nav { display: none !important; }
