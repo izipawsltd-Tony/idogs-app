@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { getDogs } from '../lib/db'
 import { getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS, calculateLifeStage } from '../lib/utils'
 import type { Dog, LifeStage, ToastMessage } from '../types'
@@ -14,6 +14,12 @@ export default function DogListPage({ toast }: Props) {
   const [search, setSearch] = useState('')
   const [filterStage, setFilterStage] = useState<LifeStage | 'all'>('all')
   const [showTransferred, setShowTransferred] = useState(false)
+  const [searchParams] = useSearchParams()
+  useEffect(() => {
+    const stage = searchParams.get('stage')
+    const valid = ['whelp', 'puppy', 'young_adult', 'adult', 'senior', 'remembered']
+    if (stage && valid.includes(stage)) setFilterStage(stage as LifeStage)
+  }, [])
 
   useEffect(() => {
     getDogs()

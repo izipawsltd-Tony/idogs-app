@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { getAllRemindersForUser, getDogs, completeReminder } from '../lib/db'
 import { sendReminderEmail } from '../lib/email'
@@ -15,6 +16,11 @@ export default function RemindersPage({ toast }: Props) {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [filter, setFilter] = useState<'upcoming' | 'overdue' | 'all' | 'done'>('upcoming')
+  const [searchParams] = useSearchParams()
+  useEffect(() => {
+    const f = searchParams.get('filter')
+    if (f === 'overdue' || f === 'upcoming' || f === 'all' || f === 'done') setFilter(f)
+  }, [])
 
   useEffect(() => {
     if (!user) return
