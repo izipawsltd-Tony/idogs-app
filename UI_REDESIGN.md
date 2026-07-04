@@ -33,12 +33,18 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 - [ ] M4 — My Dogs + Dog Detail reskin (GIỮ NGUYÊN logic compliance tab, chỉ đổi vỏ)
 - [ ] M5 — Litters + Reminders + Documents pages reskin
 - [ ] M6 — QA: empty states, loading states, responsive tablet, dark-data edge cases
-- [ ] M7 (sau cùng, tách riêng): modules Buyers/Puppies/Reports thật — cần bàn data model trước, KHÔNG tự làm
+- [x] M7 (sau cùng, tách riêng): modules Buyers/Puppies/Reports thật — COMPLETE (#1–#5 done, staging verified)
   - [x] M7 #1 — Insights (Reports V1): Breeding Overview (reuse breedingCompliance.checkDamCompliance) + Litter Production + Health Test Coverage + Sales & Transfers. Route /app/reports, label hiển thị "Insights". Sales funnel chờ M7 #2.
-  - [ ] M7 #2 — Puppy lifecycle fields (availabilityStatus/reservedFor*/deposit*/buyer*/status → promote lên Dog type §7a). Tham chiếu M7_DATA_MODEL.md
-  - [ ] M7 #3 — Reservation UI. Tham chiếu M7_DATA_MODEL.md
-  - [ ] M7 #4 — Deposit UI. Tham chiếu M7_DATA_MODEL.md
-  - [ ] M7 #5 — Buyers derived view. Tham chiếu M7_DATA_MODEL.md
+  - [x] M7 #2 — Puppy lifecycle fields (availabilityStatus/reservedFor*/deposit*/buyer*/status → promote lên Dog type §7a). Tham chiếu M7_DATA_MODEL.md
+  - [x] M7 #3 — Reservation UI (gộp chung vào Sale & availability panel, #2b). Tham chiếu M7_DATA_MODEL.md
+  - [x] M7 #4 — Deposit UI (gộp chung vào Sale & availability panel, #2b). Tham chiếu M7_DATA_MODEL.md
+  - [x] M7 #5 — Buyers derived view (BuyersPage.tsx, grouped client-side từ getDogs(), không collection riêng). Tham chiếu M7_DATA_MODEL.md
+  - [x] M7 #6 (ngoài kế hoạch gốc) — My Dogs "Transferred" đổi từ toggle ẩn/hiện sang FILTER riêng (chỉ hiện dog transferred, không dim) — confirmed landed commit 2fe8bbd4, staging verified
+
+## Backlog (low-priority, chưa bắt đầu)
+- Transfer modal đang trùng lặp code ở 3 nơi: `LittersPage.tsx`, `DogDetailPage.tsx` (TransferModal nội bộ), và `src/components/ui/TransferOwnershipModal.tsx` (shared component nhưng KHÔNG được 2 trang kia dùng — orphan). Cần gộp lại 1 component dùng chung.
+- Compliance rules bị lặp: logic inline trong `DogDetailPage.tsx` (BreedingTab) vs `src/lib/breedingCompliance.ts`. Cần rà soát và hợp nhất về 1 nguồn.
+- Optional: verify lại logic group buyer trong `BuyersPage.tsx` (`resolveIdentity()` — thứ tự ưu tiên email/phone) so với `M7_DATA_MODEL.md` §5, đây là điểm thay đổi duy nhất nếu cần chỉnh semantics.
 
 ## Log
 (mỗi session ghi: ngày, milestone, staging URL, notes)
@@ -50,3 +56,7 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 | 2026-07-03 | M2 — Layout shell | https://idogs-p5qbug410-izipawsltd-tonys-projects.vercel.app | Sidebar 240px trắng + logo + tagline "Every dog's story, forever." + nav groups (MAIN/BREEDING/MANAGE/ACCOUNT) + brand-600 active state; Topbar 60px greeting+date+bell+user menu dropdown; Plan widget (dogCount/limit, progress bar, Upgrade CTA); ComingSoonPage cho Puppies/Buyers/Reports; page-bg var(--gray-100); responsive mobile giữ nguyên |
 | 2026-07-03 | M3 — Dashboard | https://idogs-brrm0m11e-izipawsltd-tonys-projects.vercel.app | 6 stat cards clickable (Dogs/Active/Overdue/Puppies/Litters/Documents) + PanelCard component; panels: Recent Dogs (top 5 + badge-active/closed) / Litters Overview (status badge + puppy count) / Upcoming Reminders / Documents summary / Recent Activity (audit log, timeAgo) / NSW compliance banner reskin sang brand tokens; fetch getAllDocumentsForUser + getLitters + getAuditLogs trên dashboard |
 | 2026-07-04 | M7 #1 Insights | https://idogs-d6l74jr7h-izipawsltd-tonys-projects.vercel.app | ReportsPage.tsx + lib/reports.ts; nav "Reports"→"Insights"; commit 516d6bd1 on feature/ui-redesign; NOT on prod (UI Redesign freeze) |
+| 2026-07-04 | M7 #2b Sale & availability | https://idogs-7js2erot1-izipawsltd-tonys-projects.vercel.app | Panel trong Dog Detail Overview (availabilityStatus/reservedFor*/deposit*); commit 189265a4 |
+| 2026-07-04 | M7 #2c Transfer prefill + buyerPhone | https://idogs-cxc87pb4u-izipawsltd-tonys-projects.vercel.app | Transfer modal (Litters + Dog Detail) prefill từ reservedFor*, thêm buyerPhone; commit 398de8de |
+| 2026-07-05 | My Dogs Transferred → filter | https://idogs-qfjjh0yef-izipawsltd-tonys-projects.vercel.app | Đổi từ toggle ẩn/hiện sang filter riêng (không dim); commit 2fe8bbd4 |
+| 2026-07-05 | M7 #5 Buyers | https://idogs-38efg4u2g-izipawsltd-tonys-projects.vercel.app | BuyersPage.tsx (derived view, grouped client-side); wired route+nav; commit 8dcd8c2e — M7 COMPLETE |
