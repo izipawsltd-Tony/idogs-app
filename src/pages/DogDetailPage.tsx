@@ -18,7 +18,7 @@ import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityN
 import PhotoUpload from '../components/ui/PhotoUpload'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
-import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc } from 'firebase/firestore'
+import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 
 interface Props {
@@ -570,6 +570,9 @@ export default function DogDetailPage({ toast }: Props) {
       {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
+      }} onUpdateSale={async (firestoreUpdates, localUpdates) => {
+        await updateDog(dogId!, firestoreUpdates)
+        setDog(prev => prev ? { ...prev, ...localUpdates } : prev)
       }} />}
       {tab === 'scan' && (
         <div style={{ maxWidth: 480 }}>
@@ -750,10 +753,11 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, onUpdateBreederId }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, onUpdateBreederId, onUpdateSale }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number
   toast: (msg: string, type?: ToastMessage['type']) => void
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
+  onUpdateSale: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
 }) {
   const { user } = useAuth()
   const [editingBreederId, setEditingBreederId] = useState(false)
@@ -907,6 +911,162 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
           <p style={{ fontSize: 14, color: 'var(--dark)', lineHeight: 1.6 }}>{dog.notes}</p>
         </div>
       )}
+      <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} />
+    </div>
+  )
+}
+
+// ── SALE & AVAILABILITY PANEL ────────────────────────────────
+
+function SaleAvailabilityPanel({ dog, onSave, toast }: {
+  dog: Dog
+  onSave: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
+  toast: (msg: string, type?: ToastMessage['type']) => void
+}) {
+  const initial = {
+    availabilityStatus: dog.availabilityStatus || '',
+    reservedForName: dog.reservedForName || '',
+    reservedForEmail: dog.reservedForEmail || '',
+    reservedForPhone: dog.reservedForPhone || '',
+    reservedAt: dog.reservedAt || '',
+    depositStatus: dog.depositStatus || 'none',
+    depositAmount: dog.depositAmount != null ? String(dog.depositAmount) : '',
+    depositReceivedAt: dog.depositReceivedAt || '',
+  }
+  const [form, setForm] = useState(initial)
+  const [saving, setSaving] = useState(false)
+
+  const hasChanges = (Object.keys(initial) as Array<keyof typeof initial>).some(k => form[k] !== initial[k])
+
+  function handleAvailabilityChange(value: string) {
+    setForm(prev => ({
+      ...prev,
+      availabilityStatus: value,
+      reservedAt: value === 'reserved' && !prev.reservedAt ? new Date().toISOString().split('T')[0] : prev.reservedAt,
+    }))
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const clean = (v: string) => (v.trim() === '' ? undefined : v.trim())
+      const isReservedOrSold = form.availabilityStatus === 'reserved' || form.availabilityStatus === 'sold'
+      const amt = Number(form.depositAmount)
+      const depositAmount =
+        form.depositAmount.trim() === '' || Number.isNaN(amt) || amt < 0 ? undefined : amt
+
+      const localUpdates: Partial<Dog> = {
+        availabilityStatus: clean(form.availabilityStatus) as Dog['availabilityStatus'],
+        reservedForName: isReservedOrSold ? clean(form.reservedForName) : undefined,
+        reservedForEmail: isReservedOrSold ? clean(form.reservedForEmail) : undefined,
+        reservedForPhone: isReservedOrSold ? clean(form.reservedForPhone) : undefined,
+        reservedAt: isReservedOrSold ? clean(form.reservedAt) : undefined,
+        depositStatus: isReservedOrSold ? (form.depositStatus as Dog['depositStatus']) : 'none',
+        depositAmount: isReservedOrSold ? depositAmount : undefined,
+        depositReceivedAt: isReservedOrSold ? clean(form.depositReceivedAt) : undefined,
+      }
+
+      const orDelete = (v: unknown) => (v === undefined ? deleteField() : v)
+      const firestoreUpdates: any = {
+        availabilityStatus: orDelete(localUpdates.availabilityStatus),
+        reservedForName: orDelete(localUpdates.reservedForName),
+        reservedForEmail: orDelete(localUpdates.reservedForEmail),
+        reservedForPhone: orDelete(localUpdates.reservedForPhone),
+        reservedAt: orDelete(localUpdates.reservedAt),
+        depositStatus: localUpdates.depositStatus,
+        depositAmount: orDelete(localUpdates.depositAmount),
+        depositReceivedAt: orDelete(localUpdates.depositReceivedAt),
+      }
+
+      await onSave(firestoreUpdates, localUpdates)
+      toast('Sale & availability updated')
+    } catch {
+      toast('Failed to save', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const status = form.availabilityStatus
+  const showReservationAndDeposit = status === 'reserved' || status === 'sold'
+
+  return (
+    <div className="card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)' }}>Sale & availability</div>
+        {status === 'available' ? (
+          <span className="badge badge-green">Available</span>
+        ) : status === 'reserved' ? (
+          <span className="badge" style={{ background: 'var(--gray-100)', color: 'var(--warning)' }}>Reserved</span>
+        ) : status === 'sold' ? (
+          <span className="badge badge-gray">Sold</span>
+        ) : status === 'kept' ? (
+          <span className="badge badge-gray">Retained by breeder</span>
+        ) : (
+          <span className="badge badge-gray">Not for sale</span>
+        )}
+      </div>
+
+      <div className="form-group" style={{ maxWidth: 260, marginBottom: 16 }}>
+        <label className="form-label">Availability</label>
+        <select
+          className="form-select"
+          value={form.availabilityStatus}
+          onChange={e => handleAvailabilityChange(e.target.value)}
+        >
+          <option value="">Not for sale</option>
+          <option value="available">Available</option>
+          <option value="reserved">Reserved</option>
+          <option value="kept">Kept</option>
+          <option value="sold">Sold</option>
+        </select>
+      </div>
+
+      {showReservationAndDeposit && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            <div className="form-group">
+              <label className="form-label">Reserved for — name</label>
+              <input className="form-input" value={form.reservedForName} onChange={e => setForm(prev => ({ ...prev, reservedForName: e.target.value }))} placeholder="e.g. Jane Smith" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Reserved for — email</label>
+              <input className="form-input" type="email" value={form.reservedForEmail} onChange={e => setForm(prev => ({ ...prev, reservedForEmail: e.target.value }))} placeholder="e.g. jane@example.com" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Reserved for — phone</label>
+              <input className="form-input" value={form.reservedForPhone} onChange={e => setForm(prev => ({ ...prev, reservedForPhone: e.target.value }))} placeholder="e.g. 0412 345 678" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Reserved on</label>
+              <input className="form-input" type="date" value={form.reservedAt} onChange={e => setForm(prev => ({ ...prev, reservedAt: e.target.value }))} />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+            <div className="form-group">
+              <label className="form-label">Deposit status</label>
+              <select className="form-select" value={form.depositStatus} onChange={e => setForm(prev => ({ ...prev, depositStatus: e.target.value as 'none' | 'pending' | 'received' }))}>
+                <option value="none">None</option>
+                <option value="pending">Pending</option>
+                <option value="received">Received</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Deposit amount (AUD)</label>
+              <input className="form-input" type="number" min="0" value={form.depositAmount} onChange={e => setForm(prev => ({ ...prev, depositAmount: e.target.value }))} placeholder="e.g. 500" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Deposit received on</label>
+              <input className="form-input" type="date" value={form.depositReceivedAt} onChange={e => setForm(prev => ({ ...prev, depositReceivedAt: e.target.value }))} />
+            </div>
+          </div>
+        </>
+      )}
+
+      <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!hasChanges || saving}>
+        {saving ? <span className="spinner" style={{ borderTopColor: '#fff', width: 14, height: 14 }} /> : 'Save'}
+      </button>
     </div>
   )
 }

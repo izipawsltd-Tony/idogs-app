@@ -39,6 +39,30 @@ export interface Dog {
   microchipCertPath?: string
   createdAt: string
   updatedAt: string
+
+  // ── Ownership (already written by transferDogOwnership) ──
+  status?: 'active' | 'transferred'
+  buyerName?: string
+  buyerEmail?: string
+  buyerPhone?: string
+  transferredAt?: string
+
+  // ── Commercial lifecycle (M7 #2 — puppy sale funnel) ──
+  availabilityStatus?: 'available' | 'reserved' | 'kept' | 'sold'
+  reservedForName?: string
+  reservedForEmail?: string
+  reservedForPhone?: string
+  reservedAt?: string
+  depositStatus?: 'none' | 'pending' | 'received'
+  depositAmount?: number
+  depositReceivedAt?: string
+
+  // ── Breeding history (edited on compliance tab, stored on Dog) ──
+  pedigreeRegister?: 'main' | 'limited' | 'no_pedigree' | 'mixed' | 'rescue'
+  litterCount?: number
+  last18mLitters?: number
+  cSectionCount?: number
+  lastLitterDate?: string
 }
 
 export interface VaccineRecord {
