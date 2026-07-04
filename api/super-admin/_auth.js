@@ -43,7 +43,8 @@ export async function verifySuperAdmin(req, res) {
 
     // Enforce Super Admin identity
     const email = decodedToken.email ? decodedToken.email.toLowerCase().trim() : ''
-    if (email !== 'trunghieungo@gmail.com') {
+    const ALLOWED_ADMINS = ['trunghieungo@gmail.com', 'theresanguyenngo@gmail.com']
+    if (!ALLOWED_ADMINS.includes(email)) {
       res.status(403).json({ error: 'Forbidden: Not authorized as Super Admin' })
       return null
     }

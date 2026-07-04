@@ -2,6 +2,7 @@ export const SUPER_ADMIN_BASE_PATH = '/app/super-admin'
 
 export const SUPER_ADMIN_EMAILS = [
   'trunghieungo@gmail.com',
+  'theresanguyenngo@gmail.com',
 ] as const
 
 export type SuperAdminNavSection = {

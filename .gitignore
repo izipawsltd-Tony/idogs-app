@@ -5,3 +5,4 @@ WORKFLOW.md
 fix-script/
 node_modules/
 dist/
+.env*

@@ -67,6 +67,11 @@ export default function SuperAdminOverviewPage() {
         return
       }
 
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        throw new Error('The server returned a non-JSON response. If running locally, please ensure you are using "vercel dev" instead of "npm run dev".')
+      }
+
       if (!res.ok) {
         const errorJson = await res.json().catch(() => ({}))
         throw new Error(errorJson.message || `HTTP error ${res.status}`)
