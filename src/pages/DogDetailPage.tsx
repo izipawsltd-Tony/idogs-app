@@ -392,12 +392,13 @@ export default function DogDetailPage({ toast }: Props) {
   const viewDoc = (path?: string | null, legacyUrl?: string | null) =>
     viewDocument(user, toast, path, legacyUrl)
 
-  async function handleTransfer(buyerName: string, buyerEmail: string) {
+  async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone?: string) {
     if (!dogId || !dog) return
     const passportUrl = `${window.location.origin}/p/${dog.passportId}`
     await transferDogOwnership(dogId, {
       buyerName,
       buyerEmail,
+      buyerPhone,
       transferredAt: new Date().toISOString(),
       microchipCertUrl: (dog as any).microchipCertUrl || null,
     })
@@ -418,7 +419,7 @@ export default function DogDetailPage({ toast }: Props) {
       performedBy: user?.uid || '',
       performedByEmail: user?.email || '',
     })
-    setDog(prev => prev ? { ...prev, status: 'transferred', buyerName, buyerEmail } as any : prev)
+    setDog(prev => prev ? { ...prev, status: 'transferred', buyerName, buyerEmail, buyerPhone } as any : prev)
     setShowTransfer(false)
     toast(`${dog.name} transferred to ${buyerName} ✓`, 'success')
   }
@@ -602,6 +603,9 @@ export default function DogDetailPage({ toast }: Props) {
           dogBreed={dog.breed}
           breederIdType={dog.breederIdType}
           breederIdValue={dog.breederIdValue}
+          initialBuyerName={dog.reservedForName || ''}
+          initialBuyerEmail={dog.reservedForEmail || ''}
+          initialBuyerPhone={dog.reservedForPhone || ''}
           onClose={() => setShowTransfer(false)}
           onTransfer={handleTransfer}
         />
@@ -617,6 +621,9 @@ function TransferModal({
   dogBreed,
   breederIdType,
   breederIdValue,
+  initialBuyerName,
+  initialBuyerEmail,
+  initialBuyerPhone,
   onClose,
   onTransfer,
 }: {
@@ -624,11 +631,15 @@ function TransferModal({
   dogBreed: string
   breederIdType?: Dog['breederIdType']
   breederIdValue?: string
+  initialBuyerName?: string
+  initialBuyerEmail?: string
+  initialBuyerPhone?: string
   onClose: () => void
-  onTransfer: (name: string, email: string) => Promise<void>
+  onTransfer: (name: string, email: string, phone?: string) => Promise<void>
 }) {
-  const [buyerName, setBuyerName] = useState('')
-  const [buyerEmail, setBuyerEmail] = useState('')
+  const [buyerName, setBuyerName] = useState(initialBuyerName || '')
+  const [buyerEmail, setBuyerEmail] = useState(initialBuyerEmail || '')
+  const [buyerPhone, setBuyerPhone] = useState(initialBuyerPhone || '')
   const [confirm, setConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -639,7 +650,7 @@ function TransferModal({
     setLoading(true)
     setError('')
     try {
-      await onTransfer(buyerName.trim(), buyerEmail.trim().toLowerCase())
+      await onTransfer(buyerName.trim(), buyerEmail.trim().toLowerCase(), buyerPhone.trim() || undefined)
     } catch {
       setError('Something went wrong. Please try again.')
       setLoading(false)
@@ -718,6 +729,18 @@ function TransferModal({
               onChange={e => setBuyerEmail(e.target.value)}
             />
             <p className="form-hint">They'll receive an email with the passport link and signup instructions.</p>
+          </div>
+
+          {/* Buyer phone */}
+          <div className="form-group">
+            <label className="form-label">Buyer phone (optional)</label>
+            <input
+              className="form-input"
+              type="tel"
+              placeholder="e.g. 0412 345 678 (optional)"
+              value={buyerPhone}
+              onChange={e => setBuyerPhone(e.target.value)}
+            />
           </div>
 
           {/* Confirm checkbox */}

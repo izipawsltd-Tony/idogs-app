@@ -168,6 +168,7 @@ export async function transferDogOwnership(
   transfer: {
     buyerName: string
     buyerEmail: string
+    buyerPhone?: string
     transferredAt: string
     microchipCertUrl?: string | null
   }
@@ -176,6 +177,7 @@ export async function transferDogOwnership(
     status: 'transferred',
     buyerName: transfer.buyerName,
     buyerEmail: transfer.buyerEmail,
+    ...(transfer.buyerPhone ? { buyerPhone: transfer.buyerPhone } : {}),
     transferredAt: transfer.transferredAt,
     ...(transfer.microchipCertUrl ? { microchipCertUrl: transfer.microchipCertUrl } : {}),
     updatedAt: serverTimestamp(),

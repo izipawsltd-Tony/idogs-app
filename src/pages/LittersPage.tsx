@@ -51,6 +51,7 @@ export default function LittersPage({ toast }: Props) {
   const [transferPuppy, setTransferPuppy] = useState<Dog | null>(null)
   const [transferName, setTransferName] = useState('')
   const [transferEmail, setTransferEmail] = useState('')
+  const [transferPhone, setTransferPhone] = useState('')
   const [transferConfirm, setTransferConfirm] = useState(false)
   const [transferring, setTransferring] = useState(false)
   const [transferError, setTransferError] = useState('')
@@ -255,6 +256,7 @@ export default function LittersPage({ toast }: Props) {
       await transferDogOwnership(transferPuppy.id, {
         buyerName: transferName.trim(),
         buyerEmail: transferEmail.trim().toLowerCase(),
+        buyerPhone: transferPhone.trim() || undefined,
         transferredAt: new Date().toISOString(),
       })
       await sendTransferEmail({
@@ -271,6 +273,7 @@ export default function LittersPage({ toast }: Props) {
       setTransferPuppy(null)
       setTransferName('')
       setTransferEmail('')
+      setTransferPhone('')
       setTransferConfirm(false)
     } catch {
       setTransferError('Something went wrong. Please try again.')
@@ -641,7 +644,13 @@ export default function LittersPage({ toast }: Props) {
                                       <button
                                         className="btn btn-sm"
                                         style={{ background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid var(--brand-300)' }}
-                                        onClick={() => { setTransferPuppy(puppy); setTransferError('') }}
+                                        onClick={() => {
+                                          setTransferPuppy(puppy)
+                                          setTransferName(puppy.reservedForName || '')
+                                          setTransferEmail(puppy.reservedForEmail || '')
+                                          setTransferPhone(puppy.reservedForPhone || '')
+                                          setTransferError('')
+                                        }}
                                       >🔄 Transfer</button>
                                     ) : (
                                       <span className="badge badge-gray" style={{ fontSize: 11 }}>Transferred</span>
@@ -710,6 +719,10 @@ export default function LittersPage({ toast }: Props) {
                 <label className="form-label">Buyer's Email Address</label>
                 <input className="form-input" type="email" placeholder="e.g. jane@example.com" value={transferEmail} onChange={e => setTransferEmail(e.target.value)} />
                 <p className="form-hint">They'll receive an email with the passport link and signup instructions.</p>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Buyer phone (optional)</label>
+                <input className="form-input" type="tel" placeholder="e.g. 0412 345 678 (optional)" value={transferPhone} onChange={e => setTransferPhone(e.target.value)} />
               </div>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.625rem', fontSize: '0.875rem', color: 'var(--dark)', cursor: 'pointer', lineHeight: 1.4 }}>
                 <input type="checkbox" checked={transferConfirm} onChange={e => setTransferConfirm(e.target.checked)} style={{ marginTop: 2, accentColor: 'var(--brand-600)', width: 16, height: 16, flexShrink: 0 }} />
