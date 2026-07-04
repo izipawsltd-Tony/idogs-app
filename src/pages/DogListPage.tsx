@@ -12,8 +12,7 @@ export default function DogListPage({ toast }: Props) {
   const [dogs, setDogs] = useState<Dog[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filterStage, setFilterStage] = useState<LifeStage | 'all'>('all')
-  const [showTransferred, setShowTransferred] = useState(false)
+  const [filterStage, setFilterStage] = useState<LifeStage | 'all' | 'transferred'>('all')
   const [searchParams] = useSearchParams()
   useEffect(() => {
     const stage = searchParams.get('stage')
@@ -27,11 +26,18 @@ export default function DogListPage({ toast }: Props) {
       .catch(() => { toast('Failed to load dogs', 'error'); setLoading(false) })
   }, [])
 
-  const activeDogs = dogs.filter(d => (d as any).status !== 'transferred')
-  const transferredDogs = dogs.filter(d => (d as any).status === 'transferred')
+  const activeDogs = dogs.filter(d => d.status !== 'transferred')
+  const transferredDogs = dogs.filter(d => d.status === 'transferred')
 
-  const filtered = (showTransferred ? dogs : activeDogs).filter(d => {
+  const filtered = dogs.filter(d => {
     const matchSearch = !search || (d.name || '').toLowerCase().includes(search.toLowerCase()) || (d.breed || '').toLowerCase().includes(search.toLowerCase())
+    const isTransferred = d.status === 'transferred'
+
+    if (filterStage === 'transferred') {
+      return isTransferred && matchSearch
+    }
+    // Mọi filter khác: ẩn dog đã transferred
+    if (isTransferred) return false
     const actualStage = d.isDeceased ? 'remembered' : calculateLifeStage(d.dateOfBirth, d.breed)
     const matchStage = filterStage === 'all' || actualStage === filterStage
     return matchSearch && matchStage
@@ -78,23 +84,21 @@ export default function DogListPage({ toast }: Props) {
             </button>
           ))}
 
-          {/* Transferred toggle */}
+          {/* Transferred filter */}
           {transferredDogs.length > 0 && (
             <button
-              onClick={() => setShowTransferred(p => !p)}
+              key="transferred"
+              onClick={() => setFilterStage('transferred')}
               style={{
                 padding: '7px 14px',
                 borderRadius: 20,
                 border: '1.5px solid',
-                borderColor: showTransferred ? 'var(--mid)' : 'var(--border)',
-                background: showTransferred ? 'var(--sand)' : 'var(--white)',
-                color: showTransferred ? 'var(--dark)' : 'var(--light)',
+                borderColor: filterStage === 'transferred' ? 'var(--brand-600)' : 'var(--border)',
+                background: filterStage === 'transferred' ? 'var(--brand-50)' : 'var(--white)',
+                color: filterStage === 'transferred' ? 'var(--brand-600)' : 'var(--mid)',
                 fontSize: 13,
                 fontWeight: 500,
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
               }}
             >
               🔄 Transferred ({transferredDogs.length})
@@ -124,14 +128,14 @@ export default function DogListPage({ toast }: Props) {
 }
 
 function DogCard({ dog }: { dog: Dog }) {
-  const isTransferred = (dog as any).status === 'transferred'
+  const isTransferred = dog.status === 'transferred'
   const actualStage = dog.isDeceased ? 'remembered' : calculateLifeStage(dog.dateOfBirth, dog.breed)
   return (
     <Link to={`/app/dogs/${dog.id}`} style={{ textDecoration: 'none' }}>
       <div className="card" style={{
         padding: 0, overflow: 'hidden', cursor: 'pointer',
         transition: 'border-color 0.15s, transform 0.15s',
-        opacity: isTransferred ? 0.6 : 1,
+        opacity: 1,
       }}
         onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--brand-600)'; e.currentTarget.style.transform = 'translateY(-2px)' }}
         onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'none' }}
