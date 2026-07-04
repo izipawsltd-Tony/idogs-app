@@ -29,6 +29,10 @@ import PassportPublicPage from '../pages/PassportPublicPage'
 import ForgotPasswordPage from '../pages/ForgotPasswordPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import ComingSoonPage from '../pages/ComingSoonPage'
+import SuperAdminRoute from '../super-admin/SuperAdminRoute'
+import SuperAdminLayout from '../super-admin/SuperAdminLayout'
+import SuperAdminOverviewPage from '../super-admin/pages/SuperAdminOverviewPage'
+import SuperAdminModulePlaceholderPage from '../super-admin/pages/SuperAdminModulePlaceholderPage'
 
 import AppLayout from './layout/AppLayout'
 
@@ -80,6 +84,24 @@ export default function App() {
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+
+        {/* Protected - isolated Super SaaS Admin */}
+        <Route path="/app/super-admin" element={
+          <SuperAdminRoute>
+            <SuperAdminLayout />
+          </SuperAdminRoute>
+        }>
+          <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
+          <Route path="dashboard" element={<SuperAdminOverviewPage />} />
+          <Route path="organisations" element={<SuperAdminModulePlaceholderPage title="Organisations" section="Management" description="Tenant and kennel administration will be added in a later Super Admin batch." />} />
+          <Route path="users" element={<SuperAdminModulePlaceholderPage title="Users" section="Management" description="User account search and administration will be added in a later Super Admin batch." />} />
+          <Route path="subscriptions" element={<SuperAdminModulePlaceholderPage title="Subscriptions" section="Revenue" description="Subscription operations will be added in a later Super Admin batch." />} />
+          <Route path="billing-payments" element={<SuperAdminModulePlaceholderPage title="Billing & Payments" section="Revenue" description="Billing and payment review will be added in a later Super Admin batch." />} />
+          <Route path="plans-pricing" element={<SuperAdminModulePlaceholderPage title="Plans & Pricing" section="Revenue" description="Plan and pricing controls will be added in a later Super Admin batch." />} />
+          <Route path="support" element={<SuperAdminModulePlaceholderPage title="Support" section="Operations" description="Support tooling will be added in a later Super Admin batch." />} />
+          <Route path="audit-logs" element={<SuperAdminModulePlaceholderPage title="Audit Logs" section="Operations" description="Platform audit review will be added in a later Super Admin batch." />} />
+          <Route path="settings" element={<SuperAdminModulePlaceholderPage title="Settings" section="System" description="Super Admin settings will be added in a later Super Admin batch." />} />
+        </Route>
 
         {/* Protected — app */}
         <Route path="/app" element={
