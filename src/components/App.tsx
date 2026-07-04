@@ -30,6 +30,7 @@ import ForgotPasswordPage from '../pages/ForgotPasswordPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import ComingSoonPage from '../pages/ComingSoonPage'
 import ReportsPage from '../pages/ReportsPage'
+import BuyersPage from '../pages/BuyersPage'
 
 import AppLayout from './layout/AppLayout'
 
@@ -103,7 +104,7 @@ export default function App() {
           <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
           <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
           <Route path="puppies" element={<ComingSoonPage feature="Puppies" />} />
-          <Route path="buyers"  element={<ComingSoonPage feature="Buyers" />} />
+          <Route path="buyers"  element={<BuyersPage />} />
           <Route path="reports" element={<ReportsPage toast={toast} />} />
         </Route>
 
