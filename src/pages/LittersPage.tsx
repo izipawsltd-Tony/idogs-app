@@ -57,7 +57,7 @@ export default function LittersPage({ toast }: Props) {
 
   // Create litter form
   const [form, setForm] = useState({
-    name: '', damId: '', sireName: '', sireAnkc: '',
+    name: '', damId: '', sireId: '', sireName: '', sireAnkc: '',
     matingSuspectedDate: '', expectedDueDate: '', actualBirthDate: '', notes: '',
   })
 
@@ -99,18 +99,18 @@ export default function LittersPage({ toast }: Props) {
       await createLitter({
         name: form.name || `${dam.name} Litter`,
         damId: form.damId,
-        sireId: null,
+        sireId: form.sireId && form.sireId !== '__external__' ? form.sireId : null,
+        sireName: form.sireId === '__external__' ? (form.sireName.trim() || null) : null,
         matingSuspectedDate: form.matingSuspectedDate,
         expectedDueDate: form.expectedDueDate,
         actualBirthDate: form.actualBirthDate,
         notes: form.notes,
         puppyIds: [],
-        tenantId: 'placeholder',
       })
       const updated = await getLitters()
       setLitters(updated)
       setShowCreate(false)
-      setForm({ name: '', damId: '', sireName: '', sireAnkc: '', matingSuspectedDate: '', expectedDueDate: '', actualBirthDate: '', notes: '' })
+      setForm({ name: '', damId: '', sireId: '', sireName: '', sireAnkc: '', matingSuspectedDate: '', expectedDueDate: '', actualBirthDate: '', notes: '' })
       toast('Litter created!')
     } catch (err) {
       toast('Failed to create litter', 'error')
@@ -280,6 +280,7 @@ export default function LittersPage({ toast }: Props) {
   }
 
   const femalesOnly = dogs.filter(d => d.sex === 'female')
+  const malesOnly = dogs.filter(d => d.sex === 'male')
 
   if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
 
@@ -374,9 +375,37 @@ export default function LittersPage({ toast }: Props) {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
               <div className="form-group">
-                <label className="form-label">Sire name</label>
-                <input className="form-input" placeholder="Champion Max" value={form.sireName} onChange={e => setForm(p => ({ ...p, sireName: e.target.value }))} />
+                <label className="form-label">Sire (father)</label>
+                <select
+                  className="form-select"
+                  value={form.sireId}
+                  onChange={e => {
+                    const value = e.target.value
+                    if (value === '__external__') {
+                      setForm(p => ({ ...p, sireId: '__external__' }))
+                    } else if (value === '') {
+                      setForm(p => ({ ...p, sireId: '', sireName: '' }))
+                    } else {
+                      setForm(p => ({ ...p, sireId: value, sireName: '' }))
+                    }
+                  }}
+                >
+                  <option value="">Select sire… (optional)</option>
+                  {malesOnly.map(d => <option key={d.id} value={d.id}>{d.name} — {d.breed}</option>)}
+                  <option value="__external__">External sire (not in my dogs)</option>
+                </select>
               </div>
+              {form.sireId === '__external__' && (
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label">Sire name</label>
+                  <input
+                    className="form-input"
+                    placeholder="e.g. Ch. Someone's Rex"
+                    value={form.sireName}
+                    onChange={e => setForm(p => ({ ...p, sireName: e.target.value }))}
+                  />
+                </div>
+              )}
               <div className="form-group">
                 <label className="form-label">Sire Dogs Australia Reg</label>
                 <input className="form-input" placeholder="2100123456" value={form.sireAnkc} onChange={e => setForm(p => ({ ...p, sireAnkc: e.target.value }))} />

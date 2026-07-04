@@ -132,6 +132,7 @@ export interface Litter {
   tenantId: string
   name: string
   sireId?: string | null
+  sireName?: string | null
   damId: string
   matingSuspectedDate?: string
   expectedDueDate?: string

@@ -369,7 +369,7 @@ export async function getLitters(): Promise<Litter[]> {
   return snap.docs.map(d => ({ ...d.data(), id: d.id } as Litter))
 }
 
-export async function createLitter(data: Omit<Litter, 'id' | 'createdAt'>): Promise<string> {
+export async function createLitter(data: Omit<Litter, 'id' | 'createdAt' | 'tenantId'>): Promise<string> {
   const ref = await addDoc(collection(db, 'litters'), { ...data, tenantId: uid(), createdAt: serverTimestamp() })
   return ref.id
 }

@@ -74,7 +74,7 @@ export function litterProduction(litters: Litter[], dogs: Dog[]): LitterProducti
     id: l.id,
     name: l.name,
     damName: nameById.get(l.damId) || 'Unknown dam',
-    sireName: l.sireId ? (nameById.get(l.sireId) || 'External sire') : '—',
+    sireName: l.sireId ? (nameById.get(l.sireId) || '—') : (l.sireName || '—'),
     whelpDate: l.actualBirthDate || null,
     puppyCount: l.puppyIds?.length || 0,
   })
