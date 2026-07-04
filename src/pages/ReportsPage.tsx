@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { getDogs, getLitters, getHealthTests } from '../lib/db'
+import { useAuth } from '../hooks/useAuth'
+import { getDogs, getLitters, getHealthTests, getUserProfile } from '../lib/db'
 import { formatDate } from '../lib/utils'
 import {
-  litterProduction, healthCoverage, salesAndTransfers,
-  type LitterProductionReport, type HealthCoverageReport, type SalesReport,
+  breedingOverview, litterProduction, healthCoverage, salesAndTransfers,
+  type BreedingOverviewReport, type LitterProductionReport, type HealthCoverageReport, type SalesReport,
   type CoverageType,
 } from '../lib/reports'
 import type { HealthTest, ToastMessage } from '../types'
@@ -25,21 +26,29 @@ function formatMonth(ym: string): string {
 }
 
 export default function ReportsPage({ toast }: Props) {
+  const { user } = useAuth()
   const [loading, setLoading] = useState(true)
+  const [overview, setOverview] = useState<BreedingOverviewReport | null>(null)
   const [litter, setLitter] = useState<LitterProductionReport | null>(null)
   const [coverage, setCoverage] = useState<HealthCoverageReport | null>(null)
   const [sales, setSales] = useState<SalesReport | null>(null)
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (user) load() }, [user])
 
   async function load() {
     setLoading(true)
     try {
-      const [dogs, litters] = await Promise.all([getDogs(), getLitters()])
+      const [dogs, litters, profile] = await Promise.all([
+        getDogs(),
+        getLitters(),
+        user ? getUserProfile(user.uid) : Promise.resolve(null),
+      ])
+      const state = (profile as { state?: string } | null)?.state || 'SA'
       const healthArrays = await Promise.all(dogs.map(d => getHealthTests(d.id)))
       const healthByDog = new Map<string, HealthTest[]>(
         dogs.map((d, i) => [d.id, healthArrays[i]]),
       )
+      setOverview(breedingOverview(dogs, healthByDog, state))
       setLitter(litterProduction(litters, dogs))
       setCoverage(healthCoverage(dogs, healthByDog))
       setSales(salesAndTransfers(dogs))
@@ -60,12 +69,12 @@ export default function ReportsPage({ toast }: Props) {
   return (
     <div style={{ padding: 32 }}>
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>Reports</h1>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>Insights</h1>
         <p style={{ fontSize: 14, color: 'var(--light)' }}>An on-the-fly overview of your kennel. Nothing here is stored.</p>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <BreedingOverviewStub />
+        <BreedingOverviewSection data={overview} />
         <LitterProductionSection data={litter} />
         <HealthCoverageSection data={coverage} />
         <SalesSection data={sales} />
@@ -87,8 +96,8 @@ function SectionCard({ title, subtitle, children }: { title: string; subtitle?: 
   )
 }
 
-function Stat({ value, label, tone }: { value: string | number; label: string; tone?: 'brand' | 'warning' | 'muted' }) {
-  const color = tone === 'brand' ? 'var(--brand-600)' : tone === 'warning' ? 'var(--warning)' : 'var(--dark)'
+function Stat({ value, label, tone }: { value: string | number; label: string; tone?: 'brand' | 'warning' | 'danger' | 'muted' }) {
+  const color = tone === 'brand' ? 'var(--brand-600)' : tone === 'warning' ? 'var(--warning)' : tone === 'danger' ? 'var(--danger)' : 'var(--dark)'
   return (
     <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 16, textAlign: 'center', minWidth: 0 }}>
       <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
@@ -101,16 +110,50 @@ function EmptyRow({ text }: { text: string }) {
   return <p style={{ fontSize: 14, color: 'var(--light)', padding: '8px 0' }}>{text}</p>
 }
 
-// ── 4.1 Breeding Overview (stub — pending breedingCompliance.ts) ──
-function BreedingOverviewStub() {
-  return (
-    <SectionCard title="Breeding Overview" subtitle="Eligibility across your current kennel (excludes deceased and transferred dogs).">
-      <div style={{ background: 'var(--gray-100)', border: '1px dashed var(--border)', borderRadius: 'var(--radius-md)', padding: '20px 16px', textAlign: 'center' }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--mid)', marginBottom: 4 }}>Coming in this build</div>
-        <div style={{ fontSize: 13, color: 'var(--light)' }}>
-          This section reuses your existing breeding rules and will show Eligible / Caution / Review Required once wired up.
-        </div>
+// ── 4.1 Breeding Overview (reuses breedingCompliance.checkDamCompliance) ──
+function BreedingOverviewSection({ data }: { data: BreedingOverviewReport | null }) {
+  if (!data) return null
+  const { eligible, caution, review, assessedCount, excludedMaleCount } = data
+
+  const bucket = (
+    label: string,
+    rows: BreedingOverviewReport['eligible'],
+    badgeClass: string,
+    dotColor: string,
+  ) => rows.length === 0 ? null : (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, display: 'inline-block' }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>{label} ({rows.length})</span>
       </div>
+      {rows.map(r => (
+        <div key={r.dogId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--dark)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.dogName}</span>
+          <span className={`badge ${badgeClass}`} style={{ flexShrink: 0, maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.headline}</span>
+        </div>
+      ))}
+    </div>
+  )
+
+  const sub = `Eligibility across ${assessedCount} female dog${assessedCount !== 1 ? 's' : ''} in your current kennel (excludes deceased and transferred).`
+    + (excludedMaleCount > 0 ? ` ${excludedMaleCount} male dog${excludedMaleCount !== 1 ? 's' : ''} not assessed — dam breeding rules only.` : '')
+
+  return (
+    <SectionCard title="Breeding Overview" subtitle={sub}>
+      {assessedCount === 0 ? (
+        <EmptyRow text="No breeding females in the current kennel to assess." />
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+            <Stat value={eligible.length} label="Eligible" tone="brand" />
+            <Stat value={caution.length} label="Caution" tone="warning" />
+            <Stat value={review.length} label="Review Required" tone="danger" />
+          </div>
+          {bucket('Review Required', review, 'badge-red', 'var(--danger)')}
+          {bucket('Caution', caution, 'badge-gray', 'var(--warning)')}
+          {bucket('Eligible', eligible, 'badge-green', 'var(--brand-600)')}
+        </>
+      )}
     </SectionCard>
   )
 }

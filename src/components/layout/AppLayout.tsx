@@ -70,7 +70,7 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
       { path: '/app/reminders',  label: 'Reminders',  icon: '🔔', remindersItem: true },
       { path: '/app/documents',  label: 'Documents',  icon: '📄', documentsItem: true },
       { path: '/app/audit',      label: 'Activity',   icon: '📋' },
-      { path: '/app/reports',    label: 'Reports',    icon: '📊', comingSoon: true },
+      { path: '/app/reports',    label: 'Insights',    icon: '📊' },
     ],
   },
   {

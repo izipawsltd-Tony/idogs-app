@@ -1,4 +1,5 @@
 import type { Dog, Litter, HealthTest, LifeStage } from '../types'
+import { checkDamCompliance, type ComplianceDog, type ComplianceHealthTest, type FindingLevel } from './breedingCompliance'
 
 // ─────────────────────────────────────────────────────────────
 // Reports V1 — pure aggregation helpers (no I/O, no Firestore).
@@ -6,9 +7,9 @@ import type { Dog, Litter, HealthTest, LifeStage } from '../types'
 // trivially testable. See M7_DATA_MODEL.md §4.
 // ─────────────────────────────────────────────────────────────
 
-// Commercial/ownership fields written to Firestore but not yet declared on
-// `Dog` (see M7_DATA_MODEL.md §7a). Extended locally so this module is type-safe
-// without needing the Dog interface edited first.
+// Commercial/ownership + breeding-history fields written to Firestore but not yet
+// declared on `Dog` (see M7_DATA_MODEL.md §7a). Extended locally so this module is
+// type-safe without needing the Dog interface edited first.
 export type DogSale = Dog & {
   status?: 'active' | 'transferred'
   availabilityStatus?: 'available' | 'reserved' | 'kept' | 'sold'
@@ -23,6 +24,12 @@ export type DogSale = Dog & {
   buyerEmail?: string
   buyerPhone?: string
   transferredAt?: string
+  // Breeding history (edited on the Dog compliance tab, stored on the Dog doc)
+  pedigreeRegister?: string
+  litterCount?: number
+  last18mLitters?: number
+  cSectionCount?: number
+  lastLitterDate?: string
 }
 
 // ── Shared "current kennel" filter — SINGLE source of truth ──
@@ -225,4 +232,71 @@ export function salesAndTransfers(dogs: Dog[]): SalesReport {
     .sort((a, b) => (b.reservedAt || '').localeCompare(a.reservedAt || ''))
 
   return { transfersByMonth, funnel, hasSalesData, transferredRows, reservedRows }
+}
+
+// ── 4.1 Breeding Overview ─────────────────────────────────────
+// Reuses the canonical checkDamCompliance() from breedingCompliance.ts.
+// Assesses current-kennel FEMALES only (dam breeding rules); males are counted
+// as "not assessed" rather than bucketed. See M7_DATA_MODEL.md §4.1.
+export interface BreedingOverviewRow {
+  dogId: string
+  dogName: string
+  overall: FindingLevel     // 'block' | 'warn' | 'info' | 'ok'
+  headline: string
+}
+export interface BreedingOverviewReport {
+  eligible: BreedingOverviewRow[]   // overall ok | info
+  caution: BreedingOverviewRow[]    // overall warn
+  review: BreedingOverviewRow[]     // overall block
+  assessedCount: number             // females assessed
+  excludedMaleCount: number         // males in kennel, not assessed
+}
+
+export function breedingOverview(
+  dogs: Dog[],
+  healthByDog: Map<string, HealthTest[]>,
+  state: string,
+): BreedingOverviewReport {
+  const kennel = currentKennelDogs(dogs) as DogSale[]
+  const females = kennel.filter(d => d.sex === 'female')
+  const males = kennel.filter(d => d.sex !== 'female')
+
+  const eligible: BreedingOverviewRow[] = []
+  const caution: BreedingOverviewRow[] = []
+  const review: BreedingOverviewRow[] = []
+
+  females.forEach(d => {
+    const cDog: ComplianceDog = {
+      name: d.name,
+      breed: d.breed,
+      sex: d.sex,
+      dateOfBirth: d.dateOfBirth,
+      colour: d.colour,
+      pedigreeRegister: d.pedigreeRegister,
+      litterCount: d.litterCount,
+      last18mLitters: d.last18mLitters,
+      cSectionCount: d.cSectionCount,
+      lastLitterDate: d.lastLitterDate,
+    }
+    const cTests: ComplianceHealthTest[] = (healthByDog.get(d.id) || []).map(t => ({
+      testType: t.testType,
+      result: t.result,
+      dateTested: t.dateTested,
+      lab: t.lab,
+      certNumber: t.certNumber,
+    }))
+    const res = checkDamCompliance(cDog, cTests, state)
+    const row: BreedingOverviewRow = { dogId: d.id, dogName: d.name, overall: res.overall, headline: res.headline }
+    if (res.overall === 'block') review.push(row)
+    else if (res.overall === 'warn') caution.push(row)
+    else eligible.push(row)  // 'ok' | 'info'
+  })
+
+  return {
+    eligible,
+    caution,
+    review,
+    assessedCount: females.length,
+    excludedMaleCount: males.length,
+  }
 }
