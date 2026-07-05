@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { getDogs, getLitters, getHealthTests, getUserProfile } from '../lib/db'
 import { formatDate } from '../lib/utils'
@@ -128,8 +129,19 @@ function BreedingOverviewSection({ data }: { data: BreedingOverviewReport | null
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>{label} ({rows.length})</span>
       </div>
       <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 6, marginLeft: 14 }}>{description}</div>
-      {rows.map(r => (
-        <div key={r.dogId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+      {rows.map(r => r.dogId ? (
+        <Link
+          key={r.dogId}
+          to={`/app/dogs/${r.dogId}`}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)', textDecoration: 'none', borderRadius: 4 }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--gray-100)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--dark)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.dogName}</span>
+          <span className={`badge ${badgeClass}`} style={{ flexShrink: 0, maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.headline}</span>
+        </Link>
+      ) : (
+        <div key={r.dogName} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
           <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--dark)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.dogName}</span>
           <span className={`badge ${badgeClass}`} style={{ flexShrink: 0, maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.headline}</span>
         </div>
@@ -189,7 +201,7 @@ function LitterProductionSection({ data }: { data: LitterProductionReport | null
             <tbody>
               {rows.map(r => (
                 <tr key={r.id}>
-                  <td style={td}>{r.name}</td>
+                  <td style={td}><Link to="/app/litters" style={{ color: 'var(--brand-600)', textDecoration: 'none', fontWeight: 500 }}>{r.name}</Link></td>
                   <td style={td}>{r.damName}</td>
                   <td style={{ ...td, color: r.sireName === 'External sire' ? 'var(--light)' : 'var(--dark)' }}>{r.sireName}</td>
                   <td style={td}>{r.whelpDate ? formatDate(r.whelpDate) : '—'}</td>
@@ -205,7 +217,9 @@ function LitterProductionSection({ data }: { data: LitterProductionReport | null
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Expected (not yet whelped)</div>
           {expected.map(r => (
-            <div key={r.id} style={{ fontSize: 13, color: 'var(--mid)', padding: '4px 0' }}>{r.name} · Dam: {r.damName}</div>
+            <div key={r.id} style={{ fontSize: 13, color: 'var(--mid)', padding: '4px 0' }}>
+              <Link to="/app/litters" style={{ color: 'var(--brand-600)', textDecoration: 'none', fontWeight: 500 }}>{r.name}</Link> · Dam: {r.damName}
+            </div>
           ))}
         </div>
       )}
@@ -265,7 +279,17 @@ function SalesSection({ data }: { data: SalesReport | null }) {
         <EmptyRow text="No transfers recorded yet." />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 10, marginBottom: 18 }}>
-          {transfersByMonth.map(m => <Stat key={m.month} value={m.count} label={formatMonth(m.month)} tone="brand" />)}
+          {transfersByMonth.map(m => (
+            <Link
+              key={m.month}
+              to="/app/dogs?stage=transferred"
+              style={{ textDecoration: 'none', color: 'inherit' }}
+              onMouseEnter={e => { e.currentTarget.style.opacity = '0.8' }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = '1' }}
+            >
+              <Stat value={m.count} label={formatMonth(m.month)} tone="brand" />
+            </Link>
+          ))}
         </div>
       )}
 
@@ -278,7 +302,14 @@ function SalesSection({ data }: { data: SalesReport | null }) {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 10, marginBottom: 4 }}>
           <Stat value={funnel.available} label="Available" tone="brand" />
-          <Stat value={funnel.reserved} label="Reserved" tone="warning" />
+          <Link
+            to="/app/buyers"
+            style={{ textDecoration: 'none', color: 'inherit' }}
+            onMouseEnter={e => { e.currentTarget.style.opacity = '0.8' }}
+            onMouseLeave={e => { e.currentTarget.style.opacity = '1' }}
+          >
+            <Stat value={funnel.reserved} label="Reserved" tone="warning" />
+          </Link>
           <Stat value={funnel.depositReceived} label="Deposit in" tone="brand" />
           <Stat value={funnel.sold} label="Sold" tone="brand" />
           <Stat value={funnel.kept} label="Kept" tone="muted" />
@@ -289,8 +320,19 @@ function SalesSection({ data }: { data: SalesReport | null }) {
       {reservedRows.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Currently reserved</div>
-          {reservedRows.map(r => (
-            <div key={r.dogId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0', borderTop: '1px solid var(--border)' }}>
+          {reservedRows.map(r => r.dogId ? (
+            <Link
+              key={r.dogId}
+              to={`/app/dogs/${r.dogId}`}
+              style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0', borderTop: '1px solid var(--border)', textDecoration: 'none' }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--gray-100)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+            >
+              <span style={{ color: 'var(--dark)', fontWeight: 500 }}>{r.dogName}</span>
+              <span style={{ color: 'var(--mid)' }}>{r.reservedForName}{r.reservedAt ? ` · ${formatDate(r.reservedAt)}` : ''}</span>
+            </Link>
+          ) : (
+            <div key={r.dogName} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0', borderTop: '1px solid var(--border)' }}>
               <span style={{ color: 'var(--dark)', fontWeight: 500 }}>{r.dogName}</span>
               <span style={{ color: 'var(--mid)' }}>{r.reservedForName}{r.reservedAt ? ` · ${formatDate(r.reservedAt)}` : ''}</span>
             </div>
@@ -307,7 +349,7 @@ function SalesSection({ data }: { data: SalesReport | null }) {
             <tbody>
               {transferredRows.map(r => (
                 <tr key={r.dogId}>
-                  <td style={td}>{r.dogName}</td>
+                  <td style={td}><Link to="/app/dogs?stage=transferred" style={{ color: 'var(--brand-600)', textDecoration: 'none', fontWeight: 500 }}>{r.dogName}</Link></td>
                   <td style={td}>{r.buyerName}</td>
                   <td style={td}>{r.buyerEmail}</td>
                   <td style={td}>{formatDate(r.transferredAt)}</td>
