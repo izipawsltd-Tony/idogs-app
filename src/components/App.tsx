@@ -39,6 +39,9 @@ import SuperAdminUsersPage from '../super-admin/pages/SuperAdminUsersPage'
 import SuperAdminUserDetailPage from '../super-admin/pages/SuperAdminUserDetailPage'
 import SuperAdminSubscriptionsPage from '../super-admin/pages/SuperAdminSubscriptionsPage'
 import SuperAdminPlansPricingPage from '../super-admin/pages/SuperAdminPlansPricingPage'
+import SuperAdminAuditLogsPage from '../super-admin/pages/SuperAdminAuditLogsPage'
+import SuperAdminAuditLogDetailPage from '../super-admin/pages/SuperAdminAuditLogDetailPage'
+import SuperAdminSupportPage from '../super-admin/pages/SuperAdminSupportPage'
 
 import AppLayout from './layout/AppLayout'
 
@@ -106,8 +109,9 @@ export default function App() {
           <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
           <Route path="billing-payments" element={<SuperAdminModulePlaceholderPage title="Billing & Payments" section="Revenue" description="Billing and payment review will be added in a later Super Admin batch." />} />
           <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
-          <Route path="support" element={<SuperAdminModulePlaceholderPage title="Support" section="Operations" description="Support tooling will be added in a later Super Admin batch." />} />
-          <Route path="audit-logs" element={<SuperAdminModulePlaceholderPage title="Audit Logs" section="Operations" description="Platform audit review will be added in a later Super Admin batch." />} />
+          <Route path="support" element={<SuperAdminSupportPage />} />
+          <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
+          <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
           <Route path="settings" element={<SuperAdminModulePlaceholderPage title="Settings" section="System" description="Super Admin settings will be added in a later Super Admin batch." />} />
         </Route>
 
