@@ -37,6 +37,8 @@ import SuperAdminOrganisationsPage from '../super-admin/pages/SuperAdminOrganisa
 import SuperAdminOrganisationDetailPage from '../super-admin/pages/SuperAdminOrganisationDetailPage'
 import SuperAdminUsersPage from '../super-admin/pages/SuperAdminUsersPage'
 import SuperAdminUserDetailPage from '../super-admin/pages/SuperAdminUserDetailPage'
+import SuperAdminSubscriptionsPage from '../super-admin/pages/SuperAdminSubscriptionsPage'
+import SuperAdminPlansPricingPage from '../super-admin/pages/SuperAdminPlansPricingPage'
 
 import AppLayout from './layout/AppLayout'
 
@@ -101,9 +103,9 @@ export default function App() {
           <Route path="organisations/:id" element={<SuperAdminOrganisationDetailPage />} />
           <Route path="users" element={<SuperAdminUsersPage />} />
           <Route path="users/:uid" element={<SuperAdminUserDetailPage />} />
-          <Route path="subscriptions" element={<SuperAdminModulePlaceholderPage title="Subscriptions" section="Revenue" description="Subscription operations will be added in a later Super Admin batch." />} />
+          <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
           <Route path="billing-payments" element={<SuperAdminModulePlaceholderPage title="Billing & Payments" section="Revenue" description="Billing and payment review will be added in a later Super Admin batch." />} />
-          <Route path="plans-pricing" element={<SuperAdminModulePlaceholderPage title="Plans & Pricing" section="Revenue" description="Plan and pricing controls will be added in a later Super Admin batch." />} />
+          <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
           <Route path="support" element={<SuperAdminModulePlaceholderPage title="Support" section="Operations" description="Support tooling will be added in a later Super Admin batch." />} />
           <Route path="audit-logs" element={<SuperAdminModulePlaceholderPage title="Audit Logs" section="Operations" description="Platform audit review will be added in a later Super Admin batch." />} />
           <Route path="settings" element={<SuperAdminModulePlaceholderPage title="Settings" section="System" description="Super Admin settings will be added in a later Super Admin batch." />} />
