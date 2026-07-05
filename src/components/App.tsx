@@ -42,6 +42,7 @@ import SuperAdminPlansPricingPage from '../super-admin/pages/SuperAdminPlansPric
 import SuperAdminAuditLogsPage from '../super-admin/pages/SuperAdminAuditLogsPage'
 import SuperAdminAuditLogDetailPage from '../super-admin/pages/SuperAdminAuditLogDetailPage'
 import SuperAdminSupportPage from '../super-admin/pages/SuperAdminSupportPage'
+import SuperAdminSettingsPage from '../super-admin/pages/SuperAdminSettingsPage'
 
 import AppLayout from './layout/AppLayout'
 
@@ -112,7 +113,7 @@ export default function App() {
           <Route path="support" element={<SuperAdminSupportPage />} />
           <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
           <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
-          <Route path="settings" element={<SuperAdminModulePlaceholderPage title="Settings" section="System" description="Super Admin settings will be added in a later Super Admin batch." />} />
+          <Route path="settings" element={<SuperAdminSettingsPage />} />
         </Route>
 
         {/* Protected — app */}

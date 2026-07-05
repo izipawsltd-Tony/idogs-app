@@ -15,10 +15,15 @@ if (!getApps().length) {
   })
 }
 
+// Single source of truth for the Super Admin allowlist on the server side.
+// Mirrors SUPER_ADMIN_EMAILS in src/super-admin/superAdminConfig.ts (the
+// frontend gate) — keep both lists in sync if this ever changes.
+export const ALLOWED_ADMINS = ['trunghieungo@gmail.com', 'theresanguyenngo@gmail.com']
+
 /**
  * Reusable helper to verify that a request is from the authorized Super Admin.
  * Returns the decoded token if authorized, or handles the response and returns null.
- * 
+ *
  * @param {import('http').IncomingMessage} req
  * @param {import('http').ServerResponse} res
  * @returns {Promise<import('firebase-admin/auth').DecodedIdToken | null>}
@@ -43,7 +48,6 @@ export async function verifySuperAdmin(req, res) {
 
     // Enforce Super Admin identity
     const email = decodedToken.email ? decodedToken.email.toLowerCase().trim() : ''
-    const ALLOWED_ADMINS = ['trunghieungo@gmail.com', 'theresanguyenngo@gmail.com']
     if (!ALLOWED_ADMINS.includes(email)) {
       res.status(403).json({ error: 'Forbidden: Not authorized as Super Admin' })
       return null
