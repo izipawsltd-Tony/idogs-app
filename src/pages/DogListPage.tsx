@@ -27,6 +27,7 @@ export default function DogListPage({ toast }: Props) {
     const stage = searchParams.get('stage')
     const valid = ['whelp', 'puppy', 'young_adult', 'adult', 'senior', 'remembered']
     if (stage === 'puppies') setFilterStage('puppies')
+    else if (stage === 'transferred') setFilterStage('transferred')
     else if (stage && valid.includes(stage)) setFilterStage(stage as LifeStage)
   }, [])
 
