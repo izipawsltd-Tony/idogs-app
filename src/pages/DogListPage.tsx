@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { getDogs } from '../lib/db'
+import { getDogs, getHealthTests } from '../lib/db'
 import { getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS, calculateLifeStage } from '../lib/utils'
-import type { Dog, LifeStage, ToastMessage } from '../types'
+import type { CoverageType } from '../lib/reports'
+import type { Dog, HealthTest, LifeStage, ToastMessage } from '../types'
+
+const MISSING_TEST_TYPES: CoverageType[] = ['hip', 'elbow', 'eye', 'dna']
+const MISSING_TEST_LABEL: Record<CoverageType, string> = {
+  hip: 'Hip', elbow: 'Elbow', eye: 'Eye', dna: 'DNA',
+}
+// Same "eligible" set as healthCoverage() in reports.ts — kept in lockstep so
+// the count shown in Insights always matches the dogs this filter surfaces.
+const HEALTH_ELIGIBLE_STAGES: LifeStage[] = ['young_adult', 'adult', 'senior']
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -21,11 +30,37 @@ export default function DogListPage({ toast }: Props) {
     else if (stage && valid.includes(stage)) setFilterStage(stage as LifeStage)
   }, [])
 
+  // Health "X missing" drill-down (?missingTest=hip|elbow|eye|dna) — a mode
+  // separate from filterStage, so it doesn't disturb the stage/transferred/
+  // puppies logic above. Health records are fetched lazily: only once this
+  // param is present, so the normal dog-list flow costs zero extra queries.
+  const missingTestParam = searchParams.get('missingTest')
+  const missingTest: CoverageType | null =
+    missingTestParam && MISSING_TEST_TYPES.includes(missingTestParam as CoverageType)
+      ? (missingTestParam as CoverageType)
+      : null
+  const [healthMap, setHealthMap] = useState<Map<string, HealthTest[]> | null>(null)
+  const [healthLoading, setHealthLoading] = useState(false)
+
   useEffect(() => {
     getDogs()
       .then(result => { setDogs(result); setLoading(false) })
       .catch(() => { toast('Failed to load dogs', 'error'); setLoading(false) })
   }, [])
+
+  useEffect(() => {
+    if (!missingTest || dogs.length === 0) { setHealthMap(null); return }
+    let active = true
+    setHealthLoading(true)
+    Promise.all(dogs.map(d => getHealthTests(d.id)))
+      .then(results => {
+        if (!active) return
+        setHealthMap(new Map(dogs.map((d, i) => [d.id, results[i]])))
+      })
+      .catch(() => { if (active) toast('Failed to load health records', 'error') })
+      .finally(() => { if (active) setHealthLoading(false) })
+    return () => { active = false }
+  }, [missingTest, dogs])
 
   const activeDogs = dogs.filter(d => d.status !== 'transferred')
   const transferredDogs = dogs.filter(d => d.status === 'transferred')
@@ -66,6 +101,22 @@ export default function DogListPage({ toast }: Props) {
     const puppyDogs = withStage.filter(w => w.actualStage === 'puppy').map(w => w.dog).sort(sortByDobDesc)
     return { bornDogs, puppyDogs }
   }, [filtered, filterStage])
+
+  // Missing-test mode: eligible (young_adult/adult/senior, not deceased, not
+  // transferred) dogs with no HealthTest record of this type — identical
+  // definition to healthCoverage() in reports.ts, so counts always match.
+  const missingTestDogs = useMemo(() => {
+    if (!missingTest || !healthMap) return null
+    return dogs.filter(d => {
+      if (d.isDeceased) return false
+      if (d.status === 'transferred') return false
+      const stage = calculateLifeStage(d.dateOfBirth, d.breed)
+      if (!HEALTH_ELIGIBLE_STAGES.includes(stage)) return false
+      const hasTest = (healthMap.get(d.id) || []).some(t => t.testType === missingTest)
+      if (hasTest) return false
+      return !search || (d.name || '').toLowerCase().includes(search.toLowerCase()) || (d.breed || '').toLowerCase().includes(search.toLowerCase())
+    })
+  }, [missingTest, healthMap, dogs, search])
 
   return (
     <div style={{ padding: 32 }}>
@@ -152,6 +203,34 @@ export default function DogListPage({ toast }: Props) {
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>
+      ) : missingTest ? (
+        <>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            background: 'var(--brand-50)', border: '1px solid var(--brand-300)',
+            borderRadius: 'var(--radius-md)', padding: '10px 16px', marginBottom: 16,
+          }}>
+            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--brand-600)' }}>
+              Showing dogs missing {MISSING_TEST_LABEL[missingTest]} test
+            </span>
+            <Link to="/app/dogs" className="btn btn-secondary btn-sm">Clear filter</Link>
+          </div>
+          {healthLoading || !missingTestDogs ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>
+          ) : missingTestDogs.length === 0 ? (
+            <div className="card">
+              <div className="empty-state">
+                <div className="empty-state-icon">✓</div>
+                <div className="empty-state-title">{search ? 'No dogs found' : `All eligible dogs have a ${MISSING_TEST_LABEL[missingTest]} test on file.`}</div>
+                {search && <div className="empty-state-desc">Try a different search term.</div>}
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+              {missingTestDogs.map(dog => <DogCard key={dog.id} dog={dog} />)}
+            </div>
+          )}
+        </>
       ) : filterStage === 'puppies' ? (
         !puppyGroups || (puppyGroups.bornDogs.length === 0 && puppyGroups.puppyDogs.length === 0) ? (
           <div className="card">

@@ -251,7 +251,14 @@ function HealthCoverageSection({ data }: { data: HealthCoverageReport | null }) 
                 <div style={{ height: '100%', width: `${s.pct}%`, background: s.pct >= 100 ? 'var(--brand-600)' : s.pct > 0 ? 'var(--brand-300)' : 'var(--border)', borderRadius: 4, transition: 'width .2s' }} />
               </div>
               {s.missing > 0 && (
-                <div style={{ fontSize: 12, color: 'var(--warning)', marginTop: 2 }}>{s.missing} missing</div>
+                <Link
+                  to={`/app/dogs?missingTest=${s.type}`}
+                  style={{ fontSize: 12, color: 'var(--warning)', marginTop: 2, display: 'inline-block', textDecoration: 'none' }}
+                  onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline' }}
+                  onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none' }}
+                >
+                  {s.missing} missing
+                </Link>
               )}
             </div>
           ))}
