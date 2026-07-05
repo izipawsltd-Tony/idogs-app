@@ -103,7 +103,7 @@ export default function App() {
           <Route path="billing" element={<BillingPage toast={toast} />} />
           <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
           <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
-          <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppy" replace />} />
+          <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppies" replace />} />
           <Route path="buyers"  element={<BuyersPage />} />
           <Route path="reports" element={<ReportsPage toast={toast} />} />
         </Route>

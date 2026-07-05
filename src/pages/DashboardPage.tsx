@@ -123,7 +123,7 @@ export default function DashboardPage({ toast }: Props) {
     { value: activeDogs.length,                                     label: 'Dogs',              icon: '🐕',  link: '/app/dogs',      color: undefined },
     { value: activeDogs.filter(d => !d.isDeceased).length,         label: 'Active profiles',   icon: '✓',   link: '/app/dogs',      color: 'var(--brand-600)' },
     { value: overdueCount,                                          label: 'Overdue reminders', icon: '🔔',  link: '/app/reminders?filter=overdue', color: overdueCount > 0 ? 'var(--danger)' : undefined },
-    { value: activeDogs.filter(d => d.lifeStage === 'puppy').length, label: 'Puppies',          icon: '🐾',  link: '/app/dogs?stage=puppy',      color: undefined },
+    { value: activeDogs.filter(d => d.lifeStage === 'puppy').length, label: 'Puppies',          icon: '🐾',  link: '/app/dogs?stage=puppies',      color: undefined },
     { value: litters.length,                                        label: 'Litters',           icon: '🐣',  link: '/app/litters',   color: undefined },
     { value: documents.length,                                      label: 'Documents',         icon: '📄',  link: '/app/documents', color: undefined },
   ]

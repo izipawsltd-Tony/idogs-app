@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { getDogs } from '../lib/db'
 import { getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS, calculateLifeStage } from '../lib/utils'
@@ -12,12 +12,13 @@ export default function DogListPage({ toast }: Props) {
   const [dogs, setDogs] = useState<Dog[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filterStage, setFilterStage] = useState<LifeStage | 'all' | 'transferred'>('all')
+  const [filterStage, setFilterStage] = useState<LifeStage | 'all' | 'transferred' | 'puppies'>('all')
   const [searchParams] = useSearchParams()
   useEffect(() => {
     const stage = searchParams.get('stage')
     const valid = ['whelp', 'puppy', 'young_adult', 'adult', 'senior', 'remembered']
-    if (stage && valid.includes(stage)) setFilterStage(stage as LifeStage)
+    if (stage === 'puppies') setFilterStage('puppies')
+    else if (stage && valid.includes(stage)) setFilterStage(stage as LifeStage)
   }, [])
 
   useEffect(() => {
@@ -39,9 +40,32 @@ export default function DogListPage({ toast }: Props) {
     // Mọi filter khác: ẩn dog đã transferred
     if (isTransferred) return false
     const actualStage = d.isDeceased ? 'remembered' : calculateLifeStage(d.dateOfBirth, d.breed)
-    const matchStage = filterStage === 'all' || actualStage === filterStage
+    const matchStage =
+      filterStage === 'all' ? true
+      : filterStage === 'puppies' ? (actualStage === 'whelp' || actualStage === 'puppy')
+      : actualStage === filterStage
     return matchSearch && matchStage
   })
+
+  // Puppies mode groups the flat `filtered` list into Born (whelp) / Puppy
+  // sections. actualStage is computed once per dog here (not re-derived per
+  // group) since calculateLifeStage is breed-aware and not free.
+  const puppyGroups = useMemo(() => {
+    if (filterStage !== 'puppies') return null
+    const sortByDobDesc = (a: Dog, b: Dog) => {
+      if (!a.dateOfBirth && !b.dateOfBirth) return 0
+      if (!a.dateOfBirth) return 1
+      if (!b.dateOfBirth) return -1
+      return b.dateOfBirth.localeCompare(a.dateOfBirth)
+    }
+    const withStage = filtered.map(dog => ({
+      dog,
+      actualStage: dog.isDeceased ? 'remembered' : calculateLifeStage(dog.dateOfBirth, dog.breed),
+    }))
+    const bornDogs = withStage.filter(w => w.actualStage === 'whelp').map(w => w.dog).sort(sortByDobDesc)
+    const puppyDogs = withStage.filter(w => w.actualStage === 'puppy').map(w => w.dog).sort(sortByDobDesc)
+    return { bornDogs, puppyDogs }
+  }, [filtered, filterStage])
 
   return (
     <div style={{ padding: 32 }}>
@@ -84,6 +108,25 @@ export default function DogListPage({ toast }: Props) {
             </button>
           ))}
 
+          {/* Puppies (Born + Puppy grouped) filter */}
+          <button
+            key="puppies"
+            onClick={() => setFilterStage('puppies')}
+            style={{
+              padding: '7px 14px',
+              borderRadius: 20,
+              border: '1.5px solid',
+              borderColor: filterStage === 'puppies' ? 'var(--brand-600)' : 'var(--border)',
+              background: filterStage === 'puppies' ? 'var(--brand-50)' : 'var(--white)',
+              color: filterStage === 'puppies' ? 'var(--brand-600)' : 'var(--mid)',
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            🐾 Puppies
+          </button>
+
           {/* Transferred filter */}
           {transferredDogs.length > 0 && (
             <button
@@ -109,6 +152,41 @@ export default function DogListPage({ toast }: Props) {
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>
+      ) : filterStage === 'puppies' ? (
+        !puppyGroups || (puppyGroups.bornDogs.length === 0 && puppyGroups.puppyDogs.length === 0) ? (
+          <div className="card">
+            <div className="empty-state">
+              <div className="empty-state-icon">🐾</div>
+              <div className="empty-state-title">{search ? 'No dogs found' : 'No puppies right now'}</div>
+              <div className="empty-state-desc">{search ? 'Try a different search term.' : 'Born and Puppy dogs will show up here.'}</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+            {puppyGroups.bornDogs.length > 0 && (
+              <div>
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, color: 'var(--dark)' }}>🐣 Born ({puppyGroups.bornDogs.length})</div>
+                  <div style={{ fontSize: 13, color: 'var(--light)' }}>Newborn</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+                  {puppyGroups.bornDogs.map(dog => <DogCard key={dog.id} dog={dog} />)}
+                </div>
+              </div>
+            )}
+            {puppyGroups.puppyDogs.length > 0 && (
+              <div>
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, color: 'var(--dark)' }}>🐶 Puppy ({puppyGroups.puppyDogs.length})</div>
+                  <div style={{ fontSize: 13, color: 'var(--light)' }}>Ready for sale</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+                  {puppyGroups.puppyDogs.map(dog => <DogCard key={dog.id} dog={dog} />)}
+                </div>
+              </div>
+            )}
+          </div>
+        )
       ) : filtered.length === 0 ? (
         <div className="card">
           <div className="empty-state">

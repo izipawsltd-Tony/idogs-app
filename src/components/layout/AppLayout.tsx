@@ -60,7 +60,7 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
   {
     label: 'BREEDING',
     items: [
-      { path: '/app/dogs?stage=puppy', label: 'Puppies', icon: '🐾' },
+      { path: '/app/dogs?stage=puppies', label: 'Puppies', icon: '🐾' },
       { path: '/app/buyers',  label: 'Buyers',  icon: '👥' },
     ],
   },
