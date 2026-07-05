@@ -26,6 +26,10 @@ For each route, confirm:
 - [ ] Data populates (or a clear empty state shows if there's nothing to display)
 - [ ] Sidebar highlights the correct nav item as active
 - [ ] No disabled button is clickable or triggers a network request
+- [ ] Read-only notice is visible where expected (Subscriptions, Plans & Pricing, Audit Logs, Support, Settings)
+- [ ] V1 data-model limitation notice is visible where expected (Subscriptions, Plans & Pricing, Audit Logs, Support)
+- [ ] No Stripe/payment live action is reachable anywhere (Plans & Pricing, Settings integration buttons all disabled)
+- [ ] No support reply/assign/resolve/close action is reachable on the Support page
 
 ## 2. Detail-page specific checks
 
@@ -74,9 +78,12 @@ Each should return `401 {"error":"Unauthorized: Missing Authorization header"}`.
 - [ ] No Firestore `.set()/.update()/.delete()/.add()` calls anywhere under `api/super-admin/*`
 - [ ] No Firebase Auth write calls (`createUser`/`updateUser`/`deleteUser`/`setCustomUserClaims`) anywhere under `api/super-admin/*`
 
-## 6. Pre-push / pre-deploy checks
+## 6. Pre-push / pre-preview-deploy checks
 
 - [ ] `npm run build` passes with no errors
+- [ ] All API guard checks in section 4 pass (401 JSON, no Authorization header)
 - [ ] `git status -u` reviewed — no `.env.local`, no service account JSON, nothing outside the intended diff staged
-- [ ] Deploy target is `vercel deploy` (Preview), not `vercel deploy --prod`
-- [ ] Tony has reviewed and approved before any `--prod` deploy
+- [ ] No production env, Firebase/Vercel cloud config, or Firestore rules/data touched
+- [ ] Tony has explicitly approved pushing this branch to the remote
+- [ ] Tony has explicitly approved a `vercel deploy` (Preview) run
+- [ ] `vercel deploy --prod` is NOT run under any circumstance without a separate, explicit Tony go-ahead
