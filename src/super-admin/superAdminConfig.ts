@@ -31,12 +31,12 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
       {
         label: 'Organisations',
         path: `${SUPER_ADMIN_BASE_PATH}/organisations`,
-        description: 'Future tenant and kennel administration',
+        description: 'Tenant and kennel overview',
       },
       {
         label: 'Users',
         path: `${SUPER_ADMIN_BASE_PATH}/users`,
-        description: 'Future user account administration',
+        description: 'Platform account overview',
       },
     ],
   },

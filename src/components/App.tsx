@@ -33,6 +33,10 @@ import SuperAdminRoute from '../super-admin/SuperAdminRoute'
 import SuperAdminLayout from '../super-admin/SuperAdminLayout'
 import SuperAdminOverviewPage from '../super-admin/pages/SuperAdminOverviewPage'
 import SuperAdminModulePlaceholderPage from '../super-admin/pages/SuperAdminModulePlaceholderPage'
+import SuperAdminOrganisationsPage from '../super-admin/pages/SuperAdminOrganisationsPage'
+import SuperAdminOrganisationDetailPage from '../super-admin/pages/SuperAdminOrganisationDetailPage'
+import SuperAdminUsersPage from '../super-admin/pages/SuperAdminUsersPage'
+import SuperAdminUserDetailPage from '../super-admin/pages/SuperAdminUserDetailPage'
 
 import AppLayout from './layout/AppLayout'
 
@@ -93,8 +97,10 @@ export default function App() {
         }>
           <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
           <Route path="dashboard" element={<SuperAdminOverviewPage />} />
-          <Route path="organisations" element={<SuperAdminModulePlaceholderPage title="Organisations" section="Management" description="Tenant and kennel administration will be added in a later Super Admin batch." />} />
-          <Route path="users" element={<SuperAdminModulePlaceholderPage title="Users" section="Management" description="User account search and administration will be added in a later Super Admin batch." />} />
+          <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
+          <Route path="organisations/:id" element={<SuperAdminOrganisationDetailPage />} />
+          <Route path="users" element={<SuperAdminUsersPage />} />
+          <Route path="users/:uid" element={<SuperAdminUserDetailPage />} />
           <Route path="subscriptions" element={<SuperAdminModulePlaceholderPage title="Subscriptions" section="Revenue" description="Subscription operations will be added in a later Super Admin batch." />} />
           <Route path="billing-payments" element={<SuperAdminModulePlaceholderPage title="Billing & Payments" section="Revenue" description="Billing and payment review will be added in a later Super Admin batch." />} />
           <Route path="plans-pricing" element={<SuperAdminModulePlaceholderPage title="Plans & Pricing" section="Revenue" description="Plan and pricing controls will be added in a later Super Admin batch." />} />
