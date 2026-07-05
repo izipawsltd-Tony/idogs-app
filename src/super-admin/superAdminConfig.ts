@@ -46,7 +46,7 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
       {
         label: 'Subscriptions',
         path: `${SUPER_ADMIN_BASE_PATH}/subscriptions`,
-        description: 'Future subscription operations',
+        description: 'Read-only subscription and plan overview',
       },
       {
         label: 'Billing & Payments',
@@ -56,7 +56,7 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
       {
         label: 'Plans & Pricing',
         path: `${SUPER_ADMIN_BASE_PATH}/plans-pricing`,
-        description: 'Future plan catalogue controls',
+        description: 'Read-only plan catalogue and usage',
       },
     ],
   },
@@ -66,12 +66,12 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
       {
         label: 'Support',
         path: `${SUPER_ADMIN_BASE_PATH}/support`,
-        description: 'Future support workspace',
+        description: 'Read-only support signals (no ticket system yet)',
       },
       {
         label: 'Audit Logs',
         path: `${SUPER_ADMIN_BASE_PATH}/audit-logs`,
-        description: 'Future platform audit review',
+        description: 'Read-only platform activity trail',
       },
     ],
   },
@@ -81,7 +81,7 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
       {
         label: 'Settings',
         path: `${SUPER_ADMIN_BASE_PATH}/settings`,
-        description: 'Future Super Admin configuration',
+        description: 'Read-only platform configuration and safety overview',
       },
     ],
   },

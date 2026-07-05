@@ -1,6 +1,23 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type CSSProperties } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
+
+const disabledButtonStyle: CSSProperties = {
+  padding: '4px 10px',
+  fontSize: 12,
+  borderRadius: 6,
+  border: '1px solid var(--border)',
+  background: '#f4f6f5',
+  color: '#9aa39d',
+  cursor: 'not-allowed',
+}
+
+const disabledDangerButtonStyle: CSSProperties = {
+  ...disabledButtonStyle,
+  color: '#b91c1c',
+  background: '#fee2e2',
+  borderColor: '#fca5a5',
+}
 
 interface AssociatedDog {
   id: string
@@ -57,12 +74,14 @@ export default function SuperAdminOrganisationDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [unauthorized, setUnauthorized] = useState(false)
+  const [notFound, setNotFound] = useState(false)
 
   async function fetchOrganisationDetail() {
     if (!user || !id) return
     setLoading(true)
     setError(null)
     setUnauthorized(false)
+    setNotFound(false)
     try {
       const token = await user.getIdToken()
       const res = await fetch(`/api/super-admin/organisations/${id}`, {
@@ -77,7 +96,8 @@ export default function SuperAdminOrganisationDetailPage() {
       }
 
       if (res.status === 404) {
-        throw new Error('Organisation not found in database or is not a Breeder account.')
+        setNotFound(true)
+        return
       }
 
       const contentType = res.headers.get('content-type') || ''
@@ -163,8 +183,23 @@ export default function SuperAdminOrganisationDetailPage() {
         <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
         <h3 style={{ fontSize: 20, color: '#1a3a2a', marginBottom: 8, fontWeight: 700 }}>Access Denied</h3>
         <p style={{ color: '#53635a', fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
-          Access restricted to operators only.
+          Your account does not possess Super Admin permissions. This console is restricted to authorized platform operators only.
         </p>
+      </div>
+    )
+  }
+
+  if (notFound) {
+    return (
+      <div style={{ maxWidth: 500, margin: '60px auto', padding: 32, background: '#ffffff', border: '1px solid #dfe5df', borderRadius: 12, textAlign: 'center', boxShadow: '0 2px 8px rgba(16,41,29,0.06)' }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🔍</div>
+        <h3 style={{ fontSize: 20, color: '#1a3a2a', marginBottom: 8, fontWeight: 700 }}>Organisation Not Found</h3>
+        <p style={{ color: '#53635a', fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
+          This account does not exist, or is not registered as a Breeder organisation.
+        </p>
+        <Link to="/app/super-admin/organisations" className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
+          Back to Organisations
+        </Link>
       </div>
     )
   }
@@ -173,7 +208,7 @@ export default function SuperAdminOrganisationDetailPage() {
     return (
       <div style={{ maxWidth: 500, margin: '60px auto', padding: 32, background: '#ffffff', border: '1px solid #dfe5df', borderRadius: 12, textAlign: 'center', boxShadow: '0 2px 8px rgba(16,41,29,0.06)' }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>❌</div>
-        <h3 style={{ fontSize: 20, color: '#1a3a2a', marginBottom: 8, fontWeight: 700 }}>Record Error</h3>
+        <h3 style={{ fontSize: 20, color: '#1a3a2a', marginBottom: 8, fontWeight: 700 }}>Connection Error</h3>
         <p style={{ color: '#c53030', fontSize: 13, wordBreak: 'break-word', lineHeight: 1.6, marginBottom: 20 }}>
           {error || 'Failed to fetch details.'}
         </p>
@@ -374,14 +409,14 @@ export default function SuperAdminOrganisationDetailPage() {
           <div className="super-admin-panel" style={{ padding: 20 }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 700, color: '#10291d' }}>Console Operations</h3>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <button type="button" className="btn btn-secondary btn-sm" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>
-                Impersonate Owner (Coming later)
+              <button type="button" disabled title="Coming later" style={disabledButtonStyle}>
+                Impersonate Owner — Coming later
               </button>
-              <button type="button" className="btn btn-secondary btn-sm" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>
-                Suspend Account (Coming later)
+              <button type="button" disabled title="Coming later" style={disabledButtonStyle}>
+                Suspend Account — Coming later
               </button>
-              <button type="button" className="btn btn-secondary btn-sm" disabled style={{ opacity: 0.5, cursor: 'not-allowed', color: '#991b1b', background: '#fee2e2', borderColor: '#fca5a5' }}>
-                Delete Tenant (Coming later)
+              <button type="button" disabled title="Coming later" style={disabledDangerButtonStyle}>
+                Delete Tenant — Coming later
               </button>
             </div>
           </div>

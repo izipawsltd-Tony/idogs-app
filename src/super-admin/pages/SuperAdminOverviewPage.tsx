@@ -223,7 +223,7 @@ export default function SuperAdminOverviewPage() {
             </h3>
           </div>
           <p style={{ fontSize: 11, color: '#6c7a70', margin: 0 }}>
-            Stripe Status: active
+            Derived from user profile fields, not live Stripe
           </p>
         </div>
 
