@@ -67,13 +67,15 @@ Return ONLY a JSON object with these exact fields (use null if not found):
       "uncertain": boolean
     }
   ],
-  "healthTest": {
-    "testType": "hip" | "elbow" | "eye" | "dna" | "cardiac" | "other" | null,
-    "result": string | null,
-    "dateTested": "YYYY-MM-DD" | null,
-    "lab": string | null,
-    "certNumber": string | null
-  } | null,
+  "healthTests": [
+    {
+      "testType": "hip" | "elbow" | "eye" | "dna" | "cardiac" | "other" | null,
+      "result": string | null,
+      "dateTested": "YYYY-MM-DD" | null,
+      "lab": string | null,
+      "certNumber": string | null
+    }
+  ],
   "notes": string | null
 }
 
@@ -83,10 +85,11 @@ IMPORTANT extraction rules:
 - Extract "sex" from fields like "Sex: Female", "Sex: Male", "Bitch", "Dog"
 - Extract "breed" from "Breed:" field on pedigree certificates
 - Extract "ankc" from registration numbers on pedigree certificates
-- IMPORTANT: "ankc" and "healthTest.result" are separate fields and must never contain the same value. Health test certificates (hip/elbow/eye/cardiac scores) often also print the dog's ANKC registration number somewhere on the page for identification purposes — that number belongs in "ankc" only, never in "healthTest.result". "healthTest.result" must be the actual test outcome only (e.g. a hip/elbow score or grade such as "Excellent", "Good", "9/9", or a left/right breakdown like "Left: Excellent, Right: Good" — never a registration or certificate number on its own)
+- IMPORTANT: "ankc" and each healthTests[].result are separate fields and must never contain the same value. Health test certificates (hip/elbow/eye/cardiac scores) often also print the dog's ANKC registration number somewhere on the page for identification purposes — that number belongs in "ankc" only, never in a healthTests entry's "result". Each entry's "result" must be the actual test outcome only (e.g. a hip/elbow score or grade such as "Excellent", "Good", "9/9", or a left/right breakdown like "Left: Excellent, Right: Good" — never a registration or certificate number on its own)
 - Extract "microchip" from microchip/chip numbers
 - If document is a microchip registration or implant certificate, set documentType to "microchip_cert"
 - For vaccines: extract each vaccine as a separate entry in the vaccines array
+- For health tests: extract each test type as a separate entry in the healthTests array. If one certificate reports multiple test types (e.g. hip AND elbow scored in the same session), output EACH as a separate entry in healthTests, splitting the result text so each entry's result contains ONLY that test's outcome. Hip score and elbow grade must never share one entry.
 - Mark uncertain:true if you are not confident about a date or value
 - Return ONLY valid JSON, no markdown, no explanation`
 
@@ -129,7 +132,7 @@ IMPORTANT extraction rules:
       const extracted = JSON.parse(clean)
       return res.status(200).json(extracted)
     } catch {
-      return res.status(200).json({ documentType: 'other', vaccines: [], healthTest: null, raw: text })
+      return res.status(200).json({ documentType: 'other', vaccines: [], healthTests: [], raw: text })
     }
   } catch (err) {
     return res.status(500).json({ error: 'Internal error', message: String(err) })

@@ -60,6 +60,34 @@ async function viewDocument(
   }
 }
 
+// Maps AI Scan's free-text testType guess to the exact HealthTest.testType
+// enum. Only these 6 values are ever written to Firestore — anything that
+// doesn't map returns null so the caller can skip it (and tell the user)
+// instead of silently saving a bad value.
+function normaliseTestType(raw: unknown): HealthTest['testType'] | null {
+  if (typeof raw !== 'string') return null
+  const t = raw.toLowerCase().trim()
+  if (!t) return null
+
+  const DIRECT = ['hip', 'elbow', 'eye', 'dna', 'cardiac', 'other'] as const
+  if ((DIRECT as readonly string[]).includes(t)) return t as HealthTest['testType']
+
+  const HIP = ['hips', 'hip score', 'hip scoring']
+  const ELBOW = ['elbows', 'elbow score', 'elbow scoring']
+  const EYE = ['eyes', 'eye test', 'ophthalmology', 'ophthalmologist']
+  const DNA = ['genetic', 'genetics', 'genetic test']
+  const CARDIAC = ['heart', 'echo', 'echocardiogram', 'cardiac test']
+  const PATELLA = ['patella', 'luxating patella', 'knees', 'knee test']
+
+  if (HIP.includes(t)) return 'hip'
+  if (ELBOW.includes(t)) return 'elbow'
+  if (EYE.includes(t)) return 'eye'
+  if (DNA.includes(t)) return 'dna'
+  if (CARDIAC.includes(t)) return 'cardiac'
+  if (PATELLA.includes(t)) return 'other'
+  return null
+}
+
 export default function DogDetailPage({ toast }: Props) {
   const { dogId } = useParams<{ dogId: string }>()
   const navigate = useNavigate()
@@ -208,7 +236,8 @@ export default function DogDetailPage({ toast }: Props) {
     if (!dogId || !dog) return
 
     let vaccineCount = 0
-    let healthSaved = false
+    let healthCount = 0
+    const skippedTests: string[] = []
 
     // Save vaccines with filePath from scanned document
     if (result.vaccines && result.vaccines.length > 0) {
@@ -256,110 +285,106 @@ export default function DogDetailPage({ toast }: Props) {
       setVaccines(updated)
     }
 
-    // Save health test
-    // FIX (bug: hipScore/elbowGrade rendering as "[object Object]"):
-    // the AI scan occasionally returns `result` as a nested object
-    // (e.g. { left: "Excellent", right: "Good" } for hip/elbow scores,
-    // which often have separate left/right readings on the source
-    // document) even though the documented schema says result is a
-    // plain string. Coerce defensively here so a string is always what
-    // gets saved and rendered, regardless of what shape the AI returns.
-    const rawResult = result.healthTest?.result
-    let safeResult = typeof rawResult === 'string'
-      ? rawResult
-      : rawResult && typeof rawResult === 'object'
-        ? Object.entries(rawResult).map(([k, v]) => `${k}: ${v}`).join(', ')
-        : ''
+    // Save health tests — one record per detected test type, mirroring the
+    // vaccines loop above. Backward-compat: if the scan response still has
+    // the old singular `healthTest` (stale cache or a model response
+    // predating the array schema), treat it as a one-item array so existing
+    // scans keep working unchanged.
+    const rawHealthTests: any[] = Array.isArray(result.healthTests)
+      ? result.healthTests
+      : result.healthTest
+        ? [result.healthTest]
+        : []
 
-    // FIX (bug: "Health test result still showing ANKC"): some hip/elbow
-    // certificates also print the dog's ANKC registration number on the
-    // same page, and the AI occasionally wrote that number into
-    // healthTest.result instead of (or alongside) the actual test
-    // outcome — the scan.js prompt has been clarified to prevent this
-    // going forward, but this guards the save step too. If the extracted
-    // result exactly matches the dog's known ANKC number, or looks like a
-    // bare registration number (digits/letters with no result wording),
-    // drop it rather than saving a "result" that's actually a duplicate
-    // ANKC number.
-    // FIX: the previous check only matched when safeResult was an exact
-    // character-for-character match to dog.ankc — but the AI can return
-    // the same number wrapped differently, e.g. "ANKC 4100353152" or
-    // "ANKC: 4100353152" instead of the bare "4100353152" stored on the
-    // dog, so an exact-match comparison silently failed to catch these
-    // variants. Now checks whether the ANKC digits appear anywhere
-    // inside the result, which catches the wrapped forms too.
-    if (safeResult && dog.ankc) {
-      const ankcDigits = dog.ankc.trim()
-      if (ankcDigits && safeResult.includes(ankcDigits)) {
-        safeResult = ''
+    for (const ht of rawHealthTests) {
+      // Any testType the model returns must map to the real 6-value enum —
+      // freeform variants ("hip scoring", "ophthalmologist", "luxating
+      // patella", etc.) are normalised here; anything unrecognised is
+      // skipped (never saved with a made-up type) and surfaced via toast.
+      const normalisedType = normaliseTestType(ht?.testType)
+      if (!normalisedType) {
+        if (ht?.testType) skippedTests.push(String(ht.testType))
+        continue
       }
-    }
 
-    // FIX (bug: "Date Tested not applying from scans"): the previous
-    // condition required BOTH testType AND result to be truthy before
-    // saving anything, so a scanned document with a date but no clearly
-    // extracted result (e.g. result pending, or the AI couldn't parse a
-    // plain-text result) silently dropped the entire health test,
-    // including the date. Now we save as long as we have a testType,
-    // using whatever we could extract for the rest — dateTested included
-    // even when result is blank, instead of losing it.
-    if (result.healthTest?.testType) {
-      // FIX (bug: re-scanning the same document silently creates an
-      // exact duplicate record with no warning): check for an existing
-      // health test with the same type + date + cert number (when a
-      // cert number is present, that's the strongest signal of "this is
-      // literally the same certificate") before saving. This came up
-      // directly from re-scanning a HIP report to recover a missing
-      // documentUrl — the old record should be deleted, not left
-      // alongside an identical new one.
+      // FIX (bug: hipScore/elbowGrade rendering as "[object Object]"):
+      // the AI scan occasionally returns `result` as a nested object
+      // (e.g. { left: "Excellent", right: "Good" } for hip/elbow scores,
+      // which often have separate left/right readings on the source
+      // document) even though the documented schema says result is a
+      // plain string. Coerce defensively here so a string is always what
+      // gets saved and rendered, regardless of what shape the AI returns.
+      const rawResult = ht?.result
+      let safeResult = typeof rawResult === 'string'
+        ? rawResult
+        : rawResult && typeof rawResult === 'object'
+          ? Object.entries(rawResult).map(([k, v]) => `${k}: ${v}`).join(', ')
+          : ''
+
+      // FIX (bug: "Health test result still showing ANKC"): some hip/elbow
+      // certificates also print the dog's ANKC registration number on the
+      // same page, and the AI occasionally wrote that number into the
+      // result instead of (or alongside) the actual test outcome — the
+      // scan.js prompt has been clarified to prevent this going forward,
+      // but this guards the save step too. Checks whether the ANKC digits
+      // appear anywhere inside the result, which also catches wrapped
+      // forms like "ANKC 4100353152" or "ANKC: 4100353152".
+      if (safeResult && dog.ankc) {
+        const ankcDigits = dog.ankc.trim()
+        if (ankcDigits && safeResult.includes(ankcDigits)) {
+          safeResult = ''
+        }
+      }
+
+      // FIX (bug: re-scanning the same document silently creates an exact
+      // duplicate record with no warning): check for an existing health
+      // test with the same type + date + cert number (when a cert number
+      // is present, that's the strongest signal of "this is literally the
+      // same certificate") before saving.
       const possibleDuplicate = healthTests.find(h =>
-        h.testType === result.healthTest.testType &&
-        h.dateTested === (result.healthTest.dateTested || '') &&
+        h.testType === normalisedType &&
+        h.dateTested === (ht.dateTested || '') &&
         (
-          (result.healthTest.certNumber && h.certNumber === result.healthTest.certNumber) ||
-          (!result.healthTest.certNumber && formatHealthResult(h.result) === safeResult)
+          (ht.certNumber && h.certNumber === ht.certNumber) ||
+          (!ht.certNumber && formatHealthResult(h.result) === safeResult)
         )
       )
       if (possibleDuplicate) {
         const confirmed = window.confirm(
-          `This looks like a duplicate of an existing ${result.healthTest.testType.toUpperCase()} test from ${result.healthTest.dateTested || 'the same date'} (Cert: ${result.healthTest.certNumber || 'n/a'}).\n\nAdd it anyway? If you're trying to attach a document to the existing record, cancel this and delete the old record instead, or use Edit on the existing one.`
+          `This looks like a duplicate of an existing ${normalisedType.toUpperCase()} test from ${ht.dateTested || 'the same date'} (Cert: ${ht.certNumber || 'n/a'}).\n\nAdd it anyway? If you're trying to attach a document to the existing record, cancel this and delete the old record instead, or use Edit on the existing one.`
         )
-        if (!confirmed) {
-          toast('Scan cancelled — duplicate not added', 'info')
-          return
-        }
+        if (!confirmed) continue
       }
 
       const newHealthTestId = await addHealthTest({
         dogId,
-        testType: result.healthTest.testType,
+        testType: normalisedType,
         result: safeResult,
-        dateTested: result.healthTest.dateTested || '',
-        lab: result.healthTest.lab || '',
-        certNumber: result.healthTest.certNumber || '',
+        dateTested: ht.dateTested || '',
+        lab: ht.lab || '',
+        certNumber: ht.certNumber || '',
       }).catch(() => null)
-      healthSaved = true
-      // Update health test record with documentUrl. FIX: previously this
-      // grabbed the "last" item from getHealthTests(dogId) and assumed
-      // that was the just-created record — but that query has no
-      // orderBy, so Firestore doesn't guarantee insertion order, and the
-      // documentUrl could end up attached to an unrelated older health
-      // test instead. Using the ID returned directly from addHealthTest
-      // removes the guesswork entirely.
+      healthCount++
+      // Update health test record with documentUrl. Using the ID returned
+      // directly from addHealthTest (not "last item from getHealthTests",
+      // which has no orderBy and no guaranteed insertion order) removes the
+      // guesswork of which record a shared cert document belongs to.
       if (filePath && newHealthTestId) {
         await updateDoc(doc(db, 'healthTests', newHealthTestId), { documentPath: filePath }).catch(() => {})
       }
-      const updatedHealth = await getHealthTests(dogId)
-      setHealthTests(updatedHealth)
       await logAudit({
         tenantId: user?.uid || '',
         dogId,
         dogName: dog.name,
         action: 'health_test_added',
-        details: `Health test "${result.healthTest.testType?.toUpperCase()}" added via iDogs Scan — result: ${safeResult || '(not extracted)'}`,
+        details: `Health test "${normalisedType.toUpperCase()}" added via iDogs Scan — result: ${safeResult || '(not extracted)'}`,
         performedBy: user?.uid || '',
         performedByEmail: user?.email || '',
       })
+    }
+    if (healthCount > 0) {
+      const updatedHealth = await getHealthTests(dogId)
+      setHealthTests(updatedHealth)
     }
 
     // Update dog fields from scan
@@ -380,12 +405,15 @@ export default function DogDetailPage({ toast }: Props) {
     // Toast summary
     const parts = []
     if (vaccineCount > 0) parts.push(`${vaccineCount} vaccine(s)`)
-    if (healthSaved) parts.push('health test')
+    if (healthCount > 0) parts.push(`${healthCount} health test(s)`)
     if (Object.keys(updates).length > 0) parts.push('dog info updated')
     toast(`Saved: ${parts.length > 0 ? parts.join(', ') : 'no new records found'}`)
+    if (skippedTests.length > 0) {
+      toast(`${skippedTests.length} test type(s) not recognised — not saved: ${skippedTests.join(', ')}`, 'info')
+    }
 
     // Navigate to relevant tab
-    if (healthSaved && vaccineCount === 0) setTab('health')
+    if (healthCount > 0 && vaccineCount === 0) setTab('health')
     else if (vaccineCount > 0) setTab('vaccines')
   }
 
