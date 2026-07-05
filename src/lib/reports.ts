@@ -1,5 +1,5 @@
 import type { Dog, Litter, HealthTest, LifeStage } from '../types'
-import { checkDamCompliance, type ComplianceDog, type ComplianceHealthTest, type FindingLevel } from './breedingCompliance'
+import { checkDamCompliance, type ComplianceDog, type ComplianceHealthTest, type ComplianceOverall } from './breedingCompliance'
 
 // ─────────────────────────────────────────────────────────────
 // Reports V1 — pure aggregation helpers (no I/O, no Firestore).
@@ -241,15 +241,17 @@ export function salesAndTransfers(dogs: Dog[]): SalesReport {
 export interface BreedingOverviewRow {
   dogId: string
   dogName: string
-  overall: FindingLevel     // 'block' | 'warn' | 'info' | 'ok'
+  overall: ComplianceOverall     // 'block' | 'warn' | 'info' | 'ok' | 'not_yet'
   headline: string
 }
 export interface BreedingOverviewReport {
-  eligible: BreedingOverviewRow[]   // overall ok | info
-  caution: BreedingOverviewRow[]    // overall warn
-  review: BreedingOverviewRow[]     // overall block
-  assessedCount: number             // females assessed
-  excludedMaleCount: number         // males in kennel, not assessed
+  eligible: BreedingOverviewRow[]           // overall ok | info
+  caution: BreedingOverviewRow[]            // overall warn
+  review: BreedingOverviewRow[]             // overall block
+  notYetOfBreedingAge: BreedingOverviewRow[] // overall not_yet — whelp/puppy females, informational only
+  assessedCount: number                      // adult (young_adult/adult/senior) females actually assessed — excludes not-yet
+  excludedMaleCount: number                  // males in kennel, not assessed
+  notYetCount: number                        // whelp/puppy females, informational only
 }
 
 export function breedingOverview(
@@ -264,6 +266,7 @@ export function breedingOverview(
   const eligible: BreedingOverviewRow[] = []
   const caution: BreedingOverviewRow[] = []
   const review: BreedingOverviewRow[] = []
+  const notYetOfBreedingAge: BreedingOverviewRow[] = []
 
   females.forEach(d => {
     const cDog: ComplianceDog = {
@@ -287,7 +290,8 @@ export function breedingOverview(
     }))
     const res = checkDamCompliance(cDog, cTests, state)
     const row: BreedingOverviewRow = { dogId: d.id, dogName: d.name, overall: res.overall, headline: res.headline }
-    if (res.overall === 'block') review.push(row)
+    if (res.overall === 'not_yet') notYetOfBreedingAge.push(row)
+    else if (res.overall === 'block') review.push(row)
     else if (res.overall === 'warn') caution.push(row)
     else eligible.push(row)  // 'ok' | 'info'
   })
@@ -296,7 +300,9 @@ export function breedingOverview(
     eligible,
     caution,
     review,
-    assessedCount: females.length,
+    notYetOfBreedingAge,
+    assessedCount: eligible.length + caution.length + review.length,
     excludedMaleCount: males.length,
+    notYetCount: notYetOfBreedingAge.length,
   }
 }

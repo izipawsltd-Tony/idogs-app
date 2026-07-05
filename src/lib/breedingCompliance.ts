@@ -20,6 +20,8 @@
 // No React / Firestore imports — pure functions, unit-testable.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { calculateLifeStage } from './utils'
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type RuleSource = 'ANKC_NATIONAL' | 'STATE_LAW' | 'KENNEL_CLUB_STATE'
@@ -46,8 +48,11 @@ export interface Finding {
   verified: boolean
 }
 
+/** 'not_yet' = whelp/puppy — excluded from assessment, not a warning. */
+export type ComplianceOverall = FindingLevel | 'not_yet'
+
 export interface ComplianceResult {
-  overall: FindingLevel            // worst of all findings ('ok' if none negative)
+  overall: ComplianceOverall        // worst of all findings ('ok' if none negative); 'not_yet' if excluded
   headline: string                 // one-line summary for the badge
   findings: Finding[]
 }
@@ -733,10 +738,17 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
 
 // ── Convenience: dam-only summary (drop-in for current BreedingTab badge) ────
 
+// Puppies/whelps are not breeding candidates yet — excluded before any rule
+// runs, not flagged as a compliance warning. Stage is derived fresh via the
+// single breed-aware age source (calculateLifeStage), never a stored field.
 export function checkDamCompliance(
   dam: ComplianceDog,
   damHealthTests: ComplianceHealthTest[],
   state: string,
 ): ComplianceResult {
+  const stage = calculateLifeStage(dam.dateOfBirth || '', dam.breed)
+  if (stage === 'whelp' || stage === 'puppy') {
+    return { overall: 'not_yet', headline: 'Not yet of breeding age', findings: [] }
+  }
   return checkBreedingCompliance({ dam, damHealthTests, state })
 }

@@ -97,7 +97,7 @@ function SectionCard({ title, subtitle, children }: { title: string; subtitle?: 
 }
 
 function Stat({ value, label, tone }: { value: string | number; label: string; tone?: 'brand' | 'warning' | 'danger' | 'muted' }) {
-  const color = tone === 'brand' ? 'var(--brand-600)' : tone === 'warning' ? 'var(--warning)' : tone === 'danger' ? 'var(--danger)' : 'var(--dark)'
+  const color = tone === 'brand' ? 'var(--brand-600)' : tone === 'warning' ? 'var(--warning)' : tone === 'danger' ? 'var(--danger)' : tone === 'muted' ? 'var(--mid)' : 'var(--dark)'
   return (
     <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 16, textAlign: 'center', minWidth: 0 }}>
       <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
@@ -113,19 +113,21 @@ function EmptyRow({ text }: { text: string }) {
 // ── 4.1 Breeding Overview (reuses breedingCompliance.checkDamCompliance) ──
 function BreedingOverviewSection({ data }: { data: BreedingOverviewReport | null }) {
   if (!data) return null
-  const { eligible, caution, review, assessedCount, excludedMaleCount } = data
+  const { eligible, caution, review, notYetOfBreedingAge, assessedCount, excludedMaleCount, notYetCount } = data
 
   const bucket = (
     label: string,
+    description: string,
     rows: BreedingOverviewReport['eligible'],
     badgeClass: string,
     dotColor: string,
   ) => rows.length === 0 ? null : (
     <div style={{ marginTop: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, display: 'inline-block' }} />
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>{label} ({rows.length})</span>
       </div>
+      <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 6, marginLeft: 14 }}>{description}</div>
       {rows.map(r => (
         <div key={r.dogId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
           <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--dark)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.dogName}</span>
@@ -135,23 +137,26 @@ function BreedingOverviewSection({ data }: { data: BreedingOverviewReport | null
     </div>
   )
 
-  const sub = `Eligibility across ${assessedCount} female dog${assessedCount !== 1 ? 's' : ''} in your current kennel (excludes deceased and transferred).`
+  const sub = `Adult breeding readiness across ${assessedCount} female dog${assessedCount !== 1 ? 's' : ''} in your current kennel (excludes deceased, transferred, and dogs not yet of breeding age).`
     + (excludedMaleCount > 0 ? ` ${excludedMaleCount} male dog${excludedMaleCount !== 1 ? 's' : ''} not assessed — dam breeding rules only.` : '')
+    + (notYetCount > 0 ? ` ${notYetCount} not yet of breeding age.` : '')
 
   return (
-    <SectionCard title="Breeding Overview" subtitle={sub}>
-      {assessedCount === 0 ? (
+    <SectionCard title="Breeding Readiness" subtitle={sub}>
+      {assessedCount === 0 && notYetCount === 0 ? (
         <EmptyRow text="No breeding females in the current kennel to assess." />
       ) : (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
             <Stat value={eligible.length} label="Eligible" tone="brand" />
             <Stat value={caution.length} label="Caution" tone="warning" />
             <Stat value={review.length} label="Review Required" tone="danger" />
+            {notYetCount > 0 && <Stat value={notYetCount} label="Not Yet" tone="muted" />}
           </div>
-          {bucket('Review Required', review, 'badge-red', 'var(--danger)')}
-          {bucket('Caution', caution, 'badge-gray', 'var(--warning)')}
-          {bucket('Eligible', eligible, 'badge-green', 'var(--brand-600)')}
+          {bucket('Review Required', 'Adult dams requiring compliance review', review, 'badge-red', 'var(--danger)')}
+          {bucket('Caution', 'Adult dams approaching or near limits', caution, 'badge-gray', 'var(--warning)')}
+          {bucket('Eligible', 'Adult dams meeting breeding criteria', eligible, 'badge-green', 'var(--brand-600)')}
+          {bucket('Not yet of breeding age', 'Puppies and young females excluded from assessment', notYetOfBreedingAge, 'badge-gray', 'var(--light)')}
         </>
       )}
     </SectionCard>
