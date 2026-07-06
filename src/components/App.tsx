@@ -1,5 +1,4 @@
-import React from 'react'
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
+import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import ToastContainer from './ui/Toast'
@@ -48,8 +47,9 @@ import AppLayout from './layout/AppLayout'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
+  const location = useLocation()
   if (loading) return <LoadingScreen />
-  if (!user) return <Navigate to="/login" replace />
+  if (!user) return <Navigate to="/login" state={{ from: location }} replace />
   if (!user.emailVerified) return <Navigate to="/verify-email" replace />
   return <>{children}</>
 }
