@@ -1,5 +1,5 @@
 import React from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import ToastContainer from './ui/Toast'
@@ -95,50 +95,53 @@ export default function App() {
         <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
-        {/* Protected - isolated Super SaaS Admin */}
-        <Route path="/app/super-admin" element={
-          <SuperAdminRoute>
-            <SuperAdminLayout />
-          </SuperAdminRoute>
-        }>
-          <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
-          <Route path="dashboard" element={<SuperAdminOverviewPage />} />
-          <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
-          <Route path="organisations/:id" element={<SuperAdminOrganisationDetailPage />} />
-          <Route path="users" element={<SuperAdminUsersPage />} />
-          <Route path="users/:uid" element={<SuperAdminUserDetailPage />} />
-          <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
-          <Route path="billing-payments" element={<SuperAdminModulePlaceholderPage title="Billing & Payments" section="Revenue" description="Billing and payment review will be added in a later Super Admin batch." />} />
-          <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
-          <Route path="support" element={<SuperAdminSupportPage />} />
-          <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
-          <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
-          <Route path="settings" element={<SuperAdminSettingsPage />} />
-        </Route>
-
-        {/* Protected — app */}
+        {/* Protected — app wrapper */}
         <Route path="/app" element={
           <ProtectedRoute>
-            <AppLayout toast={toast} />
+            <Outlet />
           </ProtectedRoute>
         }>
-          <Route index element={<Navigate to="/app/dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardPage toast={toast} />} />
-          <Route path="dogs" element={<DogListPage toast={toast} />} />
-          <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
-          <Route path="dogs/:dogId" element={<DogDetailPage toast={toast} />} />
-          <Route path="litters" element={<LittersPage toast={toast} />} />
-          <Route path="reminders" element={<RemindersPage toast={toast} />} />
-          <Route path="settings" element={<SettingsPage toast={toast} />} />
-          <Route path="documents" element={<DocumentsPage toast={toast} />} />
-          <Route path="export" element={<ExportPage toast={toast} />} />
-          <Route path="audit" element={<AuditPage toast={toast} />} />
-          <Route path="billing" element={<BillingPage toast={toast} />} />
-          <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
-          <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
-          <Route path="puppies" element={<ComingSoonPage feature="Puppies" />} />
-          <Route path="buyers"  element={<ComingSoonPage feature="Buyers" />} />
-          <Route path="reports" element={<ComingSoonPage feature="Reports" />} />
+          {/* Isolated Super SaaS Admin */}
+          <Route path="super-admin" element={
+            <SuperAdminRoute>
+              <SuperAdminLayout />
+            </SuperAdminRoute>
+          }>
+            <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
+            <Route path="dashboard" element={<SuperAdminOverviewPage />} />
+            <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
+            <Route path="organisations/:id" element={<SuperAdminOrganisationDetailPage />} />
+            <Route path="users" element={<SuperAdminUsersPage />} />
+            <Route path="users/:uid" element={<SuperAdminUserDetailPage />} />
+            <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
+            <Route path="billing-payments" element={<SuperAdminModulePlaceholderPage title="Billing & Payments" section="Revenue" description="Billing and payment review will be added in a later Super Admin batch." />} />
+            <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
+            <Route path="support" element={<SuperAdminSupportPage />} />
+            <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
+            <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
+            <Route path="settings" element={<SuperAdminSettingsPage />} />
+          </Route>
+
+          {/* Normal Breeder/Pet Owner workspace */}
+          <Route element={<AppLayout toast={toast} />}>
+            <Route index element={<Navigate to="/app/dashboard" replace />} />
+            <Route path="dashboard" element={<DashboardPage toast={toast} />} />
+            <Route path="dogs" element={<DogListPage toast={toast} />} />
+            <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
+            <Route path="dogs/:dogId" element={<DogDetailPage toast={toast} />} />
+            <Route path="litters" element={<LittersPage toast={toast} />} />
+            <Route path="reminders" element={<RemindersPage toast={toast} />} />
+            <Route path="settings" element={<SettingsPage toast={toast} />} />
+            <Route path="documents" element={<DocumentsPage toast={toast} />} />
+            <Route path="export" element={<ExportPage toast={toast} />} />
+            <Route path="audit" element={<AuditPage toast={toast} />} />
+            <Route path="billing" element={<BillingPage toast={toast} />} />
+            <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
+            <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
+            <Route path="puppies" element={<ComingSoonPage feature="Puppies" />} />
+            <Route path="buyers"  element={<ComingSoonPage feature="Buyers" />} />
+            <Route path="reports" element={<ComingSoonPage feature="Reports" />} />
+          </Route>
         </Route>
 
         <Route path="*" element={<NotFoundPage />} />

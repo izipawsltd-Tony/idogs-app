@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import type { ToastMessage } from '../types'
 
@@ -10,6 +10,7 @@ interface Props {
 export default function LoginPage({ toast }: Props) {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -21,7 +22,8 @@ export default function LoginPage({ toast }: Props) {
     setLoading(true)
     try {
       await login(email, password)
-      navigate('/app/dashboard')
+      const from = (location.state as any)?.from?.pathname || '/app/dashboard'
+      navigate(from)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed'
       if (msg.includes('user-not-found') || msg.includes('wrong-password') || msg.includes('invalid-credential')) {

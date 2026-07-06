@@ -39,8 +39,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u)
       if (u) {
-        const p = await getUserProfile(u.uid)
-        setProfile(p)
+        try {
+          const p = await getUserProfile(u.uid)
+          setProfile(p)
+        } catch (err) {
+          // A failed profile read (e.g. Firestore permission-denied) must not
+          // leave `loading` stuck forever — routes like SuperAdminRoute gate
+          // purely on `user`/email and never need `profile` to be non-null.
+          console.error('Failed to load user profile:', err)
+          setProfile(null)
+        }
       } else {
         setProfile(null)
       }

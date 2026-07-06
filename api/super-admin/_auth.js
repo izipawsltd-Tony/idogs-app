@@ -4,7 +4,14 @@ import { getAuth } from 'firebase-admin/auth'
 
 if (!getApps().length) {
   let privateKey = process.env.FIREBASE_PRIVATE_KEY || ''
-  privateKey = privateKey.replace(/\\n/g, '\n')
+  privateKey = privateKey.trim()
+  if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+    privateKey = privateKey.slice(1, -1)
+  }
+  if (privateKey.startsWith("'") && privateKey.endsWith("'")) {
+    privateKey = privateKey.slice(1, -1)
+  }
+  privateKey = privateKey.replace(/\\n/g, '\n').trim()
 
   initializeApp({
     credential: cert({
@@ -56,7 +63,11 @@ export async function verifySuperAdmin(req, res) {
     return decodedToken
   } catch (error) {
     console.error('Super Admin Auth Error:', error.message)
-    res.status(401).json({ error: 'Unauthorized: Invalid or expired token' })
+    res.status(401).json({
+      error: 'Unauthorized: Invalid or expired token',
+      message: error.message,
+      code: error.code
+    })
     return null
   }
 }

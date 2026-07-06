@@ -1,5 +1,5 @@
 import React from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { isSuperAdminEmail } from './superAdminConfig'
 import SuperAdminAccessDeniedPage from './pages/SuperAdminAccessDeniedPage'
@@ -21,9 +21,10 @@ function SuperAdminLoadingScreen() {
 
 export default function SuperAdminRoute({ children }: Props) {
   const { user, loading } = useAuth()
+  const location = useLocation()
 
   if (loading) return <SuperAdminLoadingScreen />
-  if (!user) return <Navigate to="/login" replace />
+  if (!user) return <Navigate to="/login" state={{ from: location }} replace />
   if (!user.emailVerified) return <Navigate to="/verify-email" replace />
 
   // Client-side gating is for shell routing and UX only.

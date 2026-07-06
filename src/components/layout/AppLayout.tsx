@@ -4,6 +4,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { getDogs, getLitters, updateUserProfile } from '../../lib/db'
 import { getInitials, AU_STATES } from '../../lib/utils'
 import type { ToastMessage, UserProfile } from '../../types'
+import { isSuperAdminEmail } from '../../super-admin/superAdminConfig'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -437,6 +438,32 @@ export default function AppLayout({ toast }: Props) {
                   borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-md)',
                   minWidth: 160, zIndex: 100, overflow: 'hidden',
                 }}>
+                  {user?.email && isSuperAdminEmail(user.email) && (
+                    <>
+                      <button
+                        onClick={() => { setUserMenuOpen(false); navigate('/app/super-admin/dashboard') }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          width: '100%',
+                          padding: '10px 14px',
+                          background: 'none',
+                          border: 'none',
+                          fontSize: 13,
+                          color: 'var(--brand-600)',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          fontWeight: 600,
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--brand-50)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                      >
+                        🛡️ Super Admin
+                      </button>
+                      <div style={{ height: 1, background: 'var(--border)' }} />
+                    </>
+                  )}
                   <button
                     onClick={() => { setUserMenuOpen(false); navigate('/app/settings') }}
                     style={{
