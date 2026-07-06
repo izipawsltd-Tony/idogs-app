@@ -21,6 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { calculateLifeStage } from './utils'
+import { differenceInMonths } from 'date-fns'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -483,8 +484,7 @@ const KIND_MATCHERS: Record<HealthTestKind, (t: ComplianceHealthTest) => boolean
 // ── Date helpers ─────────────────────────────────────────────────────────────
 
 function monthsBetween(fromISO: string, to: Date): number {
-  const from = new Date(fromISO)
-  return (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+  return differenceInMonths(to, new Date(fromISO))
 }
 
 function addDays(date: Date, days: number): Date {

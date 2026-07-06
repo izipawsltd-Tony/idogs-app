@@ -71,6 +71,7 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
       { path: '/app/documents',  label: 'Documents',  icon: '📄', documentsItem: true },
       { path: '/app/audit',      label: 'Activity',   icon: '📋' },
       { path: '/app/reports',    label: 'Insights',    icon: '📊' },
+      { path: '/app/export',     label: 'Export',      icon: '📥' },
     ],
   },
   {

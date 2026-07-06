@@ -60,3 +60,4 @@ Nguyên tắc: reskin pages hiện có TRƯỚC, modules mới SAU. Data model k
 | 2026-07-04 | M7 #2c Transfer prefill + buyerPhone | https://idogs-cxc87pb4u-izipawsltd-tonys-projects.vercel.app | Transfer modal (Litters + Dog Detail) prefill từ reservedFor*, thêm buyerPhone; commit 398de8de |
 | 2026-07-05 | My Dogs Transferred → filter | https://idogs-qfjjh0yef-izipawsltd-tonys-projects.vercel.app | Đổi từ toggle ẩn/hiện sang filter riêng (không dim); commit 2fe8bbd4 |
 | 2026-07-05 | M7 #5 Buyers | https://idogs-38efg4u2g-izipawsltd-tonys-projects.vercel.app | BuyersPage.tsx (derived view, grouped client-side); wired route+nav; commit 8dcd8c2e — M7 COMPLETE |
+| 2026-07-06 | URGENT HOTFIX — compliance & Export | https://idogs-dce2sbrd7-izipawsltd-tonys-projects.vercel.app | Excluded puppies/whelps from breeding compliance warnings, restored Export page menu link, and updated monthsBetween helper with date-fns |

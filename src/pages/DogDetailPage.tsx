@@ -2477,7 +2477,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   }
 
   // Compliance summary
-  const isUnder12 = ageMo < rules.minBreedingMonths
+  const isPuppyOrWhelp = dog.lifeStage === 'whelp' || dog.lifeStage === 'puppy'
+  const isUnder12 = !isPuppyOrWhelp && ageMo < rules.minBreedingMonths
   const minForBreed = (breedSize === 'large' || breedSize === 'giant') ? rules.minBreedingMonthsLarge : rules.minBreedingMonths
   const isOver = ageYrs >= rules.maxAgeYears
   const littersOk = litterCount < rules.maxLifetimeLitters
@@ -2486,8 +2487,9 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const csectionVetNeeded = rules.csectionVetRequired !== null && cSectionCount >= rules.csectionVetRequired
   const isLimitedRegister = (dog as any).pedigreeRegister === 'limited'
   const isNoPedigree = ['no_pedigree', 'mixed', 'rescue'].includes((dog as any).pedigreeRegister || '')
-  const overallOk = !isUnder12 && !isOver && littersOk && last18Ok && csectionOk && !isLimitedRegister && !isNoPedigree
-  const overallMsg = isNoPedigree ? `ℹ️ No Dogs Australia pedigree — cannot register litters with Dogs Australia`
+  const overallOk = !isPuppyOrWhelp && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk && !isLimitedRegister && !isNoPedigree
+  const overallMsg = isPuppyOrWhelp ? `Not yet of breeding age (${dog.lifeStage === 'whelp' ? 'Whelp' : 'Puppy'})`
+    : isNoPedigree ? `ℹ️ No Dogs Australia pedigree — cannot register litters with Dogs Australia`
     : isLimitedRegister ? '❌ Limited Register — not eligible to breed under Dogs Australia rules'
     : isUnder12 ? `❌ Not eligible — under ${rules.minBreedingMonths} months`
     : isOver ? `⚠️ Over ${rules.maxAgeYears} years — vet certificate required`
@@ -2559,15 +2561,15 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
 
   const rulesTable = [
     { rule: 'Pedigree / Registration', value: (dog as any).pedigreeRegister === 'limited' ? '🟠 Limited Register — not eligible to breed' : (dog as any).pedigreeRegister === 'no_pedigree' ? 'No pedigree (purebred without papers)' : (dog as any).pedigreeRegister === 'mixed' ? 'Mixed breed' : (dog as any).pedigreeRegister === 'rescue' ? 'Rescue / unknown' : '🔵 Main Register — eligible to breed', source: 'Dogs Australia Regulations Part 6', st: isLimitedRegister ? 'fail' : isNoPedigree ? 'info' : 'ok' },
-    { rule: 'Minimum breeding age',              value: `${rules.minBreedingMonths} months`,      st: !isUnder12 ? 'ok' : 'fail' },
-    { rule: `Recommended min age (${breedSize})`,value: `${minForBreed} months`,                 st: ageMo >= minForBreed ? 'ok' : 'warn' },
-    { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No specific rule' : `${rules.maxLittersIn18Months} litters`, st: last18Ok ? 'ok' : 'fail' },
-    { rule: 'Max litters in lifetime',           value: `${rules.maxLifetimeLitters} litters`,    st: littersOk ? 'ok' : 'fail' },
+    { rule: 'Minimum breeding age',              value: `${rules.minBreedingMonths} months`,      st: isPuppyOrWhelp ? 'info' : (!isUnder12 ? 'ok' : 'fail') },
+    { rule: `Recommended min age (${breedSize})`,value: `${minForBreed} months`,                 st: isPuppyOrWhelp ? 'info' : (ageMo >= minForBreed ? 'ok' : 'warn') },
+    { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No specific rule' : `${rules.maxLittersIn18Months} litters`, st: isPuppyOrWhelp ? 'info' : (last18Ok ? 'ok' : 'fail') },
+    { rule: 'Max litters in lifetime',           value: `${rules.maxLifetimeLitters} litters`,    st: isPuppyOrWhelp ? 'info' : (littersOk ? 'ok' : 'fail') },
     ...(rules.maxCsections !== null ? [
-      { rule: 'Max C-section litters',           value: `${rules.maxCsections} C-sections`,       st: csectionOk ? 'ok' : 'fail' },
-      { rule: 'Vet cert before C-section',       value: `After ${rules.csectionVetRequired} C-sections`, st: !csectionVetNeeded ? 'ok' : 'warn' },
+      { rule: 'Max C-section litters',           value: `${rules.maxCsections} C-sections`,       st: isPuppyOrWhelp ? 'info' : (csectionOk ? 'ok' : 'fail') },
+      { rule: 'Vet cert before C-section',       value: `After ${rules.csectionVetRequired} C-sections`, st: isPuppyOrWhelp ? 'info' : (!csectionVetNeeded ? 'ok' : 'warn') },
     ] : [{ rule: 'C-section limit', value: 'No specific state rule', st: 'info' }]),
-    { rule: 'Maximum breeding age',              value: `${rules.maxAgeYears} years`,              st: !isOver ? 'ok' : 'warn' },
+    { rule: 'Maximum breeding age',              value: `${rules.maxAgeYears} years`,              st: isPuppyOrWhelp ? 'info' : (!isOver ? 'ok' : 'warn') },
     { rule: 'Minimum puppy sale age',            value: '8 weeks',                                st: 'info' },
     { rule: 'Skip first heat',                   value: 'Do not breed on first heat',             st: 'info' },
     ...(rules.requiresBIN ? [{ rule: 'Breeder ID Number (BIN)', value: 'Mandatory (NSW)', st: 'info' }] : []),
@@ -2615,20 +2617,20 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       ) : (
       <div style={{
         padding: '16px 20px', borderRadius: 12, marginBottom: 20,
-        background: overallOk ? 'var(--brand-50)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#FDEDED' : '#FBF3E4',
-        border: `1.5px solid ${overallOk ? 'var(--brand-300)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#F3B0B0' : '#EBD9A8'}`,
+        background: isPuppyOrWhelp ? 'var(--sand)' : (overallOk ? 'var(--brand-50)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#FDEDED' : '#FBF3E4'),
+        border: `1.5px solid ${isPuppyOrWhelp ? 'var(--border)' : (overallOk ? 'var(--brand-300)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#F3B0B0' : '#EBD9A8')}`,
       }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, marginBottom: 10, color: overallOk ? 'var(--brand-600)' : !littersOk || !csectionOk || !last18Ok || isUnder12 ? 'var(--error)' : 'var(--warning)' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, marginBottom: 10, color: isPuppyOrWhelp ? 'var(--mid)' : (overallOk ? 'var(--brand-600)' : !littersOk || !csectionOk || !last18Ok || isUnder12 ? 'var(--error)' : 'var(--warning)') }}>
           {overallMsg}
         </div>
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
           {[
             { l: 'Register', v: (dog as any).pedigreeRegister === 'limited' ? '🟠 Limited' : (dog as any).pedigreeRegister === 'none' ? 'None' : '🔵 Main', ok: !isLimitedRegister },
-            { l: 'Age', v: `${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo`, ok: !isUnder12 && !isOver },
+            { l: 'Age', v: `${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo`, ok: isPuppyOrWhelp ? true : (!isUnder12 && !isOver) },
             { l: 'Breed size', v: breedSize.charAt(0).toUpperCase() + breedSize.slice(1), ok: true },
-            { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: littersOk },
-            ...(rules.maxLittersIn18Months !== 999 ? [{ l: 'Last 18 months', v: `${last18mLitters} / ${rules.maxLittersIn18Months}`, ok: last18Ok }] : []),
-            ...(rules.maxCsections !== null ? [{ l: 'C-sections', v: `${cSectionCount} / ${rules.maxCsections}`, ok: csectionOk }] : []),
+            { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: isPuppyOrWhelp ? true : littersOk },
+            ...(rules.maxLittersIn18Months !== 999 ? [{ l: 'Last 18 months', v: `${last18mLitters} / ${rules.maxLittersIn18Months}`, ok: isPuppyOrWhelp ? true : last18Ok }] : []),
+            ...(rules.maxCsections !== null ? [{ l: 'C-sections', v: `${cSectionCount} / ${rules.maxCsections}`, ok: isPuppyOrWhelp ? true : csectionOk }] : []),
           ].map(x => (
             <div key={x.l} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
               <span style={{ fontSize: 12, color: 'var(--light)' }}>{x.l}:</span>
@@ -2653,7 +2655,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
             <div style={{ textAlign: 'right', flexShrink: 0 }}>
               <div style={{ fontSize: 13, color: 'var(--dark)', marginBottom: 3 }}>{row.value}</div>
               <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: row.st === 'ok' ? 'var(--brand-50)' : row.st === 'fail' ? '#FDEDED' : row.st === 'warn' ? '#FBF3E4' : 'var(--sand)', color: row.st === 'ok' ? 'var(--brand-600)' : row.st === 'fail' ? 'var(--error)' : row.st === 'warn' ? 'var(--warning)' : 'var(--mid)' }}>
-                {row.st === 'ok' ? '✓ Compliant' : row.st === 'fail' ? '✕ Non-compliant' : row.st === 'warn' ? '⚠ Review' : 'ℹ Info'}
+                {row.st === 'ok' ? '✓ Compliant' : row.st === 'fail' ? '✕ Non-compliant' : row.st === 'warn' ? '⚠ Review' : (isPuppyOrWhelp && (row.rule.toLowerCase().includes('age') || row.rule.toLowerCase().includes('litter') || row.rule.toLowerCase().includes('c-section') || row.rule.toLowerCase().includes('breeding')) ? 'Not breeding age' : 'ℹ Info')}
               </span>
             </div>
           </div>
