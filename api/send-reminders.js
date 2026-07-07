@@ -366,6 +366,26 @@ export default async function handler(req, res) {
             const ageAtHeatMonths = (heatDate.getFullYear() - dob.getFullYear()) * 12 + (heatDate.getMonth() - dob.getMonth())
             const isEligible = ageAtHeatMonths >= minBreedingMonths
             const isFirstHeat = heatNum === 1
+            const currentAgeMonths = (today.getFullYear() - dob.getFullYear()) * 12 + (today.getMonth() - dob.getMonth())
+
+            // Age guard: adult female dog > 18 months should not get "First heat" reminders
+            if (isFirstHeat && currentAgeMonths > 18) {
+              // Try to clean up any previously generated invalid first-heat reminder
+              try {
+                const reminderId = `heat_${dogDoc.id}_cycle1`
+                const reminderRef = db.collection('reminders').doc(reminderId)
+                const existing = await reminderRef.get()
+                if (existing.exists && existing.data()?.status !== 'completed') {
+                  await reminderRef.update({ 
+                    status: 'completed', 
+                    completedAt: today.toISOString(),
+                    completedReason: 'age_guard_adult_dog',
+                    updatedAt: today.toISOString()
+                  })
+                }
+              } catch (e) {}
+              continue
+            }
 
             const heatLabel = isFirstHeat ? 'First heat (skip — Dogs SA rule)' :
               !isEligible ? `Heat ${heatNum} (not yet eligible — under ${minBreedingMonths} months)` :
