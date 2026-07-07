@@ -41,6 +41,14 @@ async function viewDocument(
     toast('Please sign in to view this document', 'error')
     return
   }
+
+  // To bypass browser popup blockers, open the new tab synchronously 
+  // before the async fetch, then update its URL once the signed URL is returned.
+  const newWin = window.open('about:blank', '_blank')
+  if (newWin) {
+    newWin.document.write('<div style="font-family:sans-serif;padding:40px;text-align:center;color:#666;">Opening secure document...</div>')
+  }
+
   try {
     const idToken = await user.getIdToken()
     const response = await fetch('/api/get-signed-url', {
@@ -51,11 +59,17 @@ async function viewDocument(
     if (!response.ok) {
       const err = await response.json().catch(() => ({}))
       toast(err.error || 'Could not open document', 'error')
+      if (newWin) newWin.close()
       return
     }
     const { url } = await response.json()
-    window.open(url, '_blank', 'noopener,noreferrer')
+    if (newWin) {
+      newWin.location.href = url
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
   } catch {
+    if (newWin) newWin.close()
     toast('Could not open document', 'error')
   }
 }
@@ -1942,7 +1956,7 @@ function DocumentsTab({ documents, dogName, toast }: { documents: any[]; dogName
                 )}
               </div>
               <button
-                onClick={() => viewDocument(user, toast, (doc as any).filePath, doc.fileUrl)}
+                onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
                 className="btn btn-secondary btn-sm"
               >
                 View ↗
