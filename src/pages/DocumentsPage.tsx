@@ -29,6 +29,56 @@ function getDocLabel(type: string) {
   return DOC_TYPES.find(d => d.value === type)?.label || 'Document'
 }
 
+async function viewDocument(
+  user: { getIdToken: () => Promise<string> } | null | undefined,
+  toast: (msg: string, type?: ToastMessage['type']) => void,
+  path?: string | null,
+  legacyUrl?: string | null,
+) {
+  if (!path) {
+    if (legacyUrl) window.open(legacyUrl, '_blank', 'noopener,noreferrer')
+    return
+  }
+  if (!user) {
+    toast('Please sign in to view this document', 'error')
+    return
+  }
+
+  // To bypass browser popup blockers, open the new tab synchronously 
+  // before the async fetch, then update its URL once the signed URL is returned.
+  const newWin = window.open('about:blank', '_blank')
+  if (newWin) {
+    newWin.document.write('<div style="font-family:sans-serif;padding:40px;text-align:center;color:#666;">Opening secure document...</div>')
+  }
+
+  try {
+    const idToken = await user.getIdToken()
+    const response = await fetch('/api/get-signed-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ filePath: path }),
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      if (import.meta.env.DEV) {
+        console.error('get-signed-url failed:', response.status, err.error || 'Unknown error')
+      }
+      toast('Could not open document. Please contact breeder or try again.', 'error')
+      if (newWin) newWin.close()
+      return
+    }
+    const { url } = await response.json()
+    if (newWin) {
+      newWin.location.href = url
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  } catch {
+    if (newWin) newWin.close()
+    toast('Network error — please check connection', 'error')
+  }
+}
+
 export default function DocumentsPage({ toast }: Props) {
   const { user } = useAuth()
   const [documents, setDocuments] = useState<any[]>([])
@@ -172,9 +222,13 @@ export default function DocumentsPage({ toast }: Props) {
                     </div>
                   )}
                 </div>
-                <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ flexShrink: 0 }}>
+                <button 
+                  onClick={() => viewDocument(user, toast, doc.filePath || doc.storagePath, doc.fileUrl)} 
+                  className="btn btn-secondary btn-sm" 
+                  style={{ flexShrink: 0 }}
+                >
                   View ↗
-                </a>
+                </button>
               </div>
             )
           })}
