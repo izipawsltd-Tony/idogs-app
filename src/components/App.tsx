@@ -52,14 +52,11 @@ function LoadingScreen() {
       background: 'var(--sand)',
     }}>
       <div style={{ textAlign: 'center' }}>
-        <div style={{
-          width: 40, height: 40,
-          background: 'var(--green)',
-          borderRadius: 10,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          margin: '0 auto 16px',
-          fontSize: 20,
-        }}>🐾</div>
+        <img 
+          src="/logo.png" 
+          alt="iDogs" 
+          style={{ height: 48, width: 160, objectFit: 'contain', margin: '0 auto 16px', display: 'block' }} 
+        />
         <div className="spinner" style={{ margin: '0 auto' }} />
       </div>
     </div>
