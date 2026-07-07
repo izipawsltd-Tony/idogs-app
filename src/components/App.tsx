@@ -50,13 +50,16 @@ function LoadingScreen() {
       alignItems: 'center',
       justifyContent: 'center',
       background: 'var(--sand)',
+      padding: 24,
     }}>
-      <div style={{ textAlign: 'center' }}>
-        <img 
-          src="/logo.png" 
-          alt="iDogs" 
-          style={{ height: 48, width: 160, objectFit: 'contain', margin: '0 auto 16px', display: 'block' }} 
-        />
+      <div style={{ width: '100%', maxWidth: 400, textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <img
+            src="/logo.png"
+            alt="iDogs"
+            style={{ height: 60, width: 200, objectFit: 'contain', display: 'inline-block' }}
+          />
+        </div>
         <div className="spinner" style={{ margin: '0 auto' }} />
       </div>
     </div>
