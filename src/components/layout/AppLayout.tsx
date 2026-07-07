@@ -9,6 +9,12 @@ interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
+// ── Super Admin allowlist for Option B Console link ──
+const SUPER_ADMIN_EMAILS = [
+  'trunghieungo@gmail.com',
+  'theresanguyenngo@gmail.com',
+]
+
 // ── Plan configuration ──
 const PLAN_CONFIG: Record<string, { label: string; dogLimit: number; upgrade: boolean }> = {
   free:         { label: 'Free Plan',    dogLimit: 2,    upgrade: true },
@@ -93,6 +99,8 @@ const BOTTOM_NAV_ITEMS = [
 export default function AppLayout({ toast }: Props) {
   const { user, profile, logout, refreshProfile } = useAuth()
   const navigate = useNavigate()
+
+  const isSuperAdmin = !!user?.email && SUPER_ADMIN_EMAILS.includes(user.email.trim().toLowerCase())
 
   const isOwner = profile?.role === 'owner'
   const hideLitters   = (profile as any)?.hideLitters   === true
@@ -305,6 +313,36 @@ export default function AppLayout({ toast }: Props) {
           })}
         </nav>
 
+        {/* Admin Console Shortcut */}
+        {isSuperAdmin && (
+          <div style={{ padding: '0 14px 12px' }}>
+            <a
+              href={`https://idogs-admin-codex.vercel.app/app/super-admin/dashboard?email=${encodeURIComponent(user?.email || '')}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                width: '100%',
+                background: 'var(--gold-50, #FAF7EB)',
+                color: 'var(--gold-500, #D4AF37)',
+                border: '1px solid var(--gold-500, #D4AF37)',
+                fontWeight: 600,
+                textDecoration: 'none',
+                boxSizing: 'border-box',
+                height: 36,
+                fontSize: 13,
+                borderRadius: 8
+              }}
+            >
+              👑 Admin Console ↗
+            </a>
+          </div>
+        )}
+
         {/* Plan widget */}
         <div style={{ padding: '12px 14px 16px', borderTop: '1px solid var(--border)' }}>
           <div style={{
@@ -438,6 +476,27 @@ export default function AppLayout({ toast }: Props) {
                   borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-md)',
                   minWidth: 160, zIndex: 100, overflow: 'hidden',
                 }}>
+                  {isSuperAdmin && (
+                    <>
+                      <a
+                        href={`https://idogs-admin-codex.vercel.app/app/super-admin/dashboard?email=${encodeURIComponent(user?.email || '')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          width: '100%', padding: '10px 14px',
+                          background: 'none', border: 'none',
+                          fontSize: 13, color: 'var(--gold-500, #D4AF37)', cursor: 'pointer',
+                          textAlign: 'left', textDecoration: 'none', boxSizing: 'border-box'
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--gold-50, #FAF7EB)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                      >
+                        👑 Admin Console ↗
+                      </a>
+                      <div style={{ height: 1, background: 'var(--border)' }} />
+                    </>
+                  )}
                   <button
                     onClick={() => { setUserMenuOpen(false); navigate('/app/settings') }}
                     style={{
