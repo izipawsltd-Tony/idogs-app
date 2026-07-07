@@ -11,6 +11,7 @@ if (!getApps().length) {
   // Firebase private key: replace escaped newlines and convert RSA → PKCS8 if needed
   let privateKey = process.env.FIREBASE_PRIVATE_KEY || ''
   privateKey = privateKey.replace(/\\n/g, '\n')
+  const defaultBucket = process.env.FIREBASE_PROJECT_ID ? `${process.env.FIREBASE_PROJECT_ID}.firebasestorage.app` : 'idogs-app.firebasestorage.app'
 
   initializeApp({
     credential: cert({
@@ -18,7 +19,7 @@ if (!getApps().length) {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey,
     }),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'idogs-app.firebasestorage.app',
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || defaultBucket,
   })
 }
 
@@ -73,7 +74,7 @@ export default async function handler(req, res) {
     const filePath = `documents/${uid}/${dogId}/${fileName}`
 
     // Upload to Firebase Storage
-    const bucket = getStorage().bucket('idogs-app.firebasestorage.app')
+    const bucket = getStorage().bucket()
     const file = bucket.file(filePath)
     const buffer = Buffer.from(base64, 'base64')
 

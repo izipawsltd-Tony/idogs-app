@@ -58,7 +58,10 @@ async function viewDocument(
     })
     if (!response.ok) {
       const err = await response.json().catch(() => ({}))
-      toast(err.error || 'Could not open document', 'error')
+      if (import.meta.env.DEV) {
+        console.error('get-signed-url failed:', response.status, err.error || 'Unknown error')
+      }
+      toast('Could not open document. Please contact breeder or try again.', 'error')
       if (newWin) newWin.close()
       return
     }
