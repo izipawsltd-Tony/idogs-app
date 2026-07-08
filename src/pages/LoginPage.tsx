@@ -1,4 +1,4 @@
-import { useState, FormEvent } from 'react'
+import { useState, useEffect, FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
@@ -9,20 +9,27 @@ interface Props {
 }
 
 export default function LoginPage({ toast }: Props) {
-  const { login } = useAuth()
+  const { user, login } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (user) {
+      navigate('/app/dashboard', { replace: true })
+    }
+  }, [user, navigate])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
-    setLoading(true)
+    setIsSubmitting(true)
     try {
       await login(email, password)
-      navigate('/app/dashboard')
+      // Do not set isSubmitting to false on success, keep showing loading screen
+      // until the useEffect redirects to /app/dashboard
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed'
       if (msg.includes('user-not-found') || msg.includes('wrong-password') || msg.includes('invalid-credential')) {
@@ -30,12 +37,11 @@ export default function LoginPage({ toast }: Props) {
       } else {
         setError('Something went wrong. Please try again.')
       }
-    } finally {
-      setLoading(false)
+      setIsSubmitting(false)
     }
   }
 
-  if (loading) return <LoadingScreen />
+  if (isSubmitting) return <LoadingScreen />
 
   return (
     <div style={{
@@ -102,7 +108,7 @@ export default function LoginPage({ toast }: Props) {
               type="submit"
               className="btn btn-primary"
               style={{ width: '100%', height: 46, fontSize: 15, marginTop: 4 }}
-              disabled={loading}
+              disabled={isSubmitting}
             >
               Sign in
             </button>

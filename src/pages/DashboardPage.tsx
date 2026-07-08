@@ -8,6 +8,7 @@ import {
 import type { AuditEntry } from '../lib/db'
 import { formatDate, isOverdue, getDogAge, LIFE_STAGE_EMOJI } from '../lib/utils'
 import type { Dog, Reminder, Litter, Document, ToastMessage } from '../types'
+import LoadingScreen from '../components/ui/LoadingScreen'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -113,11 +114,7 @@ export default function DashboardPage({ toast }: Props) {
   const overdueCount = reminders.filter(r => r.status !== 'completed' && isOverdue(r.dueDate)).length
   const visibleReminders = reminders.slice(0, 5)
 
-  if (loading) return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
-      <div className="spinner" />
-    </div>
-  )
+  if (loading) return <LoadingScreen />
 
   const STATS = [
     { value: activeDogs.length,                                     label: 'Dogs',              icon: '🐕',  link: '/app/dogs',      color: undefined },
