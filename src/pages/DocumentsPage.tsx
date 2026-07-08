@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { getAllDocumentsForUser, getDogs } from '../lib/db'
+import { getAllDocumentsForUser, getDogs, deleteDocument } from '../lib/db'
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
 import { db, storage } from '../lib/firebase'
@@ -222,13 +222,31 @@ export default function DocumentsPage({ toast }: Props) {
                     </div>
                   )}
                 </div>
-                <button 
-                  onClick={() => viewDocument(user, toast, doc.filePath || doc.storagePath, doc.fileUrl)} 
-                  className="btn btn-secondary btn-sm" 
-                  style={{ flexShrink: 0 }}
-                >
-                  View ↗
-                </button>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                  <button 
+                    onClick={() => viewDocument(user, toast, doc.filePath || doc.storagePath, doc.fileUrl)} 
+                    className="btn btn-secondary btn-sm" 
+                  >
+                    View ↗
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
+                        try {
+                          await deleteDocument(doc.id)
+                          setDocuments(prev => prev.filter(d => d.id !== doc.id))
+                          toast('Document removed')
+                        } catch {
+                          toast('Failed to remove document', 'error')
+                        }
+                      }
+                    }}
+                    className="btn btn-ghost btn-sm" 
+                    style={{ color: 'var(--error)' }}
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             )
           })}

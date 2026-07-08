@@ -7,7 +7,7 @@ import {
   getReminders, getActivityNotes, addActivityNote,
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder,
   addWormingRecord, deleteWormingRecord,
-  getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, logAudit, syncLifeStage,
+  getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, logAudit, syncLifeStage,
   getAuditLogs, type AuditEntry
 } from '../lib/db'
 import {
@@ -632,7 +632,7 @@ export default function DogDetailPage({ toast }: Props) {
       {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} />}
       {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} />}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} toast={toast} />}
-      {tab === 'documents' && <DocumentsTab documents={documents} dogName={dog.name} toast={toast} />}
+      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} />}
       {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} />}
 
       {tab === 'breeding' && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
@@ -1895,7 +1895,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
 
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
-function DocumentsTab({ documents, dogName, toast }: { documents: any[]; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void }) {
+function DocumentsTab({ documents, setDocuments, dogName, toast }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void }) {
   const { user } = useAuth()
   function getDocIcon(type: string) {
     if (type === 'vaccine_card') return '💉'
@@ -1958,12 +1958,31 @@ function DocumentsTab({ documents, dogName, toast }: { documents: any[]; dogName
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
-                className="btn btn-secondary btn-sm"
-              >
-                View ↗
-              </button>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <button
+                  onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
+                  className="btn btn-secondary btn-sm"
+                >
+                  View ↗
+                </button>
+                <button 
+                  onClick={async () => {
+                    if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
+                      try {
+                        await deleteDocument(doc.id)
+                        setDocuments(prev => prev.filter(d => d.id !== doc.id))
+                        toast('Document removed')
+                      } catch {
+                        toast('Failed to remove document', 'error')
+                      }
+                    }
+                  }}
+                  className="btn btn-ghost btn-sm" 
+                  style={{ color: 'var(--error)' }}
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           ))}
         </div>

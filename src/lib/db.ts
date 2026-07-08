@@ -469,13 +469,29 @@ export async function logScan(dogId: string, passportId: string): Promise<void> 
 export async function getDogDocuments(dogId: string): Promise<any[]> {
   const q = query(collection(db, 'documents'), where('dogId', '==', dogId))
   const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as any))
+    .sort((a: any, b: any) => {
+      const timeA = a.uploadedAt?.toDate?.()?.getTime() || 0
+      const timeB = b.uploadedAt?.toDate?.()?.getTime() || 0
+      return timeB - timeA
+    })
 }
 
 export async function getAllDocumentsForUser(userId: string): Promise<any[]> {
   const q = query(collection(db, 'documents'), where('tenantId', '==', userId))
   const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as any))
+    .sort((a: any, b: any) => {
+      const timeA = a.uploadedAt?.toDate?.()?.getTime() || 0
+      const timeB = b.uploadedAt?.toDate?.()?.getTime() || 0
+      return timeB - timeA
+    })
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'documents', id))
 }
 
 export async function getScanCount(dogId: string): Promise<number> {
