@@ -61,7 +61,11 @@ async function viewDocument(
       if (import.meta.env.DEV) {
         console.error('get-signed-url failed:', response.status, err.error || 'Unknown error')
       }
-      toast('Could not open document. Please contact breeder or try again.', 'error')
+      if (response.status === 404) {
+        toast('This file is missing from storage or uses an old upload format. You can remove this broken document record.', 'error')
+      } else {
+        toast('Could not open document. Please contact breeder or try again.', 'error')
+      }
       if (newWin) newWin.close()
       return
     }
@@ -1958,7 +1962,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast }: { documents: 
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
                 <button
                   onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
                   className="btn btn-secondary btn-sm"
@@ -1980,7 +1984,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast }: { documents: 
                   className="btn btn-ghost btn-sm" 
                   style={{ color: 'var(--error)' }}
                 >
-                  Remove
+                  🗑️ Remove from list
                 </button>
               </div>
             </div>
