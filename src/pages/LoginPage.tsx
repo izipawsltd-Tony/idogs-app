@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 
 interface Props {
@@ -33,6 +34,8 @@ export default function LoginPage({ toast }: Props) {
       setLoading(false)
     }
   }
+
+  if (loading) return <LoadingScreen />
 
   return (
     <div style={{
@@ -101,7 +104,7 @@ export default function LoginPage({ toast }: Props) {
               style={{ width: '100%', height: 46, fontSize: 15, marginTop: 4 }}
               disabled={loading}
             >
-              {loading ? <span className="spinner" /> : 'Sign in'}
+              Sign in
             </button>
           </form>
         </div>

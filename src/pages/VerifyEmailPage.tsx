@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 
 interface Props {
@@ -67,11 +68,7 @@ export default function VerifyEmailPage({ toast }: Props) {
   }
 
   if (loading) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--sand)' }}>
-        <div className="spinner" />
-      </div>
-    )
+    return <LoadingScreen />
   }
 
   return (

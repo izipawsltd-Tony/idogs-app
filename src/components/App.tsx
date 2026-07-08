@@ -33,6 +33,7 @@ import ReportsPage from '../pages/ReportsPage'
 import BuyersPage from '../pages/BuyersPage'
 
 import AppLayout from './layout/AppLayout'
+import LoadingScreen from './ui/LoadingScreen'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -41,31 +42,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!user.emailVerified) return <Navigate to="/verify-email" replace />
   return <>{children}</>
 }
-
-function LoadingScreen() {
-  return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: 'var(--sand)',
-      padding: 24,
-    }}>
-      <div style={{ width: '100%', maxWidth: 400, textAlign: 'center' }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <img
-            src="/logo.png"
-            alt="iDogs"
-            style={{ height: 60, width: 200, objectFit: 'contain', display: 'inline-block' }}
-          />
-        </div>
-        <div className="spinner" style={{ margin: '0 auto' }} />
-      </div>
-    </div>
-  )
-}
-
 export default function App() {
   const { toasts, toast, dismiss } = useToast()
 
