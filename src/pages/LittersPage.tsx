@@ -253,6 +253,10 @@ export default function LittersPage({ toast }: Props) {
     setTransferError('')
     try {
       const passportUrl = `${window.location.origin}/p/${transferPuppy.passportId}`
+      // The Firestore write below is the actual transfer — once it succeeds,
+      // the puppy is transferred. Email is a best-effort follow-up; a
+      // transient failure there must not surface as "transfer failed" when
+      // the dog document was already updated.
       await transferDogOwnership(transferPuppy.id, {
         buyerName: transferName.trim(),
         buyerEmail: transferEmail.trim().toLowerCase(),
@@ -266,7 +270,7 @@ export default function LittersPage({ toast }: Props) {
         breed: transferPuppy.breed,
         breederName: user?.displayName || 'Your breeder',
         passportUrl,
-      })
+      }).catch(err => console.error('Transfer email failed (transfer itself already succeeded):', err))
       const updatedDogs = await getDogs()
       setDogs(updatedDogs.filter(d => !d.isDeceased))
       toast(`${transferPuppy.name} transferred to ${transferName} ✓`, 'success')
@@ -333,7 +337,7 @@ export default function LittersPage({ toast }: Props) {
                           <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{puppy.name}</div>
                           <div style={{ fontSize: 12, color: 'var(--light)' }}>{puppy.sex === 'female' ? '♀' : '♂'} · {puppy.colour}</div>
                         </div>
-                        {(puppy as any).status === 'transferred' && (
+                        {((puppy as any).status === 'transferred' || (puppy as any).transferStatus === 'pendingClaim') && (
                           <span className="badge badge-gray" style={{ fontSize: 11 }}>Transferred</span>
                         )}
                       </div>
@@ -640,7 +644,7 @@ export default function LittersPage({ toast }: Props) {
                                       {isEditingThisPuppy ? 'Cancel' : '✏️ Edit'}
                                     </button>
                                     <Link to={`/app/dogs/${puppy.id}`} className="btn btn-secondary btn-sm">View →</Link>
-                                    {(puppy as any).status !== 'transferred' ? (
+                                    {((puppy as any).status !== 'transferred' && (puppy as any).transferStatus !== 'pendingClaim') ? (
                                       <button
                                         className="btn btn-sm"
                                         style={{ background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid var(--brand-300)' }}

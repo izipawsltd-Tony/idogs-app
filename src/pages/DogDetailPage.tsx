@@ -444,6 +444,13 @@ export default function DogDetailPage({ toast }: Props) {
   async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone?: string) {
     if (!dogId || !dog) return
     const passportUrl = `${window.location.origin}/p/${dog.passportId}`
+    // The Firestore write below is the actual transfer — once it succeeds,
+    // the dog is transferred. Email + audit log are best-effort follow-ups;
+    // previously a transient failure in either (network blip, Resend
+    // hiccup) threw past this point uncaught, so the modal reported a
+    // generic "Something went wrong" and stayed open even though the
+    // transfer had already gone through — the breeder saw a failure for a
+    // transfer that had, in fact, succeeded.
     await transferDogOwnership(dogId, {
       buyerName,
       buyerEmail,
@@ -458,7 +465,7 @@ export default function DogDetailPage({ toast }: Props) {
       breed: dog.breed,
       breederName: user?.displayName || 'Your breeder',
       passportUrl,
-    })
+    }).catch(err => console.error('Transfer email failed (transfer itself already succeeded):', err))
     await logAudit({
       tenantId: user?.uid || '',
       dogId: dogId!,
@@ -467,8 +474,8 @@ export default function DogDetailPage({ toast }: Props) {
       details: `Ownership transferred to ${buyerName} (${buyerEmail})`,
       performedBy: user?.uid || '',
       performedByEmail: user?.email || '',
-    })
-    setDog(prev => prev ? { ...prev, status: 'transferred', buyerName, buyerEmail, buyerPhone } as any : prev)
+    }).catch(err => console.error('Transfer audit log failed (transfer itself already succeeded):', err))
+    setDog(prev => prev ? { ...prev, status: 'transferred', transferStatus: 'pendingClaim', buyerName, buyerEmail, buyerPhone } as any : prev)
     setShowTransfer(false)
     toast(`${dog.name} transferred to ${buyerName} ✓`, 'success')
   }
@@ -503,7 +510,7 @@ export default function DogDetailPage({ toast }: Props) {
     return 'current' as const
   })()
   const overdueReminders = reminders.filter(r => r.status === 'overdue' || (r.status === 'pending' && isOverdue(r.dueDate)))
-  const isTransferred = (dog as any).status === 'transferred' && (dog as any).buyerEmail
+  const isTransferred = ((dog as any).status === 'transferred' || (dog as any).transferStatus === 'pendingClaim') && (dog as any).buyerEmail
   const todaysMilestone = getTodaysMilestone(dog.dateOfBirth, dog.createdAt)
 
   const TABS: { id: Tab; label: string }[] = [
