@@ -229,22 +229,33 @@ export async function getDogsByBuyerEmail(email: string): Promise<Dog[]> {
 // yet — that's exactly the gap this claim operation needs to cross, so
 // it has to happen server-side with the buyer's identity verified via
 // their Firebase ID token instead of a client-supplied email/uid.
+// IMPORTANT: this function does NOT swallow failures into a silent 0/[]
+// (it used to — an API error was indistinguishable from "no pending
+// dogs", which is exactly why /app/claim-dogs was showing "No pending
+// transfers" for a buyer whose dog was confirmed sitting in Firestore
+// with the correct buyerEmail/transferStatus). Any real failure — bad
+// token, network error, non-2xx response — now throws so the caller can
+// tell the user what actually happened instead of a misleading empty
+// result. Callers that want to fail silently (e.g. a background banner
+// check) should catch this themselves, same as AppLayout.tsx already does.
 export async function claimTransferredDogs(_userId: string, _email: string, action: 'check' | 'claim' = 'claim'): Promise<any> {
-  if (!auth.currentUser) return { claimed: 0, dogs: [] }
-  try {
-    const idToken = await auth.currentUser.getIdToken()
-    const res = await fetch('/api/claim-transferred-dogs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-      body: JSON.stringify({ action }),
-    })
-    if (!res.ok) return { claimed: 0, dogs: [] }
-    const data = await res.json()
-    if (action === 'check') return data.dogs || []
-    return data.claimed || 0
-  } catch {
-    return 0
+  if (!auth.currentUser) {
+    if (action === 'check') return []
+    throw new Error('Not signed in')
   }
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/claim-transferred-dogs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ action }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Claim request failed (${res.status})`)
+  }
+  const data = await res.json()
+  if (action === 'check') return data.dogs || []
+  return data.claimed || 0
 }
 
 // ── VACCINE RECORDS ───────────────────────────────────────────

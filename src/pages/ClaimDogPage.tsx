@@ -22,18 +22,27 @@ export default function ClaimDogPage({ toast }: Props) {
   const [loading, setLoading] = useState(true)
   const [claiming, setClaiming] = useState(false)
   const [dogs, setDogs] = useState<ClaimableDog[]>([])
+  // Distinct from "genuinely 0 pending dogs" — claimTransferredDogs() now
+  // throws real errors instead of swallowing them into an empty array, so
+  // a failed check (bad token, network, server error) shows an actual
+  // message here instead of the misleading "No pending transfers" state.
+  const [loadError, setLoadError] = useState('')
+  const [claimError, setClaimError] = useState('')
 
   useEffect(() => {
     if (!user?.email) return
     let active = true
+    setLoadError('')
     claimTransferredDogs(user.uid, user.email, 'check')
       .then(foundDogs => {
         if (!active) return
         setDogs(foundDogs || [])
         setLoading(false)
       })
-      .catch(() => {
-        if (active) setLoading(false)
+      .catch(err => {
+        if (!active) return
+        setLoadError(err instanceof Error ? err.message : 'Failed to load pending transfers.')
+        setLoading(false)
       })
     return () => { active = false }
   }, [user])
@@ -41,6 +50,7 @@ export default function ClaimDogPage({ toast }: Props) {
   async function handleClaim() {
     if (!user?.email) return
     setClaiming(true)
+    setClaimError('')
     try {
       const claimed = await claimTransferredDogs(user.uid, user.email, 'claim')
       if (claimed > 0) {
@@ -50,8 +60,8 @@ export default function ClaimDogPage({ toast }: Props) {
         toast('No dogs found to claim.', 'info')
         setDogs([])
       }
-    } catch {
-      toast('Failed to claim dogs. Please try again.', 'error')
+    } catch (err) {
+      setClaimError(err instanceof Error ? err.message : 'Failed to claim dogs. Please try again.')
     } finally {
       setClaiming(false)
     }
@@ -59,6 +69,22 @@ export default function ClaimDogPage({ toast }: Props) {
 
   if (loading) {
     return <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
+  }
+
+  if (loadError) {
+    return (
+      <div style={{ padding: 32, maxWidth: 600, margin: '0 auto' }}>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 20 }}>Claim Dogs</h1>
+        <div className="card">
+          <div className="empty-state">
+            <div className="empty-state-icon">⚠️</div>
+            <div className="empty-state-title">Couldn&apos;t load pending transfers</div>
+            <div className="empty-state-desc">{loadError}</div>
+            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => window.location.reload()}>Try again</button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (dogs.length === 0) {
@@ -107,11 +133,14 @@ export default function ClaimDogPage({ toast }: Props) {
         ))}
       </div>
 
+      {claimError && (
+        <p className="form-error" style={{ textAlign: 'right', marginBottom: 12 }}>{claimError}</p>
+      )}
       <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
         <Link to="/app/dashboard" className="btn btn-secondary">Maybe later</Link>
-        <button 
-          className="btn btn-primary" 
-          onClick={handleClaim} 
+        <button
+          className="btn btn-primary"
+          onClick={handleClaim}
           disabled={claiming}
           style={{ minWidth: 140 }}
         >

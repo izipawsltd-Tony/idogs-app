@@ -52,18 +52,31 @@ export default async function handler(req, res) {
   }
 
   if (!email) {
+    console.log('[claim-diag] No email in token, uid:', uid)
     return res.status(200).json({ claimed: 0 })
   }
 
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})
   const action = body.action === 'check' ? 'check' : 'claim'
 
+  console.log('[claim-diag] token email:', email, '| uid:', uid, '| action:', action, '| project:', process.env.FIREBASE_PROJECT_ID)
+
   try {
     const db = getFirestore()
+
+    // Diagnostic: check ALL dogs with this buyerEmail regardless of transferStatus
+    const allByEmail = await db.collection('dogs')
+      .where('buyerEmail', '==', email.toLowerCase())
+      .get()
+    console.log('[claim-diag] dogs with buyerEmail=' + email.toLowerCase() + ':', allByEmail.size,
+      allByEmail.docs.map(d => ({ id: d.id, name: d.data().name, status: d.data().status, transferStatus: d.data().transferStatus })))
+
     const dogsSnap = await db.collection('dogs')
       .where('buyerEmail', '==', email.toLowerCase())
       .where('transferStatus', '==', 'pendingClaim')
       .get()
+
+    console.log('[claim-diag] pendingClaim dogs:', dogsSnap.size)
 
     if (dogsSnap.empty) {
       return res.status(200).json({ dogs: [], claimed: 0 })
@@ -93,6 +106,7 @@ export default async function handler(req, res) {
         status: 'active',
         transferStatus: FieldValue.delete(),
         claimedAt: new Date().toISOString(),
+        claimedBy: uid,
         updatedAt: new Date(),
       })
     })
