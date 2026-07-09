@@ -74,14 +74,44 @@ export async function deleteUserData(userId: string): Promise<void> {
 export async function getDogs(): Promise<Dog[]> {
   const currentUid = uid()
   if (!currentUid) return []
-  const snap = await getDocs(query(collection(db, 'dogs'), where('tenantId', '==', currentUid)))
-  return snap.docs.map(d => ({ ...d.data(), id: d.id } as Dog))
+  
+  const [breederSnap, ownerSnap] = await Promise.all([
+    getDocs(query(collection(db, 'dogs'), where('tenantId', '==', currentUid))),
+    getDocs(query(collection(db, 'dogs'), where('currentOwnerId', '==', currentUid)))
+  ])
+  
+  const dogMap = new Map<string, Dog>()
+  
+  breederSnap.docs.forEach(d => {
+    dogMap.set(d.id, { ...d.data(), id: d.id } as Dog)
+  })
+  
+  ownerSnap.docs.forEach(d => {
+    dogMap.set(d.id, { ...d.data(), id: d.id } as Dog)
+  })
+  
+  return Array.from(dogMap.values()).map(dog => {
+    // If the current user is the breeder (tenantId) but not the current owner,
+    // they should see the dog as "transferred" regardless of its actual DB status
+    // (which might have been set to 'active' when the new owner claimed it).
+    if (dog.tenantId === currentUid && dog.currentOwnerId !== currentUid) {
+      return { ...dog, status: 'transferred' }
+    }
+    return dog
+  })
 }
 
 export async function getDog(id: string): Promise<Dog | null> {
   const snap = await getDoc(doc(db, 'dogs', id))
   if (!snap.exists()) return null
-  return { ...snap.data(), id: snap.id } as Dog
+  const dog = { ...snap.data(), id: snap.id } as Dog
+  
+  const currentUid = uid()
+  if (dog.tenantId === currentUid && dog.currentOwnerId !== currentUid) {
+    dog.status = 'transferred'
+  }
+  
+  return dog
 }
 
 export async function getDogByPassportId(passportId: string): Promise<Dog | null> {
@@ -175,8 +205,10 @@ export async function transferDogOwnership(
 ): Promise<void> {
   await updateDoc(doc(db, 'dogs', dogId), {
     status: 'transferred',
+    transferStatus: 'pendingClaim',
+    previousOwnerId: uid(),
     buyerName: transfer.buyerName,
-    buyerEmail: transfer.buyerEmail,
+    buyerEmail: transfer.buyerEmail.trim().toLowerCase(),
     ...(transfer.buyerPhone ? { buyerPhone: transfer.buyerPhone } : {}),
     transferredAt: transfer.transferredAt,
     ...(transfer.microchipCertUrl ? { microchipCertUrl: transfer.microchipCertUrl } : {}),
@@ -197,16 +229,18 @@ export async function getDogsByBuyerEmail(email: string): Promise<Dog[]> {
 // yet — that's exactly the gap this claim operation needs to cross, so
 // it has to happen server-side with the buyer's identity verified via
 // their Firebase ID token instead of a client-supplied email/uid.
-export async function claimTransferredDogs(_userId: string, _email: string): Promise<number> {
-  if (!auth.currentUser) return 0
+export async function claimTransferredDogs(_userId: string, _email: string, action: 'check' | 'claim' = 'claim'): Promise<any> {
+  if (!auth.currentUser) return { claimed: 0, dogs: [] }
   try {
     const idToken = await auth.currentUser.getIdToken()
     const res = await fetch('/api/claim-transferred-dogs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ action }),
     })
-    if (!res.ok) return 0
+    if (!res.ok) return { claimed: 0, dogs: [] }
     const data = await res.json()
+    if (action === 'check') return data.dogs || []
     return data.claimed || 0
   } catch {
     return 0
