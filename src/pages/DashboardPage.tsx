@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import {
-  getDogs, getAllPendingReminders, claimTransferredDogs,
+  getDogs, getAllPendingReminders,
   getLitters, getAllDocumentsForUser, getAuditLogs,
 } from '../lib/db'
 import type { AuditEntry } from '../lib/db'
@@ -100,17 +100,7 @@ export default function DashboardPage({ toast }: Props) {
       .catch(() => { toast('Failed to load data', 'error'); setLoading(false) })
   }, [user])
 
-  useEffect(() => {
-    if (!user?.email) return
-    claimTransferredDogs(user.uid, user.email).then(count => {
-      if (count > 0) {
-        toast(`${count} dog${count > 1 ? 's' : ''} transferred to your account 🐾`, 'success')
-        getDogs().then(setDogs).catch(() => {})
-      }
-    }).catch(() => {})
-  }, [user])
-
-  const activeDogs   = dogs.filter(d => (d as any).status !== 'transferred')
+  const activeDogs   = dogs.filter(d => (d as any).status !== 'transferred' && (d as any).transferStatus !== 'pendingClaim')
   const overdueCount = reminders.filter(r => r.status !== 'completed' && isOverdue(r.dueDate)).length
   const visibleReminders = reminders.slice(0, 5)
 

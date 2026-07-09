@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import { getDogs, getLitters, updateUserProfile } from '../../lib/db'
+import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '../../lib/db'
 import { getInitials, AU_STATES } from '../../lib/utils'
+import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
 
 interface Props {
@@ -109,6 +110,7 @@ export default function AppLayout({ toast }: Props) {
 
   const [litterCount, setLitterCount] = useState<number | null>(null)
   const [dogCount,    setDogCount]    = useState<number>(0)
+  const [pendingClaimCount, setPendingClaimCount] = useState<number>(0)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement>(null)
 
@@ -121,8 +123,13 @@ export default function AppLayout({ toast }: Props) {
   useEffect(() => {
     if (!user) return
     getDogs()
-      .then(dogs => setDogCount(dogs.filter((d: any) => d.status !== 'transferred').length))
+      .then(dogs => setDogCount(dogs.filter((d: any) => d.status !== 'transferred' && d.transferStatus !== 'pendingClaim').length))
       .catch(() => setDogCount(0))
+    if (user.email) {
+      claimTransferredDogs(user.uid, user.email, 'check')
+        .then(dogs => setPendingClaimCount(dogs.length))
+        .catch(() => setPendingClaimCount(0))
+    }
   }, [user])
 
   useEffect(() => {
@@ -399,6 +406,16 @@ export default function AppLayout({ toast }: Props) {
         display: 'flex',
         flexDirection: 'column',
       }}>
+        {pendingClaimCount > 0 && (
+          <div style={{ background: 'var(--brand-600)', color: '#fff', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 45 }}>
+            <div style={{ fontSize: 14, fontWeight: 500 }}>
+              🐾 You have {pendingClaimCount} dog{pendingClaimCount !== 1 ? 's' : ''} waiting to be claimed!
+            </div>
+            <Link to="/app/claim-dogs" className="btn btn-sm" style={{ background: '#fff', color: 'var(--brand-600)', border: 'none' }}>
+              Review transfer
+            </Link>
+          </div>
+        )}
 
         {/* Topbar (desktop) */}
         <header style={{

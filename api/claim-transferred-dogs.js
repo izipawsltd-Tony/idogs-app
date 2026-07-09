@@ -19,7 +19,7 @@
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 
 if (!getApps().length) {
   initializeApp({
@@ -55,15 +55,33 @@ export default async function handler(req, res) {
     return res.status(200).json({ claimed: 0 })
   }
 
+  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})
+  const action = body.action === 'check' ? 'check' : 'claim'
+
   try {
     const db = getFirestore()
     const dogsSnap = await db.collection('dogs')
       .where('buyerEmail', '==', email.toLowerCase())
-      .where('status', '==', 'transferred')
+      .where('transferStatus', '==', 'pendingClaim')
       .get()
 
     if (dogsSnap.empty) {
-      return res.status(200).json({ claimed: 0 })
+      return res.status(200).json({ dogs: [], claimed: 0 })
+    }
+
+    if (action === 'check') {
+      const dogs = []
+      dogsSnap.forEach(d => {
+        const data = d.data()
+        dogs.push({
+          id: d.id,
+          name: data.name,
+          breed: data.breed,
+          profilePhoto: data.profilePhoto || null,
+          transferredAt: data.transferredAt,
+        })
+      })
+      return res.status(200).json({ dogs })
     }
 
     const batch = db.batch()
@@ -73,6 +91,7 @@ export default async function handler(req, res) {
         // original breeder's uid forever so their getDogs() still works.
         currentOwnerId: uid,
         status: 'active',
+        transferStatus: FieldValue.delete(),
         claimedAt: new Date().toISOString(),
         updatedAt: new Date(),
       })

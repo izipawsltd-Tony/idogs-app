@@ -63,12 +63,12 @@ export default function DogListPage({ toast }: Props) {
     return () => { active = false }
   }, [missingTest, dogs])
 
-  const activeDogs = dogs.filter(d => d.status !== 'transferred')
-  const transferredDogs = dogs.filter(d => d.status === 'transferred')
+  const activeDogs = dogs.filter(d => d.status !== 'transferred' && (d as any).transferStatus !== 'pendingClaim')
+  const transferredDogs = dogs.filter(d => d.status === 'transferred' || (d as any).transferStatus === 'pendingClaim')
 
   const filtered = dogs.filter(d => {
     const matchSearch = !search || (d.name || '').toLowerCase().includes(search.toLowerCase()) || (d.breed || '').toLowerCase().includes(search.toLowerCase())
-    const isTransferred = d.status === 'transferred'
+    const isTransferred = d.status === 'transferred' || (d as any).transferStatus === 'pendingClaim'
 
     if (filterStage === 'transferred') {
       return isTransferred && matchSearch
@@ -286,7 +286,7 @@ export default function DogListPage({ toast }: Props) {
 }
 
 function DogCard({ dog }: { dog: Dog }) {
-  const isTransferred = dog.status === 'transferred'
+  const isTransferred = dog.status === 'transferred' || (dog as any).transferStatus === 'pendingClaim'
   const actualStage = dog.isDeceased ? 'remembered' : calculateLifeStage(dog.dateOfBirth, dog.breed)
   return (
     <Link to={`/app/dogs/${dog.id}`} style={{ textDecoration: 'none' }}>

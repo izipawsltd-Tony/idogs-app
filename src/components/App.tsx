@@ -31,6 +31,7 @@ import NotFoundPage from '../pages/NotFoundPage'
 import ComingSoonPage from '../pages/ComingSoonPage'
 import ReportsPage from '../pages/ReportsPage'
 import BuyersPage from '../pages/BuyersPage'
+import ClaimDogPage from '../pages/ClaimDogPage'
 
 import AppLayout from './layout/AppLayout'
 import LoadingScreen from './ui/LoadingScreen'
@@ -82,6 +83,7 @@ export default function App() {
           <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppies" replace />} />
           <Route path="buyers"  element={<BuyersPage />} />
           <Route path="reports" element={<ReportsPage toast={toast} />} />
+          <Route path="claim-dogs" element={<ClaimDogPage toast={toast} />} />
         </Route>
 
         <Route path="*" element={<NotFoundPage />} />
