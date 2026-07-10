@@ -253,6 +253,21 @@ export default function DogDetailPage({ toast }: Props) {
     }
   }
 
+  // addVaccineRecord()/updateVaccineRecord() upsert a reminder doc in
+  // Firestore immediately, but this page's `reminders` state was only
+  // ever loaded once on mount — the Reminders tab count/list stayed
+  // stale ("Reminders (0)") until a full page reload. Call this after
+  // any vaccine save so the tab reflects the new reminder right away.
+  async function refreshReminders() {
+    if (!dogId) return
+    try {
+      const r = await getReminders(dogId)
+      setReminders(r)
+    } catch {
+      // non-critical — worst case the tab stays stale until next reload
+    }
+  }
+
   async function handleScanResult(result: any, filePath?: string) {
     if (!dogId || !dog) return
 
@@ -304,6 +319,7 @@ export default function DogDetailPage({ toast }: Props) {
       }
       const updated = await getVaccineRecords(dogId)
       setVaccines(updated)
+      await refreshReminders()
     }
 
     // Save health tests — one record per detected test type, mirroring the
@@ -638,7 +654,7 @@ export default function DogDetailPage({ toast }: Props) {
           <AIScan onResult={handleScanResult} toast={toast} dogId={dog.id} tenantId={user?.uid} />
         </div>
       )}
-      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} />}
+      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} />}
       {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} />}
       {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} />}
       {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} />}
@@ -1170,13 +1186,14 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
 
 // ── VACCINES TAB ──────────────────────────────────────────────
 
-function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc }: {
+function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc, onReminderSaved }: {
   dogId: string; dogName: string; tenantId: string; userEmail: string;
   vaccines: VaccineRecord[];
   setVaccines: (v: VaccineRecord[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
   documents: any[]
   onViewDoc: (path?: string | null, legacyUrl?: string | null) => void
+  onReminderSaved: () => void | Promise<void>
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
@@ -1221,6 +1238,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
       })
       const updated = await getVaccineRecords(dogId)
       setVaccines(updated)
+      await onReminderSaved()
       setEditingId(null)
       toast('Vaccine record updated')
     } catch {
@@ -1246,6 +1264,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
       })
       const updated = await getVaccineRecords(dogId)
       setVaccines(updated)
+      await onReminderSaved()
       setForm({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
       setShowForm(false)
       toast('Vaccine record added')
