@@ -274,11 +274,19 @@ export async function addVaccineRecord(data: Omit<VaccineRecord, 'id' | 'created
     ...data,
     createdAt: serverTimestamp(),
   })
+  if (data.nextDue) {
+    await upsertVaccineReminder(data.dogId, ref.id, { name: data.name, nextDue: data.nextDue })
+  }
   return ref.id
 }
 
 export async function updateVaccineRecord(id: string, data: Partial<VaccineRecord>): Promise<void> {
   await updateDoc(doc(db, 'vaccineRecords', id), data)
+  const snap = await getDoc(doc(db, 'vaccineRecords', id))
+  if (snap.exists()) {
+    const v = snap.data() as VaccineRecord
+    if (v.nextDue) await upsertVaccineReminder(v.dogId, id, { name: v.name, nextDue: v.nextDue })
+  }
 }
 
 export async function deleteVaccineRecord(id: string): Promise<void> {
@@ -327,6 +335,61 @@ export async function deleteHealthTest(id: string): Promise<void> {
 }
 
 // ── REMINDERS ─────────────────────────────────────────────────
+
+// Creates/refreshes the reminder for a single vaccine record the moment
+// it's saved, so it shows up in the Reminders tab immediately instead of
+// waiting for the next daily cron run (api/send-reminders.js only
+// upserts reminders once a day — a vaccine added minutes after that run
+// previously stayed invisible for up to ~24h).
+//
+// Uses the exact same deterministic id (`vaccine_${dogId}_${vaccineId}`)
+// and owner-resolution rule (currentOwnerId, falling back to tenantId)
+// that the cron uses, so this is a true upsert — whichever side writes
+// last just refreshes the same doc, never creates a duplicate — and it
+// inherits Fix Batch G's ownership behaviour: a pendingClaim dog gets no
+// reminder yet, and a claimed dog's reminder is owned by the new owner,
+// not the original breeder.
+async function upsertVaccineReminder(
+  dogId: string,
+  vaccineId: string,
+  vaccine: { name: string; nextDue: string }
+): Promise<void> {
+  try {
+    const dogSnap = await getDoc(doc(db, 'dogs', dogId))
+    if (!dogSnap.exists()) return
+    const dog = dogSnap.data() as Dog
+    if (dog.status === 'transferred') return // pendingClaim — no active owner yet
+    const ownerId = dog.currentOwnerId || dog.tenantId
+    if (!ownerId) return
+
+    const reminderId = `vaccine_${dogId}_${vaccineId}`
+    const reminderRef = doc(db, 'reminders', reminderId)
+    const existing = await getDoc(reminderRef)
+    if (existing.exists() && existing.data()?.status === 'completed') return
+
+    const daysUntilDue = Math.ceil((new Date(vaccine.nextDue).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    const dueLabel = daysUntilDue < 0
+      ? `overdue by ${Math.abs(daysUntilDue)} day${Math.abs(daysUntilDue) !== 1 ? 's' : ''}`
+      : daysUntilDue === 0 ? 'today'
+      : daysUntilDue === 1 ? 'tomorrow'
+      : `in ${daysUntilDue} days`
+
+    await setDoc(reminderRef, {
+      id: reminderId,
+      dogId,
+      tenantId: ownerId,
+      title: `${vaccine.name} due ${dueLabel}`,
+      dueDate: vaccine.nextDue,
+      type: 'vaccine',
+      vaccineId,
+      status: daysUntilDue < 0 ? 'overdue' : 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }, { merge: true })
+  } catch (err) {
+    console.error('Failed to upsert vaccine reminder:', err)
+  }
+}
 
 // Per-dog reminders (used in DogDetailPage)
 export async function getReminders(dogId: string): Promise<Reminder[]> {
