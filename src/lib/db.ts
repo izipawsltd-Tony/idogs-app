@@ -335,11 +335,20 @@ export async function getReminders(dogId: string): Promise<Reminder[]> {
   return snap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
 }
 
-// All reminders for current user across all dogs (used in RemindersPage)
+// All reminders for current user across all dogs (used in RemindersPage).
+// Cross-checked against getDogs() (same pattern as getAllPendingReminders
+// below) so a dog the user has transferred away drops out immediately —
+// the reminders collection itself still tags old docs with the original
+// breeder's tenantId until the next cron run reassigns them.
 export async function getAllRemindersForUser(userId: string): Promise<Reminder[]> {
-  const q = query(collection(db, 'reminders'), where('tenantId', '==', userId))
-  const snap = await getDocs(q)
-  return snap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+  const [snap, dogs] = await Promise.all([
+    getDocs(query(collection(db, 'reminders'), where('tenantId', '==', userId))),
+    getDogs(),
+  ])
+  const ownedDogIds = new Set(dogs.filter(d => d.status !== 'transferred').map(d => d.id))
+  return snap.docs
+    .map(d => ({ ...d.data(), id: d.id } as Reminder))
+    .filter(r => ownedDogIds.has(r.dogId))
 }
 
 // Used in DashboardPage
