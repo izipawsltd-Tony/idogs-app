@@ -8,7 +8,7 @@ import {
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder,
   addWormingRecord, deleteWormingRecord,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, logAudit, syncLifeStage,
-  getAuditLogs, type AuditEntry
+  getAuditLogs, type AuditEntry, isCurrentOwner
 } from '../lib/db'
 import {
   formatDate, getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS,
@@ -120,6 +120,7 @@ export default function DogDetailPage({ toast }: Props) {
   const [wormings, setWormings] = useState<WormingRecord[]>([])
   const [healthTests, setHealthTests] = useState<HealthTest[]>([])
   const [reminders, setReminders] = useState<Reminder[]>([])
+  const [remindersError, setRemindersError] = useState(false)
   const [notes, setNotes] = useState<ActivityNote[]>([])
   const [lifeStageEvents, setLifeStageEvents] = useState<AuditEntry[]>([])
   const [qrUrl, setQrUrl] = useState('')
@@ -152,20 +153,34 @@ export default function DogDetailPage({ toast }: Props) {
           // non-critical — if this fails, the page still works, just
           // with a possibly-stale lifeStage badge until next visit
         })
-        const [v, w, h, r, n, sc, docs, auditLogs] = await Promise.all([
+        const [v, w, h, n, sc, docs, auditLogs, remindersResult] = await Promise.all([
           getVaccineRecords(dogId!).catch(() => [] as VaccineRecord[]),
           getWormingRecords(dogId!).catch(() => [] as WormingRecord[]),
           getHealthTests(dogId!).catch(() => [] as HealthTest[]),
-          getReminders(dogId!).catch(() => [] as Reminder[]),
           getActivityNotes(dogId!).catch(() => [] as ActivityNote[]),
           getScanCount(dogId!).catch(() => 0),
           getDogDocuments(dogId!).catch(() => []),
           getAuditLogs(d.tenantId, dogId!).catch(() => [] as AuditEntry[]),
+          getReminders(dogId!, user?.uid || '')
+            .then(r => ({ ok: true as const, data: r }))
+            .catch(err => {
+              console.error('Failed to load reminders:', err)
+              return { ok: false as const, data: [] as Reminder[] }
+            }),
         ])
         setVaccines(v)
         setWormings(w)
         setHealthTests(h)
-        setReminders(r)
+        // A user who's no longer the current owner (e.g. the original
+        // breeder after a buyer claims the dog) must not see this dog's
+        // active reminders here — status alone can't tell that apart from
+        // a still-owned dog, since it resets to 'active' post-claim.
+        // A failed load (remindersResult.ok === false) must not render as
+        // "All clear" — that only means a genuinely empty, successful query.
+        setReminders(remindersResult.ok
+          ? (isCurrentOwner(d, user?.uid || '') ? remindersResult.data : remindersResult.data.filter(rem => rem.status === 'completed'))
+          : [])
+        setRemindersError(!remindersResult.ok)
         setNotes(n)
         setScanCount(sc)
         if (docs) setDocuments(docs)
@@ -259,12 +274,14 @@ export default function DogDetailPage({ toast }: Props) {
   // stale ("Reminders (0)") until a full page reload. Call this after
   // any vaccine save so the tab reflects the new reminder right away.
   async function refreshReminders() {
-    if (!dogId) return
+    if (!dogId || !dog) return
     try {
-      const r = await getReminders(dogId)
-      setReminders(r)
-    } catch {
-      // non-critical — worst case the tab stays stale until next reload
+      const r = await getReminders(dogId, user?.uid || '')
+      setReminders(isCurrentOwner(dog, user?.uid || '') ? r : r.filter(rem => rem.status === 'completed'))
+      setRemindersError(false)
+    } catch (err) {
+      console.error('Failed to refresh reminders:', err)
+      setRemindersError(true)
     }
   }
 
@@ -657,7 +674,7 @@ export default function DogDetailPage({ toast }: Props) {
       {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} />}
       {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} />}
       {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} />}
-      {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} />}
+      {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} />}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} toast={toast} />}
       {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} />}
       {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} />}
@@ -1822,10 +1839,11 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
 
 // ── REMINDERS TAB ─────────────────────────────────────────────
 
-function RemindersTab({ reminders, setReminders, toast }: {
+function RemindersTab({ reminders, setReminders, toast, error }: {
   reminders: Reminder[];
   setReminders: (r: Reminder[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
+  error?: boolean
 }) {
   async function handleComplete(id: string) {
     await completeReminder(id)
@@ -1836,7 +1854,9 @@ function RemindersTab({ reminders, setReminders, toast }: {
   return (
     <div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Reminders</h2>
-      {active.length === 0 ? (
+      {error ? (
+        <div className="card"><div className="empty-state"><div className="empty-state-icon">⚠️</div><div className="empty-state-title">Couldn't load reminders</div><div className="empty-state-desc">Something went wrong. Please refresh the page to try again.</div></div></div>
+      ) : active.length === 0 ? (
         <div className="card"><div className="empty-state"><div className="empty-state-icon">✅</div><div className="empty-state-title">All clear</div></div></div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

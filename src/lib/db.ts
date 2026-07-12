@@ -101,6 +101,19 @@ export async function getDogs(): Promise<Dog[]> {
   })
 }
 
+// Production-verified ownership check (currentOwnerId is the source of
+// truth, not status alone — status resets to 'active' once a buyer claims
+// a dog). Used where a dog is fetched individually via getDog() rather
+// than through getDogs()'s list-level status override above — e.g. a
+// reminder document can still carry the original breeder's tenantId for a
+// short window after claim (until the next vaccine save or cron run
+// reassigns it), so this catches that gap even when dog.status already
+// looks correct. A dog with no currentOwnerId is a legacy record
+// predating this field, so it falls back to whoever's asking.
+export function isCurrentOwner(dog: Pick<Dog, 'currentOwnerId'>, userId: string): boolean {
+  return !dog.currentOwnerId || dog.currentOwnerId === userId
+}
+
 export async function getDog(id: string): Promise<Dog | null> {
   const snap = await getDoc(doc(db, 'dogs', id))
   if (!snap.exists()) return null
@@ -391,9 +404,18 @@ async function upsertVaccineReminder(
   }
 }
 
-// Per-dog reminders (used in DogDetailPage)
-export async function getReminders(dogId: string): Promise<Reminder[]> {
-  const q = query(collection(db, 'reminders'), where('dogId', '==', dogId))
+// Per-dog reminders (used in DogDetailPage). Filtered by both dogId and
+// tenantId (the viewer's own uid) — a dogId-only query can't satisfy the
+// tenant-scoped `list` rule on the reminders collection in production,
+// since Firestore must be able to prove the rule holds from the query's
+// own where-clauses alone, not from inspecting matched documents; a
+// dogId-only query is denied outright. This also means a viewer only ever
+// sees reminders currently tagged with their own uid, which is the
+// correct scope: a claimed dog's older reminder doc still carries the
+// original breeder's tenantId until the next vaccine save or cron run
+// reassigns it, so it won't appear here for the new owner until then.
+export async function getReminders(dogId: string, userId: string): Promise<Reminder[]> {
+  const q = query(collection(db, 'reminders'), where('dogId', '==', dogId), where('tenantId', '==', userId))
   const snap = await getDocs(q)
   return snap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
 }
@@ -402,16 +424,54 @@ export async function getReminders(dogId: string): Promise<Reminder[]> {
 // Cross-checked against getDogs() (same pattern as getAllPendingReminders
 // below) so a dog the user has transferred away drops out immediately —
 // the reminders collection itself still tags old docs with the original
-// breeder's tenantId until the next cron run reassigns them.
+// breeder's tenantId until the next cron run reassigns them. getDogs()
+// already overrides status to 'transferred' for a former breeder, so this
+// filter is correct without needing a separate currentOwnerId check here.
 export async function getAllRemindersForUser(userId: string): Promise<Reminder[]> {
   const [snap, dogs] = await Promise.all([
     getDocs(query(collection(db, 'reminders'), where('tenantId', '==', userId))),
     getDogs(),
   ])
   const ownedDogIds = new Set(dogs.filter(d => d.status !== 'transferred').map(d => d.id))
-  return snap.docs
+  const tenantReminders = snap.docs
     .map(d => ({ ...d.data(), id: d.id } as Reminder))
     .filter(r => ownedDogIds.has(r.dogId))
+
+  // A claimed dog's reminder doc keeps the original breeder's tenantId
+  // until the next vaccine save or daily cron run reassigns it — this
+  // query attempts to find those anyway so a buyer sees a claimed dog's
+  // reminders immediately, without waiting for that reassignment. Reuses
+  // the `dogs` array from getDogs() above (already includes claimed dogs
+  // via the currentOwnerId union) instead of a second Firestore query.
+  // (Firestore 'in' caps at 30 values — fine at this app's scale.)
+  //
+  // This query has no tenantId filter, so it can never satisfy the
+  // tenant-scoped `list` rule on reminders in production — Firestore
+  // denies it outright whenever the reminder doc's tenantId still belongs
+  // to someone else, which is true for every claimed dog until that
+  // reassignment happens. It's wrapped here so that expected failure
+  // doesn't discard the already-valid tenantReminders above; the known
+  // tradeoff is a just-claimed dog's pre-existing reminder stays invisible
+  // to the new owner until their next vaccine edit or the next cron run
+  // reassigns tenantId — not indefinitely, but not immediate either.
+  const claimedDogIds = dogs
+    .filter(d => d.currentOwnerId === userId && d.tenantId !== userId)
+    .map(d => d.id)
+  let claimedReminders: Reminder[] = []
+  if (claimedDogIds.length > 0) {
+    try {
+      const claimedRemindersSnap = await getDocs(
+        query(collection(db, 'reminders'), where('dogId', 'in', claimedDogIds.slice(0, 30)))
+      )
+      claimedReminders = claimedRemindersSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+    } catch (err) {
+      console.error('Failed to fetch claimed-dog reminders (expected until tenantId reassignment):', err)
+    }
+  }
+
+  const merged = new Map<string, Reminder>()
+  for (const r of [...tenantReminders, ...claimedReminders]) merged.set(r.id, r)
+  return Array.from(merged.values())
 }
 
 // Used in DashboardPage

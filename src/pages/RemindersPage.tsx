@@ -14,6 +14,7 @@ export default function RemindersPage({ toast }: Props) {
   const { user } = useAuth()
   const [reminders, setReminders] = useState<(Reminder & { dogName: string })[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [sending, setSending] = useState(false)
   const [filter, setFilter] = useState<'upcoming' | 'overdue' | 'all' | 'done'>('upcoming')
   const [searchParams] = useSearchParams()
@@ -42,7 +43,11 @@ export default function RemindersPage({ toast }: Props) {
         dogName: dogMap[r.dogId] || 'Unknown Dog',
       }))
       setReminders(enriched)
-    } catch {
+      setLoadError(false)
+    } catch (err) {
+      console.error('Failed to load reminders:', err)
+      setReminders([])
+      setLoadError(true)
       toast('Failed to load reminders', 'error')
     } finally {
       setLoading(false)
@@ -197,7 +202,13 @@ export default function RemindersPage({ toast }: Props) {
       </div>
 
       {/* Reminder list */}
-      {filtered.length === 0 ? (
+      {loadError ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">⚠️</div>
+          <div className="empty-state-title">Couldn't load reminders</div>
+          <div className="empty-state-desc">Something went wrong. Please refresh the page to try again.</div>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">🔔</div>
           <div className="empty-state-title">No {filter} reminders</div>
