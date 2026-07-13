@@ -149,7 +149,18 @@ export async function getDogByPassportId(passportId: string): Promise<Dog | null
   return normalizeDog({ ...d.data(), id: d.id } as Dog)
 }
 
-export async function createDog(data: DogFormData): Promise<string> {
+// sourceType defaults to BREEDER_ISSUED so LittersPage.tsx's puppy-add
+// flow (and any other caller that doesn't pass one) is unaffected. Only
+// DogNewPage.tsx passes 'OWNER_CREATED' explicitly, for the pet-owner
+// creation flow (ADR-001 Phase 2). IMPORTED is intentionally not part of
+// this parameter's type yet — not exposed until that flow exists.
+// tenantId/currentOwnerId/createdByUserId are always derived from the
+// authenticated session (uid()) — never accepted from the caller — so
+// there is no way for a caller to assign ownership to another user.
+export async function createDog(
+  data: DogFormData,
+  sourceType: 'BREEDER_ISSUED' | 'OWNER_CREATED' = 'BREEDER_ISSUED'
+): Promise<string> {
   const now = new Date()
   const yearPart = data.dateOfBirth ? data.dateOfBirth.slice(0, 4) : now.getFullYear().toString()
   const namePart = (data.name || 'DOG').slice(0, 3).toUpperCase()
@@ -157,13 +168,12 @@ export async function createDog(data: DogFormData): Promise<string> {
   const ref = await addDoc(collection(db, 'dogs'), {
     ...data,
     tenantId: uid(),
-    originBreederId: uid(),
     currentOwnerId: uid(),
-    // Both existing createDog() callers (DogNewPage.tsx, LittersPage.tsx)
-    // are breeder-shaped flows only — the owner-created path (ADR-001
-    // Phase 2) will extend this with an explicit sourceType param later.
-    sourceType: 'BREEDER_ISSUED',
     createdByUserId: uid(),
+    sourceType,
+    // originBreederId is breeder provenance — omitted for owner-created
+    // dogs rather than written as a meaningless copy of tenantId.
+    ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: uid() } : {}),
     passportId,
     lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
     isDeceased: false,

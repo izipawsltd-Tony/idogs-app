@@ -18,6 +18,7 @@ const FREE_PLANS = ['free', 'trial']
 export default function DogNewPage({ toast }: Props) {
   const navigate = useNavigate()
   const { user, profile } = useAuth()
+  const isOwner = profile?.role === 'owner'
   const [step, setStep] = useState<Step>('scan')
   const [loading, setLoading] = useState(true)
   const [blocked, setBlocked] = useState(false)
@@ -139,7 +140,7 @@ export default function DogNewPage({ toast }: Props) {
       const dogId = await createDog({
         ...form,
         breederIdValue: form.breederIdType === 'NONE' ? '' : form.breederIdValue,
-      })
+      }, isOwner ? 'OWNER_CREATED' : 'BREEDER_ISSUED')
 
       // Now that the dog exists, upload any files that were scanned before
       // we had a dogId to attach them to (fixes "fail to save file" when
@@ -247,7 +248,7 @@ export default function DogNewPage({ toast }: Props) {
     <div style={{ padding: 32, maxWidth: 640 }}>
       <div style={{ marginBottom: 24 }}>
         <Link to="/app/dogs" style={{ fontSize: 13, color: 'var(--light)', textDecoration: 'none' }}>← My dogs</Link>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginTop: 8, marginBottom: 4 }}>Add a dog</h1>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginTop: 8, marginBottom: 4 }}>{isOwner ? 'Create Dog ID' : 'Add a dog'}</h1>
         <p style={{ fontSize: 14, color: 'var(--light)' }}>Scan documents first to auto-fill the form, or fill in manually.</p>
       </div>
 
@@ -386,22 +387,24 @@ export default function DogNewPage({ toast }: Props) {
                 )}
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: form.breederIdType !== 'NONE' ? '1fr 1fr' : '1fr', gap: 14 }}>
-              <div className="form-group">
-                <label className="form-label">Breeder ID type</label>
-                <select className="form-select" value={form.breederIdType} onChange={e => set('breederIdType', e.target.value)}>
-                  {(Object.keys(BREEDER_ID_CONFIG) as Array<keyof typeof BREEDER_ID_CONFIG>).map(key => (
-                    <option key={key} value={key}>{BREEDER_ID_CONFIG[key].label}</option>
-                  ))}
-                </select>
-              </div>
-              {form.breederIdType !== 'NONE' && (
+            {!isOwner && (
+              <div style={{ display: 'grid', gridTemplateColumns: form.breederIdType !== 'NONE' ? '1fr 1fr' : '1fr', gap: 14 }}>
                 <div className="form-group">
-                  <label className="form-label">Breeder ID value</label>
-                  <input className="form-input" type="text" placeholder="e.g. B123456789" value={form.breederIdValue} onChange={e => set('breederIdValue', e.target.value)} />
+                  <label className="form-label">Breeder ID type</label>
+                  <select className="form-select" value={form.breederIdType} onChange={e => set('breederIdType', e.target.value)}>
+                    {(Object.keys(BREEDER_ID_CONFIG) as Array<keyof typeof BREEDER_ID_CONFIG>).map(key => (
+                      <option key={key} value={key}>{BREEDER_ID_CONFIG[key].label}</option>
+                    ))}
+                  </select>
                 </div>
-              )}
-            </div>
+                {form.breederIdType !== 'NONE' && (
+                  <div className="form-group">
+                    <label className="form-label">Breeder ID value</label>
+                    <input className="form-input" type="text" placeholder="e.g. B123456789" value={form.breederIdValue} onChange={e => set('breederIdValue', e.target.value)} />
+                  </div>
+                )}
+              </div>
+            )}
             <div className="form-group">
               <label className="form-label">Notes</label>
               <textarea className="form-textarea" placeholder="Any notes about this dog…" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ minHeight: 80 }} />
@@ -422,7 +425,8 @@ export default function DogNewPage({ toast }: Props) {
               <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading}>
                 {loading ? <span className="spinner" /> : (() => {
                   const recordCount = scannedDocs.reduce((s, d) => s + (d.vaccines?.length || 0), 0)
-                  return `Add dog & create passport${recordCount > 0 ? ` (${recordCount} records)` : ''}`
+                  const base = isOwner ? 'Create Dog ID & passport' : 'Add dog & create passport'
+                  return `${base}${recordCount > 0 ? ` (${recordCount} records)` : ''}`
                 })()}
               </button>
               <button type="button" onClick={() => setStep('scan')} className="btn btn-secondary" style={{ height: 46 }}>

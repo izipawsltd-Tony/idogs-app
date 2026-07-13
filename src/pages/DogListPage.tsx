@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { getDogs, getHealthTests } from '../lib/db'
 import { getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS, calculateLifeStage } from '../lib/utils'
+import { useAuth } from '../hooks/useAuth'
 import type { CoverageType } from '../lib/reports'
 import type { Dog, HealthTest, LifeStage, ToastMessage } from '../types'
 
@@ -18,6 +19,8 @@ interface Props {
 }
 
 export default function DogListPage({ toast }: Props) {
+  const { profile } = useAuth()
+  const isOwner = profile?.role === 'owner'
   const [dogs, setDogs] = useState<Dog[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -126,7 +129,7 @@ export default function DogListPage({ toast }: Props) {
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>My dogs</h1>
           <p style={{ fontSize: 14, color: 'var(--light)' }}>{activeDogs.length} dog{activeDogs.length !== 1 ? 's' : ''} registered</p>
         </div>
-        <Link to="/app/dogs/new" className="btn btn-primary">+ Add dog</Link>
+        <Link to="/app/dogs/new" className="btn btn-primary">{isOwner ? '+ Create Dog ID' : '+ Add dog'}</Link>
       </div>
 
       {/* Filters */}
@@ -273,7 +276,7 @@ export default function DogListPage({ toast }: Props) {
             <div className="empty-state-icon">🔍</div>
             <div className="empty-state-title">{search ? 'No dogs found' : 'No dogs yet'}</div>
             <div className="empty-state-desc">{search ? 'Try a different search term.' : 'Add your first dog to get started.'}</div>
-            {!search && <Link to="/app/dogs/new" className="btn btn-primary" style={{ marginTop: 8 }}>Add dog</Link>}
+            {!search && <Link to="/app/dogs/new" className="btn btn-primary" style={{ marginTop: 8 }}>{isOwner ? 'Create Dog ID' : 'Add dog'}</Link>}
           </div>
         </div>
       ) : (
