@@ -502,7 +502,7 @@ export async function getAllRemindersForUser(userId: string): Promise<Reminder[]
 // Used in DashboardPage
 export async function getAllPendingReminders(): Promise<Reminder[]> {
   const dogs = await getDogs()
-  const dogIds = new Set(dogs.map(d => d.id))
+  const dogIds = new Set(dogs.filter(d => d.status !== 'transferred').map(d => d.id))
   if (dogIds.size === 0) return []
   const q = query(
     collection(db, 'reminders'),
