@@ -19,6 +19,12 @@ export interface Dog {
   isDeceased: boolean
   originBreederId: string
   currentOwnerId: string
+  // Dog Origin & Provenance (ADR-001). Optional so legacy documents with
+  // neither field remain valid — see normalizeDog() in db.ts for the
+  // read-time BREEDER_ISSUED fallback. Never reassigned by transfer/claim,
+  // same immutability contract as tenantId.
+  sourceType?: 'BREEDER_ISSUED' | 'OWNER_CREATED' | 'IMPORTED'
+  createdByUserId?: string
   profilePhoto?: string
   photos: string[]
   notes: string

@@ -71,25 +71,39 @@ export async function deleteUserData(userId: string): Promise<void> {
 
 // ── DOGS ──────────────────────────────────────────────────────
 
+// Read-time-only normalisation (ADR-001) — never writes back to Firestore.
+// Every dog created before sourceType/createdByUserId existed only ever
+// came from the breeder-shaped creation flow, so absence of sourceType is
+// safely and unambiguously BREEDER_ISSUED, never an unknown/misclassified
+// state. Shared by every place a raw Firestore snapshot becomes a Dog
+// (getDog, getDogs, getDogByPassportId) so they cannot diverge.
+function normalizeDog(raw: Dog): Dog {
+  return {
+    ...raw,
+    sourceType: raw.sourceType ?? 'BREEDER_ISSUED',
+    createdByUserId: raw.createdByUserId ?? raw.tenantId,
+  }
+}
+
 export async function getDogs(): Promise<Dog[]> {
   const currentUid = uid()
   if (!currentUid) return []
-  
+
   const [breederSnap, ownerSnap] = await Promise.all([
     getDocs(query(collection(db, 'dogs'), where('tenantId', '==', currentUid))),
     getDocs(query(collection(db, 'dogs'), where('currentOwnerId', '==', currentUid)))
   ])
-  
+
   const dogMap = new Map<string, Dog>()
-  
+
   breederSnap.docs.forEach(d => {
-    dogMap.set(d.id, { ...d.data(), id: d.id } as Dog)
+    dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
   })
-  
+
   ownerSnap.docs.forEach(d => {
-    dogMap.set(d.id, { ...d.data(), id: d.id } as Dog)
+    dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
   })
-  
+
   return Array.from(dogMap.values()).map(dog => {
     // If the current user is the breeder (tenantId) but not the current owner,
     // they should see the dog as "transferred" regardless of its actual DB status
@@ -117,13 +131,13 @@ export function isCurrentOwner(dog: Pick<Dog, 'currentOwnerId'>, userId: string)
 export async function getDog(id: string): Promise<Dog | null> {
   const snap = await getDoc(doc(db, 'dogs', id))
   if (!snap.exists()) return null
-  const dog = { ...snap.data(), id: snap.id } as Dog
-  
+  const dog = normalizeDog({ ...snap.data(), id: snap.id } as Dog)
+
   const currentUid = uid()
   if (dog.tenantId === currentUid && dog.currentOwnerId !== currentUid) {
     dog.status = 'transferred'
   }
-  
+
   return dog
 }
 
@@ -132,7 +146,7 @@ export async function getDogByPassportId(passportId: string): Promise<Dog | null
   const snap = await getDocs(q)
   if (snap.empty) return null
   const d = snap.docs[0]
-  return { ...d.data(), id: d.id } as Dog
+  return normalizeDog({ ...d.data(), id: d.id } as Dog)
 }
 
 export async function createDog(data: DogFormData): Promise<string> {
@@ -145,6 +159,11 @@ export async function createDog(data: DogFormData): Promise<string> {
     tenantId: uid(),
     originBreederId: uid(),
     currentOwnerId: uid(),
+    // Both existing createDog() callers (DogNewPage.tsx, LittersPage.tsx)
+    // are breeder-shaped flows only — the owner-created path (ADR-001
+    // Phase 2) will extend this with an explicit sourceType param later.
+    sourceType: 'BREEDER_ISSUED',
+    createdByUserId: uid(),
     passportId,
     lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
     isDeceased: false,
