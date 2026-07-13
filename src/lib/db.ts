@@ -404,20 +404,45 @@ async function upsertVaccineReminder(
   }
 }
 
-// Per-dog reminders (used in DogDetailPage). Filtered by both dogId and
-// tenantId (the viewer's own uid) — a dogId-only query can't satisfy the
-// tenant-scoped `list` rule on the reminders collection in production,
-// since Firestore must be able to prove the rule holds from the query's
-// own where-clauses alone, not from inspecting matched documents; a
-// dogId-only query is denied outright. This also means a viewer only ever
-// sees reminders currently tagged with their own uid, which is the
-// correct scope: a claimed dog's older reminder doc still carries the
-// original breeder's tenantId until the next vaccine save or cron run
-// reassigns it, so it won't appear here for the new owner until then.
-export async function getReminders(dogId: string, userId: string): Promise<Reminder[]> {
-  const q = query(collection(db, 'reminders'), where('dogId', '==', dogId), where('tenantId', '==', userId))
-  const snap = await getDocs(q)
-  return snap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+// Per-dog reminders (used in DogDetailPage). Always runs the tenantId-scoped
+// query first — a dogId-only query can't satisfy the tenant-scoped `list`
+// rule on the reminders collection in production, since Firestore must be
+// able to prove the rule holds from the query's own where-clauses alone,
+// not from inspecting matched documents; a dogId-only query is denied
+// outright. The optional `dog` param mirrors the claimed-dog merge already
+// used by getAllRemindersForUser() below: when the caller is the dog's
+// current owner via a claim rather than the original tenant, a claimed
+// dog's older reminder doc still carries the original breeder's tenantId
+// until the next vaccine save or cron run reassigns it, so a second,
+// best-effort dogId-only query is attempted to catch that case. That query
+// has no tenantId filter, so it's expected to be denied by the same list
+// rule once the reminder's tenantId hasn't been reassigned yet in a
+// stricter rule environment — wrapped so a deny there doesn't discard the
+// tenantReminders that already loaded successfully.
+export async function getReminders(
+  dogId: string,
+  userId: string,
+  dog?: Pick<Dog, 'tenantId' | 'currentOwnerId'>
+): Promise<Reminder[]> {
+  const tenantSnap = await getDocs(
+    query(collection(db, 'reminders'), where('dogId', '==', dogId), where('tenantId', '==', userId))
+  )
+  const tenantReminders = tenantSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+
+  const isClaimedByCaller = !!dog && dog.currentOwnerId === userId && dog.tenantId !== userId
+  if (!isClaimedByCaller) return tenantReminders
+
+  let claimedReminders: Reminder[] = []
+  try {
+    const claimedSnap = await getDocs(query(collection(db, 'reminders'), where('dogId', '==', dogId)))
+    claimedReminders = claimedSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+  } catch (err) {
+    console.error('Failed to fetch claimed-dog reminders for dog detail (expected until tenantId reassignment):', err)
+  }
+
+  const merged = new Map<string, Reminder>()
+  for (const r of [...tenantReminders, ...claimedReminders]) merged.set(r.id, r)
+  return Array.from(merged.values())
 }
 
 // All reminders for current user across all dogs (used in RemindersPage).

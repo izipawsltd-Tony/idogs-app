@@ -161,7 +161,7 @@ export default function DogDetailPage({ toast }: Props) {
           getScanCount(dogId!).catch(() => 0),
           getDogDocuments(dogId!).catch(() => []),
           getAuditLogs(d.tenantId, dogId!).catch(() => [] as AuditEntry[]),
-          getReminders(dogId!, user?.uid || '')
+          getReminders(dogId!, user?.uid || '', d)
             .then(r => ({ ok: true as const, data: r }))
             .catch(err => {
               console.error('Failed to load reminders:', err)
@@ -276,7 +276,7 @@ export default function DogDetailPage({ toast }: Props) {
   async function refreshReminders() {
     if (!dogId || !dog) return
     try {
-      const r = await getReminders(dogId, user?.uid || '')
+      const r = await getReminders(dogId, user?.uid || '', dog)
       setReminders(isCurrentOwner(dog, user?.uid || '') ? r : r.filter(rem => rem.status === 'completed'))
       setRemindersError(false)
     } catch (err) {
