@@ -499,19 +499,43 @@ export async function getAllRemindersForUser(userId: string): Promise<Reminder[]
   return Array.from(merged.values())
 }
 
-// Used in DashboardPage
+// Used in DashboardPage. Mirrors the claimed-dog merge in
+// getAllRemindersForUser() above so a claimed dog's reminder — still
+// tagged with the original breeder's tenantId until the next vaccine
+// edit or cron run reassigns it — shows up on the current owner's
+// Dashboard too, not just on /app/reminders and Dog Detail.
 export async function getAllPendingReminders(): Promise<Reminder[]> {
+  const userId = uid()
   const dogs = await getDogs()
   const dogIds = new Set(dogs.filter(d => d.status !== 'transferred').map(d => d.id))
-  if (dogIds.size === 0) return []
-  const q = query(
-    collection(db, 'reminders'),
-    where('tenantId', '==', uid())
-  )
-  const snap = await getDocs(q)
-  return snap.docs
+
+  const tenantSnap = dogIds.size > 0
+    ? await getDocs(query(collection(db, 'reminders'), where('tenantId', '==', userId)))
+    : null
+  const tenantReminders = (tenantSnap?.docs ?? [])
     .map(d => ({ ...d.data(), id: d.id } as Reminder))
     .filter(r => dogIds.has(r.dogId) && ['pending', 'overdue'].includes(r.status))
+
+  const claimedDogIds = dogs
+    .filter(d => d.currentOwnerId === userId && d.tenantId !== userId)
+    .map(d => d.id)
+  let claimedReminders: Reminder[] = []
+  if (claimedDogIds.length > 0) {
+    try {
+      const claimedSnap = await getDocs(
+        query(collection(db, 'reminders'), where('dogId', 'in', claimedDogIds.slice(0, 30)))
+      )
+      claimedReminders = claimedSnap.docs
+        .map(d => ({ ...d.data(), id: d.id } as Reminder))
+        .filter(r => ['pending', 'overdue'].includes(r.status))
+    } catch (err) {
+      console.error('Failed to fetch claimed-dog pending reminders (expected until tenantId reassignment):', err)
+    }
+  }
+
+  const merged = new Map<string, Reminder>()
+  for (const r of [...tenantReminders, ...claimedReminders]) merged.set(r.id, r)
+  return Array.from(merged.values())
 }
 
 export async function addReminder(data: Omit<Reminder, 'id' | 'createdAt'>): Promise<string> {
