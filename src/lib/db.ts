@@ -31,7 +31,7 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
   await setDoc(doc(db, 'users', userId), {
     ...data,
     uid: userId,
-    role: 'breeder',
+    role: data.role || 'breeder',
     plan: 'trial',
     trialEndsAt: trialEnd.toISOString(),
     createdAt: serverTimestamp(),
