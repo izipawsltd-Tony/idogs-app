@@ -39,7 +39,7 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
 }
 
 export async function updateUserProfile(userId: string, data: Partial<UserProfile>): Promise<void> {
-  await updateDoc(doc(db, 'users', userId), { ...data, updatedAt: serverTimestamp() })
+  await setDoc(doc(db, 'users', userId), { ...data, updatedAt: serverTimestamp() }, { merge: true })
 }
 
 export async function deleteUserData(userId: string): Promise<void> {
