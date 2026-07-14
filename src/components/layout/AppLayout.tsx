@@ -195,7 +195,11 @@ export default function AppLayout({ toast }: Props) {
   const dogLimit  = planCfg.dogLimit
   const dogPct    = dogLimit >= 9999 ? 100 : Math.min(100, Math.round((dogCount / dogLimit) * 100))
   const displayName = profile?.kennelName || profile?.firstName || 'User'
-  const roleLabel   = profile?.role === 'breeder' ? 'Breeder' : 'Pet Owner'
+  const roleLabel   =
+    profile?.role === 'breeder' ? 'Breeder' :
+    profile?.role === 'owner' ? 'Pet Owner' :
+    profile?.role === 'admin' ? 'Admin' :
+    'Account'
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--page-bg)' }}>
