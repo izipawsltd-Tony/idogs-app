@@ -733,16 +733,25 @@ export async function getDogDocuments(dogId: string): Promise<any[]> {
     })
 }
 
-export async function getAllDocumentsForUser(userId: string): Promise<any[]> {
-  const q = query(collection(db, 'documents'), where('tenantId', '==', userId))
-  const snap = await getDocs(q)
-  return snap.docs
-    .map(d => ({ id: d.id, ...d.data() } as any))
-    .sort((a: any, b: any) => {
-      const timeA = a.uploadedAt?.toDate?.()?.getTime() || 0
-      const timeB = b.uploadedAt?.toDate?.()?.getTime() || 0
-      return timeB - timeA
-    })
+// Derives accessible dog IDs from getDogs() (already correctly scoped to
+// tenantId OR currentOwnerId, with status overridden to 'transferred' for
+// a former breeder's own view) rather than querying `documents` by
+// tenantId directly — a tenantId-literal query only ever matches whoever
+// originally uploaded a document, so a claimed dog's pre-transfer
+// documents (uploaded by the original breeder) would never surface for
+// its new current owner. Fetching per-dog via getDogDocuments() reuses
+// the same dogId-scoped query (and dogBelongsToUser rule) already proven
+// safe and working — no rules change needed.
+export async function getAllDocumentsForUser(_userId: string): Promise<any[]> {
+  const dogs = await getDogs()
+  const accessibleDogIds = dogs.filter(d => d.status !== 'transferred').map(d => d.id)
+  if (accessibleDogIds.length === 0) return []
+  const perDog = await Promise.all(accessibleDogIds.map(id => getDogDocuments(id).catch(() => [])))
+  return perDog.flat().sort((a: any, b: any) => {
+    const timeA = a.uploadedAt?.toDate?.()?.getTime() || 0
+    const timeB = b.uploadedAt?.toDate?.()?.getTime() || 0
+    return timeB - timeA
+  })
 }
 
 export async function deleteDocument(id: string): Promise<void> {

@@ -442,6 +442,16 @@ export default function DogDetailPage({ toast }: Props) {
       setHealthTests(updatedHealth)
     }
 
+    // Refresh the Documents tab immediately — AIScan uploads the document
+    // via /api/upload-document (Admin SDK) before calling onResult, so by
+    // this point the Firestore doc already exists if filePath is set. A
+    // failed upload leaves filePath undefined, so no refetch (and no false
+    // record) happens for it.
+    if (filePath) {
+      const updatedDocs = await getDogDocuments(dogId).catch(() => documents)
+      setDocuments(updatedDocs)
+    }
+
     // Update dog fields from scan
     const updates: Partial<Dog> = {}
     if (result.microchip && !dog.microchip) updates.microchip = result.microchip
