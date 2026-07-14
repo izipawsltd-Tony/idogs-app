@@ -3,6 +3,17 @@ import { useParams, Link } from 'react-router-dom'
 import { formatDate, getDogAge, getVaccineStatus, LIFE_STAGE_EMOJI } from '../lib/utils'
 import type { Dog, VaccineRecord, HealthTest } from '../types'
 
+// ADR-002 §9 Decision 4 — exact public provenance values. Never a real
+// person/organisation name; label stays "Source" (ADR-001 §Decision 6's
+// neutral label for the QR Passport specifically). Legacy/unrecognised
+// sourceType falls back to the same BREEDER_ISSUED default the API
+// itself already applies server-side.
+const PROVENANCE_VALUES: Record<string, string> = {
+  BREEDER_ISSUED: 'Breeder-issued Dog ID',
+  OWNER_CREATED: 'Owner-created Dog ID',
+  IMPORTED: 'Imported record',
+}
+
 export default function PassportPublicPage() {
   const { passportId } = useParams<{ passportId: string }>()
   const [dog, setDog] = useState<Dog | null>(null)
@@ -55,6 +66,8 @@ export default function PassportPublicPage() {
 
   const vaccStatus = getVaccineStatus(vaccines[0]?.nextDue)
   const isTransferred = (dog as any).status === 'transferred'
+  const isRemembered = (dog as any).isDeceased === true
+  const provenanceValue = PROVENANCE_VALUES[(dog as any).sourceType] || PROVENANCE_VALUES.BREEDER_ISSUED
 
   return (
     <div style={{ minHeight: '100vh', background: '#F5F0E8' }}>
@@ -82,7 +95,7 @@ export default function PassportPublicPage() {
               border: '3px solid rgba(255,255,255,0.3)',
               boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
             }}>
-              {!dog.profilePhoto && LIFE_STAGE_EMOJI[dog.lifeStage]}
+              {!dog.profilePhoto && (isRemembered ? '♥️' : LIFE_STAGE_EMOJI[dog.lifeStage])}
             </div>
             <div>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em', marginBottom: 4 }}>{dog.name}</div>
@@ -107,6 +120,11 @@ export default function PassportPublicPage() {
                 {isTransferred && (
                   <span style={{ padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.15)' }}>
                     🔄 Transferred
+                  </span>
+                )}
+                {isRemembered && (
+                  <span style={{ padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.85)', border: '1px solid rgba(255,255,255,0.2)' }}>
+                    ♥️ Remembered
                   </span>
                 )}
               </div>
@@ -214,6 +232,7 @@ export default function PassportPublicPage() {
                 { label: 'Sex', value: dog.sex === 'female' ? '♀ Female' : '♂ Male' },
                 { label: 'Colour', value: dog.colour || '—' },
                 { label: 'Passport ID', value: dog.passportId, mono: true },
+                { label: 'Source', value: provenanceValue },
               ].map((row, i, arr) => (
                 <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', borderBottom: i < arr.length - 1 ? '1px solid #F5F0E8' : 'none', fontSize: 14 }}>
                   <span style={{ color: '#9A9891' }}>{row.label}</span>
@@ -223,6 +242,11 @@ export default function PassportPublicPage() {
               {isTransferred && (
                 <div style={{ margin: 16, padding: '10px 14px', background: '#F5F0E8', borderRadius: 10, fontSize: 13, color: '#5C5A54' }}>
                   🔄 This dog has been transferred to a new owner.
+                </div>
+              )}
+              {isRemembered && (
+                <div style={{ margin: 16, padding: '10px 14px', background: '#F5F0E8', borderRadius: 10, fontSize: 13, color: '#5C5A54' }}>
+                  ♥️ {dog.name}&apos;s story is remembered here, forever.
                 </div>
               )}
             </div>
