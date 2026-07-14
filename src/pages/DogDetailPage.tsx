@@ -114,6 +114,7 @@ export default function DogDetailPage({ toast }: Props) {
   const navigate = useNavigate()
   const { user, profile } = useAuth()
   const userState: string = (profile as any)?.state || 'SA'
+  const isOwner = profile?.role === 'owner'
   const [tab, setTab] = useState<Tab>('overview')
   const [dog, setDog] = useState<Dog | null>(null)
   const [vaccines, setVaccines] = useState<VaccineRecord[]>([])
@@ -556,7 +557,7 @@ export default function DogDetailPage({ toast }: Props) {
     { id: 'passport', label: 'QR Passport' },
     { id: 'timeline', label: 'Timeline' },
     { id: 'documents', label: `📄 Documents (${documents.length})` },
-    ...(dog.sex === 'female' ? [{ id: 'breeding' as Tab, label: '🌸 Breeding' }] : []),
+    ...(dog.sex === 'female' && !isOwner ? [{ id: 'breeding' as Tab, label: '🌸 Breeding' }] : []),
   ]
 
   return (
@@ -657,7 +658,7 @@ export default function DogDetailPage({ toast }: Props) {
         <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} onUpdateSale={async (firestoreUpdates, localUpdates) => {
@@ -679,7 +680,7 @@ export default function DogDetailPage({ toast }: Props) {
       {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} />}
       {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} />}
 
-      {tab === 'breeding' && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
+      {tab === 'breeding' && !isOwner && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
         await updateDog(dogId!, updates)
         setDog(prev => prev ? { ...prev, ...updates } : prev)
         toast('Breeding record updated')
@@ -865,17 +866,29 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, onUpdateBreederId, onUpdateSale }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, onUpdateBreederId, onUpdateSale }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number
   toast: (msg: string, type?: ToastMessage['type']) => void
+  isOwner: boolean
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
   onUpdateSale: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
 }) {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [editingBreederId, setEditingBreederId] = useState(false)
   const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
   const [breederIdValue, setBreederIdValue] = useState(dog.breederIdValue || '')
   const [savingBreederId, setSavingBreederId] = useState(false)
+
+  const sourceType = dog.sourceType || 'BREEDER_ISSUED'
+  let provenanceLabel = 'Source'
+  let provenanceValue = 'Imported record'
+  if (sourceType === 'BREEDER_ISSUED') {
+    provenanceLabel = 'Issued by'
+    provenanceValue = (dog.tenantId === user?.uid && profile?.kennelName) ? profile.kennelName : 'Breeder-issued Dog ID'
+  } else if (sourceType === 'OWNER_CREATED') {
+    provenanceLabel = 'Created by'
+    provenanceValue = (dog.currentOwnerId === user?.uid && profile?.kennelName) ? profile.kennelName : 'Current owner'
+  }
 
   async function handleSaveBreederId() {
     setSavingBreederId(true)
@@ -1008,6 +1021,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
           </div>
         )}
         <InfoRow label="Passport ID" value={dog.passportId} mono />
+        <InfoRow label={provenanceLabel} value={provenanceValue} />
       </InfoSection>
       <InfoSection title="Health summary">
         <InfoRow label="Vaccines recorded" value={String(vaccines.length)} />
@@ -1023,7 +1037,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
           <p style={{ fontSize: 14, color: 'var(--dark)', lineHeight: 1.6 }}>{dog.notes}</p>
         </div>
       )}
-      <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} />
+      {!isOwner && <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} />}
     </div>
   )
 }

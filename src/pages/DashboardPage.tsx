@@ -106,12 +106,14 @@ export default function DashboardPage({ toast }: Props) {
 
   if (loading) return <LoadingScreen />
 
+  const isOwner = profile?.role === 'owner'
+
   const STATS = [
     { value: activeDogs.length,                                     label: 'Dogs',              icon: '🐕',  link: '/app/dogs',      color: undefined },
     { value: activeDogs.filter(d => !d.isDeceased).length,         label: 'Active profiles',   icon: '✓',   link: '/app/dogs',      color: 'var(--brand-600)' },
     { value: overdueCount,                                          label: 'Overdue reminders', icon: '🔔',  link: '/app/reminders?filter=overdue', color: overdueCount > 0 ? 'var(--danger)' : undefined },
     { value: activeDogs.filter(d => d.lifeStage === 'puppy').length, label: 'Puppies',          icon: '🐾',  link: '/app/dogs?stage=puppies',      color: undefined },
-    { value: litters.length,                                        label: 'Litters',           icon: '🐣',  link: '/app/litters',   color: undefined },
+    ...(!isOwner || litters.length > 0 ? [{ value: litters.length, label: 'Litters', icon: '🐣', link: '/app/litters', color: undefined }] : []),
     { value: documents.length,                                      label: 'Documents',         icon: '📄',  link: '/app/documents', color: undefined },
   ]
 
@@ -159,42 +161,44 @@ export default function DashboardPage({ toast }: Props) {
             )}
           </PanelCard>
 
-          {/* Litters Overview */}
-          <PanelCard title="Litters Overview" viewAllTo="/app/litters" viewAllLabel="View all litters →">
-            {litters.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--light)', fontSize: 13 }}>
-                No litters recorded yet.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {litters.slice(0, 4).map(litter => (
-                  <div key={litter.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 12,
-                    padding: '10px 12px', borderRadius: 'var(--radius-md)',
-                    background: 'var(--gray-100)',
-                  }}>
-                    <span style={{ fontSize: 18 }}>🐣</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--brand-900)' }}>
-                        {litter.name || 'Unnamed litter'}
+          {/* Litters Overview — hidden for pet owners unless they actually have litters */}
+          {(!isOwner || litters.length > 0) && (
+            <PanelCard title="Litters Overview" viewAllTo="/app/litters" viewAllLabel="View all litters →">
+              {litters.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--light)', fontSize: 13 }}>
+                  No litters recorded yet.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {litters.slice(0, 4).map(litter => (
+                    <div key={litter.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '10px 12px', borderRadius: 'var(--radius-md)',
+                      background: 'var(--gray-100)',
+                    }}>
+                      <span style={{ fontSize: 18 }}>🐣</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--brand-900)' }}>
+                          {litter.name || 'Unnamed litter'}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--light)' }}>
+                          {litter.actualBirthDate
+                            ? `Born ${formatDate(litter.actualBirthDate)}`
+                            : litter.expectedDueDate
+                              ? `Due ${formatDate(litter.expectedDueDate)}`
+                              : 'Date not set'}
+                          {litter.puppyIds.length > 0 && ` · ${litter.puppyIds.length} pup${litter.puppyIds.length !== 1 ? 's' : ''}`}
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--light)' }}>
-                        {litter.actualBirthDate
-                          ? `Born ${formatDate(litter.actualBirthDate)}`
-                          : litter.expectedDueDate
-                            ? `Due ${formatDate(litter.expectedDueDate)}`
-                            : 'Date not set'}
-                        {litter.puppyIds.length > 0 && ` · ${litter.puppyIds.length} pup${litter.puppyIds.length !== 1 ? 's' : ''}`}
-                      </div>
+                      <span className={litter.actualBirthDate ? 'badge badge-active' : 'badge badge-gray'}>
+                        {litter.actualBirthDate ? 'Active' : 'Planned'}
+                      </span>
                     </div>
-                    <span className={litter.actualBirthDate ? 'badge badge-active' : 'badge badge-gray'}>
-                      {litter.actualBirthDate ? 'Active' : 'Planned'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </PanelCard>
+                  ))}
+                </div>
+              )}
+            </PanelCard>
+          )}
         </div>
 
         {/* Right column */}

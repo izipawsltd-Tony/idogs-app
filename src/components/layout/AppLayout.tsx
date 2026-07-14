@@ -53,6 +53,7 @@ type NavItemDef = {
   littersItem?: boolean
   documentsItem?: boolean
   remindersItem?: boolean
+  breederOnly?: boolean
 }
 
 const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
@@ -67,8 +68,8 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
   {
     label: 'BREEDING',
     items: [
-      { path: '/app/dogs?stage=puppies', label: 'Puppies', icon: '🐾' },
-      { path: '/app/buyers',  label: 'Buyers',  icon: '👥' },
+      { path: '/app/dogs?stage=puppies', label: 'Puppies', icon: '🐾', breederOnly: true },
+      { path: '/app/buyers',  label: 'Buyers',  icon: '👥', breederOnly: true },
     ],
   },
   {
@@ -77,8 +78,8 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
       { path: '/app/reminders',  label: 'Reminders',  icon: '🔔', remindersItem: true },
       { path: '/app/documents',  label: 'Documents',  icon: '📄', documentsItem: true },
       { path: '/app/audit',      label: 'Activity',   icon: '📋' },
-      { path: '/app/reports',    label: 'Insights',    icon: '📊' },
-      { path: '/app/export',     label: 'Export',      icon: '📥' },
+      { path: '/app/reports',    label: 'Insights',    icon: '📊', breederOnly: true },
+      { path: '/app/export',     label: 'Export',      icon: '📥', breederOnly: true },
     ],
   },
   {
@@ -178,6 +179,7 @@ export default function AppLayout({ toast }: Props) {
 
   function filterNavItems(items: NavItemDef[]) {
     return items.filter(item => {
+      if (item.breederOnly && isOwner) return false
       if (item.littersItem) {
         if (isOwner) return ownerHasLitters
         if (hideLitters) return false

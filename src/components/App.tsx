@@ -43,6 +43,12 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!user.emailVerified) return <Navigate to="/verify-email" replace />
   return <>{children}</>
 }
+
+function BreederOnlyRoute({ children }: { children: React.ReactNode }) {
+  const { profile } = useAuth()
+  if (profile?.role === 'owner') return <Navigate to="/app/dashboard" replace />
+  return <>{children}</>
+}
 export default function App() {
   const { toasts, toast, dismiss } = useToast()
 
@@ -75,14 +81,14 @@ export default function App() {
           <Route path="reminders" element={<RemindersPage toast={toast} />} />
           <Route path="settings" element={<SettingsPage toast={toast} />} />
           <Route path="documents" element={<DocumentsPage toast={toast} />} />
-          <Route path="export" element={<ExportPage toast={toast} />} />
+          <Route path="export" element={<BreederOnlyRoute><ExportPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="audit" element={<AuditPage toast={toast} />} />
           <Route path="billing" element={<BillingPage toast={toast} />} />
           <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
           <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
           <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppies" replace />} />
-          <Route path="buyers"  element={<BuyersPage />} />
-          <Route path="reports" element={<ReportsPage toast={toast} />} />
+          <Route path="buyers"  element={<BreederOnlyRoute><BuyersPage /></BreederOnlyRoute>} />
+          <Route path="reports" element={<BreederOnlyRoute><ReportsPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="claim-dogs" element={<ClaimDogPage toast={toast} />} />
         </Route>
 
