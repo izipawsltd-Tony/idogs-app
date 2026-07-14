@@ -61,9 +61,26 @@ service cloud.firestore {
       allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
       allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
     }
+    // NOTE: get and list are split (rather than a combined `read`) so that
+    // an existence-check on a not-yet-created reminder (e.g.
+    // upsertVaccineReminder()'s dedupe check before its first-ever write)
+    // doesn't get denied — `resource == null` for a get on a missing doc,
+    // and dereferencing resource.data on null previously errored out the
+    // whole rule, which Firestore treats as a deny. A missing document
+    // still exposes no data either way. `list` keeps the stricter
+    // tenantId-only check since query results always have real data.
     match /reminders/{id} {
-      allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+      allow get: if isSignedIn()
+        && (resource == null || resource.data.tenantId == request.auth.uid);
+
+      allow list: if isSignedIn()
+        && resource.data.tenantId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && request.resource.data.tenantId == request.auth.uid;
+
+      allow update, delete: if isSignedIn()
+        && resource.data.tenantId == request.auth.uid;
     }
     match /litters/{id} {
       allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
