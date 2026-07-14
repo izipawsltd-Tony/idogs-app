@@ -794,8 +794,28 @@ export async function deleteDocument(id: string): Promise<void> {
   await deleteDoc(doc(db, 'documents', id))
 }
 
+// ADR-002 Phase C2: scanLogs denies all client reads (see firestore.rules
+// comment on that collection) — a direct client query here always failed
+// permission-denied. Goes through the authenticated /api/scan-count
+// endpoint instead (Admin SDK, ownership-checked, aggregate-only). Throws
+// on failure rather than swallowing to 0 — same reasoning as
+// claimTransferredDogs() above: a real error must never be
+// indistinguishable from a genuine zero-scan dog. Callers that want a
+// safe "unavailable" UI state should catch this themselves.
 export async function getScanCount(dogId: string): Promise<number> {
-  const q = query(collection(db, 'scanLogs'), where('dogId', '==', dogId))
-  const snap = await getDocs(q)
-  return snap.size
+  if (!auth.currentUser) {
+    throw new Error('Not signed in')
+  }
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/scan-count', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Scan count request failed (${res.status})`)
+  }
+  const data = await res.json()
+  return typeof data.count === 'number' ? data.count : 0
 }

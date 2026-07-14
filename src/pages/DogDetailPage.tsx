@@ -125,7 +125,11 @@ export default function DogDetailPage({ toast }: Props) {
   const [notes, setNotes] = useState<ActivityNote[]>([])
   const [lifeStageEvents, setLifeStageEvents] = useState<AuditEntry[]>([])
   const [qrUrl, setQrUrl] = useState('')
-  const [scanCount, setScanCount] = useState(0)
+  // null = unavailable/unknown (load failed or not yet loaded) — must
+  // never be conflated with a genuine 0, which is why the load below
+  // does not catch getScanCount() into 0 like the other Promise.all
+  // entries (ADR-002 Phase C2).
+  const [scanCount, setScanCount] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [newNote, setNewNote] = useState('')
   const [newNoteDate, setNewNoteDate] = useState(() => new Date().toISOString().split('T')[0])
@@ -159,7 +163,7 @@ export default function DogDetailPage({ toast }: Props) {
           getWormingRecords(dogId!).catch(() => [] as WormingRecord[]),
           getHealthTests(dogId!).catch(() => [] as HealthTest[]),
           getActivityNotes(dogId!).catch(() => [] as ActivityNote[]),
-          getScanCount(dogId!).catch(() => 0),
+          getScanCount(dogId!).catch(() => null as number | null),
           getDogDocuments(dogId!).catch(() => []),
           getAuditLogs(d.tenantId, dogId!).catch(() => [] as AuditEntry[]),
           getReminders(dogId!, user?.uid || '', d)
@@ -877,7 +881,7 @@ function TransferModal({
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
 function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, onUpdateBreederId, onUpdateSale }: {
-  dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number
+  dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number | null
   toast: (msg: string, type?: ToastMessage['type']) => void
   isOwner: boolean
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
@@ -1039,7 +1043,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
         <InfoRow label="Next vaccine due" value={vaccines[0]?.nextDue ? formatDate(vaccines[0].nextDue) : '—'} />
         <InfoRow label="Worming records" value={String(wormings.length)} />
         <InfoRow label="Health tests" value={String(healthTests.length)} />
-        <InfoRow label="Passport scans" value={String(scanCount)} />
+        <InfoRow label="Passport scans" value={scanCount === null ? 'Unavailable' : String(scanCount)} />
       </InfoSection>
       {dog.notes && (
         <div className="card" style={{ gridColumn: '1 / -1' }}>
@@ -1906,7 +1910,7 @@ function RemindersTab({ reminders, setReminders, toast, error }: {
 // ── PASSPORT TAB ──────────────────────────────────────────────
 
 function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
-  dog: Dog; qrUrl: string; publicUrl: string; scanCount: number;
+  dog: Dog; qrUrl: string; publicUrl: string; scanCount: number | null;
   toast: (msg: string, type?: ToastMessage['type']) => void
 }) {
   function copyUrl() { navigator.clipboard.writeText(publicUrl); toast('Passport link copied!') }
@@ -1953,7 +1957,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)', marginBottom: 12 }}>Passport details</div>
           <InfoRow label="Passport ID" value={dog.passportId} mono />
           <InfoRow label="Public URL" value={publicUrl} />
-          <InfoRow label="Total scans" value={String(scanCount)} />
+          <InfoRow label="Total scans" value={scanCount === null ? 'Unavailable' : String(scanCount)} />
           <InfoRow label="Status" value={dog.isDeceased ? 'Remembered' : 'Active'} />
         </div>
         <div className="card">
