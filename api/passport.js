@@ -14,11 +14,18 @@
 // elsewhere) and isDeceased are added. Never add a real person's or
 // organisation's name/identity to this response — see ADR-002 §5/§7.
 //
+// ADR-002 Phase C1: rate-limited by client IP (see api/_lib/rate-limit.js
+// for the limiter itself and its documented serverless limitations). The
+// rate-limit check runs before any passportId validation or Firestore
+// query, so a 429 never differs in timing/shape based on whether the
+// requested passport would have existed.
+//
 // GET /api/passport?passportId=XXXXX
-// Returns: { dog: {...}, vaccines: [...], healthTests: [...] } | 404
+// Returns: { dog: {...}, vaccines: [...], healthTests: [...] } | 404 | 429
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
+import { checkRateLimit, getClientIp, hashClientKey } from './_lib/rate-limit.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -35,6 +42,15 @@ const db = getFirestore()
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  // Rate limit first, before any other validation or lookup — applies
+  // uniformly regardless of what's being requested or whether it exists.
+  const clientKey = hashClientKey(getClientIp(req))
+  const rateLimitResult = checkRateLimit(clientKey)
+  if (!rateLimitResult.allowed) {
+    res.setHeader('Retry-After', String(rateLimitResult.retryAfterSeconds))
+    return res.status(429).json({ error: 'Too many requests' })
   }
 
   const { passportId } = req.query

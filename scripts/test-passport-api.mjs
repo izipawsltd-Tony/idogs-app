@@ -41,6 +41,14 @@ function check(label, cond, extra = '') {
   else { console.log(`FAIL: ${label} ${extra}`); fail++ }
 }
 
+// ADR-002 Phase C1 — handler now checks rate-limiting first, which reads
+// req.headers/req.socket. All mock requests below go through this so
+// every call is well-formed; a fixed test IP is fine here since this
+// suite's ~6 calls stay far under the default per-window limit.
+function mockReq(query) {
+  return { method: 'GET', query, headers: { 'x-forwarded-for': '198.51.100.10' }, socket: {} }
+}
+
 function mockRes() {
   const res = { statusCode: 200, body: null }
   res.status = (code) => { res.statusCode = code; return res }
@@ -86,7 +94,7 @@ await seedDb.collection('dogs').doc(dog3Id).set({
 
 // ── Test 1: valid passport returns approved fields ──
 {
-  const req = { method: 'GET', query: { passportId: (await seedDb.collection('dogs').doc(dog1Id).get()).data().passportId } }
+  const req = mockReq({ passportId: (await seedDb.collection('dogs').doc(dog1Id).get()).data().passportId })
   const res = mockRes()
   await handler(req, res)
   check('Valid passport returns 200', res.statusCode === 200, `got ${res.statusCode}`)
@@ -126,7 +134,7 @@ await seedDb.collection('dogs').doc(dog3Id).set({
 
 // ── Test 2: legacy dog — sourceType fallback ──
 {
-  const req = { method: 'GET', query: { passportId: (await seedDb.collection('dogs').doc(dog2Id).get()).data().passportId } }
+  const req = mockReq({ passportId: (await seedDb.collection('dogs').doc(dog2Id).get()).data().passportId })
   const res = mockRes()
   await handler(req, res)
   check('Legacy dog (no sourceType field) falls back to BREEDER_ISSUED', res.body?.dog?.sourceType === 'BREEDER_ISSUED')
@@ -135,7 +143,7 @@ await seedDb.collection('dogs').doc(dog3Id).set({
 
 // ── Test 3: deceased dog ──
 {
-  const req = { method: 'GET', query: { passportId: (await seedDb.collection('dogs').doc(dog3Id).get()).data().passportId } }
+  const req = mockReq({ passportId: (await seedDb.collection('dogs').doc(dog3Id).get()).data().passportId })
   const res = mockRes()
   await handler(req, res)
   check('Deceased dog isDeceased=true in response', res.body?.dog?.isDeceased === true)
@@ -144,7 +152,7 @@ await seedDb.collection('dogs').doc(dog3Id).set({
 
 // ── Test 4: unknown passport returns safe not-found response ──
 {
-  const req = { method: 'GET', query: { passportId: `NONEXISTENT-${R}` } }
+  const req = mockReq({ passportId: `NONEXISTENT-${R}` })
   const res = mockRes()
   await handler(req, res)
   check('Unknown passport returns 404', res.statusCode === 404, `got ${res.statusCode}`)
@@ -153,7 +161,7 @@ await seedDb.collection('dogs').doc(dog3Id).set({
 
 // ── Test 5: missing passportId param ──
 {
-  const req = { method: 'GET', query: {} }
+  const req = mockReq({})
   const res = mockRes()
   await handler(req, res)
   check('Missing passportId returns 400', res.statusCode === 400, `got ${res.statusCode}`)

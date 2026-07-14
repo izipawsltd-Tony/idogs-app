@@ -64,6 +64,20 @@ service cloud.firestore {
         request.resource.data.createdByUserId == request.auth.uid;
     }
 
+    // ── passportReservations/{passportId} — uniqueness index for
+    // Dog.passportId (ADR-002 Phase C1). Document ID IS the passportId
+    // being claimed; existence alone is the uniqueness signal, so no
+    // client ever needs to read another user's reservation for the
+    // create flow to work correctly (the transaction in
+    // reservePassportId() checks existence via a read permitted here).
+    // Permanent once created — never updated or deleted, since a
+    // passportId must never be reassigned or freed for reuse.
+    match /passportReservations/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     // ── Records keyed by dogId — access follows the parent dog's ownership ──
     match /vaccineRecords/{id} {
       allow read, update, delete: if dogBelongsToUser(resource.data.dogId);

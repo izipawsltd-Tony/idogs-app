@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, setDoc, Timestamp
+  query, where, serverTimestamp, setDoc, Timestamp, runTransaction
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage } from '../types'
@@ -149,6 +149,42 @@ export async function getDogByPassportId(passportId: string): Promise<Dog | null
   return normalizeDog({ ...d.data(), id: d.id } as Dog)
 }
 
+// ADR-002 Phase C1 — passportId uniqueness. `dogs` documents use a
+// Firestore auto-generated ID, so passportId (a separate string field)
+// has no built-in uniqueness guarantee. `passportReservations/{passportId}`
+// is a dedicated index collection — its document ID IS the passportId —
+// used purely to atomically claim a candidate before it's written onto
+// any dog. A Firestore transaction's read-then-write is atomic against
+// concurrent transactions touching the same document, so two callers
+// racing on the exact same candidate can never both succeed: one wins
+// the reservation, the other's transaction throws and retries with a
+// fresh candidate. Bounded at MAX_PASSPORT_ID_ATTEMPTS — with a 32-char
+// alphabet and 4-char suffix (~1M combinations per name+year cohort),
+// exhausting every attempt on genuine collisions is not expected in
+// practice; a persistent failure past the bound surfaces as a thrown
+// error rather than silently reusing an existing ID.
+const MAX_PASSPORT_ID_ATTEMPTS = 5
+
+async function reservePassportId(namePart: string, yearPart: string): Promise<string> {
+  for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
+    const candidate = `${namePart}-${yearPart}-${nanoid(4)}`
+    const reservationRef = doc(db, 'passportReservations', candidate)
+    try {
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(reservationRef)
+        if (snap.exists()) throw new Error('PASSPORT_ID_TAKEN')
+        tx.set(reservationRef, { createdAt: serverTimestamp(), createdBy: uid() })
+      })
+      return candidate
+    } catch (err: any) {
+      if (err?.message !== 'PASSPORT_ID_TAKEN') throw err
+      // else: genuine collision on this specific candidate — loop and
+      // try a fresh one, up to the bound above.
+    }
+  }
+  throw new Error('Could not generate a unique passport ID — please try again')
+}
+
 // sourceType defaults to BREEDER_ISSUED so LittersPage.tsx's puppy-add
 // flow (and any other caller that doesn't pass one) is unaffected. Only
 // DogNewPage.tsx passes 'OWNER_CREATED' explicitly, for the pet-owner
@@ -164,7 +200,7 @@ export async function createDog(
   const now = new Date()
   const yearPart = data.dateOfBirth ? data.dateOfBirth.slice(0, 4) : now.getFullYear().toString()
   const namePart = (data.name || 'DOG').slice(0, 3).toUpperCase()
-  const passportId = `${namePart}-${yearPart}-${nanoid(4)}`
+  const passportId = await reservePassportId(namePart, yearPart)
   const ref = await addDoc(collection(db, 'dogs'), {
     ...data,
     tenantId: uid(),
