@@ -83,28 +83,32 @@ function relationshipBadge(rel: Relationship): { className: string; style?: Reac
 }
 
 // Resolve one dog to a single buyer identity + relationship.
-// transferredAt present => Transferred (prefer buyer* contact).
-// otherwise            => Reserved    (prefer reservedFor* contact).
+// transferredAt present => Transferred (buyer* contact only).
+// otherwise            => Reserved    (reservedFor* contact only).
 // Returns null when the dog has no buyer identity at all (skip it).
+//
+// M7_DATA_MODEL.md §1's locked rule is explicit: "Reservation writes
+// reservedFor* ONLY. Sale/transfer writes buyer* ONLY... this keeps
+// prospective buyer (reserved) and completed buyer (sold/transferred)
+// cleanly separable so Reports (§4.4) and Buyers (§5) can't confuse the
+// two." An earlier version of this function fell back to the OTHER
+// field set when the primary one was empty (e.g. transferred but
+// buyerEmail blank => fall back to reservedForEmail) — that's exactly
+// the confusion the locked rule forbids: a puppy can legitimately be
+// reserved by one person and sold to a different one, and falling back
+// would misattribute the sale to the original reserver instead of
+// correctly reporting "no contact on file for this transfer" (which
+// falls through to `key === null` below, listing the dog individually,
+// per §5's own documented behaviour for un-groupable contacts).
 function resolveIdentity(
   dog: Dog,
 ): { key: string; email: string; phone: string; name: string; relationship: Relationship } | null {
   const transferred = !!dog.transferredAt;
   const relationship: Relationship = transferred ? 'transferred' : 'reserved';
 
-  const email = transferred
-    ? normEmail(dog.buyerEmail) || normEmail(dog.reservedForEmail)
-    : normEmail(dog.reservedForEmail) || normEmail(dog.buyerEmail);
-
-  const phone = transferred
-    ? normPhone(dog.buyerPhone) || normPhone(dog.reservedForPhone)
-    : normPhone(dog.reservedForPhone) || normPhone(dog.buyerPhone);
-
-  const name = (
-    transferred
-      ? dog.buyerName || dog.reservedForName
-      : dog.reservedForName || dog.buyerName
-  ) || '';
+  const email = transferred ? normEmail(dog.buyerEmail) : normEmail(dog.reservedForEmail);
+  const phone = transferred ? normPhone(dog.buyerPhone) : normPhone(dog.reservedForPhone);
+  const name = (transferred ? dog.buyerName : dog.reservedForName) || '';
 
   const key = email || phone; // email is the primary key; phone is fallback
   if (!key) return null;

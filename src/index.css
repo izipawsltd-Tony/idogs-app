@@ -291,6 +291,14 @@ h1, h2, h3, h4, h5, h6 {
   .main-area { margin-left: 0 !important; }
   main { padding-bottom: 72px !important; }
 
+  /* Defensive backstop: clip rather than page-wide-scroll for any
+     individual card/row that's still a few px too wide on a narrow
+     viewport (the two real causes — the flex min-width:0 collapse and
+     unbroken long dog/litter names — are fixed at the source; this
+     only guards remaining edge cases so they clip invisibly instead of
+     forcing horizontal scroll on the whole page). */
+  .main-area { overflow-x: hidden; }
+
   /* Show mobile top bar */
   .mobile-topbar { display: flex !important; }
 

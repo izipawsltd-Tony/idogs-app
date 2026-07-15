@@ -178,7 +178,7 @@ export default function DashboardPage({ toast }: Props) {
                     }}>
                       <span style={{ fontSize: 18 }}>🐣</span>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--brand-900)' }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--brand-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {litter.name || 'Unnamed litter'}
                         </div>
                         <div style={{ fontSize: 11, color: 'var(--light)' }}>
@@ -325,7 +325,10 @@ function PanelCard({
 }) {
   return (
     <div className="card card-shadow">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+      {/* flexWrap so title + action + "View all" stack instead of forcing
+          a minimum row width wider than a narrow mobile viewport — this
+          header pattern is shared by every dashboard panel. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: 'var(--brand-900)', margin: 0 }}>
             {title}
@@ -370,7 +373,12 @@ function DogRow({ dog }: { dog: Dog }) {
           {!dog.profilePhoto && LIFE_STAGE_EMOJI[dog.lifeStage]}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--brand-900)' }}>{dog.name}</div>
+          {/* Long single-word names (no spaces, e.g. underscore-joined test
+              names) have no natural wrap point — without truncation they
+              force this row (and everything up the flex chain) wider than
+              a mobile viewport. Ellipsis needs both minWidth:0 above (so
+              the flex item can actually shrink) and overflow:hidden here. */}
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--brand-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.name}</div>
           <div style={{ fontSize: 11, color: 'var(--light)' }}>
             {dog.breed} · {dog.sex === 'female' ? '♀' : '♂'} · {getDogAge(dog.dateOfBirth)}
           </div>

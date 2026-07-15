@@ -407,6 +407,14 @@ export default function AppLayout({ toast }: Props) {
       {/* ── MAIN AREA ── */}
       <div className="main-area" style={{
         flex: 1,
+        // Flex items default to min-width: auto, which refuses to shrink
+        // below the intrinsic content width of whatever's inside (e.g. a
+        // CSS grid with minmax() tracks) — on mobile this silently forced
+        // the whole page wider than the viewport, causing horizontal
+        // scroll on every page under this layout, not just one. min-width:
+        // 0 is the standard fix: let flex-basis/width actually govern
+        // sizing instead of the content's minimum.
+        minWidth: 0,
         marginLeft: 'var(--sidebar-w)',
         minHeight: '100vh',
         display: 'flex',

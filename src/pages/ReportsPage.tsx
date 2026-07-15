@@ -29,6 +29,13 @@ function formatMonth(ym: string): string {
 export default function ReportsPage({ toast }: Props) {
   const { user } = useAuth()
   const [loading, setLoading] = useState(true)
+  // Explicit failure state, distinct from "loaded but empty" — a failed
+  // load must never silently fall through to a blank page with no
+  // explanation or way to recover (the four sections below each return
+  // null when their data is null, so a load() failure previously showed
+  // just the header with no content and no retry affordance, with the
+  // toast as the only, transient signal).
+  const [loadError, setLoadError] = useState(false)
   const [overview, setOverview] = useState<BreedingOverviewReport | null>(null)
   const [litter, setLitter] = useState<LitterProductionReport | null>(null)
   const [coverage, setCoverage] = useState<HealthCoverageReport | null>(null)
@@ -38,6 +45,7 @@ export default function ReportsPage({ toast }: Props) {
 
   async function load() {
     setLoading(true)
+    setLoadError(false)
     try {
       const [dogs, litters, profile] = await Promise.all([
         getDogs(),
@@ -54,6 +62,7 @@ export default function ReportsPage({ toast }: Props) {
       setCoverage(healthCoverage(dogs, healthByDog))
       setSales(salesAndTransfers(dogs))
     } catch {
+      setLoadError(true)
       toast('Failed to load reports', 'error')
     } finally {
       setLoading(false)
@@ -64,6 +73,15 @@ export default function ReportsPage({ toast }: Props) {
     <div style={{ padding: 40, display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', gap: 12 }}>
       <div className="spinner" />
       <p style={{ fontSize: 14, color: 'var(--light)' }}>Loading reports…</p>
+    </div>
+  )
+
+  if (loadError) return (
+    <div style={{ padding: 40, display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', gap: 12, textAlign: 'center' }}>
+      <div style={{ fontSize: 32 }}>⚠️</div>
+      <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--dark)' }}>Couldn't load your reports</p>
+      <p style={{ fontSize: 13, color: 'var(--light)', maxWidth: 360 }}>Something went wrong fetching your kennel's data. Your dogs and records are safe — this is just a load failure.</p>
+      <button className="btn btn-primary btn-sm" onClick={load}>Try again</button>
     </div>
   )
 

@@ -52,31 +52,29 @@ export default async function handler(req, res) {
   }
 
   if (!email) {
-    console.log('[claim-diag] No email in token, uid:', uid)
     return res.status(200).json({ claimed: 0 })
   }
 
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})
   const action = body.action === 'check' ? 'check' : 'claim'
 
-  console.log('[claim-diag] token email:', email, '| uid:', uid, '| action:', action, '| project:', process.env.FIREBASE_PROJECT_ID)
-
   try {
     const db = getFirestore()
 
-    // Diagnostic: check ALL dogs with this buyerEmail regardless of transferStatus
-    const allByEmail = await db.collection('dogs')
-      .where('buyerEmail', '==', email.toLowerCase())
-      .get()
-    console.log('[claim-diag] dogs with buyerEmail=' + email.toLowerCase() + ':', allByEmail.size,
-      allByEmail.docs.map(d => ({ id: d.id, name: d.data().name, status: d.data().status, transferStatus: d.data().transferStatus })))
-
+    // Match on status === 'transferred' rather than transferStatus ===
+    // 'pendingClaim'. transferDogOwnership() sets BOTH fields on every
+    // new transfer, but production dogs transferred before this
+    // rewrite only ever had `status: 'transferred'` — never
+    // `transferStatus` at all (that field didn't exist yet). Querying
+    // by transferStatus alone would silently orphan every
+    // already-transferred production dog: they'd never appear as
+    // claimable again, with no error and no visible sign anything was
+    // wrong. status is the one field both the old and new transfer
+    // paths always set, so it's the backward-compatible match.
     const dogsSnap = await db.collection('dogs')
       .where('buyerEmail', '==', email.toLowerCase())
-      .where('transferStatus', '==', 'pendingClaim')
+      .where('status', '==', 'transferred')
       .get()
-
-    console.log('[claim-diag] pendingClaim dogs:', dogsSnap.size)
 
     if (dogsSnap.empty) {
       return res.status(200).json({ dogs: [], claimed: 0 })
