@@ -33,9 +33,49 @@ service cloud.firestore {
     // read of the full dog document. Flag this before deploying if such a
     // page exists.
     match /dogs/{dogId} {
-      allow read, update, delete: if isSignedIn() &&
+      allow read: if isSignedIn() &&
         (resource.data.tenantId == request.auth.uid || resource.data.currentOwnerId == request.auth.uid);
-      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+
+      // Only the CURRENT owner may write — not the former breeder once a
+      // claim has moved currentOwnerId elsewhere (tenantId is permanent
+      // provenance for *read*, not an ongoing management right). Verified
+      // safe: transferDogOwnership() is only ever called while the caller
+      // still IS currentOwnerId (currentOwnerId only changes via the
+      // server-side claim route), so no legitimate flow needs tenantId-only
+      // write access. Also never reassigns tenantId/currentOwnerId/
+      // createdByUserId/sourceType — those are immutable via any client
+      // write, changed only by the Admin SDK claim route, which bypasses
+      // these rules entirely.
+      allow update: if isSignedIn() &&
+        resource.data.currentOwnerId == request.auth.uid &&
+        request.resource.data.tenantId == resource.data.tenantId &&
+        request.resource.data.currentOwnerId == resource.data.currentOwnerId &&
+        request.resource.data.createdByUserId == resource.data.createdByUserId &&
+        request.resource.data.sourceType == resource.data.sourceType;
+
+      allow delete: if isSignedIn() && resource.data.currentOwnerId == request.auth.uid;
+
+      // Creator becomes tenantId/currentOwnerId/createdByUserId — a client
+      // cannot assign ownership to anyone else at creation time either
+      // (createDog() always derives all three from the authenticated uid).
+      allow create: if isSignedIn() &&
+        request.resource.data.tenantId == request.auth.uid &&
+        request.resource.data.currentOwnerId == request.auth.uid &&
+        request.resource.data.createdByUserId == request.auth.uid;
+    }
+
+    // ── passportReservations/{passportId} — uniqueness index for
+    // Dog.passportId (ADR-002 Phase C1). Document ID IS the passportId
+    // being claimed; existence alone is the uniqueness signal, so no
+    // client ever needs to read another user's reservation for the
+    // create flow to work correctly (the transaction in
+    // reservePassportId() checks existence via a read permitted here).
+    // Permanent once created — never updated or deleted, since a
+    // passportId must never be reassigned or freed for reuse.
+    match /passportReservations/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
     }
 
     // ── Records keyed by dogId — access follows the parent dog's ownership ──
@@ -56,14 +96,38 @@ service cloud.firestore {
       allow create: if dogBelongsToUser(request.resource.data.dogId);
     }
 
-    // ── Records keyed by tenantId directly ──
+    // ── documents — access follows the parent dog's ownership, same as
+    // vaccineRecords/healthTests/activityNotes, so a claimed dog's
+    // pre-transfer documents stay visible to its new current owner. (A
+    // plain tenantId-literal rule here previously also broke
+    // getDogDocuments()'s dogId-only list query outright — Firestore
+    // denies a `list` query up front when its only where-clause doesn't
+    // match a literal field the rule compares against; a get()-based rule
+    // like dogBelongsToUser doesn't have that restriction.) ──
     match /documents/{id} {
-      allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow create: if dogBelongsToUser(request.resource.data.dogId);
     }
+    // NOTE: get and list are split (rather than a combined `read`) so that
+    // an existence-check on a not-yet-created reminder (e.g.
+    // upsertVaccineReminder()'s dedupe check before its first-ever write)
+    // doesn't get denied — `resource == null` for a get on a missing doc,
+    // and dereferencing resource.data on null previously errored out the
+    // whole rule, which Firestore treats as a deny. A missing document
+    // still exposes no data either way. `list` keeps the stricter
+    // tenantId-only check since query results always have real data.
     match /reminders/{id} {
-      allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+      allow get: if isSignedIn()
+        && (resource == null || resource.data.tenantId == request.auth.uid);
+
+      allow list: if isSignedIn()
+        && resource.data.tenantId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && request.resource.data.tenantId == request.auth.uid;
+
+      allow update, delete: if isSignedIn()
+        && resource.data.tenantId == request.auth.uid;
     }
     match /litters/{id} {
       allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;

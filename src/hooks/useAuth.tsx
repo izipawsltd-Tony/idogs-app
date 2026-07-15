@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsub
   }, [])
 
-  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber }: SignupFormData & { role?: string }) {
+  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber }: SignupFormData) {
     const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password)
     try {
       await sendEmailVerification(newUser)
@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         firstName,
         lastName,
         kennelName,
-        role: (role as any) || 'breeder',
+        role: role || 'breeder',
         plan: 'trial',
         ...(state && { state: state as UserProfile['state'] }),
         ...(breederNumber?.trim() && { breederIdValue: breederNumber.trim() }),

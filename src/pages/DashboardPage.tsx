@@ -75,7 +75,7 @@ export default function DashboardPage({ toast }: Props) {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Your dogs</h2>
-            <Link to="/app/dogs/new" className="btn btn-primary btn-sm">+ Add dog</Link>
+            <Link to="/app/dogs/new" className="btn btn-primary btn-sm">{profile?.role === 'owner' ? '+ Create Dog ID' : '+ Add dog'}</Link>
           </div>
 
           {dogs.length === 0 ? (

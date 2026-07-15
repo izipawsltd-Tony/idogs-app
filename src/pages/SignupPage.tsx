@@ -48,6 +48,7 @@ export default function SignupPage({ toast }: Props) {
         firstName: form.firstName,
         lastName: form.lastName,
         kennelName: accountType === 'breeder' ? form.kennelName : `${form.firstName} ${form.lastName}`,
+        role: accountType,
         state: form.state,
         breederNumber: form.breederNumber || undefined,
       })

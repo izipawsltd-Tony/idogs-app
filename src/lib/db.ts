@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, setDoc, Timestamp
+  query, where, serverTimestamp, setDoc, Timestamp, runTransaction
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage } from '../types'
@@ -31,15 +31,22 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
   await setDoc(doc(db, 'users', userId), {
     ...data,
     uid: userId,
-    role: 'breeder',
+    role: data.role || 'breeder',
     plan: 'trial',
     trialEndsAt: trialEnd.toISOString(),
     createdAt: serverTimestamp(),
   })
 }
 
+// Uses setDoc(..., {merge: true}) rather than updateDoc() — updateDoc()
+// carries an implicit currentDocument:{exists:true} precondition that,
+// against the real Firestore backend (not the emulator), silently failed
+// to persist users/{uid} writes (role/reminderDays/state changes all
+// accepted with no error but never actually took effect). setDoc merge
+// produces the same partial-field-merge result via a different write RPC
+// shape without that precondition.
 export async function updateUserProfile(userId: string, data: Partial<UserProfile>): Promise<void> {
-  await updateDoc(doc(db, 'users', userId), { ...data, updatedAt: serverTimestamp() })
+  await setDoc(doc(db, 'users', userId), { ...data, updatedAt: serverTimestamp() }, { merge: true })
 }
 
 export async function deleteUserData(userId: string): Promise<void> {
@@ -71,17 +78,31 @@ export async function deleteUserData(userId: string): Promise<void> {
 
 // ── DOGS ──────────────────────────────────────────────────────
 
+// Read-time-only normalisation (ADR-001) — never writes back to Firestore.
+// Every dog created before sourceType/createdByUserId existed only ever
+// came from the breeder-shaped creation flow, so absence of sourceType is
+// safely and unambiguously BREEDER_ISSUED, never an unknown/misclassified
+// state. Shared by every place a raw Firestore snapshot becomes a Dog
+// (getDog, getDogs, getDogByPassportId) so they cannot diverge.
+function normalizeDog(raw: Dog): Dog {
+  return {
+    ...raw,
+    sourceType: raw.sourceType ?? 'BREEDER_ISSUED',
+    createdByUserId: raw.createdByUserId ?? raw.tenantId,
+  }
+}
+
 export async function getDogs(): Promise<Dog[]> {
   const currentUid = uid()
   if (!currentUid) return []
   const snap = await getDocs(query(collection(db, 'dogs'), where('tenantId', '==', currentUid)))
-  return snap.docs.map(d => ({ ...d.data(), id: d.id } as Dog))
+  return snap.docs.map(d => normalizeDog({ ...d.data(), id: d.id } as Dog))
 }
 
 export async function getDog(id: string): Promise<Dog | null> {
   const snap = await getDoc(doc(db, 'dogs', id))
   if (!snap.exists()) return null
-  return { ...snap.data(), id: snap.id } as Dog
+  return normalizeDog({ ...snap.data(), id: snap.id } as Dog)
 }
 
 export async function getDogByPassportId(passportId: string): Promise<Dog | null> {
@@ -89,19 +110,54 @@ export async function getDogByPassportId(passportId: string): Promise<Dog | null
   const snap = await getDocs(q)
   if (snap.empty) return null
   const d = snap.docs[0]
-  return { ...d.data(), id: d.id } as Dog
+  return normalizeDog({ ...d.data(), id: d.id } as Dog)
 }
 
-export async function createDog(data: DogFormData): Promise<string> {
+// ADR-002 Phase C1 — claims a passportId atomically via a Firestore
+// transaction against passportReservations/{passportId} (doc ID IS the
+// value being uniquified; existence alone is the uniqueness signal).
+// Bounded retry on collision so a crowded namespace fails safely instead
+// of looping forever or silently reusing an ID.
+const MAX_PASSPORT_ID_ATTEMPTS = 5
+
+async function reservePassportId(namePart: string, yearPart: string): Promise<string> {
+  for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
+    const candidate = `${namePart}-${yearPart}-${nanoid(4)}`
+    const reservationRef = doc(db, 'passportReservations', candidate)
+    try {
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(reservationRef)
+        if (snap.exists()) throw new Error('PASSPORT_ID_TAKEN')
+        tx.set(reservationRef, { createdAt: serverTimestamp(), createdBy: uid() })
+      })
+      return candidate
+    } catch (err: any) {
+      if (err?.message !== 'PASSPORT_ID_TAKEN') throw err
+    }
+  }
+  throw new Error('Could not generate a unique passport ID — please try again')
+}
+
+// ADR-001 Phase 2 — sourceType defaults to 'BREEDER_ISSUED' so both
+// existing callers (DogNewPage.tsx breeder flow, LittersPage.tsx puppy-add
+// flow) are unaffected unless they explicitly opt into 'OWNER_CREATED'.
+// tenantId/currentOwnerId/createdByUserId are always derived from the
+// authenticated session — never accepted from the caller — so ownership
+// can never be assigned to another user. originBreederId is only written
+// for the BREEDER_ISSUED branch, since it would be a meaningless copy of
+// tenantId for an owner-created dog.
+export async function createDog(data: DogFormData, sourceType: 'BREEDER_ISSUED' | 'OWNER_CREATED' = 'BREEDER_ISSUED'): Promise<string> {
   const now = new Date()
   const yearPart = data.dateOfBirth ? data.dateOfBirth.slice(0, 4) : now.getFullYear().toString()
   const namePart = (data.name || 'DOG').slice(0, 3).toUpperCase()
-  const passportId = `${namePart}-${yearPart}-${nanoid(4)}`
+  const passportId = await reservePassportId(namePart, yearPart)
   const ref = await addDoc(collection(db, 'dogs'), {
     ...data,
     tenantId: uid(),
-    originBreederId: uid(),
+    ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: uid() } : {}),
     currentOwnerId: uid(),
+    createdByUserId: uid(),
+    sourceType,
     passportId,
     lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
     isDeceased: false,
@@ -476,8 +532,28 @@ export async function getAllDocumentsForUser(userId: string): Promise<any[]> {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
 }
 
+// ADR-002 Phase C2: scanLogs denies all client reads (see firestore.rules
+// comment on that collection) — a direct client query here always failed
+// permission-denied. Goes through the authenticated /api/scan-count
+// endpoint instead (Admin SDK, ownership-checked, aggregate-only). Throws
+// on failure rather than swallowing to 0 — same reasoning as
+// claimTransferredDogs() above: a real error must never be
+// indistinguishable from a genuine zero-scan dog. Callers that want a
+// safe "unavailable" UI state should catch this themselves.
 export async function getScanCount(dogId: string): Promise<number> {
-  const q = query(collection(db, 'scanLogs'), where('dogId', '==', dogId))
-  const snap = await getDocs(q)
-  return snap.size
+  if (!auth.currentUser) {
+    throw new Error('Not signed in')
+  }
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/scan-count', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Scan count request failed (${res.status})`)
+  }
+  const data = await res.json()
+  return typeof data.count === 'number' ? data.count : 0
 }
