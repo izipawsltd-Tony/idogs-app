@@ -74,7 +74,11 @@ export default function DogDetailPage({ toast }: Props) {
   const [notes, setNotes] = useState<ActivityNote[]>([])
   const [lifeStageEvents, setLifeStageEvents] = useState<AuditEntry[]>([])
   const [qrUrl, setQrUrl] = useState('')
-  const [scanCount, setScanCount] = useState(0)
+  // null = unavailable/unknown (load failed or not yet loaded) — must
+  // never be conflated with a genuine 0, which is why the load below
+  // does not catch getScanCount() into 0 like the other Promise.all
+  // entries (ADR-002 Phase C2).
+  const [scanCount, setScanCount] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [newNote, setNewNote] = useState('')
   const [newNoteDate, setNewNoteDate] = useState(() => new Date().toISOString().split('T')[0])
@@ -109,7 +113,7 @@ export default function DogDetailPage({ toast }: Props) {
           getHealthTests(dogId!).catch(() => [] as HealthTest[]),
           getReminders(dogId!).catch(() => [] as Reminder[]),
           getActivityNotes(dogId!).catch(() => [] as ActivityNote[]),
-          getScanCount(dogId!).catch(() => 0),
+          getScanCount(dogId!).catch(() => null as number | null),
           getDogDocuments(dogId!).catch(() => []),
           getAuditLogs(d.tenantId, dogId!).catch(() => [] as AuditEntry[]),
         ])
@@ -360,6 +364,16 @@ export default function DogDetailPage({ toast }: Props) {
         performedBy: user?.uid || '',
         performedByEmail: user?.email || '',
       })
+    }
+
+    // Refresh the Documents tab immediately — AIScan uploads the document
+    // via /api/upload-document (Admin SDK) before calling onResult, so by
+    // this point the Firestore doc already exists if filePath is set. A
+    // failed upload leaves filePath undefined, so no refetch (and no false
+    // record) happens for it.
+    if (filePath) {
+      const updatedDocs = await getDogDocuments(dogId).catch(() => documents)
+      setDocuments(updatedDocs)
     }
 
     // Update dog fields from scan
@@ -751,15 +765,29 @@ function TransferModal({
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
 function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, onUpdateBreederId }: {
-  dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number
+  dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number | null
   toast: (msg: string, type?: ToastMessage['type']) => void
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
 }) {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [editingBreederId, setEditingBreederId] = useState(false)
   const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
   const [breederIdValue, setBreederIdValue] = useState(dog.breederIdValue || '')
   const [savingBreederId, setSavingBreederId] = useState(false)
+
+  // ADR-001 §Decision 6 — provenance display, never a real person/
+  // organisation name beyond the caller's own kennelName when they are
+  // the party the label refers to.
+  const sourceType = dog.sourceType || 'BREEDER_ISSUED'
+  let provenanceLabel = 'Source'
+  let provenanceValue = 'Imported record'
+  if (sourceType === 'BREEDER_ISSUED') {
+    provenanceLabel = 'Issued by'
+    provenanceValue = (dog.tenantId === user?.uid && profile?.kennelName) ? profile.kennelName : 'Breeder-issued Dog ID'
+  } else if (sourceType === 'OWNER_CREATED') {
+    provenanceLabel = 'Created by'
+    provenanceValue = (dog.currentOwnerId === user?.uid && profile?.kennelName) ? profile.kennelName : 'Current owner'
+  }
 
   async function handleSaveBreederId() {
     setSavingBreederId(true)
@@ -892,6 +920,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
           </div>
         )}
         <InfoRow label="Passport ID" value={dog.passportId} mono />
+        <InfoRow label={provenanceLabel} value={provenanceValue} />
       </InfoSection>
       <InfoSection title="Health summary">
         <InfoRow label="Vaccines recorded" value={String(vaccines.length)} />
@@ -899,7 +928,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, o
         <InfoRow label="Next vaccine due" value={vaccines[0]?.nextDue ? formatDate(vaccines[0].nextDue) : '—'} />
         <InfoRow label="Worming records" value={String(wormings.length)} />
         <InfoRow label="Health tests" value={String(healthTests.length)} />
-        <InfoRow label="Passport scans" value={String(scanCount)} />
+        <InfoRow label="Passport scans" value={scanCount === null ? 'Unavailable' : String(scanCount)} />
       </InfoSection>
       {dog.notes && (
         <div className="card" style={{ gridColumn: '1 / -1' }}>
@@ -1604,7 +1633,7 @@ function RemindersTab({ reminders, setReminders, toast }: {
 // ── PASSPORT TAB ──────────────────────────────────────────────
 
 function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
-  dog: Dog; qrUrl: string; publicUrl: string; scanCount: number;
+  dog: Dog; qrUrl: string; publicUrl: string; scanCount: number | null;
   toast: (msg: string, type?: ToastMessage['type']) => void
 }) {
   function copyUrl() { navigator.clipboard.writeText(publicUrl); toast('Passport link copied!') }
@@ -1651,7 +1680,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)', marginBottom: 12 }}>Passport details</div>
           <InfoRow label="Passport ID" value={dog.passportId} mono />
           <InfoRow label="Public URL" value={publicUrl} />
-          <InfoRow label="Total scans" value={String(scanCount)} />
+          <InfoRow label="Total scans" value={scanCount === null ? 'Unavailable' : String(scanCount)} />
           <InfoRow label="Status" value={dog.isDeceased ? 'Remembered' : 'Active'} />
         </div>
         <div className="card">
