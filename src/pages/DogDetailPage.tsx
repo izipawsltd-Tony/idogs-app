@@ -42,7 +42,7 @@ async function viewDocument(
     return
   }
 
-  // To bypass browser popup blockers, open the new tab synchronously 
+  // To bypass browser popup blockers, open the new tab synchronously
   // before the async fetch, then update its URL once the signed URL is returned.
   const newWin = window.open('about:blank', '_blank')
   if (newWin) {
@@ -2056,7 +2056,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast }: { documents: 
                 >
                   View ↗
                 </button>
-                <button 
+                <button
                   onClick={async () => {
                     if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
                       try {
@@ -2068,7 +2068,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast }: { documents: 
                       }
                     }
                   }}
-                  className="btn btn-ghost btn-sm" 
+                  className="btn btn-ghost btn-sm"
                   style={{ color: 'var(--error)' }}
                 >
                   🗑️ Remove from list

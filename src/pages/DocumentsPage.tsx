@@ -44,7 +44,7 @@ async function viewDocument(
     return
   }
 
-  // To bypass browser popup blockers, open the new tab synchronously 
+  // To bypass browser popup blockers, open the new tab synchronously
   // before the async fetch, then update its URL once the signed URL is returned.
   const newWin = window.open('about:blank', '_blank')
   if (newWin) {
@@ -227,13 +227,13 @@ export default function DocumentsPage({ toast }: Props) {
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
-                  <button 
-                    onClick={() => viewDocument(user, toast, doc.filePath || doc.storagePath, doc.fileUrl)} 
-                    className="btn btn-secondary btn-sm" 
+                  <button
+                    onClick={() => viewDocument(user, toast, doc.filePath || doc.storagePath, doc.fileUrl)}
+                    className="btn btn-secondary btn-sm"
                   >
                     View ↗
                   </button>
-                  <button 
+                  <button
                     onClick={async () => {
                       if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
                         try {
@@ -245,7 +245,7 @@ export default function DocumentsPage({ toast }: Props) {
                         }
                       }
                     }}
-                    className="btn btn-ghost btn-sm" 
+                    className="btn btn-ghost btn-sm"
                     style={{ color: 'var(--error)' }}
                   >
                     🗑️ Remove from list
