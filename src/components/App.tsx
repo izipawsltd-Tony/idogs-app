@@ -28,8 +28,13 @@ import PrivacyPage from '../pages/PrivacyPage'
 import PassportPublicPage from '../pages/PassportPublicPage'
 import ForgotPasswordPage from '../pages/ForgotPasswordPage'
 import NotFoundPage from '../pages/NotFoundPage'
+import ComingSoonPage from '../pages/ComingSoonPage'
+import ReportsPage from '../pages/ReportsPage'
+import BuyersPage from '../pages/BuyersPage'
+import ClaimDogPage from '../pages/ClaimDogPage'
 
 import AppLayout from './layout/AppLayout'
+import LoadingScreen from './ui/LoadingScreen'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -39,30 +44,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-function LoadingScreen() {
-  return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: 'var(--sand)',
-    }}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{
-          width: 40, height: 40,
-          background: 'var(--green)',
-          borderRadius: 10,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          margin: '0 auto 16px',
-          fontSize: 20,
-        }}>🐾</div>
-        <div className="spinner" style={{ margin: '0 auto' }} />
-      </div>
-    </div>
-  )
+function BreederOnlyRoute({ children }: { children: React.ReactNode }) {
+  const { profile } = useAuth()
+  if (profile?.role === 'owner') return <Navigate to="/app/dashboard" replace />
+  return <>{children}</>
 }
-
 export default function App() {
   const { toasts, toast, dismiss } = useToast()
 
@@ -95,11 +81,15 @@ export default function App() {
           <Route path="reminders" element={<RemindersPage toast={toast} />} />
           <Route path="settings" element={<SettingsPage toast={toast} />} />
           <Route path="documents" element={<DocumentsPage toast={toast} />} />
-          <Route path="export" element={<ExportPage toast={toast} />} />
+          <Route path="export" element={<BreederOnlyRoute><ExportPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="audit" element={<AuditPage toast={toast} />} />
           <Route path="billing" element={<BillingPage toast={toast} />} />
           <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
           <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
+          <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppies" replace />} />
+          <Route path="buyers"  element={<BreederOnlyRoute><BuyersPage /></BreederOnlyRoute>} />
+          <Route path="reports" element={<BreederOnlyRoute><ReportsPage toast={toast} /></BreederOnlyRoute>} />
+          <Route path="claim-dogs" element={<ClaimDogPage toast={toast} />} />
         </Route>
 
         <Route path="*" element={<NotFoundPage />} />

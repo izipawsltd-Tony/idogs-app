@@ -1,11 +1,27 @@
 /* ── DESIGN TOKENS ── */
 :root {
+  /* Brand palette (canonical) */
+  --brand-900: #1A3A2A;   /* sidebar text, headings */
+  --brand-600: #2E7D4E;   /* primary action — only brand color on interactive elements */
+  --brand-300: #6BAE7B;   /* decorative only — NOT for text on white */
+  --brand-50:  #F3F8F4;   /* hover/selected backgrounds (tint 8% of brand-300) */
+
+  /* Gold — premium only */
+  --gold-500: #D4AF37;
+  --gold-50:  #FAF7EB;    /* badge background (tint 10% of gold-500) */
+
+  /* Neutral gray */
+  --gray-100: #F2F4F7;    /* page background */
+
+  /* Legacy green aliases (backward compat — do not add new uses) */
   --green: #085041;
   --green-mid: #1D9E75;
   --green-light: #E1F5EE;
   --green-pale: #F0FAF5;
   --gold: #C8971F;
   --gold-light: #FDF3DC;
+
+  /* Neutral palette */
   --sand: #F5F0E8;
   --sand-dark: #EDE7DB;
   --dark: #1A1917;
@@ -13,18 +29,50 @@
   --light: #9A9891;
   --border: #E2DFD8;
   --white: #FFFFFF;
-  --success: #1D9E75;
-  --warning: #C8971F;
-  --error: #C0392B;
+
+  /* Semantic colors */
+  --success: #2E7D4E;
+  --warning: #B45309;
+  --danger:  #B91C1C;
+  --info:    #1D4ED8;
+  --error:   #B91C1C;     /* alias → danger */
+
+  /* Button hover/active (brand-600 darkened, no color-mix) */
+  --brand-600-hover:  #256640;
+  --brand-600-active: #1E5534;
+
+  /* Typography */
   --font-display: 'Plus Jakarta Sans', -apple-system, sans-serif;
   --font-body: 'Inter', -apple-system, sans-serif;
+
+  /* Radii */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
   --radius-xl: 24px;
+
+  /* Shadows */
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
   --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.1);
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.04), 0 2px 8px rgba(0,0,0,0.06);
+
+  /* Layout */
+  --page-bg: var(--gray-100);
+  --sidebar-bg: #FFFFFF;
+  --topbar-h: 60px;
+  --sidebar-w: 240px;
+
+  /* Spacing scale */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
 }
 
 /* ── RESET ── */
@@ -71,8 +119,9 @@ h1, h2, h3, h4, h5, h6 {
   line-height: 1;
 }
 .btn:active { transform: scale(0.98); }
-.btn-primary { background: var(--green); color: #fff; border-color: var(--green); }
-.btn-primary:hover { background: #0a6350; border-color: #0a6350; }
+.btn-primary { background: var(--brand-600); color: #fff; border-color: var(--brand-600); }
+.btn-primary:hover { background: var(--brand-600-hover); border-color: var(--brand-600-hover); }
+.btn-primary:active { background: var(--brand-600-active); border-color: var(--brand-600-active); }
 .btn-secondary { background: transparent; color: var(--dark); border-color: var(--border); }
 .btn-secondary:hover { border-color: var(--green); color: var(--green); }
 .btn-ghost { background: transparent; color: var(--mid); border-color: transparent; }
@@ -116,6 +165,7 @@ h1, h2, h3, h4, h5, h6 {
 /* ── CARD ── */
 .card { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px 24px; }
 .card-sm { padding: 14px 16px; border-radius: var(--radius-md); }
+.card-shadow { box-shadow: var(--shadow-card); }
 
 /* ── BADGE ── */
 .badge {
@@ -123,10 +173,13 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 11px; font-weight: 600; padding: 3px 9px;
   border-radius: 20px; letter-spacing: 0.01em;
 }
-.badge-green { background: var(--green-light); color: var(--green); }
-.badge-gold { background: var(--gold-light); color: var(--gold); }
-.badge-red { background: #FDEDED; color: var(--error); }
-.badge-gray { background: var(--sand); color: var(--mid); }
+.badge-green  { background: var(--brand-50);   color: var(--brand-600); }
+.badge-gold   { background: var(--gold-50);    color: var(--gold-500); }
+.badge-red    { background: #FDEDED;           color: var(--danger);   }
+.badge-gray   { background: var(--sand);       color: var(--mid);      }
+/* Domain aliases */
+.badge-active { background: var(--brand-50);  color: var(--success); }
+.badge-closed { background: var(--sand);      color: var(--mid);     }
 
 /* ── LAYOUT ── */
 .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
@@ -231,8 +284,20 @@ h1, h2, h3, h4, h5, h6 {
   /* Hide desktop sidebar */
   aside { display: none !important; }
 
+  /* Hide desktop topbar */
+  .desktop-topbar { display: none !important; }
+
   /* Main content full width + bottom padding for nav */
-  main { margin-left: 0 !important; padding-bottom: 72px !important; }
+  .main-area { margin-left: 0 !important; }
+  main { padding-bottom: 72px !important; }
+
+  /* Defensive backstop: clip rather than page-wide-scroll for any
+     individual card/row that's still a few px too wide on a narrow
+     viewport (the two real causes — the flex min-width:0 collapse and
+     unbroken long dog/litter names — are fixed at the source; this
+     only guards remaining edge cases so they clip invisibly instead of
+     forcing horizontal scroll on the whole page). */
+  .main-area { overflow-x: hidden; }
 
   /* Show mobile top bar */
   .mobile-topbar { display: flex !important; }
@@ -288,6 +353,21 @@ h1, h2, h3, h4, h5, h6 {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
+}
+
+/* ── TABLET (769–1024px) ── */
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* Slim the sidebar so content isn't squeezed. --sidebar-w covers shells that
+     read the var; the explicit aside/.main-area rules cover shells that hardcode 240px. */
+  :root { --sidebar-w: 200px; }
+  aside { width: 200px !important; }
+  .main-area { margin-left: 200px !important; }
+
+  /* Tighten page padding (pages use inline padding: 32) */
+  div[style*="padding: 32"] { padding: 20px !important; }
+
+  /* Stack the dashboard 2-col so the 340px rail doesn't crush the main panel */
+  div[style*="1fr 340px"] { grid-template-columns: 1fr !important; }
 }
 
 @media (min-width: 769px) {

@@ -95,27 +95,39 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
         ? await readPDF(file)
         : await resizeImage(file)
 
+      let scanData: ScanResult | null = null
+      let scanError = ''
+
       if (!user) {
         toast('Please sign in to scan documents', 'error')
         setScanning(false)
         return
       }
-      const scanIdToken = await user.getIdToken()
-      const response = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${scanIdToken}` },
-        body: JSON.stringify({ image: base64, mediaType }),
-      })
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}))
-        throw new Error(err.error || 'Scan failed')
+      // 1. Attempt AI Scan
+      try {
+        const scanIdToken = await user.getIdToken()
+        const response = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${scanIdToken}` },
+          body: JSON.stringify({ image: base64, mediaType }),
+        })
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}))
+          throw new Error(err.error || 'Scan failed')
+        }
+        scanData = await response.json()
+      } catch (err: any) {
+        console.error('Scan API failed:', err)
+        scanError = err.message || 'Scan failed'
       }
 
-      const data: ScanResult = await response.json()
-      setResult(data)
+      if (scanData) {
+        setResult(scanData)
+      }
 
-      // Upload document FIRST, get filePath, THEN call onResult with filePath
+      // 2. Upload document FIRST, get filePath, THEN call onResult with filePath
       let filePath: string | undefined
       if (dogId && user) {
         try {
@@ -127,18 +139,26 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
               base64,
               mediaType,
               dogId,
-              documentType: data.documentType || 'other',
+              documentType: scanData?.documentType || 'other',
               extractedData: {
-                dogName: data.dogName,
-                vaccines: data.vaccines?.length || 0,
-                healthTest: data.healthTest?.testType || null,
+                dogName: scanData?.dogName || null,
+                vaccines: scanData?.vaccines?.length || 0,
+                healthTest: scanData?.healthTest?.testType || null,
               },
             }),
           })
           if (uploadRes.ok) {
             const uploadData = await uploadRes.json()
             filePath = uploadData.filePath
-            toast('Document scanned & saved! ✓')
+            if (scanData) {
+              toast('Document scanned & saved! ✓')
+            } else {
+              if (scanError.includes('ANTHROPIC_API_KEY not set')) {
+                toast('AI scan is not configured yet. The document was uploaded, but automatic extraction is unavailable.', 'info')
+              } else {
+                toast(`The document was uploaded, but AI scan failed: ${scanError}`, 'info')
+              }
+            }
           } else {
             // FIX: previously this branch was silently skipped and the
             // generic success toast below still fired regardless, so a
@@ -158,11 +178,13 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
           toast('Scanned, but the document file could not be saved — record added without a viewable file', 'info')
         }
       } else {
-        toast('Document scanned!')
+        if (scanData) toast('Document scanned!')
       }
 
       // Call onResult AFTER upload so filePath is available for saving to records
-      onResult(data, filePath)
+      // Even if scanData is null, we can call onResult so the parent component can refresh document lists
+      const resultData = scanData || { documentType: 'other', dogName: null, breed: null, dateOfBirth: null, microchip: null, vaccines: [], healthTest: null, ankc: null, notes: null }
+      onResult(resultData, filePath)
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Scan failed', 'error')
     } finally {

@@ -24,6 +24,42 @@ const sns = new SNSClient({
   },
 })
 
+// Dogs eligible for reminder processing under `tenantId` — mirrors the
+// ownership rule getDogs() uses client-side. tenantId permanently stays
+// the original breeder (needed for historical/audit records), so a plain
+// tenantId query would keep matching a dog forever, even after a buyer
+// claims it (status resets to 'active' on claim). currentOwnerId is the
+// source of truth for who should actually be reminded/emailed/SMS'd:
+//  - currentOwnerId missing → legacy record, fall back to tenantId
+//  - currentOwnerId === tenantId → still owned by this user, include
+//  - currentOwnerId !== tenantId → claimed by someone else, exclude
+//  - status === 'transferred' → pendingClaim, no active owner yet, exclude
+// The currentOwnerId query below also lets a buyer who has claimed a dog
+// start receiving its reminders under their own tenantId once processed.
+async function getReminderEligibleDogs(tenantId) {
+  const [byTenant, byOwner] = await Promise.all([
+    db.collection('dogs').where('tenantId', '==', tenantId).get(),
+    db.collection('dogs').where('currentOwnerId', '==', tenantId).get(),
+  ])
+
+  const dogs = new Map()
+
+  byTenant.docs.forEach(d => {
+    const data = d.data()
+    if (data.status === 'transferred') return
+    if (data.currentOwnerId && data.currentOwnerId !== tenantId) return
+    dogs.set(d.id, { id: d.id, ...data })
+  })
+
+  byOwner.docs.forEach(d => {
+    const data = d.data()
+    if (data.status === 'transferred') return
+    dogs.set(d.id, { id: d.id, ...data })
+  })
+
+  return Array.from(dogs.values())
+}
+
 async function sendSMS(phone, message) {
   const command = new PublishCommand({
     Message: message,
@@ -119,15 +155,11 @@ export default async function handler(req, res) {
       const hasSmsAddon = user.smsAddon === true
       const phone = user.phone
 
-      // Get all dogs for this user
-      const dogsSnap = await db.collection('dogs')
-        .where('tenantId', '==', tenantId)
-        .where('status', '!=', 'transferred')
-        .get()
+      // Get dogs currently owned by this user — see getReminderEligibleDogs()
+      // for why this isn't a plain tenantId query.
+      const dogs = await getReminderEligibleDogs(tenantId)
 
-      for (const dogDoc of dogsSnap.docs) {
-        const dog = dogDoc.data()
-
+      for (const dog of dogs) {
         // Birthday / join-anniversary check — separate from the vaccine
         // due-date logic below, this fires at most once per dog per day
         // regardless of how many vaccine records exist.
@@ -143,7 +175,7 @@ export default async function handler(req, res) {
                   to_email: user.email,
                   to_name: user.firstName || 'there',
                   subject: `${milestone.kind === 'birthday' ? '🎂' : '🏠'} ${dog.name}'s ${milestone.label}`,
-                  message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}</strong> ${milestone.kind === 'birthday' ? `is celebrating their ${milestone.label} today!` : `joined iDogs ${milestone.label} ago today!`} 🎉</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s story →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
+                  message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}</strong> ${milestone.kind === 'birthday' ? `is celebrating their ${milestone.label} today!` : `joined iDogs ${milestone.label} ago today!`} 🎉</p><p><a href="https://idogs.com.au/app/dogs/${dog.id}">View ${dog.name}'s story →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
                 }),
               })
               emailSent++
@@ -155,7 +187,7 @@ export default async function handler(req, res) {
 
         // Check vaccine records
         const vaccinesSnap = await db.collection('vaccineRecords')
-          .where('dogId', '==', dogDoc.id)
+          .where('dogId', '==', dog.id)
           .get()
 
         // Auto-resolve reminders for superseded vaccines.
@@ -181,7 +213,7 @@ export default async function handler(req, res) {
           if (isSuperseded) {
             // Mark the reminder for this vaccine as completed
             try {
-              const reminderId = `vaccine_${dogDoc.id}_${v.id}`
+              const reminderId = `vaccine_${dog.id}_${v.id}`
               const reminderRef = db.collection('reminders').doc(reminderId)
               const existing = await reminderRef.get()
               if (existing.exists && existing.data()?.status !== 'completed') {
@@ -246,7 +278,7 @@ export default async function handler(req, res) {
             // Reminders tab in the app shows the due/overdue item.
             // Key by dogId + vaccineId so re-runs don't create duplicates.
             try {
-              const reminderId = `vaccine_${dogDoc.id}_${vDoc.id}`
+              const reminderId = `vaccine_${dog.id}_${vDoc.id}`
               const reminderRef = db.collection('reminders').doc(reminderId)
               const existingReminder = await reminderRef.get()
 
@@ -254,7 +286,7 @@ export default async function handler(req, res) {
               if (!existingReminder.exists || existingReminder.data()?.status !== 'completed') {
                 await reminderRef.set({
                   id: reminderId,
-                  dogId: dogDoc.id,
+                  dogId: dog.id,
                   tenantId,
                   title: `${vaccine.name} due ${dueLabelShort}`,
                   dueDate: vaccine.nextDue,
@@ -286,7 +318,7 @@ export default async function handler(req, res) {
                       subject: isOverdue
                         ? `⚠️ ${dog.name}'s ${vaccine.name} is overdue!`
                         : `🐾 Reminder: ${dog.name}'s ${vaccine.name} due ${dueLabelShort}`,
-                      message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s ${vaccine.name}</strong> ${isOverdue ? `was due on <strong>${formatDate(vaccine.nextDue)}</strong> and is now overdue.` : `is due on <strong>${formatDate(vaccine.nextDue)}</strong>.`}</p><p>Book your vet appointment ${isOverdue ? 'as soon as possible' : 'soon'} to keep ${dog.name} protected.</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s records →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
+                      message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s ${vaccine.name}</strong> ${isOverdue ? `was due on <strong>${formatDate(vaccine.nextDue)}</strong> and is now overdue.` : `is due on <strong>${formatDate(vaccine.nextDue)}</strong>.`}</p><p>Book your vet appointment ${isOverdue ? 'as soon as possible' : 'soon'} to keep ${dog.name} protected.</p><p><a href="https://idogs.com.au/app/dogs/${dog.id}">View ${dog.name}'s records →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
                     }),
                   })
                   emailSent++
@@ -319,7 +351,7 @@ export default async function handler(req, res) {
             // Vaccine not yet due — ensure any old reminder is marked pending
             // (handles the case where a due date was edited to be further away)
             try {
-              const reminderId = `vaccine_${dogDoc.id}_${vDoc.id}`
+              const reminderId = `vaccine_${dog.id}_${vDoc.id}`
               const reminderRef = db.collection('reminders').doc(reminderId)
               const existing = await reminderRef.get()
               if (existing.exists && existing.data()?.status === 'overdue') {
@@ -366,12 +398,18 @@ export default async function handler(req, res) {
             const ageAtHeatMonths = (heatDate.getFullYear() - dob.getFullYear()) * 12 + (heatDate.getMonth() - dob.getMonth())
             const isEligible = ageAtHeatMonths >= minBreedingMonths
             const isFirstHeat = heatNum === 1
+            const currentAgeMonths = (today.getFullYear() - dob.getFullYear()) * 12 + (today.getMonth() - dob.getMonth())
+
+            // Age guard: adult female dog > 18 months should not get "First heat" reminders
+            if (isFirstHeat && currentAgeMonths > 18) {
+              continue
+            }
 
             const heatLabel = isFirstHeat ? 'First heat (skip — Dogs SA rule)' :
               !isEligible ? `Heat ${heatNum} (not yet eligible — under ${minBreedingMonths} months)` :
               `Heat ${heatNum} — eligible to breed`
 
-            const reminderId = `heat_${dogDoc.id}_cycle${heatNum}`
+            const reminderId = `heat_${dog.id}_cycle${heatNum}`
             const status = daysUntil < 0 ? 'overdue' : 'pending'
 
             // Upsert reminder record
@@ -381,7 +419,7 @@ export default async function handler(req, res) {
               if (!existing.exists || existing.data()?.status !== 'completed') {
                 await reminderRef.set({
                   id: reminderId,
-                  dogId: dogDoc.id,
+                  dogId: dog.id,
                   tenantId,
                   title: `${dog.name} — ${heatLabel}`,
                   dueDate: heatDate.toISOString().split('T')[0],
@@ -421,7 +459,7 @@ export default async function handler(req, res) {
                         to_email: user.email,
                         to_name: user.firstName || 'there',
                         subject: `🌸 ${dog.name}'s Heat ${heatNum} expected ${dueLabel}`,
-                        message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s Heat ${heatNum}</strong> is expected ${dueLabel} (${formatDate(heatDate.toISOString().split('T')[0])}).</p><p>${complianceNote}</p><p><a href="https://idogs.com.au/app/dogs/${dogDoc.id}">View ${dog.name}'s breeding record →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
+                        message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s Heat ${heatNum}</strong> is expected ${dueLabel} (${formatDate(heatDate.toISOString().split('T')[0])}).</p><p>${complianceNote}</p><p><a href="https://idogs.com.au/app/dogs/${dog.id}">View ${dog.name}'s breeding record →</a></p><p style="color:#9A9891;font-size:12px">iDogs · idogs.com.au · <a href="https://idogs.com.au/app/settings">Manage reminders</a></p>`,
                       }),
                     })
                     emailSent++
@@ -442,7 +480,7 @@ export default async function handler(req, res) {
 
                 // Record send time on dog document
                 try {
-                  await db.collection('dogs').doc(dogDoc.id).update({
+                  await db.collection('dogs').doc(dog.id).update({
                     [sentKey]: today.toISOString(),
                   })
                 } catch (e) {

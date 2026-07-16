@@ -45,6 +45,30 @@ export interface Dog {
   microchipCertPath?: string
   createdAt: string
   updatedAt: string
+
+  // ── Ownership (already written by transferDogOwnership) ──
+  status?: 'active' | 'transferred'
+  buyerName?: string
+  buyerEmail?: string
+  buyerPhone?: string
+  transferredAt?: string
+
+  // ── Commercial lifecycle (M7 #2 — puppy sale funnel) ──
+  availabilityStatus?: 'available' | 'reserved' | 'kept' | 'sold'
+  reservedForName?: string
+  reservedForEmail?: string
+  reservedForPhone?: string
+  reservedAt?: string
+  depositStatus?: 'none' | 'pending' | 'received'
+  depositAmount?: number
+  depositReceivedAt?: string
+
+  // ── Breeding history (edited on compliance tab, stored on Dog) ──
+  pedigreeRegister?: 'main' | 'limited' | 'no_pedigree' | 'mixed' | 'rescue'
+  litterCount?: number
+  last18mLitters?: number
+  cSectionCount?: number
+  lastLitterDate?: string
 }
 
 export interface VaccineRecord {
@@ -114,6 +138,7 @@ export interface Litter {
   tenantId: string
   name: string
   sireId?: string | null
+  sireName?: string | null
   damId: string
   matingSuspectedDate?: string
   expectedDueDate?: string
@@ -123,6 +148,22 @@ export interface Litter {
   createdAt: string
 }
 
+// ═════════════════════════════════════════════════════════════
+// ⚠ IZIPAWS-TARGET SCHEMA — NOT USED BY iDogs V1 (satellite).
+//
+// These four types are legacy from the original IZIPAWS-first plan.
+// iDogs is now a lightweight satellite: it stores CURRENT commercial
+// state as optional fields on `Dog` (availabilityStatus / reservedFor*
+// / deposit* / buyer*) and derives Buyers as a view — NO Buyers or
+// Sales collection. See M7_DATA_MODEL.md §1 & §7b.
+//
+// Kept (not deleted) as the migration TARGET for when iDogs data later
+// graduates to the IZIPAWS identity layer (real Buyers, sales history,
+// invite-based ownership transfer, QR passport permissions).
+//
+// DO NOT build iDogs V1 features, collections, APIs or CRUD on these.
+// They have zero runtime usage by design.
+// ═════════════════════════════════════════════════════════════
 export interface BuyerRecord {
   id: string
   tenantId: string
@@ -178,6 +219,7 @@ export interface PassportVisibility {
   ownerPhone: boolean
 }
 
+// ── end IZIPAWS-target block ── (types below are ACTIVE in iDogs V1)
 export interface ScanLog {
   id: string
   dogId: string

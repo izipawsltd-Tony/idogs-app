@@ -59,7 +59,7 @@ export default function PassportPublicPage() {
         <div style={{ fontSize: 48, marginBottom: 16 }}>🐾</div>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, color: '#1A1917', marginBottom: 8 }}>Passport not found</div>
         <div style={{ fontSize: 14, color: '#9A9891', marginBottom: 20 }}>This QR code may be invalid or the dog has been removed.</div>
-        <Link to="/" style={{ background: '#085041', color: '#fff', padding: '10px 20px', borderRadius: 10, textDecoration: 'none', fontSize: 14, fontWeight: 600 }}>Go to iDogs →</Link>
+        <Link to="/" style={{ background: 'var(--brand-600)', color: '#fff', padding: '10px 20px', borderRadius: 10, textDecoration: 'none', fontSize: 14, fontWeight: 600 }}>Go to iDogs →</Link>
       </div>
     </div>
   )
@@ -73,7 +73,7 @@ export default function PassportPublicPage() {
     <div style={{ minHeight: '100vh', background: '#F5F0E8' }}>
 
       {/* Hero header */}
-      <div style={{ background: 'linear-gradient(160deg, #085041 0%, #1D9E75 100%)', padding: '32px 20px 48px' }}>
+      <div style={{ background: 'linear-gradient(160deg, var(--brand-900) 0%, var(--brand-600) 100%)', padding: '32px 20px 48px' }}>
         <div style={{ maxWidth: 480, margin: '0 auto' }}>
 
           {/* iDogs branding */}
@@ -150,8 +150,8 @@ export default function PassportPublicPage() {
                 style={{
                   flex: 1, padding: '14px 8px', border: 'none', fontSize: 12, fontWeight: 500,
                   background: 'transparent', cursor: 'pointer',
-                  borderBottom: activeTab === tab.id ? '2px solid #085041' : '2px solid transparent',
-                  color: activeTab === tab.id ? '#085041' : '#9A9891',
+                  borderBottom: activeTab === tab.id ? '2px solid var(--brand-600)' : '2px solid transparent',
+                  color: activeTab === tab.id ? 'var(--brand-600)' : '#9A9891',
                   marginBottom: -1, transition: 'all 0.15s',
                 }}
               >
@@ -176,16 +176,16 @@ export default function PassportPublicPage() {
                       <div>
                         <div style={{ fontSize: 14, fontWeight: 600, color: '#1A1917', marginBottom: 2 }}>
                           {v.name}
-                          {v.uncertain && <span style={{ fontSize: 11, color: '#C8971F', marginLeft: 6 }}>⚠ uncertain</span>}
+                          {v.uncertain && <span style={{ fontSize: 11, color: 'var(--warning)', marginLeft: 6 }}>⚠ uncertain</span>}
                         </div>
                         <div style={{ fontSize: 12, color: '#9A9891' }}>Given: {formatDate(v.dateGiven)}</div>
-                        {v.nextDue && <div style={{ fontSize: 12, color: overdue ? '#C0392B' : '#9A9891' }}>Next due: {formatDate(v.nextDue)}</div>}
+                        {v.nextDue && <div style={{ fontSize: 12, color: overdue ? 'var(--danger)' : '#9A9891' }}>Next due: {formatDate(v.nextDue)}</div>}
                         {v.vetClinic && <div style={{ fontSize: 11, color: '#9A9891', marginTop: 2 }}>📍 {v.vetClinic}</div>}
                       </div>
                       <span style={{
                         padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, flexShrink: 0,
-                        background: overdue ? '#FDEDED' : '#E1F5EE',
-                        color: overdue ? '#C0392B' : '#085041',
+                        background: overdue ? '#FDEDED' : 'var(--brand-50)',
+                        color: overdue ? 'var(--danger)' : 'var(--brand-600)',
                       }}>
                         {overdue ? 'Overdue' : 'Current'}
                       </span>
@@ -213,7 +213,7 @@ export default function PassportPublicPage() {
                       {h.lab && <div style={{ fontSize: 11, color: '#9A9891', marginTop: 2 }}>🏥 {h.lab}</div>}
                       {h.certNumber && <div style={{ fontSize: 11, color: '#9A9891' }}>Cert: {h.certNumber}</div>}
                     </div>
-                    <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 700, flexShrink: 0, background: '#E1F5EE', color: '#085041' }}>
+                    <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 700, flexShrink: 0, background: 'var(--brand-50)', color: 'var(--brand-600)' }}>
                       {h.result}
                     </span>
                   </div>
@@ -256,7 +256,7 @@ export default function PassportPublicPage() {
         {/* Footer */}
         <div style={{ textAlign: 'center', marginTop: 24, padding: '0 8px' }}>
           <div style={{ fontSize: 12, color: '#9A9891', marginBottom: 4 }}>
-            Managed via <Link to="/" style={{ color: '#085041', textDecoration: 'none', fontWeight: 600 }}>iDogs</Link> · Every dog's story, forever
+            Managed via <Link to="/" style={{ color: 'var(--brand-600)', textDecoration: 'none', fontWeight: 600 }}>iDogs</Link> · Every dog's story, forever
           </div>
           <div style={{ fontSize: 11, color: '#9A9891' }}>🔒 Your privacy and your dog's information are handled securely, in line with the Australian Privacy Act 1988</div>
         </div>

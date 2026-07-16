@@ -19,6 +19,7 @@ import { getStorage } from 'firebase-admin/storage'
 if (!getApps().length) {
   let privateKey = process.env.FIREBASE_PRIVATE_KEY || ''
   privateKey = privateKey.replace(/\\n/g, '\n')
+  const defaultBucket = process.env.FIREBASE_PROJECT_ID ? `${process.env.FIREBASE_PROJECT_ID}.firebasestorage.app` : 'idogs-app.firebasestorage.app'
 
   initializeApp({
     credential: cert({
@@ -26,7 +27,7 @@ if (!getApps().length) {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey,
     }),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'idogs-app.firebasestorage.app',
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || defaultBucket,
   })
 }
 
@@ -64,6 +65,9 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Unrecognised filePath shape' })
   }
   const [, pathTenantId, dogId] = parts
+  if (!pathTenantId || !dogId) {
+    return res.status(400).json({ error: 'Unrecognised filePath shape (empty segments)' })
+  }
 
   try {
     // 3. Verify the caller actually owns/breeds this dog — either as
