@@ -60,7 +60,10 @@ iDogs.com.au is a **freemium consumer SaaS** serving as the **top-of-funnel acqu
 - Auth fixes deployed: forgot password flow, signup form có State (required) + Breeder Number (optional), modal backfill state cho user cũ
 - Breeding compliance engine live: `src/lib/breedingCompliance.ts` (3-layer ANKC/state, verified flags), wired vào DogDetailPage BreedingTab
 - hipScore display + Hip/Elbow Date Tested từ AI scan: đã fix
-- **Production FROZEN** cho đến khi UI redesign hoàn thành — mọi thay đổi chỉ trên branch `feature/ui-redesign`, KHÔNG merge, KHÔNG `vercel deploy --prod`
+- UI redesign hoàn thành, breeder/owner QA pass (192/192 regression), master đã approved và pushed. Production deployment is allowed only after explicit Tony approval.
+- Current approved release: master@f77730c1, subject to this documentation-only commit.
+- Firebase deploys, migrations, environment-variable changes, and production data mutations still require separate explicit approval.
+- Staging-first QA and rollback requirements remain in effect for every future change.
 
 ## Staging (idogs-app-staging) — bản sao live từ 3/7/2026
 - 283 docs copied (17 dogs, 41 vaccineRecords, 93 auditLogs...), Auth users imported giữ nguyên uid production
