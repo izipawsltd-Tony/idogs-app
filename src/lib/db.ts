@@ -34,12 +34,19 @@ function isValidLegacyRole(v: unknown): v is 'breeder' | 'owner' {
 // Resolves a single unambiguous value out of a legacy `roles` array. Every
 // consumer in this codebase gates on `profile.role === 'owner'` — 'breeder'
 // is the functionally MORE privileged state (buyer PII, litter/breeding
-// data, compliance export), so an array containing more than one distinct
-// valid value is a genuine conflict, not "pick the first one": returns
-// undefined (no usable signal) rather than silently picking a side.
+// data, compliance export) — so this deliberately does NOT filter out
+// invalid entries before checking ambiguity: an array with even one
+// malformed element (wrong type, unrecognized string, null, etc.) is
+// treated as malformed as a WHOLE, not "mostly valid" — e.g.
+// ['breeder', 123] must resolve the same as ['breeder', 'unknown'] (no
+// usable signal), not silently drop the garbage entry and honor the
+// remaining clean-looking value. Only a non-empty array where every single
+// entry is a recognized value, and all of those entries agree, counts as
+// unambiguous.
 function resolveLegacyRolesArray(roles: unknown): 'breeder' | 'owner' | undefined {
-  if (!Array.isArray(roles)) return undefined
-  const distinct = new Set(roles.filter(isValidLegacyRole))
+  if (!Array.isArray(roles) || roles.length === 0) return undefined
+  if (!roles.every(isValidLegacyRole)) return undefined
+  const distinct = new Set(roles)
   return distinct.size === 1 ? [...distinct][0] : undefined
 }
 

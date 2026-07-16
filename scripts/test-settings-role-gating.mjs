@@ -36,8 +36,9 @@ function isValidLegacyRole(v) {
   return v === 'breeder' || v === 'owner'
 }
 function resolveLegacyRolesArray(roles) {
-  if (!Array.isArray(roles)) return undefined
-  const distinct = new Set(roles.filter(isValidLegacyRole))
+  if (!Array.isArray(roles) || roles.length === 0) return undefined
+  if (!roles.every(isValidLegacyRole)) return undefined
+  const distinct = new Set(roles)
   return distinct.size === 1 ? [...distinct][0] : undefined
 }
 function normalizeUserProfile(raw) {
@@ -91,6 +92,23 @@ function heatCycleVisible(profile, emailReminders) {
 
   const legacyRolesArray = normalizeUserProfile({ roles: ['owner'] })
   check('Legacy roles[]=owner normalizes and hides Litters', littersVisible(legacyRolesArray) === false)
+}
+
+// ── Test 4a2: mixed valid/invalid legacy roles[] array never grants
+// breeder settings access — the fix was that invalid entries were
+// silently filtered out before checking ambiguity, so ['breeder', 123]
+// used to resolve to 'breeder' (Litters/Heat cycle would incorrectly
+// render) ──
+{
+  const mixedArrayCases = [
+    ['breeder', 'unknown'], ['owner', 'unknown'], ['breeder', 123],
+    ['owner', null], ['breeder', {}], ['owner', 'breeder'],
+  ]
+  for (const roles of mixedArrayCases) {
+    const profile = normalizeUserProfile({ roles })
+    check(`roles=${JSON.stringify(roles)} hides Litters (never grants breeder settings)`, littersVisible(profile) === false)
+    check(`roles=${JSON.stringify(roles)} hides Heat cycle (never grants breeder settings)`, heatCycleVisible(profile, true) === false)
+  }
 }
 
 // ── Test 4b: malformed/conflicting profile data can never grant breeder

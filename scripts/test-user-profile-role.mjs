@@ -41,8 +41,9 @@ function isValidLegacyRole(v) {
   return v === 'breeder' || v === 'owner'
 }
 function resolveLegacyRolesArray(roles) {
-  if (!Array.isArray(roles)) return undefined
-  const distinct = new Set(roles.filter(isValidLegacyRole))
+  if (!Array.isArray(roles) || roles.length === 0) return undefined
+  if (!roles.every(isValidLegacyRole)) return undefined
+  const distinct = new Set(roles)
   return distinct.size === 1 ? [...distinct][0] : undefined
 }
 function normalizeUserProfile(raw) {
@@ -257,6 +258,89 @@ async function newUser(name) {
   await setDoc(doc(db, 'users', uid), { roles: ['owner', 'breeder'] })
   const profile = await getUserProfile(uid)
   check('roles[] with two distinct values is ambiguous, fails safe to owner', profile.role === 'owner')
+}
+
+// ── Mixed legacy roles[] array remediation: an array containing even one
+// malformed/invalid element must never resolve to breeder or any
+// privileged role — the bug was that invalid entries were silently
+// filtered out before checking ambiguity, so ['breeder', 123] resolved to
+// 'breeder' (the garbage entry was dropped, leaving an "unambiguous"
+// breeder). Every one of these must fail safe to 'owner'. ──
+{
+  const cases = [
+    ['breeder', 'unknown'],
+    ['owner', 'unknown'],
+    ['breeder', 123],
+    ['owner', null],
+    ['breeder', {}],
+  ]
+  for (const roles of cases) {
+    const { uid } = await newUser(`mixed-array-${JSON.stringify(roles)}`.replace(/[^a-z0-9]/gi, '_'))
+    await setDoc(doc(db, 'users', uid), { roles })
+    const profile = await getUserProfile(uid)
+    check(`roles=${JSON.stringify(roles)} (mixed valid+invalid) fails safe to owner`, profile.role === 'owner')
+  }
+}
+
+// ── Mixed-array remediation: unambiguous all-valid arrays still resolve
+// correctly (these already passed before the fix — confirming no
+// regression from the stricter "every element must be valid" check) ──
+{
+  const { uid: uidA } = await newUser('all-valid-breeder-dup')
+  await setDoc(doc(db, 'users', uidA), { roles: ['breeder', 'breeder'] })
+  check("roles=['breeder','breeder'] resolves to breeder", (await getUserProfile(uidA)).role === 'breeder')
+
+  const { uid: uidB } = await newUser('all-valid-owner-dup')
+  await setDoc(doc(db, 'users', uidB), { roles: ['owner', 'owner'] })
+  check("roles=['owner','owner'] resolves to owner", (await getUserProfile(uidB)).role === 'owner')
+
+  const { uid: uidC } = await newUser('all-valid-conflicting')
+  await setDoc(doc(db, 'users', uidC), { roles: ['owner', 'breeder'] })
+  check("roles=['owner','breeder'] (all valid, but conflicting) fails safe to owner", (await getUserProfile(uidC)).role === 'owner')
+}
+
+// ── Mixed-array remediation: empty array and non-array roles value ──
+{
+  const { uid: uidA } = await newUser('mixed-remediation-empty-array')
+  await setDoc(doc(db, 'users', uidA), { roles: [] })
+  check('Empty roles[] array fails safe to owner (remediation re-check)', (await getUserProfile(uidA)).role === 'owner')
+
+  const { uid: uidB } = await newUser('mixed-remediation-non-array')
+  await setDoc(doc(db, 'users', uidB), { roles: 'owner' })
+  check('Non-array roles value fails safe to owner', (await getUserProfile(uidB)).role === 'owner')
+}
+
+// ── Mixed-array remediation: a valid canonical role overrides a malformed
+// legacy array entirely, in both directions ──
+{
+  const { uid: uidA } = await newUser('valid-canonical-breeder-overrides-malformed-array')
+  await setDoc(doc(db, 'users', uidA), { role: 'breeder', roles: ['owner', 123] })
+  check('Valid canonical breeder overrides a malformed legacy roles[] array', (await getUserProfile(uidA)).role === 'breeder')
+
+  const { uid: uidB } = await newUser('valid-canonical-owner-overrides-malformed-array')
+  await setDoc(doc(db, 'users', uidB), { role: 'owner', roles: ['breeder', 'unknown'] })
+  check('Valid canonical owner overrides a malformed legacy roles[] array', (await getUserProfile(uidB)).role === 'owner')
+}
+
+// ── Mixed-array remediation: invalid canonical + malformed roles[] (voids
+// its own signal entirely) + a separately valid, unambiguous accountType.
+// The malformed array contributes nothing — it doesn't corrupt or veto a
+// clean signal in a sibling field, it's simply absent from consideration —
+// so accountType stands alone and is honored on its own merits. ──
+{
+  const { uid } = await newUser('invalid-canonical-malformed-array-valid-accounttype')
+  await setDoc(doc(db, 'users', uid), { role: 'superuser', roles: ['breeder', 123], accountType: 'breeder' })
+  const profile = await getUserProfile(uid)
+  check('Malformed roles[] contributes no signal; a separately-clean accountType is honored on its own', profile.role === 'breeder')
+}
+
+// ── Mixed-array remediation: malformed legacy array can never expose
+// breeder-gated navigation/settings (end-to-end isOwner check) ──
+{
+  const { uid } = await newUser('malformed-array-cannot-expose-breeder-ui')
+  await setDoc(doc(db, 'users', uid), { roles: ['breeder', {}] })
+  const profile = await getUserProfile(uid)
+  check('Malformed roles[] array cannot expose breeder-gated UI (isOwner stays true)', (profile?.role === 'owner'))
 }
 
 // ── Test 6m: malformed data can never produce breeder-gated UI access —
