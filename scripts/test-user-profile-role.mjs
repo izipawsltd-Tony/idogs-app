@@ -32,11 +32,30 @@ function check(label, cond, extra = '') {
   else { console.log(`FAIL: ${label} ${extra}`); fail++ }
 }
 
-// ── Exact mirror of db.ts's normalizeUserProfile ──
+// ── Exact mirror of db.ts's normalizeUserProfile (see the precedence
+// comment there for the full policy rationale) ──
+function isValidRole(v) {
+  return v === 'breeder' || v === 'owner' || v === 'admin'
+}
+function isValidLegacyRole(v) {
+  return v === 'breeder' || v === 'owner'
+}
+function resolveLegacyRolesArray(roles) {
+  if (!Array.isArray(roles)) return undefined
+  const distinct = new Set(roles.filter(isValidLegacyRole))
+  return distinct.size === 1 ? [...distinct][0] : undefined
+}
 function normalizeUserProfile(raw) {
-  const legacyRole = raw.role ?? raw.accountType ?? (Array.isArray(raw.roles) ? raw.roles[0] : undefined)
-  const role = (legacyRole === 'owner' || legacyRole === 'admin') ? legacyRole : 'breeder'
-  return { ...raw, role }
+  if (isValidRole(raw.role)) {
+    return { ...raw, role: raw.role }
+  }
+  const legacyAccountType = isValidLegacyRole(raw.accountType) ? raw.accountType : undefined
+  const legacyRolesArray = resolveLegacyRolesArray(raw.roles)
+  if (legacyAccountType && legacyRolesArray && legacyAccountType !== legacyRolesArray) {
+    return { ...raw, role: 'owner' }
+  }
+  const legacyRole = legacyAccountType ?? legacyRolesArray
+  return { ...raw, role: legacyRole ?? 'owner' }
 }
 
 // ── Exact mirror of db.ts's updateUserProfile (real setDoc merge + role
@@ -115,28 +134,140 @@ async function newUser(name) {
   check('Legacy accountType=owner normalizes to role=owner', profile.role === 'owner')
 }
 
-// ── Test 5: legacy roles[] array field normalizes to role ──
+// ── Test 5: legacy roles[] array field (unambiguous — single distinct
+// value) normalizes to role ──
 {
   const { uid } = await newUser('legacy-roles-array')
-  await setDoc(doc(db, 'users', uid), { roles: ['owner', 'breeder'] })
+  await setDoc(doc(db, 'users', uid), { roles: ['owner'] })
   const profile = await getUserProfile(uid)
-  check('Legacy roles=["owner",...] normalizes to role=owner', profile.role === 'owner')
+  check('Legacy roles=["owner"] normalizes to role=owner', profile.role === 'owner')
 }
 
-// ── Test 6: invalid/garbage role value defaults safely to breeder ──
+// ── Test 6: invalid/garbage canonical role, no usable legacy signal, must
+// fail safe to 'owner' (the non-privileged role) — never 'breeder' ──
 {
   const { uid } = await newUser('invalid-role')
   await setDoc(doc(db, 'users', uid), { role: 'superuser' })
   const profile = await getUserProfile(uid)
-  check('Invalid role value defaults to breeder, not left as garbage', profile.role === 'breeder')
+  check('Invalid role value fails safe to owner, never breeder', profile.role === 'owner')
 }
 
-// ── Test 7: missing role field entirely defaults to breeder ──
+// ── Test 7: missing role field entirely fails safe to owner ──
 {
   const { uid } = await newUser('no-role-field')
   await setDoc(doc(db, 'users', uid), { kennelName: 'No Role Set' })
   const profile = await getUserProfile(uid)
-  check('Missing role field defaults to breeder', profile.role === 'breeder')
+  check('Missing role field fails safe to owner', profile.role === 'owner')
+}
+
+// ── Test 6b: valid role='owner' is authoritative over a conflicting
+// legacy breeder signal ──
+{
+  const { uid } = await newUser('valid-owner-overrides-legacy-breeder')
+  await setDoc(doc(db, 'users', uid), { role: 'owner', accountType: 'breeder', roles: ['breeder'] })
+  const profile = await getUserProfile(uid)
+  check("Valid role='owner' overrides conflicting legacy breeder fields", profile.role === 'owner')
+}
+
+// ── Test 6c: valid role='breeder' remains breeder regardless of legacy ──
+{
+  const { uid } = await newUser('valid-breeder-stays-breeder')
+  await setDoc(doc(db, 'users', uid), { role: 'breeder', accountType: 'owner' })
+  const profile = await getUserProfile(uid)
+  check("Valid role='breeder' remains breeder", profile.role === 'breeder')
+}
+
+// ── Test 6d: invalid canonical + unambiguous owner legacy → owner ──
+{
+  const { uid } = await newUser('invalid-canonical-unambiguous-owner-legacy')
+  await setDoc(doc(db, 'users', uid), { role: 'superuser', accountType: 'owner' })
+  const profile = await getUserProfile(uid)
+  check('Invalid canonical + unambiguous owner legacy resolves to owner', profile.role === 'owner')
+}
+
+// ── Test 6e: invalid canonical + unambiguous breeder legacy → breeder.
+// Deliberately permitted: this is the actual motivating case for legacy
+// fallback existing at all — a genuinely pre-existing breeder account
+// hand-edited before the `role` field existed must still resolve
+// correctly, not be demoted just because it predates the convention. The
+// safety requirement is about MALFORMED/CONFLICTING data, not about
+// honoring a single, clear, unambiguous legacy signal. ──
+{
+  const { uid } = await newUser('invalid-canonical-unambiguous-breeder-legacy')
+  await setDoc(doc(db, 'users', uid), { role: 'superuser', accountType: 'breeder' })
+  const profile = await getUserProfile(uid)
+  check('Invalid canonical + unambiguous breeder legacy resolves to breeder (permitted by policy)', profile.role === 'breeder')
+}
+
+// ── Test 6f: invalid canonical + CONFLICTING legacy (accountType vs
+// roles[] disagree) → safest non-privileged fallback, never breeder ──
+{
+  const { uid } = await newUser('invalid-canonical-conflicting-legacy')
+  await setDoc(doc(db, 'users', uid), { role: 'superuser', accountType: 'breeder', roles: ['owner'] })
+  const profile = await getUserProfile(uid)
+  check('Invalid canonical + conflicting legacy fields fails safe to owner', profile.role === 'owner')
+}
+
+// ── Test 6g: conflicting legacy fields alone (no canonical role field at
+// all) → safest non-privileged fallback ──
+{
+  const { uid } = await newUser('conflicting-legacy-no-canonical')
+  await setDoc(doc(db, 'users', uid), { accountType: 'owner', roles: ['breeder'] })
+  const profile = await getUserProfile(uid)
+  check('Conflicting legacy fields (no canonical) fails safe to owner', profile.role === 'owner')
+}
+
+// ── Test 6h: malformed field types (wrong JS type, not just wrong string) ──
+{
+  const { uid } = await newUser('malformed-types')
+  await setDoc(doc(db, 'users', uid), { role: 123, accountType: {}, roles: 'owner' })
+  const profile = await getUserProfile(uid)
+  check('Malformed role/accountType/roles types all fail safe to owner', profile.role === 'owner')
+}
+
+// ── Test 6i: role explicitly null falls through to legacy, same as
+// missing entirely ──
+{
+  const { uid } = await newUser('null-role-falls-through')
+  await setDoc(doc(db, 'users', uid), { role: null, accountType: 'owner' })
+  const profile = await getUserProfile(uid)
+  check('role: null falls through to legacy accountType', profile.role === 'owner')
+}
+
+// ── Test 6j: empty roles array is not a usable signal ──
+{
+  const { uid } = await newUser('empty-roles-array')
+  await setDoc(doc(db, 'users', uid), { roles: [] })
+  const profile = await getUserProfile(uid)
+  check('Empty roles[] array fails safe to owner', profile.role === 'owner')
+}
+
+// ── Test 6k: duplicate identical values in roles[] are unambiguous ──
+{
+  const { uid } = await newUser('duplicate-roles')
+  await setDoc(doc(db, 'users', uid), { roles: ['breeder', 'breeder'] })
+  const profile = await getUserProfile(uid)
+  check('Duplicate identical roles[] values resolve unambiguously', profile.role === 'breeder')
+}
+
+// ── Test 6l: roles[] containing genuinely different values is ambiguous,
+// even with no accountType present at all ──
+{
+  const { uid } = await newUser('roles-array-internally-conflicting')
+  await setDoc(doc(db, 'users', uid), { roles: ['owner', 'breeder'] })
+  const profile = await getUserProfile(uid)
+  check('roles[] with two distinct values is ambiguous, fails safe to owner', profile.role === 'owner')
+}
+
+// ── Test 6m: malformed data can never produce breeder-gated UI access —
+// end-to-end check that isOwner (the exact predicate every page/component
+// uses) evaluates true for a malformed/conflicting profile ──
+{
+  const { uid } = await newUser('cannot-gain-breeder-via-malformed-data')
+  await setDoc(doc(db, 'users', uid), { role: 'not-a-real-role', accountType: 'breeder', roles: ['owner'] })
+  const profile = await getUserProfile(uid)
+  const isOwner = profile?.role === 'owner'
+  check('Malformed + conflicting profile cannot gain breeder-gated UI access (isOwner stays true)', isOwner === true)
 }
 
 // ── Test 8: role write does not lose unrelated existing fields ──

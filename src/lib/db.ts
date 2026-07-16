@@ -18,17 +18,69 @@ function toDate(ts: Timestamp | string | undefined): string {
 
 // ── USER PROFILE ──────────────────────────────────────────────
 
+function isValidRole(v: unknown): v is UserProfile['role'] {
+  return v === 'breeder' || v === 'owner' || v === 'admin'
+}
+
+// 'admin' is never inferable from legacy data — every account predating the
+// `role` field predates the admin concept entirely, and admin access is
+// gated separately by a hardcoded email allowlist (AppLayout.tsx), never by
+// this field. Legacy fallback is deliberately restricted to the two values
+// it could plausibly have meant.
+function isValidLegacyRole(v: unknown): v is 'breeder' | 'owner' {
+  return v === 'breeder' || v === 'owner'
+}
+
+// Resolves a single unambiguous value out of a legacy `roles` array. Every
+// consumer in this codebase gates on `profile.role === 'owner'` — 'breeder'
+// is the functionally MORE privileged state (buyer PII, litter/breeding
+// data, compliance export), so an array containing more than one distinct
+// valid value is a genuine conflict, not "pick the first one": returns
+// undefined (no usable signal) rather than silently picking a side.
+function resolveLegacyRolesArray(roles: unknown): 'breeder' | 'owner' | undefined {
+  if (!Array.isArray(roles)) return undefined
+  const distinct = new Set(roles.filter(isValidLegacyRole))
+  return distinct.size === 1 ? [...distinct][0] : undefined
+}
+
 // `role` is the single canonical field going forward. Some accounts predate
 // it or were hand-edited via the Firebase console using an older field name
 // — `accountType` (string) or `roles` (array) — so those are read here as
-// fallbacks ONLY, never written back under their old name. Anything that
-// isn't a recognized role value falls back to 'breeder' (the same default
-// createUserProfile() has always used), rather than surfacing as falsy and
-// silently mis-gating the UI.
+// fallbacks ONLY, never written back under their old name.
+//
+// Precedence, most to least authoritative:
+//   1. A valid canonical `role` ('breeder'/'owner'/'admin') is authoritative
+//      — used as-is even if legacy fields disagree with it.
+//   2. Canonical missing or invalid (wrong type, unrecognized string, etc.)
+//      falls through to legacy fields. An invalid canonical value is
+//      discarded outright; its mere presence must never itself grant
+//      breeder access.
+//   3. If both legacy fields are present and disagree, that's a genuine
+//      conflict, not just an "old" account — unsafe to trust either.
+//   4. A single unambiguous legacy signal (accountType, or roles[] once
+//      resolved to one distinct value) is honored, including granting
+//      'breeder' — this is the actual case legacy fallback exists for: a
+//      genuinely pre-existing breeder account hand-edited before `role`
+//      existed should still resolve correctly, not be demoted just because
+//      it predates the convention.
+//   5. Nothing usable anywhere (missing/malformed/empty/conflicting-into-
+//      nothing) defaults to 'owner' — deliberately the safe, non-privileged
+//      role, never 'breeder': malformed profile data must never silently
+//      grant the more-privileged breeder-shaped UI.
 function normalizeUserProfile(raw: any): UserProfile {
-  const legacyRole = raw.role ?? raw.accountType ?? (Array.isArray(raw.roles) ? raw.roles[0] : undefined)
-  const role: UserProfile['role'] = (legacyRole === 'owner' || legacyRole === 'admin') ? legacyRole : 'breeder'
-  return { ...raw, role }
+  if (isValidRole(raw.role)) {
+    return { ...raw, role: raw.role }
+  }
+
+  const legacyAccountType = isValidLegacyRole(raw.accountType) ? raw.accountType : undefined
+  const legacyRolesArray = resolveLegacyRolesArray(raw.roles)
+
+  if (legacyAccountType && legacyRolesArray && legacyAccountType !== legacyRolesArray) {
+    return { ...raw, role: 'owner' }
+  }
+
+  const legacyRole = legacyAccountType ?? legacyRolesArray
+  return { ...raw, role: legacyRole ?? 'owner' }
 }
 
 export async function getUserProfile(userId: string): Promise<UserProfile | null> {

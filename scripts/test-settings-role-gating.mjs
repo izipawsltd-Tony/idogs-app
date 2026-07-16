@@ -27,11 +27,30 @@ function check(label, cond, extra = '') {
   else { console.log(`FAIL: ${label} ${extra}`); fail++ }
 }
 
-// ── Mirror of db.ts's normalizeUserProfile (see test-user-profile-role.mjs) ──
+// ── Mirror of db.ts's normalizeUserProfile (see test-user-profile-role.mjs
+// and db.ts's own precedence comment for the full policy rationale) ──
+function isValidRole(v) {
+  return v === 'breeder' || v === 'owner' || v === 'admin'
+}
+function isValidLegacyRole(v) {
+  return v === 'breeder' || v === 'owner'
+}
+function resolveLegacyRolesArray(roles) {
+  if (!Array.isArray(roles)) return undefined
+  const distinct = new Set(roles.filter(isValidLegacyRole))
+  return distinct.size === 1 ? [...distinct][0] : undefined
+}
 function normalizeUserProfile(raw) {
-  const legacyRole = raw.role ?? raw.accountType ?? (Array.isArray(raw.roles) ? raw.roles[0] : undefined)
-  const role = (legacyRole === 'owner' || legacyRole === 'admin') ? legacyRole : 'breeder'
-  return { ...raw, role }
+  if (isValidRole(raw.role)) {
+    return { ...raw, role: raw.role }
+  }
+  const legacyAccountType = isValidLegacyRole(raw.accountType) ? raw.accountType : undefined
+  const legacyRolesArray = resolveLegacyRolesArray(raw.roles)
+  if (legacyAccountType && legacyRolesArray && legacyAccountType !== legacyRolesArray) {
+    return { ...raw, role: 'owner' }
+  }
+  const legacyRole = legacyAccountType ?? legacyRolesArray
+  return { ...raw, role: legacyRole ?? 'owner' }
 }
 
 // ── Mirror of SettingsPage.tsx's exact gating predicates ──
@@ -70,8 +89,17 @@ function heatCycleVisible(profile, emailReminders) {
   check('Legacy accountType=owner normalizes and hides Litters', littersVisible(legacyAccountType) === false)
   check('Legacy accountType=owner normalizes and hides Heat cycle', heatCycleVisible(legacyAccountType, true) === false)
 
-  const legacyRolesArray = normalizeUserProfile({ roles: ['owner', 'breeder'] })
+  const legacyRolesArray = normalizeUserProfile({ roles: ['owner'] })
   check('Legacy roles[]=owner normalizes and hides Litters', littersVisible(legacyRolesArray) === false)
+}
+
+// ── Test 4b: malformed/conflicting profile data can never grant breeder
+// settings access — the safe-default (owner) applies here too ──
+{
+  const malformed = normalizeUserProfile({ role: 'superuser', accountType: 'breeder', roles: ['owner'] })
+  check('Malformed + conflicting profile fails safe to owner (never gains breeder settings)', malformed.role === 'owner')
+  check('Malformed + conflicting profile: Litters section stays hidden', littersVisible(malformed) === false)
+  check('Malformed + conflicting profile: Heat cycle section stays hidden', heatCycleVisible(malformed, true) === false)
 }
 
 // ── Test 5 (structural): the JSX is actually absent for owner, not just
