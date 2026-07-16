@@ -18,11 +18,24 @@ function toDate(ts: Timestamp | string | undefined): string {
 
 // ── USER PROFILE ──────────────────────────────────────────────
 
+// `role` is the single canonical field going forward. Some accounts predate
+// it or were hand-edited via the Firebase console using an older field name
+// — `accountType` (string) or `roles` (array) — so those are read here as
+// fallbacks ONLY, never written back under their old name. Anything that
+// isn't a recognized role value falls back to 'breeder' (the same default
+// createUserProfile() has always used), rather than surfacing as falsy and
+// silently mis-gating the UI.
+function normalizeUserProfile(raw: any): UserProfile {
+  const legacyRole = raw.role ?? raw.accountType ?? (Array.isArray(raw.roles) ? raw.roles[0] : undefined)
+  const role: UserProfile['role'] = (legacyRole === 'owner' || legacyRole === 'admin') ? legacyRole : 'breeder'
+  return { ...raw, role }
+}
+
 export async function getUserProfile(userId: string): Promise<UserProfile | null> {
   const snap = await getDoc(doc(db, 'users', userId))
   if (!snap.exists()) return null
   const d = snap.data()
-  return { ...d, uid: snap.id, createdAt: toDate(d.createdAt) } as UserProfile
+  return normalizeUserProfile({ ...d, uid: snap.id, createdAt: toDate(d.createdAt) })
 }
 
 export async function createUserProfile(userId: string, data: Partial<UserProfile>): Promise<void> {
@@ -45,8 +58,21 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
 // accepted with no error but never actually took effect). setDoc merge
 // produces the same partial-field-merge result via a different write RPC
 // shape without that precondition.
+//
+// Role changes specifically get a read-back verification: a role switch
+// that silently doesn't stick (whatever the underlying cause) is exactly
+// the failure mode this project has hit before with Firestore writes that
+// throw nothing yet never take effect. Callers (SettingsPage's changeRole)
+// already catch and toast on a thrown error, so this turns a confusing
+// silent no-op into a visible, honest failure instead of a false "success".
 export async function updateUserProfile(userId: string, data: Partial<UserProfile>): Promise<void> {
   await setDoc(doc(db, 'users', userId), { ...data, updatedAt: serverTimestamp() }, { merge: true })
+  if (data.role) {
+    const confirm = await getDoc(doc(db, 'users', userId))
+    if (confirm.data()?.role !== data.role) {
+      throw new Error('ROLE_UPDATE_NOT_PERSISTED')
+    }
+  }
 }
 
 export async function deleteUserData(userId: string): Promise<void> {
