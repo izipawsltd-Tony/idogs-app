@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getLitters, getDogs, createLitter, updateLitter, createDog, updateDog, deleteDog, transferDogOwnership } from '../lib/db'
-import { deleteDoc, doc } from 'firebase/firestore'
+import { doc, writeBatch } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import { formatDate, isEligibleSireDog, isEligibleDamDog } from '../lib/utils'
+import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred } from '../lib/utils'
 import type { Litter, Dog, ToastMessage } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { sendTransferEmail } from '../lib/email'
@@ -120,30 +120,95 @@ export default function LittersPage({ toast }: Props) {
     }
   }
 
-  async function handleSaveLitter(litterId: string) {
+  async function handleSaveLitter(litterId: string, litter: Litter) {
+    // A litter that already has puppies must keep an actual birth date —
+    // clearing it would leave born puppy records pointing at a litter
+    // that (per policy) shouldn't have been able to produce them.
+    if ((litter.puppyIds?.length || 0) > 0 && !editLitterForm.actualBirthDate) {
+      toast('This litter has puppies — actual birth date cannot be cleared', 'error')
+      return
+    }
     try {
-      await updateLitter(litterId, editLitterForm)
-      const updated = await getLitters()
-      setLitters(updated)
+      // If actual birth date changed, propagate it to every puppy still
+      // in the breeder's care — a transferred puppy's DOB is no longer
+      // the breeder's to edit (matches dogs/{dogId}'s own update rule,
+      // which only ever allows the CURRENT owner to write). Bundled into
+      // one batch with the litter's own field update so the litter and
+      // its puppies' dates can't end up inconsistent from a partial
+      // failure.
+      const dobChanged = editLitterForm.actualBirthDate !== undefined &&
+        editLitterForm.actualBirthDate !== (litter.actualBirthDate || '')
+      const batch = writeBatch(db)
+      batch.update(doc(db, 'litters', litterId), editLitterForm as any)
+      let updatedPuppyCount = 0
+      if (dobChanged && editLitterForm.actualBirthDate) {
+        const puppyDogs = dogs.filter(d => litter.puppyIds?.includes(d.id) && !isDogTransferred(d))
+        for (const puppy of puppyDogs) {
+          batch.update(doc(db, 'dogs', puppy.id), { dateOfBirth: editLitterForm.actualBirthDate, updatedAt: new Date().toISOString() })
+        }
+        updatedPuppyCount = puppyDogs.length
+      }
+      await batch.commit()
+      const [updatedLitters, updatedDogs] = await Promise.all([getLitters(), getDogs()])
+      setLitters(updatedLitters)
+      setDogs(updatedDogs.filter(dog => !dog.isDeceased))
       setEditingLitter(null)
-      toast('Litter updated!')
+      toast(updatedPuppyCount > 0 ? `Litter updated — ${updatedPuppyCount} puppy record${updatedPuppyCount !== 1 ? 's' : ''} synced to the new birth date` : 'Litter updated!')
     } catch {
       toast('Failed to update litter', 'error')
     }
   }
 
-  async function handleDeleteLitter(litterId: string, litterName: string) {
-    if (!confirm(`Delete litter "${litterName}"? This will NOT delete the puppies.`)) return
+  async function handleDeleteLitter(litter: Litter) {
+    const puppyDogs = dogs.filter(d => litter.puppyIds?.includes(d.id))
+    const eligible = puppyDogs.filter(d => !isDogTransferred(d))
+    const preserved = puppyDogs.length - eligible.length
+
+    const parts = [`Delete litter "${litter.name}"?`]
+    if (eligible.length > 0) {
+      parts.push(`This will also delete ${eligible.length} puppy record${eligible.length !== 1 ? 's' : ''} still in your care.`)
+    }
+    if (preserved > 0) {
+      parts.push(`${preserved} already-transferred puppy record${preserved !== 1 ? 's' : ''} will be kept.`)
+    }
+    if (eligible.length === 0 && preserved === 0) {
+      parts.push('No puppies will be affected.')
+    }
+    if (!confirm(parts.join(' '))) return
+
     try {
-      await deleteDoc(doc(db, 'litters', litterId))
-      setLitters(prev => prev.filter(l => l.id !== litterId))
-      toast('Litter deleted')
+      // Litter delete + eligible-puppy deletes as one atomic batch — if
+      // any single delete were denied (e.g. a stale local puppy list no
+      // longer matching live ownership), the whole batch is rejected and
+      // nothing is left half-deleted. Firestore re-evaluates the normal
+      // per-document dogs/litters rules for every op in the batch, so
+      // this can never delete a dog outside the requester's own tenancy
+      // regardless of what puppyIds says.
+      const batch = writeBatch(db)
+      batch.delete(doc(db, 'litters', litter.id))
+      for (const puppy of eligible) {
+        batch.delete(doc(db, 'dogs', puppy.id))
+      }
+      await batch.commit()
+      setLitters(prev => prev.filter(l => l.id !== litter.id))
+      setDogs(prev => prev.filter(d => !eligible.some(e => e.id === d.id)))
+      toast(eligible.length > 0 ? `Litter deleted along with ${eligible.length} puppy record${eligible.length !== 1 ? 's' : ''}` : 'Litter deleted')
     } catch {
       toast('Failed to delete litter', 'error')
     }
   }
 
   async function handleAddPuppy(litterId: string, litter: Litter) {
+    // A litter that has produced puppies must have an actual birth date —
+    // planned/expected litters (mating date or due date only) can exist,
+    // but must never generate a born puppy record. This is the service-
+    // layer guard; the "+ Add puppy" button itself is also hidden for a
+    // litter with no actualBirthDate (see render below), so reaching
+    // here without one would only happen via a stale/bypassed UI state.
+    if (!litter.actualBirthDate) {
+      toast('Set an actual birth date for this litter before adding puppies', 'error')
+      return
+    }
     setSavingPuppy(true)
     try {
       const dam = dogs.find(d => d.id === litter.damId)
@@ -158,7 +223,7 @@ export default function LittersPage({ toast }: Props) {
         name: finalName,
         breed: dam?.breed || '',
         sex: puppyForm.sex,
-        dateOfBirth: litter.actualBirthDate || '',
+        dateOfBirth: litter.actualBirthDate,
         colour: puppyForm.colour,
         microchip: puppyForm.microchip,
         ankc: '',
@@ -486,7 +551,7 @@ export default function LittersPage({ toast }: Props) {
                     <button
                       className="btn btn-sm"
                       style={{ background: '#FDEDED', color: 'var(--danger)', border: '1px solid #F3B0B0' }}
-                      onClick={() => handleDeleteLitter(litter.id, litter.name)}
+                      onClick={() => handleDeleteLitter(litter)}
                     >🗑️</button>
                     <button
                       className="btn btn-secondary btn-sm"
@@ -541,7 +606,7 @@ export default function LittersPage({ toast }: Props) {
                             <textarea className="form-textarea" value={editLitterForm.notes || ''} onChange={e => setEditLitterForm(p => ({ ...p, notes: e.target.value }))} style={{ minHeight: 60 }} />
                           </div>
                           <div style={{ display: 'flex', gap: 8 }}>
-                            <button className="btn btn-primary btn-sm" onClick={() => handleSaveLitter(litter.id)}>Save changes</button>
+                            <button className="btn btn-primary btn-sm" onClick={() => handleSaveLitter(litter.id, litter)}>Save changes</button>
                             <button className="btn btn-secondary btn-sm" onClick={() => setEditingLitter(null)}>Cancel</button>
                           </div>
                         </div>
@@ -587,13 +652,17 @@ export default function LittersPage({ toast }: Props) {
                     <div style={{ padding: '14px 20px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)' }}>Puppies ({puppyDogs.length})</div>
-                        <button className="btn btn-primary btn-sm" onClick={() => setShowAddPuppy(showAddPuppy === litter.id ? null : litter.id)}>
-                          + Add puppy
-                        </button>
+                        {litter.actualBirthDate ? (
+                          <button className="btn btn-primary btn-sm" onClick={() => setShowAddPuppy(showAddPuppy === litter.id ? null : litter.id)}>
+                            + Add puppy
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 12, color: 'var(--light)' }}>Set an actual birth date to add puppies</span>
+                        )}
                       </div>
 
                       {/* Add puppy form */}
-                      {showAddPuppy === litter.id && (
+                      {showAddPuppy === litter.id && litter.actualBirthDate && (
                         <div style={{ background: 'var(--sand)', borderRadius: 'var(--radius-md)', padding: 16, marginBottom: 16 }}>
                           <PuppyFormFields form={puppyForm} onChange={setPuppyForm} />
                           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
