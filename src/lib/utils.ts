@@ -213,17 +213,37 @@ export function calculateLifeStage(dob: string, breed?: string): LifeStage {
   return 'senior'
 }
 
-// Shared by the Sire selectors in LittersPage (create litter) and
-// DogDetailPage's HeatCycleModal (record a mating) — a dog only makes
-// sense as a Sire pick if it's a living, currently-owned, sexually
-// mature male in the caller's own account. Kept as one predicate so both
-// selectors apply the same exclusions instead of drifting apart.
-export function isEligibleSireDog(dog: Dog): boolean {
-  if (dog.sex !== 'male') return false
+// The sex-agnostic half of Sire/Dam eligibility — a dog only makes sense
+// as a *current breeder-controlled* breeding pick (regardless of which
+// sex-specific role it's being considered for) if it's living, still
+// under this account's active control (not transferred away), and
+// sexually mature. A dog with no dateOfBirth (some legacy records) can't
+// be proven mature, so calculateLifeStage's 'puppy' fallback for a
+// missing dob correctly excludes it here too — "can't prove eligible"
+// fails safe to "not eligible", never the other way round.
+//
+// Relies on `dog.status`/`transferStatus` already being correctly
+// computed for the CURRENT user's viewpoint (i.e. the dog came from
+// getDogs(), which re-derives 'transferred' from currentOwnerId — a raw
+// tenantId-only Firestore query sees a transferred dog's stale
+// post-claim status and must never feed this predicate).
+function isCurrentBreederDog(dog: Dog): boolean {
   if (dog.isDeceased) return false
   if (dog.status === 'transferred' || (dog as any).transferStatus === 'pendingClaim') return false
   const stage = calculateLifeStage(dog.dateOfBirth, dog.breed)
   return stage !== 'whelp' && stage !== 'puppy'
+}
+
+// Shared by the Sire selectors in LittersPage (create litter) and
+// DogDetailPage's HeatCycleModal (record a mating).
+export function isEligibleSireDog(dog: Dog): boolean {
+  return dog.sex === 'male' && isCurrentBreederDog(dog)
+}
+
+// Shared by the Dam selector in LittersPage (create litter) — same
+// current-breeder-dog eligibility as isEligibleSireDog, plus female.
+export function isEligibleDamDog(dog: Dog): boolean {
+  return dog.sex === 'female' && isCurrentBreederDog(dog)
 }
 
 export const LIFE_STAGE_LABELS: Record<LifeStage, string> = {
