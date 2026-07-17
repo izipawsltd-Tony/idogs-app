@@ -18,11 +18,106 @@ function toDate(ts: Timestamp | string | undefined): string {
 
 // ── USER PROFILE ──────────────────────────────────────────────
 
+function isValidRole(v: unknown): v is UserProfile['role'] {
+  return v === 'breeder' || v === 'owner' || v === 'admin'
+}
+
+// 'admin' is never inferable from legacy data — every account predating the
+// `role` field predates the admin concept entirely, and admin access is
+// gated separately by a hardcoded email allowlist (AppLayout.tsx), never by
+// this field. Legacy fallback is deliberately restricted to the two values
+// it could plausibly have meant.
+function isValidLegacyRole(v: unknown): v is 'breeder' | 'owner' {
+  return v === 'breeder' || v === 'owner'
+}
+
+// Each legacy source (accountType, roles[]) is evaluated independently into
+// one of three states — this distinction (not just "valid or not") is the
+// whole point: a source that's ABSENT (field never set) lets a sibling
+// source stand on its own, but a source that's PRESENT-but-MALFORMED voids
+// the entire legacy fallback, even if the sibling looks perfectly clean.
+// Without this distinction, e.g. accountType=123 (present, garbage) +
+// roles=['breeder'] (clean) would let roles win on its own — but a
+// malformed accountType is exactly the kind of corrupted/tampered data this
+// whole fallback exists to be defensive against, so its mere presence must
+// cast doubt on the entire legacy signal, not just itself.
+type LegacySourceResult =
+  | { status: 'absent' }
+  | { status: 'malformed' }
+  | { status: 'valid'; role: 'breeder' | 'owner' }
+
+function evaluateAccountType(raw: any): LegacySourceResult {
+  if (raw.accountType === undefined) return { status: 'absent' }
+  return isValidLegacyRole(raw.accountType)
+    ? { status: 'valid', role: raw.accountType }
+    : { status: 'malformed' }
+}
+
+// A `roles` array is malformed if: the field is present but isn't an array,
+// is an empty array, contains any element that isn't a recognized legacy
+// role (wrong type, unrecognized string, null, plain object, etc.), or its
+// valid-looking entries don't all agree with each other. Deliberately does
+// NOT filter out bad entries before checking — ['breeder', 123] is
+// malformed as a whole, not "breeder with one ignored garbage entry".
+function evaluateRolesArray(raw: any): LegacySourceResult {
+  if (raw.roles === undefined) return { status: 'absent' }
+  const roles = raw.roles
+  if (!Array.isArray(roles) || roles.length === 0) return { status: 'malformed' }
+  if (!roles.every(isValidLegacyRole)) return { status: 'malformed' }
+  const distinct = new Set(roles)
+  return distinct.size === 1 ? { status: 'valid', role: [...distinct][0] } : { status: 'malformed' }
+}
+
+// `role` is the single canonical field going forward. Some accounts predate
+// it or were hand-edited via the Firebase console using an older field name
+// — `accountType` (string) or `roles` (array) — so those are read here as
+// fallbacks ONLY, never written back under their old name.
+//
+// Precedence, most to least authoritative:
+//   1. A valid canonical `role` ('breeder'/'owner'/'admin') is authoritative
+//      — used as-is even if legacy fields disagree with it or are malformed.
+//   2. Canonical missing or invalid falls through to legacy evaluation. An
+//      invalid canonical value is discarded outright; its mere presence
+//      must never itself grant breeder access.
+//   3. Either legacy source being PRESENT-but-MALFORMED voids the entire
+//      legacy fallback — even if the other source looks perfectly clean.
+//   4. Both sources present and valid must agree; if they disagree, that's
+//      a genuine conflict — owner.
+//   5. Exactly one source present-and-valid, the other genuinely ABSENT
+//      (never set at all) — honor the one that's there, including
+//      granting 'breeder'. This is the actual case legacy fallback exists
+//      for: a genuinely pre-existing breeder account hand-edited before
+//      `role` existed should still resolve correctly.
+//   6. Nothing usable anywhere (both absent, or either malformed, or
+//      valid-but-conflicting) defaults to 'owner' — deliberately the safe,
+//      non-privileged role, never 'breeder'.
+function normalizeUserProfile(raw: any): UserProfile {
+  if (isValidRole(raw.role)) {
+    return { ...raw, role: raw.role }
+  }
+
+  const accountTypeResult = evaluateAccountType(raw)
+  const rolesArrayResult = evaluateRolesArray(raw)
+
+  if (accountTypeResult.status === 'malformed' || rolesArrayResult.status === 'malformed') {
+    return { ...raw, role: 'owner' }
+  }
+
+  if (accountTypeResult.status === 'valid' && rolesArrayResult.status === 'valid') {
+    return { ...raw, role: accountTypeResult.role === rolesArrayResult.role ? accountTypeResult.role : 'owner' }
+  }
+
+  const soleValid = accountTypeResult.status === 'valid' ? accountTypeResult
+    : rolesArrayResult.status === 'valid' ? rolesArrayResult
+    : null
+  return { ...raw, role: soleValid?.role ?? 'owner' }
+}
+
 export async function getUserProfile(userId: string): Promise<UserProfile | null> {
   const snap = await getDoc(doc(db, 'users', userId))
   if (!snap.exists()) return null
   const d = snap.data()
-  return { ...d, uid: snap.id, createdAt: toDate(d.createdAt) } as UserProfile
+  return normalizeUserProfile({ ...d, uid: snap.id, createdAt: toDate(d.createdAt) })
 }
 
 export async function createUserProfile(userId: string, data: Partial<UserProfile>): Promise<void> {
@@ -45,8 +140,21 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
 // accepted with no error but never actually took effect). setDoc merge
 // produces the same partial-field-merge result via a different write RPC
 // shape without that precondition.
+//
+// Role changes specifically get a read-back verification: a role switch
+// that silently doesn't stick (whatever the underlying cause) is exactly
+// the failure mode this project has hit before with Firestore writes that
+// throw nothing yet never take effect. Callers (SettingsPage's changeRole)
+// already catch and toast on a thrown error, so this turns a confusing
+// silent no-op into a visible, honest failure instead of a false "success".
 export async function updateUserProfile(userId: string, data: Partial<UserProfile>): Promise<void> {
   await setDoc(doc(db, 'users', userId), { ...data, updatedAt: serverTimestamp() }, { merge: true })
+  if (data.role) {
+    const confirm = await getDoc(doc(db, 'users', userId))
+    if (confirm.data()?.role !== data.role) {
+      throw new Error('ROLE_UPDATE_NOT_PERSISTED')
+    }
+  }
 }
 
 export async function deleteUserData(userId: string): Promise<void> {

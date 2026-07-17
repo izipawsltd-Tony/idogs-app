@@ -11,9 +11,8 @@ interface Props {
 const REMINDER_OPTIONS = [3, 7, 14, 30]
 
 export default function SettingsPage({ toast }: Props) {
-  const { user, profile, refreshProfile, upgradeToBreeder } = useAuth()
+  const { user, profile, refreshProfile } = useAuth()
   const [saving, setSaving] = useState<string | null>(null)
-  const [upgrading, setUpgrading] = useState(false)
   const [editingProfile, setEditingProfile] = useState(false)
   const [profileForm, setProfileForm] = useState({
     firstName: profile?.firstName || '',
@@ -89,17 +88,6 @@ export default function SettingsPage({ toast }: Props) {
       toast('Failed to save setting', 'error')
     } finally {
       setSaving(null)
-    }
-  }
-
-  async function handleUpgrade() {
-    setUpgrading(true)
-    try {
-      await upgradeToBreeder()
-      toast('Litter management enabled! 🐣', 'success')
-    } catch {
-      toast('Something went wrong. Please try again.', 'error')
-      setUpgrading(false)
     }
   }
 
@@ -300,18 +288,10 @@ export default function SettingsPage({ toast }: Props) {
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Navigation</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-          {/* Litters */}
-          {isOwner ? (
-            <ToggleRow
-              icon="🐣" label="Litter Management"
-              description="Track litters, manage puppies, record births."
-              enabled={false}
-              saving={saving === 'hideLitters'}
-              onToggle={handleUpgrade}
-              isEnable
-              upgrading={upgrading}
-            />
-          ) : (
+          {/* Litters — breeder-only; Litter Management is a breeding
+              feature and has no relevance to a Pet Owner account, so it's
+              not rendered at all for isOwner (not merely disabled). */}
+          {!isOwner && (
             <ToggleRow
               icon="🐣" label="Litters"
               description="Show Litters in the navigation menu."
@@ -410,8 +390,9 @@ export default function SettingsPage({ toast }: Props) {
             </div>
           )}
 
-          {/* Heat cycle reminder lead time */}
-          {emailReminders && (
+          {/* Heat cycle reminder lead time — breeding-specific, not
+              relevant to a Pet Owner account (see Litters above). */}
+          {emailReminders && !isOwner && (
             <div style={{ paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 4 }}>🌸 Heat cycle reminder lead time</div>
               <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>
@@ -468,15 +449,13 @@ function SettingRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function ToggleRow({ icon, label, description, enabled, saving, onToggle, isEnable, upgrading }: {
+function ToggleRow({ icon, label, description, enabled, saving, onToggle }: {
   icon: string
   label: string
   description: string
   enabled: boolean
   saving: boolean
   onToggle: () => void
-  isEnable?: boolean
-  upgrading?: boolean
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
@@ -484,32 +463,26 @@ function ToggleRow({ icon, label, description, enabled, saving, onToggle, isEnab
         <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 2 }}>{icon} {label}</div>
         <div style={{ fontSize: 13, color: 'var(--light)' }}>{description}</div>
       </div>
-      {isEnable ? (
-        <button className="btn btn-primary btn-sm" onClick={onToggle} disabled={upgrading} style={{ flexShrink: 0 }}>
-          {upgrading ? <span className="spinner" style={{ width: 14, height: 14, borderTopColor: '#fff' }} /> : 'Enable'}
-        </button>
-      ) : (
-        <button
-          onClick={onToggle}
-          disabled={saving}
-          style={{
-            width: 48, height: 26, borderRadius: 13, flexShrink: 0,
-            background: enabled ? 'var(--green)' : 'var(--border)',
-            border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
-            position: 'relative', transition: 'background 0.2s',
-            opacity: saving ? 0.6 : 1,
-          }}
-        >
-          <span style={{
-            position: 'absolute', top: 3,
-            left: enabled ? 22 : 4,
-            width: 20, height: 20,
-            background: '#fff', borderRadius: '50%',
-            transition: 'left 0.2s',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-          }} />
-        </button>
-      )}
+      <button
+        onClick={onToggle}
+        disabled={saving}
+        style={{
+          width: 48, height: 26, borderRadius: 13, flexShrink: 0,
+          background: enabled ? 'var(--green)' : 'var(--border)',
+          border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
+          position: 'relative', transition: 'background 0.2s',
+          opacity: saving ? 0.6 : 1,
+        }}
+      >
+        <span style={{
+          position: 'absolute', top: 3,
+          left: enabled ? 22 : 4,
+          width: 20, height: 20,
+          background: '#fff', borderRadius: '50%',
+          transition: 'left 0.2s',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+        }} />
+      </button>
     </div>
   )
 }
