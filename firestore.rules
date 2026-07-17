@@ -94,10 +94,18 @@ service cloud.firestore {
       // Creator becomes tenantId/currentOwnerId/createdByUserId — a client
       // cannot assign ownership to anyone else at creation time either
       // (createDog() always derives all three from the authenticated uid).
+      // dateOfBirth must be non-empty on create — both existing callers
+      // (DogNewPage's form, LittersPage's litter-puppy flow) already
+      // enforce this at the UI layer; this closes the gap for any future
+      // caller and specifically stops a litter puppy ever being created
+      // with an empty dateOfBirth because its litter had no actual birth
+      // date yet.
       allow create: if isSignedIn() &&
         request.resource.data.tenantId == request.auth.uid &&
         request.resource.data.currentOwnerId == request.auth.uid &&
-        request.resource.data.createdByUserId == request.auth.uid;
+        request.resource.data.createdByUserId == request.auth.uid &&
+        request.resource.data.dateOfBirth is string &&
+        request.resource.data.dateOfBirth.size() > 0;
     }
 
     // ── passportReservations/{passportId} — uniqueness index for
@@ -190,9 +198,18 @@ service cloud.firestore {
     // puppyIds) so a stale/wrong-tenant/transferred Dam can't be
     // submitted even if the client's own selector was bypassed.
     match /litters/{id} {
-      allow read, update, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
+      allow read, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
       allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid &&
         isEligibleDam(request.resource.data.damId);
+      // A litter with puppies attached must keep a non-empty
+      // actualBirthDate — mirrors the same invariant enforced when
+      // puppies are added in the first place (dogs/{dogId}'s create
+      // rule requires a non-empty dateOfBirth, which for a litter puppy
+      // always comes from the litter's actualBirthDate).
+      allow update: if isSignedIn() && resource.data.tenantId == request.auth.uid &&
+        (request.resource.data.get('puppyIds', []).size() == 0 ||
+         (request.resource.data.get('actualBirthDate', '') is string &&
+          request.resource.data.get('actualBirthDate', '').size() > 0));
     }
 
     // ── auditLogs — append-only, never editable/deletable by clients ──
