@@ -2602,44 +2602,53 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     load()
   }, [dogId])
 
-  // Actual recorded heats, keyed by heat number — an actual record always
-  // overrides the corresponding predicted slot's date/label below. A
-  // heatCycles doc with no heatNumber (can't be matched to a slot) or no
-  // heatStartDate (legacy record predating that field, or in-progress
-  // edit) is skipped and that slot falls back to being estimated. Ties
-  // (more than one record sharing a heat number — a data anomaly) are
-  // resolved deterministically by lowest doc id, so the choice doesn't
-  // flip between reloads.
-  const recordedByHeatNumber = new Map<number, HeatCycle>()
-  for (const cycle of [...heatCycles].sort((a, b) => (a.id || '').localeCompare(b.id || ''))) {
-    if (cycle.heatNumber == null || !cycle.heatStartDate) continue
-    if (!recordedByHeatNumber.has(cycle.heatNumber)) recordedByHeatNumber.set(cycle.heatNumber, cycle)
-  }
-  // The most recent actual recording (highest heat number) becomes the
-  // new anchor for any prediction that comes after it, instead of every
-  // slot continuing to extrapolate from heat 1/DOB alone.
-  let latestActual: { n: number; date: Date } | null = null
-  for (const [n, cycle] of recordedByHeatNumber) {
-    const d = new Date(cycle.heatStartDate)
-    if (!latestActual || n > latestActual.n) latestActual = { n, date: d }
-  }
+  // Recorded Heat N means the Nth ACTUAL heat-cycle record for this Dam,
+  // numbered purely by chronological order of the recorded heatStartDate
+  // — never by matching against a DOB-predicted slot index, and never by
+  // the record's own user-editable heatNumber field (that field only
+  // labels the "Heat Cycle Records" list above; it must never leak into
+  // this predictor's numbering, since a breeder can set it to anything,
+  // in any order, independent of when heats actually happened). A
+  // heatCycles doc with no heatStartDate (legacy record predating that
+  // field, or an in-progress edit) can't be placed in the timeline and is
+  // excluded. Ties on the exact same date are broken deterministically by
+  // doc id, so ordering never flips between reloads. Because this is
+  // recomputed fresh from heatCycles on every render, editing a date,
+  // deleting a record, or adding one out of order all renumber correctly
+  // with no special-case code.
+  const actualHeats = heatCycles
+    .filter(c => !!c.heatStartDate)
+    .slice()
+    .sort((a, b) => a.heatStartDate.localeCompare(b.heatStartDate) || (a.id || '').localeCompare(b.id || ''))
+    .map((cycle, i) => ({ n: i + 1, date: new Date(cycle.heatStartDate), cycle }))
+  const latestActual = actualHeats.length > 0 ? actualHeats[actualHeats.length - 1] : null
 
-  // Predicted heats from DOB, overridden per-slot by any actual recorded
-  // heat with the matching number.
+  // Zero actual records: fall back to the original DOB/firstHeatDate
+  // 6-slot estimate view (unchanged). Once at least one actual heat
+  // exists, that fallback is replaced entirely by the real history —
+  // "Recorded Heat 1, 2, …" in actual order — plus exactly one "Next
+  // estimated heat" anchored from the latest actual date. No DOB-based
+  // number is ever attached to an actual record.
   const predictedHeats: { n: number; date: Date; label: string; recorded: boolean }[] = []
-  if (dob) {
+  if (latestActual) {
+    for (const h of actualHeats) {
+      predictedHeats.push({ n: h.n, date: h.date, label: `Recorded Heat ${h.n}`, recorded: true })
+    }
+    predictedHeats.push({
+      n: latestActual.n + 1,
+      date: addMonths(latestActual.date, heatInterval),
+      label: 'Next estimated heat',
+      recorded: false,
+    })
+  } else if (dob) {
     const anchor = firstHeatDate ? new Date(firstHeatDate) : addMonths(dob, firstHeatMo)
     for (let i = 0; i < 6; i++) {
-      const n = i + 1
-      const actual = recordedByHeatNumber.get(n)
-      if (actual) {
-        predictedHeats.push({ n, date: new Date(actual.heatStartDate), label: `Heat ${n} (recorded)`, recorded: true })
-        continue
-      }
-      const date = latestActual && n > latestActual.n
-        ? addMonths(latestActual.date, heatInterval * (n - latestActual.n))
-        : addMonths(anchor, heatInterval * i)
-      predictedHeats.push({ n, date, label: n === 1 && firstHeatDate ? 'Heat 1 (actual)' : `Heat ${n} (estimated)`, recorded: false })
+      predictedHeats.push({
+        n: i + 1,
+        date: addMonths(anchor, heatInterval * i),
+        label: i === 0 ? (firstHeatDate ? 'Heat 1 (actual)' : 'Heat 1 (estimated)') : `Heat ${i + 1} (estimated)`,
+        recorded: false,
+      })
     }
   }
 
@@ -2700,11 +2709,12 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         data.createdAt = new Date().toISOString()
         const ref = await addDoc(collection(db, 'heatCycles'), data)
         setHeatCycles(prev => [...prev, { ...data, id: ref.id }].sort((a, b) => a.heatNumber - b.heatNumber))
-        // Update firstHeatDate if this is heat 1
-        if (cycle.heatNumber === 1 && cycle.heatStartDate && !firstHeatDate) {
-          await onUpdate({ firstHeatDate: cycle.heatStartDate } as any)
-          setFirstHeatDate(cycle.heatStartDate)
-        }
+        // firstHeatDate is no longer auto-derived from a record's
+        // user-editable heatNumber field (that assumption is exactly what
+        // broke actual-vs-estimated sync — see the Recorded Heat N
+        // numbering above). It stays purely a manual anchor for the
+        // zero-actual-records fallback view, set only via "+ Add first
+        // heat date" below.
       }
       // Auto-update litter count if whelping recorded
       if (cycle.whelpingActual && cycle.whelpingMethod) {
@@ -2953,15 +2963,24 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       {dob && (
         <div className="card" style={{ marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)' }}>Heat Cycle Predictor (estimate only)</div>
-            <button onClick={() => setEditingHeat(!editingHeat)} className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}>
-              {editingHeat ? 'Cancel' : firstHeatDate ? '✎ Edit anchor date' : '+ Add first heat date'}
-            </button>
+            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)' }}>Heat Cycle Predictor</div>
+            {/* The manual anchor date only affects the zero-actual-records
+                fallback estimate below — once a real heat cycle is
+                recorded, actual dates take over entirely and this control
+                would have no visible effect, so it's hidden rather than
+                left as a dead button. */}
+            {!latestActual && (
+              <button onClick={() => setEditingHeat(!editingHeat)} className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}>
+                {editingHeat ? 'Cancel' : firstHeatDate ? '✎ Edit anchor date' : '+ Add first heat date'}
+              </button>
+            )}
           </div>
           <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
-            {firstHeatDate ? 'Anchored to actual first heat' : 'Estimated from DOB'} · {breedSize} breed · ~{heatInterval}-month cycle
+            {latestActual
+              ? `Based on ${actualHeats.length} recorded heat${actualHeats.length !== 1 ? 's' : ''} · next estimate ~${heatInterval}-month cycle`
+              : `${firstHeatDate ? 'Anchored to actual first heat' : 'Estimated from DOB'} · ${breedSize} breed · ~${heatInterval}-month cycle`}
           </div>
-          {editingHeat && (
+          {editingHeat && !latestActual && (
             <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginBottom: 14, padding: '12px', background: 'var(--sand)', borderRadius: 8 }}>
               <div className="form-group" style={{ flex: 1 }}>
                 <label className="form-label">Date of first heat</label>
@@ -2993,7 +3012,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
             })}
           </div>
           <div style={{ marginTop: 12, padding: '8px 12px', background: 'var(--sand)', borderRadius: 8, fontSize: 12, color: 'var(--mid)' }}>
-            💡 Use "Add Heat Cycle" above to record actual dates. The predictor will auto-anchor to recorded heat 1 date.
+            💡 Use "Add Heat Cycle" above to record actual dates — each one becomes "Recorded Heat N" here, numbered in the order they happened, with a single estimate for the next one.
           </div>
         </div>
       )}
