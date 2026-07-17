@@ -35,23 +35,34 @@ function isValidRole(v) {
 function isValidLegacyRole(v) {
   return v === 'breeder' || v === 'owner'
 }
-function resolveLegacyRolesArray(roles) {
-  if (!Array.isArray(roles) || roles.length === 0) return undefined
-  if (!roles.every(isValidLegacyRole)) return undefined
+function evaluateAccountType(raw) {
+  if (raw.accountType === undefined) return { status: 'absent' }
+  return isValidLegacyRole(raw.accountType) ? { status: 'valid', role: raw.accountType } : { status: 'malformed' }
+}
+function evaluateRolesArray(raw) {
+  if (raw.roles === undefined) return { status: 'absent' }
+  const roles = raw.roles
+  if (!Array.isArray(roles) || roles.length === 0) return { status: 'malformed' }
+  if (!roles.every(isValidLegacyRole)) return { status: 'malformed' }
   const distinct = new Set(roles)
-  return distinct.size === 1 ? [...distinct][0] : undefined
+  return distinct.size === 1 ? { status: 'valid', role: [...distinct][0] } : { status: 'malformed' }
 }
 function normalizeUserProfile(raw) {
   if (isValidRole(raw.role)) {
     return { ...raw, role: raw.role }
   }
-  const legacyAccountType = isValidLegacyRole(raw.accountType) ? raw.accountType : undefined
-  const legacyRolesArray = resolveLegacyRolesArray(raw.roles)
-  if (legacyAccountType && legacyRolesArray && legacyAccountType !== legacyRolesArray) {
+  const accountTypeResult = evaluateAccountType(raw)
+  const rolesArrayResult = evaluateRolesArray(raw)
+  if (accountTypeResult.status === 'malformed' || rolesArrayResult.status === 'malformed') {
     return { ...raw, role: 'owner' }
   }
-  const legacyRole = legacyAccountType ?? legacyRolesArray
-  return { ...raw, role: legacyRole ?? 'owner' }
+  if (accountTypeResult.status === 'valid' && rolesArrayResult.status === 'valid') {
+    return { ...raw, role: accountTypeResult.role === rolesArrayResult.role ? accountTypeResult.role : 'owner' }
+  }
+  const soleValid = accountTypeResult.status === 'valid' ? accountTypeResult
+    : rolesArrayResult.status === 'valid' ? rolesArrayResult
+    : null
+  return { ...raw, role: soleValid?.role ?? 'owner' }
 }
 
 // ── Mirror of SettingsPage.tsx's exact gating predicates ──
@@ -92,6 +103,15 @@ function heatCycleVisible(profile, emailReminders) {
 
   const legacyRolesArray = normalizeUserProfile({ roles: ['owner'] })
   check('Legacy roles[]=owner normalizes and hides Litters', littersVisible(legacyRolesArray) === false)
+}
+
+// ── Test 4c: cross-field rule — a present-but-malformed accountType
+// voids the whole legacy fallback even when roles[] alone looks like a
+// clean, unambiguous breeder signal. Must still hide breeder settings. ──
+{
+  const profile = normalizeUserProfile({ accountType: 123, roles: ['breeder'] })
+  check('accountType malformed + roles clean breeder: still hides Litters', littersVisible(profile) === false)
+  check('accountType malformed + roles clean breeder: still hides Heat cycle', heatCycleVisible(profile, true) === false)
 }
 
 // ── Test 4a2: mixed valid/invalid legacy roles[] array never grants

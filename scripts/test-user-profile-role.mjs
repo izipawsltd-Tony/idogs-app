@@ -40,23 +40,34 @@ function isValidRole(v) {
 function isValidLegacyRole(v) {
   return v === 'breeder' || v === 'owner'
 }
-function resolveLegacyRolesArray(roles) {
-  if (!Array.isArray(roles) || roles.length === 0) return undefined
-  if (!roles.every(isValidLegacyRole)) return undefined
+function evaluateAccountType(raw) {
+  if (raw.accountType === undefined) return { status: 'absent' }
+  return isValidLegacyRole(raw.accountType) ? { status: 'valid', role: raw.accountType } : { status: 'malformed' }
+}
+function evaluateRolesArray(raw) {
+  if (raw.roles === undefined) return { status: 'absent' }
+  const roles = raw.roles
+  if (!Array.isArray(roles) || roles.length === 0) return { status: 'malformed' }
+  if (!roles.every(isValidLegacyRole)) return { status: 'malformed' }
   const distinct = new Set(roles)
-  return distinct.size === 1 ? [...distinct][0] : undefined
+  return distinct.size === 1 ? { status: 'valid', role: [...distinct][0] } : { status: 'malformed' }
 }
 function normalizeUserProfile(raw) {
   if (isValidRole(raw.role)) {
     return { ...raw, role: raw.role }
   }
-  const legacyAccountType = isValidLegacyRole(raw.accountType) ? raw.accountType : undefined
-  const legacyRolesArray = resolveLegacyRolesArray(raw.roles)
-  if (legacyAccountType && legacyRolesArray && legacyAccountType !== legacyRolesArray) {
+  const accountTypeResult = evaluateAccountType(raw)
+  const rolesArrayResult = evaluateRolesArray(raw)
+  if (accountTypeResult.status === 'malformed' || rolesArrayResult.status === 'malformed') {
     return { ...raw, role: 'owner' }
   }
-  const legacyRole = legacyAccountType ?? legacyRolesArray
-  return { ...raw, role: legacyRole ?? 'owner' }
+  if (accountTypeResult.status === 'valid' && rolesArrayResult.status === 'valid') {
+    return { ...raw, role: accountTypeResult.role === rolesArrayResult.role ? accountTypeResult.role : 'owner' }
+  }
+  const soleValid = accountTypeResult.status === 'valid' ? accountTypeResult
+    : rolesArrayResult.status === 'valid' ? rolesArrayResult
+    : null
+  return { ...raw, role: soleValid?.role ?? 'owner' }
 }
 
 // ── Exact mirror of db.ts's updateUserProfile (real setDoc merge + role
@@ -322,16 +333,70 @@ async function newUser(name) {
   check('Valid canonical owner overrides a malformed legacy roles[] array', (await getUserProfile(uidB)).role === 'owner')
 }
 
-// ── Mixed-array remediation: invalid canonical + malformed roles[] (voids
-// its own signal entirely) + a separately valid, unambiguous accountType.
-// The malformed array contributes nothing — it doesn't corrupt or veto a
-// clean signal in a sibling field, it's simply absent from consideration —
-// so accountType stands alone and is honored on its own merits. ──
+// ── Cross-field remediation: invalid canonical + malformed roles[] +
+// otherwise-clean accountType. SUPERSEDES the prior policy — a present-
+// but-malformed legacy source now voids the ENTIRE legacy fallback, not
+// just its own contribution, even when the sibling field looks perfectly
+// clean. A malformed field is exactly the kind of corrupted/tampered data
+// this fallback must be defensive against; its mere presence casts doubt
+// on the whole legacy signal. ──
 {
   const { uid } = await newUser('invalid-canonical-malformed-array-valid-accounttype')
   await setDoc(doc(db, 'users', uid), { role: 'superuser', roles: ['breeder', 123], accountType: 'breeder' })
   const profile = await getUserProfile(uid)
-  check('Malformed roles[] contributes no signal; a separately-clean accountType is honored on its own', profile.role === 'breeder')
+  check('Present-but-malformed roles[] voids the whole legacy fallback, even with a clean accountType', profile.role === 'owner')
+}
+
+// ── Exhaustive table-driven cross-field coverage (canonical always
+// missing/invalid in every row here, so only legacy resolution is under
+// test) — every combination of absent/valid/malformed accountType x
+// absent/valid/malformed roles[] from the final policy's decision matrix. ──
+{
+  const table = [
+    { accountType: undefined, roles: undefined, expected: 'owner', desc: 'both absent' },
+    { accountType: 'breeder', roles: undefined, expected: 'breeder', desc: 'accountType breeder, roles absent' },
+    { accountType: 'owner', roles: undefined, expected: 'owner', desc: 'accountType owner, roles absent' },
+    { accountType: undefined, roles: ['breeder'], expected: 'breeder', desc: 'accountType absent, roles breeder' },
+    { accountType: undefined, roles: ['owner'], expected: 'owner', desc: 'accountType absent, roles owner' },
+    { accountType: 'breeder', roles: ['breeder'], expected: 'breeder', desc: 'both breeder agree' },
+    { accountType: 'owner', roles: ['owner'], expected: 'owner', desc: 'both owner agree' },
+    { accountType: 'breeder', roles: ['owner'], expected: 'owner', desc: 'breeder vs owner disagree' },
+    { accountType: 'owner', roles: ['breeder'], expected: 'owner', desc: 'owner vs breeder disagree' },
+    { accountType: 123, roles: ['breeder'], expected: 'owner', desc: 'accountType malformed(123), roles clean breeder' },
+    { accountType: {}, roles: ['owner'], expected: 'owner', desc: 'accountType malformed({}), roles clean owner' },
+    { accountType: 'breeder', roles: ['breeder', 'unknown'], expected: 'owner', desc: 'accountType clean breeder, roles malformed mixed' },
+    { accountType: 'breeder', roles: null, expected: 'owner', desc: 'accountType clean breeder, roles=null present' },
+    { accountType: 'owner', roles: [], expected: 'owner', desc: 'accountType clean owner, roles=[] present empty' },
+    { accountType: 'owner', roles: 'owner', expected: 'owner', desc: 'accountType clean owner, roles non-array present' },
+    { accountType: 123, roles: null, expected: 'owner', desc: 'both malformed' },
+    { accountType: undefined, roles: ['breeder', 'unknown'], expected: 'owner', desc: 'accountType absent, roles malformed' },
+    { accountType: undefined, roles: null, expected: 'owner', desc: 'accountType absent, roles=null present malformed' },
+    { accountType: 123, roles: undefined, expected: 'owner', desc: 'accountType malformed, roles absent' },
+    { accountType: 'garbage', roles: undefined, expected: 'owner', desc: 'accountType malformed string, roles absent' },
+  ]
+  for (const [i, { accountType, roles, expected, desc }] of table.entries()) {
+    const data = {}
+    if (accountType !== undefined) data.accountType = accountType
+    if (roles !== undefined) data.roles = roles
+    const { uid } = await newUser(`table${i}`)
+    await setDoc(doc(db, 'users', uid), data)
+    const profile = await getUserProfile(uid)
+    check(`[cross-field table] ${desc} -> ${expected}`, profile.role === expected, `got ${profile.role}`)
+  }
+}
+
+// ── A valid canonical role remains authoritative no matter how malformed
+// the legacy fields are, including 'admin' (which legacy can never grant
+// on its own) ──
+{
+  const { uid: uidA } = await newUser('canonical-admin-overrides-malformed-legacy')
+  await setDoc(doc(db, 'users', uidA), { role: 'admin', accountType: 123, roles: null })
+  check("Valid canonical 'admin' is authoritative over malformed legacy fields", (await getUserProfile(uidA)).role === 'admin')
+
+  const { uid: uidB } = await newUser('legacy-cannot-ever-grant-admin')
+  await setDoc(doc(db, 'users', uidB), { accountType: 'admin', roles: ['admin'] })
+  const profileB = await getUserProfile(uidB)
+  check("Legacy 'admin' values are not recognized as valid legacy roles at all, fails safe to owner", profileB.role === 'owner')
 }
 
 // ── Mixed-array remediation: malformed legacy array can never expose
