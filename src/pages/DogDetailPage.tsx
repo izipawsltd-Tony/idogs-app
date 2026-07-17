@@ -2560,24 +2560,32 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const ageMo = dob ? (today.getFullYear() - dob.getFullYear()) * 12 + (today.getMonth() - dob.getMonth()) : 0
   const ageYrs = ageMo / 12
 
-  // Load heat cycles and all dogs from Firestore
+  // Load heat cycles and all dogs from Firestore independently — a
+  // Promise.all here previously meant a failure on either query (e.g. the
+  // heatCycles permission-denied bug) silently emptied BOTH the heat cycle
+  // list AND the "from my dogs" Sire dropdown, since Promise.all rejects
+  // as soon as one of its inputs rejects.
   useEffect(() => {
     if (!dogId) return
     async function load() {
-      try {
-        const [cyclesSnap, dogsData] = await Promise.all([
-          getDocs(query(collection(db, 'heatCycles'), where('dogId', '==', dogId))),
-          getDocs(query(collection(db, 'dogs'), where('tenantId', '==', dog.tenantId))),
-        ])
-        const cycles = cyclesSnap.docs.map(d => ({ id: d.id, ...d.data() } as HeatCycle))
+      const [cyclesResult, dogsResult] = await Promise.allSettled([
+        getDocs(query(collection(db, 'heatCycles'), where('dogId', '==', dogId))),
+        getDocs(query(collection(db, 'dogs'), where('tenantId', '==', dog.tenantId))),
+      ])
+      if (cyclesResult.status === 'fulfilled') {
+        const cycles = cyclesResult.value.docs.map(d => ({ id: d.id, ...d.data() } as HeatCycle))
         cycles.sort((a, b) => a.heatNumber - b.heatNumber)
         setHeatCycles(cycles)
-        setAllDogs(dogsData.docs.map(d => ({ id: d.id, ...d.data() } as Dog)))
-      } catch (e) {
-        console.error('Failed to load heat cycles:', e)
-      } finally {
-        setLoadingCycles(false)
+      } else {
+        console.error('Failed to load heat cycles:', cyclesResult.reason)
+        toast('Failed to load heat cycle records', 'error')
       }
+      if (dogsResult.status === 'fulfilled') {
+        setAllDogs(dogsResult.value.docs.map(d => ({ id: d.id, ...d.data() } as Dog)))
+      } else {
+        console.error('Failed to load dogs for sire selector:', dogsResult.reason)
+      }
+      setLoadingCycles(false)
     }
     load()
   }, [dogId])
