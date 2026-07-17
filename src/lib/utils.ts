@@ -219,7 +219,21 @@ export function parseDobStrict(dob: unknown): Date | null {
   const day = Number(match[3])
   const parsed = new Date(year, month - 1, day)
   if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return null
-  if (parsed.getTime() > Date.now()) return null
+  // Future-date check compares calendar-date components (Y, M, D)
+  // directly, never an absolute instant (parsed.getTime() vs
+  // Date.now()). A DOB dated "today" must never be rejectable — but
+  // comparing instants makes that depend on what time of day the check
+  // happens to run, and mixing UTC-based helpers (toISOString()) with
+  // local-based ones (setDate()) anywhere nearby silently shifts which
+  // calendar date "today" even means. Component comparison sidesteps
+  // both: the same date string always evaluates the same way relative
+  // to whatever this machine's own Date() calls "today", with no
+  // instant/epoch or UTC/local mixing involved anywhere.
+  const today = new Date()
+  const isFuture = year > today.getFullYear() ||
+    (year === today.getFullYear() && month - 1 > today.getMonth()) ||
+    (year === today.getFullYear() && month - 1 === today.getMonth() && day > today.getDate())
+  if (isFuture) return null
   return parsed
 }
 
