@@ -46,6 +46,15 @@ export interface Dog {
   createdAt: string
   updatedAt: string
 
+  // Back-reference to the litters/{id} doc this puppy was born into —
+  // set once at creation via LittersPage's handleAddPuppy, never
+  // reassigned. Litters only carry the forward reference (puppyIds), so
+  // this is what lets litter deletion verify EXACT membership (both
+  // directions must agree) instead of trusting puppyIds alone. Absent
+  // on any dog created before this field existed, and on dogs never
+  // added via the litter flow (e.g. DogNewPage) — legacy litters fall
+  // back to the forward-reference-only check.
+  litterId?: string
   // ── Ownership (already written by transferDogOwnership) ──
   status?: 'active' | 'transferred'
   buyerName?: string
@@ -293,6 +302,7 @@ export interface DogFormData {
   pedigreeRegister?: string
   breederIdType?: Dog['breederIdType']
   breederIdValue?: string
+  litterId?: string
 }
 
 export interface AuthFormData {

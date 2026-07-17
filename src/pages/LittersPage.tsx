@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getLitters, getDogs, createLitter, updateLitter, createDog, updateDog, deleteDog, transferDogOwnership } from '../lib/db'
-import { doc, writeBatch } from 'firebase/firestore'
+import { doc, getDoc, writeBatch } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred } from '../lib/utils'
+import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict } from '../lib/utils'
 import type { Litter, Dog, ToastMessage } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { sendTransferEmail } from '../lib/email'
@@ -95,6 +95,14 @@ export default function LittersPage({ toast }: Props) {
     if (!form.damId) { toast('Please select a dam', 'error'); return }
     const dam = dogs.find(d => d.id === form.damId)
     if (!dam) { toast('Dam not found — please refresh', 'error'); return }
+    // actualBirthDate is optional at create time (a planned litter may
+    // have only a mating/due date) — but if one is provided, it must be
+    // a genuinely valid past date, same standard as everywhere else a
+    // dateOfBirth-shaped value is accepted.
+    if (form.actualBirthDate && !parseDobStrict(form.actualBirthDate)) {
+      toast('Actual birth date is not a valid past date', 'error')
+      return
+    }
     setSavingLitter(true)
     try {
       await createLitter({
@@ -126,6 +134,10 @@ export default function LittersPage({ toast }: Props) {
     // that (per policy) shouldn't have been able to produce them.
     if ((litter.puppyIds?.length || 0) > 0 && !editLitterForm.actualBirthDate) {
       toast('This litter has puppies — actual birth date cannot be cleared', 'error')
+      return
+    }
+    if (editLitterForm.actualBirthDate && !parseDobStrict(editLitterForm.actualBirthDate)) {
+      toast('Actual birth date is not a valid past date', 'error')
       return
     }
     try {
@@ -160,11 +172,47 @@ export default function LittersPage({ toast }: Props) {
   }
 
   async function handleDeleteLitter(litter: Litter) {
-    const puppyDogs = dogs.filter(d => litter.puppyIds?.includes(d.id))
-    const eligible = puppyDogs.filter(d => !isDogTransferred(d))
-    const preserved = puppyDogs.length - eligible.length
+    if (!user) return
+    // Re-read the litter and every candidate puppy fresh from Firestore
+    // right before deciding anything — never decide from the component's
+    // local `litters`/`dogs` state, which was loaded at page mount and
+    // can be stale (another tab could have transferred a puppy since).
+    // This is what lets the confirmation count and the actual batch stay
+    // guaranteed identical, computed from one single fresh snapshot.
+    let freshLitter: Litter
+    let candidates: Dog[]
+    try {
+      const freshLitterSnap = await getDoc(doc(db, 'litters', litter.id))
+      if (!freshLitterSnap.exists()) { toast('This litter no longer exists — refreshing', 'error'); setLitters(prev => prev.filter(l => l.id !== litter.id)); return }
+      freshLitter = { id: freshLitterSnap.id, ...freshLitterSnap.data() } as Litter
+      const candidateSnaps = await Promise.all((freshLitter.puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
+      candidates = candidateSnaps
+        .filter(s => s.exists())
+        .map(s => ({ id: s.id, ...s.data() } as Dog))
+        // Exact litter membership: the dog is already only a candidate
+        // because THIS litter's own puppyIds names it, but any dog that
+        // carries a litterId back-reference must also agree it belongs
+        // to THIS exact litter — never trust the forward reference alone
+        // if the dog's own record disagrees (guards against a stale/
+        // corrupted puppyIds entry pointing at a dog that was actually
+        // reassigned elsewhere). Dogs with no litterId at all predate
+        // that field and fall back to the forward-reference-only check,
+        // so legacy litters remain deletable.
+        .filter(d => d.litterId === undefined || d.litterId === freshLitter.id)
+    } catch {
+      toast('Failed to load current litter details — please try again', 'error')
+      return
+    }
 
-    const parts = [`Delete litter "${litter.name}"?`]
+    // Eligibility is decided on currentOwnerId directly — the exact same
+    // field the dogs/{dogId} delete rule itself checks — rather than the
+    // status/transferStatus fields, which a raw (non-getDogs()) read can
+    // see as stale post-claim (claim-transferred-dogs.js resets status
+    // back to 'active' on the new owner's copy of the document).
+    const eligible = candidates.filter(d => d.currentOwnerId === user.uid)
+    const preserved = candidates.length - eligible.length
+
+    const parts = [`Delete litter "${freshLitter.name}"?`]
     if (eligible.length > 0) {
       parts.push(`This will also delete ${eligible.length} puppy record${eligible.length !== 1 ? 's' : ''} still in your care.`)
     }
@@ -178,12 +226,15 @@ export default function LittersPage({ toast }: Props) {
 
     try {
       // Litter delete + eligible-puppy deletes as one atomic batch — if
-      // any single delete were denied (e.g. a stale local puppy list no
-      // longer matching live ownership), the whole batch is rejected and
-      // nothing is left half-deleted. Firestore re-evaluates the normal
-      // per-document dogs/litters rules for every op in the batch, so
-      // this can never delete a dog outside the requester's own tenancy
-      // regardless of what puppyIds says.
+      // any single delete were denied (e.g. a puppy transferred in the
+      // instant between the fresh read above and this commit), the whole
+      // batch is rejected and nothing is left half-deleted. Firestore
+      // re-evaluates the normal per-document dogs/litters rules for
+      // every op in the batch, so this can never delete a dog outside
+      // the requester's own tenancy regardless of what puppyIds says —
+      // and re-running this exact same batch again is safe (deleting an
+      // already-deleted document is a no-op), so a retry after a
+      // transient failure is idempotent.
       const batch = writeBatch(db)
       batch.delete(doc(db, 'litters', litter.id))
       for (const puppy of eligible) {
@@ -209,6 +260,10 @@ export default function LittersPage({ toast }: Props) {
       toast('Set an actual birth date for this litter before adding puppies', 'error')
       return
     }
+    if (!parseDobStrict(litter.actualBirthDate)) {
+      toast('This litter\'s actual birth date is invalid — fix it before adding puppies', 'error')
+      return
+    }
     setSavingPuppy(true)
     try {
       const dam = dogs.find(d => d.id === litter.damId)
@@ -227,6 +282,7 @@ export default function LittersPage({ toast }: Props) {
         colour: puppyForm.colour,
         microchip: puppyForm.microchip,
         ankc: '',
+        litterId,
         notes: [
           `From litter: ${litter.name}`,
           puppyForm.collarColour ? `Collar: ${puppyForm.collarColour}` : '',
