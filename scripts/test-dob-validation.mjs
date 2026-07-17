@@ -38,7 +38,11 @@ function parseDobStrict(dob) {
   const day = Number(match[3])
   const parsed = new Date(year, month - 1, day)
   if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return null
-  if (parsed.getTime() > Date.now()) return null
+  const today = new Date()
+  const isFuture = year > today.getFullYear() ||
+    (year === today.getFullYear() && month - 1 > today.getMonth()) ||
+    (year === today.getFullYear() && month - 1 === today.getMonth() && day > today.getDate())
+  if (isFuture) return null
   return parsed
 }
 function calculateLifeStage(dob) {
@@ -58,10 +62,19 @@ function isCurrentBreederDog(dog) {
   return stage !== 'whelp' && stage !== 'puppy'
 }
 
+// Builds a local-calendar-date string directly from a Date's local
+// components — never toISOString(), which is UTC and can silently
+// shift the calendar date by a day relative to what setMonth()/
+// setDate() (local) just computed, depending on the machine's own
+// timezone offset (exactly the class of bug this whole file exists to
+// catch — see the "future DOB" tests below).
+function toLocalDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 function dobYearsAgo(years) {
   const d = new Date()
   d.setMonth(d.getMonth() - Math.round(years * 12))
-  return d.toISOString().slice(0, 10)
+  return toLocalDateStr(d)
 }
 
 // ── Test 1: valid DOB parses correctly ──
@@ -106,13 +119,18 @@ function dobYearsAgo(years) {
   check('A boolean is rejected', parseDobStrict(true) === null)
 }
 
-// ── Test 6: future DOB ──
+// ── Test 6: future DOB — built via local Y/M/D components throughout
+// (toLocalDateStr), never toISOString(), so this test's own "tomorrow"
+// can't drift onto the wrong calendar date near a UTC/local day
+// boundary (exactly the bug this fix addresses — verified by running
+// this suite for real in UTC+9:30, where toISOString()-based "tomorrow"
+// could silently compute today's date instead). ──
 {
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
-  const tomorrowStr = tomorrow.toISOString().slice(0, 10)
+  const tomorrowStr = toLocalDateStr(tomorrow)
   check('A DOB one day in the future is rejected', parseDobStrict(tomorrowStr) === null)
   check('A DOB far in the future ("2099-01-01") is rejected', parseDobStrict('2099-01-01') === null)
-  check("Today's date is accepted (not \"future\")", parseDobStrict(new Date().toISOString().slice(0, 10)) !== null)
+  check("Today's date is accepted (not \"future\")", parseDobStrict(toLocalDateStr(new Date())) !== null)
 }
 
 // ── Test 7: malformed legacy value ──
@@ -145,7 +163,8 @@ function dobYearsAgo(years) {
     /export function calculateLifeStage[\s\S]{0,120}const birth = parseDobStrict\(dob\)/.test(utilsSrc))
   check('parseDobStrict round-trips year/month/day to reject impossible calendar dates',
     /getFullYear\(\) !== year \|\| parsed\.getMonth\(\) !== month - 1 \|\| parsed\.getDate\(\) !== day/.test(utilsSrc))
-  check('parseDobStrict rejects a future date against Date.now()', /parsed\.getTime\(\) > Date\.now\(\)/.test(utilsSrc))
+  check('parseDobStrict rejects a future date via calendar-component comparison (not an instant/getTime() comparison — timezone-safe)',
+    /const isFuture = year > today\.getFullYear\(\)/.test(utilsSrc) && !/parsed\.getTime\(\) > Date\.now\(\)/.test(utilsSrc))
 
   const dogNewSrc = readFileSync(new URL('../src/pages/DogNewPage.tsx', import.meta.url), 'utf8')
   check('DogNewPage imports and validates through parseDobStrict before submit',
