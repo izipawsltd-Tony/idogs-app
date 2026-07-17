@@ -12,7 +12,8 @@ import {
 } from '../lib/db'
 import {
   formatDate, getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS,
-  getVaccineStatus, isOverdue, isDueSoon, getTodaysMilestone, ordinal, BREEDER_ID_CONFIG, type Milestone
+  getVaccineStatus, isOverdue, isDueSoon, getTodaysMilestone, ordinal, BREEDER_ID_CONFIG, type Milestone,
+  isEligibleSireDog
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import PhotoUpload from '../components/ui/PhotoUpload'
@@ -2990,8 +2991,9 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
   const [form, setForm] = useState<HeatCycle>({ ...cycle })
   const [sireMode, setSireMode] = useState<'list' | 'manual'>(cycle.sireName ? 'manual' : 'list')
 
-  // Male dogs in the system (exclude current dog)
-  const maleDogs = allDogs.filter(d => d.sex === 'male' && (d as any).status !== 'transferred')
+  // Eligible Sire candidates — living, currently-owned, non-puppy males
+  // (same predicate LittersPage uses for its own Sire dropdown)
+  const maleDogs = allDogs.filter(isEligibleSireDog)
 
   function set(field: keyof HeatCycle, value: any) {
     setForm(prev => {

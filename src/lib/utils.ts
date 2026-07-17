@@ -1,5 +1,5 @@
 import { format, formatDistance, isAfter, isBefore, addDays, differenceInYears, differenceInMonths } from 'date-fns'
-import type { LifeStage } from '../types'
+import type { Dog, LifeStage } from '../types'
 
 // ── ID GENERATION ─────────────────────────────────────────────
 
@@ -211,6 +211,19 @@ export function calculateLifeStage(dob: string, breed?: string): LifeStage {
   if (months < youngAdultEnd) return 'young_adult'
   if (months < seniorStart) return 'adult'
   return 'senior'
+}
+
+// Shared by the Sire selectors in LittersPage (create litter) and
+// DogDetailPage's HeatCycleModal (record a mating) — a dog only makes
+// sense as a Sire pick if it's a living, currently-owned, sexually
+// mature male in the caller's own account. Kept as one predicate so both
+// selectors apply the same exclusions instead of drifting apart.
+export function isEligibleSireDog(dog: Dog): boolean {
+  if (dog.sex !== 'male') return false
+  if (dog.isDeceased) return false
+  if (dog.status === 'transferred' || (dog as any).transferStatus === 'pendingClaim') return false
+  const stage = calculateLifeStage(dog.dateOfBirth, dog.breed)
+  return stage !== 'whelp' && stage !== 'puppy'
 }
 
 export const LIFE_STAGE_LABELS: Record<LifeStage, string> = {

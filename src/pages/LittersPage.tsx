@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { getLitters, getDogs, createLitter, updateLitter, createDog, updateDog, deleteDog, transferDogOwnership } from '../lib/db'
 import { deleteDoc, doc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import { formatDate } from '../lib/utils'
+import { formatDate, isEligibleSireDog } from '../lib/utils'
 import type { Litter, Dog, ToastMessage } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { sendTransferEmail } from '../lib/email'
@@ -287,7 +287,7 @@ export default function LittersPage({ toast }: Props) {
   }
 
   const femalesOnly = dogs.filter(d => d.sex === 'female')
-  const malesOnly = dogs.filter(d => d.sex === 'male')
+  const malesOnly = dogs.filter(isEligibleSireDog)
 
   if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
 
