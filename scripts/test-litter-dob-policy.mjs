@@ -107,8 +107,8 @@ function partitionLitterPuppies(dogs, puppyIds) {
 // puppies atomically, and the confirmation reports the affected count ──
 {
   const src = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
-  check('handleDeleteLitter computes eligible via isDogTransferred (not a bespoke check)',
-    /const eligible = puppyDogs\.filter\(d => !isDogTransferred\(d\)\)/.test(src))
+  check('handleDeleteLitter computes eligible via currentOwnerId (same field the delete rule itself checks)',
+    /const eligible = candidates\.filter\(d => d\.currentOwnerId === user\.uid\)/.test(src))
   check('Delete confirmation message includes the eligible puppy count',
     /This will also delete \$\{eligible\.length\} puppy record/.test(src))
   check('Delete confirmation message mentions preserved (transferred) puppies when any exist',
@@ -122,12 +122,12 @@ function partitionLitterPuppies(dogs, puppyIds) {
 {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
   const dogsBlock = (rules.match(/match \/dogs\/\{dogId\} \{[\s\S]*?\n    \}/) || [''])[0]
-  check('dogs create requires a non-empty dateOfBirth',
-    /request\.resource\.data\.dateOfBirth is string &&\s*\n\s*request\.resource\.data\.dateOfBirth\.size\(\) > 0/.test(dogsBlock))
+  check('dogs create requires a validly-shaped dateOfBirth (isValidDobString)',
+    /isValidDobString\(request\.resource\.data\.dateOfBirth\)/.test(dogsBlock))
   const littersBlock = (rules.match(/match \/litters\/\{id\} \{[\s\S]*?\n    \}/) || [''])[0]
-  check('litters update requires actualBirthDate to stay non-empty while puppyIds is non-empty',
+  check('litters update requires a validly-shaped actualBirthDate while puppyIds is non-empty',
     /get\('puppyIds', \[\]\)\.size\(\) == 0 \|\|/.test(littersBlock) &&
-    /get\('actualBirthDate', ''\)\.size\(\) > 0/.test(littersBlock))
+    /isValidDobString\(request\.resource\.data\.get\('actualBirthDate', null\)\)/.test(littersBlock))
 }
 
 // ── Test 8: no PII logging — the new/changed code paths (delete litter,

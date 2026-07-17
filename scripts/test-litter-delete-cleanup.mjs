@@ -207,5 +207,241 @@ const strangerUid = await newUser('stranger')
   check('3-EmptyLitter', 'A planned litter with zero puppies deletes cleanly', ok)
 }
 
+// Mirrors LittersPage.handleDeleteLitter()'s exact candidate-filtering
+// logic against already-fetched snapshots, so Sections 4-7 below can
+// reuse it instead of re-deriving eligibility ad hoc.
+function computeEligible(freshLitterId, candidates, requesterUid) {
+  const litterMembers = candidates.filter(d => d.litterId === undefined || d.litterId === freshLitterId)
+  const eligible = litterMembers.filter(d => d.currentOwnerId === requesterUid)
+  const preserved = litterMembers.length - eligible.length
+  return { eligible, preserved, litterMembers }
+}
+
+// =========================================================================
+// SECTION 4 — litterId cross-check: a dog erroneously listed in this
+// litter's puppyIds (a data-corruption scenario — e.g. a copy/paste bug
+// wrote the wrong id) but whose OWN litterId back-reference points at a
+// DIFFERENT litter must be preserved, never deleted and never counted
+// as "eligible" — Codex Blocker 3 ("same owner but different litter
+// remains untouched").
+// =========================================================================
+{
+  await as('breeder')
+  const damId4 = `dam4_${R}`
+  await setDoc(doc(db, 'dogs', damId4), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam4', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const otherLitterId = `otherlitter_${R}`
+  const thisLitterId = `thislitter_${R}`
+  const crossLinkedPupId = `crosslinked_${R}`
+  // This puppy genuinely belongs to otherLitterId (its own litterId says so)
+  await setDoc(doc(db, 'dogs', crossLinkedPupId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'CrossLinkedPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+    litterId: otherLitterId,
+  })
+  // ...but thisLitterId's own puppyIds array ALSO (erroneously) lists it
+  await setDoc(doc(db, 'litters', thisLitterId), {
+    tenantId: breederUid, damId: damId4, name: 'This Litter', notes: '', actualBirthDate: '2026-01-01',
+    puppyIds: [crossLinkedPupId],
+  })
+
+  const litterSnap = await getDoc(doc(db, 'litters', thisLitterId))
+  const candidateSnaps = await Promise.all((litterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
+  const candidates = candidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
+  const { eligible, litterMembers } = computeEligible(thisLitterId, candidates, breederUid)
+  check('4-CrossLinkGuard', 'A dog whose litterId points elsewhere is excluded from litter membership entirely', litterMembers.length === 0)
+  check('4-CrossLinkGuard', 'A dog whose litterId points elsewhere is never in the eligible-for-deletion set', eligible.length === 0)
+
+  // Actually attempt the delete (litter only — eligible is empty) and
+  // confirm the cross-linked puppy survives untouched
+  const batch = writeBatch(db)
+  batch.delete(doc(db, 'litters', thisLitterId))
+  await batch.commit()
+  const pupStillThere = await safeGetDoc(doc(db, 'dogs', crossLinkedPupId))
+  check('4-CrossLinkGuard', 'The cross-linked puppy (belongs to a different litter) survives the delete untouched', pupStillThere.exists() && pupStillThere.data().litterId === otherLitterId)
+}
+
+// =========================================================================
+// SECTION 5 — same tenant, no litterId, NOT actually part of this
+// litter: an ordinary standalone dog (e.g. created via DogNewPage,
+// never touched by any litter flow) must never be swept up by a litter
+// delete merely for sharing a tenant — Codex Blocker 3 ("same tenant
+// but no litterId remains untouched").
+// =========================================================================
+{
+  await as('breeder')
+  const damId5 = `dam5b_${R}`
+  await setDoc(doc(db, 'dogs', damId5), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam5b', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const litterId5 = `litter5b_${R}`
+  await setDoc(doc(db, 'litters', litterId5), {
+    tenantId: breederUid, damId: damId5, name: 'Litter5b', notes: '', puppyIds: [], // empty — nobody is a member
+  })
+  // A standalone dog, same tenant, no litterId, never listed anywhere
+  const standaloneDogId = `standalone5_${R}`
+  await setDoc(doc(db, 'dogs', standaloneDogId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Standalone', sex: 'male', status: 'active', dateOfBirth: '2018-01-01',
+  })
+
+  const batch = writeBatch(db)
+  batch.delete(doc(db, 'litters', litterId5))
+  await batch.commit()
+  const standaloneStillThere = await safeGetDoc(doc(db, 'dogs', standaloneDogId))
+  check('5-StandaloneGuard', 'A same-tenant standalone dog with no litterId and no puppyIds membership is untouched', standaloneStillThere.exists())
+}
+
+// =========================================================================
+// SECTION 6 — concurrent change: a puppy is transferred AFTER the
+// component's stale local state would have considered it eligible, but
+// BEFORE the fresh re-read handleDeleteLitter now does immediately
+// before deciding anything. Proves the fresh-read fix actually closes
+// the staleness window, not just in theory.
+// =========================================================================
+{
+  await as('breeder')
+  const damId6 = `dam6_${R}`
+  await setDoc(doc(db, 'dogs', damId6), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam6', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const litterId6 = `litter6_${R}`
+  const racePupId = `racepup_${R}`
+  await setDoc(doc(db, 'dogs', racePupId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'RacePup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+    litterId: litterId6,
+  })
+  await setDoc(doc(db, 'litters', litterId6), {
+    tenantId: breederUid, damId: damId6, name: 'Litter6', notes: '', actualBirthDate: '2026-01-01', puppyIds: [racePupId],
+  })
+
+  // Simulate "stale local component state": at page-mount time this
+  // puppy looked eligible (currentOwnerId === breeder).
+  const staleSnapshot = { currentOwnerId: breederUid, litterId: litterId6 }
+  const staleEligible = computeEligible(litterId6, [{ id: racePupId, ...staleSnapshot }], breederUid).eligible
+  check('6-ConcurrentChange', 'Stale snapshot alone would have considered the puppy eligible (sets up the race)', staleEligible.length === 1)
+
+  // Now the puppy actually gets transferred (a concurrent tab/process)
+  const buyerUid6 = await newUser('buyer6')
+  await as('breeder')
+  await adminDb.collection('dogs').doc(racePupId).update({ currentOwnerId: buyerUid6, status: 'active' })
+
+  // handleDeleteLitter's fresh re-read happens AFTER the transfer
+  const freshLitterSnap = await getDoc(doc(db, 'litters', litterId6))
+  const freshCandidateSnaps = await Promise.all((freshLitterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
+  const freshCandidates = freshCandidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
+  const { eligible: freshEligible, preserved: freshPreserved } = computeEligible(litterId6, freshCandidates, breederUid)
+  check('6-ConcurrentChange', 'Fresh re-read correctly excludes the just-transferred puppy from eligible', freshEligible.length === 0)
+  check('6-ConcurrentChange', 'Fresh re-read correctly counts it as preserved instead', freshPreserved === 1)
+
+  // The actual delete (litter only, since eligible is empty) must leave
+  // the transferred puppy fully intact
+  const batch = writeBatch(db)
+  batch.delete(doc(db, 'litters', litterId6))
+  await batch.commit()
+  const racePupStillThere = await safeGetDoc(doc(db, 'dogs', racePupId))
+  check('6-ConcurrentChange', 'The concurrently-transferred puppy survives with its new owner intact', racePupStillThere.exists() && racePupStillThere.data().currentOwnerId === buyerUid6)
+}
+
+// =========================================================================
+// SECTION 7 — affected-count accuracy: the eligible/preserved counts
+// computed for the confirmation message must exactly match what the
+// batch actually deletes/preserves — no drift between what's promised
+// and what happens.
+// =========================================================================
+{
+  await as('breeder')
+  const damId7 = `dam7_${R}`
+  await setDoc(doc(db, 'dogs', damId7), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam7', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const litterId7 = `litter7_${R}`
+  const pupIds = [`p7a_${R}`, `p7b_${R}`, `p7c_${R}`, `p7d_${R}`]
+  for (const id of pupIds) {
+    await setDoc(doc(db, 'dogs', id), {
+      tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+      sourceType: 'BREEDER_ISSUED', name: id, sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId7,
+    })
+  }
+  await setDoc(doc(db, 'litters', litterId7), {
+    tenantId: breederUid, damId: damId7, name: 'Litter7', notes: '', actualBirthDate: '2026-01-01', puppyIds: pupIds,
+  })
+  // Transfer 1 of the 4 away — expect 3 eligible, 1 preserved
+  const buyerUid7 = await newUser('buyer7')
+  await as('breeder')
+  await adminDb.collection('dogs').doc(pupIds[0]).update({ currentOwnerId: buyerUid7, status: 'active' })
+
+  const freshLitterSnap = await getDoc(doc(db, 'litters', litterId7))
+  const freshCandidateSnaps = await Promise.all((freshLitterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
+  const freshCandidates = freshCandidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
+  const { eligible, preserved } = computeEligible(litterId7, freshCandidates, breederUid)
+  check('7-AffectedCount', 'Computed eligible count is exactly 3', eligible.length === 3)
+  check('7-AffectedCount', 'Computed preserved count is exactly 1', preserved === 1)
+
+  const batch = writeBatch(db)
+  batch.delete(doc(db, 'litters', litterId7))
+  for (const puppy of eligible) batch.delete(doc(db, 'dogs', puppy.id))
+  await batch.commit()
+
+  let actuallyDeleted = 0, actuallyPreserved = 0
+  for (const id of pupIds) {
+    const snap = await safeGetDoc(doc(db, 'dogs', id))
+    if (snap.exists()) actuallyPreserved++
+    else actuallyDeleted++
+  }
+  check('7-AffectedCount', 'Actual deleted count matches the computed eligible count (3)', actuallyDeleted === 3)
+  check('7-AffectedCount', 'Actual preserved count matches the computed preserved count (1)', actuallyPreserved === 1)
+}
+
+// =========================================================================
+// SECTION 8 — retry idempotency: committing the same delete batch a
+// second time (simulating a client retry after e.g. a network blip on
+// the response, even though the first commit actually succeeded) must
+// not error and must not affect any other data.
+// =========================================================================
+{
+  await as('breeder')
+  const damId8 = `dam8_${R}`
+  await setDoc(doc(db, 'dogs', damId8), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam8', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const litterId8 = `litter8_${R}`
+  const pupId8 = `p8_${R}`
+  await setDoc(doc(db, 'dogs', pupId8), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Pup8', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId8,
+  })
+  await setDoc(doc(db, 'litters', litterId8), {
+    tenantId: breederUid, damId: damId8, name: 'Litter8', notes: '', actualBirthDate: '2026-01-01', puppyIds: [pupId8],
+  })
+
+  const firstBatch = writeBatch(db)
+  firstBatch.delete(doc(db, 'litters', litterId8))
+  firstBatch.delete(doc(db, 'dogs', pupId8))
+  let firstOk = true
+  try { await firstBatch.commit() } catch { firstOk = false }
+  check('8-RetryIdempotent', 'First commit succeeds', firstOk)
+
+  // Retry — same shape of batch, deleting already-deleted documents
+  const retryBatch = writeBatch(db)
+  retryBatch.delete(doc(db, 'litters', litterId8))
+  retryBatch.delete(doc(db, 'dogs', pupId8))
+  let retryOk = true
+  try { await retryBatch.commit() } catch { retryOk = false }
+  check('8-RetryIdempotent', 'Retrying the same delete batch on already-deleted documents does not error', retryOk)
+
+  const litterGone = await safeGetDoc(doc(db, 'litters', litterId8))
+  const pupGone = await safeGetDoc(doc(db, 'dogs', pupId8))
+  check('8-RetryIdempotent', 'Litter remains deleted after retry (no resurrection, no error state)', !litterGone.exists())
+  check('8-RetryIdempotent', 'Puppy remains deleted after retry', !pupGone.exists())
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail > 0 ? 1 : 0)

@@ -368,6 +368,77 @@ const strangerUid = await newUser('stranger')
     await setDoc(doc(db, 'litters', `litter_malformed_${R}`), { tenantId: breederUid, damId: `nonexistent_${R}`, name: 'Litter E', puppyIds: [] })
   } catch (err) { malformedDamDenied = isDenied(err) }
   check('6-DamValidation', 'A malformed/stale damId pointing at no document is rejected', malformedDamDenied)
+
+  // A deceased Dam
+  const deceasedDamId = `deceaseddam6_${R}`
+  await setDoc(doc(db, 'dogs', deceasedDamId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Deceased Dam', sex: 'female', status: 'active', dateOfBirth: '2015-01-01', isDeceased: true,
+  })
+  let deceasedDamDenied = false
+  try {
+    await setDoc(doc(db, 'litters', `litter_deceaseddam_${R}`), { tenantId: breederUid, damId: deceasedDamId, name: 'Litter F', puppyIds: [] })
+  } catch (err) { deceasedDamDenied = isDenied(err) }
+  check('6-DamValidation', 'A deceased Dam is rejected', deceasedDamDenied)
+}
+
+// =========================================================================
+// SECTION 7 — Malformed-DOB parent rejection (Codex Blocker 1/2): a Sire
+// or Dam reference whose OWN dateOfBirth is missing/malformed must be
+// rejected server-side even though sex/ownership/deceased all check
+// out — "can't prove maturity" must never resolve to "eligible", and
+// this must hold even if a client bypasses its own UI filtering by
+// writing directly to Firestore (exactly what these setDoc calls do).
+// =========================================================================
+{
+  await as('breeder')
+  const dobDamId = `dobdam7_${R}`
+  await setDoc(doc(db, 'dogs', dobDamId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'DobTest Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+
+  // Sire with a malformed dateOfBirth field (simulates a legacy/corrupt
+  // record — direct admin write bypasses the dogs create rule entirely,
+  // matching how a real pre-existing malformed record would look)
+  const malformedDobSireId = `malformeddobsire_${R}`
+  await adminDb.collection('dogs').doc(malformedDobSireId).set({
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Malformed DOB Sire', sex: 'male', status: 'active', dateOfBirth: 'not-a-date',
+  })
+  let malformedDobSireDenied = false
+  try {
+    await setDoc(doc(db, 'heatCycles', `cyc_malformeddob_${R}`), {
+      dogId: dobDamId, tenantId: breederUid, heatNumber: 1, heatStartDate: '2026-01-01', sireId: malformedDobSireId,
+    })
+  } catch (err) { malformedDobSireDenied = isDenied(err) }
+  check('7-MalformedDob', 'A Sire with a malformed dateOfBirth is rejected even though sex/ownership check out', malformedDobSireDenied)
+
+  // Sire with NO dateOfBirth field at all
+  const missingDobSireId = `missingdobsire_${R}`
+  await adminDb.collection('dogs').doc(missingDobSireId).set({
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Missing DOB Sire', sex: 'male', status: 'active',
+  })
+  let missingDobSireDenied = false
+  try {
+    await setDoc(doc(db, 'heatCycles', `cyc_missingdob_${R}`), {
+      dogId: dobDamId, tenantId: breederUid, heatNumber: 2, heatStartDate: '2026-02-01', sireId: missingDobSireId,
+    })
+  } catch (err) { missingDobSireDenied = isDenied(err) }
+  check('7-MalformedDob', 'A Sire with no dateOfBirth field at all is rejected', missingDobSireDenied)
+
+  // A Dam whose own dateOfBirth is malformed cannot be used to create a litter
+  const malformedDobDamId = `malformeddobdam_${R}`
+  await adminDb.collection('dogs').doc(malformedDobDamId).set({
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Malformed DOB Dam', sex: 'female', status: 'active', dateOfBirth: '2020-02-30',
+  })
+  let malformedDobDamDenied = false
+  try {
+    await setDoc(doc(db, 'litters', `litter_malformeddobdam_${R}`), { tenantId: breederUid, damId: malformedDobDamId, name: 'Litter G', puppyIds: [] })
+  } catch (err) { malformedDobDamDenied = isDenied(err) }
+  check('7-MalformedDob', 'A Dam with an impossible-calendar-date dateOfBirth ("2020-02-30") is rejected', malformedDobDamDenied)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)
