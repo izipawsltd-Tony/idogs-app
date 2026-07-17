@@ -1,7 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { createDog, addVaccineRecord, addHealthTest, getDogs } from '../lib/db'
-import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
+import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType, parseDobStrict } from '../lib/utils'
 import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
@@ -103,6 +103,10 @@ export default function DogNewPage({ toast }: Props) {
     e.preventDefault()
     if (!form.name || !form.breed || !form.dateOfBirth) {
       toast('Please fill in name, breed and date of birth', 'error')
+      return
+    }
+    if (!parseDobStrict(form.dateOfBirth)) {
+      toast('Date of birth is not a valid past date', 'error')
       return
     }
 
