@@ -227,9 +227,36 @@ export function calculateLifeStage(dob: string, breed?: string): LifeStage {
 // getDogs(), which re-derives 'transferred' from currentOwnerId — a raw
 // tenantId-only Firestore query sees a transferred dog's stale
 // post-claim status and must never feed this predicate).
+// Whether a dog has left the breeder's active control — transferred to a
+// buyer, or claimed-pending. Relies on `dog.status`/`transferStatus`
+// already being correctly computed for the CURRENT user's viewpoint (see
+// isCurrentBreederDog's note below on why that must come from getDogs()).
+// Used on its own (not via isCurrentBreederDog) anywhere life-stage/
+// deceased shouldn't factor in — e.g. deciding which of a litter's
+// puppies are still safe to delete alongside the litter: a puppy is by
+// definition puppy-stage, and a deceased-but-untransferred puppy is
+// still fully the breeder's to delete.
+export function isDogTransferred(dog: Pick<Dog, 'status'> & { transferStatus?: string }): boolean {
+  return dog.status === 'transferred' || dog.transferStatus === 'pendingClaim'
+}
+
+// The sex-agnostic half of Sire/Dam eligibility — a dog only makes sense
+// as a *current breeder-controlled* breeding pick (regardless of which
+// sex-specific role it's being considered for) if it's living, still
+// under this account's active control (not transferred away), and
+// sexually mature. A dog with no dateOfBirth (some legacy records) can't
+// be proven mature, so calculateLifeStage's 'puppy' fallback for a
+// missing dob correctly excludes it here too — "can't prove eligible"
+// fails safe to "not eligible", never the other way round.
+//
+// Relies on `dog.status`/`transferStatus` already being correctly
+// computed for the CURRENT user's viewpoint (i.e. the dog came from
+// getDogs(), which re-derives 'transferred' from currentOwnerId — a raw
+// tenantId-only Firestore query sees a transferred dog's stale
+// post-claim status and must never feed this predicate).
 function isCurrentBreederDog(dog: Dog): boolean {
   if (dog.isDeceased) return false
-  if (dog.status === 'transferred' || (dog as any).transferStatus === 'pendingClaim') return false
+  if (isDogTransferred(dog)) return false
   const stage = calculateLifeStage(dog.dateOfBirth, dog.breed)
   return stage !== 'whelp' && stage !== 'puppy'
 }
