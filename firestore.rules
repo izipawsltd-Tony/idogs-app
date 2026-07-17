@@ -96,6 +96,20 @@ service cloud.firestore {
       allow create: if dogBelongsToUser(request.resource.data.dogId);
     }
 
+    // ── heatCycles — same dogBelongsToUser access pattern as the other
+    // dogId-keyed records above. Previously had NO rule at all here, so
+    // every read/write fell through to the default-deny block at the
+    // bottom of this file: the Heat Cycle Records list silently loaded
+    // empty and "Add Heat Cycle" always failed with a generic error.
+    // create is additionally scoped to female dogs — heat cycles are a
+    // Dam concept, and a male or unrelated-tenant dog must never receive
+    // one even if a client bypasses the UI's own eligibility gating.
+    match /heatCycles/{id} {
+      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow create: if dogBelongsToUser(request.resource.data.dogId) &&
+        get(/databases/$(database)/documents/dogs/$(request.resource.data.dogId)).data.sex == 'female';
+    }
+
     // ── documents — access follows the parent dog's ownership, same as
     // vaccineRecords/healthTests/activityNotes, so a claimed dog's
     // pre-transfer documents stay visible to its new current owner. (A
