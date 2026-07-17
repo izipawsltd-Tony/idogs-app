@@ -80,7 +80,7 @@ const strangerUid = await newUser('stranger')
   await as('breeder')
   await setDoc(doc(db, 'dogs', damId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Luna', sex: 'female', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Luna', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
 
   const cycleId = `cycle_${R}`
@@ -117,7 +117,7 @@ const strangerUid = await newUser('stranger')
   await as('breeder')
   await setDoc(doc(db, 'dogs', sireId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Rex', sex: 'male', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Rex', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
   })
 
   let denied = false
@@ -137,7 +137,7 @@ const strangerUid = await newUser('stranger')
   await as('stranger')
   await setDoc(doc(db, 'dogs', strangerDamId), {
     tenantId: strangerUid, currentOwnerId: strangerUid, createdByUserId: strangerUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Bella', sex: 'female', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Bella', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
 
   await as('breeder')
@@ -173,7 +173,7 @@ const strangerUid = await newUser('stranger')
   await as('breeder')
   await setDoc(doc(db, 'dogs', legacyDamId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Legacy Dam', sex: 'female', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Legacy Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const legacyCycleId = `legacycycle_${R}`
   // Minimal legacy shape: no tenantId field on the record itself (older
@@ -199,14 +199,14 @@ const strangerUid = await newUser('stranger')
   await as('breeder')
   await setDoc(doc(db, 'dogs', damId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Dam Five', sex: 'female', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Dam Five', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
 
   // A currently-eligible sire
   const validSireId = `validsire_${R}`
   await setDoc(doc(db, 'dogs', validSireId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Valid Sire', sex: 'male', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Valid Sire', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
   })
   let validSireOk = true
   try {
@@ -227,7 +227,7 @@ const strangerUid = await newUser('stranger')
   const transferredSireId = `transferredsire_${R}`
   await setDoc(doc(db, 'dogs', transferredSireId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Transferred Sire', sex: 'male', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Transferred Sire', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
   })
   await simulateAdminClaim(transferredSireId, buyerUid)
   let transferredDenied = false
@@ -243,7 +243,7 @@ const strangerUid = await newUser('stranger')
   await as('stranger')
   await setDoc(doc(db, 'dogs', strangerSireId), {
     tenantId: strangerUid, currentOwnerId: strangerUid, createdByUserId: strangerUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Stranger Sire', sex: 'male', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Stranger Sire', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
   })
   await as('breeder')
   let wrongTenantDenied = false
@@ -258,7 +258,7 @@ const strangerUid = await newUser('stranger')
   const deceasedSireId = `deceasedsire_${R}`
   await setDoc(doc(db, 'dogs', deceasedSireId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Deceased Sire', sex: 'male', status: 'active', isDeceased: true,
+    sourceType: 'BREEDER_ISSUED', name: 'Deceased Sire', sex: 'male', status: 'active', isDeceased: true, dateOfBirth: '2020-01-01',
   })
   let deceasedDenied = false
   try {
@@ -312,7 +312,7 @@ const strangerUid = await newUser('stranger')
   const validDamId = `validdam_${R}`
   await setDoc(doc(db, 'dogs', validDamId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Valid Dam', sex: 'female', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Valid Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   let validDamOk = true
   try {
@@ -327,7 +327,7 @@ const strangerUid = await newUser('stranger')
   const transferredDamId = `transferreddam_${R}`
   await setDoc(doc(db, 'dogs', transferredDamId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Transferred Dam', sex: 'female', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Transferred Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   await simulateAdminClaim(transferredDamId, buyerUid6)
   let transferredDamDenied = false
@@ -341,7 +341,7 @@ const strangerUid = await newUser('stranger')
   await as('stranger')
   await setDoc(doc(db, 'dogs', strangerDamId6), {
     tenantId: strangerUid, currentOwnerId: strangerUid, createdByUserId: strangerUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Stranger Dam', sex: 'female', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Stranger Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   await as('breeder')
   let wrongTenantDamDenied = false
@@ -354,7 +354,7 @@ const strangerUid = await newUser('stranger')
   const maleAsDamId = `maleasdam_${R}`
   await setDoc(doc(db, 'dogs', maleAsDamId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Male Dog', sex: 'male', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Male Dog', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
   })
   let maleDamDenied = false
   try {

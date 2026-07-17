@@ -90,7 +90,7 @@ const otherOwnerUid = await newUser('otherowner')
   try {
     await setDoc(doc(db, 'dogs', dogId), {
       tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-      sourceType: 'BREEDER_ISSUED', name: 'Rex', status: 'active',
+      sourceType: 'BREEDER_ISSUED', name: 'Rex', status: 'active', dateOfBirth: '2020-01-01',
     })
   } catch (err) { createOk = false }
   check('1-BreederIssued', 'Breeder can create a breeder-issued dog', createOk)
@@ -169,7 +169,7 @@ const otherOwnerUid = await newUser('otherowner')
   try {
     await setDoc(doc(db, 'dogs', dogId), {
       tenantId: ownerCreatorUid, currentOwnerId: ownerCreatorUid, createdByUserId: ownerCreatorUid,
-      sourceType: 'OWNER_CREATED', name: 'Bella', status: 'active',
+      sourceType: 'OWNER_CREATED', name: 'Bella', status: 'active', dateOfBirth: '2020-01-01',
     })
   } catch (err) { createOk = false }
   check('2-OwnerCreated', 'Owner can create their own dog', createOk)
@@ -183,7 +183,7 @@ const otherOwnerUid = await newUser('otherowner')
   try {
     await setDoc(doc(db, 'dogs', `ocDog_bad1_${R}`), {
       tenantId: ownerCreatorUid, currentOwnerId: strangerUid, createdByUserId: ownerCreatorUid,
-      sourceType: 'OWNER_CREATED', name: 'Bad',
+      sourceType: 'OWNER_CREATED', name: 'Bad', dateOfBirth: '2020-01-01',
     })
   } catch (err) { arbitraryOwnerDenied = isDenied(err) }
   check('2-OwnerCreated', 'Client cannot assign arbitrary currentOwnerId at create', arbitraryOwnerDenied)
@@ -193,7 +193,7 @@ const otherOwnerUid = await newUser('otherowner')
   try {
     await setDoc(doc(db, 'dogs', `ocDog_bad2_${R}`), {
       tenantId: ownerCreatorUid, currentOwnerId: ownerCreatorUid, createdByUserId: strangerUid,
-      sourceType: 'OWNER_CREATED', name: 'Bad',
+      sourceType: 'OWNER_CREATED', name: 'Bad', dateOfBirth: '2020-01-01',
     })
   } catch (err) { arbitraryCreatorDenied = isDenied(err) }
   check('2-OwnerCreated', 'Client cannot assign arbitrary createdByUserId at create', arbitraryCreatorDenied)
@@ -203,7 +203,7 @@ const otherOwnerUid = await newUser('otherowner')
   try {
     await setDoc(doc(db, 'dogs', `ocDog_bad3_${R}`), {
       tenantId: strangerUid, currentOwnerId: ownerCreatorUid, createdByUserId: ownerCreatorUid,
-      sourceType: 'OWNER_CREATED', name: 'Bad',
+      sourceType: 'OWNER_CREATED', name: 'Bad', dateOfBirth: '2020-01-01',
     })
   } catch (err) { arbitraryTenantDenied = isDenied(err) }
   check('2-OwnerCreated', 'Client cannot assign arbitrary tenantId at create', arbitraryTenantDenied)
@@ -255,7 +255,7 @@ const otherOwnerUid = await newUser('otherowner')
   await as('breeder')
   await setDoc(doc(db, 'dogs', dogId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Claimable', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'Claimable', status: 'active', dateOfBirth: '2020-01-01',
   })
 
   let breederCannotReassign = false
@@ -277,7 +277,7 @@ const otherOwnerUid = await newUser('otherowner')
   await as('breeder')
   await setDoc(doc(db, 'dogs', dogId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'RecordsDog', status: 'active',
+    sourceType: 'BREEDER_ISSUED', name: 'RecordsDog', status: 'active', dateOfBirth: '2020-01-01',
   })
 
   // documents — created as if by the breeder (matches api/upload-document.js: tenantId = verified uploader)
