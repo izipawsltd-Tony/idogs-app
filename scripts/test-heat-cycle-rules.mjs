@@ -10,6 +10,15 @@
 // female-only (Dam) check on create as a hard boundary — not just UI
 // gating — against a male or unrelated-tenant dog receiving one.
 //
+// Section 5 covers a follow-up bug: My Dogs showed 1 valid Sire while the
+// Heat Cycle Sire dropdown showed 3, because the dropdown's data source
+// used a raw tenantId-only query that sees a transferred dog's *stale*
+// status field (api/claim-transferred-dogs.js resets status back to
+// 'active' on claim). heatCycleSireValid()/isEligibleSire() in
+// firestore.rules now independently re-validates sireId against live
+// currentOwnerId at save time — the save path can no longer be tricked
+// by a stale client-side dropdown regardless of what the UI filter does.
+//
 // Usage (no test framework configured in this project — run manually):
 //   1. firebase emulators:start --only auth,firestore --project demo-idogs-qa
 //   2. FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 \
@@ -18,12 +27,24 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword } from 'firebase/auth'
 import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where } from 'firebase/firestore'
+import { initializeApp as initAdminApp } from 'firebase-admin/app'
+import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
 
 const app = initializeApp({ projectId: 'demo-idogs-qa', apiKey: 'fake-api-key' })
 const auth = getAuth(app)
 const db = getFirestore(app)
 connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
 connectFirestoreEmulator(db, '127.0.0.1', 8080)
+
+// Admin SDK client — genuinely bypasses security rules, used ONLY to
+// simulate the server-side claim reassignment (api/claim-transferred-
+// dogs.js) as a test fixture, matching test-dog-ownership-matrix.mjs.
+process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
+const adminApp = initAdminApp({ projectId: 'demo-idogs-qa' })
+const adminDb = getAdminFirestore(adminApp)
+async function simulateAdminClaim(dogId, newCurrentOwnerId) {
+  await adminDb.collection('dogs').doc(dogId).update({ currentOwnerId: newCurrentOwnerId, status: 'active' })
+}
 
 let pass = 0, fail = 0
 function check(label, cond, extra = '') {
@@ -167,6 +188,117 @@ const strangerUid = await newUser('stranger')
   let updateOk = true
   try { await updateDoc(doc(db, 'heatCycles', legacyCycleId), { notes: 'backfilled' }) } catch (err) { updateOk = false }
   check('4-Legacy', 'Legacy heat cycle record remains editable', updateOk)
+}
+
+// =========================================================================
+// SECTION 5 — sireId save-path validation (independent of the client's
+// own dropdown filtering)
+// =========================================================================
+{
+  const damId = `dam5_${R}`
+  await as('breeder')
+  await setDoc(doc(db, 'dogs', damId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam Five', sex: 'female', status: 'active',
+  })
+
+  // A currently-eligible sire
+  const validSireId = `validsire_${R}`
+  await setDoc(doc(db, 'dogs', validSireId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Valid Sire', sex: 'male', status: 'active',
+  })
+  let validSireOk = true
+  try {
+    await setDoc(doc(db, 'heatCycles', `cyc_valid_${R}`), {
+      dogId: damId, tenantId: breederUid, heatNumber: 1, heatStartDate: '2026-01-01', sireId: validSireId,
+    })
+  } catch (err) { validSireOk = false }
+  check('5-SireValidation', 'A Heat Cycle can be saved with a valid, currently-owned Sire', validSireOk)
+
+  // A "stale"/transferred sire: tenantId still breeder (permanent
+  // provenance) but currentOwnerId has moved to a buyer — exactly the
+  // shape api/claim-transferred-dogs.js produces post-claim. A client can
+  // never create a dog with someone else's currentOwnerId directly (see
+  // dogs/{dogId}'s own create rule), so this is simulated via the Admin
+  // SDK claim route exactly like production, not a direct client setDoc.
+  const buyerUid = await newUser('buyer5')
+  await as('breeder')
+  const transferredSireId = `transferredsire_${R}`
+  await setDoc(doc(db, 'dogs', transferredSireId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Transferred Sire', sex: 'male', status: 'active',
+  })
+  await simulateAdminClaim(transferredSireId, buyerUid)
+  let transferredDenied = false
+  try {
+    await setDoc(doc(db, 'heatCycles', `cyc_transferred_${R}`), {
+      dogId: damId, tenantId: breederUid, heatNumber: 2, heatStartDate: '2026-02-01', sireId: transferredSireId,
+    })
+  } catch (err) { transferredDenied = isDenied(err) }
+  check('5-SireValidation', 'A transferred (stale currentOwnerId) Sire is rejected even though tenantId still matches', transferredDenied)
+
+  // A wrong-tenant sire (never belonged to this breeder at all)
+  const strangerSireId = `strangersire_${R}`
+  await as('stranger')
+  await setDoc(doc(db, 'dogs', strangerSireId), {
+    tenantId: strangerUid, currentOwnerId: strangerUid, createdByUserId: strangerUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Stranger Sire', sex: 'male', status: 'active',
+  })
+  await as('breeder')
+  let wrongTenantDenied = false
+  try {
+    await setDoc(doc(db, 'heatCycles', `cyc_wrongtenant_${R}`), {
+      dogId: damId, tenantId: breederUid, heatNumber: 3, heatStartDate: '2026-03-01', sireId: strangerSireId,
+    })
+  } catch (err) { wrongTenantDenied = isDenied(err) }
+  check('5-SireValidation', 'A wrong-tenant Sire is rejected', wrongTenantDenied)
+
+  // A deceased sire (still owned by this breeder, but not breedable)
+  const deceasedSireId = `deceasedsire_${R}`
+  await setDoc(doc(db, 'dogs', deceasedSireId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Deceased Sire', sex: 'male', status: 'active', isDeceased: true,
+  })
+  let deceasedDenied = false
+  try {
+    await setDoc(doc(db, 'heatCycles', `cyc_deceased_${R}`), {
+      dogId: damId, tenantId: breederUid, heatNumber: 4, heatStartDate: '2026-04-01', sireId: deceasedSireId,
+    })
+  } catch (err) { deceasedDenied = isDenied(err) }
+  check('5-SireValidation', 'A deceased Sire is rejected', deceasedDenied)
+
+  // A malformed/stale sireId — points at nothing
+  let malformedDenied = false
+  try {
+    await setDoc(doc(db, 'heatCycles', `cyc_malformed_${R}`), {
+      dogId: damId, tenantId: breederUid, heatNumber: 5, heatStartDate: '2026-05-01', sireId: `nonexistent_${R}`,
+    })
+  } catch (err) { malformedDenied = isDenied(err) }
+  check('5-SireValidation', 'A malformed/stale sireId pointing at no document is rejected', malformedDenied)
+
+  // Editing an existing (valid, sireId-less) Heat Cycle to attach a stale
+  // sireId must be rejected on update too, not just create.
+  const editableCycleId = `cyc_editable_${R}`
+  await setDoc(doc(db, 'heatCycles', editableCycleId), {
+    dogId: damId, tenantId: breederUid, heatNumber: 6, heatStartDate: '2026-06-01',
+  })
+  let updateStaleDenied = false
+  try {
+    await updateDoc(doc(db, 'heatCycles', editableCycleId), { sireId: transferredSireId })
+  } catch (err) { updateStaleDenied = isDenied(err) }
+  check('5-SireValidation', 'Updating an existing Heat Cycle to a stale Sire is rejected', updateStaleDenied)
+
+  // A manually-entered external sire (no sireId at all) is unaffected —
+  // sireId is optional and only validated when present.
+  let externalSireOk = true
+  try {
+    await setDoc(doc(db, 'heatCycles', `cyc_external_${R}`), {
+      dogId: damId, tenantId: breederUid, heatNumber: 7, heatStartDate: '2026-07-01',
+      sireName: 'CH External Dog', sireReg: '2100999999',
+    })
+  } catch (err) { externalSireOk = false }
+  check('5-SireValidation', 'A manually-entered external sire (no sireId) is unaffected by Sire validation', externalSireOk)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)
