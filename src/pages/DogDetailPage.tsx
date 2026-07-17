@@ -2602,16 +2602,44 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     load()
   }, [dogId])
 
-  // Predicted heats from DOB
-  const predictedHeats: { n: number; date: Date; label: string }[] = []
+  // Actual recorded heats, keyed by heat number — an actual record always
+  // overrides the corresponding predicted slot's date/label below. A
+  // heatCycles doc with no heatNumber (can't be matched to a slot) or no
+  // heatStartDate (legacy record predating that field, or in-progress
+  // edit) is skipped and that slot falls back to being estimated. Ties
+  // (more than one record sharing a heat number — a data anomaly) are
+  // resolved deterministically by lowest doc id, so the choice doesn't
+  // flip between reloads.
+  const recordedByHeatNumber = new Map<number, HeatCycle>()
+  for (const cycle of [...heatCycles].sort((a, b) => (a.id || '').localeCompare(b.id || ''))) {
+    if (cycle.heatNumber == null || !cycle.heatStartDate) continue
+    if (!recordedByHeatNumber.has(cycle.heatNumber)) recordedByHeatNumber.set(cycle.heatNumber, cycle)
+  }
+  // The most recent actual recording (highest heat number) becomes the
+  // new anchor for any prediction that comes after it, instead of every
+  // slot continuing to extrapolate from heat 1/DOB alone.
+  let latestActual: { n: number; date: Date } | null = null
+  for (const [n, cycle] of recordedByHeatNumber) {
+    const d = new Date(cycle.heatStartDate)
+    if (!latestActual || n > latestActual.n) latestActual = { n, date: d }
+  }
+
+  // Predicted heats from DOB, overridden per-slot by any actual recorded
+  // heat with the matching number.
+  const predictedHeats: { n: number; date: Date; label: string; recorded: boolean }[] = []
   if (dob) {
     const anchor = firstHeatDate ? new Date(firstHeatDate) : addMonths(dob, firstHeatMo)
     for (let i = 0; i < 6; i++) {
-      predictedHeats.push({
-        n: i + 1,
-        date: addMonths(anchor, heatInterval * i),
-        label: i === 0 ? (firstHeatDate ? 'Heat 1 (actual)' : 'Heat 1 (estimated)') : `Heat ${i + 1} (estimated)`,
-      })
+      const n = i + 1
+      const actual = recordedByHeatNumber.get(n)
+      if (actual) {
+        predictedHeats.push({ n, date: new Date(actual.heatStartDate), label: `Heat ${n} (recorded)`, recorded: true })
+        continue
+      }
+      const date = latestActual && n > latestActual.n
+        ? addMonths(latestActual.date, heatInterval * (n - latestActual.n))
+        : addMonths(anchor, heatInterval * i)
+      predictedHeats.push({ n, date, label: n === 1 && firstHeatDate ? 'Heat 1 (actual)' : `Heat ${n} (estimated)`, recorded: false })
     }
   }
 
@@ -2948,7 +2976,6 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
               const isSoon = !isPast && heat.date < addMonths(today, 2)
               const ageAtHeatMo = dob ? (heat.date.getFullYear() - dob.getFullYear()) * 12 + (heat.date.getMonth() - dob.getMonth()) : 0
               const c = heatCompliance(ageAtHeatMo)
-              const recorded = heatCycles.find(h => h.heatNumber === heat.n)
               return (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 8, background: isSoon ? '#FBF3E4' : isPast ? 'var(--sand)' : 'var(--white)', border: `1px solid ${isSoon ? '#EBD9A8' : 'var(--border)'}`, opacity: isPast ? 0.65 : 1 }}>
                   <div style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, background: c.status === 'ok' ? 'var(--brand-50)' : c.status === 'blocked' ? '#FDEDED' : '#FBF3E4', color: c.status === 'ok' ? 'var(--brand-600)' : c.status === 'blocked' ? 'var(--error)' : 'var(--warning)' }}>{heat.n}</div>
@@ -2956,7 +2983,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
                     <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--dark)', display: 'flex', alignItems: 'center', gap: 6 }}>
                       {heat.label}
                       {isSoon && <span style={{ fontSize: 10, background: 'var(--warning)', color: '#fff', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>Upcoming</span>}
-                      {recorded && <span style={{ fontSize: 10, background: 'var(--brand-600)', color: '#fff', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>✓ Recorded</span>}
+                      {heat.recorded && <span style={{ fontSize: 10, background: 'var(--brand-600)', color: '#fff', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>✓ Recorded</span>}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--light)' }}>{fmtDate(heat.date)} · Age: {ageAtDate(dog.dateOfBirth, heat.date)}</div>
                   </div>
