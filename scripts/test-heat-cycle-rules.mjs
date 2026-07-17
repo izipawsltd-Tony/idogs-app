@@ -301,5 +301,74 @@ const strangerUid = await newUser('stranger')
   check('5-SireValidation', 'A manually-entered external sire (no sireId) is unaffected by Sire validation', externalSireOk)
 }
 
+// =========================================================================
+// SECTION 6 — litters.damId save-path validation (Create Litter Dam
+// selector consistency follow-up)
+// =========================================================================
+{
+  await as('breeder')
+
+  // A currently-eligible dam
+  const validDamId = `validdam_${R}`
+  await setDoc(doc(db, 'dogs', validDamId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Valid Dam', sex: 'female', status: 'active',
+  })
+  let validDamOk = true
+  try {
+    await setDoc(doc(db, 'litters', `litter_valid_${R}`), { tenantId: breederUid, damId: validDamId, name: 'Litter A', puppyIds: [] })
+  } catch (err) { validDamOk = false }
+  check('6-DamValidation', 'A litter can be created with a valid, currently-owned Dam', validDamOk)
+
+  // A transferred (stale currentOwnerId) dam — same post-claim shape as
+  // the Sire case above.
+  const buyerUid6 = await newUser('buyer6')
+  await as('breeder')
+  const transferredDamId = `transferreddam_${R}`
+  await setDoc(doc(db, 'dogs', transferredDamId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Transferred Dam', sex: 'female', status: 'active',
+  })
+  await simulateAdminClaim(transferredDamId, buyerUid6)
+  let transferredDamDenied = false
+  try {
+    await setDoc(doc(db, 'litters', `litter_transferred_${R}`), { tenantId: breederUid, damId: transferredDamId, name: 'Litter B', puppyIds: [] })
+  } catch (err) { transferredDamDenied = isDenied(err) }
+  check('6-DamValidation', 'A transferred (stale currentOwnerId) Dam is rejected even though tenantId still matches', transferredDamDenied)
+
+  // A wrong-tenant dam
+  const strangerDamId6 = `strangerdam6_${R}`
+  await as('stranger')
+  await setDoc(doc(db, 'dogs', strangerDamId6), {
+    tenantId: strangerUid, currentOwnerId: strangerUid, createdByUserId: strangerUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Stranger Dam', sex: 'female', status: 'active',
+  })
+  await as('breeder')
+  let wrongTenantDamDenied = false
+  try {
+    await setDoc(doc(db, 'litters', `litter_wrongtenant_${R}`), { tenantId: breederUid, damId: strangerDamId6, name: 'Litter C', puppyIds: [] })
+  } catch (err) { wrongTenantDamDenied = isDenied(err) }
+  check('6-DamValidation', 'A wrong-tenant Dam is rejected', wrongTenantDamDenied)
+
+  // A male dog used as damId
+  const maleAsDamId = `maleasdam_${R}`
+  await setDoc(doc(db, 'dogs', maleAsDamId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Male Dog', sex: 'male', status: 'active',
+  })
+  let maleDamDenied = false
+  try {
+    await setDoc(doc(db, 'litters', `litter_male_${R}`), { tenantId: breederUid, damId: maleAsDamId, name: 'Litter D', puppyIds: [] })
+  } catch (err) { maleDamDenied = isDenied(err) }
+  check('6-DamValidation', 'A male dog cannot be submitted as damId', maleDamDenied)
+
+  // A malformed/stale damId — points at nothing
+  let malformedDamDenied = false
+  try {
+    await setDoc(doc(db, 'litters', `litter_malformed_${R}`), { tenantId: breederUid, damId: `nonexistent_${R}`, name: 'Litter E', puppyIds: [] })
+  } catch (err) { malformedDamDenied = isDenied(err) }
+  check('6-DamValidation', 'A malformed/stale damId pointing at no document is rejected', malformedDamDenied)
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail > 0 ? 1 : 0)
