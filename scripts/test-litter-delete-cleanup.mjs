@@ -1,20 +1,21 @@
-// Emulator-only regression test for the litter-delete puppy-cleanup fix
-// (fix/sire-heat-cycle, Final Litter Lifecycle Blockers).
+// Emulator-only regression test for litter-delete puppy-cleanup safety
+// (fix/sire-heat-cycle, Codex re-review v2 — "Safe litter deletion").
 //
-// Root cause: handleDeleteLitter() in LittersPage.tsx used to only
-// deleteDoc() the litters/{id} document itself — its own confirm() text
-// literally said "This will NOT delete the puppies." Every puppy Dog
-// record stayed in Firestore and kept showing up in My Dogs forever,
-// with no litter left to show they'd ever been grouped together.
-//
-// Fixed by batching the litter delete with a delete for every puppy
-// still under the breeder's active control (not transferred/claimed) in
-// one atomic writeBatch — a transferred/claimed puppy's Dog record (and
-// its ownership history) is left completely untouched, and an unrelated
-// dog never in litter.puppyIds is never touched either. Using a batch
-// means a single denied operation (e.g. a stale puppyIds entry that no
-// longer resolves to the requester's own dog) fails the ENTIRE batch —
-// nothing is left half-deleted.
+// Root cause history: handleDeleteLitter() in LittersPage.tsx used to
+// only deleteDoc() the litters/{id} document itself. Then it deleted
+// eligible puppies too but trusted litter.puppyIds alone (a legacy dog
+// with no litterId was assumed to be a member). This version tightens
+// that: a dog only counts as a CONFIRMED member of a litter if its own
+// litterId explicitly agrees — a legacy dog with no litterId at all is
+// AMBIGUOUS and left completely untouched, never assumed eligible on
+// the strength of the litter's forward reference alone. A confirmed
+// member is only eligible for deletion if it's still exclusively
+// breeder-controlled: currentOwnerId matches the requester, it isn't
+// mid-transfer (covers both the current transferStatus='pendingClaim'
+// marking and the legacy status-only marking), and it has never been
+// through a transfer at all (buyerEmail is permanent ownership-history
+// provenance). firestore.rules independently denies deleting any dog
+// that's mid-transfer, regardless of what client logic decides.
 //
 // Usage (no test framework configured in this project — run manually):
 //   1. firebase emulators:start --only auth,firestore --project demo-idogs-qa
@@ -23,7 +24,7 @@
 
 import { initializeApp } from 'firebase/app'
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword } from 'firebase/auth'
-import { getFirestore, connectFirestoreEmulator, doc, getDoc, setDoc, writeBatch } from 'firebase/firestore'
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, setDoc, updateDoc, writeBatch, deleteDoc } from 'firebase/firestore'
 import { initializeApp as initAdminApp } from 'firebase-admin/app'
 import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
 
@@ -69,13 +70,27 @@ async function as(name) {
   await signInWithEmailAndPassword(auth, email(name), PW)
 }
 
+// Mirrors LittersPage.handleDeleteLitter()'s exact candidate-filtering
+// logic against already-fetched snapshots.
+function computeEligible(freshLitterId, fetched, requesterUid) {
+  const confirmedMembers = fetched.filter(d => d.litterId === freshLitterId)
+  const ambiguousCount = fetched.length - confirmedMembers.length
+  const eligible = confirmedMembers.filter(d =>
+    d.currentOwnerId === requesterUid &&
+    d.status !== 'transferred' && d.transferStatus !== 'pendingClaim' &&
+    !d.buyerEmail
+  )
+  const preserved = confirmedMembers.length - eligible.length
+  return { confirmedMembers, ambiguousCount, eligible, preserved }
+}
+
 const breederUid = await newUser('breeder')
 const buyerUid = await newUser('buyer')
 const strangerUid = await newUser('stranger')
 
 // =========================================================================
-// SECTION 1 — Delete litter removes eligible puppies, preserves
-// transferred ones, leaves unrelated dogs untouched
+// SECTION 1 — Delete litter removes exact-match eligible puppies,
+// preserves a transferred one, leaves an unrelated dog untouched
 // =========================================================================
 {
   await as('breeder')
@@ -89,19 +104,19 @@ const strangerUid = await newUser('stranger')
     tenantId: breederUid, damId, name: 'Test Litter', notes: '', actualBirthDate: '2026-01-01',
     puppyIds: [`p1_${R}`, `p2_${R}`, `p3_${R}`],
   })
-  // p1, p2: eligible — still fully breeder-controlled
+  // p1, p2: confirmed members, still fully breeder-controlled
   await setDoc(doc(db, 'dogs', `p1_${R}`), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Pup1', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+    sourceType: 'BREEDER_ISSUED', name: 'Pup1', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId,
   })
   await setDoc(doc(db, 'dogs', `p2_${R}`), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Pup2', sex: 'female', status: 'active', dateOfBirth: '2026-01-01',
+    sourceType: 'BREEDER_ISSUED', name: 'Pup2', sex: 'female', status: 'active', dateOfBirth: '2026-01-01', litterId,
   })
-  // p3: transferred to a buyer — must be preserved
+  // p3: confirmed member, but transferred to a buyer — must be preserved
   await setDoc(doc(db, 'dogs', `p3_${R}`), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Pup3', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+    sourceType: 'BREEDER_ISSUED', name: 'Pup3', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId,
   })
   await adminDb.collection('dogs').doc(`p3_${R}`).update({ currentOwnerId: buyerUid, status: 'active' })
   // Unrelated dog — never part of this litter
@@ -111,8 +126,6 @@ const strangerUid = await newUser('stranger')
     sourceType: 'BREEDER_ISSUED', name: 'Unrelated', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
   })
 
-  // Mirrors LittersPage.handleDeleteLitter(): batch litter delete + only
-  // the eligible (untransferred) puppies.
   const batch = writeBatch(db)
   batch.delete(doc(db, 'litters', litterId))
   batch.delete(doc(db, 'dogs', `p1_${R}`))
@@ -156,7 +169,7 @@ const strangerUid = await newUser('stranger')
   })
   await setDoc(doc(db, 'dogs', `ap1_${R}`), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'AtomicPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+    sourceType: 'BREEDER_ISSUED', name: 'AtomicPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId2,
   })
   // A stranger's dog, wrongly included in the batch (simulates a bug —
   // e.g. a stale puppyIds entry pointing at a dog that isn't the
@@ -207,23 +220,12 @@ const strangerUid = await newUser('stranger')
   check('3-EmptyLitter', 'A planned litter with zero puppies deletes cleanly', ok)
 }
 
-// Mirrors LittersPage.handleDeleteLitter()'s exact candidate-filtering
-// logic against already-fetched snapshots, so Sections 4-7 below can
-// reuse it instead of re-deriving eligibility ad hoc.
-function computeEligible(freshLitterId, candidates, requesterUid) {
-  const litterMembers = candidates.filter(d => d.litterId === undefined || d.litterId === freshLitterId)
-  const eligible = litterMembers.filter(d => d.currentOwnerId === requesterUid)
-  const preserved = litterMembers.length - eligible.length
-  return { eligible, preserved, litterMembers }
-}
-
 // =========================================================================
 // SECTION 4 — litterId cross-check: a dog erroneously listed in this
-// litter's puppyIds (a data-corruption scenario — e.g. a copy/paste bug
-// wrote the wrong id) but whose OWN litterId back-reference points at a
-// DIFFERENT litter must be preserved, never deleted and never counted
-// as "eligible" — Codex Blocker 3 ("same owner but different litter
-// remains untouched").
+// litter's puppyIds (a data-corruption scenario) but whose OWN litterId
+// back-reference points at a DIFFERENT litter must be preserved, never
+// deleted and never counted as eligible ("same owner but different
+// litter remains untouched").
 // =========================================================================
 {
   await as('breeder')
@@ -249,13 +251,11 @@ function computeEligible(freshLitterId, candidates, requesterUid) {
 
   const litterSnap = await getDoc(doc(db, 'litters', thisLitterId))
   const candidateSnaps = await Promise.all((litterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
-  const candidates = candidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
-  const { eligible, litterMembers } = computeEligible(thisLitterId, candidates, breederUid)
-  check('4-CrossLinkGuard', 'A dog whose litterId points elsewhere is excluded from litter membership entirely', litterMembers.length === 0)
+  const fetched = candidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
+  const { confirmedMembers, eligible } = computeEligible(thisLitterId, fetched, breederUid)
+  check('4-CrossLinkGuard', 'A dog whose litterId points elsewhere is excluded from litter membership entirely', confirmedMembers.length === 0)
   check('4-CrossLinkGuard', 'A dog whose litterId points elsewhere is never in the eligible-for-deletion set', eligible.length === 0)
 
-  // Actually attempt the delete (litter only — eligible is empty) and
-  // confirm the cross-linked puppy survives untouched
   const batch = writeBatch(db)
   batch.delete(doc(db, 'litters', thisLitterId))
   await batch.commit()
@@ -264,11 +264,10 @@ function computeEligible(freshLitterId, candidates, requesterUid) {
 }
 
 // =========================================================================
-// SECTION 5 — same tenant, no litterId, NOT actually part of this
-// litter: an ordinary standalone dog (e.g. created via DogNewPage,
-// never touched by any litter flow) must never be swept up by a litter
-// delete merely for sharing a tenant — Codex Blocker 3 ("same tenant
-// but no litterId remains untouched").
+// SECTION 5 — ambiguous legacy dogs (no litterId at all) are NEVER
+// assumed eligible, even when genuinely listed in puppyIds — "preserve
+// ambiguous legacy dogs." Also covers a plain same-tenant standalone dog
+// (no litterId, not listed anywhere) staying untouched.
 // =========================================================================
 {
   await as('breeder')
@@ -277,22 +276,51 @@ function computeEligible(freshLitterId, candidates, requesterUid) {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam5b', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
+  const legacyPupId = `legacypup5_${R}`
+  // A legacy puppy: genuinely listed in this litter's puppyIds, but
+  // predates the litterId field — no way to CONFIRM membership from its
+  // own record.
+  await setDoc(doc(db, 'dogs', legacyPupId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'LegacyPup', sex: 'male', status: 'active', dateOfBirth: '2020-06-01',
+    // no litterId field at all
+  })
   const litterId5 = `litter5b_${R}`
   await setDoc(doc(db, 'litters', litterId5), {
-    tenantId: breederUid, damId: damId5, name: 'Litter5b', notes: '', puppyIds: [], // empty — nobody is a member
+    tenantId: breederUid, damId: damId5, name: 'Litter5b', notes: '', actualBirthDate: '2020-06-01', puppyIds: [legacyPupId],
   })
-  // A standalone dog, same tenant, no litterId, never listed anywhere
+
+  const litterSnap = await getDoc(doc(db, 'litters', litterId5))
+  const candidateSnaps = await Promise.all((litterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
+  const fetched = candidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
+  const { confirmedMembers, ambiguousCount, eligible } = computeEligible(litterId5, fetched, breederUid)
+  check('5-AmbiguousLegacy', 'A puppy with no litterId is NOT a confirmed member even though genuinely listed in puppyIds', confirmedMembers.length === 0)
+  check('5-AmbiguousLegacy', 'It is counted as ambiguous, not silently dropped or silently included', ambiguousCount === 1)
+  check('5-AmbiguousLegacy', 'It is never in the eligible-for-deletion set', eligible.length === 0)
+
+  const batch = writeBatch(db)
+  batch.delete(doc(db, 'litters', litterId5))
+  await batch.commit()
+  const legacyPupStillThere = await safeGetDoc(doc(db, 'dogs', legacyPupId))
+  check('5-AmbiguousLegacy', 'The ambiguous legacy puppy survives the litter delete completely untouched', legacyPupStillThere.exists())
+
+  // Plain standalone dog, same tenant, no litterId, never listed
+  // anywhere — must also stay untouched (distinct from the ambiguous
+  // case above: this one was never even a candidate).
+  const litterId5b = `litter5c_${R}`
+  await setDoc(doc(db, 'litters', litterId5b), {
+    tenantId: breederUid, damId: damId5, name: 'Litter5c', notes: '', puppyIds: [],
+  })
   const standaloneDogId = `standalone5_${R}`
   await setDoc(doc(db, 'dogs', standaloneDogId), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Standalone', sex: 'male', status: 'active', dateOfBirth: '2018-01-01',
   })
-
-  const batch = writeBatch(db)
-  batch.delete(doc(db, 'litters', litterId5))
-  await batch.commit()
+  const batch2 = writeBatch(db)
+  batch2.delete(doc(db, 'litters', litterId5b))
+  await batch2.commit()
   const standaloneStillThere = await safeGetDoc(doc(db, 'dogs', standaloneDogId))
-  check('5-StandaloneGuard', 'A same-tenant standalone dog with no litterId and no puppyIds membership is untouched', standaloneStillThere.exists())
+  check('5-AmbiguousLegacy', 'A same-tenant standalone dog with no litterId and no puppyIds membership is untouched', standaloneStillThere.exists())
 }
 
 // =========================================================================
@@ -322,7 +350,7 @@ function computeEligible(freshLitterId, candidates, requesterUid) {
 
   // Simulate "stale local component state": at page-mount time this
   // puppy looked eligible (currentOwnerId === breeder).
-  const staleSnapshot = { currentOwnerId: breederUid, litterId: litterId6 }
+  const staleSnapshot = { currentOwnerId: breederUid, litterId: litterId6, status: 'active' }
   const staleEligible = computeEligible(litterId6, [{ id: racePupId, ...staleSnapshot }], breederUid).eligible
   check('6-ConcurrentChange', 'Stale snapshot alone would have considered the puppy eligible (sets up the race)', staleEligible.length === 1)
 
@@ -334,8 +362,8 @@ function computeEligible(freshLitterId, candidates, requesterUid) {
   // handleDeleteLitter's fresh re-read happens AFTER the transfer
   const freshLitterSnap = await getDoc(doc(db, 'litters', litterId6))
   const freshCandidateSnaps = await Promise.all((freshLitterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
-  const freshCandidates = freshCandidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
-  const { eligible: freshEligible, preserved: freshPreserved } = computeEligible(litterId6, freshCandidates, breederUid)
+  const freshFetched = freshCandidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
+  const { eligible: freshEligible, preserved: freshPreserved } = computeEligible(litterId6, freshFetched, breederUid)
   check('6-ConcurrentChange', 'Fresh re-read correctly excludes the just-transferred puppy from eligible', freshEligible.length === 0)
   check('6-ConcurrentChange', 'Fresh re-read correctly counts it as preserved instead', freshPreserved === 1)
 
@@ -379,8 +407,8 @@ function computeEligible(freshLitterId, candidates, requesterUid) {
 
   const freshLitterSnap = await getDoc(doc(db, 'litters', litterId7))
   const freshCandidateSnaps = await Promise.all((freshLitterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
-  const freshCandidates = freshCandidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
-  const { eligible, preserved } = computeEligible(litterId7, freshCandidates, breederUid)
+  const freshFetched = freshCandidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
+  const { eligible, preserved } = computeEligible(litterId7, freshFetched, breederUid)
   check('7-AffectedCount', 'Computed eligible count is exactly 3', eligible.length === 3)
   check('7-AffectedCount', 'Computed preserved count is exactly 1', preserved === 1)
 
@@ -441,6 +469,94 @@ function computeEligible(freshLitterId, candidates, requesterUid) {
   const pupGone = await safeGetDoc(doc(db, 'dogs', pupId8))
   check('8-RetryIdempotent', 'Litter remains deleted after retry (no resurrection, no error state)', !litterGone.exists())
   check('8-RetryIdempotent', 'Puppy remains deleted after retry', !pupGone.exists())
+}
+
+// =========================================================================
+// SECTION 9 — pending-claim preservation: a puppy the breeder has
+// already marked as transferred (transferStatus='pendingClaim') but the
+// buyer hasn't actually claimed yet — currentOwnerId is STILL the
+// breeder's — must be excluded from eligible and preserved. This is the
+// scenario the old currentOwnerId-only check (post round-2 fix) missed:
+// pending-claim dogs pass a bare currentOwnerId check because ownership
+// hasn't legally moved yet, even though a real deal may be in progress.
+// =========================================================================
+{
+  await as('breeder')
+  const damId9 = `dam9_${R}`
+  await setDoc(doc(db, 'dogs', damId9), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam9', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const litterId9 = `litter9_${R}`
+  const pendingPupId = `pendingpup9_${R}`
+  await setDoc(doc(db, 'dogs', pendingPupId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'PendingPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId9,
+  })
+  await setDoc(doc(db, 'litters', litterId9), {
+    tenantId: breederUid, damId: damId9, name: 'Litter9', notes: '', actualBirthDate: '2026-01-01', puppyIds: [pendingPupId],
+  })
+  // Breeder marks the puppy as pending-claim (currentOwnerId untouched —
+  // matches transferDogOwnership()'s real shape)
+  await updateDoc(doc(db, 'dogs', pendingPupId), { status: 'transferred', transferStatus: 'pendingClaim', buyerEmail: 'buyer9@example.com', buyerName: 'Buyer Nine' })
+
+  const litterSnap = await getDoc(doc(db, 'litters', litterId9))
+  const candidateSnaps = await Promise.all((litterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
+  const fetched = candidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
+  const { confirmedMembers, eligible, preserved } = computeEligible(litterId9, fetched, breederUid)
+  check('9-PendingClaim', 'Pending-claim puppy is a confirmed member (litterId matches)', confirmedMembers.length === 1)
+  check('9-PendingClaim', 'Pending-claim puppy (currentOwnerId unchanged, but transferStatus=pendingClaim) is excluded from eligible', eligible.length === 0)
+  check('9-PendingClaim', 'Pending-claim puppy is counted as preserved', preserved === 1)
+
+  // The rules layer independently denies deleting it too, regardless of
+  // what client logic decides — a direct single-document delete attempt
+  // (not via the litter-delete batch at all) must also fail.
+  let directDeleteDenied = false
+  try { await deleteDoc(doc(db, 'dogs', pendingPupId)) } catch (err) { directDeleteDenied = isDenied(err) }
+  check('9-PendingClaim', 'firestore.rules independently denies deleting a pending-claim dog directly (not just via client eligibility filtering)', directDeleteDenied)
+
+  const batch = writeBatch(db)
+  batch.delete(doc(db, 'litters', litterId9))
+  await batch.commit()
+  const pendingPupStillThere = await safeGetDoc(doc(db, 'dogs', pendingPupId))
+  check('9-PendingClaim', 'Pending-claim puppy survives the litter delete completely untouched', pendingPupStillThere.exists())
+}
+
+// =========================================================================
+// SECTION 10 — ownership-history protection: a puppy that WAS
+// transferred and has since been fully claimed (currentOwnerId moved to
+// the buyer) obviously fails the currentOwnerId check already, but
+// buyerEmail (permanent provenance) is checked independently so even a
+// hypothetical future state where status/transferStatus look "clean"
+// again can never let a formerly-transferred dog be swept up.
+// =========================================================================
+{
+  await as('breeder')
+  const damId10 = `dam10_${R}`
+  await setDoc(doc(db, 'dogs', damId10), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam10', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const litterId10 = `litter10_${R}`
+  const historyPupId = `historypup10_${R}`
+  // currentOwnerId is (unusually) back to the breeder AND status/
+  // transferStatus look clean, but buyerEmail proves this dog has
+  // ownership history — must still be preserved.
+  await setDoc(doc(db, 'dogs', historyPupId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'HistoryPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+    litterId: litterId10, buyerEmail: 'past-buyer@example.com',
+  })
+  await setDoc(doc(db, 'litters', litterId10), {
+    tenantId: breederUid, damId: damId10, name: 'Litter10', notes: '', actualBirthDate: '2026-01-01', puppyIds: [historyPupId],
+  })
+
+  const litterSnap = await getDoc(doc(db, 'litters', litterId10))
+  const candidateSnaps = await Promise.all((litterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
+  const fetched = candidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() }))
+  const { eligible, preserved } = computeEligible(litterId10, fetched, breederUid)
+  check('10-OwnershipHistory', 'A dog with buyerEmail set is excluded from eligible even with a clean currentOwnerId/status', eligible.length === 0)
+  check('10-OwnershipHistory', 'It is counted as preserved', preserved === 1)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

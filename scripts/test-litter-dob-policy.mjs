@@ -107,12 +107,15 @@ function partitionLitterPuppies(dogs, puppyIds) {
 // puppies atomically, and the confirmation reports the affected count ──
 {
   const src = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
-  check('handleDeleteLitter computes eligible via currentOwnerId (same field the delete rule itself checks)',
-    /const eligible = candidates\.filter\(d => d\.currentOwnerId === user\.uid\)/.test(src))
+  check('handleDeleteLitter requires exact litterId membership before considering a dog at all',
+    /confirmedMembers = fetched\.filter\(d => d\.litterId === freshLitter\.id\)/.test(src))
+  check('handleDeleteLitter computes eligible via currentOwnerId, transfer state, and ownership history together',
+    /const eligible = confirmedMembers\.filter\(d =>/.test(src) &&
+    /d\.currentOwnerId === user\.uid && !isDogTransferred\(d\) && !d\.buyerEmail/.test(src))
   check('Delete confirmation message includes the eligible puppy count',
     /This will also delete \$\{eligible\.length\} puppy record/.test(src))
-  check('Delete confirmation message mentions preserved (transferred) puppies when any exist',
-    /already-transferred puppy record\$\{preserved !== 1/.test(src))
+  check('Delete confirmation message mentions preserved puppies when any exist',
+    /preserved !== 1 \? 's' : ''\} will be kept/.test(src))
   check('Litter delete uses one writeBatch for the litter doc + all eligible puppy docs',
     /const batch = writeBatch\(db\)[\s\S]{0,200}batch\.delete\(doc\(db, 'litters'/.test(src))
 }
