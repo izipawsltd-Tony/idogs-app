@@ -103,7 +103,20 @@ service cloud.firestore {
         request.resource.data.createdByUserId == resource.data.createdByUserId &&
         request.resource.data.sourceType == resource.data.sourceType;
 
-      allow delete: if isSignedIn() && resource.data.currentOwnerId == request.auth.uid;
+      // A dog mid-transfer (marked 'transferred'/'pendingClaim' by
+      // transferDogOwnership(), currentOwnerId not yet moved) can never
+      // be deleted by the outgoing breeder — a real commercial
+      // transaction (possibly with a deposit already taken) may be in
+      // progress. Checks both the current transferStatus-based marking
+      // and the legacy status-only marking (a pre-2026 transfer had no
+      // transferStatus field at all — see claim-transferred-dogs.js's
+      // own comment on the same legacy shape). Once a buyer actually
+      // claims a dog, status/transferStatus reset to their own "clean"
+      // active state and the now-current owner regains full delete
+      // rights over what is now genuinely their own dog.
+      allow delete: if isSignedIn() && resource.data.currentOwnerId == request.auth.uid &&
+        resource.data.get('status', 'active') != 'transferred' &&
+        resource.data.get('transferStatus', null) != 'pendingClaim';
 
       // Creator becomes tenantId/currentOwnerId/createdByUserId — a client
       // cannot assign ownership to anyone else at creation time either
@@ -172,7 +185,17 @@ service cloud.firestore {
       allow create: if dogBelongsToUser(request.resource.data.dogId) &&
         get(/databases/$(database)/documents/dogs/$(request.resource.data.dogId)).data.sex == 'female' &&
         heatCycleSireValid(request.resource.data);
+      // dogId (the Dam reference) is immutable on update — without this,
+      // `dogBelongsToUser(resource.data.dogId)` only proves the caller
+      // owned whichever dog dogId pointed at BEFORE the write; it never
+      // re-checks request.resource.data.dogId, so a client could
+      // silently repoint an existing heat cycle record at an entirely
+      // different (possibly not-owned, possibly male, possibly
+      // cross-tenant) dog and this rule would never notice. sireId can
+      // still legitimately change on edit (heatCycleSireValid
+      // re-validates it against live state every time).
       allow update: if dogBelongsToUser(resource.data.dogId) &&
+        request.resource.data.dogId == resource.data.dogId &&
         heatCycleSireValid(request.resource.data);
     }
 
@@ -222,7 +245,18 @@ service cloud.firestore {
       // puppies are added in the first place (dogs/{dogId}'s create
       // rule requires a validly-shaped dateOfBirth, which for a litter
       // puppy always comes from the litter's actualBirthDate).
+      //
+      // tenantId/damId/sireId are immutable on update — the app UI never
+      // exposes a way to edit any of them after creation (editLitterForm
+      // only ever touches name/dates/notes/actualBirthDate), so without
+      // this a client could otherwise repoint an established Dam/Sire
+      // reference at an ineligible, cross-tenant, or unvalidated dog
+      // post-creation (isEligibleDam only ever runs on create), or
+      // reassign the litter to a different tenant entirely.
       allow update: if isSignedIn() && resource.data.tenantId == request.auth.uid &&
+        request.resource.data.tenantId == resource.data.tenantId &&
+        request.resource.data.damId == resource.data.damId &&
+        request.resource.data.get('sireId', null) == resource.data.get('sireId', null) &&
         (request.resource.data.get('puppyIds', []).size() == 0 ||
          isValidDobString(request.resource.data.get('actualBirthDate', null)));
     }
