@@ -18,6 +18,30 @@ service cloud.firestore {
         (dog.tenantId == request.auth.uid || dog.currentOwnerId == request.auth.uid);
     }
 
+    // A Sire reference (heatCycles.sireId) is only valid if it currently
+    // points at a living male dog under the requesting breeder's own
+    // ACTIVE control — currentOwnerId specifically, not tenantId. A dog
+    // the breeder originally issued but has since transferred away must
+    // never be selectable as a Sire again, even though tenantId still
+    // matches (tenantId is permanent provenance, used elsewhere in this
+    // file for historical read access — not an ongoing control signal).
+    function isEligibleSire(sireId) {
+      let sire = get(/databases/$(database)/documents/dogs/$(sireId)).data;
+      return exists(/databases/$(database)/documents/dogs/$(sireId)) &&
+        sire.sex == 'male' &&
+        sire.currentOwnerId == request.auth.uid &&
+        sire.get('isDeceased', false) == false;
+    }
+
+    // sireId is optional — a manually-entered external sire has no
+    // sireId at all. Only validate it when the caller actually set one,
+    // so a wrong-tenant/transferred/deleted/malformed sireId is rejected
+    // independently of whatever the client's own dropdown happened to
+    // show (which may be stale by the time Save is clicked).
+    function heatCycleSireValid(data) {
+      return !('sireId' in data) || data.sireId == null || isEligibleSire(data.sireId);
+    }
+
     // ── users/{uid} — only the account owner can read/write their own profile ──
     match /users/{userId} {
       allow read, write: if isOwnerUser(userId);
@@ -101,13 +125,19 @@ service cloud.firestore {
     // every read/write fell through to the default-deny block at the
     // bottom of this file: the Heat Cycle Records list silently loaded
     // empty and "Add Heat Cycle" always failed with a generic error.
-    // create is additionally scoped to female dogs — heat cycles are a
-    // Dam concept, and a male or unrelated-tenant dog must never receive
-    // one even if a client bypasses the UI's own eligibility gating.
+    // create/update are additionally scoped: the target dog must be
+    // female (Dam-only — a male or unrelated-tenant dog must never
+    // receive one even if a client bypasses the UI's own eligibility
+    // gating), and any sireId set on the record must independently
+    // resolve to a currently-eligible Sire (see heatCycleSireValid) —
+    // never trusted from whatever the client's dropdown last showed.
     match /heatCycles/{id} {
-      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow read, delete: if dogBelongsToUser(resource.data.dogId);
       allow create: if dogBelongsToUser(request.resource.data.dogId) &&
-        get(/databases/$(database)/documents/dogs/$(request.resource.data.dogId)).data.sex == 'female';
+        get(/databases/$(database)/documents/dogs/$(request.resource.data.dogId)).data.sex == 'female' &&
+        heatCycleSireValid(request.resource.data);
+      allow update: if dogBelongsToUser(resource.data.dogId) &&
+        heatCycleSireValid(request.resource.data);
     }
 
     // ── documents — access follows the parent dog's ownership, same as
