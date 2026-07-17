@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../hooks/useAuth'
 import {
-  getDog, getVaccineRecords, getWormingRecords, getHealthTests,
+  getDog, getDogs, getVaccineRecords, getWormingRecords, getHealthTests,
   getReminders, getActivityNotes, addActivityNote,
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder,
   addWormingRecord, deleteWormingRecord,
@@ -2566,12 +2566,23 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   // heatCycles permission-denied bug) silently emptied BOTH the heat cycle
   // list AND the "from my dogs" Sire dropdown, since Promise.all rejects
   // as soon as one of its inputs rejects.
+  //
+  // allDogs now comes from getDogs() — the same canonical source My Dogs
+  // (DogListPage) and the Litters Sire dropdown already use — instead of a
+  // raw `where('tenantId', '==', ...)` query. A raw tenantId-only query
+  // sees a transferred dog's *stale* pre-claim `status` field, because
+  // api/claim-transferred-dogs.js resets status back to 'active' on the
+  // new owner's document (tenantId is permanent provenance, so it still
+  // matches the former breeder's query) — only getDogs()'s own
+  // currentOwnerId-based override correctly re-derives 'transferred' for
+  // the former breeder's view. That mismatch was why the Heat Cycle Sire
+  // dropdown could show dogs My Dogs had already stopped showing.
   useEffect(() => {
     if (!dogId) return
     async function load() {
       const [cyclesResult, dogsResult] = await Promise.allSettled([
         getDocs(query(collection(db, 'heatCycles'), where('dogId', '==', dogId))),
-        getDocs(query(collection(db, 'dogs'), where('tenantId', '==', dog.tenantId))),
+        getDogs(),
       ])
       if (cyclesResult.status === 'fulfilled') {
         const cycles = cyclesResult.value.docs.map(d => ({ id: d.id, ...d.data() } as HeatCycle))
@@ -2582,7 +2593,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         toast('Failed to load heat cycle records', 'error')
       }
       if (dogsResult.status === 'fulfilled') {
-        setAllDogs(dogsResult.value.docs.map(d => ({ id: d.id, ...d.data() } as Dog)))
+        setAllDogs(dogsResult.value)
       } else {
         console.error('Failed to load dogs for sire selector:', dogsResult.reason)
       }
