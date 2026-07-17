@@ -6,6 +6,19 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Format-level DOB validity — the strongest check Firestore Rules can
+    // feasibly do (no generic date-arithmetic/formatting functions exist
+    // here, so true age/maturity math stays a client+service-layer
+    // concern via lib/utils.ts's parseDobStrict, which this mirrors the
+    // shape of). Requires exactly YYYY-MM-DD — catches missing, wrong
+    // type, and unparsable/malformed values. A dog whose OWN dateOfBirth
+    // fails this can never be accepted as a Sire/Dam reference, even if
+    // every ownership/sex check passes — "can't prove maturity" must
+    // never resolve to "eligible".
+    function isValidDobString(dob) {
+      return dob is string && dob.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
     function isOwnerUser(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -36,7 +49,8 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/dogs/$(dogId)) &&
         candidate.sex == requiredSex &&
         candidate.currentOwnerId == request.auth.uid &&
-        candidate.get('isDeceased', false) == false;
+        candidate.get('isDeceased', false) == false &&
+        isValidDobString(candidate.get('dateOfBirth', null));
     }
     function isEligibleSire(sireId) {
       return isEligibleBreedingDog(sireId, 'male');
@@ -94,18 +108,20 @@ service cloud.firestore {
       // Creator becomes tenantId/currentOwnerId/createdByUserId — a client
       // cannot assign ownership to anyone else at creation time either
       // (createDog() always derives all three from the authenticated uid).
-      // dateOfBirth must be non-empty on create — both existing callers
-      // (DogNewPage's form, LittersPage's litter-puppy flow) already
-      // enforce this at the UI layer; this closes the gap for any future
-      // caller and specifically stops a litter puppy ever being created
-      // with an empty dateOfBirth because its litter had no actual birth
-      // date yet.
+      // dateOfBirth must be a validly-shaped YYYY-MM-DD string on create —
+      // both existing callers (DogNewPage's form, LittersPage's
+      // litter-puppy flow) already enforce this via parseDobStrict at the
+      // UI layer; this closes the gap for any future caller and
+      // specifically stops a litter puppy ever being created with an
+      // empty/malformed dateOfBirth. Format-only (see isValidDobString) —
+      // rejecting a future-dated or age-implausible DOB stays a
+      // client+service-layer concern, since rules have no generic date
+      // arithmetic to check that with.
       allow create: if isSignedIn() &&
         request.resource.data.tenantId == request.auth.uid &&
         request.resource.data.currentOwnerId == request.auth.uid &&
         request.resource.data.createdByUserId == request.auth.uid &&
-        request.resource.data.dateOfBirth is string &&
-        request.resource.data.dateOfBirth.size() > 0;
+        isValidDobString(request.resource.data.dateOfBirth);
     }
 
     // ── passportReservations/{passportId} — uniqueness index for
@@ -201,15 +217,14 @@ service cloud.firestore {
       allow read, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
       allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid &&
         isEligibleDam(request.resource.data.damId);
-      // A litter with puppies attached must keep a non-empty
+      // A litter with puppies attached must keep a validly-shaped
       // actualBirthDate — mirrors the same invariant enforced when
       // puppies are added in the first place (dogs/{dogId}'s create
-      // rule requires a non-empty dateOfBirth, which for a litter puppy
-      // always comes from the litter's actualBirthDate).
+      // rule requires a validly-shaped dateOfBirth, which for a litter
+      // puppy always comes from the litter's actualBirthDate).
       allow update: if isSignedIn() && resource.data.tenantId == request.auth.uid &&
         (request.resource.data.get('puppyIds', []).size() == 0 ||
-         (request.resource.data.get('actualBirthDate', '') is string &&
-          request.resource.data.get('actualBirthDate', '').size() > 0));
+         isValidDobString(request.resource.data.get('actualBirthDate', null)));
     }
 
     // ── auditLogs — append-only, never editable/deletable by clients ──
