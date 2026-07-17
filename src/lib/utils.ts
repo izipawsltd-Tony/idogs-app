@@ -191,17 +191,51 @@ const LIFE_STAGE_MONTHS: Record<DogSize, { puppyEnd: number; youngAdultEnd: numb
   giant:  { puppyEnd: 18, youngAdultEnd: 24, seniorStart: 84 },  // senior ~7y
 }
 
+// The single canonical DOB parser/validator — anywhere a dateOfBirth is
+// accepted as new data or relied on to prove breeding maturity must go
+// through this, never a bare `new Date(dob)`. Rejects (returns null
+// for) anything that can't be trusted:
+//   - missing / not a string (defensive — Firestore is schemaless at
+//     runtime, so a document can carry any type regardless of what the
+//     TS type says)
+//   - not exactly YYYY-MM-DD (catches unparsable strings and malformed
+//     legacy values)
+//   - an impossible calendar date — JS Date silently ROLLS OVER
+//     "2020-02-30" into March 1st instead of rejecting it; this is
+//     caught by round-tripping the parsed components back against the
+//     input and requiring an exact match
+//   - a date in the future
+// A null result must always be treated as "cannot prove maturity",
+// never as a free pass — see calculateLifeStage below, which used to
+// silently fall through to 'senior' (i.e. treated as breeding-eligible)
+// for exactly this class of malformed input, because every numeric
+// comparison against NaN evaluates to false.
+export function parseDobStrict(dob: unknown): Date | null {
+  if (typeof dob !== 'string') return null
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob)
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(year, month - 1, day)
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return null
+  if (parsed.getTime() > Date.now()) return null
+  return parsed
+}
+
 /**
  * Calculates life stage using breed-aware age brackets. Falls back to
  * the medium-size brackets if no breed is provided or the breed isn't
  * recognised — this keeps existing callers (that only pass dob) working
  * without changes, while new callers can pass breed for more accurate
  * staging of large/giant breeds (who mature slower as puppies but reach
- * "senior" earlier than small breeds).
+ * "senior" earlier than small breeds). A missing OR malformed dob
+ * (unparsable, impossible calendar date, future date) both fail safe to
+ * 'puppy' — "can't prove otherwise" must never resolve to a mature stage.
  */
 export function calculateLifeStage(dob: string, breed?: string): LifeStage {
-  if (!dob) return 'puppy'
-  const birth = new Date(dob)
+  const birth = parseDobStrict(dob)
+  if (!birth) return 'puppy'
   const months = differenceInMonths(new Date(), birth)
   const size = breed ? getBreedSize(breed) : 'medium'
   const { puppyEnd, youngAdultEnd, seniorStart } = LIFE_STAGE_MONTHS[size]
