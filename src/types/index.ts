@@ -168,6 +168,14 @@ export interface Litter {
   notes: string
   puppyIds: string[]
   createdAt: string
+  // Set by api/delete-litter.js (Codex round 5, Blocker 2) instead of
+  // hard-deleting the litter document, whenever a transferred/claimed/
+  // history-bearing Dog is still linked to it — the document is kept
+  // (never deleted) so that Dog's litterId back-reference always
+  // resolves to something real, preserving lineage. Excluded from the
+  // breeder's normal Litters list (see getLitters() in lib/db.ts).
+  archived?: boolean
+  archivedAt?: string
 }
 
 // ═════════════════════════════════════════════════════════════

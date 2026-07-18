@@ -1,31 +1,53 @@
 // api/delete-litter.js — trusted server-side litter deletion (Codex
-// round 4, Blocker 3).
+// round 4, Blocker 3; hardened Codex round 5, Blocker 2).
 //
 // WHY THIS EXISTS: round 3 implemented safe litter deletion as a CLIENT
-// Firestore transaction (LittersPage.tsx's handleDeleteLitter), relying
-// on firestore.rules' litters.delete rule (tenantId ownership only) plus
-// the app's own client-side logic to decide which puppies to delete
-// alongside it. Codex round 4 flagged that this rule has no way to
-// verify puppy handling actually happened — a plain deleteDoc() call
-// (bypassing the app's own transaction logic entirely, e.g. from
-// browser devtools, a bug, or any other direct write) is EQUALLY
-// permitted by that same rule, and would orphan every puppy whose
-// litterId pointed at the now-deleted litter. firestore.rules now denies
-// litters delete unconditionally for clients — this endpoint is the only
-// path, and it owns the ENTIRE decision itself (Admin SDK, bypasses
-// Rules), re-implementing the exact same transaction logic round 3 had
-// client-side, just moved here where Rules can no longer be bypassed by
-// a stray direct write.
+// Firestore transaction, relying on firestore.rules' litters.delete rule
+// (tenantId ownership only) plus the app's own client-side logic to
+// decide which puppies to delete alongside it. Codex round 4 flagged
+// that this rule has no way to verify puppy handling actually happened —
+// a plain deleteDoc() call was equally permitted. firestore.rules now
+// denies litters delete unconditionally for clients — this endpoint is
+// the only path, and owns the ENTIRE decision itself (Admin SDK,
+// bypasses Rules).
+//
+// Codex round 5, Blocker 2 — two further gaps:
+//
+// 1. Round 4's version only ever inspected litter.puppyIds (the FORWARD
+//    reference) to find candidate dogs. A dog whose OWN litterId points
+//    at this litter but was never added to puppyIds (a partial write —
+//    e.g. a dog created, then the litter-link step failed or was done
+//    out of band) was invisible to this endpoint entirely: not deleted,
+//    not preserved, not even considered — silently orphaned as far as
+//    this operation's own accounting was concerned. This endpoint now
+//    ALSO queries dogs directly by litterId (the REVERSE direction) and
+//    reconciles both directions via resolveLitterMembership — see
+//    api/_lib/litter-eligibility.js's own comment on confirmed/
+//    forward-only/reverse-only.
+//
+// 2. Round 4's version always hard-deleted the litter document once
+//    eligible puppies were removed, even when a PRESERVED (history-
+//    bearing/transferred/claimed) dog still had its litterId pointing at
+//    it — leaving that dog's lineage reference dangling (pointing at a
+//    document that no longer exists). This endpoint now ARCHIVES the
+//    litter instead of hard-deleting it whenever any preserved dog is
+//    still linked — the litter document persists (so litterId always
+//    resolves to something real) but is marked `archived: true` and
+//    excluded from the breeder's normal Litters list (see
+//    src/lib/db.ts's getLitters()). Only when NO preserved dog remains
+//    linked (from either direction) is the litter document actually
+//    deleted.
 //
 // POST /api/delete-litter
 // Headers: Authorization: Bearer <Firebase ID token>
 // Body: { litterId }
-// Returns: { deletedCount, preservedCount, ambiguousCount } | { error }
+// Returns: { deletedCount, preservedCount, ambiguousCount, litterDeleted, litterArchived } | { error }
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
-import { partitionLitterCandidatesServer } from './_lib/litter-eligibility.js'
+import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
+import { resolveLitterMembership, partitionConfirmedMembers } from './_lib/litter-eligibility.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -37,15 +59,15 @@ if (!getApps().length) {
   })
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    throw new ApiError(405, 'Method not allowed')
   }
 
   const authHeader = req.headers.authorization || ''
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
   if (!idToken) {
-    return res.status(401).json({ error: 'Missing Authorization header' })
+    throw new ApiError(401, 'Missing Authorization header')
   }
 
   let uid
@@ -53,48 +75,70 @@ export default async function handler(req, res) {
     const decoded = await getAuth().verifyIdToken(idToken)
     uid = decoded.uid
   } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' })
+    throw new ApiError(401, 'Invalid or expired token')
   }
 
-  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})
+  const body = parseJsonBody(req)
   const { litterId } = body
   if (!litterId || typeof litterId !== 'string') {
-    return res.status(400).json({ error: 'litterId is required' })
+    throw new ApiError(400, 'litterId is required')
   }
 
-  try {
-    const db = getFirestore()
-    const litterRef = db.collection('litters').doc(litterId)
+  const db = getFirestore()
+  const litterRef = db.collection('litters').doc(litterId)
 
-    const outcome = await db.runTransaction(async (tx) => {
-      const litterSnap = await tx.get(litterRef)
-      if (!litterSnap.exists) {
-        return { deletedCount: 0, preservedCount: 0, ambiguousCount: 0, notFound: true }
-      }
-      const litter = litterSnap.data()
-      if (litter.tenantId !== uid) {
-        throw new Error('NOT_YOUR_LITTER')
-      }
-      const puppyIds = litter.puppyIds || []
-      const candidateSnaps = await Promise.all(puppyIds.map(id => tx.get(db.collection('dogs').doc(id))))
-      const fetched = candidateSnaps
-        .filter(s => s.exists)
-        .map(s => ({ id: s.id, ...s.data() }))
-      const { eligible, preserved, ambiguousCount } = partitionLitterCandidatesServer(litterId, fetched, uid)
-
-      tx.delete(litterRef)
-      for (const puppy of eligible) {
-        tx.delete(db.collection('dogs').doc(puppy.id))
-      }
-      return { deletedCount: eligible.length, preservedCount: preserved, ambiguousCount, notFound: false }
-    })
-
-    return res.status(200).json(outcome)
-  } catch (err) {
-    if (err.message === 'NOT_YOUR_LITTER') {
-      return res.status(403).json({ error: 'Not your litter' })
+  const outcome = await db.runTransaction(async (tx) => {
+    const litterSnap = await tx.get(litterRef)
+    if (!litterSnap.exists) {
+      return { deletedCount: 0, preservedCount: 0, ambiguousCount: 0, litterDeleted: false, litterArchived: false, notFound: true }
     }
-    console.error('delete-litter error:', err)
-    return res.status(500).json({ error: 'Internal error', message: err.message })
-  }
+    const litter = litterSnap.data()
+    if (litter.tenantId !== uid) {
+      throw new Error('NOT_YOUR_LITTER')
+    }
+
+    const puppyIds = litter.puppyIds || []
+    const forwardSnaps = await Promise.all(puppyIds.map(id => tx.get(db.collection('dogs').doc(id))))
+    const forwardFetched = forwardSnaps.filter(s => s.exists).map(s => ({ id: s.id, ...s.data() }))
+
+    // Reverse direction: any dog whose OWN litterId points here,
+    // regardless of whether it was ever added to puppyIds. Single-field
+    // equality where() — no composite index required.
+    const reverseQuerySnap = await tx.get(db.collection('dogs').where('litterId', '==', litterId))
+    const reverseFetched = reverseQuerySnap.docs.map(d => ({ id: d.id, ...d.data() }))
+
+    const { confirmed, ambiguousCount } = resolveLitterMembership(litterId, forwardFetched, reverseFetched)
+    const { eligible, preserved } = partitionConfirmedMembers(confirmed, uid)
+
+    for (const puppy of eligible) {
+      tx.delete(db.collection('dogs').doc(puppy.id))
+    }
+
+    if (preserved.length === 0) {
+      // No preserved dog depends on this litter document resolving —
+      // safe to hard-delete.
+      tx.delete(litterRef)
+      return { deletedCount: eligible.length, preservedCount: 0, ambiguousCount, litterDeleted: true, litterArchived: false }
+    }
+
+    // At least one preserved (history-bearing/transferred/claimed) dog
+    // still needs this litter document to resolve its lineage — archive
+    // instead of deleting. puppyIds is recomputed to exactly the
+    // preserved set (the only dogs still genuinely linked going
+    // forward), normalizing away whatever forward/reverse drift existed
+    // before this operation.
+    tx.update(litterRef, {
+      archived: true,
+      archivedAt: new Date().toISOString(),
+      puppyIds: preserved.map(dog => dog.id),
+    })
+    return { deletedCount: eligible.length, preservedCount: preserved.length, ambiguousCount, litterDeleted: false, litterArchived: true }
+  }).catch((err) => {
+    if (err.message === 'NOT_YOUR_LITTER') throw new ApiError(403, 'Not your litter')
+    throw err
+  })
+
+  return res.status(200).json(outcome)
 }
+
+export default withApiErrorHandling('delete-litter', handler)

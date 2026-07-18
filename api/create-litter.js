@@ -1,5 +1,6 @@
 // api/create-litter.js — trusted server-side litter creation (Codex
-// round 3, Blocker 1; hardened Codex round 4, Blocker 1).
+// round 3, Blocker 1; hardened Codex round 4, Blocker 1; hardened Codex
+// round 5, Blocker 6).
 //
 // WHY THIS EXISTS: firestore.rules can verify a Sire/Dam reference's
 // ownership/sex/deceased/DOB-format, but has no date-arithmetic
@@ -15,16 +16,16 @@
 // only path.
 //
 // Codex round 4, Blocker 1: the Dam/Sire reads and the litter write now
-// happen inside ONE db.runTransaction, not a plain get()-then-set()
-// sequence. A plain sequence has a window between the validation read
-// and the write where a concurrent request could transfer/claim/mark-
-// deceased the same dog — the validation would already have passed on
-// stale data by the time the write lands. Wrapping both in a transaction
-// means Firestore re-validates at commit time that nothing this
-// transaction read has changed since; if it has, the ENTIRE callback
-// (re-read + re-validate + write) is retried automatically against the
-// new state, so a concurrent mutation is always caught, never silently
-// missed.
+// happen inside ONE db.runTransaction — see that round's own note on why
+// a plain get()-then-set() sequence has a stale-read race window a
+// transaction closes.
+//
+// Codex round 5, Blocker 6: name/sireName/notes/dates are now validated
+// through api/_lib/litter-schema.js — an explicit field allowlist
+// (unknown keys rejected outright) plus real calendar-date and length
+// checks, rather than the previous `field || ''` fallbacks that accepted
+// any string (including an impossible or future-dated actualBirthDate)
+// as long as the client's own UI happened not to send one.
 //
 // POST /api/create-litter
 // Headers: Authorization: Bearer <Firebase ID token>
@@ -36,6 +37,8 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { validateBreedingParent } from './_lib/parent-eligibility.js'
+import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
+import { sanitizeLitterInput, LitterValidationError, CREATE_FIELDS } from './_lib/litter-schema.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -47,15 +50,15 @@ if (!getApps().length) {
   })
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    throw new ApiError(405, 'Method not allowed')
   }
 
   const authHeader = req.headers.authorization || ''
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
   if (!idToken) {
-    return res.status(401).json({ error: 'Missing Authorization header' })
+    throw new ApiError(401, 'Missing Authorization header')
   }
 
   let uid
@@ -63,68 +66,76 @@ export default async function handler(req, res) {
     const decoded = await getAuth().verifyIdToken(idToken)
     uid = decoded.uid
   } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' })
+    throw new ApiError(401, 'Invalid or expired token')
   }
 
-  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})
-  const { name, damId, sireId, sireName, matingSuspectedDate, expectedDueDate, actualBirthDate, notes } = body
+  const body = parseJsonBody(req)
+  const { damId, sireId, ...rest } = body
 
   if (!damId || typeof damId !== 'string') {
-    return res.status(400).json({ error: 'damId is required' })
+    throw new ApiError(400, 'damId is required')
+  }
+  if (sireId !== undefined && typeof sireId !== 'string') {
+    throw new ApiError(400, 'sireId must be a string')
+  }
+
+  let safeFields
+  try {
+    safeFields = sanitizeLitterInput(rest, CREATE_FIELDS)
+  } catch (err) {
+    if (err instanceof LitterValidationError) throw new ApiError(400, err.message)
+    throw err
   }
 
   const useInAccountSire = sireId && sireId !== '__external__'
 
-  try {
-    const db = getFirestore()
-    const damRef = db.collection('dogs').doc(damId)
-    const sireRef = useInAccountSire ? db.collection('dogs').doc(sireId) : null
-    const litterRef = db.collection('litters').doc()
+  const db = getFirestore()
+  const damRef = db.collection('dogs').doc(damId)
+  const sireRef = useInAccountSire ? db.collection('dogs').doc(sireId) : null
+  const litterRef = db.collection('litters').doc()
 
-    const result = await db.runTransaction(async (tx) => {
-      // Reads must precede writes in a transaction — both parent reads
-      // happen first, then validation, then (only if both pass) the
-      // single write. If either read's document changes before this
-      // transaction commits, Firestore retries this whole callback
-      // against the fresh state rather than committing against data
-      // that was true a moment ago but no longer is.
-      const damSnap = await tx.get(damRef)
-      const sireSnap = sireRef ? await tx.get(sireRef) : null
+  const result = await db.runTransaction(async (tx) => {
+    // Reads must precede writes in a transaction — both parent reads
+    // happen first, then validation, then (only if both pass) the
+    // single write. If either read's document changes before this
+    // transaction commits, Firestore retries this whole callback
+    // against the fresh state rather than committing against data
+    // that was true a moment ago but no longer is.
+    const damSnap = await tx.get(damRef)
+    const sireSnap = sireRef ? await tx.get(sireRef) : null
 
-      const damCheck = validateBreedingParent(damSnap.exists ? damSnap.data() : null, { uid, requiredSex: 'female' })
-      if (!damCheck.valid) {
-        return { ok: false, status: 400, body: { error: 'Dam is not an eligible breeding parent', reason: damCheck.reason } }
-      }
-      if (sireRef) {
-        const sireCheck = validateBreedingParent(sireSnap.exists ? sireSnap.data() : null, { uid, requiredSex: 'male' })
-        if (!sireCheck.valid) {
-          return { ok: false, status: 400, body: { error: 'Sire is not an eligible breeding parent', reason: sireCheck.reason } }
-        }
-      }
-
-      const dam = damSnap.data()
-      tx.set(litterRef, {
-        tenantId: uid,
-        name: (name && String(name).trim()) || `${dam.name} Litter`,
-        damId,
-        sireId: useInAccountSire ? sireId : null,
-        sireName: sireId === '__external__' ? ((sireName && String(sireName).trim()) || null) : null,
-        matingSuspectedDate: matingSuspectedDate || '',
-        expectedDueDate: expectedDueDate || '',
-        actualBirthDate: actualBirthDate || '',
-        notes: notes || '',
-        puppyIds: [],
-        createdAt: new Date().toISOString(),
-      })
-      return { ok: true }
-    })
-
-    if (!result.ok) {
-      return res.status(result.status).json(result.body)
+    const damCheck = validateBreedingParent(damSnap.exists ? damSnap.data() : null, { uid, requiredSex: 'female' })
+    if (!damCheck.valid) {
+      return { ok: false, status: 400, body: { error: 'Dam is not an eligible breeding parent', reason: damCheck.reason } }
     }
-    return res.status(200).json({ litterId: litterRef.id })
-  } catch (err) {
-    console.error('create-litter error:', err)
-    return res.status(500).json({ error: 'Internal error', message: err.message })
+    if (sireRef) {
+      const sireCheck = validateBreedingParent(sireSnap.exists ? sireSnap.data() : null, { uid, requiredSex: 'male' })
+      if (!sireCheck.valid) {
+        return { ok: false, status: 400, body: { error: 'Sire is not an eligible breeding parent', reason: sireCheck.reason } }
+      }
+    }
+
+    const dam = damSnap.data()
+    tx.set(litterRef, {
+      tenantId: uid,
+      name: safeFields.name?.trim() || `${dam.name} Litter`,
+      damId,
+      sireId: useInAccountSire ? sireId : null,
+      sireName: sireId === '__external__' ? (safeFields.sireName?.trim() || null) : null,
+      matingSuspectedDate: safeFields.matingSuspectedDate || '',
+      expectedDueDate: safeFields.expectedDueDate || '',
+      actualBirthDate: safeFields.actualBirthDate || '',
+      notes: safeFields.notes || '',
+      puppyIds: [],
+      createdAt: new Date().toISOString(),
+    })
+    return { ok: true }
+  })
+
+  if (!result.ok) {
+    return res.status(result.status).json(result.body)
   }
+  return res.status(200).json({ litterId: litterRef.id })
 }
+
+export default withApiErrorHandling('create-litter', handler)

@@ -257,7 +257,7 @@ export default function LittersPage({ toast }: Props) {
     // puppy from scratch inside its own transaction and decides
     // eligibility fresh, exactly as round 3's client transaction did —
     // just moved where a stray direct write can no longer bypass it.
-    let outcome: { deletedCount: number; preservedCount: number; ambiguousCount: number }
+    let outcome: { deletedCount: number; preservedCount: number; ambiguousCount: number; litterDeleted: boolean; litterArchived: boolean }
     try {
       outcome = await deleteLitterServer(litter.id)
     } catch {
@@ -268,7 +268,17 @@ export default function LittersPage({ toast }: Props) {
     const [updatedLitters, updatedDogs] = await Promise.all([getLitters(), getDogs()])
     setLitters(updatedLitters)
     setDogs(updatedDogs.filter(d => !d.isDeceased))
-    toast(outcome.deletedCount > 0 ? `Litter deleted along with ${outcome.deletedCount} puppy record${outcome.deletedCount !== 1 ? 's' : ''}` : 'Litter deleted')
+    // Codex round 5, Blocker 2: the litter is ARCHIVED (kept, not
+    // deleted — see api/delete-litter.js) rather than hard-deleted
+    // whenever a transferred/claimed dog is still linked to it, so that
+    // dog's lineage reference stays resolvable. Either way it disappears
+    // from this list (getLitters() filters archived litters out), so
+    // the wording just needs to be honest about which happened.
+    if (outcome.litterArchived) {
+      toast(`Litter removed from your list — ${outcome.preservedCount} puppy record${outcome.preservedCount !== 1 ? 's' : ''} transferred/claimed elsewhere kept their history, so the litter record itself was preserved rather than deleted`)
+    } else {
+      toast(outcome.deletedCount > 0 ? `Litter deleted along with ${outcome.deletedCount} puppy record${outcome.deletedCount !== 1 ? 's' : ''}` : 'Litter deleted')
+    }
   }
 
   async function handleAddPuppy(litterId: string, litter: Litter) {

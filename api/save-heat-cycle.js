@@ -1,30 +1,37 @@
 // api/save-heat-cycle.js — trusted server-side heat cycle create/update
-// (Codex round 3, Blocker 1; hardened Codex round 4, Blocker 1).
+// (Codex round 3, Blocker 1; hardened Codex round 4, Blocker 1; hardened
+// Codex round 5, Blocker 5).
 //
 // Same rationale as create-litter.js: firestore.rules can check a Sire
 // reference's ownership/sex/deceased/DOB-format but has no date
 // arithmetic to enforce actual minimum breeding maturity, so that check
-// moves here. On CREATE, both the Dam (dogId) and Sire (sireId, if an
-// in-account dog was selected) are re-validated fresh via the Admin SDK.
-// On UPDATE, the Dam reference itself is immutable (dogId never changes
-// on an existing record — see firestore.rules) and isn't re-validated
-// for CURRENT eligibility, since editing a historical record (e.g.
-// fixing a typo) must remain possible even if the Dam has since been
-// transferred or passed away; only a newly-set/changed sireId is
-// re-validated. firestore.rules denies direct client writes to
+// moves here. firestore.rules denies direct client writes to
 // heatCycles/{id} create and update entirely — this endpoint is now the
 // only path for both.
 //
-// Codex round 4, Blocker 1: every read this endpoint relies on for a
-// validation decision — the Dam/Sire eligibility reads on CREATE, and
-// the access-check + Sire-eligibility reads on UPDATE — now happens
-// inside a single db.runTransaction alongside the write, for the same
-// reason as create-litter.js: a plain get()-then-write() sequence has a
-// window where a concurrent transfer/claim/deceased-marking could
-// invalidate the read between validation and commit. A transaction
-// closes that window by re-validating (via Firestore's own optimistic
-// concurrency check) that nothing read here has changed by commit time,
-// automatically retrying the whole callback against fresh state if it has.
+// Codex round 5, Blocker 5 — two changes from round 4:
+//
+// 1. The Dam is now FULLY validated (validateBreedingParent — ownership,
+//    sex, deceased, active status, real breeding maturity) inside the
+//    UPDATE transaction too, not just on CREATE. Round 3/4 deliberately
+//    left UPDATE with an access-only check (tenantId/currentOwnerId),
+//    reasoning that editing a HISTORICAL record should stay possible
+//    even after the Dam is later transferred or passes away. Codex round
+//    5 explicitly requires full validation on update without that
+//    carve-out — this is a genuine behavior change: editing an existing
+//    Heat Cycle record now requires the Dam to currently pass the full
+//    eligibility bar, same as creating a new one. Flagged as a known
+//    trade-off in the round 5 report (a legitimate historical-record
+//    typo-fix for an since-transferred Dam is no longer possible through
+//    this endpoint).
+//
+// 2. The write itself no longer spreads the client's `cycle` object
+//    directly (`{...cycle, ...}`) — see api/_lib/heat-cycle-schema.js's
+//    own comment for why that was a mass-assignment risk. Every field is
+//    now validated against an explicit allowlist; createdAt is
+//    server-maintained and preserved exactly across updates (re-read
+//    from the existing document, never taken from the client, never
+//    reset).
 //
 // POST /api/save-heat-cycle
 // Headers: Authorization: Bearer <Firebase ID token>
@@ -35,6 +42,8 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { validateBreedingParent } from './_lib/parent-eligibility.js'
+import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
+import { sanitizeHeatCycleInput, HeatCycleValidationError } from './_lib/heat-cycle-schema.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -46,15 +55,15 @@ if (!getApps().length) {
   })
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    throw new ApiError(405, 'Method not allowed')
   }
 
   const authHeader = req.headers.authorization || ''
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
   if (!idToken) {
-    return res.status(401).json({ error: 'Missing Authorization header' })
+    throw new ApiError(401, 'Missing Authorization header')
   }
 
   let uid
@@ -62,86 +71,40 @@ export default async function handler(req, res) {
     const decoded = await getAuth().verifyIdToken(idToken)
     uid = decoded.uid
   } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' })
+    throw new ApiError(401, 'Invalid or expired token')
   }
 
-  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})
+  const body = parseJsonBody(req)
   const { cycleId, dogId, cycle } = body
 
   if (!dogId || typeof dogId !== 'string' || !cycle || typeof cycle !== 'object') {
-    return res.status(400).json({ error: 'dogId and cycle are required' })
-  }
-  if (!cycle.heatStartDate) {
-    return res.status(400).json({ error: 'heatStartDate is required' })
+    throw new ApiError(400, 'dogId and cycle are required')
   }
 
+  let safeCycle
   try {
-    const db = getFirestore()
+    safeCycle = sanitizeHeatCycleInput(cycle, { requireHeatStartDate: !cycleId })
+  } catch (err) {
+    if (err instanceof HeatCycleValidationError) throw new ApiError(400, err.message)
+    throw err
+  }
 
-    if (!cycleId) {
-      // CREATE — full Dam + (optional) Sire eligibility check, read and
-      // written inside one transaction.
-      const damRef = db.collection('dogs').doc(dogId)
-      const sireRef = cycle.sireId ? db.collection('dogs').doc(cycle.sireId) : null
-      const cycleRef = db.collection('heatCycles').doc()
+  const db = getFirestore()
 
-      const result = await db.runTransaction(async (tx) => {
-        const damSnap = await tx.get(damRef)
-        const sireSnap = sireRef ? await tx.get(sireRef) : null
-
-        const damCheck = validateBreedingParent(damSnap.exists ? damSnap.data() : null, { uid, requiredSex: 'female' })
-        if (!damCheck.valid) {
-          return { ok: false, status: 400, body: { error: 'Dam is not an eligible breeding parent', reason: damCheck.reason } }
-        }
-        if (sireRef) {
-          const sireCheck = validateBreedingParent(sireSnap.exists ? sireSnap.data() : null, { uid, requiredSex: 'male' })
-          if (!sireCheck.valid) {
-            return { ok: false, status: 400, body: { error: 'Sire is not an eligible breeding parent', reason: sireCheck.reason } }
-          }
-        }
-
-        const dam = damSnap.data()
-        tx.set(cycleRef, {
-          ...cycle,
-          dogId,
-          tenantId: dam.tenantId,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        })
-        return { ok: true }
-      })
-
-      if (!result.ok) return res.status(result.status).json(result.body)
-      return res.status(200).json({ cycleId: cycleRef.id })
-    }
-
-    // UPDATE — access check on the Dam (tenantId OR currentOwnerId,
-    // matching firestore.rules' own dogBelongsToUser semantics for
-    // historical-record access), and only re-validates the Sire if this
-    // update actually sets/changes one. The Dam herself isn't
-    // re-validated for current eligibility — editing a HISTORICAL
-    // record must remain possible even if she's since been transferred
-    // or passed away. All reads + the write happen inside one
-    // transaction so a concurrent Sire mutation between validation and
-    // commit is caught and retried, same as CREATE above.
-    const existingRef = db.collection('heatCycles').doc(cycleId)
+  if (!cycleId) {
+    // CREATE — full Dam + (optional) Sire eligibility check, read and
+    // written inside one transaction.
     const damRef = db.collection('dogs').doc(dogId)
-    const sireRef = cycle.sireId ? db.collection('dogs').doc(cycle.sireId) : null
+    const sireRef = safeCycle.sireId ? db.collection('dogs').doc(safeCycle.sireId) : null
+    const cycleRef = db.collection('heatCycles').doc()
 
     const result = await db.runTransaction(async (tx) => {
-      const existingSnap = await tx.get(existingRef)
       const damSnap = await tx.get(damRef)
       const sireSnap = sireRef ? await tx.get(sireRef) : null
 
-      if (!existingSnap.exists || existingSnap.data().dogId !== dogId) {
-        return { ok: false, status: 404, body: { error: 'Heat cycle record not found' } }
-      }
-      if (!damSnap.exists) {
-        return { ok: false, status: 404, body: { error: 'Dam not found' } }
-      }
-      const dam = damSnap.data()
-      if (dam.tenantId !== uid && dam.currentOwnerId !== uid) {
-        return { ok: false, status: 403, body: { error: 'Not your dog' } }
+      const damCheck = validateBreedingParent(damSnap.exists ? damSnap.data() : null, { uid, requiredSex: 'female' })
+      if (!damCheck.valid) {
+        return { ok: false, status: 400, body: { error: 'Dam is not an eligible breeding parent', reason: damCheck.reason } }
       }
       if (sireRef) {
         const sireCheck = validateBreedingParent(sireSnap.exists ? sireSnap.data() : null, { uid, requiredSex: 'male' })
@@ -150,19 +113,67 @@ export default async function handler(req, res) {
         }
       }
 
-      tx.update(existingRef, {
-        ...cycle,
+      const dam = damSnap.data()
+      const nowIso = new Date().toISOString()
+      tx.set(cycleRef, {
+        ...safeCycle,
         dogId,
         tenantId: dam.tenantId,
-        updatedAt: new Date().toISOString(),
+        createdAt: nowIso,
+        updatedAt: nowIso,
       })
       return { ok: true }
     })
 
     if (!result.ok) return res.status(result.status).json(result.body)
-    return res.status(200).json({ cycleId })
-  } catch (err) {
-    console.error('save-heat-cycle error:', err)
-    return res.status(500).json({ error: 'Internal error', message: err.message })
+    return res.status(200).json({ cycleId: cycleRef.id })
   }
+
+  // UPDATE — the Dam is now fully re-validated too (Codex round 5,
+  // Blocker 5 — see this file's own top comment on the trade-off), and
+  // only re-validates the Sire if this update actually sets/changes one.
+  // All reads + the write happen inside one transaction.
+  const existingRef = db.collection('heatCycles').doc(cycleId)
+  const damRef = db.collection('dogs').doc(dogId)
+  const sireRef = safeCycle.sireId ? db.collection('dogs').doc(safeCycle.sireId) : null
+
+  const result = await db.runTransaction(async (tx) => {
+    const existingSnap = await tx.get(existingRef)
+    const damSnap = await tx.get(damRef)
+    const sireSnap = sireRef ? await tx.get(sireRef) : null
+
+    if (!existingSnap.exists || existingSnap.data().dogId !== dogId) {
+      return { ok: false, status: 404, body: { error: 'Heat cycle record not found' } }
+    }
+    const damCheck = validateBreedingParent(damSnap.exists ? damSnap.data() : null, { uid, requiredSex: 'female' })
+    if (!damCheck.valid) {
+      return { ok: false, status: 400, body: { error: 'Dam is not an eligible breeding parent', reason: damCheck.reason } }
+    }
+    if (sireRef) {
+      const sireCheck = validateBreedingParent(sireSnap.exists ? sireSnap.data() : null, { uid, requiredSex: 'male' })
+      if (!sireCheck.valid) {
+        return { ok: false, status: 400, body: { error: 'Sire is not an eligible breeding parent', reason: sireCheck.reason } }
+      }
+    }
+
+    const dam = damSnap.data()
+    const existing = existingSnap.data()
+    tx.update(existingRef, {
+      ...safeCycle,
+      dogId,
+      tenantId: dam.tenantId,
+      // Preserve createdAt exactly — it's never in ALL_FIELDS (a
+      // client-supplied one is rejected outright as an unknown field
+      // before this point is ever reached), and is re-set here from the
+      // EXISTING document, never from the client, never reset to "now".
+      createdAt: existing.createdAt,
+      updatedAt: new Date().toISOString(),
+    })
+    return { ok: true }
+  })
+
+  if (!result.ok) return res.status(result.status).json(result.body)
+  return res.status(200).json({ cycleId })
 }
+
+export default withApiErrorHandling('save-heat-cycle', handler)

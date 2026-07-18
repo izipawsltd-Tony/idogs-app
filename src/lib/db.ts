@@ -832,10 +832,19 @@ export async function addActivityNote(dogId: string, note: string, photoUrl?: st
 
 // ── LITTERS ───────────────────────────────────────────────────
 
+// Excludes archived litters (Codex round 5, Blocker 2) — api/delete-litter.js
+// archives rather than hard-deletes a litter whenever a preserved
+// (transferred/claimed/history-bearing) Dog is still linked to it, so
+// that Dog's litterId back-reference always resolves to a real document.
+// The breeder's normal Litters view should still only show what's
+// actually active, not litters they already "deleted" (from their own
+// perspective) that happen to be preserved for someone else's lineage.
 export async function getLitters(): Promise<Litter[]> {
   const q = query(collection(db, 'litters'), where('tenantId', '==', uid()))
   const snap = await getDocs(q)
-  return snap.docs.map(d => ({ ...d.data(), id: d.id } as Litter))
+  return snap.docs
+    .map(d => ({ ...d.data(), id: d.id } as Litter))
+    .filter(litter => !litter.archived)
 }
 
 // Codex round 3, Blocker 1 — litter creation must verify the Dam (and
@@ -891,7 +900,7 @@ export async function updateLitter(id: string, data: Partial<Litter>): Promise<{
 // inside api/delete-litter.js's own Admin SDK transaction (the exact
 // same eligibility logic round 3's client transaction used, just moved
 // where a direct client write can no longer bypass it).
-export async function deleteLitterServer(id: string): Promise<{ deletedCount: number; preservedCount: number; ambiguousCount: number }> {
+export async function deleteLitterServer(id: string): Promise<{ deletedCount: number; preservedCount: number; ambiguousCount: number; litterDeleted: boolean; litterArchived: boolean }> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
   const res = await fetch('/api/delete-litter', {

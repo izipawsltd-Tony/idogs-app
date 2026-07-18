@@ -2,11 +2,12 @@
 
 Covers the release that moves litter create/update/delete, heat cycle
 create/update, and puppy creation onto trusted server endpoints, with
-firestore.rules denying the equivalent direct client writes (Codex round
-3 + round 4 remediation, `fix/sire-heat-cycle` branch). Use this runbook
+firestore.rules denying the equivalent direct client writes (Codex
+rounds 3–5 remediation, `fix/sire-heat-cycle` branch). Use this runbook
 for THIS release; treat it as a template for any future release that
 pairs new server endpoints with newly-restrictive Firestore Rules — the
-ordering problem (Step 2 vs Step 3 below) is general, not specific to
+ordering problem (client+APIs before Rules on the way up, Rules before
+Vercel on the way down, Steps 2–5 below) is general, not specific to
 this one change.
 
 This document does not deploy anything by itself and stores no secrets —
@@ -84,11 +85,13 @@ fails, stop. Do not proceed to Step 3 with a half-deployed client.
 
 ---
 
-## 3. Smoke-test the combined release (client + APIs, OLD Rules still live)
+## 3. Verify the new APIs work correctly under the OLD (still-live) Rules
 
-Against the Preview URL from Step 2, confirm (staging Firebase project
-`idogs-app-staging`, per `CLAUDE.md` — never test against production
-data):
+Against the Preview URL from Step 2, confirm the FUNCTIONAL behavior of
+the new endpoints only — do NOT check whether any raw/direct Firestore
+write is denied yet (see the note at the end of this step for why).
+Staging Firebase project `idogs-app-staging`, per `CLAUDE.md` — never
+test against production data:
 
 - [ ] Create a litter with a valid Dam → succeeds, litter appears.
 - [ ] Create a litter with an underage/transferred/wrong-sex Dam →
@@ -99,28 +102,42 @@ data):
 - [ ] Edit a litter's actual birth date → still-owned puppies' DOBs
       update; a transferred puppy's DOB does not change.
 - [ ] Remove a puppy from a litter (unlink, not delete) → puppy stays in
-      "My Dogs", litter's puppy count drops.
+      "My Dogs", litter's puppy count drops, and the puppy no longer
+      shows as linked to that litter (two-sided membership cleared).
 - [ ] Delete a litter with puppies still in your care → litter and those
       puppies are gone; a transferred/claimed puppy from the same litter
-      survives.
+      survives AND the litter record itself is preserved (archived, not
+      hard-deleted) if any such puppy is still linked.
 - [ ] Record a Heat Cycle for an eligible Dam → succeeds.
-- [ ] Edit an existing Heat Cycle record → succeeds even if the Dam has
-      since been transferred (historical-record editing must still work).
-- [ ] Open browser devtools console and attempt a raw Firestore write to
-      `litters/{id}` (update or delete) and to `heatCycles/{id}` (create
-      or update) → all denied. (This proves the OLD Rules are still
-      live and the NEW client simply isn't using the paths they'd allow
-      — Step 4 is what actually closes them.)
+- [ ] Edit an existing Heat Cycle record for a Dam who is STILL an
+      eligible breeding parent → succeeds. **Known behavior change
+      (Codex round 5, Blocker 5):** editing a Heat Cycle record for a Dam
+      who is no longer eligible (transferred, deceased, underage) is now
+      REJECTED, not just access-checked — if this staging account has
+      such a record, confirm the rejection is a specific, understandable
+      error, not a generic 500.
+- [ ] Submit malformed input to each endpoint (an unknown field, a
+      non-existent date like `2026-02-30`, a future `actualBirthDate`) →
+      each rejected with a specific 400, not a 500.
 
-**Stop condition:** any checkbox fails → fix and restart from Step 2.
-Do not proceed to Step 4 with a failing smoke test — Step 4 removes the
-Rules-level safety net for the OLD code paths, and if the NEW code has a
-bug, you want the OLD (permissive) Rules still available as a fallback
-while you fix it.
+**Why raw-write-denial is NOT checked here:** the OLD Rules are still
+live at this point in the sequence — a raw client write to `litters/{id}`
+or `heatCycles/{id}` may still be ALLOWED by them (that's expected and
+correct; Step 4 is what changes it). Checking for denial before Step 4
+would either fail (if the old rules still permit it, which they may) or
+prove nothing meaningful either way. Verifying denial belongs strictly
+AFTER the new Rules are live — see Step 4b below. Do not require
+raw-write denial as a stop condition at this step.
+
+**Stop condition:** any checkbox above fails → fix and restart from
+Step 2. Do not proceed to Step 4 with a failing functional smoke test —
+Step 4 removes the Rules-level safety net for the OLD code paths, and if
+the NEW code has a bug, you want the OLD (permissive) Rules still
+available as a fallback while you fix it.
 
 ---
 
-## 4. Deploy restrictive Firestore Rules SECOND
+## 4. Deploy restrictive Firestore Rules
 
 Only after Step 3 is fully green:
 
@@ -128,19 +145,47 @@ Only after Step 3 is fully green:
 firebase deploy --only firestore:rules --project idogs-app-staging
 ```
 
-Re-run the FULL Step 3 smoke test against the same Preview URL —
-this time the devtools direct-write checks should already have been
-denied (they were, by the old rules too, for THIS release's specific
-changes — this second pass exists to confirm nothing else in the app
-regressed against the tightened rules, e.g. dogs.delete's new
-history-field checks).
+**Stop condition:** deploy command fails → stop, do not proceed.
 
-**Stop condition:** any regression → **rollback immediately** (Step 6),
+---
+
+## 4b. Verify raw litter/Heat Cycle writes are now denied
+
+Only now — with the NEW Rules actually live — check the raw-write
+behavior. Open browser devtools console against the Preview URL and
+attempt:
+
+- [ ] A direct client write (`updateDoc`/`deleteDoc`/`setDoc` via the
+      Firebase JS SDK console, or the equivalent through devtools) to
+      `litters/{id}` (create, update, AND delete) → all denied.
+- [ ] The same to `heatCycles/{id}` (create AND update) → all denied.
+- [ ] A direct client write to `litters/{id}.puppyIds` specifically
+      (the exact bypass Codex round 4/5 named) → denied.
+- [ ] A direct client delete of a Dog carrying ANY of
+      buyerEmail/previousOwnerId/transferredAt/claimedAt/claimedBy →
+      denied, even if `currentOwnerId`/`status` look otherwise "clean".
+
+**Stop condition:** any of these SUCCEEDS (i.e. Rules did not actually
+deny it) → the deploy did not take effect as intended. Do not proceed —
+treat this as a failed Rules deploy and go to Step 8 (Rollback)
+immediately.
+
+---
+
+## 5. Combined smoke QA (client + APIs + new Rules together)
+
+Re-run the FULL Step 3 functional checklist again, this time against the
+Preview URL with the NEW Rules live. This second pass exists to confirm
+nothing else in the app regressed now that the stricter Rules are
+actually enforcing (e.g. dogs.delete's history-field checks affecting an
+unrelated feature like DogDetailPage's own "Delete dog" button).
+
+**Stop condition:** any regression → **rollback immediately** (Step 8),
 do not attempt a forward-fix under live traffic.
 
 ---
 
-## 5. Promote to production (only after explicit approval)
+## 6. Promote to production (only after explicit approval)
 
 Per `CLAUDE.md`: **production deployment requires explicit Tony
 approval — do not run these commands without it.**
@@ -156,12 +201,12 @@ before Rules, never the reverse.
 
 ---
 
-## 6. Already-open old SPA sessions
+## 7. Already-open old SPA sessions
 
 Vite ships a content-hashed bundle — a browser tab left open across a
 deploy keeps running the OLD JavaScript already loaded into memory until
 the user navigates in a way that re-fetches `index.html`, or does a hard
-refresh. Between Step 4/5 (Rules tightened) and whenever each such
+refresh. Between Step 4 (Rules tightened) and whenever each such
 session naturally refreshes, that OLD tab's attempts at the now-removed
 direct Firestore writes (litters update/delete, heatCycles create/
 update) will start failing with `PERMISSION_DENIED` instead of the
@@ -175,11 +220,11 @@ Mitigations for this release:
   wouldn't notice failing. A user hitting this mid-action sees a failed
   save and can simply refresh and retry, same as any other transient
   error the app already surfaces via `toast(...)`.
-- **Give it time**: prefer deploying Step 4/5 at a low-traffic time and
+- **Give it time**: prefer deploying Step 4 at a low-traffic time and
   waiting a short interval (15–30 minutes is reasonable at this app's
-  current traffic) after Step 2/5's client deploy before running Step
-  4/5's Rules deploy, so most active sessions have naturally refreshed
-  (new page load, tab reopened, etc.) before Rules tighten.
+  current traffic) after Step 2's client deploy before running Step 4's
+  Rules deploy, so most active sessions have naturally refreshed (new
+  page load, tab reopened, etc.) before Rules tighten.
 - **No forced-refresh mechanism exists yet.** This app has no
   version-check/"a new version is available, please refresh" banner.
   Building one is out of scope for this release but is the correct
@@ -193,19 +238,41 @@ Mitigations for this release:
 
 ---
 
-## 7. Rollback — Rules BEFORE Vercel, always
+## 8. Rollback — Rules BEFORE Vercel, always, and VERIFY the rollback took effect
 
-If anything goes wrong after Step 4/5, roll back in the OPPOSITE order
-of how you deployed — Rules first, then Vercel:
+If anything goes wrong after Step 4/6, roll back in the OPPOSITE order
+of how you deployed — Rules first, then Vercel. Codex round 5, Blocker
+8: the old version of this step extracted the previous rules to a
+SEPARATE file (`firestore.rules.rollback`) and then ran `firebase deploy
+--only firestore:rules` — but that command always deploys whatever
+`firebase.json`'s `"rules"` entry points at (`firestore.rules` itself),
+so the old instructions silently redeployed the CURRENT (bad) rules
+again, never the rollback content. Use the checked-in script instead —
+it fixes the ACTUAL file `firebase.json` points at, and refuses to run
+if `firebase.json` doesn't point where it expects:
 
 ```powershell
-# 1. Roll back Rules FIRST
-git show <previous-good-commit>:firestore.rules > firestore.rules.rollback
+# 1. Roll back Rules FIRST — overwrites firestore.rules itself (with an
+#    automatic timestamped backup of the current content first)
+node scripts/rollback-firestore-rules.mjs <previous-good-commit>
+git diff firestore.rules                 # review before deploying
 firebase deploy --only firestore:rules --project idogs-app-staging   # or idogs-app for production, after approval
-# (or, faster: Firebase Console → Firestore → Rules → History → select
-#  the previous version → Publish — avoids a local checkout mismatch)
 
-# 2. Roll back Vercel SECOND
+# 2. VERIFY the rollback is actually active — do NOT proceed to the
+#    Vercel rollback on the strength of the deploy command alone.
+#    Attempt the exact operation Step 4b confirmed the NEW rules deny
+#    (e.g. a direct client update to litters/{id}) against the SAME
+#    project you just deployed to:
+#      - ALLOWED again -> rollback confirmed active, proceed to step 3.
+#      - still DENIED  -> deploy hasn't propagated yet (allow up to
+#        ~60s and recheck) or failed outright — do NOT proceed to the
+#        Vercel rollback until this resolves; a Vercel rollback while
+#        the NEW (restrictive) Rules are still actually live recreates
+#        exactly the mismatch this ordering exists to avoid (see "Why
+#        Rules first" below).
+
+# 3. Roll back Vercel THIRD, only once step 2 confirms the Rules
+#    rollback is genuinely live
 vercel rollback                          # rolls the alias back to the previous deployment
 # or: vercel deploy --prod (after approval) from a checkout of the previous commit
 ```
@@ -215,10 +282,10 @@ the OLD, more permissive Rules — it still does direct Firestore writes
 for litters/heatCycles that the NEW Rules deny. If you roll back Vercel
 first while the NEW (restrictive) Rules are still live, the OLD client
 you just restored will immediately start failing on writes it expects
-to succeed — the exact same class of mismatch Step 6 describes, just in
-the reverse direction. Rolling back Rules first restores the permissive
-baseline the OLD client actually needs, THEN restoring the OLD client
-is safe.
+to succeed — the exact same class of mismatch Step 7 describes, just in
+the reverse direction. Rolling back Rules first (and VERIFYING it before
+touching Vercel) restores the permissive baseline the OLD client
+actually needs, THEN restoring the OLD client is safe.
 
 **Stop condition / escalation:** if rolling back Rules alone doesn't
 resolve the issue (e.g. data was already written in a bad shape by the
@@ -232,8 +299,9 @@ situation, not a "keep trying commands" situation.
 
 | Direction | Order |
 |---|---|
-| **Deploy** | 1) preflight env check → 2) client+APIs → 3) smoke test → 4) Rules → 5) promote to prod (approval required) |
-| **Rollback** | 1) Rules → 2) Vercel/client |
+| **Deploy** | 1) preflight env check → 2) client+APIs → 3) verify APIs under old Rules → 4) deploy Rules → 4b) verify raw writes now denied → 5) combined smoke QA → 6) promote to prod (approval required) |
+| **Rollback** | 1) restore+deploy old Rules (`rollback-firestore-rules.mjs`) → 2) VERIFY the rollback is live → 3) Vercel/client |
 
 Client/API always leads on the way up; Rules always leads on the way
-down.
+down — and a Rules rollback is never assumed to have worked without
+being independently verified before the Vercel side moves.

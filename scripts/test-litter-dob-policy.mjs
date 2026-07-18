@@ -123,18 +123,28 @@ function partitionLitterPuppies(dogs, puppyIds) {
   const deleteApiSrc = readFileSync(new URL('../api/delete-litter.js', import.meta.url), 'utf8')
   check('partitionLitterCandidates (client preview) requires exact litterId membership before considering a dog at all',
     /confirmedMembers = fetched\.filter\(d => d\.litterId === litterId\)/.test(src))
-  check('api/_lib/litter-eligibility.js computes eligible via currentOwnerId, transfer state, and full ownership history (incl. claimedBy)',
-    /const eligible = confirmedMembers\.filter\(d =>/.test(eligibilitySrc) &&
-    /d\.currentOwnerId === requesterUid &&/.test(eligibilitySrc) &&
-    /!d\.buyerEmail && !d\.previousOwnerId && !d\.transferredAt && !d\.claimedAt && !d\.claimedBy/.test(eligibilitySrc))
+  // Codex round 5, Blocker 3: eligibility is now presence-based (a
+  // history field being present at all is a signal, not just a truthy
+  // value — see isDogHistoryBearing's own comment on why `!d.buyerEmail`
+  // was wrong), factored into isDogSafeToDetach rather than an inline
+  // truthiness expression.
+  check('api/_lib/litter-eligibility.js computes eligible via isDogSafeToDetach (currentOwnerId, transfer state, presence-based history — incl. claimedBy)',
+    /export function isDogSafeToDetach\(dog, requesterUid\)/.test(eligibilitySrc) &&
+    /dog\.currentOwnerId !== requesterUid/.test(eligibilitySrc) &&
+    /isDogHistoryBearing\(dog\)/.test(eligibilitySrc) &&
+    /const HISTORY_FIELDS = \[.*'buyerEmail'.*'previousOwnerId'.*'transferredAt'.*'claimedAt'.*'claimedBy'.*\]/.test(eligibilitySrc))
   check('Delete confirmation message includes the eligible puppy count',
     /This will also delete \$\{eligibleCount\} puppy record/.test(src))
   check('Delete confirmation message mentions preserved puppies when any exist',
     /preservedCount !== 1 \? 's' : ''\} will be kept/.test(src))
   check('handleDeleteLitter calls the server endpoint (deleteLitterServer from lib/db) rather than a client transaction',
     /outcome = await deleteLitterServer\(litter\.id\)/.test(src))
-  check('api/delete-litter.js runs the eligibility decision inside db.runTransaction, reading litter + candidates via tx.get before any tx.delete',
-    /await db\.runTransaction\(async \(tx\) => \{[\s\S]{0,100}const litterSnap = await tx\.get\(litterRef\)[\s\S]{0,900}tx\.delete\(litterRef\)/.test(deleteApiSrc))
+  // Codex round 5, Blocker 2: delete-litter.js now ALSO queries dogs by
+  // litterId directly (the reverse direction), not just litter.puppyIds.
+  check('api/delete-litter.js runs the eligibility decision inside db.runTransaction, reading litter, forward puppyIds, AND a reverse litterId query before any tx.delete',
+    /await db\.runTransaction\(async \(tx\) => \{[\s\S]{0,100}const litterSnap = await tx\.get\(litterRef\)/.test(deleteApiSrc) &&
+    /db\.collection\('dogs'\)\.where\('litterId', '==', litterId\)/.test(deleteApiSrc) &&
+    /resolveLitterMembership\(litterId, forwardFetched, reverseFetched\)/.test(deleteApiSrc))
 }
 
 // ── Test 7 (structural): firestore.rules enforces both invariants

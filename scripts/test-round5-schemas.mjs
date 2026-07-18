@@ -1,0 +1,305 @@
+// Pure-logic regression coverage for the new server-side validation
+// modules introduced in Codex round 5: api/_lib/litter-eligibility.js's
+// presence-based history checks + membership resolution,
+// api/_lib/litter-schema.js, api/_lib/heat-cycle-schema.js,
+// api/_lib/http-helpers.js, and scripts/rollback-firestore-rules.mjs.
+// None of these modules touch Firestore/Auth directly, so this file
+// needs no emulator — it imports and exercises the real code directly,
+// not a mirror.
+//
+// Usage: node scripts/test-round5-schemas.mjs
+
+import { execFileSync } from 'node:child_process'
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
+import { isDogHistoryBearing, isDogSafeToDetach, resolveLitterMembership, partitionConfirmedMembers } from '../api/_lib/litter-eligibility.js'
+import { sanitizeLitterInput, LitterValidationError, CREATE_FIELDS, UPDATE_FIELDS } from '../api/_lib/litter-schema.js'
+import { sanitizeHeatCycleInput, HeatCycleValidationError, ALL_FIELDS as HEAT_CYCLE_FIELDS } from '../api/_lib/heat-cycle-schema.js'
+import { ApiError, parseJsonBody, withApiErrorHandling } from '../api/_lib/http-helpers.js'
+
+let pass = 0, fail = 0
+function check(label, cond, extra = '') {
+  if (cond) { console.log(`PASS: ${label}`); pass++ }
+  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
+}
+
+// =========================================================================
+// SECTION 1 — isDogHistoryBearing: presence, not truthiness (Codex round
+// 5, Blocker 3). Empty string / 0 / false, if PRESENT, must still count
+// as history; absent or explicit null must not.
+// =========================================================================
+{
+  check('A dog with no history fields at all is not history-bearing', isDogHistoryBearing({}) === false)
+  check('buyerEmail present as a non-empty string is history-bearing', isDogHistoryBearing({ buyerEmail: 'a@b.com' }) === true)
+  check('buyerEmail present as an EMPTY STRING is still history-bearing (presence, not truthiness)', isDogHistoryBearing({ buyerEmail: '' }) === true)
+  check('buyerEmail explicitly null is NOT history-bearing (matches Rules\' .get(field,null)==null semantics)', isDogHistoryBearing({ buyerEmail: null }) === false)
+  check('buyerEmail explicitly undefined (present as a key but undefined) is NOT history-bearing', isDogHistoryBearing({ buyerEmail: undefined }) === false)
+  check('previousOwnerId alone (empty string) is history-bearing', isDogHistoryBearing({ previousOwnerId: '' }) === true)
+  check('transferredAt alone (empty string) is history-bearing', isDogHistoryBearing({ transferredAt: '' }) === true)
+  check('claimedAt alone (empty string) is history-bearing', isDogHistoryBearing({ claimedAt: '' }) === true)
+  check('claimedBy ALONE (empty string, no claimedAt) is history-bearing — Codex round 4/5 Blocker 5', isDogHistoryBearing({ claimedBy: '' }) === true)
+  check('claimedBy present as 0 (falsy but present) is history-bearing', isDogHistoryBearing({ claimedBy: 0 }) === true)
+  check('claimedBy present as false (falsy but present) is history-bearing', isDogHistoryBearing({ claimedBy: false }) === true)
+  check('An unrelated field (e.g. notes) does not trigger history-bearing', isDogHistoryBearing({ notes: 'hello' }) === false)
+}
+
+// =========================================================================
+// SECTION 2 — isDogSafeToDetach: combines ownership + transfer status +
+// history presence
+// =========================================================================
+{
+  const uid = 'breeder-1'
+  const clean = { currentOwnerId: uid, status: 'active' }
+  check('A fully clean, currently-owned dog is safe to detach', isDogSafeToDetach(clean, uid) === true)
+  check('null dog is never safe to detach', isDogSafeToDetach(null, uid) === false)
+  check('Not currently owned by requester -> not safe', isDogSafeToDetach({ currentOwnerId: 'someone-else' }, uid) === false)
+  check('status=transferred -> not safe', isDogSafeToDetach({ currentOwnerId: uid, status: 'transferred' }, uid) === false)
+  check('transferStatus=pendingClaim -> not safe (even if status looks clean)', isDogSafeToDetach({ currentOwnerId: uid, status: 'active', transferStatus: 'pendingClaim' }, uid) === false)
+  check('claimedBy present alone -> not safe', isDogSafeToDetach({ currentOwnerId: uid, status: 'active', claimedBy: 'buyer-uid' }, uid) === false)
+  check('buyerEmail present as empty string alone -> not safe (presence, not truthiness)', isDogSafeToDetach({ currentOwnerId: uid, status: 'active', buyerEmail: '' }, uid) === false)
+}
+
+// =========================================================================
+// SECTION 3 — resolveLitterMembership: forward-only, reverse-only,
+// confirmed, and contradictory membership (Codex round 5, Blocker 2)
+// =========================================================================
+{
+  const litterId = 'litter-1'
+  // Confirmed: in puppyIds AND dog.litterId agrees
+  const confirmedDog = { id: 'confirmed-1', litterId }
+  // Forward-only: in puppyIds, but dog.litterId disagrees (points at a
+  // DIFFERENT litter — the "contradictory" case named in the task)
+  const contradictoryDog = { id: 'contradictory-1', litterId: 'some-other-litter' }
+  // Forward-only: in puppyIds, but dog.litterId is entirely absent (legacy)
+  const legacyForwardDog = { id: 'legacy-forward-1' }
+  // Reverse-only: dog.litterId agrees, but was never added to puppyIds
+  const reverseOnlyDog = { id: 'reverse-only-1', litterId }
+
+  const forwardFetched = [confirmedDog, contradictoryDog, legacyForwardDog] // simulates litter.puppyIds -> these 3 dogs
+  const reverseFetched = [confirmedDog, reverseOnlyDog] // simulates a where('litterId','==',litterId) query
+
+  const { confirmed, forwardOnly, reverseOnly, ambiguousCount } = resolveLitterMembership(litterId, forwardFetched, reverseFetched)
+
+  check('Confirmed member (both directions agree) is in confirmed[]', confirmed.some(d => d.id === 'confirmed-1') && confirmed.length === 1)
+  check('Contradictory dog (forward-listed, litterId points elsewhere) is in forwardOnly[], not confirmed', forwardOnly.some(d => d.id === 'contradictory-1') && !confirmed.some(d => d.id === 'contradictory-1'))
+  check('Legacy forward-only dog (no litterId at all) is in forwardOnly[], not confirmed', forwardOnly.some(d => d.id === 'legacy-forward-1'))
+  check('Reverse-only dog (litterId agrees, never in puppyIds) is in reverseOnly[], not confirmed', reverseOnly.some(d => d.id === 'reverse-only-1') && !confirmed.some(d => d.id === 'reverse-only-1'))
+  check('ambiguousCount counts both forwardOnly and reverseOnly together', ambiguousCount === forwardOnly.length + reverseOnly.length && ambiguousCount === 3)
+
+  const { eligible, preserved } = partitionConfirmedMembers(confirmed, 'no-owner-set-so-none-eligible')
+  check('partitionConfirmedMembers only ever operates on the confirmed set (ambiguous dogs never appear here)', eligible.length + preserved.length === confirmed.length)
+}
+
+// =========================================================================
+// SECTION 4 — litter-schema.js: explicit allowlist + date validation
+// (Codex round 5, Blocker 6)
+// =========================================================================
+{
+  check('A well-formed CREATE input passes and returns only the fields present',
+    JSON.stringify(sanitizeLitterInput({ name: 'Luna Litter', actualBirthDate: '2026-01-01' }, CREATE_FIELDS)) ===
+    JSON.stringify({ name: 'Luna Litter', actualBirthDate: '2026-01-01' }))
+
+  let unknownFieldThrew = false
+  try { sanitizeLitterInput({ name: 'x', tenantId: 'hacked-uid' }, CREATE_FIELDS) } catch (err) { unknownFieldThrew = err instanceof LitterValidationError }
+  check('An unknown field (e.g. tenantId) is rejected outright, not silently dropped', unknownFieldThrew)
+
+  let impossibleDateThrew = false
+  try { sanitizeLitterInput({ actualBirthDate: '2026-02-30' }, CREATE_FIELDS) } catch (err) { impossibleDateThrew = err instanceof LitterValidationError }
+  check('An impossible calendar date (2026-02-30) is rejected', impossibleDateThrew)
+
+  let malformedDateThrew = false
+  try { sanitizeLitterInput({ actualBirthDate: 'not-a-date' }, CREATE_FIELDS) } catch (err) { malformedDateThrew = err instanceof LitterValidationError }
+  check('A malformed date string is rejected', malformedDateThrew)
+
+  const farFuture = `${new Date().getFullYear() + 5}-01-01`
+  let futureBirthThrew = false
+  try { sanitizeLitterInput({ actualBirthDate: farFuture }, CREATE_FIELDS) } catch (err) { futureBirthThrew = err instanceof LitterValidationError }
+  check('A future actualBirthDate is rejected', futureBirthThrew)
+
+  let futureDueDateOk = true
+  try { sanitizeLitterInput({ expectedDueDate: farFuture }, CREATE_FIELDS) } catch { futureDueDateOk = false }
+  check('A future expectedDueDate is ALLOWED (a due date is inherently a future prediction)', futureDueDateOk)
+
+  let futureMatingDateOk = true
+  try { sanitizeLitterInput({ matingSuspectedDate: farFuture }, CREATE_FIELDS) } catch { futureMatingDateOk = false }
+  check('A future matingSuspectedDate is ALLOWED', futureMatingDateOk)
+
+  let wrongTypeThrew = false
+  try { sanitizeLitterInput({ name: 12345 }, CREATE_FIELDS) } catch (err) { wrongTypeThrew = err instanceof LitterValidationError }
+  check('A wrong-typed field (name as a number) is rejected', wrongTypeThrew)
+
+  let tooLongThrew = false
+  try { sanitizeLitterInput({ notes: 'x'.repeat(6000) }, CREATE_FIELDS) } catch (err) { tooLongThrew = err instanceof LitterValidationError }
+  check('An oversized notes field is rejected', tooLongThrew)
+
+  let sireNameOnUpdateThrew = false
+  try { sanitizeLitterInput({ sireName: 'External Sire' }, UPDATE_FIELDS) } catch (err) { sireNameOnUpdateThrew = err instanceof LitterValidationError }
+  check('sireName is not part of UPDATE_FIELDS — attempting it on an update is rejected as unknown', sireNameOnUpdateThrew)
+
+  check('Empty string is accepted for optional date fields (the app\'s "not set" sentinel)',
+    sanitizeLitterInput({ matingSuspectedDate: '' }, CREATE_FIELDS).matingSuspectedDate === '')
+
+  check('A field simply absent from input is absent from the result (never defaulted)',
+    !Object.prototype.hasOwnProperty.call(sanitizeLitterInput({ name: 'x' }, CREATE_FIELDS), 'notes'))
+}
+
+// =========================================================================
+// SECTION 5 — heat-cycle-schema.js: mass-assignment protection + date
+// validation (Codex round 5, Blocker 5)
+// =========================================================================
+{
+  check('createdAt is NOT in the allowed field list (mass-assignment protection)', !HEAT_CYCLE_FIELDS.includes('createdAt'))
+  check('id is NOT in the allowed field list', !HEAT_CYCLE_FIELDS.includes('id'))
+  check('dogId is NOT in the allowed field list (set by the endpoint, never the client)', !HEAT_CYCLE_FIELDS.includes('dogId'))
+  check('tenantId is NOT in the allowed field list', !HEAT_CYCLE_FIELDS.includes('tenantId'))
+
+  let createdAtInjectionThrew = false
+  try { sanitizeHeatCycleInput({ heatStartDate: '2026-01-01', createdAt: '2000-01-01T00:00:00.000Z' }, { requireHeatStartDate: true }) }
+  catch (err) { createdAtInjectionThrew = err instanceof HeatCycleValidationError }
+  check('Attempting to inject createdAt through cycle input is rejected outright (mass-assignment attempt)', createdAtInjectionThrew)
+
+  let tenantIdInjectionThrew = false
+  try { sanitizeHeatCycleInput({ heatStartDate: '2026-01-01', tenantId: 'hacked-uid' }, { requireHeatStartDate: true }) }
+  catch (err) { tenantIdInjectionThrew = err instanceof HeatCycleValidationError }
+  check('Attempting to inject tenantId through cycle input is rejected outright', tenantIdInjectionThrew)
+
+  let missingRequiredThrew = false
+  try { sanitizeHeatCycleInput({ notes: 'no start date' }, { requireHeatStartDate: true }) }
+  catch (err) { missingRequiredThrew = err instanceof HeatCycleValidationError }
+  check('heatStartDate is required on CREATE', missingRequiredThrew)
+
+  let updateWithoutStartDateOk = true
+  try { sanitizeHeatCycleInput({ notes: 'just a note edit' }, { requireHeatStartDate: false }) } catch { updateWithoutStartDateOk = false }
+  check('heatStartDate is NOT required on UPDATE (a patch may touch only other fields)', updateWithoutStartDateOk)
+
+  let impossibleHeatStartThrew = false
+  try { sanitizeHeatCycleInput({ heatStartDate: '2026-02-30' }, { requireHeatStartDate: true }) }
+  catch (err) { impossibleHeatStartThrew = err instanceof HeatCycleValidationError }
+  check('An impossible heatStartDate (2026-02-30) is rejected — "validate heatStartDate as a real date"', impossibleHeatStartThrew)
+
+  let wrongTypePuppiesBornThrew = false
+  try { sanitizeHeatCycleInput({ heatStartDate: '2026-01-01', puppiesBorn: 'six' }, { requireHeatStartDate: true }) }
+  catch (err) { wrongTypePuppiesBornThrew = err instanceof HeatCycleValidationError }
+  check('A wrong-typed numeric field (puppiesBorn as a string) is rejected', wrongTypePuppiesBornThrew)
+
+  let negativePuppiesBornThrew = false
+  try { sanitizeHeatCycleInput({ heatStartDate: '2026-01-01', puppiesBorn: -1 }, { requireHeatStartDate: true }) }
+  catch (err) { negativePuppiesBornThrew = err instanceof HeatCycleValidationError }
+  check('A negative puppiesBorn is rejected', negativePuppiesBornThrew)
+
+  let wrongTypeBooleanThrew = false
+  try { sanitizeHeatCycleInput({ heatStartDate: '2026-01-01', pregnancyConfirmed: 'yes' }, { requireHeatStartDate: true }) }
+  catch (err) { wrongTypeBooleanThrew = err instanceof HeatCycleValidationError }
+  check('A wrong-typed boolean field is rejected', wrongTypeBooleanThrew)
+
+  let unknownFieldThrew = false
+  try { sanitizeHeatCycleInput({ heatStartDate: '2026-01-01', totallyMadeUpField: 'x' }, { requireHeatStartDate: true }) }
+  catch (err) { unknownFieldThrew = err instanceof HeatCycleValidationError }
+  check('An unrelated unknown field is rejected outright', unknownFieldThrew)
+
+  const wellFormed = sanitizeHeatCycleInput({
+    heatStartDate: '2026-01-01', heatEndDate: '2026-01-10', matingDate: '2026-01-05',
+    puppiesBorn: 6, puppiesAlive: 6, progesteroneTested: true, notes: 'all good',
+  }, { requireHeatStartDate: true })
+  check('A well-formed, fully-populated cycle input passes and preserves every provided field', wellFormed.heatStartDate === '2026-01-01' && wellFormed.puppiesBorn === 6 && wellFormed.progesteroneTested === true)
+}
+
+// =========================================================================
+// SECTION 6 — http-helpers.js: malformed JSON -> 400, sanitized 500s
+// (Codex round 5, Blocker 9)
+// =========================================================================
+{
+  let malformedThrew = false
+  try { parseJsonBody({ body: '{not valid json' }) } catch (err) { malformedThrew = err instanceof ApiError && err.status === 400 }
+  check('Malformed JSON string body throws ApiError(400), not an uncaught SyntaxError', malformedThrew)
+
+  const parsedFromObject = parseJsonBody({ body: { already: 'parsed' } })
+  check('An already-parsed object body (Vercel\'s normal case) passes through unchanged', parsedFromObject.already === 'parsed')
+
+  const parsedFromValidString = parseJsonBody({ body: '{"a":1}' })
+  check('A valid JSON string body is parsed correctly', parsedFromValidString.a === 1)
+
+  const emptyBody = parseJsonBody({ body: undefined })
+  check('An undefined/empty body parses to an empty object, not a throw', typeof emptyBody === 'object' && Object.keys(emptyBody).length === 0)
+
+  let arrayBodyThrew = false
+  try { parseJsonBody({ body: '[1,2,3]' }) } catch (err) { arrayBodyThrew = err instanceof ApiError && err.status === 400 }
+  check('A JSON array body (not an object) is rejected', arrayBodyThrew)
+
+  // withApiErrorHandling: an ApiError is surfaced with its declared
+  // status/message; any OTHER thrown error is sanitized to a generic
+  // 500 with no err.message leak, and the underlying detail is only
+  // ever passed to console.error (server-side), never the response.
+  function fakeRes() {
+    const res = { statusCode: null, body: null }
+    res.status = (code) => { res.statusCode = code; return res }
+    res.json = (obj) => { res.body = obj; return res }
+    return res
+  }
+  const apiErrorHandler = withApiErrorHandling('test-context', async () => { throw new ApiError(409, 'Specific conflict reason') })
+  const res1 = fakeRes()
+  await apiErrorHandler({}, res1)
+  check('An ApiError thrown inside a handler surfaces its own status', res1.statusCode === 409)
+  check('An ApiError thrown inside a handler surfaces its own message', res1.body.error === 'Specific conflict reason')
+
+  const originalConsoleError = console.error
+  let loggedArgs = null
+  console.error = (...args) => { loggedArgs = args }
+  const genericErrorHandler = withApiErrorHandling('test-context', async () => { throw new Error('some internal secret detail, e.g. a stack-adjacent path or field name') })
+  const res2 = fakeRes()
+  await genericErrorHandler({}, res2)
+  console.error = originalConsoleError
+
+  check('A generic (non-ApiError) thrown error is sanitized to a 500', res2.statusCode === 500)
+  check('The sanitized 500 response body does NOT contain the real error message', JSON.stringify(res2.body).includes('internal secret detail') === false)
+  check('The sanitized 500 response body is exactly {error: "Internal error"} — no message/stack leaked', JSON.stringify(res2.body) === JSON.stringify({ error: 'Internal error' }))
+  check('The real error detail WAS logged server-side (console.error), just never sent to the client', loggedArgs !== null && String(loggedArgs.join(' ')).includes('internal secret detail'))
+}
+
+// =========================================================================
+// SECTION 7 — scripts/rollback-firestore-rules.mjs: fixes the actual
+// deployed-rules file, not a side file (Codex round 5, Blocker 8)
+// =========================================================================
+{
+  const repoRoot = new URL('..', import.meta.url).pathname.replace(/^\/([a-zA-Z]:)/, '$1')
+  const rulesPath = `${repoRoot}/firestore.rules`.replace(/\\/g, '/')
+  const originalContent = readFileSync(rulesPath, 'utf8')
+
+  let scriptOutput = ''
+  let scriptFailed = false
+  try {
+    scriptOutput = execFileSync('node', ['scripts/rollback-firestore-rules.mjs', 'ae469147'], { cwd: repoRoot, encoding: 'utf8' })
+  } catch (err) {
+    scriptFailed = true
+    scriptOutput = String(err.stdout || err.message || '')
+  }
+  check('rollback-firestore-rules.mjs runs successfully against a known-good historical ref', !scriptFailed, scriptOutput)
+
+  const restoredContent = readFileSync(rulesPath, 'utf8')
+  check('firestore.rules (the ACTUAL file firebase.json points at) was overwritten with the old ref\'s content', restoredContent !== originalContent && restoredContent.includes('rules_version'))
+  check('The old content was backed up to a timestamped file before being overwritten', scriptOutput.includes('Backed up CURRENT firestore.rules to:'))
+
+  // Extract the backup path the script printed and confirm it exists,
+  // contains the ORIGINAL (pre-rollback) content, then clean it up.
+  const backupMatch = scriptOutput.match(/Backed up CURRENT firestore\.rules to: (.+)/)
+  let backupRestoresOriginal = false
+  if (backupMatch) {
+    const backupPath = backupMatch[1].trim()
+    if (existsSync(backupPath)) {
+      backupRestoresOriginal = readFileSync(backupPath, 'utf8') === originalContent
+      unlinkSync(backupPath)
+    }
+  }
+  check('The backup file genuinely contains the pre-rollback (original) content', backupRestoresOriginal)
+
+  // Restore the real firestore.rules back to its actual HEAD content —
+  // this test must never leave the working tree modified.
+  writeFileSync(rulesPath, originalContent, 'utf8')
+  check('firestore.rules was restored to its original content after this test (working tree left clean)', readFileSync(rulesPath, 'utf8') === originalContent)
+
+  let missingRefFailed = false
+  try { execFileSync('node', ['scripts/rollback-firestore-rules.mjs'], { cwd: repoRoot, encoding: 'utf8' }) } catch { missingRefFailed = true }
+  check('Running the script with no git-ref argument fails (usage error) rather than doing something undefined', missingRefFailed)
+}
+
+console.log(`\n${pass} passed, ${fail} failed`)
+process.exit(fail > 0 ? 1 : 0)
