@@ -17,6 +17,7 @@ import {
   rulesTextsMatch,
   assertProjectMatchesCredential,
   verifyRulesRelease,
+  isValidRulesetResourceName,
   RulesVerificationError,
 } from './_lib/rules-release-verifier.mjs'
 
@@ -405,5 +406,107 @@ await checkAsync('matching text does NOT override an identity failure — conten
     }
     return threw
   })())
+
+console.log('--- Section 9: exact ruleset resource-name grammar (Codex round 10) ---')
+
+check('isValidRulesetResourceName accepts a well-formed name',
+  isValidRulesetResourceName('projects/idogs-app-staging/rulesets/xyz789', 'idogs-app-staging') === true)
+
+check('isValidRulesetResourceName rejects the wrong resource type (not-rulesets)',
+  isValidRulesetResourceName('projects/idogs-app-staging/not-rulesets/xyz', 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName rejects an empty ID segment',
+  isValidRulesetResourceName('projects/idogs-app-staging/rulesets/', 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName rejects an extra trailing path segment',
+  isValidRulesetResourceName('projects/idogs-app-staging/rulesets/a/extra', 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName rejects a leading slash (extra leading path content)',
+  isValidRulesetResourceName('/projects/idogs-app-staging/rulesets/xyz', 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName rejects trailing path content after the ID (trailing slash)',
+  isValidRulesetResourceName('projects/idogs-app-staging/rulesets/xyz/', 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName rejects a project ID that is only a STRING PREFIX of the actual name (idogs-app vs idogs-app-staging)',
+  isValidRulesetResourceName('projects/idogs-app-staging/rulesets/xyz', 'idogs-app') === false)
+
+check('isValidRulesetResourceName rejects a genuinely different (cross-)project',
+  isValidRulesetResourceName('projects/idogs-app/rulesets/xyz', 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName rejects a non-string identity (null)',
+  isValidRulesetResourceName(null, 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName rejects a non-string identity (number)',
+  isValidRulesetResourceName(123, 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName rejects a non-string identity (undefined)',
+  isValidRulesetResourceName(undefined, 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName rejects a malformed string with no recognizable structure',
+  isValidRulesetResourceName('not-a-resource-name-at-all', 'idogs-app-staging') === false)
+
+check('isValidRulesetResourceName safely handles a projectId containing regex metacharacters (does not throw, does not accidentally match)',
+  (() => {
+    // Real Firebase project IDs can never contain these, but the
+    // function must not throw or produce a wrong result if one ever
+    // did — proves projectId is escaped before being used in a RegExp,
+    // not interpolated raw.
+    const weird = 'a.b*c'
+    return isValidRulesetResourceName(`projects/${weird}/rulesets/xyz`, weird) === true &&
+      isValidRulesetResourceName('projects/aXbYc/rulesets/xyz', weird) === false
+  })())
+
+// Integration-level proof (through the real fetch/release flow, not
+// just the standalone grammar function) that each malformed shape is
+// rejected end-to-end, BEFORE any source content is read.
+function releaseWithRulesetName(rulesetName) {
+  return async (url) => {
+    if (url.includes('/releases/cloud.firestore')) {
+      return jsonResponse(200, {
+        name: 'projects/idogs-app-staging/releases/cloud.firestore',
+        rulesetName,
+      })
+    }
+    return jsonResponse(200, {
+      name: rulesetName,
+      source: { files: [{ name: 'firestore.rules', content: 'rules_version = \'2\';' }] },
+    })
+  }
+}
+
+await checkAsync('fetchActiveRulesetContent rejects release.rulesetName of the wrong resource type (not-rulesets)',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app-staging', 'fake-token', releaseWithRulesetName('projects/idogs-app-staging/not-rulesets/xyz'),
+  )))
+
+await checkAsync('fetchActiveRulesetContent rejects release.rulesetName with an empty ID segment',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app-staging', 'fake-token', releaseWithRulesetName('projects/idogs-app-staging/rulesets/'),
+  )))
+
+await checkAsync('fetchActiveRulesetContent rejects release.rulesetName with extra trailing path segments',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app-staging', 'fake-token', releaseWithRulesetName('projects/idogs-app-staging/rulesets/a/extra'),
+  )))
+
+await checkAsync('fetchActiveRulesetContent rejects release.rulesetName with trailing path content (trailing slash)',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app-staging', 'fake-token', releaseWithRulesetName('projects/idogs-app-staging/rulesets/xyz/'),
+  )))
+
+await checkAsync('fetchActiveRulesetContent rejects a projectId-as-string-prefix mismatch (idogs-app-staging vs idogs-app)',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app', 'fake-token', releaseWithRulesetName('projects/idogs-app-staging/rulesets/xyz'),
+  )))
+
+await checkAsync('fetchActiveRulesetContent rejects a non-string release.rulesetName',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app-staging', 'fake-token', async (url) => {
+      if (url.includes('/releases/cloud.firestore')) {
+        return jsonResponse(200, { name: 'projects/idogs-app-staging/releases/cloud.firestore', rulesetName: 12345 })
+      }
+      return jsonResponse(200, { source: { files: [{ name: 'firestore.rules', content: 'x' }] } })
+    },
+  )))
 
 await summary()

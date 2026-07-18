@@ -86,6 +86,32 @@ export async function getAccessToken(credential) {
 
 const RULES_API_BASE = 'https://firebaserules.googleapis.com/v1'
 
+// Codex round 10: validates the EXACT Firebase Rules Management API
+// ruleset resource-name grammar —
+//   projects/{exactProjectId}/rulesets/{non-empty, single-path-segment id}
+// A loose `startsWith('projects/' + projectId + '/')` check (still used
+// for the release resource below, whose suffix is a fixed literal, not
+// a variable ID) is not strict enough here: the ID segment is
+// server-returned, effectively attacker/API-controlled content. A bare
+// prefix check would still accept a wrong resource type
+// (.../not-rulesets/xyz), an empty ID (.../rulesets/), extra path
+// segments (.../rulesets/a/extra), or a project ID that's merely a
+// STRING PREFIX of a different, longer project ID (e.g. requesting
+// "idogs-app" would still match a name that actually says
+// "idogs-app-staging/rulesets/..."). This validates the FULL string
+// against an exact, anchored grammar instead — nothing before
+// "projects/", nothing after the ID segment.
+export function isValidRulesetResourceName(name, projectId) {
+  if (typeof name !== 'string' || name.length === 0) return false
+  // `projectId` is interpolated into a RegExp source, so it must be
+  // escaped. Real Firebase project IDs can't contain regex
+  // metacharacters, but this is free defense-in-depth against any
+  // caller ever passing something unexpected.
+  const escapedProjectId = projectId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = new RegExp(`^projects/${escapedProjectId}/rulesets/[^/]+$`)
+  return pattern.test(name)
+}
+
 // `fetchImpl` injected (defaults to the global fetch) purely so tests
 // can mock the HTTP layer without any real network access. GET-only —
 // never issues a write of any kind, never touches any Firestore
@@ -98,16 +124,24 @@ export async function fetchActiveRulesetContent(projectId, accessToken, fetchImp
     throw new RulesVerificationError(`GET releases/cloud.firestore -> HTTP ${releaseRes.status}: ${release ? JSON.stringify(release) : '(no body)'}`)
   }
 
-  // Wrong-project safety: the release resource's own `name` (and its
-  // rulesetName) must explicitly contain the EXACT requested projectId
-  // — never trust a response shape without checking it actually
-  // describes the project that was asked about.
+  // Wrong-project safety: the release resource's own `name` must
+  // explicitly contain the EXACT requested projectId — never trust a
+  // response shape without checking it actually describes the project
+  // that was asked about. (This is the RELEASE resource, whose suffix
+  // — `/releases/cloud.firestore` — is a fixed literal, not a variable
+  // ID, so a prefix check is sufficient here; the variable-ID RULESET
+  // name below needs the stricter exact-grammar check.)
   const expectedPrefix = `projects/${projectId}/`
   if (!release || typeof release.name !== 'string' || !release.name.startsWith(expectedPrefix)) {
     throw new RulesVerificationError(`Release response does not clearly identify project "${projectId}" (got name: ${release?.name ?? '(missing)'}) — refusing to trust it.`)
   }
-  if (typeof release.rulesetName !== 'string' || !release.rulesetName.startsWith(expectedPrefix)) {
-    throw new RulesVerificationError(`Release's rulesetName does not clearly identify project "${projectId}" (got: ${release.rulesetName ?? '(missing)'}) — refusing to trust it.`)
+  // Codex round 10: release.rulesetName is a RULESET resource name (its
+  // ID segment is variable, server-returned content) — validated
+  // against the exact grammar, not just a prefix, so a wrong resource
+  // type, empty ID, extra path segments, or a projectId that's merely a
+  // string-prefix of a different project can never pass.
+  if (!isValidRulesetResourceName(release.rulesetName, projectId)) {
+    throw new RulesVerificationError(`Release's rulesetName does not have the expected shape "projects/${projectId}/rulesets/{id}" (got: ${JSON.stringify(release.rulesetName ?? null)}) — refusing to trust it.`)
   }
 
   const rulesetUrl = `${RULES_API_BASE}/${release.rulesetName}`
@@ -117,23 +151,23 @@ export async function fetchActiveRulesetContent(projectId, accessToken, fetchImp
     throw new RulesVerificationError(`GET ${release.rulesetName} -> HTTP ${rulesetRes.status}: ${ruleset ? JSON.stringify(ruleset) : '(no body)'}`)
   }
 
-  // Codex round 9: the ruleset GET response was previously trusted
+  // Codex round 9/10: the ruleset GET response was previously trusted
   // purely because the FIRST call's release.rulesetName had already
   // been validated — the ruleset response's OWN identity was never
-  // independently checked. A substituted, malformed, or cross-project
+  // independently checked, and even once it was (round 9), only via a
+  // loose prefix check. A substituted, malformed, or cross-project
   // ruleset response (e.g. from a misbehaving proxy, or an API that
   // returned SOME ruleset but not the one actually requested) would
   // have been silently accepted and its content compared as if it were
   // the right one. This must fail closed BEFORE any source content is
-  // even looked at — identity is checked first, unconditionally.
-  if (!ruleset || typeof ruleset.name !== 'string' || !ruleset.name) {
-    throw new RulesVerificationError('Ruleset response is missing its own `name` field — cannot confirm it is the ruleset that was actually requested. Refusing to trust its content.')
+  // even looked at — identity is checked first, unconditionally,
+  // against the same exact grammar used for release.rulesetName above,
+  // AND for exact equality between the two.
+  if (!isValidRulesetResourceName(ruleset?.name, projectId)) {
+    throw new RulesVerificationError(`Ruleset response's name does not have the expected shape "projects/${projectId}/rulesets/{id}" (got: ${JSON.stringify(ruleset?.name ?? null)}) — cannot confirm it is the ruleset that was actually requested. Refusing to trust its content.`)
   }
   if (ruleset.name !== release.rulesetName) {
     throw new RulesVerificationError(`Ruleset response identifies itself as "${ruleset.name}", which does not exactly match the requested ruleset "${release.rulesetName}" — refusing to trust its content (possible substituted/stale response).`)
-  }
-  if (!ruleset.name.startsWith(expectedPrefix)) {
-    throw new RulesVerificationError(`Ruleset response's name "${ruleset.name}" does not belong to project "${projectId}" — refusing to trust its content (possible cross-project response).`)
   }
 
   const files = ruleset.source?.files

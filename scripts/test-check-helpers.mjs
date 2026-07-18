@@ -173,20 +173,29 @@ async function captureLogs(fn) {
   check('The summary line matches the established "${pass} passed, ${fail} failed" format every test file already expects', !!summaryLine && summaryLine.includes('1 passed, 1 failed') && summaryLine.includes('1 skipped'))
 }
 
-// Shared by SECTIONS 7 and 8: writes a tiny throwaway .mjs to the OS
+// Shared by SECTIONS 7, 8, and 9: writes a tiny throwaway .mjs to the OS
 // temp dir, runs it with `node`, and returns its actual stdout/stderr/
 // exit code. Needed because summary() calls process.exit() — running
 // these scenarios in-process would kill this test file too.
+//
+// `timeoutMs` (default 8000 — generous next to the ~15-100ms delays
+// these scenarios actually use) is a WATCHDOG: if a scenario under test
+// regresses back into a genuine hang, execFileSync kills the child
+// after this deadline and throws with `err.signal` set (status null)
+// instead of blocking this test file — and therefore CI — forever. Every
+// SECTION 9 (re-entrant summary()) case relies on this to turn "the fix
+// is broken and it hangs again" into a fast, clear test FAILURE rather
+// than a stuck process.
 const checkModuleUrl = new URL('./_lib/test-check.mjs', import.meta.url).href
 
-function runChild(body) {
+function runChild(body, timeoutMs = 8000) {
   const file = join(tmpdir(), `test-check-async-child-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`)
   writeFileSync(file, `import { makeChecker } from '${checkModuleUrl}'\n${body}\n`, 'utf8')
   try {
-    const stdout = execFileSync('node', [file], { encoding: 'utf8' })
-    return { status: 0, stdout, stderr: '' }
+    const stdout = execFileSync('node', [file], { encoding: 'utf8', timeout: timeoutMs })
+    return { status: 0, stdout, stderr: '', timedOut: false }
   } catch (err) {
-    return { status: err.status, stdout: err.stdout ?? '', stderr: err.stderr ?? '' }
+    return { status: err.status, stdout: err.stdout ?? '', stderr: err.stderr ?? '', timedOut: err.signal != null }
   } finally {
     unlinkSync(file)
   }
@@ -264,10 +273,26 @@ await summary()
 // BEFORE any user code runs, deferring the thunk itself to a
 // queueMicrotask callback. Every scenario here must run as a real child
 // process, since it deliberately calls process.exit() via summary().
+//
+// NOTE (Codex round 10): these two scripts now include a genuine
+// top-level `await summary()`, matching how every real test file in
+// this codebase is actually structured. Round 9's original version of
+// this test omitted it and relied on the INNER (misused) summary() call
+// to itself drain `pending` and call process.exit() — which happened to
+// work only because that inner call's own wait was, coincidentally,
+// satisfied by the SAME unrelated delayed promise the thunk separately
+// returned. Round 10 closes a DIFFERENT bug (a genuine, unbreakable
+// deadlock when the thunk's return value is summary()'s own promise —
+// see SECTION 9) by making a misused inner summary() call a safe,
+// inert no-op instead of a functioning drain — so it can no longer be
+// the thing that exits the process, by design. The delayed false/
+// rejection is still correctly counted either way; see SECTION 9's
+// "prior discarded-summary repro" case for the direct regression proof.
 // =========================================================================
 {
-  // The EXACT Codex reproduction, verbatim. Must NOT print "0 failed"
-  // or exit 0 — the delayed false must be counted and force exit 1.
+  // The EXACT Codex reproduction, verbatim, plus the top-level
+  // summary() every real test file has. Must NOT print "0 failed" or
+  // exit 0 — the delayed false must be counted and force exit 1.
   const codexRepro = runChild(`
 const { checkAsync, summary } = makeChecker()
 checkAsync('lost false', () => {
@@ -275,6 +300,7 @@ checkAsync('lost false', () => {
   return new Promise(resolve =>
     setTimeout(() => resolve(false), 40))
 })
+await summary()
 `)
   check('Codex repro: thunk-invoked summary() does not print "0 failed"', !codexRepro.stdout.includes('0 failed'))
   check('Codex repro: the delayed false is counted ("0 passed, 1 failed")', codexRepro.stdout.includes('0 passed, 1 failed'))
@@ -290,6 +316,7 @@ checkAsync('lost rejection', () => {
   return new Promise((resolve, reject) =>
     setTimeout(() => reject(new Error('lost rejection boom')), 40))
 })
+await summary()
 `)
   check('thunk-invoked summary() + delayed rejection: not printed as "0 failed"', !codexReproRejection.stdout.includes('0 failed'))
   check('thunk-invoked summary() + delayed rejection: counted as a failure', codexReproRejection.stdout.includes('0 passed, 1 failed'))
@@ -337,6 +364,95 @@ await summary()
 `)
   check('ordinary fire-and-forget checkAsync() calls still count correctly (regression check)', ordinaryFireAndForget.stdout.includes('1 passed, 1 failed'))
   check('ordinary fire-and-forget usage still exits 1 on a real failure', ordinaryFireAndForget.status === 1)
+}
+
+// =========================================================================
+// SECTION 9 — re-entrant summary() self-deadlock (Codex round 10). A
+// checkAsync() condition that calls summary() itself — directly, via an
+// explicit await, or after an unrelated await inside the thunk — used to
+// hang forever: that assertion's own settlement is already in `pending`
+// by the time the thunk runs (round 9's fix), so summary()'s drain loop
+// would wait for it, but it can only settle once the thunk (which is
+// itself stuck waiting on summary()) finishes. Every case below carries
+// an explicit watchdog timeout via runChild's `timeoutMs` — if the fix
+// regresses, these fail fast with `timedOut: true` instead of hanging
+// this file (and CI) indefinitely.
+// =========================================================================
+{
+  // The EXACT Codex reproduction, verbatim.
+  const cycleDirect = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('cycle', () => summary())
+await summary()
+`)
+  check('checkAsync + thunk returning summary() directly: does not time out (no hang)', cycleDirect.timedOut === false)
+  check('checkAsync + thunk returning summary() directly: detected and counted as a FAIL, not a false PASS', cycleDirect.stdout.includes('0 passed, 1 failed'))
+  check('checkAsync + thunk returning summary() directly: exits nonzero', cycleDirect.status !== 0 && cycleDirect.status !== null)
+  check('checkAsync + thunk returning summary() directly: no unhandled rejection warning on stderr', !/UnhandledPromiseRejection|unhandledRejection/i.test(cycleDirect.stderr))
+
+  // Same cycle, but via an explicit `await` inside an async thunk.
+  const cycleAwait = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('cycle-await', async () => await summary())
+await summary()
+`)
+  check('checkAsync + async thunk awaiting summary(): does not time out (no hang)', cycleAwait.timedOut === false)
+  check('checkAsync + async thunk awaiting summary(): detected and counted as a FAIL, not a false PASS', cycleAwait.stdout.includes('0 passed, 1 failed'))
+  check('checkAsync + async thunk awaiting summary(): exits nonzero', cycleAwait.status !== 0 && cycleAwait.status !== null)
+  check('checkAsync + async thunk awaiting summary(): no unhandled rejection warning on stderr', !/UnhandledPromiseRejection|unhandledRejection/i.test(cycleAwait.stderr))
+
+  // summary() called only AFTER an unrelated await inside the thunk —
+  // proves the detection survives an await boundary (a plain flag set
+  // and cleared around a synchronous call would miss this).
+  const cycleAfterAwait = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('cycle-after-await', async () => {
+  await new Promise(resolve => setTimeout(resolve, 15))
+  return summary()
+})
+await summary()
+`)
+  check('summary() called after an unrelated await inside the thunk: does not time out (no hang)', cycleAfterAwait.timedOut === false)
+  check('summary() called after an unrelated await inside the thunk: detected and counted as a FAIL', cycleAfterAwait.stdout.includes('0 passed, 1 failed'))
+  check('summary() called after an unrelated await inside the thunk: exits nonzero', cycleAfterAwait.status !== 0 && cycleAfterAwait.status !== null)
+
+  // Legitimate top-level summary() call while OTHER, unrelated
+  // fire-and-forget checkAsync() calls are still pending — must still
+  // drain them normally. This is the case a naive "is anything in
+  // `pending`" check would have wrongly flagged as re-entrant; the
+  // per-assertion AsyncLocalStorage context must NOT be set here at all,
+  // since this summary() call is genuinely at the top level.
+  const legitTopLevelWhilePending = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('fire-and-forget true', () => new Promise(resolve => setTimeout(() => resolve(true), 30)))
+checkAsync('fire-and-forget false', () => new Promise(resolve => setTimeout(() => resolve(false), 15)))
+await summary()
+`)
+  check('legitimate top-level summary() with fire-and-forget checks pending: does not time out', legitTopLevelWhilePending.timedOut === false)
+  check('legitimate top-level summary() with fire-and-forget checks pending: both are drained and counted correctly', legitTopLevelWhilePending.stdout.includes('1 passed, 1 failed'))
+  check('legitimate top-level summary() with fire-and-forget checks pending: exits nonzero (one genuine failure)', legitTopLevelWhilePending.status === 1)
+
+  // The round 8/9 "discarded summary() call" regression: the thunk
+  // calls summary() but never awaits/uses its return value at all
+  // (unlike the cycle cases above, where the thunk's own result IS
+  // summary()'s promise). This must keep behaving exactly as round 9
+  // fixed it — the delayed false is what gets counted, via the REAL
+  // top-level summary() call, with the misused inner call safely
+  // neutralized (rejected-but-pre-handled, so no unhandled rejection)
+  // rather than reported as if it were the actual failure.
+  const priorDiscardedRepro = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('lost false', () => {
+  summary()
+  return new Promise(resolve =>
+    setTimeout(() => resolve(false), 40))
+})
+await summary()
+`)
+  check('prior discarded-summary repro: does not time out (no hang)', priorDiscardedRepro.timedOut === false)
+  check('prior discarded-summary repro: remains nonzero for the delayed false', priorDiscardedRepro.status === 1)
+  check('prior discarded-summary repro: the delayed false is still what gets reported, not a deadlock error', priorDiscardedRepro.stdout.includes('FAIL: lost false') && priorDiscardedRepro.stdout.includes('0 passed, 1 failed'))
+  check('prior discarded-summary repro: no unhandled rejection warning on stderr from the discarded inner call', !/UnhandledPromiseRejection|unhandledRejection/i.test(priorDiscardedRepro.stderr))
 }
 
 await summary()

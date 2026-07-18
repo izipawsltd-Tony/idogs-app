@@ -55,7 +55,14 @@
 //   skip('label', 'reason emulator env vars are not set')
 //   await summary() // waits for any still-pending checkAsync() calls,
 //                    // THEN prints totals and calls process.exit() —
-//                    // always last, always awaited
+//                    // always last, always awaited. NEVER call
+//                    // summary() from inside a checkAsync() condition
+//                    // (directly, or after an await) — see the round 10
+//                    // fix note below; it is detected and reported as a
+//                    // FAIL instead of hanging, but it is still a bug in
+//                    // the test file, not a supported pattern.
+
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 function isThenable(value) {
   return !!value && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function'
@@ -85,6 +92,17 @@ export function makeChecker() {
   // any `await` inside it can run — so summary() can wait for the full
   // set even when the caller never awaited the individual calls.
   const pending = new Set()
+
+  // Codex round 10: tracks which checkAsync() assertion (if any) is
+  // CURRENTLY EXECUTING its own condition thunk, so summary() can detect
+  // being called re-entrantly from inside one — see the summary() note
+  // below for why that would otherwise deadlock forever. AsyncLocalStorage
+  // (not a plain boolean flag) is used specifically because its context
+  // correctly survives `await` boundaries, timers, and promise chains
+  // within the assertion's own execution tree — a flag set/cleared
+  // around a single synchronous call would miss the "summary called
+  // after an await inside the thunk" case entirely.
+  const assertionContext = new AsyncLocalStorage()
 
   function check(label, arg2, arg3, arg4) {
     const shaped = resolveShape(label, arg2, arg3, arg4)
@@ -141,7 +159,11 @@ export function makeChecker() {
     // fire-and-forget call the caller never awaits.
     settlement.finally(() => pending.delete(settlement))
 
-    queueMicrotask(async () => {
+    // Codex round 10: the thunk (and anything it awaits, including
+    // nested calls) runs INSIDE this AsyncLocalStorage context for the
+    // whole rest of its execution — see summary()'s own re-entrancy
+    // check below, which is what this context makes possible.
+    queueMicrotask(() => assertionContext.run({ label: shaped.label }, async () => {
       let cond
       try {
         const resolved = typeof shaped.condInput === 'function' ? shaped.condInput() : shaped.condInput
@@ -161,7 +183,7 @@ export function makeChecker() {
         fail++
       }
       resolveSettlement()
-    })
+    }))
 
     return settlement
   }
@@ -179,7 +201,7 @@ export function makeChecker() {
     return { pass, fail, skipped }
   }
 
-  // ASYNC now (Codex round 8): waits for every checkAsync() call ever
+  // ASYNC (Codex round 8): waits for every checkAsync() call ever
   // started — including ones the caller never awaited — before printing
   // totals or exiting, so a delayed false/rejection still counts and
   // still produces a nonzero exit. The while-loop (rather than a single
@@ -187,15 +209,64 @@ export function makeChecker() {
   // that itself schedules another checkAsync() call from within its
   // condition thunk: each pass drains whatever is currently pending,
   // and the loop only exits once a full pass finds nothing left.
-  // Callers must `await summary()` — see every test-*.mjs file's final
-  // line.
-  async function summary() {
+  async function drain() {
     while (pending.size > 0) {
       await Promise.allSettled([...pending])
     }
     const skippedSuffix = skipped > 0 ? `, ${skipped} skipped` : ''
     console.log(`\n${pass} passed, ${fail} failed${skippedSuffix}`)
     process.exit(fail > 0 ? 1 : 0)
+  }
+
+  // Codex round 10: calling summary() from INSIDE a checkAsync()
+  // assertion's own condition — directly, or after an await inside the
+  // thunk — creates a genuine, unbreakable cycle: that assertion's
+  // settlement is already in `pending`; summary() (via drain()) would
+  // wait for every entry in `pending`, INCLUDING this one; but this
+  // entry can only settle once the condition thunk that's calling
+  // summary() finishes running — which it can't, because it's stuck
+  // waiting for summary() to return. Left unhandled this hangs forever
+  // (Codex repro: `checkAsync('cycle', () => summary())`).
+  //
+  // Deliberately NOT a plain "is anything in `pending`" check (the task
+  // explicitly rules this out) — a global pending-non-empty check would
+  // also misfire on the completely legitimate case of a top-level
+  // summary() call made while OTHER, unrelated fire-and-forget
+  // checkAsync() calls are still in flight (those must still be
+  // drained normally). Instead this checks assertionContext, which is
+  // only ever set for the SPECIFIC async execution tree spawned by a
+  // checkAsync() thunk (see checkAsync() above) — a top-level call, by
+  // definition, is never inside that tree, no matter what else is
+  // pending.
+  //
+  // Deliberately does NOT `throw` directly (which would make summary()
+  // itself, as an async function, return a plain rejected Promise) —
+  // if a misbehaving thunk calls `summary()` WITHOUT awaiting/using its
+  // result (e.g. `() => { summary(); return somethingElse }`), that
+  // rejection would have no attached handler and would surface as a
+  // genuine Node unhandledRejection, which is exactly the failure mode
+  // this whole module exists to prevent everywhere else. Attaching a
+  // no-op `.catch()` here marks the returned promise "handled" from
+  // Node's perspective regardless of whether the misbehaving caller
+  // ever looks at it, while a caller that DOES `await`/chain it (the
+  // cycle repro's actual shape) still observes the same rejection
+  // normally — one settled promise can have any number of independent
+  // consumers, and marking it handled for Node's internal bookkeeping
+  // doesn't erase what any of them individually see.
+  function summary() {
+    const activeAssertion = assertionContext.getStore()
+    if (activeAssertion) {
+      const rejected = Promise.reject(new Error(
+        `summary() was called from inside checkAsync()'s own condition for "${activeAssertion.label}" ` +
+        `(directly, or after an await inside it). summary() waits for every pending assertion to settle, ` +
+        `including this one — but this one can only settle once the code calling summary() finishes ` +
+        `running, so this would deadlock forever. Call summary() only at the top level, after all ` +
+        `checkAsync() calls have been started (they do not need to be awaited first).`
+      ))
+      rejected.catch(() => {})
+      return rejected
+    }
+    return drain()
   }
 
   return { check, checkAsync, skip, counts, summary }
