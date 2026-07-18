@@ -18,12 +18,9 @@ import { sanitizeLitterInput, LitterValidationError, CREATE_FIELDS, UPDATE_FIELD
 import { sanitizeHeatCycleInput, HeatCycleValidationError, ALL_FIELDS as HEAT_CYCLE_FIELDS } from '../api/_lib/heat-cycle-schema.js'
 import { ApiError, parseJsonBody, withApiErrorHandling } from '../api/_lib/http-helpers.js'
 import { sanitizePuppyPayload, PuppyPayloadValidationError, PAYLOAD_FIELDS as PUPPY_PAYLOAD_FIELDS } from '../api/_lib/puppy-payload-schema.js'
+import { makeChecker } from './_lib/test-check.mjs'
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+const { check, checkAsync, skip, summary } = makeChecker()
 
 // =========================================================================
 // SECTION 1 — isDogHistoryBearing: presence, not truthiness (Codex round
@@ -395,12 +392,19 @@ function check(label, cond, extra = '') {
   catch (err) { missingLocalFileFailed = err.status === 2 }
   check('Running with a nonexistent local rules file fails with a usage error (exit 2)', missingLocalFileFailed)
 
-  const scriptSrc = readFileSync(`${repoRoot}/scripts/verify-rules-release.mjs`, 'utf8')
+  // Codex round 7, Blocker 2: the fetch/comparison logic these checks
+  // inspect moved out of verify-rules-release.mjs (now a thin CLI
+  // wrapper) into scripts/_lib/rules-release-verifier.mjs so it could be
+  // unit-tested with mocked fetch/credential — see
+  // scripts/test-verify-rules-release.mjs for the behavioral tests.
+  // These two files together are still "the script" for source-pattern
+  // purposes.
+  const scriptSrc = readFileSync(`${repoRoot}/scripts/verify-rules-release.mjs`, 'utf8') +
+    readFileSync(`${repoRoot}/scripts/_lib/rules-release-verifier.mjs`, 'utf8')
   check('The script only ever issues GET requests (fetch calls with no method/body — read-only)', !/method:\s*['"]POST['"]|method:\s*['"]PUT['"]|method:\s*['"]DELETE['"]/.test(scriptSrc))
   check('The script never references any business-data collection (dogs/litters/users/heatCycles)', !/collection\(['"](?:dogs|litters|users|heatCycles)['"]\)/.test(scriptSrc))
   check('The script independently asserts the release response identifies the requested projectId before trusting it (wrong-project safety)', /expectedPrefix/.test(scriptSrc) && /startsWith\(expectedPrefix\)/.test(scriptSrc))
   check('A mismatched/unverifiable response throws rather than silently reporting a match', /refusing to trust it/.test(scriptSrc))
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

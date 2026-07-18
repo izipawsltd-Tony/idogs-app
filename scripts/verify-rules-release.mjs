@@ -1,46 +1,62 @@
 #!/usr/bin/env node
 // scripts/verify-rules-release.mjs — Release Runbook rollback
-// verification (Codex round 6, Blocker 6).
+// verification (Codex round 6, Blocker 6; auth redesigned round 7,
+// Blocker 2).
 //
-// BUG THIS FIXES: the previous rollback verification instructions said
-// to "attempt the exact operation the new Rules had denied (e.g. a
-// direct client update to litters/{id}) against the SAME project" —
-// i.e. mutate a REAL litter document (or attempt to) just to observe
-// whether the write succeeds or fails. That is real business-data
-// access during an incident, exactly when the deployed Rules' actual
-// effect on real data is least well understood, and creates its own
-// cleanup burden and risk (a "test" write against a document that isn't
-// actually disposable).
+// BUG THIS FIXES (round 6): the previous rollback verification
+// instructions said to "attempt the exact operation the new Rules had
+// denied (e.g. a direct client update to litters/{id}) against the SAME
+// project" — i.e. mutate a REAL litter document (or attempt to) just to
+// observe whether the write succeeds or fails. That is real
+// business-data access during an incident, exactly when the deployed
+// Rules' actual effect on real data is least well understood, and
+// creates its own cleanup burden and risk.
 //
 // This script verifies the ACTIVE Firestore Rules release using the
 // Firebase Rules Management REST API — READ-ONLY (GET requests only),
 // never writes anything, never touches any collection/document, and
-// never reads any business data (dogs/litters/users/etc.) at all. It
-// fetches:
-//   1. GET /v1/projects/{projectId}/releases/cloud.firestore
-//      -> the currently ACTIVE ruleset's resource name for this project.
-//   2. GET /v1/{rulesetName}
-//      -> that ruleset's actual rules SOURCE content.
-// ...then diffs that content against a local rules file (firestore.rules
-// by default) and reports MATCH or MISMATCH. Nothing is deployed,
-// nothing is mutated, no canary document of any kind is created.
+// never reads any business data (dogs/litters/users/etc.) at all.
+//
+// AUTH REDESIGN (round 7, Blocker 2): the previous version shelled out
+// to `npx firebase-tools login:print-access-token` — an undocumented,
+// unpinned CLI subcommand with no stated support guarantee (npx always
+// resolves whatever the latest installed/cached firebase-tools happens
+// to be at run time). That command is gone. This script now obtains its
+// access token the SAME documented way every trusted API endpoint in
+// this project (api/create-litter.js, api/delete-litter.js, etc.)
+// already authenticates to Firebase: a service-account credential built
+// via firebase-admin/app's `cert()` from the SAME three env vars this
+// codebase already requires everywhere else —
+// FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY.
+// `Credential.getAccessToken()` is a stable, public, documented part of
+// the firebase-admin SDK (it's how the SDK mints its own bearer tokens
+// internally for every Admin SDK call), and firebase-admin is already a
+// pinned package.json dependency — not an unpinned npx invocation, and
+// no gcloud CLI install is required. See RELEASE_RUNBOOK.md for the
+// exact setup/commands.
+//
+// The token is held only in memory for the duration of this process and
+// used solely as a Bearer header on the two GET requests below — it is
+// never printed, logged, or persisted to disk.
 //
 // Wrong-project safety: the release lookup is scoped to the exact
 // `projectId` argument in the request URL itself (not inferred from any
 // ambient config), and the response's own resource `name` field is
 // independently asserted to contain that same projectId before its
-// content is trusted for anything — a response that somehow didn't
-// match the requested project fails loudly instead of silently
-// reporting a match against the wrong project.
+// content is trusted for anything. Additionally, since the credential's
+// OWN project (FIREBASE_PROJECT_ID) must also match the projectId
+// argument for a service account to have access at all, a mismatched
+// local env (e.g. staging credentials pointed at the production
+// project) is flagged as a warning before the request is even made.
 //
 // Usage:
 //   node scripts/verify-rules-release.mjs <projectId> [localRulesPath]
 // Example:
 //   node scripts/verify-rules-release.mjs idogs-app-staging firestore.rules
 //
-// Requires: `firebase login` already run (uses the Firebase CLI's own
-// stored credentials via `firebase login:print-access-token` — this
-// script never asks for or stores a secret itself).
+// Requires: FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL /
+// FIREBASE_PRIVATE_KEY set in the current shell for the SAME project
+// being verified (see RELEASE_RUNBOOK.md).
 //
 // Exit codes: 0 = confirmed match (rollback verified active).
 //             1 = confirmed mismatch, or the check could not complete
@@ -48,11 +64,18 @@
 //                 malformed release/ruleset shape). Every failure mode
 //                 is treated as "not verified" — never reported as a
 //                 pass by default.
+//             2 = usage error (bad arguments) — checked before any
+//                 credential or network access is attempted.
 
-import { execFileSync } from 'node:child_process'
 import { readFileSync, existsSync } from 'node:fs'
-
-const RULES_API_BASE = 'https://firebaserules.googleapis.com/v1'
+import { cert } from 'firebase-admin/app'
+import {
+  checkRequiredEnvVars,
+  getAccessToken,
+  fetchActiveRulesetContent,
+  rulesTextsMatch,
+  RulesVerificationError,
+} from './_lib/rules-release-verifier.mjs'
 
 const projectId = process.argv[2]
 const localRulesPath = process.argv[3] || 'firestore.rules'
@@ -66,65 +89,34 @@ if (!existsSync(localRulesPath)) {
   process.exit(2)
 }
 
-function normalize(rulesText) {
-  // Whitespace/line-ending differences (CRLF vs LF, trailing newline)
-  // must never register as a false MISMATCH — only actual rule content
-  // differences matter here.
-  return rulesText.replace(/\r\n/g, '\n').trim()
-}
-
-async function getAccessToken() {
-  try {
-    return execFileSync('npx', ['firebase-tools', 'login:print-access-token'], { encoding: 'utf8' }).trim()
-  } catch (err) {
-    throw new Error(`Could not obtain a Firebase access token (is 'firebase login' authenticated?): ${err.message}`)
-  }
-}
-
-async function fetchJson(url, token) {
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-  const body = await res.json().catch(() => null)
-  if (!res.ok) {
-    throw new Error(`GET ${url} -> HTTP ${res.status}: ${body ? JSON.stringify(body) : '(no body)'}`)
-  }
-  return body
-}
-
 async function main() {
   console.log(`Verifying the ACTIVE Firestore Rules release for project "${projectId}" (read-only, no business data touched)...`)
 
-  const token = await getAccessToken()
+  checkRequiredEnvVars(process.env)
 
-  // Step 1: which ruleset is currently released for cloud.firestore?
-  const releaseUrl = `${RULES_API_BASE}/projects/${encodeURIComponent(projectId)}/releases/cloud.firestore`
-  const release = await fetchJson(releaseUrl, token)
-
-  // Wrong-project safety: the release resource's own `name` must
-  // explicitly contain this exact projectId — never trust a response
-  // shape without checking it actually describes the project we asked
-  // about.
-  const expectedPrefix = `projects/${projectId}/`
-  if (!release || typeof release.name !== 'string' || !release.name.startsWith(expectedPrefix)) {
-    throw new Error(`Release response does not clearly identify project "${projectId}" (got name: ${release?.name ?? '(missing)'}) — refusing to trust it. Stop; do not proceed with rollback verification against this response.`)
-  }
-  if (typeof release.rulesetName !== 'string' || !release.rulesetName.startsWith(expectedPrefix)) {
-    throw new Error(`Release's rulesetName does not clearly identify project "${projectId}" (got: ${release.rulesetName ?? '(missing)'}) — refusing to trust it.`)
+  if (process.env.FIREBASE_PROJECT_ID !== projectId) {
+    console.warn(
+      `WARNING: the local FIREBASE_PROJECT_ID ("${process.env.FIREBASE_PROJECT_ID}") does not match ` +
+      `the project you're verifying ("${projectId}"). This service account will very likely lack ` +
+      `access to that project's Rules — set the env vars for the project you're actually verifying ` +
+      `(see RELEASE_RUNBOOK.md). Continuing anyway; the request below will fail closed if access is denied.`
+    )
   }
 
-  // Step 2: fetch that ruleset's actual source content.
-  const rulesetUrl = `${RULES_API_BASE}/${release.rulesetName}`
-  const ruleset = await fetchJson(rulesetUrl, token)
-  const files = ruleset?.source?.files
-  if (!Array.isArray(files) || files.length === 0 || typeof files[0].content !== 'string') {
-    throw new Error('Ruleset response did not contain the expected source.files[0].content shape — cannot verify.')
-  }
-  const deployedContent = normalize(files[0].content)
-  const localContent = normalize(readFileSync(localRulesPath, 'utf8'))
+  const credential = cert({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  })
+  const accessToken = await getAccessToken(credential)
 
-  console.log(`Active ruleset: ${release.rulesetName}`)
+  const { rulesetName, content } = await fetchActiveRulesetContent(projectId, accessToken)
+  const localContent = readFileSync(localRulesPath, 'utf8')
+
+  console.log(`Active ruleset: ${rulesetName}`)
   console.log(`Comparing against local file: ${localRulesPath}`)
 
-  if (deployedContent === localContent) {
+  if (rulesTextsMatch(content, localContent)) {
     console.log('MATCH — the deployed Rules release exactly matches the local file. Rollback verified active.')
     process.exit(0)
   }
@@ -140,7 +132,11 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Could not complete rollback verification:', err.message)
+  if (err instanceof RulesVerificationError) {
+    console.error('Could not complete rollback verification:', err.message)
+  } else {
+    console.error('Could not complete rollback verification (unexpected error):', err.message)
+  }
   console.error('Treat this as UNVERIFIED — do not proceed to the Vercel rollback step on the strength of an incomplete check.')
   process.exit(1)
 })

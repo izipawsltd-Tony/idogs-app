@@ -26,11 +26,8 @@ connectFirestoreEmulator(db, '127.0.0.1', 8080)
 const auth = getAuth(app)
 connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 // ── Exact mirror of db.ts's normalizeUserProfile (see the precedence
 // comment there for the full policy rationale) ──
@@ -457,5 +454,4 @@ async function newUser(name) {
   check('updateUserProfile has no console.log referencing user data', !updateSection.includes('console.log'))
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

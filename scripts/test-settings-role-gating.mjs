@@ -21,11 +21,8 @@
 
 const { readFileSync } = await import('node:fs')
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 // ── Mirror of db.ts's normalizeUserProfile (see test-user-profile-role.mjs
 // and db.ts's own precedence comment for the full policy rationale) ──
@@ -168,5 +165,4 @@ function heatCycleVisible(profile, emailReminders) {
   check('isOwner is derived directly from profile.role', src.includes("profile?.role === 'owner'"))
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

@@ -29,11 +29,8 @@ async function simulateAdminClaim(dogId, newCurrentOwnerId) {
   await adminDb.collection('dogs').doc(dogId).update({ currentOwnerId: newCurrentOwnerId, status: 'active' })
 }
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 // Re-implementation of getAllDocumentsForUser()'s logic against the client
 // SDK, mirroring src/lib/db.ts exactly, so this test exercises the real
@@ -127,5 +124,4 @@ try {
 }
 check('Unrelated user directly querying a dog they don\'t own is denied', strangerDirectDenied)
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

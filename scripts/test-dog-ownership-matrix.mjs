@@ -44,14 +44,18 @@ async function simulateAdminClaim(dogId, newCurrentOwnerId) {
   })
 }
 
-let pass = 0, fail = 0
-const results = []
-function check(section, label, cond, extra = '') {
-  const status = cond ? 'PASS' : 'FAIL'
-  results.push({ section, label, status })
-  console.log(`${status} [${section}] ${label}${extra ? ' — ' + extra : ''}`)
-  cond ? pass++ : fail++
-}
+// Codex round 7, Blocker 1: this file's own check(section, label, cond,
+// extra) had the same bare `if(cond)`/`cond ? x : y` truthiness pattern
+// every other file's check() had — a Promise passed as `cond` (e.g. a
+// forgotten `await`) would always be truthy, silently reporting PASS
+// regardless of what it actually resolves to. Now uses the shared,
+// self-tested scripts/_lib/test-check.mjs, which throws loudly instead.
+// Its check(label, description, cond, extra) shape detection accepts
+// this file's existing check(section, label, cond[, extra]) calls
+// unchanged (section+label are combined into one printed label instead
+// of the previous `[section] label` bracket format — cosmetic only).
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 function isDenied(err) {
   return err && (err.code === 'permission-denied' || /permission/i.test(err.message))
 }
@@ -324,5 +328,4 @@ const otherOwnerUid = await newUser('otherowner')
   }
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

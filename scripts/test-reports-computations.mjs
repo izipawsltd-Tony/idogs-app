@@ -37,11 +37,8 @@ execSync(
 const { litterProduction, healthCoverage, salesAndTransfers, breedingOverview, isCurrentKennelDog, currentKennelDogs } =
   await import(pathToFileURL(path.join(distDir, 'reports.js')).href)
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 function dog(overrides = {}) {
   return {
@@ -146,6 +143,5 @@ function dog(overrides = {}) {
   check('breedingOverview: empty kennel produces zeroed report, not a throw', emptyKennel.assessedCount === 0 && emptyKennel.excludedMaleCount === 0)
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
 rmSync(distDir, { recursive: true, force: true })
-process.exit(fail > 0 ? 1 : 0)
+summary()

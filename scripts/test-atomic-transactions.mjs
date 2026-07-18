@@ -36,35 +36,18 @@ process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
 const adminApp = initAdminApp({ projectId: 'demo-idogs-qa' })
 const adminDb = getAdminFirestore(adminApp)
 
-let pass = 0, fail = 0
-// Codex round 6 discovery (not one of the six assigned blockers, but
-// found while updating this file's mirrors and fixed immediately —
-// see the round-6 report's "additional finding" section): every call
-// site in this file actually passes check(sectionLabel, description,
-// condition) — a 3rd positional argument — but this function's
-// signature was check(label, cond, extra), so `cond` was always bound
-// to the DESCRIPTION STRING (permanently truthy for any non-empty
-// text) and the REAL boolean was silently discarded into `extra`
-// (only ever used in a FAIL message that could then never fire). Every
-// check() in this file has therefore always reported PASS regardless
-// of the actual condition, since this file was first written. Fixed by
-// detecting the call shape at runtime — a string in the 2nd position
-// with a 3rd argument present means the description+condition form;
-// anything else falls back to the original 2-arg(+extra) form — rather
-// than touching each of the 60 call sites individually.
-function check(label, arg2, arg3, arg4) {
-  let cond, extra
-  if (typeof arg2 === 'string' && arg3 !== undefined) {
-    label = `${label}: ${arg2}`
-    cond = arg3
-    extra = arg4 !== undefined ? arg4 : ''
-  } else {
-    cond = arg2
-    extra = arg3 !== undefined ? arg3 : ''
-  }
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+// Codex round 6 discovery: every call site in this file actually passes
+// check(sectionLabel, description, condition) — a 3rd positional
+// argument — which round 6 fixed via call-shape detection in a local
+// check(). Codex round 7, Blocker 1: that local fix (and every other
+// file's own check()) still did a bare `if (cond)`, which treats an
+// unawaited Promise as always-truthy — silently masking a forgotten
+// `await` exactly the way the round-6 bug masked a forgotten condition.
+// Now uses the shared, self-tested scripts/_lib/test-check.mjs, which
+// keeps the same shape detection AND throws loudly instead of silently
+// passing when given an unawaited thenable.
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 function isDenied(err) {
   return err && (err.code === 'permission-denied' || /permission/i.test(err.message))
 }
@@ -1099,5 +1082,4 @@ const breederUid = await newUser('breeder')
   check('15-NullHistory', 'A genuinely clean, two-sided-confirmed puppy remains removable', cleanRemoveAttempt.ok === true)
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

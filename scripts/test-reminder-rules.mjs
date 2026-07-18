@@ -22,11 +22,8 @@ const db = getFirestore(app)
 connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
 connectFirestoreEmulator(db, '127.0.0.1', 8080)
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 const PW = 'tam12345*'
 const runId = Date.now() // unique per run so re-invocations don't collide with prior emulator state
@@ -133,5 +130,4 @@ try {
   check('tenant can delete their own reminder', true)
 } catch (err) { check('tenant can delete their own reminder', false, err.code) }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

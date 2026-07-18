@@ -37,11 +37,8 @@ const clientApp = initializeApp({ projectId: 'demo-idogs-qa', apiKey: 'fake-api-
 const clientAuth = getClientAuth(clientApp)
 connectAuthEmulator(clientAuth, 'http://127.0.0.1:9099', { disableWarnings: true })
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 function mockReq({ token, dogId, method = 'POST' } = {}) {
   return {
@@ -169,5 +166,4 @@ await seedDb.collection('scanLogs').add({
   check('getScanCount() now calls /api/scan-count', dbTs.includes("fetch('/api/scan-count'"))
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

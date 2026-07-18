@@ -6,11 +6,8 @@
 
 import { checkRateLimit, hashClientKey, getClientIp, __resetForTests } from '../api/_lib/rate-limit.js'
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 // ── requests below limit succeed ──
 __resetForTests()
@@ -87,5 +84,4 @@ __resetForTests()
   check('getClientIp falls back to "unknown" when nothing is available', withNeither === 'unknown', withNeither)
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

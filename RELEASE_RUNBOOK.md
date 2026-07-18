@@ -156,7 +156,16 @@ listed in preference order:
 
 **Preferred (non-mutating, no real data touched):**
 
+Auth setup (once per shell session — see "Auth for
+`verify-rules-release.mjs`" below for full detail): set the SAME three
+env vars Step 1 already covers, scoped to the project you're verifying
+(staging vars for `idogs-app-staging`, production vars for `idogs-app`
+— never mix the two):
+
 ```powershell
+$env:FIREBASE_PROJECT_ID = "idogs-app-staging"
+$env:FIREBASE_CLIENT_EMAIL = "<the staging service account client_email>"
+$env:FIREBASE_PRIVATE_KEY = "<the staging service account private_key, one line, literal \n>"
 node scripts/verify-rules-release.mjs idogs-app-staging firestore.rules
 ```
 
@@ -186,6 +195,67 @@ devtools console against the Preview URL and attempt:
 SUCCEEDS (i.e. Rules did not actually deny it) → the deploy did not take
 effect as intended. Do not proceed — treat this as a failed Rules deploy
 and go to Step 8 (Rollback) immediately.
+
+---
+
+### Auth for `verify-rules-release.mjs` (Codex round 7, Blocker 2)
+
+`scripts/verify-rules-release.mjs` calls the Firebase Rules Management
+REST API directly (GET requests only — see the script's own header
+comment). It authenticates with the **exact same service-account
+credential every trusted API endpoint in this project already uses**
+(`api/create-litter.js`, `api/delete-litter.js`, etc.) — there is no
+separate tool to install and no new credential type to set up.
+
+**What it does NOT use, and why:** earlier drafts of this script shelled
+out to `npx firebase-tools login:print-access-token`. That command is
+gone. It was an unpinned, undocumented CLI subcommand — `npx` resolves
+whatever version of `firebase-tools` happens to be latest/cached at run
+time, with no version pin and no stated support guarantee for that
+specific subcommand. It has been fully removed; do not reintroduce it.
+
+**Setup (one-time per shell session, per project):**
+
+1. Set the same three env vars Step 1 already documents, scoped to the
+   **project you're about to verify** — never mix staging and
+   production credentials:
+   ```powershell
+   $env:FIREBASE_PROJECT_ID = "idogs-app-staging"      # or idogs-app
+   $env:FIREBASE_CLIENT_EMAIL = "<service account client_email>"
+   $env:FIREBASE_PRIVATE_KEY = "<service account private_key>"   # one line, literal \n — same format Vercel already stores
+   ```
+   Pull these values from the same place Vercel's `FIREBASE_*` env vars
+   already come from (Firebase Console → Project Settings → Service
+   Accounts → Generate new private key, or the existing key already in
+   use for that project's Vercel env — do not generate a new key if an
+   existing one already works, to avoid key sprawl).
+2. Run the script (see the exact command in Step 4b or Step 8 above).
+
+**Preflight behavior:** the script checks that all three env vars are
+present BEFORE attempting any network call, and fails closed with a
+message naming which variable(s) are missing (never printing any
+value) if not. If `FIREBASE_PROJECT_ID` doesn't match the `projectId`
+argument you passed on the command line, it prints a WARNING before
+proceeding (a service account scoped to one project will normally lack
+access to another project's Rules, so this situation will typically
+still fail closed at the API-call step — the warning just makes the
+likely cause obvious immediately instead of only from a permission-denied
+error).
+
+**Token handling:** the access token is held only in memory for the
+duration of the script's process and is used solely as a `Bearer` header
+on the two read-only GET requests. It is never printed, logged, written
+to a file, or committed anywhere.
+
+**Failure modes, all fail closed (never a false "verified"):** missing
+env vars, a credential the Firebase Admin SDK rejects (bad/expired key,
+disabled service account), a Rules Management API call that returns a
+non-2xx status (e.g. permission denied because the service account
+lacks access to that project, or the project doesn't exist), or a
+response whose own resource name doesn't match the requested
+`projectId`. Every one of these exits non-zero with a specific message
+— see `scripts/test-verify-rules-release.mjs` for the full set of
+mocked failure-mode tests.
 
 ---
 
@@ -277,6 +347,9 @@ firebase deploy --only firestore:rules --project idogs-app-staging   # or idogs-
 
 # 2. VERIFY the rollback is actually active — do NOT proceed to the
 #    Vercel rollback on the strength of the deploy command alone.
+#    Requires FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY
+#    set for the project you're rolling back (see "Auth for
+#    verify-rules-release.mjs" under Step 4b above) — set BEFORE running this.
 node scripts/verify-rules-release.mjs idogs-app-staging firestore.rules
 #    (idogs-app for production, matching whichever --project you deployed to)
 #      - MATCH (exit 0)    -> rollback confirmed active, proceed to step 3.

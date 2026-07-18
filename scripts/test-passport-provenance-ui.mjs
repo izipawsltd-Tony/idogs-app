@@ -31,11 +31,8 @@ function isRemembered(dog) {
   return dog.isDeceased === true
 }
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 // ── Provenance labels ──
 check('BREEDER_ISSUED -> "Breeder-issued Dog ID"', getProvenanceValue({ sourceType: 'BREEDER_ISSUED' }) === 'Breeder-issued Dog ID')
@@ -59,5 +56,4 @@ check('isDeceased: missing -> not Remembered (matches API default of false)', is
 check('A deceased, owner-created dog is both Remembered and Owner-created', isRemembered({ isDeceased: true, sourceType: 'OWNER_CREATED' }) === true && getProvenanceValue({ isDeceased: true, sourceType: 'OWNER_CREATED' }) === 'Owner-created Dog ID')
 check('A living, breeder-issued dog is neither Remembered nor shows Owner-created', isRemembered({ isDeceased: false, sourceType: 'BREEDER_ISSUED' }) === false && getProvenanceValue({ isDeceased: false, sourceType: 'BREEDER_ISSUED' }) === 'Breeder-issued Dog ID')
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

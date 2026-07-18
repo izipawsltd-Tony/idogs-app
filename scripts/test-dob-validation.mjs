@@ -22,11 +22,8 @@
 
 const { readFileSync } = await import('node:fs')
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 // ── Mirror of lib/utils.ts's parseDobStrict ──
 function parseDobStrict(dob) {
@@ -207,5 +204,4 @@ function dobYearsAgo(years) {
   check('api/_lib/parent-eligibility.js requires the candidate\'s own DOB to be strictly valid (parseDobStrictServer)', /parseDobStrictServer\(dogData\.dateOfBirth\)/.test(eligibilitySrc))
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

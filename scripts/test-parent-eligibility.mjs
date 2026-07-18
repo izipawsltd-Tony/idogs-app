@@ -24,29 +24,14 @@
 
 import { validateBreedingParent, parseDobStrictServer, ageInMonths, MIN_BREEDING_MONTHS } from '../api/_lib/parent-eligibility.js'
 
-let pass = 0, fail = 0
-// Codex round 6 discovery (found while auditing test-atomic-transactions.mjs
-// for the same defect — see that file's own comment for the full
-// explanation): some of this file's check() calls pass
-// check(sectionLabel, description, condition), a 3rd positional
-// argument, but the signature was check(label, cond, extra) — so for
-// those specific calls, `cond` was always the DESCRIPTION STRING
-// (permanently truthy) and the real boolean was silently discarded into
-// `extra`. Fixed via runtime shape detection, which also transparently
-// preserves this file's other, already-correct 2-arg call sites.
-function check(label, arg2, arg3, arg4) {
-  let cond, extra
-  if (typeof arg2 === 'string' && arg3 !== undefined) {
-    label = `${label}: ${arg2}`
-    cond = arg3
-    extra = arg4 !== undefined ? arg4 : ''
-  } else {
-    cond = arg2
-    extra = arg3 !== undefined ? arg3 : ''
-  }
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+// Codex round 6: some of this file's check() calls pass check(sectionLabel,
+// description, condition) — fixed via call-shape detection. Codex round
+// 7, Blocker 1: now uses the shared, self-tested
+// scripts/_lib/test-check.mjs, which keeps that same shape detection AND
+// throws loudly instead of silently passing when given an unawaited
+// Promise/thenable as the condition.
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 function dobYearsAgo(years) {
   const d = new Date()
@@ -333,5 +318,4 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   console.log('SKIPPED: emulator integration section (Tests 11-12) — set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()

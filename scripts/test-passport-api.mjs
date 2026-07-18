@@ -28,11 +28,8 @@ const { default: handler } = await import('../api/passport.js')
 // module-level code) for seeding, so both point at the same emulator.
 const seedDb = getFirestore()
 
-let pass = 0, fail = 0
-function check(label, cond, extra = '') {
-  if (cond) { console.log(`PASS: ${label}`); pass++ }
-  else { console.log(`FAIL: ${label} ${extra}`); fail++ }
-}
+import { makeChecker } from './_lib/test-check.mjs'
+const { check, checkAsync, skip, summary } = makeChecker()
 
 // ADR-002 Phase C1 — handler now checks rate-limiting first, which reads
 // req.headers/req.socket. All mock requests below go through this so
@@ -160,5 +157,4 @@ await seedDb.collection('dogs').doc(dog3Id).set({
   check('Missing passportId returns 400', res.statusCode === 400, `got ${res.statusCode}`)
 }
 
-console.log(`\n${pass} passed, ${fail} failed`)
-process.exit(fail > 0 ? 1 : 0)
+summary()
