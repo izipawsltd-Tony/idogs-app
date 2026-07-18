@@ -116,7 +116,27 @@ export async function fetchActiveRulesetContent(projectId, accessToken, fetchImp
   if (!rulesetRes.ok) {
     throw new RulesVerificationError(`GET ${release.rulesetName} -> HTTP ${rulesetRes.status}: ${ruleset ? JSON.stringify(ruleset) : '(no body)'}`)
   }
-  const files = ruleset?.source?.files
+
+  // Codex round 9: the ruleset GET response was previously trusted
+  // purely because the FIRST call's release.rulesetName had already
+  // been validated — the ruleset response's OWN identity was never
+  // independently checked. A substituted, malformed, or cross-project
+  // ruleset response (e.g. from a misbehaving proxy, or an API that
+  // returned SOME ruleset but not the one actually requested) would
+  // have been silently accepted and its content compared as if it were
+  // the right one. This must fail closed BEFORE any source content is
+  // even looked at — identity is checked first, unconditionally.
+  if (!ruleset || typeof ruleset.name !== 'string' || !ruleset.name) {
+    throw new RulesVerificationError('Ruleset response is missing its own `name` field — cannot confirm it is the ruleset that was actually requested. Refusing to trust its content.')
+  }
+  if (ruleset.name !== release.rulesetName) {
+    throw new RulesVerificationError(`Ruleset response identifies itself as "${ruleset.name}", which does not exactly match the requested ruleset "${release.rulesetName}" — refusing to trust its content (possible substituted/stale response).`)
+  }
+  if (!ruleset.name.startsWith(expectedPrefix)) {
+    throw new RulesVerificationError(`Ruleset response's name "${ruleset.name}" does not belong to project "${projectId}" — refusing to trust its content (possible cross-project response).`)
+  }
+
+  const files = ruleset.source?.files
   if (!Array.isArray(files) || files.length === 0 || typeof files[0].content !== 'string') {
     throw new RulesVerificationError('Ruleset response did not contain the expected source.files[0].content shape — cannot verify.')
   }

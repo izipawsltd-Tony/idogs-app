@@ -107,13 +107,41 @@ export function makeChecker() {
   // Never throws and never returns a rejected Promise — a thrown error
   // from a thunk, a rejected Promise, and a resolved Promise<false> are
   // ALL caught here and converted into a counted FAIL. Safe to call
-  // without awaiting: the settlement is tracked in `pending` (added
-  // synchronously below, before this function's first `await` actually
-  // suspends it) and summary() will wait for it regardless of whether
-  // the caller ever awaits the returned promise directly.
+  // without awaiting: `settlement` is added to `pending` SYNCHRONOUSLY,
+  // before any user code (the thunk, or reading `.then` off a thenable)
+  // ever runs — see the Codex round 9 fix note below — so summary()
+  // will wait for it regardless of whether the caller ever awaits the
+  // returned promise directly.
   function checkAsync(label, arg2, arg3, arg4) {
     const shaped = resolveShape(label, arg2, arg3, arg4)
-    const settlement = (async () => {
+
+    // Codex round 9 fix: the round-8 version wrapped the whole body in
+    // `(async () => {...})()` and called `pending.add(settlement)` on
+    // the LINE AFTER that IIFE was invoked. But an async arrow function
+    // starts running SYNCHRONOUSLY up to its first actually-reached
+    // `await` — so if `shaped.condInput` was a plain (non-async)
+    // function whose body called summary() BEFORE returning a pending
+    // Promise (the exact shape Codex's repro uses:
+    // `() => { summary(); return new Promise(...) }`), that summary()
+    // call ran while `settlement` had not been added to `pending` yet.
+    // summary() saw an EMPTY pending set, printed "0 failed", and called
+    // process.exit(0) — before the thunk's own delayed `false` ever had
+    // a chance to resolve. A manually-created deferred Promise lets us
+    // add it to `pending` FIRST (still perfectly synchronous — no `await`
+    // involved), and only THEN hand control to any user code, via
+    // queueMicrotask so it's guaranteed to run strictly after this
+    // synchronous registration step has already completed.
+    let resolveSettlement
+    const settlement = new Promise((resolve) => { resolveSettlement = resolve })
+    pending.add(settlement)
+    // `settlement` is only ever resolved (see resolveSettlement() calls
+    // below), never rejected, so this .finally() can't itself become a
+    // second, competing unhandled-rejection source. Attached
+    // immediately, so `pending` is guaranteed to shrink even for a true
+    // fire-and-forget call the caller never awaits.
+    settlement.finally(() => pending.delete(settlement))
+
+    queueMicrotask(async () => {
       let cond
       try {
         const resolved = typeof shaped.condInput === 'function' ? shaped.condInput() : shaped.condInput
@@ -122,6 +150,7 @@ export function makeChecker() {
         const detail = err && err.message ? err.message : String(err)
         console.log(`FAIL: ${shaped.label} (threw/rejected: ${detail}) ${shaped.extra}`)
         fail++
+        resolveSettlement()
         return
       }
       if (cond) {
@@ -131,15 +160,9 @@ export function makeChecker() {
         console.log(`FAIL: ${shaped.label} ${shaped.extra}`)
         fail++
       }
-    })()
-    // The IIFE above never lets `settlement` reject (every path is
-    // caught internally), so attaching .finally() here cannot itself
-    // create a second, competing unhandled-rejection source — it only
-    // ever runs on fulfillment. Attached BEFORE returning, so
-    // `pending` is guaranteed to shrink even if the caller drops the
-    // returned promise entirely (true fire-and-forget).
-    pending.add(settlement)
-    settlement.finally(() => pending.delete(settlement))
+      resolveSettlement()
+    })
+
     return settlement
   }
 

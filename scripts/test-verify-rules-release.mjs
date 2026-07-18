@@ -155,7 +155,7 @@ await checkAsync('fetchActiveRulesetContent rejects when release response is mal
 
 console.log('--- Section 5: malformed ruleset shape ---')
 
-await checkAsync('fetchActiveRulesetContent rejects when ruleset has no source.files',
+await checkAsync('fetchActiveRulesetContent rejects when ruleset has no source.files (identity is otherwise valid)',
   rejectsWithRulesVerificationError(fetchActiveRulesetContent(
     'idogs-app-staging',
     'fake-token',
@@ -166,7 +166,10 @@ await checkAsync('fetchActiveRulesetContent rejects when ruleset has no source.f
           rulesetName: 'projects/idogs-app-staging/rulesets/abc123',
         })
       }
-      return jsonResponse(200, { source: {} })
+      // Identity checks out (name matches release.rulesetName and the
+      // project prefix) — this test is specifically about the missing
+      // source.files shape, not identity, so name must be well-formed.
+      return jsonResponse(200, { name: 'projects/idogs-app-staging/rulesets/abc123', source: {} })
     }),
   )))
 
@@ -192,7 +195,10 @@ await checkAsync('fetchActiveRulesetContent resolves with rulesetName + content 
           })
         }
         rulesetCalled = true
-        return jsonResponse(200, { source: { files: [{ name: 'firestore.rules', content: RULES_TEXT }] } })
+        return jsonResponse(200, {
+          name: 'projects/idogs-app-staging/rulesets/xyz789',
+          source: { files: [{ name: 'firestore.rules', content: RULES_TEXT }] },
+        })
       }),
     )
     return releaseCalled && rulesetCalled &&
@@ -293,7 +299,10 @@ await checkAsync('verifyRulesRelease() DOES call the credential factory and fetc
           rulesetName: 'projects/idogs-app-staging/rulesets/xyz789',
         })
       }
-      return jsonResponse(200, { source: { files: [{ name: 'firestore.rules', content: RULES_TEXT }] } })
+      return jsonResponse(200, {
+        name: 'projects/idogs-app-staging/rulesets/xyz789',
+        source: { files: [{ name: 'firestore.rules', content: RULES_TEXT }] },
+      })
     })
     const result = await verifyRulesRelease({
       projectId: 'idogs-app-staging',
@@ -306,6 +315,95 @@ await checkAsync('verifyRulesRelease() DOES call the credential factory and fetc
       credentialFactory.calls[0].projectId === 'idogs-app-staging' &&
       result.rulesetName === 'projects/idogs-app-staging/rulesets/xyz789' &&
       result.matches === true
+  })())
+
+console.log('--- Section 8: ruleset response identity validation (Codex round 9) ---')
+
+// Shared release mock: always identifies the correct project/rulesetName
+// so every test below isolates the SECOND call's (the ruleset GET)
+// identity checks specifically, not the already-covered release checks.
+function releaseThenRuleset(rulesetResponseBody) {
+  return async (url) => {
+    if (url.includes('/releases/cloud.firestore')) {
+      return jsonResponse(200, {
+        name: 'projects/idogs-app-staging/releases/cloud.firestore',
+        rulesetName: 'projects/idogs-app-staging/rulesets/xyz789',
+      })
+    }
+    return jsonResponse(200, rulesetResponseBody)
+  }
+}
+
+const IDENTITY_RULES_TEXT = "rules_version = '2';\nservice cloud.firestore {\n  match /{document=**} { allow read: if true; }\n}\n"
+
+await checkAsync('success mock includes the correct ruleset.name and resolves normally',
+  (async () => {
+    const result = await fetchActiveRulesetContent(
+      'idogs-app-staging',
+      'fake-token',
+      releaseThenRuleset({
+        name: 'projects/idogs-app-staging/rulesets/xyz789',
+        source: { files: [{ name: 'firestore.rules', content: IDENTITY_RULES_TEXT }] },
+      }),
+    )
+    return result.rulesetName === 'projects/idogs-app-staging/rulesets/xyz789' && result.content === IDENTITY_RULES_TEXT
+  })())
+
+await checkAsync('missing ruleset.name fails, even with otherwise well-formed source.files',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app-staging',
+    'fake-token',
+    releaseThenRuleset({ source: { files: [{ name: 'firestore.rules', content: IDENTITY_RULES_TEXT }] } }),
+  )))
+
+await checkAsync('empty-string ruleset.name fails (falsy but technically present)',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app-staging',
+    'fake-token',
+    releaseThenRuleset({ name: '', source: { files: [{ name: 'firestore.rules', content: IDENTITY_RULES_TEXT }] } }),
+  )))
+
+await checkAsync('mismatched ruleset name fails (a DIFFERENT ruleset within the SAME project)',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app-staging',
+    'fake-token',
+    releaseThenRuleset({
+      name: 'projects/idogs-app-staging/rulesets/SOME-OTHER-RULESET',
+      source: { files: [{ name: 'firestore.rules', content: IDENTITY_RULES_TEXT }] },
+    }),
+  )))
+
+await checkAsync('cross-project ruleset name fails (belongs to an entirely different project)',
+  rejectsWithRulesVerificationError(fetchActiveRulesetContent(
+    'idogs-app-staging',
+    'fake-token',
+    releaseThenRuleset({
+      name: 'projects/idogs-app/rulesets/xyz789',
+      source: { files: [{ name: 'firestore.rules', content: IDENTITY_RULES_TEXT }] },
+    }),
+  )))
+
+await checkAsync('matching text does NOT override an identity failure — content is never even trusted enough to compare',
+  (async () => {
+    // The ruleset's source content is byte-for-byte identical to what a
+    // real local firestore.rules file would contain — proving that a
+    // content match alone can never rescue a failed identity check, the
+    // identity check must run (and fail closed) BEFORE content is ever
+    // looked at.
+    let threw = false
+    try {
+      await fetchActiveRulesetContent(
+        'idogs-app-staging',
+        'fake-token',
+        releaseThenRuleset({
+          name: 'projects/idogs-app/rulesets/xyz789', // cross-project — must fail regardless of content below
+          source: { files: [{ name: 'firestore.rules', content: IDENTITY_RULES_TEXT }] },
+        }),
+      )
+    } catch (err) {
+      threw = err instanceof RulesVerificationError
+    }
+    return threw
   })())
 
 await summary()

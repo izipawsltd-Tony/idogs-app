@@ -173,32 +173,32 @@ async function captureLogs(fn) {
   check('The summary line matches the established "${pass} passed, ${fail} failed" format every test file already expects', !!summaryLine && summaryLine.includes('1 passed, 1 failed') && summaryLine.includes('1 skipped'))
 }
 
+// Shared by SECTIONS 7 and 8: writes a tiny throwaway .mjs to the OS
+// temp dir, runs it with `node`, and returns its actual stdout/stderr/
+// exit code. Needed because summary() calls process.exit() — running
+// these scenarios in-process would kill this test file too.
+const checkModuleUrl = new URL('./_lib/test-check.mjs', import.meta.url).href
+
+function runChild(body) {
+  const file = join(tmpdir(), `test-check-async-child-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`)
+  writeFileSync(file, `import { makeChecker } from '${checkModuleUrl}'\n${body}\n`, 'utf8')
+  try {
+    const stdout = execFileSync('node', [file], { encoding: 'utf8' })
+    return { status: 0, stdout, stderr: '' }
+  } catch (err) {
+    return { status: err.status, stdout: err.stdout ?? '', stderr: err.stderr ?? '' }
+  } finally {
+    unlinkSync(file)
+  }
+}
+
 // =========================================================================
 // SECTION 7 — summary() waits for checkAsync() calls the caller never
 // awaited (Codex round 8). A delayed false/rejection must still be
 // counted and still produce a nonzero exit; a delayed true must still
-// be counted before totals are printed. This can only be proven
-// honestly through a REAL child process, since summary() calls
-// process.exit() — running it in-process would kill this test file
-// too. Each scenario writes a tiny throwaway .mjs to the OS temp dir,
-// runs it with `node`, and inspects its actual stdout/exit code.
+// be counted before totals are printed.
 // =========================================================================
 {
-  const checkModuleUrl = new URL('./_lib/test-check.mjs', import.meta.url).href
-
-  function runChild(body) {
-    const file = join(tmpdir(), `test-check-async-child-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`)
-    writeFileSync(file, `import { makeChecker } from '${checkModuleUrl}'\n${body}\n`, 'utf8')
-    try {
-      const stdout = execFileSync('node', [file], { encoding: 'utf8' })
-      return { status: 0, stdout, stderr: '' }
-    } catch (err) {
-      return { status: err.status, stdout: err.stdout ?? '', stderr: err.stderr ?? '' }
-    } finally {
-      unlinkSync(file)
-    }
-  }
-
   // Unawaited checkAsync() resolving to TRUE after a delay, followed
   // immediately by summary() with no intervening await on the check
   // itself. If summary() did not wait for pending checks, this would
@@ -247,6 +247,96 @@ await summary()
 `)
   check('summary() waits for ALL pending checkAsync() calls, not just the first to settle', mixedMultiple.stdout.includes('2 passed, 1 failed'))
   check('mixed pending outcomes still produce the correct nonzero exit', mixedMultiple.status === 1)
+}
+
+// =========================================================================
+// SECTION 8 — re-entrant async assertion race (Codex round 9). The
+// round-8 checkAsync() called `pending.add(settlement)` on the line
+// AFTER invoking `(async () => {...})()`, but an async arrow function
+// runs SYNCHRONOUSLY up to its first actually-reached `await`. If the
+// condition thunk itself was a plain (non-async) function that called
+// summary() BEFORE returning its own pending Promise — exactly
+// `() => { summary(); return new Promise(...) }` — that summary() call
+// ran while `settlement` had not been registered in `pending` yet.
+// summary() saw an empty pending set, printed "0 failed", and called
+// process.exit(0) before the thunk's delayed `false` ever resolved.
+// The fix registers a manually-created deferred Promise into `pending`
+// BEFORE any user code runs, deferring the thunk itself to a
+// queueMicrotask callback. Every scenario here must run as a real child
+// process, since it deliberately calls process.exit() via summary().
+// =========================================================================
+{
+  // The EXACT Codex reproduction, verbatim. Must NOT print "0 failed"
+  // or exit 0 — the delayed false must be counted and force exit 1.
+  const codexRepro = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('lost false', () => {
+  summary()
+  return new Promise(resolve =>
+    setTimeout(() => resolve(false), 40))
+})
+`)
+  check('Codex repro: thunk-invoked summary() does not print "0 failed"', !codexRepro.stdout.includes('0 failed'))
+  check('Codex repro: the delayed false is counted ("0 passed, 1 failed")', codexRepro.stdout.includes('0 passed, 1 failed'))
+  check('Codex repro: process exits 1, not 0, once the delayed false lands', codexRepro.status === 1)
+
+  // Same shape, but the thunk's own Promise REJECTS instead of
+  // resolving false — must also be caught, counted as a fail, and
+  // force a nonzero exit, not an unhandled rejection or an exit 0.
+  const codexReproRejection = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('lost rejection', () => {
+  summary()
+  return new Promise((resolve, reject) =>
+    setTimeout(() => reject(new Error('lost rejection boom')), 40))
+})
+`)
+  check('thunk-invoked summary() + delayed rejection: not printed as "0 failed"', !codexReproRejection.stdout.includes('0 failed'))
+  check('thunk-invoked summary() + delayed rejection: counted as a failure', codexReproRejection.stdout.includes('0 passed, 1 failed'))
+  check('thunk-invoked summary() + delayed rejection: exits 1, not 0', codexReproRejection.status === 1)
+  check('thunk-invoked summary() + delayed rejection: no UnhandledPromiseRejection warning on stderr', !/UnhandledPromiseRejection|unhandledRejection/i.test(codexReproRejection.stderr))
+
+  // A recursive case: while summary() is draining the FIRST pending
+  // check, that check's own resolution schedules a SECOND checkAsync()
+  // call (added to `pending` mid-drain). summary() must pick up the
+  // newly-added check too, not just the set that existed when it was
+  // first called.
+  const recursiveDuringDrain = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('outer (spawns inner while summary drains)', () => new Promise(resolve => {
+  setTimeout(() => {
+    checkAsync('inner (added mid-drain)', () => new Promise(resolve2 => setTimeout(() => resolve2(false), 20)))
+    resolve(true)
+  }, 20)
+}))
+await summary()
+`)
+  check('a checkAsync() added WHILE summary() is draining is still waited for', recursiveDuringDrain.stdout.includes('1 passed, 1 failed'))
+  check('the recursively-added failing check still forces a nonzero exit', recursiveDuringDrain.status === 1)
+
+  // Baseline: ordinary AWAITED checkAsync() usage (no thunk-invoked
+  // summary(), no fire-and-forget) must still behave exactly as before
+  // — the round-9 fix must not change correctness for the common case.
+  const ordinaryAwaited = runChild(`
+const { checkAsync, summary } = makeChecker()
+await checkAsync('ordinary awaited true', Promise.resolve(true))
+await checkAsync('ordinary awaited false', Promise.resolve(false))
+await summary()
+`)
+  check('ordinary awaited checkAsync() calls still count correctly (regression check)', ordinaryAwaited.stdout.includes('1 passed, 1 failed'))
+  check('ordinary awaited usage still exits 1 on a real failure', ordinaryAwaited.status === 1)
+
+  // Baseline: ordinary FIRE-AND-FORGET usage (unawaited, but the caller
+  // does NOT call summary() from inside the thunk — summary() is called
+  // normally afterward) must still behave exactly as it did in round 8.
+  const ordinaryFireAndForget = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('fire-and-forget true', () => new Promise(resolve => setTimeout(() => resolve(true), 30)))
+checkAsync('fire-and-forget false', () => new Promise(resolve => setTimeout(() => resolve(false), 15)))
+await summary()
+`)
+  check('ordinary fire-and-forget checkAsync() calls still count correctly (regression check)', ordinaryFireAndForget.stdout.includes('1 passed, 1 failed'))
+  check('ordinary fire-and-forget usage still exits 1 on a real failure', ordinaryFireAndForget.status === 1)
 }
 
 await summary()
