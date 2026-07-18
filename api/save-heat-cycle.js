@@ -1,5 +1,5 @@
 // api/save-heat-cycle.js — trusted server-side heat cycle create/update
-// (Codex round 3, Blocker 1).
+// (Codex round 3, Blocker 1; hardened Codex round 4, Blocker 1).
 //
 // Same rationale as create-litter.js: firestore.rules can check a Sire
 // reference's ownership/sex/deceased/DOB-format but has no date
@@ -14,6 +14,17 @@
 // re-validated. firestore.rules denies direct client writes to
 // heatCycles/{id} create and update entirely — this endpoint is now the
 // only path for both.
+//
+// Codex round 4, Blocker 1: every read this endpoint relies on for a
+// validation decision — the Dam/Sire eligibility reads on CREATE, and
+// the access-check + Sire-eligibility reads on UPDATE — now happens
+// inside a single db.runTransaction alongside the write, for the same
+// reason as create-litter.js: a plain get()-then-write() sequence has a
+// window where a concurrent transfer/claim/deceased-marking could
+// invalidate the read between validation and commit. A transaction
+// closes that window by re-validating (via Firestore's own optimistic
+// concurrency check) that nothing read here has changed by commit time,
+// automatically retrying the whole callback against fresh state if it has.
 //
 // POST /api/save-heat-cycle
 // Headers: Authorization: Bearer <Firebase ID token>
@@ -68,29 +79,39 @@ export default async function handler(req, res) {
     const db = getFirestore()
 
     if (!cycleId) {
-      // CREATE — full Dam + (optional) Sire eligibility check.
-      const damSnap = await db.collection('dogs').doc(dogId).get()
-      const damCheck = validateBreedingParent(damSnap.exists ? damSnap.data() : null, { uid, requiredSex: 'female' })
-      if (!damCheck.valid) {
-        return res.status(400).json({ error: 'Dam is not an eligible breeding parent', reason: damCheck.reason })
-      }
-      if (cycle.sireId) {
-        const sireSnap = await db.collection('dogs').doc(cycle.sireId).get()
-        const sireCheck = validateBreedingParent(sireSnap.exists ? sireSnap.data() : null, { uid, requiredSex: 'male' })
-        if (!sireCheck.valid) {
-          return res.status(400).json({ error: 'Sire is not an eligible breeding parent', reason: sireCheck.reason })
-        }
-      }
-
-      const dam = damSnap.data()
+      // CREATE — full Dam + (optional) Sire eligibility check, read and
+      // written inside one transaction.
+      const damRef = db.collection('dogs').doc(dogId)
+      const sireRef = cycle.sireId ? db.collection('dogs').doc(cycle.sireId) : null
       const cycleRef = db.collection('heatCycles').doc()
-      await cycleRef.set({
-        ...cycle,
-        dogId,
-        tenantId: dam.tenantId,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+
+      const result = await db.runTransaction(async (tx) => {
+        const damSnap = await tx.get(damRef)
+        const sireSnap = sireRef ? await tx.get(sireRef) : null
+
+        const damCheck = validateBreedingParent(damSnap.exists ? damSnap.data() : null, { uid, requiredSex: 'female' })
+        if (!damCheck.valid) {
+          return { ok: false, status: 400, body: { error: 'Dam is not an eligible breeding parent', reason: damCheck.reason } }
+        }
+        if (sireRef) {
+          const sireCheck = validateBreedingParent(sireSnap.exists ? sireSnap.data() : null, { uid, requiredSex: 'male' })
+          if (!sireCheck.valid) {
+            return { ok: false, status: 400, body: { error: 'Sire is not an eligible breeding parent', reason: sireCheck.reason } }
+          }
+        }
+
+        const dam = damSnap.data()
+        tx.set(cycleRef, {
+          ...cycle,
+          dogId,
+          tenantId: dam.tenantId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+        return { ok: true }
       })
+
+      if (!result.ok) return res.status(result.status).json(result.body)
       return res.status(200).json({ cycleId: cycleRef.id })
     }
 
@@ -100,33 +121,45 @@ export default async function handler(req, res) {
     // update actually sets/changes one. The Dam herself isn't
     // re-validated for current eligibility — editing a HISTORICAL
     // record must remain possible even if she's since been transferred
-    // or passed away.
-    const existingSnap = await db.collection('heatCycles').doc(cycleId).get()
-    if (!existingSnap.exists || existingSnap.data().dogId !== dogId) {
-      return res.status(404).json({ error: 'Heat cycle record not found' })
-    }
-    const damSnap = await db.collection('dogs').doc(dogId).get()
-    if (!damSnap.exists) {
-      return res.status(404).json({ error: 'Dam not found' })
-    }
-    const dam = damSnap.data()
-    if (dam.tenantId !== uid && dam.currentOwnerId !== uid) {
-      return res.status(403).json({ error: 'Not your dog' })
-    }
-    if (cycle.sireId) {
-      const sireSnap = await db.collection('dogs').doc(cycle.sireId).get()
-      const sireCheck = validateBreedingParent(sireSnap.exists ? sireSnap.data() : null, { uid, requiredSex: 'male' })
-      if (!sireCheck.valid) {
-        return res.status(400).json({ error: 'Sire is not an eligible breeding parent', reason: sireCheck.reason })
-      }
-    }
+    // or passed away. All reads + the write happen inside one
+    // transaction so a concurrent Sire mutation between validation and
+    // commit is caught and retried, same as CREATE above.
+    const existingRef = db.collection('heatCycles').doc(cycleId)
+    const damRef = db.collection('dogs').doc(dogId)
+    const sireRef = cycle.sireId ? db.collection('dogs').doc(cycle.sireId) : null
 
-    await db.collection('heatCycles').doc(cycleId).update({
-      ...cycle,
-      dogId,
-      tenantId: dam.tenantId,
-      updatedAt: new Date().toISOString(),
+    const result = await db.runTransaction(async (tx) => {
+      const existingSnap = await tx.get(existingRef)
+      const damSnap = await tx.get(damRef)
+      const sireSnap = sireRef ? await tx.get(sireRef) : null
+
+      if (!existingSnap.exists || existingSnap.data().dogId !== dogId) {
+        return { ok: false, status: 404, body: { error: 'Heat cycle record not found' } }
+      }
+      if (!damSnap.exists) {
+        return { ok: false, status: 404, body: { error: 'Dam not found' } }
+      }
+      const dam = damSnap.data()
+      if (dam.tenantId !== uid && dam.currentOwnerId !== uid) {
+        return { ok: false, status: 403, body: { error: 'Not your dog' } }
+      }
+      if (sireRef) {
+        const sireCheck = validateBreedingParent(sireSnap.exists ? sireSnap.data() : null, { uid, requiredSex: 'male' })
+        if (!sireCheck.valid) {
+          return { ok: false, status: 400, body: { error: 'Sire is not an eligible breeding parent', reason: sireCheck.reason } }
+        }
+      }
+
+      tx.update(existingRef, {
+        ...cycle,
+        dogId,
+        tenantId: dam.tenantId,
+        updatedAt: new Date().toISOString(),
+      })
+      return { ok: true }
     })
+
+    if (!result.ok) return res.status(result.status).json(result.body)
     return res.status(200).json({ cycleId })
   } catch (err) {
     console.error('save-heat-cycle error:', err)

@@ -182,8 +182,16 @@ function dobYearsAgo(years) {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
   check('firestore.rules defines isValidDobString with the same YYYY-MM-DD shape', /function isValidDobString\(dob\)/.test(rules) && /\^\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}\$/.test(rules))
   check('dogs create requires isValidDobString', /isValidDobString\(request\.resource\.data\.dateOfBirth\)/.test(rules))
-  check('litters update requires isValidDobString on actualBirthDate while puppies exist',
-    /isValidDobString\(request\.resource\.data\.get\('actualBirthDate', null\)\)/.test(rules))
+  // Codex round 4, Blocker 3: litters update moved entirely server-side
+  // (denied outright in rules) — the actualBirthDate-format-while-
+  // puppies-exist invariant is now enforced in api/update-litter.js
+  // instead (via parseDobStrictServer, a strictly stronger real-past-
+  // date check, not just format) — see test-atomic-transactions.mjs
+  // Section 4.
+  const updateApiSrc = readFileSync(new URL('../api/update-litter.js', import.meta.url), 'utf8')
+  check('litters update is denied outright in rules (moved server-side)', /allow create, update, delete: if false;/.test(rules))
+  check('api/update-litter.js validates actualBirthDate via parseDobStrictServer when it changes',
+    /parseDobStrictServer\(safePatch\.actualBirthDate\)/.test(updateApiSrc))
   // Sire/Dam reference DOB validation (the candidate's own DOB must be
   // valid AND actually mature enough) moved server-side in Codex round 3
   // (Blocker 1) — Firestore Rules has no date-arithmetic to check real

@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, setDoc, Timestamp, runTransaction, arrayUnion
+  query, where, serverTimestamp, setDoc, Timestamp, runTransaction
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage } from '../types'
@@ -337,88 +337,65 @@ export async function createDog(
   return ref.id
 }
 
-// Codex round 3, Blocker 3 — createDog()'s own reservePassportId() call
-// is already its own transaction, which can't be nested inside another
-// (Firestore has no cross-transaction composition), so it can't be
-// reused as-is for a puppy that ALSO needs an atomic litter-puppyIds
-// link. This function folds passportId reservation + dog creation +
-// litter linking into ONE transaction, so all three succeed or none do
-// — no orphan Dog with a consumed reservation but no litter link, no
-// linked-but-nonexistent puppyId, no reservation left dangling.
+// Codex round 3, Blocker 3, then moved server-side + hardened in Codex
+// round 4, Blockers 3 + 4.
 //
-// Idempotency: the caller pre-generates `dogId` once (via
-// doc(collection(db,'dogs')).id, a local operation with no network
-// round-trip) and persists it across any retry of the SAME logical
-// "add this puppy" submission (see LittersPage's pendingPuppyIdRef). If
-// a prior attempt with that exact dogId actually committed server-side
-// but the client never saw confirmation (a genuine network-ambiguity
-// case — the one thing no client-only idempotency key can fully avoid
-// without a server-persisted ledger), retrying finds the dog document
-// ALREADY exists and returns its real passportId without creating a
-// second dog, re-reserving a passportId, or double-linking the litter
-// (arrayUnion is itself idempotent). A prior attempt that never
-// actually committed leaves zero trace — retrying is then
-// indistinguishable from a first attempt, including generating a fresh
-// passportId candidate, which is safe precisely because nothing from
-// the failed attempt was ever persisted.
+// Round 3's version ran as a CLIENT-side Firestore transaction ending in
+// a direct `tx.update(litterRef, {puppyIds: arrayUnion(dogId)})` write —
+// but round 4, Blocker 3 requires firestore.rules to deny ALL direct
+// client litters update/delete unconditionally (see that rule's own
+// comment), which a client transaction touching litters can no longer
+// satisfy. This now calls api/create-litter-puppy.js (Admin SDK,
+// bypasses Rules) instead.
+//
+// Round 4, Blocker 4 also hardened the idempotency contract itself: an
+// existing dogId is no longer, by itself, treated as proof of a valid
+// retry (a stale ref reused across litters, or a dogId collision with
+// an unrelated dog, could otherwise silently succeed against the wrong
+// record). The caller here still pre-generates and persists BOTH
+// `dogId` and a separate `operationId` across retries of the same
+// logical "add this puppy" submission (see LittersPage's
+// pendingPuppyOperationRef) — the server endpoint persists an
+// operations record keyed by operationId atomically with the dog it
+// creates, and only trusts a retry when every field of that record
+// (tenant, litter, dogId, and the full submitted payload) agrees with
+// the new request; any mismatch fails with no writes at all rather than
+// silently resuming the wrong operation.
 export async function createLitterPuppyAtomic(
   litterId: string,
   dogId: string,
+  operationId: string,
   data: DogFormData,
   sourceType: 'BREEDER_ISSUED' | 'OWNER_CREATED' = 'BREEDER_ISSUED'
 ): Promise<{ dogId: string; passportId: string; alreadyExisted: boolean }> {
-  const dogRef = doc(db, 'dogs', dogId)
-  const litterRef = doc(db, 'litters', litterId)
-  const now = new Date()
-  const yearPart = data.dateOfBirth ? data.dateOfBirth.slice(0, 4) : now.getFullYear().toString()
-  const namePart = (data.name || 'DOG').slice(0, 3).toUpperCase()
-
-  for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
-    const candidate = `${namePart}-${yearPart}-${nanoid(4)}`
-    const reservationRef = doc(db, 'passportReservations', candidate)
-    try {
-      const result = await runTransaction(db, async (tx) => {
-        const existingDogSnap = await tx.get(dogRef)
-        if (existingDogSnap.exists()) {
-          // Idempotent retry of an attempt that already fully committed.
-          const litterSnap = await tx.get(litterRef)
-          if (litterSnap.exists() && !(litterSnap.data().puppyIds || []).includes(dogId)) {
-            tx.update(litterRef, { puppyIds: arrayUnion(dogId) })
-          }
-          return { passportId: existingDogSnap.data().passportId as string, alreadyExisted: true }
-        }
-        const reservationSnap = await tx.get(reservationRef)
-        if (reservationSnap.exists()) throw new Error('PASSPORT_ID_TAKEN')
-        tx.set(reservationRef, { createdAt: serverTimestamp(), createdBy: uid() })
-        tx.set(dogRef, {
-          ...data,
-          tenantId: uid(),
-          currentOwnerId: uid(),
-          createdByUserId: uid(),
-          sourceType,
-          ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: uid() } : {}),
-          passportId: candidate,
-          litterId,
-          lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
-          isDeceased: false,
-          photos: [],
-          notes: data.notes || '',
-          status: 'active',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        })
-        tx.update(litterRef, { puppyIds: arrayUnion(dogId) })
-        return { passportId: candidate, alreadyExisted: false }
-      })
-      return { dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted }
-    } catch (err: any) {
-      if (err?.message !== 'PASSPORT_ID_TAKEN') throw err
-      // else: genuine collision on this specific candidate — loop and
-      // try a fresh one. Safe to regenerate: nothing from this failed
-      // attempt was persisted (the whole transaction rolled back).
-    }
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/create-litter-puppy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({
+      operationId,
+      litterId,
+      dogId,
+      sourceType,
+      payload: {
+        name: data.name,
+        breed: data.breed,
+        sex: data.sex,
+        dateOfBirth: data.dateOfBirth,
+        colour: data.colour,
+        microchip: data.microchip,
+        ankc: data.ankc,
+        notes: data.notes,
+      },
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Add puppy failed (${res.status})`)
   }
-  throw new Error('Could not generate a unique passport ID — please try again')
+  const result = await res.json()
+  return { dogId: result.dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted }
 }
 
 export async function updateDog(id: string, data: Partial<Dog>): Promise<void> {
@@ -884,8 +861,68 @@ export async function createLitter(data: Omit<Litter, 'id' | 'createdAt' | 'tena
   return result.litterId
 }
 
-export async function updateLitter(id: string, data: Partial<Litter>): Promise<void> {
-  await updateDoc(doc(db, 'litters', id), data)
+// Codex round 4, Blocker 3 — firestore.rules now denies litters update
+// unconditionally (no direct-client rule path can safely verify
+// DOB-propagation to puppies happened correctly), so this calls
+// api/update-litter.js (Admin SDK) instead of writing to Firestore
+// directly. Only name/matingSuspectedDate/expectedDueDate/
+// actualBirthDate/notes are ever meaningful here — damId/sireId/
+// tenantId were never settable through this function's callers anyway.
+// Returns how many still-owned, history-free puppies had their DOB
+// propagated (0 when actualBirthDate wasn't part of this patch, or
+// didn't actually change).
+export async function updateLitter(id: string, data: Partial<Litter>): Promise<{ updatedPuppyCount: number }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/update-litter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId: id, patch: data }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update litter failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// Codex round 4, Blocker 3 — mirrors updateLitter()'s move server-side.
+// Re-decides which puppies are safe to delete alongside the litter fresh
+// inside api/delete-litter.js's own Admin SDK transaction (the exact
+// same eligibility logic round 3's client transaction used, just moved
+// where a direct client write can no longer bypass it).
+export async function deleteLitterServer(id: string): Promise<{ deletedCount: number; preservedCount: number; ambiguousCount: number }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/delete-litter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId: id }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Delete litter failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// Codex round 4, Blocker 3 — replaces the old direct
+// updateLitter(litter.id, {puppyIds: filtered}) call (a raw client
+// puppyIds mutation, exactly the bypass this blocker calls out by name)
+// with a server endpoint that verifies confirmed litter membership
+// before unlinking. Unlinks only — never deletes the Dog document.
+export async function removePuppyFromLitter(litterId: string, puppyId: string): Promise<void> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/remove-litter-puppy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, puppyId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Remove puppy failed (${res.status})`)
+  }
 }
 
 // ── AUDIT TRAIL ──────────────────────────────────────────────

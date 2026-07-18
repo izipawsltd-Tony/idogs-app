@@ -141,7 +141,9 @@ function dobYearsAgo(years) {
 {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
   const littersBlock = (rules.match(/match \/litters\/\{id\} \{[\s\S]*?\n    \}/) || [''])[0]
-  check('litters create is denied outright for direct client writes (moved server-side)', /allow create: if false;/.test(littersBlock))
+  // Codex round 4, Blocker 3: create is now denied alongside update/delete
+  // in one combined rule, not its own standalone line.
+  check('litters create is denied outright for direct client writes (moved server-side)', /allow create, update, delete: if false;/.test(littersBlock))
   const eligibilitySrc = readFileSync(new URL('../api/_lib/parent-eligibility.js', import.meta.url), 'utf8')
   check('api/_lib/parent-eligibility.js validates Dam ownership (currentOwnerId)', /currentOwnerId/.test(eligibilitySrc))
   check('api/_lib/parent-eligibility.js validates required sex', /requiredSex/.test(eligibilitySrc))

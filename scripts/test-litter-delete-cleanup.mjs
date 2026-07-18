@@ -24,7 +24,7 @@
 
 import { initializeApp } from 'firebase/app'
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword } from 'firebase/auth'
-import { getFirestore, connectFirestoreEmulator, doc, getDoc, setDoc, updateDoc, writeBatch, deleteDoc } from 'firebase/firestore'
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore'
 import { initializeApp as initAdminApp } from 'firebase-admin/app'
 import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
 
@@ -70,20 +70,49 @@ async function as(name) {
   await signInWithEmailAndPassword(auth, email(name), PW)
 }
 
-// Mirrors LittersPage.partitionLitterCandidates()'s exact
-// candidate-filtering logic against already-fetched snapshots. Codex
-// round 3, Blocker 4: history is checked across ALL of buyerEmail/
-// previousOwnerId/transferredAt/claimedAt — not buyerEmail alone.
+// Mirrors api/_lib/litter-eligibility.js's partitionLitterCandidatesServer
+// exact candidate-filtering logic against already-fetched snapshots.
+// Codex round 3, Blocker 4 / round 4, Blocker 5: history is checked
+// across ALL of buyerEmail/previousOwnerId/transferredAt/claimedAt/
+// claimedBy — not buyerEmail alone.
 function computeEligible(freshLitterId, fetched, requesterUid) {
   const confirmedMembers = fetched.filter(d => d.litterId === freshLitterId)
   const ambiguousCount = fetched.length - confirmedMembers.length
   const eligible = confirmedMembers.filter(d =>
     d.currentOwnerId === requesterUid &&
     d.status !== 'transferred' && d.transferStatus !== 'pendingClaim' &&
-    !d.buyerEmail && !d.previousOwnerId && !d.transferredAt && !d.claimedAt
+    !d.buyerEmail && !d.previousOwnerId && !d.transferredAt && !d.claimedAt && !d.claimedBy
   )
   const preserved = confirmedMembers.length - eligible.length
   return { confirmedMembers, ambiguousCount, eligible, preserved }
+}
+
+// Codex round 4, Blocker 3: litters delete moved entirely server-side —
+// firestore.rules denies a direct client delete unconditionally, so
+// every "delete this litter" call in this file below now goes through
+// this Admin SDK mirror of api/delete-litter.js's own transaction
+// (bypasses Rules exactly as the real endpoint does) instead of a client
+// writeBatch. The endpoint always decides its OWN eligible set from
+// litter.puppyIds via computeEligible — it never trusts a client-
+// supplied list of "which dogs to delete", which is what makes
+// Section 2 below ("a batch with an unauthorized dog") structurally
+// impossible to construct through the real endpoint any more (see that
+// section's own updated comment).
+async function deleteLitterServer(litterId, requesterUid) {
+  const litterRef = adminDb.collection('litters').doc(litterId)
+  return adminDb.runTransaction(async (tx) => {
+    const litterSnap = await tx.get(litterRef)
+    if (!litterSnap.exists) return { deletedCount: 0, notFound: true }
+    const litter = litterSnap.data()
+    if (litter.tenantId !== requesterUid) throw new Error('NOT_YOUR_LITTER')
+    const puppyIds = litter.puppyIds || []
+    const candidateSnaps = await Promise.all(puppyIds.map(id => tx.get(adminDb.collection('dogs').doc(id))))
+    const fetched = candidateSnaps.filter(s => s.exists).map(s => ({ id: s.id, ...s.data() }))
+    const { eligible, preserved } = computeEligible(litterId, fetched, requesterUid)
+    tx.delete(litterRef)
+    for (const puppy of eligible) tx.delete(adminDb.collection('dogs').doc(puppy.id))
+    return { deletedCount: eligible.length, preservedCount: preserved }
+  })
 }
 
 const breederUid = await newUser('breeder')
@@ -128,14 +157,13 @@ const strangerUid = await newUser('stranger')
     sourceType: 'BREEDER_ISSUED', name: 'Unrelated', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
   })
 
-  const batch = writeBatch(db)
-  batch.delete(doc(db, 'litters', litterId))
-  batch.delete(doc(db, 'dogs', `p1_${R}`))
-  batch.delete(doc(db, 'dogs', `p2_${R}`))
-  // p3 deliberately excluded — transferred, must be preserved
+  // p3 is NOT passed here — delete-litter.js decides its own eligible
+  // set from litter.puppyIds + computeEligible, it never trusts a
+  // caller-supplied list, so it correctly excludes p3 (transferred) on
+  // its own.
   let deleteOk = true
-  try { await batch.commit() } catch (err) { deleteOk = false }
-  check('1-Delete', 'Litter-delete batch (litter + 2 eligible puppies) succeeds', deleteOk)
+  try { await deleteLitterServer(litterId, breederUid) } catch (err) { deleteOk = false }
+  check('1-Delete', 'Litter delete (litter + 2 eligible puppies, p3 correctly self-excluded) succeeds', deleteOk)
 
   const litterSnap = await safeGetDoc(doc(db, 'litters', litterId))
   check('1-Delete', 'Litter document is gone', !litterSnap.exists())
@@ -153,9 +181,18 @@ const strangerUid = await newUser('stranger')
 }
 
 // =========================================================================
-// SECTION 2 — Atomicity: a batch that includes a dog the requester
-// doesn't actually own must fail ENTIRELY — the litter itself must NOT
-// be deleted either, so litter/puppy state can never go inconsistent
+// SECTION 2 — Self-computed eligibility: Codex round 4, Blocker 3 moved
+// litter deletion server-side, where the endpoint ALWAYS derives its own
+// eligible set from litter.puppyIds + computeEligible — it never accepts
+// a caller-supplied list of "which dogs to delete" the way a client
+// writeBatch could. This makes the round-3 "a batch with an unauthorized
+// dog wrongly included" scenario structurally impossible to construct
+// through the real endpoint any more: even if a litter's puppyIds
+// erroneously lists a stranger's dog (a data-corruption scenario), the
+// endpoint's own currentOwnerId check excludes it automatically, and the
+// litter + the genuinely-eligible puppy still delete correctly — a
+// false-positive entry in puppyIds can never block or corrupt the rest
+// of the operation.
 // =========================================================================
 {
   await as('breeder')
@@ -165,17 +202,13 @@ const strangerUid = await newUser('stranger')
     sourceType: 'BREEDER_ISSUED', name: 'Dam2', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const litterId2 = `litter2_${R}`
-  await adminDb.collection('litters').doc(litterId2).set({
-    tenantId: breederUid, damId: damId2, name: 'Atomicity Litter', notes: '', actualBirthDate: '2026-01-01',
-    puppyIds: [`ap1_${R}`],
-  })
   await setDoc(doc(db, 'dogs', `ap1_${R}`), {
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'AtomicPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId2,
   })
-  // A stranger's dog, wrongly included in the batch (simulates a bug —
-  // e.g. a stale puppyIds entry pointing at a dog that isn't the
-  // requester's own anymore)
+  // A stranger's dog, erroneously listed in this litter's puppyIds
+  // (simulates a data-corruption bug — e.g. a stale puppyIds entry
+  // pointing at a dog that was never actually this breeder's own).
   await as('stranger')
   const strangerDogId = `strangerdog_${R}`
   await setDoc(doc(db, 'dogs', strangerDogId), {
@@ -184,20 +217,23 @@ const strangerUid = await newUser('stranger')
   })
 
   await as('breeder')
-  const badBatch = writeBatch(db)
-  badBatch.delete(doc(db, 'litters', litterId2))
-  badBatch.delete(doc(db, 'dogs', `ap1_${R}`))
-  badBatch.delete(doc(db, 'dogs', strangerDogId)) // not the breeder's dog — must deny the whole batch
-  let batchDenied = false
-  try { await badBatch.commit() } catch (err) { batchDenied = isDenied(err) }
-  check('2-Atomicity', 'A batch containing an unauthorized delete is rejected entirely', batchDenied)
+  await adminDb.collection('litters').doc(litterId2).set({
+    tenantId: breederUid, damId: damId2, name: 'Atomicity Litter', notes: '', actualBirthDate: '2026-01-01',
+    puppyIds: [`ap1_${R}`, strangerDogId],
+  })
 
-  const litterStillThere = await safeGetDoc(doc(db, 'litters', litterId2))
-  check('2-Atomicity', 'After a rejected batch, the litter document is NOT deleted (no partial state)', litterStillThere.exists())
-  const puppyStillThere = await safeGetDoc(doc(db, 'dogs', `ap1_${R}`))
-  check('2-Atomicity', 'After a rejected batch, the eligible puppy is NOT deleted either (no partial state)', puppyStillThere.exists())
+  let deleteOk = true
+  let outcome
+  try { outcome = await deleteLitterServer(litterId2, breederUid) } catch (err) { deleteOk = false }
+  check('2-Atomicity', 'The litter still deletes successfully despite the corrupted puppyIds entry', deleteOk)
+  check('2-Atomicity', 'Exactly the one genuinely-eligible puppy was deleted (the stranger\'s dog was never counted)', outcome?.deletedCount === 1)
+
+  const litterGone = await safeGetDoc(doc(db, 'litters', litterId2))
+  check('2-Atomicity', 'The litter document is deleted', !litterGone.exists())
+  const puppyGone = await safeGetDoc(doc(db, 'dogs', `ap1_${R}`))
+  check('2-Atomicity', 'The genuinely-eligible puppy is deleted', !puppyGone.exists())
   const strangerDogStillThere = await safeGetDoc(doc(db, 'dogs', strangerDogId))
-  check('2-Atomicity', "The stranger's own dog was never touched", strangerDogStillThere.exists())
+  check('2-Atomicity', "The stranger's own dog was never touched, despite being listed in puppyIds", strangerDogStillThere.exists())
 }
 
 // =========================================================================
@@ -215,10 +251,8 @@ const strangerUid = await newUser('stranger')
   await adminDb.collection('litters').doc(litterId3).set({
     tenantId: breederUid, damId: damId3, name: 'Empty Litter', notes: '', puppyIds: [],
   })
-  const batch = writeBatch(db)
-  batch.delete(doc(db, 'litters', litterId3))
   let ok = true
-  try { await batch.commit() } catch { ok = false }
+  try { await deleteLitterServer(litterId3, breederUid) } catch { ok = false }
   check('3-EmptyLitter', 'A planned litter with zero puppies deletes cleanly', ok)
 }
 
@@ -258,9 +292,7 @@ const strangerUid = await newUser('stranger')
   check('4-CrossLinkGuard', 'A dog whose litterId points elsewhere is excluded from litter membership entirely', confirmedMembers.length === 0)
   check('4-CrossLinkGuard', 'A dog whose litterId points elsewhere is never in the eligible-for-deletion set', eligible.length === 0)
 
-  const batch = writeBatch(db)
-  batch.delete(doc(db, 'litters', thisLitterId))
-  await batch.commit()
+  await deleteLitterServer(thisLitterId, breederUid)
   const pupStillThere = await safeGetDoc(doc(db, 'dogs', crossLinkedPupId))
   check('4-CrossLinkGuard', 'The cross-linked puppy (belongs to a different litter) survives the delete untouched', pupStillThere.exists() && pupStillThere.data().litterId === otherLitterId)
 }
@@ -300,9 +332,7 @@ const strangerUid = await newUser('stranger')
   check('5-AmbiguousLegacy', 'It is counted as ambiguous, not silently dropped or silently included', ambiguousCount === 1)
   check('5-AmbiguousLegacy', 'It is never in the eligible-for-deletion set', eligible.length === 0)
 
-  const batch = writeBatch(db)
-  batch.delete(doc(db, 'litters', litterId5))
-  await batch.commit()
+  await deleteLitterServer(litterId5, breederUid)
   const legacyPupStillThere = await safeGetDoc(doc(db, 'dogs', legacyPupId))
   check('5-AmbiguousLegacy', 'The ambiguous legacy puppy survives the litter delete completely untouched', legacyPupStillThere.exists())
 
@@ -318,9 +348,7 @@ const strangerUid = await newUser('stranger')
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Standalone', sex: 'male', status: 'active', dateOfBirth: '2018-01-01',
   })
-  const batch2 = writeBatch(db)
-  batch2.delete(doc(db, 'litters', litterId5b))
-  await batch2.commit()
+  await deleteLitterServer(litterId5b, breederUid)
   const standaloneStillThere = await safeGetDoc(doc(db, 'dogs', standaloneDogId))
   check('5-AmbiguousLegacy', 'A same-tenant standalone dog with no litterId and no puppyIds membership is untouched', standaloneStillThere.exists())
 }
@@ -371,9 +399,7 @@ const strangerUid = await newUser('stranger')
 
   // The actual delete (litter only, since eligible is empty) must leave
   // the transferred puppy fully intact
-  const batch = writeBatch(db)
-  batch.delete(doc(db, 'litters', litterId6))
-  await batch.commit()
+  await deleteLitterServer(litterId6, breederUid)
   const racePupStillThere = await safeGetDoc(doc(db, 'dogs', racePupId))
   check('6-ConcurrentChange', 'The concurrently-transferred puppy survives with its new owner intact', racePupStillThere.exists() && racePupStillThere.data().currentOwnerId === buyerUid6)
 }
@@ -414,10 +440,7 @@ const strangerUid = await newUser('stranger')
   check('7-AffectedCount', 'Computed eligible count is exactly 3', eligible.length === 3)
   check('7-AffectedCount', 'Computed preserved count is exactly 1', preserved === 1)
 
-  const batch = writeBatch(db)
-  batch.delete(doc(db, 'litters', litterId7))
-  for (const puppy of eligible) batch.delete(doc(db, 'dogs', puppy.id))
-  await batch.commit()
+  await deleteLitterServer(litterId7, breederUid)
 
   let actuallyDeleted = 0, actuallyPreserved = 0
   for (const id of pupIds) {
@@ -452,20 +475,16 @@ const strangerUid = await newUser('stranger')
     tenantId: breederUid, damId: damId8, name: 'Litter8', notes: '', actualBirthDate: '2026-01-01', puppyIds: [pupId8],
   })
 
-  const firstBatch = writeBatch(db)
-  firstBatch.delete(doc(db, 'litters', litterId8))
-  firstBatch.delete(doc(db, 'dogs', pupId8))
   let firstOk = true
-  try { await firstBatch.commit() } catch { firstOk = false }
-  check('8-RetryIdempotent', 'First commit succeeds', firstOk)
+  try { await deleteLitterServer(litterId8, breederUid) } catch { firstOk = false }
+  check('8-RetryIdempotent', 'First delete succeeds', firstOk)
 
-  // Retry — same shape of batch, deleting already-deleted documents
-  const retryBatch = writeBatch(db)
-  retryBatch.delete(doc(db, 'litters', litterId8))
-  retryBatch.delete(doc(db, 'dogs', pupId8))
+  // Retry — same litterId, already deleted (the litter document no
+  // longer exists) — deleteLitterServer's own not-found branch handles
+  // this without throwing.
   let retryOk = true
-  try { await retryBatch.commit() } catch { retryOk = false }
-  check('8-RetryIdempotent', 'Retrying the same delete batch on already-deleted documents does not error', retryOk)
+  try { await deleteLitterServer(litterId8, breederUid) } catch { retryOk = false }
+  check('8-RetryIdempotent', 'Retrying the delete on an already-deleted litter does not error', retryOk)
 
   const litterGone = await safeGetDoc(doc(db, 'litters', litterId8))
   const pupGone = await safeGetDoc(doc(db, 'dogs', pupId8))
@@ -517,9 +536,7 @@ const strangerUid = await newUser('stranger')
   try { await deleteDoc(doc(db, 'dogs', pendingPupId)) } catch (err) { directDeleteDenied = isDenied(err) }
   check('9-PendingClaim', 'firestore.rules independently denies deleting a pending-claim dog directly (not just via client eligibility filtering)', directDeleteDenied)
 
-  const batch = writeBatch(db)
-  batch.delete(doc(db, 'litters', litterId9))
-  await batch.commit()
+  await deleteLitterServer(litterId9, breederUid)
   const pendingPupStillThere = await safeGetDoc(doc(db, 'dogs', pendingPupId))
   check('9-PendingClaim', 'Pending-claim puppy survives the litter delete completely untouched', pendingPupStillThere.exists())
 }

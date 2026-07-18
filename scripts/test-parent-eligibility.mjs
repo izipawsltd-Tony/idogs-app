@@ -80,12 +80,52 @@ function eligibleDog(overrides = {}) {
   check('Deceased parent is rejected', result.valid === false && result.reason === 'PARENT_DECEASED')
 }
 
-// ── Test 6: transferred / pending-claim ──
+// ── Test 6: transferred / pending-claim / non-active status (Codex
+// round 4, Blocker 1 — status must be EXACTLY 'active'; a transferred
+// dog's status is always 'transferred', so it's caught by the stricter
+// status check before ever reaching the old transferStatus-only check) ──
 {
   const transferred = validateBreedingParent(eligibleDog({ status: 'transferred' }), { uid: UID, requiredSex: 'female' })
-  check('Transferred (status=transferred) parent is rejected', transferred.valid === false && transferred.reason === 'PARENT_TRANSFERRED')
+  check('Transferred (status=transferred) parent is rejected', transferred.valid === false && transferred.reason === 'PARENT_NOT_ACTIVE')
   const pending = validateBreedingParent(eligibleDog({ status: 'active', transferStatus: 'pendingClaim' }), { uid: UID, requiredSex: 'female' })
   check('Pending-claim parent is rejected even though currentOwnerId and status both look clean', pending.valid === false && pending.reason === 'PARENT_TRANSFERRED')
+}
+
+// ── Test 6b: every non-'active' status fails closed (Codex round 4,
+// Blocker 1 — "missing, malformed, archived, deleted, transferred, or
+// any other status must fail closed") ──
+{
+  check('status="archived" is rejected', validateBreedingParent(eligibleDog({ status: 'archived' }), { uid: UID, requiredSex: 'female' }).reason === 'PARENT_NOT_ACTIVE')
+  check('status="deleted" is rejected', validateBreedingParent(eligibleDog({ status: 'deleted' }), { uid: UID, requiredSex: 'female' }).reason === 'PARENT_NOT_ACTIVE')
+  check('status=undefined (missing entirely) is rejected, never defaults to active', validateBreedingParent(eligibleDog({ status: undefined }), { uid: UID, requiredSex: 'female' }).reason === 'PARENT_NOT_ACTIVE')
+  check('status="" (empty string) is rejected', validateBreedingParent(eligibleDog({ status: '' }), { uid: UID, requiredSex: 'female' }).reason === 'PARENT_NOT_ACTIVE')
+  check('status=null is rejected', validateBreedingParent(eligibleDog({ status: null }), { uid: UID, requiredSex: 'female' }).reason === 'PARENT_NOT_ACTIVE')
+  check('status=123 (wrong type) is rejected', validateBreedingParent(eligibleDog({ status: 123 }), { uid: UID, requiredSex: 'female' }).reason === 'PARENT_NOT_ACTIVE')
+  check('status="Active" (wrong case) is rejected — exact match only, no case-insensitive leniency', validateBreedingParent(eligibleDog({ status: 'Active' }), { uid: UID, requiredSex: 'female' }).reason === 'PARENT_NOT_ACTIVE')
+  check('status="active" (the one accepted value) passes this check', validateBreedingParent(eligibleDog({ status: 'active' }), { uid: UID, requiredSex: 'female' }).valid === true)
+}
+
+// ── Test 6c: exact calendar age — day/month/year, not just month
+// arithmetic (Codex round 4, Blocker 2) ──
+{
+  // "31 Jul 2025 -> 1 Jul 2026: underage" and "1 Jul 2025 -> 1 Jul 2026:
+  // eligible" from the task spec, expressed as a fixed `now` so the test
+  // is deterministic regardless of what day it actually runs.
+  const now = new Date(2026, 6, 1) // 1 Jul 2026 (JS months are 0-indexed)
+  // Directly exercise ageInMonths with a fixed `now` to pin the exact
+  // day/month/year cases from the task spec, independent of whichever
+  // day this suite happens to run on.
+  check('ageInMonths(31 Jul 2025, now=1 Jul 2026) = 11 (one day short of 12 full months)', ageInMonths(new Date(2025, 6, 31), now) === 11)
+  check('ageInMonths(1 Jul 2025, now=1 Jul 2026) = 12 (exactly 12 full months)', ageInMonths(new Date(2025, 6, 1), now) === 12)
+  // Deterministic leap-day behavior: birth on 29 Feb 2024 (leap year) —
+  // the "anniversary" in non-leap 2025 has no 29 Feb, so it must land on
+  // 1 Mar, never silently miscounting.
+  check('ageInMonths(29 Feb 2024, now=28 Feb 2025) = 11 (leap-day birth, day before the non-leap-year rollover)', ageInMonths(new Date(2024, 1, 29), new Date(2025, 1, 28)) === 11)
+  check('ageInMonths(29 Feb 2024, now=1 Mar 2025) = 12 (leap-day birth, deterministically resolves to 1 Mar in a non-leap year)', ageInMonths(new Date(2024, 1, 29), new Date(2025, 2, 1)) === 12)
+  // Deterministic month-end behavior: birth on the 31st of a long month,
+  // "now" in a shorter month.
+  check('ageInMonths(31 Jan 2025, now=28 Feb 2025) = 0 (Feb has no 31st — anniversary not yet reached)', ageInMonths(new Date(2025, 0, 31), new Date(2025, 1, 28)) === 0)
+  check('ageInMonths(31 Jan 2025, now=1 Mar 2025) = 1 (rolled into March)', ageInMonths(new Date(2025, 0, 31), new Date(2025, 2, 1)) === 1)
 }
 
 // ── Test 7: invalid calendar / missing / malformed / future DOB ──
@@ -126,12 +166,25 @@ function eligibleDog(overrides = {}) {
 {
   const apiSrc = await (await import('node:fs')).promises.readFile(new URL('../api/create-litter.js', import.meta.url), 'utf8')
   const heatSrc = await (await import('node:fs')).promises.readFile(new URL('../api/save-heat-cycle.js', import.meta.url), 'utf8')
-  check('create-litter.js re-reads the Dam via db.collection(\'dogs\').doc(damId).get() — never trusts req.body for dog data',
-    /db\.collection\('dogs'\)\.doc\(damId\)\.get\(\)/.test(apiSrc))
+  // Codex round 4, Blocker 1: the Dam/Sire read now happens via tx.get()
+  // INSIDE db.runTransaction, not a bare .get() outside one — re-reads
+  // it fresh at commit time (see parent-eligibility.js's own comment on
+  // why a plain get()-then-write() sequence has a race window a
+  // transaction closes).
+  check('create-litter.js reads the Dam via a ref (db.collection(\'dogs\').doc(damId)) — never trusts req.body for dog data',
+    /const damRef = db\.collection\('dogs'\)\.doc\(damId\)/.test(apiSrc))
+  check('create-litter.js re-reads the Dam INSIDE the transaction (tx.get(damRef)), not before it',
+    /await tx\.get\(damRef\)/.test(apiSrc))
+  check('create-litter.js does the Dam/Sire validation + litter write inside one db.runTransaction',
+    /await db\.runTransaction\(async \(tx\) => \{/.test(apiSrc))
   check('create-litter.js validates via validateBreedingParent, not any client-submitted eligibility claim',
     /validateBreedingParent\(damSnap\.exists \? damSnap\.data\(\) : null/.test(apiSrc))
-  check('save-heat-cycle.js re-reads the Dam via db.collection(\'dogs\').doc(dogId).get() on create',
-    /db\.collection\('dogs'\)\.doc\(dogId\)\.get\(\)/.test(heatSrc))
+  check('save-heat-cycle.js reads the Dam via a ref (db.collection(\'dogs\').doc(dogId)) on create',
+    /const damRef = db\.collection\('dogs'\)\.doc\(dogId\)/.test(heatSrc))
+  check('save-heat-cycle.js re-reads the Dam INSIDE the transaction (tx.get(damRef)) on create, not before it',
+    /await tx\.get\(damRef\)/.test(heatSrc))
+  check('save-heat-cycle.js does CREATE validation + write inside db.runTransaction (appears at least twice: create and update paths)',
+    (heatSrc.match(/await db\.runTransaction\(async \(tx\) => \{/g) || []).length >= 2)
   check('Both endpoints verify a Firebase ID token before doing anything (uid comes from the verified token, never the body)',
     /verifyIdToken\(idToken\)/.test(apiSrc) && /verifyIdToken\(idToken\)/.test(heatSrc))
 }
@@ -210,6 +263,51 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
       })
     } catch (err) { heatCreateDenied = isDenied(err) }
     check('12-ServerOnly', 'A direct client heatCycles create is denied even for a fully eligible Dam', heatCreateDenied)
+  }
+
+  // ── Test 13: parent mutation DURING the API operation (Codex round 4,
+  // Blocker 1 — "concurrent ownership, status, transfer, claim, deceased
+  // or DOB changes must conflict, retry and revalidate"). Mirrors
+  // create-litter.js's exact transaction shape via the Admin SDK
+  // directly (no HTTP layer available in this test harness). The Dam is
+  // transferred by a fully-completed, separate write BEFORE the
+  // transaction runs at all — proving the transaction's tx.get() reads
+  // live state at execution time, never a snapshot from before the
+  // request started, which is the property that actually matters here
+  // (a request that arrives after a concurrent transfer must see it).
+  //
+  // A literal mid-callback concurrent write to the SAME document from
+  // the SAME Admin SDK client was tried and DROPPED — it deadlocks: the
+  // transaction holds a read lock on the Dam until it commits, but a
+  // plain (non-transactional) write to that same document from the same
+  // client blocks waiting for that lock to release, while the
+  // transaction callback itself is awaiting that write's promise before
+  // it can finish and commit. That's an artifact of sharing one client
+  // across both operations, not something a real concurrent REQUEST
+  // (its own separate client/connection) would hit — so it isn't a real
+  // product bug, just an unsafe way to write this specific test. ──
+  {
+    const damId = `damconcurrent_${R}`
+    await adminDb.collection('dogs').doc(damId).set({
+      tenantId: uid, currentOwnerId: uid, createdByUserId: uid, sourceType: 'BREEDER_ISSUED',
+      name: 'ConcurrentDam', sex: 'female', status: 'active', isDeceased: false, dateOfBirth: dobYearsAgo(3),
+    })
+    // Fully-completed concurrent mutation, BEFORE the transaction starts.
+    await adminDb.collection('dogs').doc(damId).update({ status: 'transferred' })
+
+    const damRef = adminDb.collection('dogs').doc(damId)
+    const litterRef = adminDb.collection('litters').doc()
+    const outcome = await adminDb.runTransaction(async (tx) => {
+      const damSnap = await tx.get(damRef)
+      const damCheck = validateBreedingParent(damSnap.exists ? damSnap.data() : null, { uid, requiredSex: 'female' })
+      if (!damCheck.valid) return { ok: false, reason: damCheck.reason }
+      tx.set(litterRef, { tenantId: uid, damId, name: 'ConcurrentTest', notes: '', puppyIds: [], createdAt: new Date().toISOString() })
+      return { ok: true }
+    })
+
+    check('13-ConcurrentMutation', 'The transaction reads live state and rejects the already-transferred Dam', outcome.ok === false && outcome.reason === 'PARENT_NOT_ACTIVE', JSON.stringify(outcome))
+    const litterSnap = await litterRef.get()
+    check('13-ConcurrentMutation', 'No litter was committed for the now-invalid Dam', !litterSnap.exists)
   }
 
   await signOut(clientAuth).catch(() => {})

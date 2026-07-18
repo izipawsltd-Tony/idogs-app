@@ -91,38 +91,50 @@ function partitionLitterPuppies(dogs, puppyIds) {
 }
 
 // ── Test 5 (structural): editing a litter with existing puppies cannot
-// clear actualBirthDate, and a real DOB change propagates to eligible
-// (untransferred) puppies only, batched with the litter update ──
+// clear actualBirthDate, and a real DOB change propagates to still-
+// eligible puppies only. Codex round 4, Blocker 3 moved this whole
+// operation server-side (api/update-litter.js) — firestore.rules denies
+// a direct client litters update outright, so the client-side
+// writeBatch/isDogTransferred-filter approach round 3 used no longer
+// exists to check for; the same invariants are now enforced (and
+// exercised end-to-end via an Admin SDK mirror) in
+// test-atomic-transactions.mjs's Section 4. ──
 {
   const src = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
-  check('handleSaveLitter blocks clearing actualBirthDate while puppyIds is non-empty',
-    /\(litter\.puppyIds\?\.length \|\| 0\) > 0 && !editLitterForm\.actualBirthDate/.test(src))
-  check('DOB propagation filters puppies through isDogTransferred (only untransferred puppies updated)',
-    /litter\.puppyIds\?\.includes\(d\.id\) && !isDogTransferred\(d\)/.test(src))
-  check('Litter update + puppy DOB propagation use one writeBatch (no partial-update risk)',
-    /const batch = writeBatch\(db\)[\s\S]{0,400}batch\.update\(doc\(db, 'litters'/.test(src))
+  const apiSrc = readFileSync(new URL('../api/update-litter.js', import.meta.url), 'utf8')
+  check('handleSaveLitter calls the server endpoint (updateLitter from lib/db) rather than writing Firestore directly',
+    /const \{ updatedPuppyCount \} = await updateLitter\(litterId, editLitterForm\)/.test(src))
+  check('api/update-litter.js blocks clearing actualBirthDate while puppies exist',
+    /hasPuppies && !safePatch\.actualBirthDate/.test(apiSrc))
+  check('api/update-litter.js propagates DOB changes via the shared litter-eligibility policy (partitionLitterCandidatesServer), not a bare isDogTransferred filter',
+    /partitionLitterCandidatesServer\(litterId, fetched, uid\)/.test(apiSrc))
 }
 
-// ── Test 6 (structural): litter delete is a Firestore transaction that
-// re-reads and re-decides eligibility from scratch, and the confirmation
-// reports the affected count ──
+// ── Test 6 (structural): litter delete is now a trusted server endpoint
+// (Codex round 4, Blocker 3) whose own Admin SDK transaction re-reads
+// and re-decides eligibility from scratch — LittersPage.tsx's own copy
+// of partitionLitterCandidates is now preview-only (confirm-dialog
+// wording, non-authoritative — see that function's own comment); the
+// canonical, enforcing copy is api/_lib/litter-eligibility.js, exercised
+// end-to-end in test-atomic-transactions.mjs's Section 1/2/6. ──
 {
   const src = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
-  check('partitionLitterCandidates requires exact litterId membership before considering a dog at all',
+  const eligibilitySrc = readFileSync(new URL('../api/_lib/litter-eligibility.js', import.meta.url), 'utf8')
+  const deleteApiSrc = readFileSync(new URL('../api/delete-litter.js', import.meta.url), 'utf8')
+  check('partitionLitterCandidates (client preview) requires exact litterId membership before considering a dog at all',
     /confirmedMembers = fetched\.filter\(d => d\.litterId === litterId\)/.test(src))
-  check('partitionLitterCandidates computes eligible via currentOwnerId, transfer state, and full ownership history',
-    /const eligible = confirmedMembers\.filter\(d =>/.test(src) &&
-    /d\.currentOwnerId === requesterUid &&/.test(src) &&
-    /!isDogTransferred\(d\)/.test(src) &&
-    /!d\.buyerEmail && !d\.previousOwnerId && !d\.transferredAt && !\(d as any\)\.claimedAt/.test(src))
+  check('api/_lib/litter-eligibility.js computes eligible via currentOwnerId, transfer state, and full ownership history (incl. claimedBy)',
+    /const eligible = confirmedMembers\.filter\(d =>/.test(eligibilitySrc) &&
+    /d\.currentOwnerId === requesterUid &&/.test(eligibilitySrc) &&
+    /!d\.buyerEmail && !d\.previousOwnerId && !d\.transferredAt && !d\.claimedAt && !d\.claimedBy/.test(eligibilitySrc))
   check('Delete confirmation message includes the eligible puppy count',
     /This will also delete \$\{eligibleCount\} puppy record/.test(src))
   check('Delete confirmation message mentions preserved puppies when any exist',
     /preservedCount !== 1 \? 's' : ''\} will be kept/.test(src))
-  check('handleDeleteLitter uses runTransaction (re-reads and re-decides inside the transaction, not a pre-committed batch)',
-    /outcome = await runTransaction\(db, async \(tx\) => \{/.test(src))
-  check('The transaction reads the litter and candidates via tx.get before any tx.delete (Firestore\'s read-before-write ordering)',
-    /const litterSnap = await tx\.get\(litterRef\)[\s\S]{0,400}tx\.get\(doc\(db, 'dogs', id\)\)\)[\s\S]{0,300}tx\.delete\(litterRef\)/.test(src))
+  check('handleDeleteLitter calls the server endpoint (deleteLitterServer from lib/db) rather than a client transaction',
+    /outcome = await deleteLitterServer\(litter\.id\)/.test(src))
+  check('api/delete-litter.js runs the eligibility decision inside db.runTransaction, reading litter + candidates via tx.get before any tx.delete',
+    /await db\.runTransaction\(async \(tx\) => \{[\s\S]{0,100}const litterSnap = await tx\.get\(litterRef\)[\s\S]{0,900}tx\.delete\(litterRef\)/.test(deleteApiSrc))
 }
 
 // ── Test 7 (structural): firestore.rules enforces both invariants
@@ -133,9 +145,15 @@ function partitionLitterPuppies(dogs, puppyIds) {
   check('dogs create requires a validly-shaped dateOfBirth (isValidDobString)',
     /isValidDobString\(request\.resource\.data\.dateOfBirth\)/.test(dogsBlock))
   const littersBlock = (rules.match(/match \/litters\/\{id\} \{[\s\S]*?\n    \}/) || [''])[0]
-  check('litters update requires a validly-shaped actualBirthDate while puppyIds is non-empty',
-    /get\('puppyIds', \[\]\)\.size\(\) == 0 \|\|/.test(littersBlock) &&
-    /isValidDobString\(request\.resource\.data\.get\('actualBirthDate', null\)\)/.test(littersBlock))
+  // Codex round 4, Blocker 3: litters update is no longer a conditional
+  // in-rules check (DOB-format-while-puppies-exist) — it's denied
+  // unconditionally, and that same invariant is now enforced (with a
+  // stronger, real-past-date check, not just format) server-side in
+  // api/update-litter.js — see test-atomic-transactions.mjs Section 4.
+  check('litters update is denied outright for direct client writes (moved server-side)', /allow create, update, delete: if false;/.test(littersBlock))
+  const updateApiSrc = readFileSync(new URL('../api/update-litter.js', import.meta.url), 'utf8')
+  check('api/update-litter.js enforces the actualBirthDate-cannot-be-cleared-with-puppies invariant server-side',
+    /hasPuppies && !safePatch\.actualBirthDate/.test(updateApiSrc))
 }
 
 // ── Test 8: no PII logging — the new/changed code paths (delete litter,
@@ -212,8 +230,13 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('9-DogsRule', 'Creating a dog with a valid dateOfBirth still succeeds', validOk)
   }
 
-  // ── Test 10: litters update cannot clear actualBirthDate while
-  // puppyIds is non-empty, but can while it's empty ──
+  // ── Test 10: a direct client litters update is now denied
+  // UNCONDITIONALLY (Codex round 4, Blocker 3) — not just the clear-
+  // while-puppies-exist case round 3's conditional rule caught. The
+  // actual clear-blocked / change-allowed / clear-allowed-when-empty
+  // behavior now lives in api/update-litter.js and is exercised end-to-
+  // end (via an Admin SDK mirror) in test-atomic-transactions.mjs's
+  // Section 4. ──
   {
     const damId = `dobdam_${R}`
     await setDoc(doc(db, 'dogs', damId), {
@@ -226,19 +249,19 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     })
     let clearDenied = false
     try { await updateDoc(doc(db, 'litters', litterWithPuppies), { actualBirthDate: '' }) } catch (err) { clearDenied = isDenied(err) }
-    check('10-LittersRule', 'Clearing actualBirthDate on a litter with puppies is rejected', clearDenied)
+    check('10-LittersRule', 'Clearing actualBirthDate on a litter with puppies is rejected (direct client write denied outright)', clearDenied)
 
-    let changeOk = true
-    try { await updateDoc(doc(db, 'litters', litterWithPuppies), { actualBirthDate: '2026-01-02' }) } catch (err) { changeOk = false }
-    check('10-LittersRule', 'Changing (not clearing) actualBirthDate on a litter with puppies still succeeds', changeOk)
+    let harmlessChangeDenied = false
+    try { await updateDoc(doc(db, 'litters', litterWithPuppies), { actualBirthDate: '2026-01-02' }) } catch (err) { harmlessChangeDenied = isDenied(err) }
+    check('10-LittersRule', 'Even a harmless (non-clearing) direct client update is denied — there is no in-rules carve-out left at all', harmlessChangeDenied)
 
     const litterNoPuppies = `litternp_${R}`
     await adminDb.collection('litters').doc(litterNoPuppies).set({
       tenantId: uid, damId, name: 'NoPuppiesYet', notes: '', actualBirthDate: '2026-01-01', puppyIds: [],
     })
-    let clearOkWhenEmpty = true
-    try { await updateDoc(doc(db, 'litters', litterNoPuppies), { actualBirthDate: '' }) } catch (err) { clearOkWhenEmpty = false }
-    check('10-LittersRule', 'Clearing actualBirthDate on a planned litter with zero puppies is allowed', clearOkWhenEmpty)
+    let clearDeniedEvenWhenEmpty = false
+    try { await updateDoc(doc(db, 'litters', litterNoPuppies), { actualBirthDate: '' }) } catch (err) { clearDeniedEvenWhenEmpty = isDenied(err) }
+    check('10-LittersRule', 'Clearing actualBirthDate on a planned litter with zero puppies is ALSO denied directly (must go through api/update-litter.js, which still allows it there)', clearDeniedEvenWhenEmpty)
   }
 
   // ── Test 11: a direct client litters create is denied outright now

@@ -109,20 +109,32 @@ service cloud.firestore {
         (resource.data.get('claimedBy', null) == null ||
          request.resource.data.get('claimedBy', null) == resource.data.get('claimedBy', null));
 
-      // A dog mid-transfer (marked 'transferred'/'pendingClaim' by
-      // transferDogOwnership(), currentOwnerId not yet moved) can never
-      // be deleted by the outgoing breeder — a real commercial
-      // transaction (possibly with a deposit already taken) may be in
-      // progress. Checks both the current transferStatus-based marking
-      // and the legacy status-only marking (a pre-2026 transfer had no
-      // transferStatus field at all — see claim-transferred-dogs.js's
-      // own comment on the same legacy shape). Once a buyer actually
-      // claims a dog, status/transferStatus reset to their own "clean"
-      // active state and the now-current owner regains full delete
-      // rights over what is now genuinely their own dog.
+      // Codex round 4, Blocker 5: direct client deletion is now denied
+      // for ANY dog carrying ownership history — not just a dog
+      // currently mid-transfer. Round 3 only checked the CURRENT
+      // transfer/claim status (deliberately allowing a buyer who had
+      // already fully claimed a dog to delete their own, now-clean-
+      // looking record). Codex flagged that as insufficient: a dog with
+      // buyerEmail/previousOwnerId/transferredAt/claimedAt/claimedBy set
+      // carries permanent provenance regardless of its CURRENT status —
+      // that history is exactly what a compliance/dispute inquiry would
+      // need later, and the round-3 carve-out let it be destroyed by
+      // whoever currently held the dog. Any one of the five history
+      // fields being present at all — even alone, even if the rest look
+      // "clean" (claimedBy set without claimedAt, a partial/legacy
+      // write, etc.) — now blocks deletion outright; there is no
+      // client-side path to delete a history-bearing dog at all. A dog
+      // with zero history fields (the common case — never transferred)
+      // is unaffected and deletes exactly as before, still gated on the
+      // current transfer/claim status too as defense in depth.
       allow delete: if isSignedIn() && resource.data.currentOwnerId == request.auth.uid &&
         resource.data.get('status', 'active') != 'transferred' &&
-        resource.data.get('transferStatus', null) != 'pendingClaim';
+        resource.data.get('transferStatus', null) != 'pendingClaim' &&
+        resource.data.get('buyerEmail', null) == null &&
+        resource.data.get('previousOwnerId', null) == null &&
+        resource.data.get('transferredAt', null) == null &&
+        resource.data.get('claimedAt', null) == null &&
+        resource.data.get('claimedBy', null) == null;
 
       // Creator becomes tenantId/currentOwnerId/createdByUserId — a client
       // cannot assign ownership to anyone else at creation time either
@@ -222,39 +234,47 @@ service cloud.firestore {
       allow update, delete: if isSignedIn()
         && resource.data.tenantId == request.auth.uid;
     }
-    // damId is validated on create (never editable afterwards — see
-    // updateLitter()'s callers, which only ever touch name/dates/notes/
-    // puppyIds) so a stale/wrong-tenant/transferred Dam can't be
-    // submitted even if the client's own selector was bypassed.
+    // Codex round 4, Blocker 3: direct client update/delete are now
+    // BOTH denied outright, not just create. Round 3 left update/delete
+    // client-reachable (update guarded by damId/sireId/tenantId
+    // immutability + DOB-format-while-puppies-exist; delete guarded by
+    // tenantId ownership only) on the theory that the app's own
+    // client-side transaction logic (LittersPage.tsx) was the only thing
+    // that would ever exercise them. Codex flagged the gap: a rule that
+    // permits a write at all permits ANY write matching its shape,
+    // regardless of which code path sends it — a plain deleteDoc() or
+    // updateDoc() call (browser devtools, a bug, any other direct write)
+    // was equally valid under the old rule, bypassing the app's own
+    // puppy-handling/DOB-propagation logic entirely and orphaning
+    // puppies or directly mutating puppyIds with no membership check at
+    // all. There is no way to fully re-express "puppies were handled
+    // correctly" as a Rules predicate (no loops, and cross-document
+    // get() calls for every puppyIds entry inside a rule is impractical
+    // at scale) — so, per the explicit instruction to route unsafely-
+    // Rules-checkable mutations to a trusted server endpoint, ALL litter
+    // writes after create now happen exclusively through
+    // api/update-litter.js, api/delete-litter.js, and
+    // api/remove-litter-puppy.js (Admin SDK, bypasses Rules — each
+    // endpoint owns its own safety end to end). Read stays client-side
+    // (getLitters() still needs it; reading a litter document leaks
+    // nothing a rule can't already scope to its own tenant).
     match /litters/{id} {
-      allow read, delete: if isSignedIn() && resource.data.tenantId == request.auth.uid;
-      // Codex round 3, Blocker 1: create requires verifying the Dam (and
-      // Sire, if set) "meets actual minimum breeding maturity", which
-      // needs real date arithmetic Firestore Rules can't do — create now
-      // happens exclusively through api/create-litter.js (Admin SDK,
-      // full validation via _lib/parent-eligibility.js). Direct client
-      // create is denied outright.
-      allow create: if false;
-      // A litter with puppies attached must keep a validly-shaped
-      // actualBirthDate — mirrors the same invariant enforced when
-      // puppies are added in the first place (dogs/{dogId}'s create
-      // rule requires a validly-shaped dateOfBirth, which for a litter
-      // puppy always comes from the litter's actualBirthDate).
-      //
-      // tenantId/damId/sireId stay immutable on update (defense in depth
-      // — create's own move to a server endpoint already prevents a
-      // fresh unvalidated damId/sireId from ever being set, but this
-      // still blocks repointing an ALREADY-validated reference post
-      // creation, and blocks reassigning the litter to a different
-      // tenant). The app UI never exposes a way to edit any of these
-      // after creation anyway (editLitterForm only ever touches name/
-      // dates/notes/actualBirthDate).
-      allow update: if isSignedIn() && resource.data.tenantId == request.auth.uid &&
-        request.resource.data.tenantId == resource.data.tenantId &&
-        request.resource.data.damId == resource.data.damId &&
-        request.resource.data.get('sireId', null) == resource.data.get('sireId', null) &&
-        (request.resource.data.get('puppyIds', []).size() == 0 ||
-         isValidDobString(request.resource.data.get('actualBirthDate', null)));
+      allow read: if isSignedIn() && resource.data.tenantId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
+    // ── litterPuppyOperations — internal idempotency ledger for
+    // api/create-litter-puppy.js (Codex round 4, Blocker 4). Written
+    // exclusively by that endpoint (Admin SDK) atomically with the Dog
+    // document it creates, so a retry can be verified against a
+    // persisted record instead of trusting a bare "does this dogId
+    // exist" check. Never read or written by any client directly — a
+    // client's only interaction with this system is via the API's JSON
+    // response, so there is no legitimate client access pattern here at
+    // all, and no client action should ever be able to forge, inspect,
+    // or tamper with an operation record.
+    match /litterPuppyOperations/{id} {
+      allow read, write: if false;
     }
 
     // ── auditLogs — append-only, never editable/deletable by clients ──
