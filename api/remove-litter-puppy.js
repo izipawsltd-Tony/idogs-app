@@ -25,6 +25,20 @@
 // state neither "confirmed member" nor "not a member" could correctly
 // interpret afterward).
 //
+// Codex round 6, Blocker 2: round 5's confirmed-membership check only
+// verified the REVERSE direction (dog.litterId === litterId) — it never
+// checked the FORWARD direction (litter.puppyIds actually contains
+// puppyId). A reverse-only dog (its own litterId points here, but it
+// was never added to this litter's puppyIds — e.g. a partial write)
+// would pass that single check and get "removed": litter.puppyIds gets
+// an arrayRemove of an id it never contained (a silent no-op there) AND
+// the dog's litterId gets cleared anyway — mutating a dog that was
+// never actually a two-sided, confirmed member of this litter in the
+// first place. Confirmed membership now requires BOTH directions to
+// agree before anything is written; reverse-only, forward-only,
+// contradictory, or otherwise ambiguous membership is rejected outright
+// with zero writes.
+//
 // POST /api/remove-litter-puppy
 // Headers: Authorization: Bearer <Firebase ID token>
 // Body: { litterId, puppyId }
@@ -99,11 +113,14 @@ async function handler(req, res) {
       return { ok: true }
     }
     const dog = dogSnap.data()
-    // Confirmed-membership check, mirroring litter-eligibility.js's own
-    // definition — a dog's own litterId must explicitly agree, never
-    // just the litter's forward puppyIds reference alone.
-    if (dog.litterId !== litterId) {
-      return { ok: false, status: 409, body: { error: 'This dog is not a confirmed member of this litter', reason: 'NOT_CONFIRMED_MEMBER' } }
+    // Two-sided confirmed-membership check (Codex round 6, Blocker 2):
+    // the dog's own litterId must agree (reverse) AND the litter's own
+    // puppyIds must actually list this dog (forward). Either direction
+    // alone is ambiguous, not confirmed.
+    const reverseConfirmed = dog.litterId === litterId
+    const forwardConfirmed = (litter.puppyIds || []).includes(puppyId)
+    if (!reverseConfirmed || !forwardConfirmed) {
+      return { ok: false, status: 409, body: { error: 'This dog is not a confirmed (two-sided) member of this litter', reason: 'NOT_CONFIRMED_MEMBER' } }
     }
     if (!isDogSafeToDetach(dog, uid)) {
       return { ok: false, status: 409, body: { error: 'This dog cannot be removed from the litter — it is transferred, pending claim, claimed, or otherwise no longer exclusively yours', reason: 'DOG_PROTECTED' } }

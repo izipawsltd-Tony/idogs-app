@@ -38,7 +38,24 @@ const adminApp = initAdminApp({ projectId: 'demo-idogs-qa' })
 const adminDb = getAdminFirestore(adminApp)
 
 let pass = 0, fail = 0
-function check(label, cond, extra = '') {
+// Codex round 6 discovery (found while auditing test-atomic-transactions.mjs
+// for the same defect — see that file's own comment for the full
+// explanation): this file's check() calls actually pass
+// check(sectionLabel, description, condition), a 3rd positional
+// argument, but the signature was check(label, cond, extra) — so `cond`
+// was always the DESCRIPTION STRING (permanently truthy) and the real
+// boolean was silently discarded into `extra`. Fixed via runtime shape
+// detection rather than touching every call site.
+function check(label, arg2, arg3, arg4) {
+  let cond, extra
+  if (typeof arg2 === 'string' && arg3 !== undefined) {
+    label = `${label}: ${arg2}`
+    cond = arg3
+    extra = arg4 !== undefined ? arg4 : ''
+  } else {
+    cond = arg2
+    extra = arg3 !== undefined ? arg3 : ''
+  }
   if (cond) { console.log(`PASS: ${label}`); pass++ }
   else { console.log(`FAIL: ${label} ${extra}`); fail++ }
 }

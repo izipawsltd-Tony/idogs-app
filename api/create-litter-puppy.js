@@ -1,6 +1,6 @@
 // api/create-litter-puppy.js — trusted server-side, safely-idempotent
 // puppy creation for a litter (Codex round 4, Blockers 3 + 4; hardened
-// Codex round 5, Blocker 4).
+// Codex round 5, Blocker 4; hardened further Codex round 6, Blockers 4 + 5).
 //
 // WHY THIS EXISTS: two round-3 designs collided under round-4 scrutiny.
 // (1) createLitterPuppyAtomic() ran as a CLIENT-side Firestore
@@ -42,6 +42,24 @@
 //    (same-user) operation now fails RESERVATION_MISMATCH instead of
 //    silently passing.
 //
+// Codex round 6 — two more gaps:
+//
+// Blocker 4 (payload schema): `payload` fields beyond sex/dateOfBirth
+// were written through with a bare `|| ''` fallback — no type check, no
+// length bound, no rejection of an unexpected shape (an object, an
+// array). api/_lib/puppy-payload-schema.js is now the single allowlist +
+// validator, and its NORMALIZED output is what's used for creation, for
+// what's persisted into the operation record, AND for retry comparison.
+//
+// Blocker 5 (retry litter state): the retry path re-read litterRef but
+// never actually REQUIRED it — `litterSnap.exists && ...` silently
+// skipped the puppyIds re-link if the litter was missing, then still
+// returned ok:true regardless. It also never checked tenantId or
+// `archived` on retry at all (only the fresh-creation path checked
+// those). A retry against a missing, wrong-tenant, or archived litter
+// now fails closed (LITTER_NOT_FOUND / NOT_YOUR_LITTER / LITTER_ARCHIVED)
+// with zero writes, same as the fresh-creation path already required.
+//
 // Any mismatch anywhere in this chain fails the request outright with
 // NO writes at all.
 //
@@ -56,6 +74,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { parseDobStrictServer, ageInMonths } from './_lib/parent-eligibility.js'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
+import { sanitizePuppyPayload, PuppyPayloadValidationError, PAYLOAD_FIELDS } from './_lib/puppy-payload-schema.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -69,7 +88,6 @@ if (!getApps().length) {
 
 const MAX_PASSPORT_ID_ATTEMPTS = 5
 const NANOID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-const PAYLOAD_FIELDS = ['name', 'breed', 'sex', 'dateOfBirth', 'colour', 'microchip', 'ankc', 'notes']
 
 function nanoidServer(len = 4) {
   let result = ''
@@ -140,14 +158,12 @@ async function handler(req, res) {
   if (!dogId || typeof dogId !== 'string') {
     throw new ApiError(400, 'dogId is required')
   }
-  if (!payload || typeof payload !== 'object') {
-    throw new ApiError(400, 'payload is required')
-  }
-  if (payload.sex !== 'male' && payload.sex !== 'female') {
-    throw new ApiError(400, 'payload.sex must be male or female')
-  }
-  if (!parseDobStrictServer(payload.dateOfBirth)) {
-    throw new ApiError(400, 'payload.dateOfBirth is not a valid past calendar date')
+  let normalizedPayload
+  try {
+    normalizedPayload = sanitizePuppyPayload(payload)
+  } catch (err) {
+    if (err instanceof PuppyPayloadValidationError) throw new ApiError(400, err.message)
+    throw err
   }
   const resolvedSourceType = sourceType === 'OWNER_CREATED' ? 'OWNER_CREATED' : 'BREEDER_ISSUED'
 
@@ -157,7 +173,7 @@ async function handler(req, res) {
   const operationRef = db.collection('litterPuppyOperations').doc(operationId)
 
   for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
-    const candidate = generateCandidate(payload)
+    const candidate = generateCandidate(normalizedPayload)
     const reservationRef = db.collection('passportReservations').doc(candidate)
 
     try {
@@ -182,7 +198,7 @@ async function handler(req, res) {
           if (op.sourceType !== resolvedSourceType) {
             return { ok: false, status: 409, body: { error: 'Operation source type does not match', reason: 'OPERATION_SOURCE_MISMATCH' } }
           }
-          if (!fieldsMatch(op.payload, payload)) {
+          if (!fieldsMatch(op.payload, normalizedPayload)) {
             return { ok: false, status: 409, body: { error: 'Operation payload does not match the original submission', reason: 'OPERATION_PAYLOAD_MISMATCH' } }
           }
 
@@ -218,8 +234,24 @@ async function handler(req, res) {
             return { ok: false, status: 409, body: { error: 'Passport reservation does not match this dog', reason: 'RESERVATION_MISMATCH' } }
           }
 
+          // Codex round 6, Blocker 5: the litter itself must still be a
+          // valid target for this operation on retry, exactly as
+          // strictly as the fresh-creation path below already requires —
+          // a missing, wrong-tenant, or archived litter must fail closed
+          // with NO writes, never silently skip the re-link and still
+          // report success.
           const litterSnap = await tx.get(litterRef)
-          if (litterSnap.exists && !(litterSnap.data().puppyIds || []).includes(dogId)) {
+          if (!litterSnap.exists) {
+            return { ok: false, status: 404, body: { error: 'Litter not found', reason: 'LITTER_NOT_FOUND' } }
+          }
+          const litter = litterSnap.data()
+          if (litter.tenantId !== uid) {
+            return { ok: false, status: 403, body: { error: 'Not your litter', reason: 'NOT_YOUR_LITTER' } }
+          }
+          if (litter.archived) {
+            return { ok: false, status: 409, body: { error: 'This litter has been deleted and can no longer accept puppies', reason: 'LITTER_ARCHIVED' } }
+          }
+          if (!(litter.puppyIds || []).includes(dogId)) {
             tx.update(litterRef, { puppyIds: FieldValue.arrayUnion(dogId) })
           }
           return { ok: true, alreadyExisted: true, dogId, passportId: dog.passportId }
@@ -257,14 +289,7 @@ async function handler(req, res) {
         // dogId + operationId, not just createdBy.
         tx.set(reservationRef, { createdAt: nowIso, createdBy: uid, dogId, operationId })
         tx.set(dogRef, {
-          name: payload.name || '',
-          breed: payload.breed || '',
-          sex: payload.sex,
-          dateOfBirth: payload.dateOfBirth,
-          colour: payload.colour || '',
-          microchip: payload.microchip || '',
-          ankc: payload.ankc || '',
-          notes: payload.notes || '',
+          ...normalizedPayload,
           tenantId: uid,
           currentOwnerId: uid,
           createdByUserId: uid,
@@ -272,7 +297,7 @@ async function handler(req, res) {
           ...(resolvedSourceType === 'BREEDER_ISSUED' ? { originBreederId: uid } : {}),
           passportId: candidate,
           litterId,
-          lifeStage: initialLifeStage(payload.dateOfBirth),
+          lifeStage: initialLifeStage(normalizedPayload.dateOfBirth),
           isDeceased: false,
           photos: [],
           status: 'active',
@@ -284,7 +309,7 @@ async function handler(req, res) {
           litterId,
           dogId,
           sourceType: resolvedSourceType,
-          payload: PAYLOAD_FIELDS.reduce((acc, f) => ({ ...acc, [f]: payload[f] ?? '' }), {}),
+          payload: normalizedPayload,
           status: 'completed',
           createdAt: nowIso,
         })

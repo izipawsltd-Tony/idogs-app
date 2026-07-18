@@ -38,6 +38,19 @@
 //    linked (from either direction) is the litter document actually
 //    deleted.
 //
+// Codex round 6, Blocker 1: round 5's archive-vs-delete decision only
+// looked at `preserved` (CONFIRMED members that fail isDogSafeToDetach)
+// — it never considered REVERSE-ONLY dogs (found only via the litterId
+// query above, never in puppyIds) at all. Round 5's own "never touch
+// ambiguous dogs" policy means a reverse-only dog is correctly never
+// deleted or mutated — but that same dog's litterId STILL points at
+// litterId, so if the litter had zero CONFIRMED-preserved members it
+// would previously be hard-deleted anyway, leaving that untouched
+// reverse-only dog with a now-dangling litterId reference. Hard deletion
+// is now gated on BOTH preserved.length === 0 AND reverseOnly.length ===
+// 0 — any dog whose own record still points at this litter, confirmed or
+// not, keeps the litter document alive.
+//
 // POST /api/delete-litter
 // Headers: Authorization: Bearer <Firebase ID token>
 // Body: { litterId }
@@ -107,26 +120,33 @@ async function handler(req, res) {
     const reverseQuerySnap = await tx.get(db.collection('dogs').where('litterId', '==', litterId))
     const reverseFetched = reverseQuerySnap.docs.map(d => ({ id: d.id, ...d.data() }))
 
-    const { confirmed, ambiguousCount } = resolveLitterMembership(litterId, forwardFetched, reverseFetched)
+    const { confirmed, reverseOnly, ambiguousCount } = resolveLitterMembership(litterId, forwardFetched, reverseFetched)
     const { eligible, preserved } = partitionConfirmedMembers(confirmed, uid)
 
     for (const puppy of eligible) {
       tx.delete(db.collection('dogs').doc(puppy.id))
     }
 
-    if (preserved.length === 0) {
-      // No preserved dog depends on this litter document resolving —
-      // safe to hard-delete.
+    // Codex round 6, Blocker 1: a reverse-only dog's own litterId still
+    // points at this litter — even though it's never touched (deleted or
+    // relinked), the LITTER document itself must survive for that
+    // reference to stay resolvable. Only when NEITHER a confirmed-
+    // preserved dog NOR a reverse-only dog remains linked is it safe to
+    // hard-delete.
+    if (preserved.length === 0 && reverseOnly.length === 0) {
       tx.delete(litterRef)
       return { deletedCount: eligible.length, preservedCount: 0, ambiguousCount, litterDeleted: true, litterArchived: false }
     }
 
-    // At least one preserved (history-bearing/transferred/claimed) dog
-    // still needs this litter document to resolve its lineage — archive
+    // At least one dog (confirmed-preserved and/or reverse-only) still
+    // needs this litter document to resolve its lineage — archive
     // instead of deleting. puppyIds is recomputed to exactly the
-    // preserved set (the only dogs still genuinely linked going
-    // forward), normalizing away whatever forward/reverse drift existed
-    // before this operation.
+    // confirmed-preserved set (reverse-only dogs are deliberately NOT
+    // added here — round 5's "never touch ambiguous dogs" policy means
+    // this operation only ever RECORDS what it can safely confirm, it
+    // doesn't reconcile ambiguity on their behalf; they remain
+    // discoverable via the same litterId reverse-query on any future
+    // operation regardless of what puppyIds says).
     tx.update(litterRef, {
       archived: true,
       archivedAt: new Date().toISOString(),

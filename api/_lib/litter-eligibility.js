@@ -21,19 +21,28 @@
 // history" the way `!dog.buyerEmail` would (that collapses '', 0, false,
 // null, and undefined all into the same "falsy = clean" bucket, which is
 // wrong: an empty-but-PRESENT buyerEmail is a malformed/partial record,
-// not a clean one). This is also what makes the Admin SDK checks here
-// match firestore.rules' own semantics: Rules' `.get(field, null)`
-// returns the DEFAULT only when the field is genuinely absent — a
-// present-but-empty-string value is returned as-is and fails a
-// `== null` check, exactly like this hasOwnProperty-based check does.
+// not a clean one).
+//
+// Codex round 6, Blocker 3 — hardened further: round 5 still let an
+// EXPLICIT `null` value count as "no history" (matching how Firestore
+// Rules' `.get(field, null)` collapses "absent" and "explicitly null"
+// into the same default). That turned out to be the wrong alignment
+// target — a genuinely untouched Dog never has these fields written at
+// all (createDog()/createLitterPuppyAtomic() never set them), so a
+// document that DOES carry an explicit `null` for one of them only
+// exists because some write path put it there deliberately or
+// accidentally. That is itself an anomalous/malformed record, not a
+// clean one, and must fail closed exactly like an empty string does now.
+// This is a pure presence check — hasOwnProperty alone, no value
+// inspection whatsoever — so ANY stored value (including null, 0,
+// false, '') counts as history; only a field that was NEVER WRITTEN AT
+// ALL is "no history". firestore.rules' dogs.delete rule is aligned to
+// this SAME stricter semantics (`'field' in resource.data`, not
+// `.get(field, null) == null`) — see that rule's own comment.
 const HISTORY_FIELDS = ['buyerEmail', 'previousOwnerId', 'transferredAt', 'claimedAt', 'claimedBy']
 
 export function isDogHistoryBearing(dog) {
-  return HISTORY_FIELDS.some(field =>
-    Object.prototype.hasOwnProperty.call(dog, field) &&
-    dog[field] !== null &&
-    dog[field] !== undefined
-  )
+  return HISTORY_FIELDS.some(field => Object.prototype.hasOwnProperty.call(dog, field))
 }
 
 // Codex round 5, Blocker 1: a Dog is safe to detach from a litter (unlink

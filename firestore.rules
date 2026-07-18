@@ -127,14 +127,26 @@ service cloud.firestore {
       // with zero history fields (the common case — never transferred)
       // is unaffected and deletes exactly as before, still gated on the
       // current transfer/claim status too as defense in depth.
+      //
+      // Codex round 6, Blocker 3: switched from `.get(field, null) ==
+      // null` to `!('field' in resource.data)` — the former treats an
+      // EXPLICITLY stored null the same as a field that was never
+      // written at all, which is the wrong alignment: a genuinely clean
+      // Dog never has these fields written in the first place, so a
+      // document carrying an explicit null is itself an anomalous/
+      // malformed record, not a clean one, and must fail closed the same
+      // as any other present-but-empty value. `in` checks map-key
+      // presence only, independent of the stored value — the exact same
+      // semantics as api/_lib/litter-eligibility.js's isDogHistoryBearing,
+      // which this rule is deliberately kept aligned with by hand.
       allow delete: if isSignedIn() && resource.data.currentOwnerId == request.auth.uid &&
         resource.data.get('status', 'active') != 'transferred' &&
         resource.data.get('transferStatus', null) != 'pendingClaim' &&
-        resource.data.get('buyerEmail', null) == null &&
-        resource.data.get('previousOwnerId', null) == null &&
-        resource.data.get('transferredAt', null) == null &&
-        resource.data.get('claimedAt', null) == null &&
-        resource.data.get('claimedBy', null) == null;
+        !('buyerEmail' in resource.data) &&
+        !('previousOwnerId' in resource.data) &&
+        !('transferredAt' in resource.data) &&
+        !('claimedAt' in resource.data) &&
+        !('claimedBy' in resource.data);
 
       // Creator becomes tenantId/currentOwnerId/createdByUserId — a client
       // cannot assign ownership to anyone else at creation time either

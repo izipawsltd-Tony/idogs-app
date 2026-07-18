@@ -24,6 +24,7 @@ import { getFirestore, connectFirestoreEmulator, doc, collection, getDoc, setDoc
 import { initializeApp as initAdminApp } from 'firebase-admin/app'
 import { getFirestore as getAdminFirestore, FieldValue as AdminFieldValue } from 'firebase-admin/firestore'
 import { isDogSafeToDetach, resolveLitterMembership, partitionConfirmedMembers } from '../api/_lib/litter-eligibility.js'
+import { sanitizePuppyPayload, PuppyPayloadValidationError } from '../api/_lib/puppy-payload-schema.js'
 
 const app = initializeApp({ projectId: 'demo-idogs-qa', apiKey: 'fake-api-key' })
 const auth = getAuth(app)
@@ -36,7 +37,31 @@ const adminApp = initAdminApp({ projectId: 'demo-idogs-qa' })
 const adminDb = getAdminFirestore(adminApp)
 
 let pass = 0, fail = 0
-function check(label, cond, extra = '') {
+// Codex round 6 discovery (not one of the six assigned blockers, but
+// found while updating this file's mirrors and fixed immediately —
+// see the round-6 report's "additional finding" section): every call
+// site in this file actually passes check(sectionLabel, description,
+// condition) — a 3rd positional argument — but this function's
+// signature was check(label, cond, extra), so `cond` was always bound
+// to the DESCRIPTION STRING (permanently truthy for any non-empty
+// text) and the REAL boolean was silently discarded into `extra`
+// (only ever used in a FAIL message that could then never fire). Every
+// check() in this file has therefore always reported PASS regardless
+// of the actual condition, since this file was first written. Fixed by
+// detecting the call shape at runtime — a string in the 2nd position
+// with a 3rd argument present means the description+condition form;
+// anything else falls back to the original 2-arg(+extra) form — rather
+// than touching each of the 60 call sites individually.
+function check(label, arg2, arg3, arg4) {
+  let cond, extra
+  if (typeof arg2 === 'string' && arg3 !== undefined) {
+    label = `${label}: ${arg2}`
+    cond = arg3
+    extra = arg4 !== undefined ? arg4 : ''
+  } else {
+    cond = arg2
+    extra = arg3 !== undefined ? arg3 : ''
+  }
   if (cond) { console.log(`PASS: ${label}`); pass++ }
   else { console.log(`FAIL: ${label} ${extra}`); fail++ }
 }
@@ -63,9 +88,11 @@ async function as(name) {
 
 // Mirrors api/delete-litter.js's transaction exactly (Admin SDK).
 // Codex round 5, Blocker 2: reads BOTH the forward (litter.puppyIds) and
-// reverse (dogs where litterId==litterId) directions, and archives
-// (never hard-deletes) the litter whenever any preserved dog is still
-// linked to it from either direction.
+// reverse (dogs where litterId==litterId) directions. Codex round 6,
+// Blocker 1: hard-delete is now gated on BOTH preserved.length === 0
+// AND reverseOnly.length === 0 — a reverse-only dog (found only via the
+// litterId query, never touched) still needs the litter document to
+// stay alive so its own litterId reference never dangles.
 async function deleteLitterServer(litterId, requesterUid) {
   const litterRef = adminDb.collection('litters').doc(litterId)
   return adminDb.runTransaction(async (tx) => {
@@ -80,12 +107,12 @@ async function deleteLitterServer(litterId, requesterUid) {
     const reverseQuerySnap = await tx.get(adminDb.collection('dogs').where('litterId', '==', litterId))
     const reverseFetched = reverseQuerySnap.docs.map(d => ({ id: d.id, ...d.data() }))
 
-    const { confirmed, ambiguousCount } = resolveLitterMembership(litterId, forwardFetched, reverseFetched)
+    const { confirmed, reverseOnly, ambiguousCount } = resolveLitterMembership(litterId, forwardFetched, reverseFetched)
     const { eligible, preserved } = partitionConfirmedMembers(confirmed, requesterUid)
 
     for (const puppy of eligible) tx.delete(adminDb.collection('dogs').doc(puppy.id))
 
-    if (preserved.length === 0) {
+    if (preserved.length === 0 && reverseOnly.length === 0) {
       tx.delete(litterRef)
       return { deletedCount: eligible.length, preservedCount: 0, ambiguousCount, litterDeleted: true, litterArchived: false }
     }
@@ -128,6 +155,10 @@ async function updateLitterServer(litterId, patch, requesterUid) {
 // (transferred/pending-claim/claimed/history-bearing/not-controlled),
 // and clears the Dog's own litterId in the SAME transaction as unlinking
 // it from the litter (two-sided membership, never left one-sided).
+// Codex round 6, Blocker 2: confirmed membership now requires BOTH
+// dog.litterId === litterId (reverse) AND litter.puppyIds actually
+// contains puppyId (forward) — reverse-only/forward-only/contradictory
+// membership is rejected outright with zero writes.
 async function removeLitterPuppyServer(litterId, puppyId, requesterUid) {
   const litterRef = adminDb.collection('litters').doc(litterId)
   const dogRef = adminDb.collection('dogs').doc(puppyId)
@@ -143,7 +174,9 @@ async function removeLitterPuppyServer(litterId, puppyId, requesterUid) {
       return { ok: true }
     }
     const dog = dogSnap.data()
-    if (dog.litterId !== litterId) return { ok: false, reason: 'NOT_CONFIRMED_MEMBER' }
+    const reverseConfirmed = dog.litterId === litterId
+    const forwardConfirmed = (litter.puppyIds || []).includes(puppyId)
+    if (!reverseConfirmed || !forwardConfirmed) return { ok: false, reason: 'NOT_CONFIRMED_MEMBER' }
     if (!isDogSafeToDetach(dog, requesterUid)) return { ok: false, reason: 'DOG_PROTECTED' }
     tx.update(litterRef, { puppyIds: AdminFieldValue.arrayRemove(puppyId) })
     tx.update(dogRef, { litterId: AdminFieldValue.delete() })
@@ -162,8 +195,16 @@ function fieldsMatch(a, b) {
 // tests exercise). Codex round 5, Blocker 4: also compares the actual
 // Dog document's CURRENT fields against the operation record (not just
 // the record against the new request), and binds the Passport
-// reservation to dogId+operationId, not just createdBy.
+// reservation to dogId+operationId, not just createdBy. Codex round 6,
+// Blocker 4: `payload` is validated + normalized through the real
+// sanitizePuppyPayload (imported directly, no re-mirroring — throws
+// PuppyPayloadValidationError for a malformed/oversized/unknown-field
+// payload, same as the real endpoint's 400). Codex round 6, Blocker 5:
+// the retry path now REQUIRES the litter to exist / match tenant / not
+// be archived, exactly as strictly as the fresh-creation path — a
+// missing/wrong-tenant/archived litter fails closed with zero writes.
 async function createLitterPuppyServer({ operationId, litterId, dogId, payload, requesterUid, passportIdOverride }) {
+  const normalizedPayload = sanitizePuppyPayload(payload)
   const dogRef = adminDb.collection('dogs').doc(dogId)
   const litterRef = adminDb.collection('litters').doc(litterId)
   const operationRef = adminDb.collection('litterPuppyOperations').doc(operationId)
@@ -177,7 +218,7 @@ async function createLitterPuppyServer({ operationId, litterId, dogId, payload, 
       if (op.tenantId !== requesterUid) return { ok: false, reason: 'OPERATION_TENANT_MISMATCH' }
       if (op.litterId !== litterId) return { ok: false, reason: 'OPERATION_LITTER_MISMATCH' }
       if (op.dogId !== dogId) return { ok: false, reason: 'OPERATION_DOG_MISMATCH' }
-      if (!fieldsMatch(op.payload, payload)) return { ok: false, reason: 'OPERATION_PAYLOAD_MISMATCH' }
+      if (!fieldsMatch(op.payload, normalizedPayload)) return { ok: false, reason: 'OPERATION_PAYLOAD_MISMATCH' }
 
       const dogSnap = await tx.get(dogRef)
       if (!dogSnap.exists) return { ok: false, reason: 'DOG_MISSING' }
@@ -192,8 +233,13 @@ async function createLitterPuppyServer({ operationId, litterId, dogId, payload, 
       if (reservation.createdBy !== requesterUid || reservation.dogId !== dogId || reservation.operationId !== operationId) {
         return { ok: false, reason: 'RESERVATION_MISMATCH' }
       }
+
       const litterSnap = await tx.get(litterRef)
-      if (litterSnap.exists && !(litterSnap.data().puppyIds || []).includes(dogId)) {
+      if (!litterSnap.exists) return { ok: false, reason: 'LITTER_NOT_FOUND' }
+      const litter = litterSnap.data()
+      if (litter.tenantId !== requesterUid) return { ok: false, reason: 'NOT_YOUR_LITTER' }
+      if (litter.archived) return { ok: false, reason: 'LITTER_ARCHIVED' }
+      if (!(litter.puppyIds || []).includes(dogId)) {
         tx.update(litterRef, { puppyIds: AdminFieldValue.arrayUnion(dogId) })
       }
       return { ok: true, alreadyExisted: true, dogId, passportId: dog.passportId }
@@ -204,18 +250,19 @@ async function createLitterPuppyServer({ operationId, litterId, dogId, payload, 
     const litterSnap = await tx.get(litterRef)
     if (!litterSnap.exists) return { ok: false, reason: 'LITTER_NOT_FOUND' }
     if (litterSnap.data().tenantId !== requesterUid) return { ok: false, reason: 'NOT_YOUR_LITTER' }
+    if (litterSnap.data().archived) return { ok: false, reason: 'LITTER_ARCHIVED' }
     const reservationSnap = await tx.get(reservationRef)
     if (reservationSnap.exists) return { ok: false, reason: 'PASSPORT_ID_TAKEN' }
 
     tx.set(reservationRef, { createdAt: new Date().toISOString(), createdBy: requesterUid, dogId, operationId })
     tx.set(dogRef, {
-      ...PAYLOAD_FIELDS.reduce((acc, f) => ({ ...acc, [f]: payload[f] ?? '' }), {}),
+      ...normalizedPayload,
       tenantId: requesterUid, currentOwnerId: requesterUid, createdByUserId: requesterUid,
       sourceType: 'BREEDER_ISSUED', passportId: candidate, litterId, isDeceased: false, status: 'active',
     })
     tx.set(operationRef, {
       tenantId: requesterUid, litterId, dogId, sourceType: 'BREEDER_ISSUED',
-      payload: PAYLOAD_FIELDS.reduce((acc, f) => ({ ...acc, [f]: payload[f] ?? '' }), {}),
+      payload: normalizedPayload,
       status: 'completed', createdAt: new Date().toISOString(),
     })
     tx.update(litterRef, { puppyIds: AdminFieldValue.arrayUnion(dogId) })
@@ -755,7 +802,13 @@ const breederUid = await newUser('breeder')
   const outcome = await deleteLitterServer(litterId, breederUid)
   check('10-ReverseContradictory', 'Exactly the one genuinely-confirmed member was deleted', outcome.deletedCount === 1)
   check('10-ReverseContradictory', 'Reverse-only + contradictory dogs are both counted as ambiguous', outcome.ambiguousCount === 2)
-  check('10-ReverseContradictory', 'Nothing preserved (no history-bearing confirmed member), so the litter hard-deletes', outcome.litterDeleted === true)
+  // Codex round 6, Blocker 1: nothing CONFIRMED is preserved, but the
+  // reverse-only dog's own litterId still points at this litter — the
+  // litter must be ARCHIVED (never hard-deleted), or that dog's
+  // reference would dangle. This assertion previously (incorrectly)
+  // expected a hard delete here — the exact "broken dangling-reference"
+  // expectation Codex round 6 flagged.
+  check('10-ReverseContradictory', 'The reverse-only dog alone is enough to force an archive, not a hard delete', outcome.litterDeleted === false && outcome.litterArchived === true)
 
   const confirmedGone = await safeGetDoc(doc(db, 'dogs', confirmedId))
   check('10-ReverseContradictory', 'The confirmed member was actually deleted', !confirmedGone.exists())
@@ -765,6 +818,9 @@ const breederUid = await newUser('breeder')
 
   const contradictoryAfter = await getDoc(doc(db, 'dogs', contradictoryId))
   check('10-ReverseContradictory', 'The contradictory dog (in puppyIds, but its own litterId points elsewhere) survives completely untouched, still pointing at its real litter', contradictoryAfter.exists() && contradictoryAfter.data().litterId === otherLitterId)
+
+  const litterAfter10 = await safeGetDoc(doc(db, 'litters', litterId))
+  check('10-ReverseContradictory', 'The litter document itself still exists (archived, not deleted) so the reverse-only dog\'s litterId never dangles', litterAfter10.exists() && litterAfter10.data().archived === true)
 }
 
 // =========================================================================
@@ -841,6 +897,206 @@ const breederUid = await newUser('breeder')
 
   const retryAfterSubstitution = await createLitterPuppyServer({ operationId: opId, litterId, dogId: pupId, payload, requesterUid: breederUid })
   check('12-SubstitutedReservation', 'A retry whose reservation has the SAME createdBy but a substituted dogId/operationId fails closed (RESERVATION_MISMATCH)', retryAfterSubstitution.ok === false && retryAfterSubstitution.reason === 'RESERVATION_MISMATCH')
+}
+
+// =========================================================================
+// SECTION 13 — remove-litter-puppy.js: reverse-only and forward-only
+// membership are BOTH rejected (Codex round 6, Blocker 2) — confirmed
+// membership now requires dog.litterId === litterId AND
+// litter.puppyIds.includes(puppyId) together, never either alone.
+// =========================================================================
+{
+  await as('breeder')
+  const damId = `dam13_${R}`
+  await setDoc(doc(db, 'dogs', damId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam13', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const litterId = `litter13_${R}`
+  const otherLitterId = `litter13other_${R}`
+
+  // Reverse-only: dog.litterId === litterId, but NEVER added to
+  // litterId's puppyIds.
+  const reverseOnlyId = `pup13reverseonly_${R}`
+  await setDoc(doc(db, 'dogs', reverseOnlyId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'ReverseOnly13', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId,
+  })
+  // Forward-only: listed in litterId's puppyIds, but its own litterId
+  // points at a DIFFERENT litter entirely.
+  const forwardOnlyId = `pup13forwardonly_${R}`
+  await setDoc(doc(db, 'dogs', forwardOnlyId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'ForwardOnly13', sex: 'female', status: 'active', dateOfBirth: '2026-01-01', litterId: otherLitterId,
+  })
+  await adminDb.collection('litters').doc(litterId).set({
+    tenantId: breederUid, damId, name: 'Litter13', notes: '', actualBirthDate: '2026-01-01', puppyIds: [forwardOnlyId], // reverseOnlyId deliberately absent
+  })
+
+  const reverseOnlyAttempt = await removeLitterPuppyServer(litterId, reverseOnlyId, breederUid)
+  check('13-TwoSidedMembership', 'A reverse-only dog (litterId matches, but never in puppyIds) is rejected (NOT_CONFIRMED_MEMBER)', reverseOnlyAttempt.ok === false && reverseOnlyAttempt.reason === 'NOT_CONFIRMED_MEMBER')
+  const reverseOnlyAfter = await getDoc(doc(db, 'dogs', reverseOnlyId))
+  check('13-TwoSidedMembership', 'The reverse-only dog\'s litterId was NOT cleared by the rejected attempt', reverseOnlyAfter.data().litterId === litterId)
+
+  const forwardOnlyAttempt = await removeLitterPuppyServer(litterId, forwardOnlyId, breederUid)
+  check('13-TwoSidedMembership', 'A forward-only dog (in puppyIds, but its own litterId points elsewhere) is rejected (NOT_CONFIRMED_MEMBER)', forwardOnlyAttempt.ok === false && forwardOnlyAttempt.reason === 'NOT_CONFIRMED_MEMBER')
+  const forwardOnlyAfter = await getDoc(doc(db, 'dogs', forwardOnlyId))
+  check('13-TwoSidedMembership', 'The forward-only dog\'s litterId was NOT changed by the rejected attempt (still points at its real litter)', forwardOnlyAfter.data().litterId === otherLitterId)
+
+  const litterAfter13 = await getDoc(doc(db, 'litters', litterId))
+  check('13-TwoSidedMembership', 'Neither rejected attempt mutated puppyIds at all', (litterAfter13.data().puppyIds || []).length === 1 && litterAfter13.data().puppyIds[0] === forwardOnlyId)
+}
+
+// =========================================================================
+// SECTION 14 — create-litter-puppy.js: the RETRY path requires the
+// litter to exist / match tenant / not be archived (Codex round 6,
+// Blocker 5) — a missing or archived litter must fail closed with zero
+// writes, never silently skip the re-link and report success anyway.
+// =========================================================================
+{
+  await as('breeder')
+  const damId = `dam14_${R}`
+  await setDoc(doc(db, 'dogs', damId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam14', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const payload = { name: 'RetryLitterStatePup', breed: 'Poodle', sex: 'male', dateOfBirth: '2026-01-01', colour: '', microchip: '', ankc: '', notes: '' }
+
+  // --- Missing litter on retry ---
+  {
+    const litterId = `litter14missing_${R}`
+    await adminDb.collection('litters').doc(litterId).set({
+      tenantId: breederUid, damId, name: 'Litter14Missing', notes: '', actualBirthDate: '2026-01-01', puppyIds: [],
+    })
+    const opId = `op14missing_${R}`
+    const pupId = `pup14missing_${R}`
+    const first = await createLitterPuppyServer({ operationId: opId, litterId, dogId: pupId, payload, requesterUid: breederUid })
+    check('14-RetryLitterState', 'First creation succeeds', first.ok === true)
+
+    // The litter is now deleted entirely (simulating it being removed
+    // between the first attempt and a client retry).
+    await adminDb.collection('litters').doc(litterId).delete()
+
+    const retryAfterLitterGone = await createLitterPuppyServer({ operationId: opId, litterId, dogId: pupId, payload, requesterUid: breederUid })
+    check('14-RetryLitterState', 'A retry against a now-missing litter fails closed (LITTER_NOT_FOUND), never silently reports success', retryAfterLitterGone.ok === false && retryAfterLitterGone.reason === 'LITTER_NOT_FOUND')
+  }
+
+  // --- Archived litter on retry ---
+  {
+    const litterId = `litter14archived_${R}`
+    await adminDb.collection('litters').doc(litterId).set({
+      tenantId: breederUid, damId, name: 'Litter14Archived', notes: '', actualBirthDate: '2026-01-01', puppyIds: [],
+    })
+    const opId = `op14archived_${R}`
+    const pupId = `pup14archived_${R}`
+    const first = await createLitterPuppyServer({ operationId: opId, litterId, dogId: pupId, payload, requesterUid: breederUid })
+    check('14-RetryLitterState', 'First creation succeeds (archived case)', first.ok === true)
+
+    // The litter gets archived (e.g. a concurrent delete-litter call
+    // preserved it because some OTHER dog was still linked).
+    await adminDb.collection('litters').doc(litterId).update({ archived: true, archivedAt: new Date().toISOString() })
+
+    const retryAfterArchived = await createLitterPuppyServer({ operationId: opId, litterId, dogId: pupId, payload, requesterUid: breederUid })
+    check('14-RetryLitterState', 'A retry against a now-ARCHIVED litter fails closed (LITTER_ARCHIVED), never silently reports success', retryAfterArchived.ok === false && retryAfterArchived.reason === 'LITTER_ARCHIVED')
+
+    // No writes happened as a result of the failed retry — the dog and
+    // its litter link are exactly as the first (successful) attempt
+    // left them, not further mutated by the rejected retry.
+    const litterSnap = await getDoc(doc(db, 'litters', litterId))
+    check('14-RetryLitterState', 'The archived litter\'s puppyIds is unaffected by the rejected retry', (litterSnap.data().puppyIds || []).includes(pupId))
+  }
+
+  // --- Wrong-tenant litter on retry ---
+  {
+    const litterId = `litter14wrongtenant_${R}`
+    await adminDb.collection('litters').doc(litterId).set({
+      tenantId: breederUid, damId, name: 'Litter14WrongTenant', notes: '', actualBirthDate: '2026-01-01', puppyIds: [],
+    })
+    const opId = `op14wrongtenant_${R}`
+    const pupId = `pup14wrongtenant_${R}`
+    const first = await createLitterPuppyServer({ operationId: opId, litterId, dogId: pupId, payload, requesterUid: breederUid })
+    check('14-RetryLitterState', 'First creation succeeds (wrong-tenant case)', first.ok === true)
+
+    // The litter's tenantId is reassigned (a scenario that shouldn't
+    // normally happen, but the retry path must still independently
+    // verify tenant ownership rather than trusting the earlier check).
+    await adminDb.collection('litters').doc(litterId).update({ tenantId: 'someone-else-entirely' })
+
+    const retryAfterTenantChange = await createLitterPuppyServer({ operationId: opId, litterId, dogId: pupId, payload, requesterUid: breederUid })
+    check('14-RetryLitterState', 'A retry against a litter that no longer matches tenant fails closed (NOT_YOUR_LITTER)', retryAfterTenantChange.ok === false && retryAfterTenantChange.reason === 'NOT_YOUR_LITTER')
+  }
+}
+
+// =========================================================================
+// SECTION 15 — explicit-null history fields fail closed, at BOTH the
+// Rules layer (direct client dogs.delete) and the Admin endpoint layer
+// (remove-litter-puppy.js) — Codex round 6, Blocker 3. Also confirms a
+// genuinely CLEAN dog (all five fields entirely absent, the common case)
+// still deletes/removes normally — this hardening must not be overbroad.
+// =========================================================================
+{
+  await as('breeder')
+  const damId = `dam15_${R}`
+  await setDoc(doc(db, 'dogs', damId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam15', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+
+  // --- Rules layer: explicit null on each history field independently blocks direct delete ---
+  const nullCases = [
+    ['buyerEmail', { buyerEmail: null }],
+    ['previousOwnerId', { previousOwnerId: null }],
+    ['transferredAt', { transferredAt: null }],
+    ['claimedAt', { claimedAt: null }],
+    ['claimedBy', { claimedBy: null }],
+  ]
+  for (const [label, extra] of nullCases) {
+    const dogId = `historynull_${label}_${R}`
+    await adminDb.collection('dogs').doc(dogId).set({
+      tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+      sourceType: 'BREEDER_ISSUED', name: dogId, sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
+      ...extra,
+    })
+    let deleteDenied = false
+    try { await deleteDoc(doc(db, 'dogs', dogId)) } catch (err) { deleteDenied = isDenied(err) }
+    check('15-NullHistory', `A dog with ${label} explicitly set to null (status/currentOwnerId otherwise clean) cannot be deleted directly — round 6: explicit null must fail closed, not collapse to "no history"`, deleteDenied)
+  }
+
+  // --- Admin endpoint layer: explicit null on a litter member blocks remove-litter-puppy too ---
+  const litterId = `litter15_${R}`
+  const nullHistoryPupId = `pup15nullhistory_${R}`
+  await adminDb.collection('dogs').doc(nullHistoryPupId).set({
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'NullHistoryPup15', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+    litterId, claimedBy: null,
+  })
+  await adminDb.collection('litters').doc(litterId).set({
+    tenantId: breederUid, damId, name: 'Litter15', notes: '', actualBirthDate: '2026-01-01', puppyIds: [nullHistoryPupId],
+  })
+  const nullHistoryRemoveAttempt = await removeLitterPuppyServer(litterId, nullHistoryPupId, breederUid)
+  check('15-NullHistory', 'remove-litter-puppy.js also rejects a dog whose claimedBy is explicitly null (DOG_PROTECTED), not just non-null values', nullHistoryRemoveAttempt.ok === false && nullHistoryRemoveAttempt.reason === 'DOG_PROTECTED')
+
+  // --- Sanity: a genuinely clean dog (fields entirely absent) is unaffected ---
+  const cleanDogId = `historynull_clean_${R}`
+  await setDoc(doc(db, 'dogs', cleanDogId), {
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'CleanDog15', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  let cleanDeleteOk = true
+  try { await deleteDoc(doc(db, 'dogs', cleanDogId)) } catch { cleanDeleteOk = false }
+  check('15-NullHistory', 'A dog with all five history fields genuinely absent (never written) still deletes normally — the hardening is not overbroad', cleanDeleteOk)
+
+  const cleanLitterId = `litter15clean_${R}`
+  const cleanPupId = `pup15clean_${R}`
+  await adminDb.collection('dogs').doc(cleanPupId).set({
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'CleanRemovablePup15', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: cleanLitterId,
+  })
+  await adminDb.collection('litters').doc(cleanLitterId).set({
+    tenantId: breederUid, damId, name: 'Litter15Clean', notes: '', actualBirthDate: '2026-01-01', puppyIds: [cleanPupId],
+  })
+  const cleanRemoveAttempt = await removeLitterPuppyServer(cleanLitterId, cleanPupId, breederUid)
+  check('15-NullHistory', 'A genuinely clean, two-sided-confirmed puppy remains removable', cleanRemoveAttempt.ok === true)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

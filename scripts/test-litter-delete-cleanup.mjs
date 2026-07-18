@@ -39,7 +39,24 @@ const adminApp = initAdminApp({ projectId: 'demo-idogs-qa' })
 const adminDb = getAdminFirestore(adminApp)
 
 let pass = 0, fail = 0
-function check(label, cond, extra = '') {
+// Codex round 6 discovery (found while auditing test-atomic-transactions.mjs
+// for the same defect — see that file's own comment for the full
+// explanation): this file's check() calls actually pass
+// check(sectionLabel, description, condition), a 3rd positional
+// argument, but the signature was check(label, cond, extra) — so `cond`
+// was always the DESCRIPTION STRING (permanently truthy) and the real
+// boolean was silently discarded into `extra`. Fixed via runtime shape
+// detection rather than touching every call site.
+function check(label, arg2, arg3, arg4) {
+  let cond, extra
+  if (typeof arg2 === 'string' && arg3 !== undefined) {
+    label = `${label}: ${arg2}`
+    cond = arg3
+    extra = arg4 !== undefined ? arg4 : ''
+  } else {
+    cond = arg2
+    extra = arg3 !== undefined ? arg3 : ''
+  }
   if (cond) { console.log(`PASS: ${label}`); pass++ }
   else { console.log(`FAIL: ${label} ${extra}`); fail++ }
 }
@@ -232,8 +249,15 @@ const strangerUid = await newUser('stranger')
   check('2-Atomicity', 'The litter document is deleted', !litterGone.exists())
   const puppyGone = await safeGetDoc(doc(db, 'dogs', `ap1_${R}`))
   check('2-Atomicity', 'The genuinely-eligible puppy is deleted', !puppyGone.exists())
-  const strangerDogStillThere = await safeGetDoc(doc(db, 'dogs', strangerDogId))
-  check('2-Atomicity', "The stranger's own dog was never touched, despite being listed in puppyIds", strangerDogStillThere.exists())
+  // Codex round 6 fix: the caller is signed in as 'breeder' here, and
+  // firestore.rules correctly denies a breeder reading a stranger's own
+  // dog directly — safeGetDoc's permission-denied fallback previously
+  // made this assert "gone" for the WRONG reason (an access denial, not
+  // a genuine deletion check). Use the Admin SDK (bypasses Rules) to
+  // verify existence directly — what this check actually cares about is
+  // whether the DOCUMENT survives, not who's allowed to read it.
+  const strangerDogSnap = await adminDb.collection('dogs').doc(strangerDogId).get()
+  check('2-Atomicity', "The stranger's own dog was never touched, despite being listed in puppyIds", strangerDogSnap.exists)
 }
 
 // =========================================================================

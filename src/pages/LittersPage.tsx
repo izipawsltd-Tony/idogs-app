@@ -46,14 +46,21 @@ const emptyPuppy: PuppyForm = { name: '', sex: 'female', colour: '', collarColou
 // history signal (Codex round 3): previousOwnerId, transferredAt,
 // claimedAt, AND claimedBy (Codex round 4, Blocker 5 — claimedBy alone,
 // without claimedAt, must still block) are all independent, permanent
-// provenance that must each individually block deletion.
+// provenance that must each individually block deletion. Presence, not
+// truthiness (Codex round 5/6, Blocker 3) — even an explicit null counts
+// as history now, matching isDogHistoryBearing's own pure hasOwnProperty
+// check; a field simply never having been written is the only "clean" case.
+const HISTORY_FIELD_NAMES = ['buyerEmail', 'previousOwnerId', 'transferredAt', 'claimedAt', 'claimedBy'] as const
+function isDogHistoryBearingPreview(dog: Dog): boolean {
+  return HISTORY_FIELD_NAMES.some(field => Object.prototype.hasOwnProperty.call(dog, field))
+}
 function partitionLitterCandidates(litterId: string, fetched: Dog[], requesterUid: string) {
   const confirmedMembers = fetched.filter(d => d.litterId === litterId)
   const ambiguousCount = fetched.length - confirmedMembers.length
   const eligible = confirmedMembers.filter(d =>
     d.currentOwnerId === requesterUid &&
     !isDogTransferred(d) &&
-    !d.buyerEmail && !d.previousOwnerId && !d.transferredAt && !d.claimedAt && !d.claimedBy
+    !isDogHistoryBearingPreview(d)
   )
   const preserved = confirmedMembers.length - eligible.length
   return { confirmedMembers, ambiguousCount, eligible, preserved }

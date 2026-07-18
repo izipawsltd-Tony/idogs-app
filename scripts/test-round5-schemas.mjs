@@ -1,11 +1,13 @@
 // Pure-logic regression coverage for the new server-side validation
-// modules introduced in Codex round 5: api/_lib/litter-eligibility.js's
-// presence-based history checks + membership resolution,
-// api/_lib/litter-schema.js, api/_lib/heat-cycle-schema.js,
-// api/_lib/http-helpers.js, and scripts/rollback-firestore-rules.mjs.
-// None of these modules touch Firestore/Auth directly, so this file
-// needs no emulator — it imports and exercises the real code directly,
-// not a mirror.
+// modules introduced in Codex round 5 (and extended round 6):
+// api/_lib/litter-eligibility.js's presence-based history checks +
+// membership resolution, api/_lib/litter-schema.js,
+// api/_lib/heat-cycle-schema.js, api/_lib/http-helpers.js,
+// api/_lib/puppy-payload-schema.js (round 6), and
+// scripts/rollback-firestore-rules.mjs /
+// scripts/verify-rules-release.mjs (round 6). None of these modules
+// touch Firestore/Auth directly, so this file needs no emulator — it
+// imports and exercises the real code directly, not a mirror.
 //
 // Usage: node scripts/test-round5-schemas.mjs
 
@@ -15,6 +17,7 @@ import { isDogHistoryBearing, isDogSafeToDetach, resolveLitterMembership, partit
 import { sanitizeLitterInput, LitterValidationError, CREATE_FIELDS, UPDATE_FIELDS } from '../api/_lib/litter-schema.js'
 import { sanitizeHeatCycleInput, HeatCycleValidationError, ALL_FIELDS as HEAT_CYCLE_FIELDS } from '../api/_lib/heat-cycle-schema.js'
 import { ApiError, parseJsonBody, withApiErrorHandling } from '../api/_lib/http-helpers.js'
+import { sanitizePuppyPayload, PuppyPayloadValidationError, PAYLOAD_FIELDS as PUPPY_PAYLOAD_FIELDS } from '../api/_lib/puppy-payload-schema.js'
 
 let pass = 0, fail = 0
 function check(label, cond, extra = '') {
@@ -31,15 +34,26 @@ function check(label, cond, extra = '') {
   check('A dog with no history fields at all is not history-bearing', isDogHistoryBearing({}) === false)
   check('buyerEmail present as a non-empty string is history-bearing', isDogHistoryBearing({ buyerEmail: 'a@b.com' }) === true)
   check('buyerEmail present as an EMPTY STRING is still history-bearing (presence, not truthiness)', isDogHistoryBearing({ buyerEmail: '' }) === true)
-  check('buyerEmail explicitly null is NOT history-bearing (matches Rules\' .get(field,null)==null semantics)', isDogHistoryBearing({ buyerEmail: null }) === false)
-  check('buyerEmail explicitly undefined (present as a key but undefined) is NOT history-bearing', isDogHistoryBearing({ buyerEmail: undefined }) === false)
+  // Codex round 6, Blocker 3: round 5 let an explicit null collapse to
+  // "no history" (matching Rules' old .get(field,null)==null default
+  // behavior) — that was wrong. A genuinely clean Dog never has these
+  // fields written at all; an explicit null is itself an anomalous
+  // record and must now fail closed exactly like any other present value.
+  check('buyerEmail explicitly null now IS history-bearing (round 6 — explicit null must fail closed, not collapse to "no history")', isDogHistoryBearing({ buyerEmail: null }) === true)
+  check('buyerEmail present as a JS-literal undefined value is STILL history-bearing (the key itself is present — hasOwnProperty is true regardless of value)', isDogHistoryBearing({ buyerEmail: undefined }) === true)
+  check('buyerEmail present as the literal string "undefined" (a plausible malformed-legacy-migration artifact) is history-bearing', isDogHistoryBearing({ buyerEmail: 'undefined' }) === true)
   check('previousOwnerId alone (empty string) is history-bearing', isDogHistoryBearing({ previousOwnerId: '' }) === true)
+  check('previousOwnerId explicitly null alone is history-bearing', isDogHistoryBearing({ previousOwnerId: null }) === true)
   check('transferredAt alone (empty string) is history-bearing', isDogHistoryBearing({ transferredAt: '' }) === true)
+  check('transferredAt explicitly null alone is history-bearing', isDogHistoryBearing({ transferredAt: null }) === true)
   check('claimedAt alone (empty string) is history-bearing', isDogHistoryBearing({ claimedAt: '' }) === true)
+  check('claimedAt explicitly null alone is history-bearing', isDogHistoryBearing({ claimedAt: null }) === true)
   check('claimedBy ALONE (empty string, no claimedAt) is history-bearing — Codex round 4/5 Blocker 5', isDogHistoryBearing({ claimedBy: '' }) === true)
+  check('claimedBy explicitly null alone is history-bearing', isDogHistoryBearing({ claimedBy: null }) === true)
   check('claimedBy present as 0 (falsy but present) is history-bearing', isDogHistoryBearing({ claimedBy: 0 }) === true)
   check('claimedBy present as false (falsy but present) is history-bearing', isDogHistoryBearing({ claimedBy: false }) === true)
   check('An unrelated field (e.g. notes) does not trigger history-bearing', isDogHistoryBearing({ notes: 'hello' }) === false)
+  check('A dog with only unrelated fields plus a genuinely clean shape remains not history-bearing', isDogHistoryBearing({ currentOwnerId: 'x', status: 'active', name: 'Rex' }) === false)
 }
 
 // =========================================================================
@@ -56,6 +70,7 @@ function check(label, cond, extra = '') {
   check('transferStatus=pendingClaim -> not safe (even if status looks clean)', isDogSafeToDetach({ currentOwnerId: uid, status: 'active', transferStatus: 'pendingClaim' }, uid) === false)
   check('claimedBy present alone -> not safe', isDogSafeToDetach({ currentOwnerId: uid, status: 'active', claimedBy: 'buyer-uid' }, uid) === false)
   check('buyerEmail present as empty string alone -> not safe (presence, not truthiness)', isDogSafeToDetach({ currentOwnerId: uid, status: 'active', buyerEmail: '' }, uid) === false)
+  check('buyerEmail present as explicit null alone -> not safe (round 6 — explicit null fails closed too)', isDogSafeToDetach({ currentOwnerId: uid, status: 'active', buyerEmail: null }, uid) === false)
 }
 
 // =========================================================================
@@ -299,6 +314,92 @@ function check(label, cond, extra = '') {
   let missingRefFailed = false
   try { execFileSync('node', ['scripts/rollback-firestore-rules.mjs'], { cwd: repoRoot, encoding: 'utf8' }) } catch { missingRefFailed = true }
   check('Running the script with no git-ref argument fails (usage error) rather than doing something undefined', missingRefFailed)
+}
+
+// =========================================================================
+// SECTION 8 — puppy-payload-schema.js: explicit allowlist + validation
+// for api/create-litter-puppy.js's `payload` (Codex round 6, Blocker 4)
+// =========================================================================
+{
+  const validPayload = { name: 'Rex', breed: 'Poodle', sex: 'male', dateOfBirth: '2026-01-01', colour: 'Black', microchip: '123456', ankc: '2100123', notes: 'Friendly' }
+  const normalized = sanitizePuppyPayload(validPayload)
+  check('A well-formed payload passes and every field is preserved', normalized.name === 'Rex' && normalized.breed === 'Poodle' && normalized.colour === 'Black')
+  check('The normalized result always has all 8 fields present, even if the input omitted optional ones', PUPPY_PAYLOAD_FIELDS.every(f => Object.prototype.hasOwnProperty.call(sanitizePuppyPayload({ sex: 'female', dateOfBirth: '2026-01-01' }), f)))
+
+  let unknownFieldThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, tenantId: 'hacked-uid' }) } catch (err) { unknownFieldThrew = err instanceof PuppyPayloadValidationError }
+  check('An unknown field (e.g. tenantId) is rejected outright', unknownFieldThrew)
+
+  let objectFieldThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, name: { first: 'Rex' } }) } catch (err) { objectFieldThrew = err instanceof PuppyPayloadValidationError }
+  check('An object where a string is expected (name) is rejected', objectFieldThrew)
+
+  let arrayFieldThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, notes: ['a', 'b'] }) } catch (err) { arrayFieldThrew = err instanceof PuppyPayloadValidationError }
+  check('An array where a string is expected (notes) is rejected', arrayFieldThrew)
+
+  let payloadItselfAnArrayThrew = false
+  try { sanitizePuppyPayload(['not', 'an', 'object']) } catch (err) { payloadItselfAnArrayThrew = err instanceof PuppyPayloadValidationError }
+  check('A payload that is itself an array (not an object) is rejected', payloadItselfAnArrayThrew)
+
+  let numberFieldThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, breed: 12345 }) } catch (err) { numberFieldThrew = err instanceof PuppyPayloadValidationError }
+  check('A number where a string is expected (breed) is rejected', numberFieldThrew)
+
+  let oversizedNameThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, name: 'x'.repeat(200) }) } catch (err) { oversizedNameThrew = err instanceof PuppyPayloadValidationError }
+  check('An oversized name (200 chars, over the 100-char limit) is rejected', oversizedNameThrew)
+
+  let oversizedNotesThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, notes: 'x'.repeat(6000) }) } catch (err) { oversizedNotesThrew = err instanceof PuppyPayloadValidationError }
+  check('Oversized notes (6000 chars, over the 5000-char limit) is rejected', oversizedNotesThrew)
+
+  let badSexThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, sex: 'unknown' }) } catch (err) { badSexThrew = err instanceof PuppyPayloadValidationError }
+  check('sex outside the male/female enum is rejected', badSexThrew)
+
+  let impossibleDateThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, dateOfBirth: '2026-02-30' }) } catch (err) { impossibleDateThrew = err instanceof PuppyPayloadValidationError }
+  check('An impossible calendar date (2026-02-30) is rejected', impossibleDateThrew)
+
+  const farFuture = `${new Date().getFullYear() + 5}-01-01`
+  let futureDateThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, dateOfBirth: farFuture }) } catch (err) { futureDateThrew = err instanceof PuppyPayloadValidationError }
+  check('A future dateOfBirth is rejected', futureDateThrew)
+
+  let missingDateThrew = false
+  try { sanitizePuppyPayload({ ...validPayload, dateOfBirth: undefined }) } catch (err) { missingDateThrew = err instanceof PuppyPayloadValidationError }
+  check('A missing dateOfBirth is rejected (required, unlike the other free-text fields)', missingDateThrew)
+
+  let nullPayloadThrew = false
+  try { sanitizePuppyPayload(null) } catch (err) { nullPayloadThrew = err instanceof PuppyPayloadValidationError }
+  check('A null payload is rejected', nullPayloadThrew)
+}
+
+// =========================================================================
+// SECTION 9 — scripts/verify-rules-release.mjs: non-mutating rollback
+// verification (Codex round 6, Blocker 6). Only the offline/argument-
+// validation paths are exercised here — the live Firebase Rules API call
+// itself needs real network + auth and is documented, not executed, in
+// this suite (see the round 6 report's limitations section).
+// =========================================================================
+{
+  const repoRoot = new URL('..', import.meta.url).pathname.replace(/^\/([a-zA-Z]:)/, '$1')
+
+  let noArgsFailed = false
+  try { execFileSync('node', ['scripts/verify-rules-release.mjs'], { cwd: repoRoot, encoding: 'utf8' }) } catch (err) { noArgsFailed = err.status === 2 }
+  check('Running with no arguments fails with a usage error (exit 2), not a crash or a false pass', noArgsFailed)
+
+  let missingLocalFileFailed = false
+  try { execFileSync('node', ['scripts/verify-rules-release.mjs', 'idogs-app-staging', 'a-file-that-does-not-exist.rules'], { cwd: repoRoot, encoding: 'utf8' }) }
+  catch (err) { missingLocalFileFailed = err.status === 2 }
+  check('Running with a nonexistent local rules file fails with a usage error (exit 2)', missingLocalFileFailed)
+
+  const scriptSrc = readFileSync(`${repoRoot}/scripts/verify-rules-release.mjs`, 'utf8')
+  check('The script only ever issues GET requests (fetch calls with no method/body — read-only)', !/method:\s*['"]POST['"]|method:\s*['"]PUT['"]|method:\s*['"]DELETE['"]/.test(scriptSrc))
+  check('The script never references any business-data collection (dogs/litters/users/heatCycles)', !/collection\(['"](?:dogs|litters|users|heatCycles)['"]\)/.test(scriptSrc))
+  check('The script independently asserts the release response identifies the requested projectId before trusting it (wrong-project safety)', /expectedPrefix/.test(scriptSrc) && /startsWith\(expectedPrefix\)/.test(scriptSrc))
+  check('A mismatched/unverifiable response throws rather than silently reporting a match', /refusing to trust it/.test(scriptSrc))
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

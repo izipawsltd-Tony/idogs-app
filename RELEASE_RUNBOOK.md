@@ -151,24 +151,41 @@ firebase deploy --only firestore:rules --project idogs-app-staging
 
 ## 4b. Verify raw litter/Heat Cycle writes are now denied
 
-Only now — with the NEW Rules actually live — check the raw-write
-behavior. Open browser devtools console against the Preview URL and
-attempt:
+Only now — with the NEW Rules actually live — confirm it. Two ways,
+listed in preference order:
+
+**Preferred (non-mutating, no real data touched):**
+
+```powershell
+node scripts/verify-rules-release.mjs idogs-app-staging firestore.rules
+```
+
+This reads the ACTUAL deployed ruleset via the Firebase Rules Management
+REST API and diffs it against the local file — confirms the exact rules
+text that denies these paths is genuinely live, without attempting any
+write at all. See Step 8's own note on why this replaced the previous
+"attempt a write and see if it's denied" approach.
+
+**Optional additional confidence (functional, devtools):** if you want
+to see the actual denial behavior firsthand, use ONLY a disposable test
+litter/dog you created for this specific QA pass (e.g. from Step 3's own
+checklist) — never a real breeder's existing record. Open browser
+devtools console against the Preview URL and attempt:
 
 - [ ] A direct client write (`updateDoc`/`deleteDoc`/`setDoc` via the
-      Firebase JS SDK console, or the equivalent through devtools) to
-      `litters/{id}` (create, update, AND delete) → all denied.
-- [ ] The same to `heatCycles/{id}` (create AND update) → all denied.
-- [ ] A direct client write to `litters/{id}.puppyIds` specifically
+      Firebase JS SDK console) to YOUR test `litters/{id}` (create,
+      update, AND delete) → all denied.
+- [ ] The same to a test `heatCycles/{id}` (create AND update) → all denied.
+- [ ] A direct client write to your test litter's `puppyIds` specifically
       (the exact bypass Codex round 4/5 named) → denied.
-- [ ] A direct client delete of a Dog carrying ANY of
+- [ ] A direct client delete of a test Dog carrying ANY of
       buyerEmail/previousOwnerId/transferredAt/claimedAt/claimedBy →
       denied, even if `currentOwnerId`/`status` look otherwise "clean".
 
-**Stop condition:** any of these SUCCEEDS (i.e. Rules did not actually
-deny it) → the deploy did not take effect as intended. Do not proceed —
-treat this as a failed Rules deploy and go to Step 8 (Rollback)
-immediately.
+**Stop condition:** the script reports MISMATCH, or any devtools attempt
+SUCCEEDS (i.e. Rules did not actually deny it) → the deploy did not take
+effect as intended. Do not proceed — treat this as a failed Rules deploy
+and go to Step 8 (Rollback) immediately.
 
 ---
 
@@ -260,12 +277,11 @@ firebase deploy --only firestore:rules --project idogs-app-staging   # or idogs-
 
 # 2. VERIFY the rollback is actually active — do NOT proceed to the
 #    Vercel rollback on the strength of the deploy command alone.
-#    Attempt the exact operation Step 4b confirmed the NEW rules deny
-#    (e.g. a direct client update to litters/{id}) against the SAME
-#    project you just deployed to:
-#      - ALLOWED again -> rollback confirmed active, proceed to step 3.
-#      - still DENIED  -> deploy hasn't propagated yet (allow up to
-#        ~60s and recheck) or failed outright — do NOT proceed to the
+node scripts/verify-rules-release.mjs idogs-app-staging firestore.rules
+#    (idogs-app for production, matching whichever --project you deployed to)
+#      - MATCH (exit 0)    -> rollback confirmed active, proceed to step 3.
+#      - MISMATCH (exit 1) -> deploy hasn't propagated yet (allow up to
+#        ~60s and re-run) or failed outright — do NOT proceed to the
 #        Vercel rollback until this resolves; a Vercel rollback while
 #        the NEW (restrictive) Rules are still actually live recreates
 #        exactly the mismatch this ordering exists to avoid (see "Why
@@ -276,6 +292,23 @@ firebase deploy --only firestore:rules --project idogs-app-staging   # or idogs-
 vercel rollback                          # rolls the alias back to the previous deployment
 # or: vercel deploy --prod (after approval) from a checkout of the previous commit
 ```
+
+**Why this verification method (Codex round 6, Blocker 6):** the
+previous version of this step said to verify rollback by attempting a
+direct write against a REAL litter document and observing whether it
+succeeded or failed — i.e. touching actual business data specifically
+during an incident, when the deployed Rules' real effect is least well
+understood, and creating its own cleanup burden if the "test" write
+unexpectedly succeeded. `scripts/verify-rules-release.mjs` instead reads
+the ACTUAL deployed ruleset's content via the Firebase Rules Management
+REST API (GET requests only — never writes, never touches any
+collection or document, never reads any business data at all) and diffs
+it against the local `firestore.rules` file. It also independently
+asserts the API response's own resource name matches the exact
+`projectId` you asked about before trusting anything in it — a
+response that doesn't clearly identify the right project fails loudly
+rather than silently reporting a false match, so this can never be
+pointed at the wrong Firebase project without erroring out first.
 
 **Why Rules first:** the previous (pre-release) client bundle expects
 the OLD, more permissive Rules — it still does direct Firestore writes
