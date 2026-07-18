@@ -157,4 +157,4 @@ await seedDb.collection('dogs').doc(dog3Id).set({
   check('Missing passportId returns 400', res.statusCode === 400, `got ${res.statusCode}`)
 }
 
-summary()
+await summary()

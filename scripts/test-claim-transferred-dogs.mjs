@@ -155,4 +155,4 @@ await seedDb.collection('dogs').doc(activeDogId).set({
   check('No console.log calls reference email/uid/token/buyerEmail directly', !consoleLogLines.some(l => /email|uid|token|buyerEmail/i.test(l)), JSON.stringify(consoleLogLines))
 }
 
-summary()
+await summary()

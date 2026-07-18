@@ -328,4 +328,4 @@ const otherOwnerUid = await newUser('otherowner')
   }
 }
 
-summary()
+await summary()

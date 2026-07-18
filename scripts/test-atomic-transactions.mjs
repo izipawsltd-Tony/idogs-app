@@ -1082,4 +1082,4 @@ const breederUid = await newUser('breeder')
   check('15-NullHistory', 'A genuinely clean, two-sided-confirmed puppy remains removable', cleanRemoveAttempt.ok === true)
 }
 
-summary()
+await summary()

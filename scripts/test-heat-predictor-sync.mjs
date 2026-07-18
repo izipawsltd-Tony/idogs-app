@@ -237,4 +237,4 @@ const BASE = { dob: DOB, firstHeatDate: '', heatInterval: 6, firstHeatMo: 8 }
     /heat\.recorded &&/.test(src) && !/const recorded = heatCycles\.find/.test(src))
 }
 
-summary()
+await summary()

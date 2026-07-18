@@ -157,16 +157,14 @@ listed in preference order:
 **Preferred (non-mutating, no real data touched):**
 
 Auth setup (once per shell session — see "Auth for
-`verify-rules-release.mjs`" below for full detail): set the SAME three
-env vars Step 1 already covers, scoped to the project you're verifying
-(staging vars for `idogs-app-staging`, production vars for `idogs-app`
-— never mix the two):
+`verify-rules-release.mjs`" below for the full, credential-safe setup —
+do NOT type the private key literally into a PowerShell command, it
+lands in command history):
 
 ```powershell
-$env:FIREBASE_PROJECT_ID = "idogs-app-staging"
-$env:FIREBASE_CLIENT_EMAIL = "<the staging service account client_email>"
-$env:FIREBASE_PRIVATE_KEY = "<the staging service account private_key, one line, literal \n>"
+& "$HOME\.idogs-secrets\load-env.ps1" idogs-app-staging
 node scripts/verify-rules-release.mjs idogs-app-staging firestore.rules
+& "$HOME\.idogs-secrets\clear-env.ps1"
 ```
 
 This reads the ACTUAL deployed ruleset via the Firebase Rules Management
@@ -198,7 +196,7 @@ and go to Step 8 (Rollback) immediately.
 
 ---
 
-### Auth for `verify-rules-release.mjs` (Codex round 7, Blocker 2)
+### Auth for `verify-rules-release.mjs` (Codex round 7, Blocker 2; credential handling hardened round 8)
 
 `scripts/verify-rules-release.mjs` calls the Firebase Rules Management
 REST API directly (GET requests only — see the script's own header
@@ -214,33 +212,81 @@ whatever version of `firebase-tools` happens to be latest/cached at run
 time, with no version pin and no stated support guarantee for that
 specific subcommand. It has been fully removed; do not reintroduce it.
 
-**Setup (one-time per shell session, per project):**
+**Setup (one-time per project you'll ever need to verify):**
 
-1. Set the same three env vars Step 1 already documents, scoped to the
-   **project you're about to verify** — never mix staging and
-   production credentials:
-   ```powershell
-   $env:FIREBASE_PROJECT_ID = "idogs-app-staging"      # or idogs-app
-   $env:FIREBASE_CLIENT_EMAIL = "<service account client_email>"
-   $env:FIREBASE_PRIVATE_KEY = "<service account private_key>"   # one line, literal \n — same format Vercel already stores
-   ```
-   Pull these values from the same place Vercel's `FIREBASE_*` env vars
-   already come from (Firebase Console → Project Settings → Service
-   Accounts → Generate new private key, or the existing key already in
-   use for that project's Vercel env — do not generate a new key if an
-   existing one already works, to avoid key sprawl).
-2. Run the script (see the exact command in Step 4b or Step 8 above).
+1. Firebase Console → Project Settings → Service Accounts → Generate new
+   private key, for the project you need to verify (`idogs-app-staging`
+   or `idogs-app`). Reuse an existing key for that project if one you
+   already trust is still valid — don't generate a new one just for
+   this, to avoid key sprawl.
+2. Save the downloaded JSON file at
+   `$HOME\.idogs-secrets\<projectId>-service-account.json`, e.g.
+   `C:\Users\<you>\.idogs-secrets\idogs-app-staging-service-account.json`.
+   This directory is **outside the repo on purpose** — `git status` can
+   never show it, `git add` can never pick it up by accident, and it
+   never appears in this project's `.gitignore` because it should never
+   be reachable from a `git add` inside this repo in the first place. If
+   this machine is shared with other users, additionally restrict the
+   file's permissions with `icacls "$HOME\.idogs-secrets" /inheritance:r /grant:r "$env:USERNAME:(OI)(CI)F"`.
+
+**Per-session usage — never type the key into a command:**
+
+```powershell
+.\scripts\load-rules-verify-env.ps1 -ProjectId idogs-app-staging
+node scripts/verify-rules-release.mjs idogs-app-staging firestore.rules
+.\scripts\clear-rules-verify-env.ps1
+```
+
+`load-rules-verify-env.ps1` reads the three `FIREBASE_*` values out of
+the JSON file above and sets them as env vars on the *current process*
+only (never `[Environment]::SetEnvironmentVariable(..., 'User')` or
+`'Machine'`, which would persist them beyond this shell). Because the
+command you actually type only ever names a **file path and a project
+ID** — never the key material itself — the private key never appears in
+PowerShell's PSReadLine command history
+(`$env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt`),
+unlike a literal `$env:FIREBASE_PRIVATE_KEY = "-----BEGIN..."` typed
+directly, which would be persisted there indefinitely in plain text.
+`clear-rules-verify-env.ps1` removes all three env vars from the
+session afterward — always run it once you're done, so the key doesn't
+linger in this shell's process environment (and thus in anything that
+inspects it, e.g. `Get-ChildItem Env:`) any longer than it needs to.
+
+If this project later adopts a secret manager (1Password CLI, Azure Key
+Vault, etc.), the same shape applies: replace `load-rules-verify-env.ps1`'s
+`Get-Content -Raw $credPath | ConvertFrom-Json` with a call to that
+tool's own "read a secret without echoing it" command, and keep
+everything else — the env vars only living in the current process, the
+mandatory clear step — unchanged.
+
+**Never do this:**
+- Never type `$env:FIREBASE_PRIVATE_KEY = "<the actual key>"` directly
+  into a PowerShell prompt — it is recorded verbatim in PSReadLine
+  history and will remain there in plain text.
+- Never run `Write-Host $env:FIREBASE_PRIVATE_KEY`, `echo $env:...`, or
+  otherwise print any of these three env vars — none of this project's
+  scripts do this, and no debugging step should either.
+- Never save the service-account JSON key file inside this repo, even
+  temporarily, even if you intend to delete it before committing.
 
 **Preflight behavior:** the script checks that all three env vars are
 present BEFORE attempting any network call, and fails closed with a
 message naming which variable(s) are missing (never printing any
-value) if not. If `FIREBASE_PROJECT_ID` doesn't match the `projectId`
-argument you passed on the command line, it prints a WARNING before
-proceeding (a service account scoped to one project will normally lack
-access to another project's Rules, so this situation will typically
-still fail closed at the API-call step — the warning just makes the
-likely cause obvious immediately instead of only from a permission-denied
-error).
+value) if not.
+
+**Project-mismatch behavior (Codex round 8):** if `FIREBASE_PROJECT_ID`
+doesn't match the `projectId` argument you passed on the command line,
+the script now **refuses to proceed at all** — no access token is
+minted, no network request is made. This used to only print a warning
+and continue (relying on the API call itself to fail if the service
+account genuinely lacked access) — that was upgraded to a hard stop
+because a warning-and-continue can't rule out an overprivileged or
+misconfigured credential that unexpectedly *does* have cross-project
+access, which would have silently "verified" the wrong project's Rules.
+`load-rules-verify-env.ps1` also independently checks the project ID
+*inside* the key file itself matches the `-ProjectId` you asked it to
+load, and refuses to load a mismatched file — so a wrong-project
+mismatch is now caught at load time, not just at verification time.
 
 **Token handling:** the access token is held only in memory for the
 duration of the script's process and is used solely as a `Bearer` header
@@ -347,10 +393,11 @@ firebase deploy --only firestore:rules --project idogs-app-staging   # or idogs-
 
 # 2. VERIFY the rollback is actually active — do NOT proceed to the
 #    Vercel rollback on the strength of the deploy command alone.
-#    Requires FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY
-#    set for the project you're rolling back (see "Auth for
-#    verify-rules-release.mjs" under Step 4b above) — set BEFORE running this.
+#    Load credentials first (see "Auth for verify-rules-release.mjs"
+#    under Step 4b above for the full, credential-safe setup):
+.\scripts\load-rules-verify-env.ps1 -ProjectId idogs-app-staging
 node scripts/verify-rules-release.mjs idogs-app-staging firestore.rules
+.\scripts\clear-rules-verify-env.ps1
 #    (idogs-app for production, matching whichever --project you deployed to)
 #      - MATCH (exit 0)    -> rollback confirmed active, proceed to step 3.
 #      - MISMATCH (exit 1) -> deploy hasn't propagated yet (allow up to

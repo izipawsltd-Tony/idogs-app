@@ -297,7 +297,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
 
   await signOut(auth)
 } else {
-  console.log('SKIPPED: emulator sections (9, 10, 11) — set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
+  skip('9-11 emulator sections (dogs/litters Rules + server-only create checks)', 'set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
 }
 
-summary()
+await summary()

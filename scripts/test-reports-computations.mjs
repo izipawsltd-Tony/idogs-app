@@ -144,4 +144,4 @@ function dog(overrides = {}) {
 }
 
 rmSync(distDir, { recursive: true, force: true })
-summary()
+await summary()

@@ -315,7 +315,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
 
   await signOut(clientAuth).catch(() => {})
 } else {
-  console.log('SKIPPED: emulator integration section (Tests 11-12) — set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
+  skip('11-13 emulator integration section (server-only + concurrent-mutation checks)', 'set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
 }
 
-summary()
+await summary()

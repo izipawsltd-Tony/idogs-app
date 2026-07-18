@@ -179,4 +179,4 @@ const strangerUid = await newUser('stranger')
   check('4-Legacy', 'Legacy heat cycle record remains deletable', deleteOk)
 }
 
-summary()
+await summary()

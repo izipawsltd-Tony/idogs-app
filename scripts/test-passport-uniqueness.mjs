@@ -141,4 +141,4 @@ const uid1 = await newUser('user1')
   check('firestore.rules itself denies overwriting an existing reservation (update forbidden)', ruleDenied)
 }
 
-summary()
+await summary()

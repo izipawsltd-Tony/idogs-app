@@ -588,4 +588,4 @@ const strangerUid = await newUser('stranger')
   check('10-OwnershipHistory', 'It is counted as preserved', preserved === 1)
 }
 
-summary()
+await summary()

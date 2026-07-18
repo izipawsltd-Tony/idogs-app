@@ -454,4 +454,4 @@ async function newUser(name) {
   check('updateUserProfile has no console.log referencing user data', !updateSection.includes('console.log'))
 }
 
-summary()
+await summary()

@@ -165,4 +165,4 @@ function heatCycleVisible(profile, emailReminders) {
   check('isOwner is derived directly from profile.role', src.includes("profile?.role === 'owner'"))
 }
 
-summary()
+await summary()

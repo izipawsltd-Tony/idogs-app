@@ -42,6 +42,27 @@ export function checkRequiredEnvVars(env) {
   }
 }
 
+// Codex round 8: a mismatched FIREBASE_PROJECT_ID used to only produce a
+// console.warn() and then continue on to mint a token and make a real
+// network call anyway — "fail closed if access is denied" is not the
+// same guarantee as "never attempt the call on a known-bad
+// configuration" (a service account that unexpectedly DOES have
+// cross-project access, e.g. an overprivileged shared key, would have
+// silently verified against the wrong project). This now THROWS before
+// any credential is built or any network call is made — see
+// verifyRulesRelease() below, which calls this before touching
+// `credentialFactory`/`fetchImpl` at all.
+export function assertProjectMatchesCredential(env, projectId) {
+  if (env.FIREBASE_PROJECT_ID !== projectId) {
+    throw new RulesVerificationError(
+      `Refusing to proceed: the local FIREBASE_PROJECT_ID ("${env.FIREBASE_PROJECT_ID}") does not match ` +
+      `the project you asked to verify ("${projectId}"). This is a fail-closed check — no token was minted ` +
+      `and no network request was made. Set FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY ` +
+      `for the project you're actually verifying (see RELEASE_RUNBOOK.md), then re-run.`
+    )
+  }
+}
+
 // `credential` must implement getAccessToken(): Promise<{ access_token }>
 // — exactly the interface firebase-admin/app's cert() returns. Injected
 // so tests can supply a fake one. The token itself is returned to the
@@ -111,4 +132,29 @@ export function normalizeRulesText(text) {
 
 export function rulesTextsMatch(deployedContent, localContent) {
   return normalizeRulesText(deployedContent) === normalizeRulesText(localContent)
+}
+
+// The full read-only verification flow, with every external dependency
+// injected (env vars, the credential factory, fetch) so it can be
+// exercised end-to-end with fakes in tests — including proving the
+// project-ID mismatch check in assertProjectMatchesCredential() actually
+// stops the flow BEFORE `credentialFactory` or `fetchImpl` are ever
+// invoked, not just before a call that happens to fail later. This is
+// the function scripts/verify-rules-release.mjs's CLI wraps with real
+// dependencies (firebase-admin/app's cert, the global fetch).
+export async function verifyRulesRelease({ projectId, localRulesContent, env, credentialFactory, fetchImpl = fetch }) {
+  checkRequiredEnvVars(env)
+  assertProjectMatchesCredential(env, projectId)
+
+  const credential = credentialFactory({
+    projectId: env.FIREBASE_PROJECT_ID,
+    clientEmail: env.FIREBASE_CLIENT_EMAIL,
+    // Vercel (and this project's own env-var convention, see CLAUDE.md)
+    // stores the private key as one line with a literal `\n` — real
+    // newlines have to be restored before a real PEM key will parse.
+    privateKey: env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  })
+  const accessToken = await getAccessToken(credential)
+  const { rulesetName, content } = await fetchActiveRulesetContent(projectId, accessToken, fetchImpl)
+  return { rulesetName, matches: rulesTextsMatch(content, localRulesContent) }
 }

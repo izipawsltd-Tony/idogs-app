@@ -8,6 +8,10 @@
 //
 // Usage: node scripts/test-check-helpers.mjs
 
+import { execFileSync } from 'node:child_process'
+import { writeFileSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { makeChecker } from './_lib/test-check.mjs'
 
 const { check, checkAsync, skip, summary } = makeChecker()
@@ -169,4 +173,80 @@ async function captureLogs(fn) {
   check('The summary line matches the established "${pass} passed, ${fail} failed" format every test file already expects', !!summaryLine && summaryLine.includes('1 passed, 1 failed') && summaryLine.includes('1 skipped'))
 }
 
-summary()
+// =========================================================================
+// SECTION 7 — summary() waits for checkAsync() calls the caller never
+// awaited (Codex round 8). A delayed false/rejection must still be
+// counted and still produce a nonzero exit; a delayed true must still
+// be counted before totals are printed. This can only be proven
+// honestly through a REAL child process, since summary() calls
+// process.exit() — running it in-process would kill this test file
+// too. Each scenario writes a tiny throwaway .mjs to the OS temp dir,
+// runs it with `node`, and inspects its actual stdout/exit code.
+// =========================================================================
+{
+  const checkModuleUrl = new URL('./_lib/test-check.mjs', import.meta.url).href
+
+  function runChild(body) {
+    const file = join(tmpdir(), `test-check-async-child-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`)
+    writeFileSync(file, `import { makeChecker } from '${checkModuleUrl}'\n${body}\n`, 'utf8')
+    try {
+      const stdout = execFileSync('node', [file], { encoding: 'utf8' })
+      return { status: 0, stdout, stderr: '' }
+    } catch (err) {
+      return { status: err.status, stdout: err.stdout ?? '', stderr: err.stderr ?? '' }
+    } finally {
+      unlinkSync(file)
+    }
+  }
+
+  // Unawaited checkAsync() resolving to TRUE after a delay, followed
+  // immediately by summary() with no intervening await on the check
+  // itself. If summary() did not wait for pending checks, this would
+  // print "0 passed, 0 failed" and exit 0 before the delayed PASS ever
+  // landed — exactly the bug this round fixes.
+  const delayedTrue = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('delayed true', () => new Promise(resolve => setTimeout(() => resolve(true), 40)))
+await summary()
+`)
+  check('summary() waits for an unawaited checkAsync(true) before printing totals', delayedTrue.stdout.includes('1 passed, 0 failed'))
+  check('summary() exits 0 once the delayed true is correctly counted', delayedTrue.status === 0)
+
+  // Unawaited checkAsync() resolving to FALSE after a delay — must
+  // still be counted as a failure and produce a nonzero exit, not
+  // silently dropped because summary() ran and exited first.
+  const delayedFalse = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('delayed false', () => new Promise(resolve => setTimeout(() => resolve(false), 40)))
+await summary()
+`)
+  check('summary() waits for an unawaited checkAsync(false) before printing totals', delayedFalse.stdout.includes('0 passed, 1 failed'))
+  check('a delayed false surfaces as a nonzero exit code even though checkAsync() was never awaited', delayedFalse.status === 1)
+
+  // Unawaited checkAsync() whose promise REJECTS after a delay — must
+  // be caught, counted as a fail, produce a nonzero exit, AND never
+  // surface as an unhandled rejection warning on stderr.
+  const delayedRejection = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('delayed rejection', () => new Promise((resolve, reject) => setTimeout(() => reject(new Error('delayed boom')), 40)))
+await summary()
+`)
+  check('summary() waits for an unawaited, later-rejecting checkAsync() before printing totals', delayedRejection.stdout.includes('0 passed, 1 failed'))
+  check('a delayed rejection surfaces as a nonzero exit code even though checkAsync() was never awaited', delayedRejection.status === 1)
+  check('a delayed rejection never prints an UnhandledPromiseRejection warning to stderr', !/UnhandledPromiseRejection|unhandledRejection/i.test(delayedRejection.stderr))
+
+  // Multiple unawaited calls with mixed outcomes and different delays,
+  // none awaited individually — summary() must wait for the FULL set,
+  // not just whichever settles first.
+  const mixedMultiple = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('mixed 1 (true, fast)', () => new Promise(resolve => setTimeout(() => resolve(true), 10)))
+checkAsync('mixed 2 (false, slower)', () => new Promise(resolve => setTimeout(() => resolve(false), 60)))
+checkAsync('mixed 3 (true, slowest)', () => new Promise(resolve => setTimeout(() => resolve(true), 90)))
+await summary()
+`)
+  check('summary() waits for ALL pending checkAsync() calls, not just the first to settle', mixedMultiple.stdout.includes('2 passed, 1 failed'))
+  check('mixed pending outcomes still produce the correct nonzero exit', mixedMultiple.status === 1)
+}
+
+await summary()

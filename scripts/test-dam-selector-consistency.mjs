@@ -148,4 +148,4 @@ function dobYearsAgo(years) {
   check('api/create-litter.js validates the Dam via validateBreedingParent', /validateBreedingParent/.test(createLitterSrc))
 }
 
-summary()
+await summary()

@@ -56,4 +56,4 @@ check('isDeceased: missing -> not Remembered (matches API default of false)', is
 check('A deceased, owner-created dog is both Remembered and Owner-created', isRemembered({ isDeceased: true, sourceType: 'OWNER_CREATED' }) === true && getProvenanceValue({ isDeceased: true, sourceType: 'OWNER_CREATED' }) === 'Owner-created Dog ID')
 check('A living, breeder-issued dog is neither Remembered nor shows Owner-created', isRemembered({ isDeceased: false, sourceType: 'BREEDER_ISSUED' }) === false && getProvenanceValue({ isDeceased: false, sourceType: 'BREEDER_ISSUED' }) === 'Breeder-issued Dog ID')
 
-summary()
+await summary()

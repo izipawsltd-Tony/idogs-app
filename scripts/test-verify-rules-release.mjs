@@ -15,6 +15,8 @@ import {
   fetchActiveRulesetContent,
   normalizeRulesText,
   rulesTextsMatch,
+  assertProjectMatchesCredential,
+  verifyRulesRelease,
   RulesVerificationError,
 } from './_lib/rules-release-verifier.mjs'
 
@@ -207,4 +209,103 @@ check('rulesTextsMatch treats CRLF vs LF as identical content',
 check('rulesTextsMatch reports a genuine content difference as a mismatch',
   rulesTextsMatch('rule A;\n', 'rule B;\n') === false)
 
-summary()
+console.log('--- Section 7: credential/project mismatch fails CLOSED, before any token/network call (Codex round 8) ---')
+
+check('assertProjectMatchesCredential throws when FIREBASE_PROJECT_ID differs from the requested projectId',
+  throwsRulesVerificationError(() => assertProjectMatchesCredential({ FIREBASE_PROJECT_ID: 'idogs-app-staging' }, 'idogs-app')))
+
+check('assertProjectMatchesCredential does not throw when they match',
+  (() => {
+    try {
+      assertProjectMatchesCredential({ FIREBASE_PROJECT_ID: 'idogs-app-staging' }, 'idogs-app-staging')
+      return true
+    } catch {
+      return false
+    }
+  })())
+
+function spyCredentialFactory() {
+  const calls = []
+  const factory = (opts) => {
+    calls.push(opts)
+    return { getAccessToken: async () => ({ access_token: 'should-never-be-minted' }) }
+  }
+  factory.calls = calls
+  return factory
+}
+
+function spyFetch() {
+  const calls = []
+  const impl = async (url, opts) => {
+    calls.push({ url, opts })
+    return jsonResponse(200, { name: 'unexpected', rulesetName: 'unexpected' })
+  }
+  impl.calls = calls
+  return impl
+}
+
+await checkAsync('verifyRulesRelease() rejects on project mismatch WITHOUT ever calling the credential factory (executable-path proof)',
+  (async () => {
+    const credentialFactory = spyCredentialFactory()
+    const fetchImpl = spyFetch()
+    let threw = false
+    try {
+      await verifyRulesRelease({
+        projectId: 'idogs-app',
+        localRulesContent: 'rules_version = \'2\';',
+        env: { FIREBASE_PROJECT_ID: 'idogs-app-staging', FIREBASE_CLIENT_EMAIL: 'svc@example.iam.gserviceaccount.com', FIREBASE_PRIVATE_KEY: 'fake' },
+        credentialFactory,
+        fetchImpl,
+      })
+    } catch (err) {
+      threw = err instanceof RulesVerificationError
+    }
+    return threw && credentialFactory.calls.length === 0 && fetchImpl.calls.length === 0
+  })())
+
+await checkAsync('verifyRulesRelease() rejects on missing env vars WITHOUT ever calling the credential factory or fetch (defense in depth, checked before the project-match assertion too)',
+  (async () => {
+    const credentialFactory = spyCredentialFactory()
+    const fetchImpl = spyFetch()
+    let threw = false
+    try {
+      await verifyRulesRelease({
+        projectId: 'idogs-app-staging',
+        localRulesContent: 'rules_version = \'2\';',
+        env: {},
+        credentialFactory,
+        fetchImpl,
+      })
+    } catch (err) {
+      threw = err instanceof RulesVerificationError
+    }
+    return threw && credentialFactory.calls.length === 0 && fetchImpl.calls.length === 0
+  })())
+
+await checkAsync('verifyRulesRelease() DOES call the credential factory and fetch, and resolves correctly, once projectId genuinely matches (full happy-path orchestration)',
+  (async () => {
+    const RULES_TEXT = "rules_version = '2';\nservice cloud.firestore {\n  match /{document=**} { allow read: if true; }\n}\n"
+    const credentialFactory = spyCredentialFactory()
+    const fetchImpl = (async (url) => {
+      if (url.includes('/releases/cloud.firestore')) {
+        return jsonResponse(200, {
+          name: 'projects/idogs-app-staging/releases/cloud.firestore',
+          rulesetName: 'projects/idogs-app-staging/rulesets/xyz789',
+        })
+      }
+      return jsonResponse(200, { source: { files: [{ name: 'firestore.rules', content: RULES_TEXT }] } })
+    })
+    const result = await verifyRulesRelease({
+      projectId: 'idogs-app-staging',
+      localRulesContent: RULES_TEXT,
+      env: { FIREBASE_PROJECT_ID: 'idogs-app-staging', FIREBASE_CLIENT_EMAIL: 'svc@example.iam.gserviceaccount.com', FIREBASE_PRIVATE_KEY: 'fake' },
+      credentialFactory,
+      fetchImpl,
+    })
+    return credentialFactory.calls.length === 1 &&
+      credentialFactory.calls[0].projectId === 'idogs-app-staging' &&
+      result.rulesetName === 'projects/idogs-app-staging/rulesets/xyz789' &&
+      result.matches === true
+  })())
+
+await summary()

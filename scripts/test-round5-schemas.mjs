@@ -407,4 +407,4 @@ const { check, checkAsync, skip, summary } = makeChecker()
   check('A mismatched/unverifiable response throws rather than silently reporting a match', /refusing to trust it/.test(scriptSrc))
 }
 
-summary()
+await summary()

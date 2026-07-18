@@ -165,4 +165,4 @@ function dog(overrides = {}) {
   check('Buyers sorted by most recent activity first', buyers[0].email === 'b@example.com' && buyers[1].email === 'a@example.com')
 }
 
-summary()
+await summary()

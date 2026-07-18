@@ -43,11 +43,11 @@
 // `projectId` argument in the request URL itself (not inferred from any
 // ambient config), and the response's own resource `name` field is
 // independently asserted to contain that same projectId before its
-// content is trusted for anything. Additionally, since the credential's
-// OWN project (FIREBASE_PROJECT_ID) must also match the projectId
-// argument for a service account to have access at all, a mismatched
-// local env (e.g. staging credentials pointed at the production
-// project) is flagged as a warning before the request is even made.
+// content is trusted for anything. Additionally (Codex round 8): if the
+// local FIREBASE_PROJECT_ID doesn't match the `projectId` argument, this
+// now REFUSES to proceed at all — no token is minted, no network call is
+// made — rather than warning and continuing. See
+// scripts/_lib/rules-release-verifier.mjs's assertProjectMatchesCredential().
 //
 // Usage:
 //   node scripts/verify-rules-release.mjs <projectId> [localRulesPath]
@@ -70,10 +70,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { cert } from 'firebase-admin/app'
 import {
-  checkRequiredEnvVars,
-  getAccessToken,
-  fetchActiveRulesetContent,
-  rulesTextsMatch,
+  verifyRulesRelease,
   RulesVerificationError,
 } from './_lib/rules-release-verifier.mjs'
 
@@ -92,31 +89,17 @@ if (!existsSync(localRulesPath)) {
 async function main() {
   console.log(`Verifying the ACTIVE Firestore Rules release for project "${projectId}" (read-only, no business data touched)...`)
 
-  checkRequiredEnvVars(process.env)
-
-  if (process.env.FIREBASE_PROJECT_ID !== projectId) {
-    console.warn(
-      `WARNING: the local FIREBASE_PROJECT_ID ("${process.env.FIREBASE_PROJECT_ID}") does not match ` +
-      `the project you're verifying ("${projectId}"). This service account will very likely lack ` +
-      `access to that project's Rules — set the env vars for the project you're actually verifying ` +
-      `(see RELEASE_RUNBOOK.md). Continuing anyway; the request below will fail closed if access is denied.`
-    )
-  }
-
-  const credential = cert({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  const { rulesetName, matches } = await verifyRulesRelease({
+    projectId,
+    localRulesContent: readFileSync(localRulesPath, 'utf8'),
+    env: process.env,
+    credentialFactory: cert,
   })
-  const accessToken = await getAccessToken(credential)
-
-  const { rulesetName, content } = await fetchActiveRulesetContent(projectId, accessToken)
-  const localContent = readFileSync(localRulesPath, 'utf8')
 
   console.log(`Active ruleset: ${rulesetName}`)
   console.log(`Comparing against local file: ${localRulesPath}`)
 
-  if (rulesTextsMatch(content, localContent)) {
+  if (matches) {
     console.log('MATCH — the deployed Rules release exactly matches the local file. Rollback verified active.')
     process.exit(0)
   }

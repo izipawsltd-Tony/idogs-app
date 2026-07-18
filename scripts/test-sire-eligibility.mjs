@@ -225,4 +225,4 @@ function dobYearsAgo(years) {
   check('api/save-heat-cycle.js validates the Dam with requiredSex: \'female\'', /requiredSex:\s*'female'/.test(saveHeatCycleSrc))
 }
 
-summary()
+await summary()

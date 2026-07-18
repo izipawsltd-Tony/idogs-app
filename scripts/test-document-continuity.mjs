@@ -124,4 +124,4 @@ try {
 }
 check('Unrelated user directly querying a dog they don\'t own is denied', strangerDirectDenied)
 
-summary()
+await summary()

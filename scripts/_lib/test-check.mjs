@@ -53,7 +53,9 @@
 //   check('section', 'description', someBooleanExpression)
 //   await checkAsync('label', async () => someAsyncCondition())
 //   skip('label', 'reason emulator env vars are not set')
-//   summary() // prints totals and calls process.exit() — always last
+//   await summary() // waits for any still-pending checkAsync() calls,
+//                    // THEN prints totals and calls process.exit() —
+//                    // always last, always awaited
 
 function isThenable(value) {
   return !!value && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function'
@@ -72,6 +74,17 @@ export function makeChecker() {
   let pass = 0
   let fail = 0
   let skipped = 0
+
+  // Codex round 8: a checkAsync() call the caller forgot to `await` used
+  // to run to completion "eventually" but summary() had no way to know
+  // it was still in flight — it would print totals and call
+  // process.exit() immediately, so a delayed FAIL (or a rejection) that
+  // hadn't resolved yet was silently dropped from the count and the
+  // process could exit 0 despite a real failure. Every checkAsync() call
+  // registers its own settlement promise here — synchronously, before
+  // any `await` inside it can run — so summary() can wait for the full
+  // set even when the caller never awaited the individual calls.
+  const pending = new Set()
 
   function check(label, arg2, arg3, arg4) {
     const shaped = resolveShape(label, arg2, arg3, arg4)
@@ -94,27 +107,40 @@ export function makeChecker() {
   // Never throws and never returns a rejected Promise — a thrown error
   // from a thunk, a rejected Promise, and a resolved Promise<false> are
   // ALL caught here and converted into a counted FAIL. Safe to call
-  // without awaiting (though callers should still await it so the
-  // pass/fail counters are guaranteed updated before summary() runs).
-  async function checkAsync(label, arg2, arg3, arg4) {
+  // without awaiting: the settlement is tracked in `pending` (added
+  // synchronously below, before this function's first `await` actually
+  // suspends it) and summary() will wait for it regardless of whether
+  // the caller ever awaits the returned promise directly.
+  function checkAsync(label, arg2, arg3, arg4) {
     const shaped = resolveShape(label, arg2, arg3, arg4)
-    let cond
-    try {
-      const resolved = typeof shaped.condInput === 'function' ? shaped.condInput() : shaped.condInput
-      cond = isThenable(resolved) ? await resolved : resolved
-    } catch (err) {
-      const detail = err && err.message ? err.message : String(err)
-      console.log(`FAIL: ${shaped.label} (threw/rejected: ${detail}) ${shaped.extra}`)
-      fail++
-      return
-    }
-    if (cond) {
-      console.log(`PASS: ${shaped.label}`)
-      pass++
-    } else {
-      console.log(`FAIL: ${shaped.label} ${shaped.extra}`)
-      fail++
-    }
+    const settlement = (async () => {
+      let cond
+      try {
+        const resolved = typeof shaped.condInput === 'function' ? shaped.condInput() : shaped.condInput
+        cond = isThenable(resolved) ? await resolved : resolved
+      } catch (err) {
+        const detail = err && err.message ? err.message : String(err)
+        console.log(`FAIL: ${shaped.label} (threw/rejected: ${detail}) ${shaped.extra}`)
+        fail++
+        return
+      }
+      if (cond) {
+        console.log(`PASS: ${shaped.label}`)
+        pass++
+      } else {
+        console.log(`FAIL: ${shaped.label} ${shaped.extra}`)
+        fail++
+      }
+    })()
+    // The IIFE above never lets `settlement` reject (every path is
+    // caught internally), so attaching .finally() here cannot itself
+    // create a second, competing unhandled-rejection source — it only
+    // ever runs on fulfillment. Attached BEFORE returning, so
+    // `pending` is guaranteed to shrink even if the caller drops the
+    // returned promise entirely (true fire-and-forget).
+    pending.add(settlement)
+    settlement.finally(() => pending.delete(settlement))
+    return settlement
   }
 
   // A formally-counted third bucket — a skipped section (e.g. no
@@ -130,11 +156,20 @@ export function makeChecker() {
     return { pass, fail, skipped }
   }
 
-  // Matches every existing file's final line exactly
-  // (`${pass} passed, ${fail} failed`) plus a skipped count when
-  // nonzero, then exits with the same fail>0?1:0 convention every file
-  // already uses.
-  function summary() {
+  // ASYNC now (Codex round 8): waits for every checkAsync() call ever
+  // started — including ones the caller never awaited — before printing
+  // totals or exiting, so a delayed false/rejection still counts and
+  // still produces a nonzero exit. The while-loop (rather than a single
+  // Promise.allSettled) covers the edge case of a checkAsync() call
+  // that itself schedules another checkAsync() call from within its
+  // condition thunk: each pass drains whatever is currently pending,
+  // and the loop only exits once a full pass finds nothing left.
+  // Callers must `await summary()` — see every test-*.mjs file's final
+  // line.
+  async function summary() {
+    while (pending.size > 0) {
+      await Promise.allSettled([...pending])
+    }
     const skippedSuffix = skipped > 0 ? `, ${skipped} skipped` : ''
     console.log(`\n${pass} passed, ${fail} failed${skippedSuffix}`)
     process.exit(fail > 0 ? 1 : 0)

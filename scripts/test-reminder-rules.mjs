@@ -130,4 +130,4 @@ try {
   check('tenant can delete their own reminder', true)
 } catch (err) { check('tenant can delete their own reminder', false, err.code) }
 
-summary()
+await summary()

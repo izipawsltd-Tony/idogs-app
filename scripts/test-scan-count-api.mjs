@@ -166,4 +166,4 @@ await seedDb.collection('scanLogs').add({
   check('getScanCount() now calls /api/scan-count', dbTs.includes("fetch('/api/scan-count'"))
 }
 
-summary()
+await summary()

@@ -204,4 +204,4 @@ function dobYearsAgo(years) {
   check('api/_lib/parent-eligibility.js requires the candidate\'s own DOB to be strictly valid (parseDobStrictServer)', /parseDobStrictServer\(dogData\.dateOfBirth\)/.test(eligibilitySrc))
 }
 
-summary()
+await summary()

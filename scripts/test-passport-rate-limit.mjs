@@ -84,4 +84,4 @@ __resetForTests()
   check('getClientIp falls back to "unknown" when nothing is available', withNeither === 'unknown', withNeither)
 }
 
-summary()
+await summary()
