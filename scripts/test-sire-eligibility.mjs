@@ -211,10 +211,21 @@ function dobYearsAgo(years) {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
   check('firestore.rules has a heatCycles match block', /match \/heatCycles\/\{id\}/.test(rules))
   const block = (rules.match(/match \/heatCycles\/\{id\} \{[\s\S]*?\n    \}/) || [''])[0]
-  check('heatCycles read/update/delete follows dogBelongsToUser', /dogBelongsToUser\(resource\.data\.dogId\)/.test(block))
-  check('heatCycles create requires dogBelongsToUser', /dogBelongsToUser\(request\.resource\.data\.dogId\)/.test(block))
-  check('heatCycles create requires the target dog to be female (Dam-only)',
-    /\.data\.sex == 'female'/.test(block))
+  check('heatCycles read/delete follows dogBelongsToUser', /dogBelongsToUser\(resource\.data\.dogId\)/.test(block))
+  // Codex round 3, Blocker 1: heatCycles create/update both require
+  // verifying the Dam (and Sire, if set) "meets actual minimum breeding
+  // maturity", which needs real date arithmetic Firestore Rules can't
+  // do. Both are now denied outright for direct client writes — the
+  // create-time Dam-sex/eligibility check (formerly dogBelongsToUser +
+  // sex == 'female' in-rules) now happens exclusively through
+  // api/save-heat-cycle.js (Admin SDK, full validation via
+  // _lib/parent-eligibility.js with requiredSex: 'female'). See
+  // test-parent-eligibility.mjs for that coverage.
+  check('heatCycles create is denied outright for direct client writes (moved server-side)', /allow create, update: if false;/.test(block))
+  const eligibilitySrc = readFileSync(new URL('../api/_lib/parent-eligibility.js', import.meta.url), 'utf8')
+  check('api/_lib/parent-eligibility.js enforces requiredSex (Dam-only for Dam validation)', /dogData\.sex !== requiredSex/.test(eligibilitySrc))
+  const saveHeatCycleSrc = readFileSync(new URL('../api/save-heat-cycle.js', import.meta.url), 'utf8')
+  check('api/save-heat-cycle.js validates the Dam with requiredSex: \'female\'', /requiredSex:\s*'female'/.test(saveHeatCycleSrc))
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

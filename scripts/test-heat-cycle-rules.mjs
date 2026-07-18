@@ -1,23 +1,20 @@
 // Emulator-only regression test for the heatCycles/{id} firestore.rules
-// added by fix/sire-heat-cycle.
+// (fix/sire-heat-cycle). Read/delete access control only — see history
+// below for why create/update aren't tested here anymore.
 //
-// Root cause: firestore.rules had NO match block for heatCycles, so every
-// read/write fell through to the default `match /{document=**} { allow
-// read, write: if false; }` at the bottom of the file — "Add Heat Cycle"
-// always failed with a generic error, and the existing-cycles list
-// silently loaded empty. Fixed by adding a dogBelongsToUser-scoped rule
-// (same pattern as vaccineRecords/wormingRecords/healthTests), plus a
-// female-only (Dam) check on create as a hard boundary — not just UI
-// gating — against a male or unrelated-tenant dog receiving one.
-//
-// Section 5 covers a follow-up bug: My Dogs showed 1 valid Sire while the
-// Heat Cycle Sire dropdown showed 3, because the dropdown's data source
-// used a raw tenantId-only query that sees a transferred dog's *stale*
-// status field (api/claim-transferred-dogs.js resets status back to
-// 'active' on claim). heatCycleSireValid()/isEligibleSire() in
-// firestore.rules now independently re-validates sireId against live
-// currentOwnerId at save time — the save path can no longer be tricked
-// by a stale client-side dropdown regardless of what the UI filter does.
+// History: heatCycles originally had NO rule at all (every read/write
+// fell through to the default deny). Then create/update grew Sire/Dam
+// eligibility checks in Rules (isEligibleBreedingDog etc). Codex round 3
+// established that Firestore Rules cannot verify "meets actual minimum
+// breeding maturity" (no date-arithmetic functions), so full Dam/Sire
+// eligibility now lives in api/_lib/parent-eligibility.js, exercised by
+// api/save-heat-cycle.js — see scripts/test-parent-eligibility.mjs for
+// that coverage (both the pure validation logic AND confirmation that a
+// direct client create/update is denied unconditionally, which this
+// file no longer needs to re-test). heatCycles create/update are now
+// `if false` for the client SDK — every fixture here is seeded via the
+// Admin SDK (simulating what the trusted endpoint would have written),
+// and only read/delete are exercised as real client-SDK operations.
 //
 // Usage (no test framework configured in this project — run manually):
 //   1. firebase emulators:start --only auth,firestore --project demo-idogs-qa
@@ -26,7 +23,7 @@
 
 import { initializeApp } from 'firebase/app'
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword } from 'firebase/auth'
-import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where } from 'firebase/firestore'
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocs, updateDoc, deleteDoc, collection, query, where } from 'firebase/firestore'
 import { initializeApp as initAdminApp } from 'firebase-admin/app'
 import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
 
@@ -36,15 +33,9 @@ const db = getFirestore(app)
 connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
 connectFirestoreEmulator(db, '127.0.0.1', 8080)
 
-// Admin SDK client — genuinely bypasses security rules, used ONLY to
-// simulate the server-side claim reassignment (api/claim-transferred-
-// dogs.js) as a test fixture, matching test-dog-ownership-matrix.mjs.
 process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
 const adminApp = initAdminApp({ projectId: 'demo-idogs-qa' })
 const adminDb = getAdminFirestore(adminApp)
-async function simulateAdminClaim(dogId, newCurrentOwnerId) {
-  await adminDb.collection('dogs').doc(dogId).update({ currentOwnerId: newCurrentOwnerId, status: 'active' })
-}
 
 let pass = 0, fail = 0
 function check(label, cond, extra = '') {
@@ -73,372 +64,116 @@ const breederUid = await newUser('breeder')
 const strangerUid = await newUser('stranger')
 
 // =========================================================================
-// SECTION 1 — Eligible Dam: full add/edit/delete lifecycle
+// SECTION 1 — read/delete access control for the record's own owner
 // =========================================================================
 {
   const damId = `dam_${R}`
   await as('breeder')
-  await setDoc(doc(db, 'dogs', damId), {
+  await adminDb.collection('dogs').doc(damId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Luna', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
-
   const cycleId = `cycle_${R}`
-  let createOk = true
-  try {
-    await setDoc(doc(db, 'heatCycles', cycleId), {
-      dogId: damId, tenantId: breederUid, heatNumber: 1,
-      heatStartDate: '2026-01-01', notes: 'first heat', createdAt: '2026-01-01',
-    })
-  } catch (err) { createOk = false }
-  check('1-Dam', 'Breeder can add a Heat Cycle for their own eligible Dam', createOk)
+  await adminDb.collection('heatCycles').doc(cycleId).set({
+    dogId: damId, tenantId: breederUid, heatNumber: 1, heatStartDate: '2026-01-01', notes: 'first heat', createdAt: '2026-01-01',
+  })
 
   let readOk = true, size = 0
   try {
     const snap = await getDocs(query(collection(db, 'heatCycles'), where('dogId', '==', damId)))
     size = snap.size
   } catch (err) { readOk = false }
-  check('1-Dam', 'Heat Cycle record persists and is readable (reload)', readOk && size === 1, `size=${size}`)
-
-  let updateOk = true
-  try { await updateDoc(doc(db, 'heatCycles', cycleId), { notes: 'updated notes', heatEndDate: '2026-01-14' }) } catch (err) { updateOk = false }
-  check('1-Dam', 'Breeder can edit their Heat Cycle record', updateOk)
+  check('1-Dam', 'Breeder can read their own Heat Cycle record', readOk && size === 1, `size=${size}`)
 
   let deleteOk = true
   try { await deleteDoc(doc(db, 'heatCycles', cycleId)) } catch (err) { deleteOk = false }
-  check('1-Dam', 'Breeder can delete their Heat Cycle record', deleteOk)
+  check('1-Dam', 'Breeder can delete their own Heat Cycle record', deleteOk)
 }
 
 // =========================================================================
-// SECTION 2 — Male dog: denied
+// SECTION 2 — a direct client create/update is denied outright,
+// regardless of how eligible the payload looks (full logic coverage is
+// in test-parent-eligibility.mjs; this just confirms the rule shape
+// locally too)
 // =========================================================================
 {
-  const sireId = `sire_${R}`
   await as('breeder')
-  await setDoc(doc(db, 'dogs', sireId), {
+  const damId2 = `dam2_${R}`
+  await adminDb.collection('dogs').doc(damId2).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Rex', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
+    sourceType: 'BREEDER_ISSUED', name: 'Luna2', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
-
-  let denied = false
+  let createDenied = false
   try {
-    await setDoc(doc(db, 'heatCycles', `badcycle_${R}`), {
-      dogId: sireId, tenantId: breederUid, heatNumber: 1, heatStartDate: '2026-01-01',
+    const { setDoc } = await import('firebase/firestore')
+    await setDoc(doc(db, 'heatCycles', `cyc_denied_${R}`), {
+      dogId: damId2, tenantId: breederUid, heatNumber: 1, heatStartDate: '2026-01-01',
     })
-  } catch (err) { denied = isDenied(err) }
-  check('2-MaleDenied', 'A Heat Cycle cannot be created against a male dog', denied)
+  } catch (err) { createDenied = isDenied(err) }
+  check('2-ServerOnly', 'A direct client heatCycles create is denied even for a fully eligible Dam', createDenied)
+
+  const existingCycleId = `cyc_existing_${R}`
+  await adminDb.collection('heatCycles').doc(existingCycleId).set({
+    dogId: damId2, tenantId: breederUid, heatNumber: 1, heatStartDate: '2026-01-01',
+  })
+  let updateDenied = false
+  try { await updateDoc(doc(db, 'heatCycles', existingCycleId), { notes: 'edited' }) } catch (err) { updateDenied = isDenied(err) }
+  check('2-ServerOnly', 'A direct client heatCycles update is denied too (even a notes-only edit)', updateDenied)
 }
 
 // =========================================================================
-// SECTION 3 — Unrelated-tenant dog: denied
+// SECTION 3 — unrelated-tenant dog: read/delete denied
 // =========================================================================
 {
   const strangerDamId = `strangerdam_${R}`
   await as('stranger')
-  await setDoc(doc(db, 'dogs', strangerDamId), {
+  await adminDb.collection('dogs').doc(strangerDamId).set({
     tenantId: strangerUid, currentOwnerId: strangerUid, createdByUserId: strangerUid,
     sourceType: 'BREEDER_ISSUED', name: 'Bella', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
-
-  await as('breeder')
-  let denied = false
-  try {
-    await setDoc(doc(db, 'heatCycles', `crosscycle_${R}`), {
-      dogId: strangerDamId, tenantId: breederUid, heatNumber: 1, heatStartDate: '2026-01-01',
-    })
-  } catch (err) { denied = isDenied(err) }
-  check('3-UnrelatedTenant', 'A breeder cannot add a Heat Cycle against another tenant\'s dog', denied)
-
-  // Stranger's own record is unreadable by the breeder
-  await as('stranger')
-  const strangerCycleId = `straingercycle_${R}`
-  await setDoc(doc(db, 'heatCycles', strangerCycleId), {
+  const strangerCycleId = `strangercycle_${R}`
+  await adminDb.collection('heatCycles').doc(strangerCycleId).set({
     dogId: strangerDamId, tenantId: strangerUid, heatNumber: 1, heatStartDate: '2026-01-01',
   })
+
   await as('breeder')
   let readDenied = false
   try { await getDoc(doc(db, 'heatCycles', strangerCycleId)) } catch (err) { readDenied = isDenied(err) }
   check('3-UnrelatedTenant', 'A breeder cannot read another tenant\'s Heat Cycle record', readDenied)
+
+  let deleteDenied = false
+  try { await deleteDoc(doc(db, 'heatCycles', strangerCycleId)) } catch (err) { deleteDenied = isDenied(err) }
+  check('3-UnrelatedTenant', 'A breeder cannot delete another tenant\'s Heat Cycle record', deleteDenied)
 }
 
 // =========================================================================
-// SECTION 4 — Legacy record compatibility: an existing heatCycles doc
-// written before this rule existed (arbitrary field shape, no
-// createdAt/tenantId-consistent extras) must remain readable/editable by
-// its owning dog's breeder, since this is a pure rules-gap fix, not a
-// data migration.
+// SECTION 4 — legacy record compatibility: a record written before this
+// rule existed (arbitrary field shape) remains readable and deletable —
+// but no longer directly EDITABLE by the client (that now requires the
+// server endpoint, same as any other heat cycle record).
 // =========================================================================
 {
   const legacyDamId = `legacydam_${R}`
   await as('breeder')
-  await setDoc(doc(db, 'dogs', legacyDamId), {
+  await adminDb.collection('dogs').doc(legacyDamId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Legacy Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const legacyCycleId = `legacycycle_${R}`
-  // Minimal legacy shape: no tenantId field on the record itself (older
-  // client code before saveHeatCycle() started stamping tenantId), since
-  // the rule only depends on the record's dogId, not its own tenantId.
-  await setDoc(doc(db, 'heatCycles', legacyCycleId), { dogId: legacyDamId, heatNumber: 1, heatStartDate: '2020-01-01' })
+  // Minimal legacy shape: no tenantId field on the record itself.
+  await adminDb.collection('heatCycles').doc(legacyCycleId).set({ dogId: legacyDamId, heatNumber: 1, heatStartDate: '2020-01-01' })
 
   let readOk = true
   try { await getDoc(doc(db, 'heatCycles', legacyCycleId)) } catch (err) { readOk = false }
   check('4-Legacy', 'Legacy heat cycle record (no tenantId field) remains readable', readOk)
 
-  let updateOk = true
-  try { await updateDoc(doc(db, 'heatCycles', legacyCycleId), { notes: 'backfilled' }) } catch (err) { updateOk = false }
-  check('4-Legacy', 'Legacy heat cycle record remains editable', updateOk)
-}
+  let updateDenied = false
+  try { await updateDoc(doc(db, 'heatCycles', legacyCycleId), { notes: 'backfilled' }) } catch (err) { updateDenied = isDenied(err) }
+  check('4-Legacy', 'Legacy heat cycle record can no longer be edited directly by the client (server endpoint required)', updateDenied)
 
-// =========================================================================
-// SECTION 5 — sireId save-path validation (independent of the client's
-// own dropdown filtering)
-// =========================================================================
-{
-  const damId = `dam5_${R}`
-  await as('breeder')
-  await setDoc(doc(db, 'dogs', damId), {
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Dam Five', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
-  })
-
-  // A currently-eligible sire
-  const validSireId = `validsire_${R}`
-  await setDoc(doc(db, 'dogs', validSireId), {
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Valid Sire', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
-  })
-  let validSireOk = true
-  try {
-    await setDoc(doc(db, 'heatCycles', `cyc_valid_${R}`), {
-      dogId: damId, tenantId: breederUid, heatNumber: 1, heatStartDate: '2026-01-01', sireId: validSireId,
-    })
-  } catch (err) { validSireOk = false }
-  check('5-SireValidation', 'A Heat Cycle can be saved with a valid, currently-owned Sire', validSireOk)
-
-  // A "stale"/transferred sire: tenantId still breeder (permanent
-  // provenance) but currentOwnerId has moved to a buyer — exactly the
-  // shape api/claim-transferred-dogs.js produces post-claim. A client can
-  // never create a dog with someone else's currentOwnerId directly (see
-  // dogs/{dogId}'s own create rule), so this is simulated via the Admin
-  // SDK claim route exactly like production, not a direct client setDoc.
-  const buyerUid = await newUser('buyer5')
-  await as('breeder')
-  const transferredSireId = `transferredsire_${R}`
-  await setDoc(doc(db, 'dogs', transferredSireId), {
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Transferred Sire', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
-  })
-  await simulateAdminClaim(transferredSireId, buyerUid)
-  let transferredDenied = false
-  try {
-    await setDoc(doc(db, 'heatCycles', `cyc_transferred_${R}`), {
-      dogId: damId, tenantId: breederUid, heatNumber: 2, heatStartDate: '2026-02-01', sireId: transferredSireId,
-    })
-  } catch (err) { transferredDenied = isDenied(err) }
-  check('5-SireValidation', 'A transferred (stale currentOwnerId) Sire is rejected even though tenantId still matches', transferredDenied)
-
-  // A wrong-tenant sire (never belonged to this breeder at all)
-  const strangerSireId = `strangersire_${R}`
-  await as('stranger')
-  await setDoc(doc(db, 'dogs', strangerSireId), {
-    tenantId: strangerUid, currentOwnerId: strangerUid, createdByUserId: strangerUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Stranger Sire', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
-  })
-  await as('breeder')
-  let wrongTenantDenied = false
-  try {
-    await setDoc(doc(db, 'heatCycles', `cyc_wrongtenant_${R}`), {
-      dogId: damId, tenantId: breederUid, heatNumber: 3, heatStartDate: '2026-03-01', sireId: strangerSireId,
-    })
-  } catch (err) { wrongTenantDenied = isDenied(err) }
-  check('5-SireValidation', 'A wrong-tenant Sire is rejected', wrongTenantDenied)
-
-  // A deceased sire (still owned by this breeder, but not breedable)
-  const deceasedSireId = `deceasedsire_${R}`
-  await setDoc(doc(db, 'dogs', deceasedSireId), {
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Deceased Sire', sex: 'male', status: 'active', isDeceased: true, dateOfBirth: '2020-01-01',
-  })
-  let deceasedDenied = false
-  try {
-    await setDoc(doc(db, 'heatCycles', `cyc_deceased_${R}`), {
-      dogId: damId, tenantId: breederUid, heatNumber: 4, heatStartDate: '2026-04-01', sireId: deceasedSireId,
-    })
-  } catch (err) { deceasedDenied = isDenied(err) }
-  check('5-SireValidation', 'A deceased Sire is rejected', deceasedDenied)
-
-  // A malformed/stale sireId — points at nothing
-  let malformedDenied = false
-  try {
-    await setDoc(doc(db, 'heatCycles', `cyc_malformed_${R}`), {
-      dogId: damId, tenantId: breederUid, heatNumber: 5, heatStartDate: '2026-05-01', sireId: `nonexistent_${R}`,
-    })
-  } catch (err) { malformedDenied = isDenied(err) }
-  check('5-SireValidation', 'A malformed/stale sireId pointing at no document is rejected', malformedDenied)
-
-  // Editing an existing (valid, sireId-less) Heat Cycle to attach a stale
-  // sireId must be rejected on update too, not just create.
-  const editableCycleId = `cyc_editable_${R}`
-  await setDoc(doc(db, 'heatCycles', editableCycleId), {
-    dogId: damId, tenantId: breederUid, heatNumber: 6, heatStartDate: '2026-06-01',
-  })
-  let updateStaleDenied = false
-  try {
-    await updateDoc(doc(db, 'heatCycles', editableCycleId), { sireId: transferredSireId })
-  } catch (err) { updateStaleDenied = isDenied(err) }
-  check('5-SireValidation', 'Updating an existing Heat Cycle to a stale Sire is rejected', updateStaleDenied)
-
-  // A manually-entered external sire (no sireId at all) is unaffected —
-  // sireId is optional and only validated when present.
-  let externalSireOk = true
-  try {
-    await setDoc(doc(db, 'heatCycles', `cyc_external_${R}`), {
-      dogId: damId, tenantId: breederUid, heatNumber: 7, heatStartDate: '2026-07-01',
-      sireName: 'CH External Dog', sireReg: '2100999999',
-    })
-  } catch (err) { externalSireOk = false }
-  check('5-SireValidation', 'A manually-entered external sire (no sireId) is unaffected by Sire validation', externalSireOk)
-}
-
-// =========================================================================
-// SECTION 6 — litters.damId save-path validation (Create Litter Dam
-// selector consistency follow-up)
-// =========================================================================
-{
-  await as('breeder')
-
-  // A currently-eligible dam
-  const validDamId = `validdam_${R}`
-  await setDoc(doc(db, 'dogs', validDamId), {
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Valid Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
-  })
-  let validDamOk = true
-  try {
-    await setDoc(doc(db, 'litters', `litter_valid_${R}`), { tenantId: breederUid, damId: validDamId, name: 'Litter A', puppyIds: [] })
-  } catch (err) { validDamOk = false }
-  check('6-DamValidation', 'A litter can be created with a valid, currently-owned Dam', validDamOk)
-
-  // A transferred (stale currentOwnerId) dam — same post-claim shape as
-  // the Sire case above.
-  const buyerUid6 = await newUser('buyer6')
-  await as('breeder')
-  const transferredDamId = `transferreddam_${R}`
-  await setDoc(doc(db, 'dogs', transferredDamId), {
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Transferred Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
-  })
-  await simulateAdminClaim(transferredDamId, buyerUid6)
-  let transferredDamDenied = false
-  try {
-    await setDoc(doc(db, 'litters', `litter_transferred_${R}`), { tenantId: breederUid, damId: transferredDamId, name: 'Litter B', puppyIds: [] })
-  } catch (err) { transferredDamDenied = isDenied(err) }
-  check('6-DamValidation', 'A transferred (stale currentOwnerId) Dam is rejected even though tenantId still matches', transferredDamDenied)
-
-  // A wrong-tenant dam
-  const strangerDamId6 = `strangerdam6_${R}`
-  await as('stranger')
-  await setDoc(doc(db, 'dogs', strangerDamId6), {
-    tenantId: strangerUid, currentOwnerId: strangerUid, createdByUserId: strangerUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Stranger Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
-  })
-  await as('breeder')
-  let wrongTenantDamDenied = false
-  try {
-    await setDoc(doc(db, 'litters', `litter_wrongtenant_${R}`), { tenantId: breederUid, damId: strangerDamId6, name: 'Litter C', puppyIds: [] })
-  } catch (err) { wrongTenantDamDenied = isDenied(err) }
-  check('6-DamValidation', 'A wrong-tenant Dam is rejected', wrongTenantDamDenied)
-
-  // A male dog used as damId
-  const maleAsDamId = `maleasdam_${R}`
-  await setDoc(doc(db, 'dogs', maleAsDamId), {
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Male Dog', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
-  })
-  let maleDamDenied = false
-  try {
-    await setDoc(doc(db, 'litters', `litter_male_${R}`), { tenantId: breederUid, damId: maleAsDamId, name: 'Litter D', puppyIds: [] })
-  } catch (err) { maleDamDenied = isDenied(err) }
-  check('6-DamValidation', 'A male dog cannot be submitted as damId', maleDamDenied)
-
-  // A malformed/stale damId — points at nothing
-  let malformedDamDenied = false
-  try {
-    await setDoc(doc(db, 'litters', `litter_malformed_${R}`), { tenantId: breederUid, damId: `nonexistent_${R}`, name: 'Litter E', puppyIds: [] })
-  } catch (err) { malformedDamDenied = isDenied(err) }
-  check('6-DamValidation', 'A malformed/stale damId pointing at no document is rejected', malformedDamDenied)
-
-  // A deceased Dam
-  const deceasedDamId = `deceaseddam6_${R}`
-  await setDoc(doc(db, 'dogs', deceasedDamId), {
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Deceased Dam', sex: 'female', status: 'active', dateOfBirth: '2015-01-01', isDeceased: true,
-  })
-  let deceasedDamDenied = false
-  try {
-    await setDoc(doc(db, 'litters', `litter_deceaseddam_${R}`), { tenantId: breederUid, damId: deceasedDamId, name: 'Litter F', puppyIds: [] })
-  } catch (err) { deceasedDamDenied = isDenied(err) }
-  check('6-DamValidation', 'A deceased Dam is rejected', deceasedDamDenied)
-}
-
-// =========================================================================
-// SECTION 7 — Malformed-DOB parent rejection (Codex Blocker 1/2): a Sire
-// or Dam reference whose OWN dateOfBirth is missing/malformed must be
-// rejected server-side even though sex/ownership/deceased all check
-// out — "can't prove maturity" must never resolve to "eligible", and
-// this must hold even if a client bypasses its own UI filtering by
-// writing directly to Firestore (exactly what these setDoc calls do).
-// =========================================================================
-{
-  await as('breeder')
-  const dobDamId = `dobdam7_${R}`
-  await setDoc(doc(db, 'dogs', dobDamId), {
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'DobTest Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
-  })
-
-  // Sire with a malformed dateOfBirth field (simulates a legacy/corrupt
-  // record — direct admin write bypasses the dogs create rule entirely,
-  // matching how a real pre-existing malformed record would look)
-  const malformedDobSireId = `malformeddobsire_${R}`
-  await adminDb.collection('dogs').doc(malformedDobSireId).set({
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Malformed DOB Sire', sex: 'male', status: 'active', dateOfBirth: 'not-a-date',
-  })
-  let malformedDobSireDenied = false
-  try {
-    await setDoc(doc(db, 'heatCycles', `cyc_malformeddob_${R}`), {
-      dogId: dobDamId, tenantId: breederUid, heatNumber: 1, heatStartDate: '2026-01-01', sireId: malformedDobSireId,
-    })
-  } catch (err) { malformedDobSireDenied = isDenied(err) }
-  check('7-MalformedDob', 'A Sire with a malformed dateOfBirth is rejected even though sex/ownership check out', malformedDobSireDenied)
-
-  // Sire with NO dateOfBirth field at all
-  const missingDobSireId = `missingdobsire_${R}`
-  await adminDb.collection('dogs').doc(missingDobSireId).set({
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Missing DOB Sire', sex: 'male', status: 'active',
-  })
-  let missingDobSireDenied = false
-  try {
-    await setDoc(doc(db, 'heatCycles', `cyc_missingdob_${R}`), {
-      dogId: dobDamId, tenantId: breederUid, heatNumber: 2, heatStartDate: '2026-02-01', sireId: missingDobSireId,
-    })
-  } catch (err) { missingDobSireDenied = isDenied(err) }
-  check('7-MalformedDob', 'A Sire with no dateOfBirth field at all is rejected', missingDobSireDenied)
-
-  // A Dam whose own dateOfBirth is malformed cannot be used to create a litter
-  const malformedDobDamId = `malformeddobdam_${R}`
-  await adminDb.collection('dogs').doc(malformedDobDamId).set({
-    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
-    sourceType: 'BREEDER_ISSUED', name: 'Malformed DOB Dam', sex: 'female', status: 'active', dateOfBirth: '2020-02-30',
-  })
-  let malformedDobDamDenied = false
-  try {
-    await setDoc(doc(db, 'litters', `litter_malformeddobdam_${R}`), { tenantId: breederUid, damId: malformedDobDamId, name: 'Litter G', puppyIds: [] })
-  } catch (err) { malformedDobDamDenied = isDenied(err) }
-  check('7-MalformedDob', 'A Dam with an impossible-calendar-date dateOfBirth ("2020-02-30") is rejected', malformedDobDamDenied)
+  let deleteOk = true
+  try { await deleteDoc(doc(db, 'heatCycles', legacyCycleId)) } catch { deleteOk = false }
+  check('4-Legacy', 'Legacy heat cycle record remains deletable', deleteOk)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

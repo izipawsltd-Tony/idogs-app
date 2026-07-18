@@ -20,7 +20,7 @@ import PhotoUpload from '../components/ui/PhotoUpload'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
 import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
-import { db } from '../lib/firebase'
+import { db, auth } from '../lib/firebase'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -2698,17 +2698,34 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     finally { setSaving(false) }
   }
 
+  // Codex round 3, Blocker 1 — saving a heat cycle must verify the Dam
+  // (on create) and any Sire reference "meets actual minimum breeding
+  // maturity", which needs real date arithmetic Firestore Rules has no
+  // functions for. This now calls api/save-heat-cycle.js (Admin SDK,
+  // full validation via api/_lib/parent-eligibility.js) instead of
+  // writing to Firestore directly — firestore.rules denies a direct
+  // client create/update outright, so this is the only path.
   async function saveHeatCycle(cycle: HeatCycle) {
     setSaving(true)
     try {
-      const data = { ...cycle, dogId, tenantId: dog.tenantId, updatedAt: new Date().toISOString() }
-      if (cycle.id) {
-        await updateDoc(doc(db, 'heatCycles', cycle.id), data)
-        setHeatCycles(prev => prev.map(c => c.id === cycle.id ? { ...data, id: cycle.id } : c))
+      if (!auth.currentUser) throw new Error('Not signed in')
+      const idToken = await auth.currentUser.getIdToken()
+      const { id: cycleId, ...cycleFields } = cycle
+      const res = await fetch('/api/save-heat-cycle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ cycleId: cycleId || null, dogId, cycle: cycleFields }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || `Save heat cycle failed (${res.status})`)
+      }
+      const result = await res.json()
+      const savedData = { ...cycleFields, dogId, tenantId: dog.tenantId, id: result.cycleId }
+      if (cycleId) {
+        setHeatCycles(prev => prev.map(c => c.id === cycleId ? savedData : c))
       } else {
-        data.createdAt = new Date().toISOString()
-        const ref = await addDoc(collection(db, 'heatCycles'), data)
-        setHeatCycles(prev => [...prev, { ...data, id: ref.id }].sort((a, b) => a.heatNumber - b.heatNumber))
+        setHeatCycles(prev => [...prev, savedData].sort((a, b) => a.heatNumber - b.heatNumber))
         // firstHeatDate is no longer auto-derived from a record's
         // user-editable heatNumber field (that assumption is exactly what
         // broke actual-vs-estimated sync — see the Recorded Heat N
@@ -2719,8 +2736,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       // Auto-update litter count if whelping recorded
       if (cycle.whelpingActual && cycle.whelpingMethod) {
         const isCS = cycle.whelpingMethod?.startsWith('csection')
-        const newLitterCount = heatCycles.filter(c => c.whelpingActual && c.id !== cycle.id).length + 1
-        const newCS = heatCycles.filter(c => c.whelpingMethod?.startsWith('csection') && c.id !== cycle.id).length + (isCS ? 1 : 0)
+        const newLitterCount = heatCycles.filter(c => c.whelpingActual && c.id !== cycleId).length + 1
+        const newCS = heatCycles.filter(c => c.whelpingMethod?.startsWith('csection') && c.id !== cycleId).length + (isCS ? 1 : 0)
         await onUpdate({ litterCount: newLitterCount, cSectionCount: newCS, lastLitterDate: cycle.whelpingActual } as any)
         setLitterCount(newLitterCount)
         setCSectionCount(newCS)
@@ -2731,7 +2748,9 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       toast('Heat cycle saved', 'success')
     } catch (e) {
       console.error(e)
-      toast('Failed to save', 'error')
+      // The server endpoint returns a specific, actionable message (e.g.
+      // "Sire is not an eligible breeding parent") — surface it directly.
+      toast(e instanceof Error && e.message ? e.message : 'Failed to save', 'error')
     } finally { setSaving(false) }
   }
 

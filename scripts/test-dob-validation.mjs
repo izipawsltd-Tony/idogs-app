@@ -182,10 +182,17 @@ function dobYearsAgo(years) {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
   check('firestore.rules defines isValidDobString with the same YYYY-MM-DD shape', /function isValidDobString\(dob\)/.test(rules) && /\^\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}\$/.test(rules))
   check('dogs create requires isValidDobString', /isValidDobString\(request\.resource\.data\.dateOfBirth\)/.test(rules))
-  check('isEligibleBreedingDog (Sire/Dam reference validation) requires the candidate\'s own DOB to be valid',
-    /isValidDobString\(candidate\.get\('dateOfBirth', null\)\)/.test(rules))
   check('litters update requires isValidDobString on actualBirthDate while puppies exist',
     /isValidDobString\(request\.resource\.data\.get\('actualBirthDate', null\)\)/.test(rules))
+  // Sire/Dam reference DOB validation (the candidate's own DOB must be
+  // valid AND actually mature enough) moved server-side in Codex round 3
+  // (Blocker 1) — Firestore Rules has no date-arithmetic to check real
+  // age, so isEligibleBreedingDog was removed from rules entirely rather
+  // than left doing a weaker format-only check. Now covered by
+  // parseDobStrictServer + validateBreedingParent in
+  // api/_lib/parent-eligibility.js — see test-parent-eligibility.mjs.
+  const eligibilitySrc = readFileSync(new URL('../api/_lib/parent-eligibility.js', import.meta.url), 'utf8')
+  check('api/_lib/parent-eligibility.js requires the candidate\'s own DOB to be strictly valid (parseDobStrictServer)', /parseDobStrictServer\(dogData\.dateOfBirth\)/.test(eligibilitySrc))
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

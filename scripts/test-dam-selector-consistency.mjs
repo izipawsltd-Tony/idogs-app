@@ -129,15 +129,24 @@ function dobYearsAgo(years) {
     /export function isEligibleDamDog\(dog: Dog\): boolean \{\s*return dog\.sex === 'female' && isCurrentBreederDog\(dog\)/.test(utilsSrc))
 }
 
-// ── Test 9 (structural): firestore.rules independently validates damId
-// on litter create — a stale/wrong-tenant Dam must be rejected even if
-// the client's selector is bypassed ──
+// ── Test 9 (structural): a stale/wrong-tenant/underage Dam must be
+// rejected even if the client's selector is bypassed. Codex round 3,
+// Blocker 1 established that Firestore Rules cannot verify actual
+// breeding-maturity age (no date-arithmetic functions), so this
+// authoritative check now lives server-side (api/create-litter.js +
+// api/_lib/parent-eligibility.js), and firestore.rules denies a direct
+// client litters create outright rather than doing a weaker check
+// in-rules. See scripts/test-parent-eligibility.mjs for full coverage
+// of the server-side validation logic itself. ──
 {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
-  check('firestore.rules defines isEligibleDam', /function isEligibleDam\(damId\)/.test(rules))
   const littersBlock = (rules.match(/match \/litters\/\{id\} \{[\s\S]*?\n    \}/) || [''])[0]
-  check('litters create requires isEligibleDam(damId)', /isEligibleDam\(request\.resource\.data\.damId\)/.test(littersBlock))
-  check('litters create still requires tenantId ownership (unchanged)', /request\.resource\.data\.tenantId == request\.auth\.uid/.test(littersBlock))
+  check('litters create is denied outright for direct client writes (moved server-side)', /allow create: if false;/.test(littersBlock))
+  const eligibilitySrc = readFileSync(new URL('../api/_lib/parent-eligibility.js', import.meta.url), 'utf8')
+  check('api/_lib/parent-eligibility.js validates Dam ownership (currentOwnerId)', /currentOwnerId/.test(eligibilitySrc))
+  check('api/_lib/parent-eligibility.js validates required sex', /requiredSex/.test(eligibilitySrc))
+  const createLitterSrc = readFileSync(new URL('../api/create-litter.js', import.meta.url), 'utf8')
+  check('api/create-litter.js validates the Dam via validateBreedingParent', /validateBreedingParent/.test(createLitterSrc))
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getLitters, getDogs, createLitter, updateLitter, createDog, updateDog, deleteDog, transferDogOwnership } from '../lib/db'
-import { doc, getDoc, writeBatch, updateDoc, arrayUnion } from 'firebase/firestore'
+import { getLitters, getDogs, createLitter, updateLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership } from '../lib/db'
+import { doc, collection, getDoc, writeBatch, runTransaction } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict } from '../lib/utils'
 import type { Litter, Dog, ToastMessage } from '../types'
@@ -29,6 +29,47 @@ const COLLAR_EMOJI: Record<string, string> = {
 }
 
 const emptyPuppy: PuppyForm = { name: '', sex: 'female', colour: '', collarColour: '', weightKg: '', microchip: '', notes: '' }
+
+// Shared by handleDeleteLitter's preview pass and its authoritative
+// in-transaction decision (both must apply IDENTICAL logic, just against
+// snapshots taken at different times) — a dog only counts as a confirmed
+// member of `litterId` if its own litterId explicitly agrees (a legacy
+// dog with no litterId can't be confirmed either way from its own
+// record, so it's excluded entirely rather than assumed eligible on the
+// strength of the litter's forward reference alone). A confirmed member
+// is eligible for deletion only if it's still exclusively
+// breeder-controlled AND has no ownership history at all — buyerEmail
+// alone is not the complete history signal (Codex round 3): previousOwnerId,
+// transferredAt, and claimedAt/claimedBy are all independent, permanent
+// provenance that must each individually block deletion.
+function partitionLitterCandidates(litterId: string, fetched: Dog[], requesterUid: string) {
+  const confirmedMembers = fetched.filter(d => d.litterId === litterId)
+  const ambiguousCount = fetched.length - confirmedMembers.length
+  const eligible = confirmedMembers.filter(d =>
+    d.currentOwnerId === requesterUid &&
+    !isDogTransferred(d) &&
+    !d.buyerEmail && !d.previousOwnerId && !d.transferredAt && !(d as any).claimedAt
+  )
+  const preserved = confirmedMembers.length - eligible.length
+  return { confirmedMembers, ambiguousCount, eligible, preserved }
+}
+
+function buildDeleteLitterConfirmText(litterName: string, eligibleCount: number, preservedCount: number, ambiguousCount: number): string {
+  const parts = [`Delete litter "${litterName}"?`]
+  if (eligibleCount > 0) {
+    parts.push(`This will also delete ${eligibleCount} puppy record${eligibleCount !== 1 ? 's' : ''} still in your care.`)
+  }
+  if (preservedCount > 0) {
+    parts.push(`${preservedCount} puppy record${preservedCount !== 1 ? 's' : ''} will be kept (transferred, claimed, or otherwise no longer exclusively yours).`)
+  }
+  if (ambiguousCount > 0) {
+    parts.push(`${ambiguousCount} puppy record${ambiguousCount !== 1 ? 's' : ''} could not be confirmed as exact members of this litter and will be left untouched.`)
+  }
+  if (eligibleCount === 0 && preservedCount === 0 && ambiguousCount === 0) {
+    parts.push('No puppies will be affected.')
+  }
+  return parts.join(' ')
+}
 
 export default function LittersPage({ toast }: Props) {
   const { user, profile, upgradeToBreeder } = useAuth()
@@ -67,6 +108,14 @@ export default function LittersPage({ toast }: Props) {
   const [puppyForm, setPuppyForm] = useState<PuppyForm>(emptyPuppy)
   const [savingPuppy, setSavingPuppy] = useState(false)
   const [savingLitter, setSavingLitter] = useState(false)
+  // Persists the pre-generated dog-doc id for the IN-PROGRESS "add
+  // puppy" submission across retries within this page session, so a
+  // second click after an ambiguous failure resumes the SAME operation
+  // (createLitterPuppyAtomic detects the id already exists and returns
+  // the existing puppy instead of creating a duplicate) rather than
+  // starting a brand-new one. Cleared on success and whenever the form
+  // is opened fresh for a different litter/closed.
+  const pendingPuppyIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -122,7 +171,12 @@ export default function LittersPage({ toast }: Props) {
       setForm({ name: '', damId: '', sireId: '', sireName: '', sireAnkc: '', matingSuspectedDate: '', expectedDueDate: '', actualBirthDate: '', notes: '' })
       toast('Litter created!')
     } catch (err) {
-      toast('Failed to create litter', 'error')
+      // The server endpoint returns a specific, actionable message (e.g.
+      // "Dam is not an eligible breeding parent") — surface it directly
+      // rather than a generic failure, since the whole point of the
+      // server-side check is to explain WHY (underage, transferred,
+      // deceased, malformed DOB) when the client's own selector missed it.
+      toast(err instanceof Error && err.message ? err.message : 'Failed to create litter', 'error')
     } finally {
       setSavingLitter(false)
     }
@@ -173,88 +227,71 @@ export default function LittersPage({ toast }: Props) {
 
   async function handleDeleteLitter(litter: Litter) {
     if (!user) return
-    // Re-read the litter and every candidate puppy fresh from Firestore
-    // right before deciding anything — never decide from the component's
-    // local `litters`/`dogs` state, which was loaded at page mount and
-    // can be stale (another tab could have transferred a puppy since).
-    // This is what lets the confirmation count and the actual batch stay
-    // guaranteed identical, computed from one single fresh snapshot.
-    let freshLitter: Litter
-    let confirmedMembers: Dog[]
-    let ambiguousCount: number
+    const currentUid = user.uid
+
+    // Step 1 — a best-effort PREVIEW read, used ONLY to word the
+    // confirmation dialog. NOT authoritative: it can be stale the moment
+    // it's shown (another tab could transfer a puppy right after this
+    // read completes). The actual decision is made fresh in Step 2,
+    // inside a transaction — if reality has moved on by then, the
+    // transaction acts on the NEW truth, not on what this preview said,
+    // and the toast after completion reports what really happened.
+    let previewLitterName: string
     try {
-      const freshLitterSnap = await getDoc(doc(db, 'litters', litter.id))
-      if (!freshLitterSnap.exists()) { toast('This litter no longer exists — refreshing', 'error'); setLitters(prev => prev.filter(l => l.id !== litter.id)); return }
-      freshLitter = { id: freshLitterSnap.id, ...freshLitterSnap.data() } as Litter
-      const candidateSnaps = await Promise.all((freshLitter.puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
-      const fetched = candidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() } as Dog))
-      // Exact litter membership ONLY — a dog's own litterId must
-      // explicitly agree it belongs to THIS litter. A legacy dog with no
-      // litterId at all (created before that field existed) can't be
-      // confirmed either way from its own record — the litter's forward
-      // reference (puppyIds) alone isn't trustworthy proof, so rather
-      // than assume it's a member, it's treated as ambiguous and left
-      // completely untouched. This never deletes a dog on the strength
-      // of shared owner/tenant/DOB/breed/naming alone.
-      confirmedMembers = fetched.filter(d => d.litterId === freshLitter.id)
-      ambiguousCount = fetched.length - confirmedMembers.length
+      const previewLitterSnap = await getDoc(doc(db, 'litters', litter.id))
+      if (!previewLitterSnap.exists()) { toast('This litter no longer exists — refreshing', 'error'); setLitters(prev => prev.filter(l => l.id !== litter.id)); return }
+      const previewLitter = { id: previewLitterSnap.id, ...previewLitterSnap.data() } as Litter
+      previewLitterName = previewLitter.name
+      const previewCandidateSnaps = await Promise.all((previewLitter.puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
+      const previewFetched = previewCandidateSnaps.filter(s => s.exists()).map(s => ({ id: s.id, ...s.data() } as Dog))
+      const preview = partitionLitterCandidates(previewLitter.id, previewFetched, currentUid)
+      if (!confirm(buildDeleteLitterConfirmText(previewLitterName, preview.eligible.length, preview.preserved, preview.ambiguousCount))) return
     } catch {
       toast('Failed to load current litter details — please try again', 'error')
       return
     }
 
-    // Eligible for deletion only if ALL of: still exclusively
-    // breeder-controlled (currentOwnerId — the exact field the
-    // dogs/{dogId} delete rule itself checks, not the status/
-    // transferStatus fields a raw read can see as stale post-claim);
-    // not mid-transfer (isDogTransferred covers both status=transferred
-    // AND the pending-claim window, where currentOwnerId hasn't moved
-    // YET but the dog is already earmarked for a buyer); and has never
-    // been through a transfer at all (buyerEmail is permanent ownership-
-    // history provenance, kept even after a completed claim).
-    const eligible = confirmedMembers.filter(d =>
-      d.currentOwnerId === user.uid && !isDogTransferred(d) && !d.buyerEmail
-    )
-    const preserved = confirmedMembers.length - eligible.length
-
-    const parts = [`Delete litter "${freshLitter.name}"?`]
-    if (eligible.length > 0) {
-      parts.push(`This will also delete ${eligible.length} puppy record${eligible.length !== 1 ? 's' : ''} still in your care.`)
-    }
-    if (preserved > 0) {
-      parts.push(`${preserved} puppy record${preserved !== 1 ? 's' : ''} will be kept (transferred, claimed, or otherwise no longer exclusively yours).`)
-    }
-    if (ambiguousCount > 0) {
-      parts.push(`${ambiguousCount} puppy record${ambiguousCount !== 1 ? 's' : ''} could not be confirmed as exact members of this litter and will be left untouched.`)
-    }
-    if (eligible.length === 0 && preserved === 0 && ambiguousCount === 0) {
-      parts.push('No puppies will be affected.')
-    }
-    if (!confirm(parts.join(' '))) return
-
+    // Step 2 — the AUTHORITATIVE operation. A Firestore transaction
+    // re-reads the litter and every candidate puppy from scratch inside
+    // itself and decides eligibility fresh. If ANY document it reads
+    // changes before the transaction commits — a puppy transferred
+    // mid-flight, a new puppy just linked in, litterId edited elsewhere —
+    // Firestore detects the conflict and automatically retries this
+    // entire callback against the new state, rather than silently
+    // committing against data that was true a moment ago but no longer
+    // is. This closes the TOCTOU window a plain getDoc()-then-
+    // writeBatch() sequence cannot: that pattern only fails safe (the
+    // whole batch gets rejected) when the race happens to trip a rule;
+    // a transaction instead correctly RE-DECIDES and still completes.
+    let outcome: { deletedCount: number; preservedCount: number; ambiguousCount: number } | null = null
     try {
-      // Litter delete + eligible-puppy deletes as one atomic batch — if
-      // any single delete were denied (e.g. a puppy transferred in the
-      // instant between the fresh read above and this commit), the whole
-      // batch is rejected and nothing is left half-deleted. Firestore
-      // re-evaluates the normal per-document dogs/litters rules for
-      // every op in the batch, so this can never delete a dog outside
-      // the requester's own tenancy regardless of what puppyIds says —
-      // and re-running this exact same batch again is safe (deleting an
-      // already-deleted document is a no-op), so a retry after a
-      // transient failure is idempotent.
-      const batch = writeBatch(db)
-      batch.delete(doc(db, 'litters', litter.id))
-      for (const puppy of eligible) {
-        batch.delete(doc(db, 'dogs', puppy.id))
-      }
-      await batch.commit()
-      setLitters(prev => prev.filter(l => l.id !== litter.id))
-      setDogs(prev => prev.filter(d => !eligible.some(e => e.id === d.id)))
-      toast(eligible.length > 0 ? `Litter deleted along with ${eligible.length} puppy record${eligible.length !== 1 ? 's' : ''}` : 'Litter deleted')
+      outcome = await runTransaction(db, async (tx) => {
+        const litterRef = doc(db, 'litters', litter.id)
+        const litterSnap = await tx.get(litterRef)
+        if (!litterSnap.exists()) return { deletedCount: 0, preservedCount: 0, ambiguousCount: 0 }
+        const freshLitter = { id: litterSnap.id, ...litterSnap.data() } as Litter
+        const puppyIds = freshLitter.puppyIds || []
+        const candidateSnaps = await Promise.all(puppyIds.map(id => tx.get(doc(db, 'dogs', id))))
+        const fetched = candidateSnaps
+          .filter(s => s.exists())
+          .map(s => ({ id: s.id, ...(s.data() as Omit<Dog, 'id'>) }))
+        const { eligible, preserved, ambiguousCount } = partitionLitterCandidates(freshLitter.id, fetched, currentUid)
+
+        tx.delete(litterRef)
+        for (const puppy of eligible) {
+          tx.delete(doc(db, 'dogs', puppy.id))
+        }
+        return { deletedCount: eligible.length, preservedCount: preserved, ambiguousCount }
+      })
     } catch {
-      toast('Failed to delete litter', 'error')
+      toast('Failed to delete litter — please try again', 'error')
+      return
     }
+
+    const [updatedLitters, updatedDogs] = await Promise.all([getLitters(), getDogs()])
+    setLitters(updatedLitters)
+    setDogs(updatedDogs.filter(d => !d.isDeceased))
+    toast(outcome.deletedCount > 0 ? `Litter deleted along with ${outcome.deletedCount} puppy record${outcome.deletedCount !== 1 ? 's' : ''}` : 'Litter deleted')
   }
 
   async function handleAddPuppy(litterId: string, litter: Litter) {
@@ -282,20 +319,17 @@ export default function LittersPage({ toast }: Props) {
         ? `${puppyForm.collarColour} ${sexWord}`
         : `${dam?.name ? dam.name + ' ' : ''}Pup ${puppyIndex}`
       const finalName = trimmed || fallbackName
-      // createDog() (a new Dog document) and linking it into the litter's
-      // puppyIds are two independent Firestore writes — Firestore has no
-      // way to make "create a brand-new auto-id document elsewhere" and
-      // "append its id to this array" a single atomic transaction when
-      // the id doesn't exist yet (see createDog()'s own internal
-      // passportId-reservation transaction, which can't itself be
-      // nested inside another). Rather than claim false atomicity, this
-      // is an explicit two-phase, recoverable sequence: if phase 2
-      // (linking) fails after phase 1 (creation) succeeded, phase 1 is
-      // rolled back — the puppy is deleted — so a failure never leaves
-      // an orphaned Dog record that exists but isn't linked to any
-      // litter. arrayUnion also makes phase 2 itself idempotent (safe to
-      // retry with the same dogId without ever double-adding it).
-      const dogId = await createDog({
+      // Pre-generate the dog's id locally (no network round-trip) and
+      // persist it across retries of this same submission — if this is
+      // a retry after an earlier attempt whose outcome was unknown,
+      // reuse that id so createLitterPuppyAtomic can detect the prior
+      // attempt already succeeded, instead of generating a fresh id
+      // (and thus a fresh, genuinely duplicate dog) every click.
+      if (!pendingPuppyIdRef.current) {
+        pendingPuppyIdRef.current = doc(collection(db, 'dogs')).id
+      }
+      const dogId = pendingPuppyIdRef.current
+      const { alreadyExisted } = await createLitterPuppyAtomic(litterId, dogId, {
         name: finalName,
         breed: dam?.breed || '',
         sex: puppyForm.sex,
@@ -303,7 +337,6 @@ export default function LittersPage({ toast }: Props) {
         colour: puppyForm.colour,
         microchip: puppyForm.microchip,
         ankc: '',
-        litterId,
         notes: [
           `From litter: ${litter.name}`,
           puppyForm.collarColour ? `Collar: ${puppyForm.collarColour}` : '',
@@ -311,20 +344,21 @@ export default function LittersPage({ toast }: Props) {
           puppyForm.notes || '',
         ].filter(Boolean).join(' · '),
       })
-      try {
-        await updateDoc(doc(db, 'litters', litterId), { puppyIds: arrayUnion(dogId) })
-      } catch (linkErr) {
-        await deleteDog(dogId).catch(() => {})
-        throw linkErr
-      }
+      pendingPuppyIdRef.current = null
       const [updatedLitters, updatedDogs] = await Promise.all([getLitters(), getDogs()])
       setLitters(updatedLitters)
       setDogs(updatedDogs.filter(d => !d.isDeceased))
       setPuppyForm(emptyPuppy)
       setShowAddPuppy(null)
-      toast(`${finalName} added — QR Passport created!`)
+      toast(alreadyExisted ? `${finalName} was already added — no duplicate created` : `${finalName} added — QR Passport created!`)
     } catch {
-      toast('Failed to add puppy', 'error')
+      // Deliberately does NOT clear pendingPuppyIdRef — if the failure
+      // was a transient network error after the transaction actually
+      // committed server-side, the next click reuses the same id and
+      // createLitterPuppyAtomic resolves it idempotently instead of
+      // creating a duplicate. A genuine full failure left nothing
+      // committed, so reusing the id on retry is equally safe there.
+      toast('Failed to add puppy — click Add again to safely retry', 'error')
     } finally {
       setSavingPuppy(false)
     }
@@ -735,7 +769,7 @@ export default function LittersPage({ toast }: Props) {
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)' }}>Puppies ({puppyDogs.length})</div>
                         {litter.actualBirthDate ? (
-                          <button className="btn btn-primary btn-sm" onClick={() => setShowAddPuppy(showAddPuppy === litter.id ? null : litter.id)}>
+                          <button className="btn btn-primary btn-sm" onClick={() => { pendingPuppyIdRef.current = null; setShowAddPuppy(showAddPuppy === litter.id ? null : litter.id) }}>
                             + Add puppy
                           </button>
                         ) : (
@@ -751,7 +785,7 @@ export default function LittersPage({ toast }: Props) {
                             <button className="btn btn-primary btn-sm" onClick={() => handleAddPuppy(litter.id, litter)} disabled={savingPuppy}>
                               {savingPuppy ? <span className="spinner" /> : 'Add & create passport'}
                             </button>
-                            <button className="btn btn-secondary btn-sm" onClick={() => setShowAddPuppy(null)}>Cancel</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => { pendingPuppyIdRef.current = null; setShowAddPuppy(null) }}>Cancel</button>
                           </div>
                         </div>
                       )}

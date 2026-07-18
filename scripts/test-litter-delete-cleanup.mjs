@@ -70,15 +70,17 @@ async function as(name) {
   await signInWithEmailAndPassword(auth, email(name), PW)
 }
 
-// Mirrors LittersPage.handleDeleteLitter()'s exact candidate-filtering
-// logic against already-fetched snapshots.
+// Mirrors LittersPage.partitionLitterCandidates()'s exact
+// candidate-filtering logic against already-fetched snapshots. Codex
+// round 3, Blocker 4: history is checked across ALL of buyerEmail/
+// previousOwnerId/transferredAt/claimedAt — not buyerEmail alone.
 function computeEligible(freshLitterId, fetched, requesterUid) {
   const confirmedMembers = fetched.filter(d => d.litterId === freshLitterId)
   const ambiguousCount = fetched.length - confirmedMembers.length
   const eligible = confirmedMembers.filter(d =>
     d.currentOwnerId === requesterUid &&
     d.status !== 'transferred' && d.transferStatus !== 'pendingClaim' &&
-    !d.buyerEmail
+    !d.buyerEmail && !d.previousOwnerId && !d.transferredAt && !d.claimedAt
   )
   const preserved = confirmedMembers.length - eligible.length
   return { confirmedMembers, ambiguousCount, eligible, preserved }
@@ -100,7 +102,7 @@ const strangerUid = await newUser('stranger')
     sourceType: 'BREEDER_ISSUED', name: 'Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const litterId = `litter_${R}`
-  await setDoc(doc(db, 'litters', litterId), {
+  await adminDb.collection('litters').doc(litterId).set({
     tenantId: breederUid, damId, name: 'Test Litter', notes: '', actualBirthDate: '2026-01-01',
     puppyIds: [`p1_${R}`, `p2_${R}`, `p3_${R}`],
   })
@@ -163,7 +165,7 @@ const strangerUid = await newUser('stranger')
     sourceType: 'BREEDER_ISSUED', name: 'Dam2', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const litterId2 = `litter2_${R}`
-  await setDoc(doc(db, 'litters', litterId2), {
+  await adminDb.collection('litters').doc(litterId2).set({
     tenantId: breederUid, damId: damId2, name: 'Atomicity Litter', notes: '', actualBirthDate: '2026-01-01',
     puppyIds: [`ap1_${R}`],
   })
@@ -210,7 +212,7 @@ const strangerUid = await newUser('stranger')
     sourceType: 'BREEDER_ISSUED', name: 'Dam3', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const litterId3 = `litter3_${R}`
-  await setDoc(doc(db, 'litters', litterId3), {
+  await adminDb.collection('litters').doc(litterId3).set({
     tenantId: breederUid, damId: damId3, name: 'Empty Litter', notes: '', puppyIds: [],
   })
   const batch = writeBatch(db)
@@ -244,7 +246,7 @@ const strangerUid = await newUser('stranger')
     litterId: otherLitterId,
   })
   // ...but thisLitterId's own puppyIds array ALSO (erroneously) lists it
-  await setDoc(doc(db, 'litters', thisLitterId), {
+  await adminDb.collection('litters').doc(thisLitterId).set({
     tenantId: breederUid, damId: damId4, name: 'This Litter', notes: '', actualBirthDate: '2026-01-01',
     puppyIds: [crossLinkedPupId],
   })
@@ -286,7 +288,7 @@ const strangerUid = await newUser('stranger')
     // no litterId field at all
   })
   const litterId5 = `litter5b_${R}`
-  await setDoc(doc(db, 'litters', litterId5), {
+  await adminDb.collection('litters').doc(litterId5).set({
     tenantId: breederUid, damId: damId5, name: 'Litter5b', notes: '', actualBirthDate: '2020-06-01', puppyIds: [legacyPupId],
   })
 
@@ -308,7 +310,7 @@ const strangerUid = await newUser('stranger')
   // anywhere — must also stay untouched (distinct from the ambiguous
   // case above: this one was never even a candidate).
   const litterId5b = `litter5c_${R}`
-  await setDoc(doc(db, 'litters', litterId5b), {
+  await adminDb.collection('litters').doc(litterId5b).set({
     tenantId: breederUid, damId: damId5, name: 'Litter5c', notes: '', puppyIds: [],
   })
   const standaloneDogId = `standalone5_${R}`
@@ -344,7 +346,7 @@ const strangerUid = await newUser('stranger')
     sourceType: 'BREEDER_ISSUED', name: 'RacePup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
     litterId: litterId6,
   })
-  await setDoc(doc(db, 'litters', litterId6), {
+  await adminDb.collection('litters').doc(litterId6).set({
     tenantId: breederUid, damId: damId6, name: 'Litter6', notes: '', actualBirthDate: '2026-01-01', puppyIds: [racePupId],
   })
 
@@ -397,7 +399,7 @@ const strangerUid = await newUser('stranger')
       sourceType: 'BREEDER_ISSUED', name: id, sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId7,
     })
   }
-  await setDoc(doc(db, 'litters', litterId7), {
+  await adminDb.collection('litters').doc(litterId7).set({
     tenantId: breederUid, damId: damId7, name: 'Litter7', notes: '', actualBirthDate: '2026-01-01', puppyIds: pupIds,
   })
   // Transfer 1 of the 4 away — expect 3 eligible, 1 preserved
@@ -446,7 +448,7 @@ const strangerUid = await newUser('stranger')
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Pup8', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId8,
   })
-  await setDoc(doc(db, 'litters', litterId8), {
+  await adminDb.collection('litters').doc(litterId8).set({
     tenantId: breederUid, damId: damId8, name: 'Litter8', notes: '', actualBirthDate: '2026-01-01', puppyIds: [pupId8],
   })
 
@@ -493,7 +495,7 @@ const strangerUid = await newUser('stranger')
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'PendingPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId9,
   })
-  await setDoc(doc(db, 'litters', litterId9), {
+  await adminDb.collection('litters').doc(litterId9).set({
     tenantId: breederUid, damId: damId9, name: 'Litter9', notes: '', actualBirthDate: '2026-01-01', puppyIds: [pendingPupId],
   })
   // Breeder marks the puppy as pending-claim (currentOwnerId untouched —
@@ -547,7 +549,7 @@ const strangerUid = await newUser('stranger')
     sourceType: 'BREEDER_ISSUED', name: 'HistoryPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
     litterId: litterId10, buyerEmail: 'past-buyer@example.com',
   })
-  await setDoc(doc(db, 'litters', litterId10), {
+  await adminDb.collection('litters').doc(litterId10).set({
     tenantId: breederUid, damId: damId10, name: 'Litter10', notes: '', actualBirthDate: '2026-01-01', puppyIds: [historyPupId],
   })
 

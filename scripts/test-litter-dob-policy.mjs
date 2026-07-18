@@ -103,21 +103,26 @@ function partitionLitterPuppies(dogs, puppyIds) {
     /const batch = writeBatch\(db\)[\s\S]{0,400}batch\.update\(doc\(db, 'litters'/.test(src))
 }
 
-// ── Test 6 (structural): litter delete batches the litter + eligible
-// puppies atomically, and the confirmation reports the affected count ──
+// ── Test 6 (structural): litter delete is a Firestore transaction that
+// re-reads and re-decides eligibility from scratch, and the confirmation
+// reports the affected count ──
 {
   const src = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
-  check('handleDeleteLitter requires exact litterId membership before considering a dog at all',
-    /confirmedMembers = fetched\.filter\(d => d\.litterId === freshLitter\.id\)/.test(src))
-  check('handleDeleteLitter computes eligible via currentOwnerId, transfer state, and ownership history together',
+  check('partitionLitterCandidates requires exact litterId membership before considering a dog at all',
+    /confirmedMembers = fetched\.filter\(d => d\.litterId === litterId\)/.test(src))
+  check('partitionLitterCandidates computes eligible via currentOwnerId, transfer state, and full ownership history',
     /const eligible = confirmedMembers\.filter\(d =>/.test(src) &&
-    /d\.currentOwnerId === user\.uid && !isDogTransferred\(d\) && !d\.buyerEmail/.test(src))
+    /d\.currentOwnerId === requesterUid &&/.test(src) &&
+    /!isDogTransferred\(d\)/.test(src) &&
+    /!d\.buyerEmail && !d\.previousOwnerId && !d\.transferredAt && !\(d as any\)\.claimedAt/.test(src))
   check('Delete confirmation message includes the eligible puppy count',
-    /This will also delete \$\{eligible\.length\} puppy record/.test(src))
+    /This will also delete \$\{eligibleCount\} puppy record/.test(src))
   check('Delete confirmation message mentions preserved puppies when any exist',
-    /preserved !== 1 \? 's' : ''\} will be kept/.test(src))
-  check('Litter delete uses one writeBatch for the litter doc + all eligible puppy docs',
-    /const batch = writeBatch\(db\)[\s\S]{0,200}batch\.delete\(doc\(db, 'litters'/.test(src))
+    /preservedCount !== 1 \? 's' : ''\} will be kept/.test(src))
+  check('handleDeleteLitter uses runTransaction (re-reads and re-decides inside the transaction, not a pre-committed batch)',
+    /outcome = await runTransaction\(db, async \(tx\) => \{/.test(src))
+  check('The transaction reads the litter and candidates via tx.get before any tx.delete (Firestore\'s read-before-write ordering)',
+    /const litterSnap = await tx\.get\(litterRef\)[\s\S]{0,400}tx\.get\(doc\(db, 'dogs', id\)\)\)[\s\S]{0,300}tx\.delete\(litterRef\)/.test(src))
 }
 
 // ── Test 7 (structural): firestore.rules enforces both invariants
@@ -156,12 +161,19 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   const { initializeApp } = await import('firebase/app')
   const { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword } = await import('firebase/auth')
   const { getFirestore, connectFirestoreEmulator, doc, setDoc, updateDoc } = await import('firebase/firestore')
+  const { initializeApp: initAdminApp } = await import('firebase-admin/app')
+  const { getFirestore: getAdminFirestore } = await import('firebase-admin/firestore')
 
   const app = initializeApp({ projectId: 'demo-idogs-qa', apiKey: 'fake-api-key' }, 'dob-policy-app')
   const auth = getAuth(app)
   const db = getFirestore(app)
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
   connectFirestoreEmulator(db, '127.0.0.1', 8080)
+  // litters create is now server-endpoint-only (Codex round 3) — these
+  // fixtures simulate what api/create-litter.js would have written,
+  // since this section's actual target is the UPDATE rule, unaffected.
+  const adminApp = initAdminApp({ projectId: 'demo-idogs-qa' }, 'dob-policy-admin')
+  const adminDb = getAdminFirestore(adminApp)
 
   function isDenied(err) { return err && (err.code === 'permission-denied' || /permission/i.test(err.message)) }
 
@@ -209,7 +221,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
       sourceType: 'BREEDER_ISSUED', name: 'DobDam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
     })
     const litterWithPuppies = `litterwp_${R}`
-    await setDoc(doc(db, 'litters', litterWithPuppies), {
+    await adminDb.collection('litters').doc(litterWithPuppies).set({
       tenantId: uid, damId, name: 'WithPuppies', notes: '', actualBirthDate: '2026-01-01', puppyIds: [`validdobpup_${R}`],
     })
     let clearDenied = false
@@ -221,7 +233,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('10-LittersRule', 'Changing (not clearing) actualBirthDate on a litter with puppies still succeeds', changeOk)
 
     const litterNoPuppies = `litternp_${R}`
-    await setDoc(doc(db, 'litters', litterNoPuppies), {
+    await adminDb.collection('litters').doc(litterNoPuppies).set({
       tenantId: uid, damId, name: 'NoPuppiesYet', notes: '', actualBirthDate: '2026-01-01', puppyIds: [],
     })
     let clearOkWhenEmpty = true
@@ -229,9 +241,27 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('10-LittersRule', 'Clearing actualBirthDate on a planned litter with zero puppies is allowed', clearOkWhenEmpty)
   }
 
+  // ── Test 11: a direct client litters create is denied outright now
+  // (moved to api/create-litter.js — see test-parent-eligibility.mjs for
+  // the full eligibility-logic coverage) ──
+  {
+    const damId11 = `dobdam11_${R}`
+    await setDoc(doc(db, 'dogs', damId11), {
+      tenantId: uid, currentOwnerId: uid, createdByUserId: uid,
+      sourceType: 'BREEDER_ISSUED', name: 'DobDam11', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+    })
+    let createDenied = false
+    try {
+      await setDoc(doc(db, 'litters', `litter_clientdenied_${R}`), {
+        tenantId: uid, damId: damId11, name: 'Should Be Denied', notes: '', puppyIds: [],
+      })
+    } catch (err) { createDenied = isDenied(err) }
+    check('11-LittersServerOnly', 'A direct client litters create is denied even for a well-formed payload', createDenied)
+  }
+
   await signOut(auth)
 } else {
-  console.log('SKIPPED: emulator sections (9, 10) — set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
+  console.log('SKIPPED: emulator sections (9, 10, 11) — set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

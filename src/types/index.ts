@@ -61,6 +61,19 @@ export interface Dog {
   buyerEmail?: string
   buyerPhone?: string
   transferredAt?: string
+  // Set by transferDogOwnership() alongside the fields above — the uid
+  // of whoever held the dog immediately before this transfer. Existed in
+  // real Firestore documents before it was ever declared here (a type-
+  // completeness gap, not a functional one). transferStatus is set by
+  // the SAME call ('pendingClaim') and cleared by the claim route.
+  previousOwnerId?: string
+  transferStatus?: 'pendingClaim'
+  // Written only by api/claim-transferred-dogs.js (Admin SDK, bypasses
+  // rules) once a buyer actually claims a transferred dog — permanent
+  // record that a claim happened, independent of buyerEmail/
+  // transferredAt (which describe the BREEDER's side of the transfer).
+  claimedAt?: string
+  claimedBy?: string
 
   // ── Commercial lifecycle (M7 #2 — puppy sale funnel) ──
   availabilityStatus?: 'available' | 'reserved' | 'kept' | 'sold'

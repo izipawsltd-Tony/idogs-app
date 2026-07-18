@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, setDoc, Timestamp, runTransaction
+  query, where, serverTimestamp, setDoc, Timestamp, runTransaction, arrayUnion
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage } from '../types'
@@ -335,6 +335,90 @@ export async function createDog(
     updatedAt: serverTimestamp(),
   })
   return ref.id
+}
+
+// Codex round 3, Blocker 3 — createDog()'s own reservePassportId() call
+// is already its own transaction, which can't be nested inside another
+// (Firestore has no cross-transaction composition), so it can't be
+// reused as-is for a puppy that ALSO needs an atomic litter-puppyIds
+// link. This function folds passportId reservation + dog creation +
+// litter linking into ONE transaction, so all three succeed or none do
+// — no orphan Dog with a consumed reservation but no litter link, no
+// linked-but-nonexistent puppyId, no reservation left dangling.
+//
+// Idempotency: the caller pre-generates `dogId` once (via
+// doc(collection(db,'dogs')).id, a local operation with no network
+// round-trip) and persists it across any retry of the SAME logical
+// "add this puppy" submission (see LittersPage's pendingPuppyIdRef). If
+// a prior attempt with that exact dogId actually committed server-side
+// but the client never saw confirmation (a genuine network-ambiguity
+// case — the one thing no client-only idempotency key can fully avoid
+// without a server-persisted ledger), retrying finds the dog document
+// ALREADY exists and returns its real passportId without creating a
+// second dog, re-reserving a passportId, or double-linking the litter
+// (arrayUnion is itself idempotent). A prior attempt that never
+// actually committed leaves zero trace — retrying is then
+// indistinguishable from a first attempt, including generating a fresh
+// passportId candidate, which is safe precisely because nothing from
+// the failed attempt was ever persisted.
+export async function createLitterPuppyAtomic(
+  litterId: string,
+  dogId: string,
+  data: DogFormData,
+  sourceType: 'BREEDER_ISSUED' | 'OWNER_CREATED' = 'BREEDER_ISSUED'
+): Promise<{ dogId: string; passportId: string; alreadyExisted: boolean }> {
+  const dogRef = doc(db, 'dogs', dogId)
+  const litterRef = doc(db, 'litters', litterId)
+  const now = new Date()
+  const yearPart = data.dateOfBirth ? data.dateOfBirth.slice(0, 4) : now.getFullYear().toString()
+  const namePart = (data.name || 'DOG').slice(0, 3).toUpperCase()
+
+  for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
+    const candidate = `${namePart}-${yearPart}-${nanoid(4)}`
+    const reservationRef = doc(db, 'passportReservations', candidate)
+    try {
+      const result = await runTransaction(db, async (tx) => {
+        const existingDogSnap = await tx.get(dogRef)
+        if (existingDogSnap.exists()) {
+          // Idempotent retry of an attempt that already fully committed.
+          const litterSnap = await tx.get(litterRef)
+          if (litterSnap.exists() && !(litterSnap.data().puppyIds || []).includes(dogId)) {
+            tx.update(litterRef, { puppyIds: arrayUnion(dogId) })
+          }
+          return { passportId: existingDogSnap.data().passportId as string, alreadyExisted: true }
+        }
+        const reservationSnap = await tx.get(reservationRef)
+        if (reservationSnap.exists()) throw new Error('PASSPORT_ID_TAKEN')
+        tx.set(reservationRef, { createdAt: serverTimestamp(), createdBy: uid() })
+        tx.set(dogRef, {
+          ...data,
+          tenantId: uid(),
+          currentOwnerId: uid(),
+          createdByUserId: uid(),
+          sourceType,
+          ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: uid() } : {}),
+          passportId: candidate,
+          litterId,
+          lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
+          isDeceased: false,
+          photos: [],
+          notes: data.notes || '',
+          status: 'active',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        })
+        tx.update(litterRef, { puppyIds: arrayUnion(dogId) })
+        return { passportId: candidate, alreadyExisted: false }
+      })
+      return { dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted }
+    } catch (err: any) {
+      if (err?.message !== 'PASSPORT_ID_TAKEN') throw err
+      // else: genuine collision on this specific candidate — loop and
+      // try a fresh one. Safe to regenerate: nothing from this failed
+      // attempt was persisted (the whole transaction rolled back).
+    }
+  }
+  throw new Error('Could not generate a unique passport ID — please try again')
 }
 
 export async function updateDog(id: string, data: Partial<Dog>): Promise<void> {
@@ -777,9 +861,27 @@ export async function getLitters(): Promise<Litter[]> {
   return snap.docs.map(d => ({ ...d.data(), id: d.id } as Litter))
 }
 
+// Codex round 3, Blocker 1 — litter creation must verify the Dam (and
+// Sire, if set) "meets actual minimum breeding maturity", which needs
+// real date arithmetic Firestore Rules has no functions for. This now
+// calls api/create-litter.js (Admin SDK, full validation via
+// api/_lib/parent-eligibility.js) instead of writing to Firestore
+// directly — firestore.rules denies a direct client create outright, so
+// this is the only path.
 export async function createLitter(data: Omit<Litter, 'id' | 'createdAt' | 'tenantId'>): Promise<string> {
-  const ref = await addDoc(collection(db, 'litters'), { ...data, tenantId: uid(), createdAt: serverTimestamp() })
-  return ref.id
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/create-litter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Create litter failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.litterId
 }
 
 export async function updateLitter(id: string, data: Partial<Litter>): Promise<void> {
