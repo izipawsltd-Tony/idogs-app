@@ -22,6 +22,10 @@ export default function DogNewPage({ toast }: Props) {
   const [step, setStep] = useState<Step>('scan')
   const [loading, setLoading] = useState(true)
   const [blocked, setBlocked] = useState(false)
+  // Codex round 14: a failed subscription-limit check must never be
+  // treated as "under the limit" — that would let a free-plan account
+  // create unlimited dogs whenever the getDogs() call happens to fail.
+  const [limitCheckError, setLimitCheckError] = useState(false)
   const [activeDogCount, setActiveDogCount] = useState(0)
   const [scannedDocs, setScannedDocs] = useState<any[]>([])
   const [pendingFiles, setPendingFiles] = useState<Array<{ base64: string; mediaType: string; documentType: string }>>([])
@@ -32,24 +36,25 @@ export default function DogNewPage({ toast }: Props) {
     breederIdType: 'NONE', breederIdValue: '',
   })
 
-  // Check free tier limit on mount
+  // Check free tier limit on mount. This is a safety/precondition check —
+  // Codex round 14 requires it fail CLOSED: if we can't confirm the
+  // account is under its plan limit, we must not let dog creation proceed.
+  function checkLimit() {
+    setLoading(true)
+    setLimitCheckError(false)
+    getDogs().then(dogs => {
+      const active = dogs.filter((d: any) => d.status !== 'transferred')
+      setActiveDogCount(active.length)
+      const isFreePlan = FREE_PLANS.includes(profile?.plan ?? 'free')
+      setBlocked(isFreePlan && active.length >= FREE_DOG_LIMIT)
+    }).catch(() => {
+      setLimitCheckError(true)
+    }).finally(() => setLoading(false))
+  }
+
   useEffect(() => {
-    async function checkLimit() {
-      try {
-        const dogs = await getDogs()
-        const active = dogs.filter((d: any) => d.status !== 'transferred')
-        setActiveDogCount(active.length)
-        const isFreePlan = FREE_PLANS.includes(profile?.plan ?? 'free')
-        if (isFreePlan && active.length >= FREE_DOG_LIMIT) {
-          setBlocked(true)
-        }
-      } catch {
-        // allow through if check fails
-      } finally {
-        setLoading(false)
-      }
-    }
     checkLimit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile])
 
   // Auto-suggest a sensible default Breeder ID type based on the
@@ -129,10 +134,12 @@ export default function DogNewPage({ toast }: Props) {
         setDuplicateWarning({ matchedBy: 'name', existingDogName: nameMatch.name })
         return
       }
-    } catch (err) {
-      console.error('Duplicate check failed:', err)
-      // if the duplicate check itself fails, don't block dog creation —
-      // proceed as normal
+    } catch {
+      // Codex round 14: the duplicate check is a safety precondition —
+      // if we can't confirm this isn't a duplicate, we must not create
+      // the dog. Fail closed and let the user retry the submit.
+      toast('Could not check for duplicate dogs — please try again', 'error')
+      return
     }
 
     await proceedWithCreate()
@@ -214,6 +221,31 @@ export default function DogNewPage({ toast }: Props) {
     return (
       <div style={{ padding: 32, display: 'flex', justifyContent: 'center', paddingTop: 80 }}>
         <div className="spinner" />
+      </div>
+    )
+  }
+
+  // Codex round 14: couldn't verify the free-tier limit — fail closed
+  // rather than silently letting creation through.
+  if (limitCheckError) {
+    return (
+      <div style={{ padding: 32, maxWidth: 480 }}>
+        <Link to="/app/dogs" style={{ fontSize: 13, color: 'var(--light)', textDecoration: 'none' }}>← My dogs</Link>
+        <div className="card" style={{ marginTop: 24, textAlign: 'center', padding: '48px 32px' }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--dark)', marginBottom: 8 }}>
+            Couldn't check your plan limit
+          </h2>
+          <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 28, lineHeight: 1.6 }}>
+            We need to confirm how many dogs you already have before adding a new one, and that check failed. This is a loading error, not a limit reached — please try again.
+          </p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" onClick={checkLimit}>Retry</button>
+            <Link to="/app/dogs" className="btn btn-secondary">
+              Back to my dogs
+            </Link>
+          </div>
+        </div>
       </div>
     )
   }

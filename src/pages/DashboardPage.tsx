@@ -80,24 +80,49 @@ export default function DashboardPage({ toast }: Props) {
   const [recentActivity, setRecentActivity] = useState<AuditEntry[]>([])
   const [loading,        setLoading]        = useState(true)
 
-  useEffect(() => {
+  // Codex round 14: each of these 5 sources is an INDEPENDENT card —
+  // a reminders load failure shouldn't hide the Dogs card, and vice
+  // versa — so Promise.allSettled at THIS level is correct (unlike
+  // getDogs()'s own two internal ownership queries, which must stay
+  // fail-closed together since they're parts of ONE dog list). But the
+  // previous per-item `.catch(() => [])` wrappers threw away WHICH
+  // section failed: getAllPendingReminders() and getAllDocumentsForUser()
+  // both call getDogs() internally (see src/lib/db.ts), so a getDogs()
+  // failure buried inside either of them silently rendered as "0
+  // reminders" / "No documents uploaded yet" — indistinguishable from a
+  // genuinely empty, healthy account. Each source now has its own
+  // tracked error flag, checked before its card's empty-state renders.
+  const [dogsError,       setDogsError]       = useState(false)
+  const [remindersError,  setRemindersError]  = useState(false)
+  const [littersError,    setLittersError]    = useState(false)
+  const [documentsError,  setDocumentsError]  = useState(false)
+  const [activityError,   setActivityError]   = useState(false)
+
+  function loadDashboard() {
     if (!user) return
-    Promise.all([
+    setLoading(true)
+    Promise.allSettled([
       getDogs(),
-      getAllPendingReminders().catch(() => [] as Reminder[]),
-      getLitters().catch(() => [] as Litter[]),
-      getAllDocumentsForUser(user.uid).catch(() => [] as Document[]),
-      getAuditLogs(user.uid).catch(() => [] as AuditEntry[]),
-    ])
-      .then(([d, r, l, docs, audit]) => {
-        setDogs(d)
-        setReminders(r)
-        setLitters(l)
-        setDocuments(docs)
-        setRecentActivity(audit.slice(0, 5))
-        setLoading(false)
-      })
-      .catch(() => { toast('Failed to load data', 'error'); setLoading(false) })
+      getAllPendingReminders(),
+      getLitters(),
+      getAllDocumentsForUser(user.uid),
+      getAuditLogs(user.uid),
+    ]).then(([d, r, l, docs, audit]) => {
+      if (d.status === 'fulfilled') { setDogs(d.value); setDogsError(false) } else { setDogsError(true) }
+      if (r.status === 'fulfilled') { setReminders(r.value); setRemindersError(false) } else { setRemindersError(true) }
+      if (l.status === 'fulfilled') { setLitters(l.value); setLittersError(false) } else { setLittersError(true) }
+      if (docs.status === 'fulfilled') { setDocuments(docs.value); setDocumentsError(false) } else { setDocumentsError(true) }
+      if (audit.status === 'fulfilled') { setRecentActivity(audit.value.slice(0, 5)); setActivityError(false) } else { setActivityError(true) }
+      if ([d, r, l, docs, audit].some(x => x.status === 'rejected')) {
+        toast('Some dashboard data failed to load', 'error')
+      }
+      setLoading(false)
+    })
+  }
+
+  useEffect(() => {
+    loadDashboard()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   const activeDogs   = dogs.filter(d => (d as any).status !== 'transferred' && (d as any).transferStatus !== 'pendingClaim')
@@ -108,17 +133,36 @@ export default function DashboardPage({ toast }: Props) {
 
   const isOwner = profile?.role === 'owner'
 
+  // Codex round 14: `error` here means "this specific stat's underlying
+  // load failed" — displayed as "—" instead of a number, never a
+  // misleading 0. dogsError feeds Dogs/Active profiles/Puppies (all
+  // derived from `dogs`); remindersError feeds Overdue reminders.
   const STATS = [
-    { value: activeDogs.length,                                     label: 'Dogs',              icon: '🐕',  link: '/app/dogs',      color: undefined },
-    { value: activeDogs.filter(d => !d.isDeceased).length,         label: 'Active profiles',   icon: '✓',   link: '/app/dogs',      color: 'var(--brand-600)' },
-    { value: overdueCount,                                          label: 'Overdue reminders', icon: '🔔',  link: '/app/reminders?filter=overdue', color: overdueCount > 0 ? 'var(--danger)' : undefined },
-    { value: activeDogs.filter(d => d.lifeStage === 'puppy').length, label: 'Puppies',          icon: '🐾',  link: '/app/dogs?stage=puppies',      color: undefined },
-    ...(!isOwner || litters.length > 0 ? [{ value: litters.length, label: 'Litters', icon: '🐣', link: '/app/litters', color: undefined }] : []),
-    { value: documents.length,                                      label: 'Documents',         icon: '📄',  link: '/app/documents', color: undefined },
+    { value: activeDogs.length,                                     error: dogsError,      label: 'Dogs',              icon: '🐕',  link: '/app/dogs',      color: undefined },
+    { value: activeDogs.filter(d => !d.isDeceased).length,         error: dogsError,      label: 'Active profiles',   icon: '✓',   link: '/app/dogs',      color: 'var(--brand-600)' },
+    { value: overdueCount,                                          error: remindersError, label: 'Overdue reminders', icon: '🔔',  link: '/app/reminders?filter=overdue', color: overdueCount > 0 ? 'var(--danger)' : undefined },
+    { value: activeDogs.filter(d => d.lifeStage === 'puppy').length, error: dogsError,      label: 'Puppies',          icon: '🐾',  link: '/app/dogs?stage=puppies',      color: undefined },
+    ...(!isOwner || litters.length > 0 || littersError ? [{ value: litters.length, error: littersError, label: 'Litters', icon: '🐣', link: '/app/litters', color: undefined }] : []),
+    { value: documents.length,                                      error: documentsError, label: 'Documents',         icon: '📄',  link: '/app/documents', color: undefined },
   ]
+
+  const anySectionErrored = dogsError || remindersError || littersError || documentsError || activityError
 
   return (
     <div style={{ padding: '28px 32px' }}>
+
+      {anySectionErrored && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          background: '#FDEDED', border: '1px solid #F3B0B0', borderRadius: 'var(--radius-md)',
+          padding: '10px 16px', marginBottom: 16,
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--danger)' }}>
+            ⚠️ Some data on this page couldn't load — a "—" or missing section is a loading error, not genuinely empty.
+          </span>
+          <button className="btn btn-secondary btn-sm" onClick={loadDashboard}>Retry</button>
+        </div>
+      )}
 
       {/* ── Stat cards ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 28 }}>
@@ -129,8 +173,8 @@ export default function DashboardPage({ toast }: Props) {
               onMouseLeave={e => (e.currentTarget.style.boxShadow = '')}
             >
               <div style={{ fontSize: 20, marginBottom: 8 }}>{s.icon}</div>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 700, color: s.color ?? 'var(--brand-900)', lineHeight: 1, marginBottom: 4 }}>
-                {s.value}
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 700, color: s.error ? 'var(--light)' : (s.color ?? 'var(--brand-900)'), lineHeight: 1, marginBottom: 4 }}>
+                {s.error ? '—' : s.value}
               </div>
               <div style={{ fontSize: 12, color: 'var(--light)' }}>{s.label}</div>
               <div style={{ fontSize: 11, color: 'var(--brand-600)', marginTop: 8, fontWeight: 500 }}>View all →</div>
@@ -147,7 +191,7 @@ export default function DashboardPage({ toast }: Props) {
 
           {/* Recent Dogs */}
           <PanelCard title="Recent Dogs" viewAllTo="/app/dogs" viewAllLabel={`View all ${activeDogs.length} →`} action={<Link to="/app/dogs/new" className="btn btn-primary btn-sm">{profile?.role === 'owner' ? '+ Create Dog ID' : '+ Add dog'}</Link>}>
-            {activeDogs.length === 0 ? (
+            {dogsError ? <LoadErrorState label="your dogs" /> : activeDogs.length === 0 ? (
               <div className="empty-state" style={{ padding: '32px 0' }}>
                 <div className="empty-state-icon">🐾</div>
                 <div className="empty-state-title">No dogs yet</div>
@@ -161,10 +205,12 @@ export default function DashboardPage({ toast }: Props) {
             )}
           </PanelCard>
 
-          {/* Litters Overview — hidden for pet owners unless they actually have litters */}
-          {(!isOwner || litters.length > 0) && (
+          {/* Litters Overview — hidden for pet owners unless they actually
+              have litters OR the load itself failed (an owner must still
+              see the error, not have the whole panel silently vanish) */}
+          {(!isOwner || litters.length > 0 || littersError) && (
             <PanelCard title="Litters Overview" viewAllTo="/app/litters" viewAllLabel="View all litters →">
-              {litters.length === 0 ? (
+              {littersError ? <LoadErrorState label="litters" /> : litters.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--light)', fontSize: 13 }}>
                   No litters recorded yet.
                 </div>
@@ -208,7 +254,7 @@ export default function DashboardPage({ toast }: Props) {
           <PanelCard title="Upcoming Reminders" viewAllTo="/app/reminders" viewAllLabel="View all →"
             badge={overdueCount > 0 ? <span className="badge badge-red">{overdueCount} overdue</span> : undefined}
           >
-            {visibleReminders.length === 0 ? (
+            {remindersError ? <LoadErrorState label="reminders" /> : visibleReminders.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '16px 0' }}>
                 <div style={{ fontSize: 24, marginBottom: 4 }}>✓</div>
                 <div style={{ fontSize: 13, color: 'var(--light)' }}>All up to date</div>
@@ -241,7 +287,7 @@ export default function DashboardPage({ toast }: Props) {
 
           {/* Documents */}
           <PanelCard title="Documents" viewAllTo="/app/documents" viewAllLabel="View all →">
-            {documents.length === 0 ? (
+            {documentsError ? <LoadErrorState label="documents" /> : documents.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '12px 0', color: 'var(--light)', fontSize: 13 }}>
                 No documents uploaded yet.
               </div>
@@ -270,7 +316,7 @@ export default function DashboardPage({ toast }: Props) {
 
           {/* Recent Activity */}
           <PanelCard title="Recent Activity" viewAllTo="/app/audit" viewAllLabel="Full history →">
-            {recentActivity.length === 0 ? (
+            {activityError ? <LoadErrorState label="recent activity" /> : recentActivity.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '12px 0', color: 'var(--light)', fontSize: 13 }}>
                 No activity recorded yet.
               </div>
@@ -307,6 +353,19 @@ export default function DashboardPage({ toast }: Props) {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// Codex round 14: the one thing every panel below must never render for
+// a load failure — distinct in wording and icon from any of this page's
+// genuine "empty" states, so it can't be mistaken for one.
+function LoadErrorState({ label }: { label: string }) {
+  return (
+    <div style={{ textAlign: 'center', padding: '16px 0' }}>
+      <div style={{ fontSize: 20, marginBottom: 4 }}>⚠️</div>
+      <div style={{ fontSize: 13, color: 'var(--danger)' }}>Couldn't load {label}</div>
+      <div style={{ fontSize: 11, color: 'var(--light)', marginTop: 2 }}>This is a loading error, not an empty list.</div>
     </div>
   )
 }

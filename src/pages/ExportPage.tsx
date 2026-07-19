@@ -19,21 +19,39 @@ export default function ExportPage({ toast }: Props) {
   const [selectedDogId, setSelectedDogId] = useState('')
   const [selectedLitterId, setSelectedLitterId] = useState('')
   const [exporting, setExporting] = useState<Format | null>(null)
+  // Codex round 14: distinct from `dogs`/`litters` being genuinely empty
+  // — a failed load must BLOCK export entirely, not let the user
+  // generate a report against a kennel summary that (silently) reads
+  // "0 dogs and 0 litters" or an empty dog/litter selector dropdown.
+  // Even though the /api/export-report endpoint re-derives its own data
+  // server-side (so a "Full Kennel" export could technically still
+  // succeed despite a client-side load failure), blocking unconditionally
+  // is the safe, consistent choice: the user should never be looking at
+  // a page that's actively lying about what it's about to export.
+  const [loadError, setLoadError] = useState(false)
   const userState = (profile as any)?.state || 'SA'
 
   // Female dogs only for breeding compliance
   const femaleDogs = dogs.filter(d => d.sex === 'female' && (d as any).status !== 'transferred')
 
-  useEffect(() => {
+  function loadExportData() {
     if (!user) return
+    setLoading(true)
+    setLoadError(false)
     Promise.all([getDogs(), getLitters()])
       .then(([d, l]) => { setDogs(d); setLitters(l) })
-      .catch(() => toast('Failed to load data', 'error'))
+      .catch(() => { setLoadError(true); toast('Failed to load data', 'error') })
       .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadExportData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   async function handleExport(format: Format) {
     if (!user) return
+    if (loadError) { toast('Your dogs/litters failed to load — retry before exporting', 'error'); return }
     if (scope === 'dog' && !selectedDogId) { toast('Please select a dog', 'error'); return }
     if (scope === 'litter' && !selectedLitterId) { toast('Please select a litter', 'error'); return }
     if (scope === 'breeding' && !selectedDogId) { toast('Please select a female dog', 'error'); return }
@@ -100,6 +118,19 @@ export default function ExportPage({ toast }: Props) {
         Generate audit reports for Dogs Australia inspections, state compliance, and personal records.
       </p>
 
+      {loadError && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          background: '#FDEDED', border: '1px solid #F3B0B0', borderRadius: 'var(--radius-md)',
+          padding: '10px 16px', marginBottom: 24,
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--danger)' }}>
+            ⚠️ Couldn't load your dogs/litters. Export is disabled until this succeeds — retry below.
+          </span>
+          <button className="btn btn-secondary btn-sm" onClick={loadExportData}>Retry</button>
+        </div>
+      )}
+
       {/* Compliance notice */}
       <div style={{ background: 'var(--green-light)', border: '1px solid rgba(8,80,65,.12)', borderRadius: 10, padding: '12px 16px', marginBottom: 24, fontSize: 13, color: '#0F6E56' }}>
         🇦🇺 <strong>Australian Universal Compliance Report</strong> — covers NSW Puppy Farm Act 2024, VIC Pet Exchange Register, QLD Animal Management Act, SA Dog and Cat Management Act, and WA Dog Act requirements.
@@ -159,7 +190,9 @@ export default function ExportPage({ toast }: Props) {
         {/* Kennel summary */}
         {scope === 'kennel' && (
           <div style={{ marginTop: 12, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', padding: '10px 14px', borderRadius: 8 }}>
-            📊 Will include <strong>{dogs.length} dogs</strong> and <strong>{litters.length} litters</strong> — all health records, vaccines, and transfers.
+            {loadError
+              ? '⚠️ Dog/litter counts unavailable — your data failed to load.'
+              : <>📊 Will include <strong>{dogs.length} dogs</strong> and <strong>{litters.length} litters</strong> — all health records, vaccines, and transfers.</>}
           </div>
         )}
 
@@ -211,7 +244,7 @@ export default function ExportPage({ toast }: Props) {
               className="btn btn-primary btn-sm"
               style={{ width: '100%' }}
               onClick={() => handleExport('pdf')}
-              disabled={exporting !== null}
+              disabled={exporting !== null || loadError}
             >
               {exporting === 'pdf'
                 ? <><span className="spinner" style={{ width: 14, height: 14, borderTopColor: '#fff' }} /> Generating…</>
@@ -231,7 +264,7 @@ export default function ExportPage({ toast }: Props) {
               className="btn btn-secondary btn-sm"
               style={{ width: '100%' }}
               onClick={() => scope === 'breeding' ? toast('Use PDF for breeding compliance reports', 'error') : handleExport('csv')}
-              disabled={exporting !== null || scope === 'breeding'}
+              disabled={exporting !== null || scope === 'breeding' || loadError}
             >
               {exporting === 'csv'
                 ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Generating…</>

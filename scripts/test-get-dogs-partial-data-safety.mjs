@@ -226,8 +226,23 @@ await checkAsync('the thrown error message is the fixed, sanitized string — ne
     /Promise\.all\(\[/.test(getDogsBlock) && !/Promise\.allSettled/.test(getDogsBlock))
   check('getDogs() throws a typed GetDogsError on failure, not the raw Firestore error',
     /throw new GetDogsError\(\)/.test(getDogsBlock))
-  check('getDogs() logs the raw error to console for debugging (full detail is not lost, only kept out of the thrown message)',
-    /console\.error\(['"]getDogs\(\)/.test(getDogsBlock))
+  // Codex round 14, Blocker 2: the console.error call in getDogs()'s catch
+  // block must never receive the raw `err` object/message/stack — only a
+  // fixed operation-name string plus a normalized, allowlisted code.
+  check('getDogs() logs a fixed operation name to console, not a raw error message string',
+    /console\.error\(['"]getDogs:/.test(getDogsBlock))
+  check('getDogs() does NOT pass the raw caught `err` directly as a console.error argument',
+    !/console\.error\([^)]*,\s*err\)/.test(getDogsBlock))
+  check('getDogs() logs only a normalized/sanitized code, via safeReadFirestoreErrorCode(err)',
+    /console\.error\(['"]getDogs:[^)]*safeReadFirestoreErrorCode\(err\)/.test(getDogsBlock))
+
+  const codeSanitizerMatch = dbSrc.match(/function safeReadFirestoreErrorCode\([\s\S]*?\n}\r?\n/)
+  const codeSanitizer = codeSanitizerMatch ? codeSanitizerMatch[0] : ''
+  check('safeReadFirestoreErrorCode() was actually located for inspection (sanity check on the pattern above)', codeSanitizer.length > 0)
+  check('safeReadFirestoreErrorCode() reads err.code inside a try block (getter/proxy-safe)',
+    /try\s*\{[\s\S]*?\.code[\s\S]*?\}\s*catch/.test(codeSanitizer))
+  check('safeReadFirestoreErrorCode() only reads the `code` property once per branch (a single `.code` property access, not multiple)',
+    (codeSanitizer.match(/\)\.code\b/g) || []).length <= 1)
   check('GetDogsError is exported (so UI consumers can distinguish it from other failures if they choose to)',
     /export class GetDogsError extends Error/.test(dbSrc))
   check('getDogs() still merges results through a Map keyed by doc id (dedup preserved)',
@@ -238,6 +253,67 @@ await checkAsync('the thrown error message is the fixed, sanitized string — ne
     /where\('currentOwnerId', '==', currentUid\)/.test(getDogsBlock))
   check('getDogs() still re-derives "transferred" for the former breeder viewpoint (ownership/tenant behavior preserved)',
     /dog\.tenantId === currentUid && dog\.currentOwnerId !== currentUid/.test(getDogsBlock))
+}
+
+// =========================================================================
+// SECTION 8b (round 14, Blocker 2) — behavioral coverage of
+// safeReadFirestoreErrorCode()'s hostile-input safety. db.ts can't be
+// imported directly in this plain-Node script (it transitively imports
+// ./firebase, which requires live Firebase Web SDK config/env vars that
+// don't exist in this test environment — confirmed by attempting the
+// import directly, which fails with a module-resolution error before any
+// Firebase code even runs). This mirrors the exact algorithm instead,
+// combined with the source-pattern checks in Section 8 above so the
+// mirror can't silently drift from what's actually shipped.
+// =========================================================================
+{
+  const KNOWN_FIRESTORE_ERROR_CODES = new Set([
+    'permission-denied', 'unavailable', 'cancelled', 'deadline-exceeded',
+    'not-found', 'already-exists', 'resource-exhausted', 'failed-precondition',
+    'aborted', 'out-of-range', 'unimplemented', 'internal', 'unauthenticated',
+    'invalid-argument', 'unknown',
+  ])
+
+  function safeReadFirestoreErrorCodeMirror(err) {
+    try {
+      if (err && typeof err === 'object' && 'code' in err) {
+        const code = err.code
+        if (typeof code === 'string' && KNOWN_FIRESTORE_ERROR_CODES.has(code)) {
+          return code
+        }
+      }
+    } catch {
+      // fall through
+    }
+    return 'unknown'
+  }
+
+  check('known code (permission-denied) is returned as-is', safeReadFirestoreErrorCodeMirror({ code: 'permission-denied' }) === 'permission-denied')
+  check('unrecognized string code normalizes to "unknown", not passed through raw',
+    safeReadFirestoreErrorCodeMirror({ code: 'some-made-up-code-with-a-path/dogs/abc123' }) === 'unknown')
+  check('a plain Error with no .code normalizes to "unknown"', safeReadFirestoreErrorCodeMirror(new Error('boom')) === 'unknown')
+  check('null input does not throw and normalizes to "unknown"',
+    (() => { try { return safeReadFirestoreErrorCodeMirror(null) === 'unknown' } catch { return false } })())
+  check('a thrown Symbol does not throw and normalizes to "unknown"',
+    (() => { try { return safeReadFirestoreErrorCodeMirror(Symbol('x')) === 'unknown' } catch { return false } })())
+
+  const throwingGetterErr = {}
+  Object.defineProperty(throwingGetterErr, 'code', { get() { throw new Error('boom') }, enumerable: true })
+  check('a throwing .code getter does not crash the sanitizer and normalizes to "unknown"',
+    (() => { try { return safeReadFirestoreErrorCodeMirror(throwingGetterErr) === 'unknown' } catch { return false } })())
+
+  let readCount = 0
+  const countingErr = {}
+  Object.defineProperty(countingErr, 'code', { get() { readCount++; return 'unavailable' }, enumerable: true })
+  const countingResult = safeReadFirestoreErrorCodeMirror(countingErr)
+  check('.code is read at most once', readCount <= 1, `readCount was ${readCount}`)
+  check('single-read result is correct', countingResult === 'unavailable')
+
+  const throwingProxy = new Proxy({}, { get(_t, p) { if (p === 'code') throw new Error('proxy boom') } })
+  check('a Proxy with a throwing get trap does not crash the sanitizer',
+    (() => { try { return safeReadFirestoreErrorCodeMirror(throwingProxy) === 'unknown' } catch { return false } })())
+
+  check('a non-string .code (number) normalizes to "unknown"', safeReadFirestoreErrorCodeMirror({ code: 42 }) === 'unknown')
 }
 
 // =========================================================================

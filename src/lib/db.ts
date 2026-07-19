@@ -227,6 +227,37 @@ export class GetDogsError extends Error {
   }
 }
 
+// Codex round 14: browser console logs are visible to anyone with devtools
+// open (or a browser extension reading console output), so the raw
+// Firestore error — which can carry query/index paths, project details, or
+// other internal structure — must never reach console.error/log verbatim.
+// Only a fixed operation name plus a normalized, allowlisted code may be
+// logged. `err.code` is read AT MOST ONCE, inside try/catch, so a hostile
+// or malformed error (throwing getter, Proxy, Symbol, plain object with a
+// non-string `code`, etc.) can never crash this sanitizer or leak anything
+// beyond the fixed 'unknown' fallback.
+const KNOWN_FIRESTORE_ERROR_CODES = new Set([
+  'permission-denied', 'unavailable', 'cancelled', 'deadline-exceeded',
+  'not-found', 'already-exists', 'resource-exhausted', 'failed-precondition',
+  'aborted', 'out-of-range', 'unimplemented', 'internal', 'unauthenticated',
+  'invalid-argument', 'unknown',
+])
+
+function safeReadFirestoreErrorCode(err: unknown): string {
+  try {
+    if (err && typeof err === 'object' && 'code' in err) {
+      const code = (err as { code?: unknown }).code
+      if (typeof code === 'string' && KNOWN_FIRESTORE_ERROR_CODES.has(code)) {
+        return code
+      }
+    }
+  } catch {
+    // Reading `code` itself threw (hostile getter/proxy) — fall through
+    // to the fixed 'unknown' value below.
+  }
+  return 'unknown'
+}
+
 export async function getDogs(): Promise<Dog[]> {
   const currentUid = uid()
   if (!currentUid) return []
@@ -238,11 +269,11 @@ export async function getDogs(): Promise<Dog[]> {
       getDocs(query(collection(db, 'dogs'), where('currentOwnerId', '==', currentUid)))
     ])
   } catch (err) {
-    // Full detail goes to the console for debugging (never shown to the
-    // user); the THROWN error is a fixed, sanitized message only — the
-    // raw Firestore error can carry internal query/index details that
-    // have no business surfacing in a UI-facing exception.
-    console.error('getDogs(): failed to load dogs', err)
+    // Codex round 14: neither the console log nor the thrown error may
+    // carry the raw Firestore error — only a fixed operation name plus a
+    // normalized, allowlisted code goes to the console; the THROWN error
+    // is always the same fixed, sanitized message.
+    console.error('getDogs: load failed', { code: safeReadFirestoreErrorCode(err) })
     throw new GetDogsError()
   }
 

@@ -29,19 +29,32 @@ export default function AuditPage({ toast }: Props) {
   const [logs, setLogs] = useState<AuditEntry[]>([])
   const [dogs, setDogs] = useState<Dog[]>([])
   const [loading, setLoading] = useState(true)
+  // Codex round 14: distinct from `logs` being genuinely empty — a
+  // failed load (getAuditLogs, or the getDogs() call this page also
+  // makes for the dog filter dropdown) must never render as "No
+  // activity yet" indefinitely. The toast alone is transient and easy
+  // to miss.
+  const [loadError, setLoadError] = useState(false)
   const [filterDog, setFilterDog] = useState('')
   const [filterAction, setFilterAction] = useState('')
 
-  useEffect(() => {
+  function loadAudit() {
     if (!user) return
+    setLoading(true)
+    setLoadError(false)
     Promise.all([
       getAuditLogs(user.uid),
       getDogs(),
     ]).then(([l, d]) => {
       setLogs(l)
       setDogs(d)
-    }).catch(() => toast('Failed to load audit log', 'error'))
+    }).catch(() => { setLoadError(true); toast('Failed to load audit log', 'error') })
       .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadAudit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   function formatTime(iso: string) {
@@ -94,7 +107,14 @@ export default function AuditPage({ toast }: Props) {
         )}
       </div>
 
-      {filtered.length === 0 ? (
+      {loadError ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">⚠️</div>
+          <div className="empty-state-title">Couldn't load your activity</div>
+          <div className="empty-state-desc">This is a loading error, not an empty history. Please try again.</div>
+          <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={loadAudit}>Retry</button>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">📋</div>
           <div className="empty-state-title">{logs.length === 0 ? 'No activity yet' : 'No matching activity'}</div>

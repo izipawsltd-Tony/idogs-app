@@ -88,28 +88,33 @@ export default function DocumentsPage({ toast }: Props) {
   const [documents, setDocuments] = useState<any[]>([])
   const [dogs, setDogs] = useState<Record<string, Dog>>({})
   const [loading, setLoading] = useState(true)
+  // Codex round 14: distinct from `documents` being genuinely empty — a
+  // failed load (getAllDocumentsForUser, which itself calls getDogs()
+  // internally — see src/lib/db.ts) must never render as "No documents
+  // yet" indefinitely.
+  const [loadError, setLoadError] = useState(false)
   const [filter, setFilter] = useState<string>('all')
   const [showUpload, setShowUpload] = useState(false)
 
-  useEffect(() => {
+  function loadDocuments() {
     if (!user) return
-    async function load() {
-      try {
-        const [docs, dogsData] = await Promise.all([
-          getAllDocumentsForUser(user!.uid),
-          getDogs(),
-        ])
-        const dogMap: Record<string, Dog> = {}
-        dogsData.forEach((d: Dog) => { dogMap[d.id] = d })
-        setDocuments(docs)
-        setDogs(dogMap)
-      } catch {
-        toast('Failed to load documents', 'error')
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
+    setLoading(true)
+    setLoadError(false)
+    Promise.all([
+      getAllDocumentsForUser(user.uid),
+      getDogs(),
+    ]).then(([docs, dogsData]) => {
+      const dogMap: Record<string, Dog> = {}
+      dogsData.forEach((d: Dog) => { dogMap[d.id] = d })
+      setDocuments(docs)
+      setDogs(dogMap)
+    }).catch(() => { setLoadError(true); toast('Failed to load documents', 'error') })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadDocuments()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   async function handleUpload(doc: any) {
@@ -163,7 +168,16 @@ export default function DocumentsPage({ toast }: Props) {
         ))}
       </div>
 
-      {filtered.length === 0 ? (
+      {loadError ? (
+        <div className="card">
+          <div className="empty-state">
+            <div className="empty-state-icon">⚠️</div>
+            <div className="empty-state-title">Couldn't load your documents</div>
+            <div className="empty-state-desc">This is a loading error, not an empty list. Please try again.</div>
+            <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={loadDocuments}>Retry</button>
+          </div>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="card">
           <div className="empty-state">
             <div className="empty-state-icon">📄</div>

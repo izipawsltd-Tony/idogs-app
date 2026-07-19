@@ -134,21 +134,73 @@ export default function LittersPage({ toast }: Props) {
   // litter/closed.
   const pendingPuppyOperationRef = useRef<{ operationId: string; dogId: string } | null>(null)
 
+  // Codex round 14: this retry loop had three separate bugs.
+  // 1. `finally { setLoading(false) }` ran on EVERY attempt, including
+  //    ones that were about to schedule a retry — so between each of
+  //    the 3 retry attempts (up to ~2.4s total), the spinner disappeared
+  //    and the page briefly rendered with litters=[]/dogs=[] as if
+  //    genuinely empty, before the next retry even started.
+  // 2. Once all retries were exhausted, only a transient toast fired —
+  //    litters/dogs stayed at their initial [] with no persistent
+  //    indication the load had actually failed (see the loadError
+  //    render branch below).
+  // 3. Nothing guarded against the component unmounting (navigating
+  //    away from /app/litters) while a retry setTimeout was still
+  //    pending, or against a NEWER load (a manual Retry click) racing a
+  //    STILL-RETRYING older one and having a late, stale response
+  //    overwrite fresher state.
+  // `loadTokenRef` fixes #3: every call to startLoad() (the initial
+  // effect run, or a manual Retry) mints a new token; any in-flight
+  // attempt/retry from a PREVIOUS token is a no-op once it resolves.
+  // `mountedRef` additionally guards against post-unmount state
+  // updates. `loading` is only ever cleared in the two TERMINAL cases
+  // (success, or retries fully exhausted) — never between retries.
+  const mountedRef = useRef(true)
+  const loadTokenRef = useRef(0)
+  const [loadError, setLoadError] = useState(false)
+
   useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+
+  function startLoad() {
     if (!user) return
-    async function load(retries = 3) {
+    const token = ++loadTokenRef.current
+    setLoading(true)
+    setLoadError(false)
+
+    async function attempt(retries: number) {
       try {
         const [l, d] = await Promise.all([getLitters(), getDogs()])
+        if (!mountedRef.current || loadTokenRef.current !== token) return
         setLitters(l)
         setDogs(d.filter(dog => !dog.isDeceased))
-      } catch {
-        if (retries > 0) setTimeout(() => load(retries - 1), 800)
-        else toast('Failed to load — please refresh', 'error')
-      } finally {
         setLoading(false)
+      } catch {
+        if (!mountedRef.current || loadTokenRef.current !== token) return
+        if (retries > 0) {
+          setTimeout(() => {
+            if (mountedRef.current && loadTokenRef.current === token) attempt(retries - 1)
+          }, 800)
+          // Deliberately no setLoading(false) here — a retry is still
+          // scheduled, so the page must keep showing the loading state,
+          // not a misleadingly-empty one.
+        } else {
+          setLoadError(true)
+          setLoading(false)
+          toast('Failed to load — please try again', 'error')
+        }
       }
     }
-    setTimeout(() => load(), 300)
+    setTimeout(() => {
+      if (mountedRef.current && loadTokenRef.current === token) attempt(3)
+    }, 300)
+  }
+
+  useEffect(() => {
+    startLoad()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   function handleDamChange(damId: string) {
@@ -272,9 +324,20 @@ export default function LittersPage({ toast }: Props) {
       return
     }
 
-    const [updatedLitters, updatedDogs] = await Promise.all([getLitters(), getDogs()])
-    setLitters(updatedLitters)
-    setDogs(updatedDogs.filter(d => !d.isDeceased))
+    // Codex round 14: this refresh (unlike every other post-action
+    // refresh in this file) was not wrapped in a try/catch at all — if
+    // it failed AFTER deleteLitterServer() had already succeeded, the
+    // rejection went uncaught (a silent unhandled-rejection risk) and
+    // the user got no feedback at all: the just-deleted litter would
+    // still appear in `litters` (the refresh that would remove it never
+    // completed), with nothing telling them why.
+    try {
+      const [updatedLitters, updatedDogs] = await Promise.all([getLitters(), getDogs()])
+      setLitters(updatedLitters)
+      setDogs(updatedDogs.filter(d => !d.isDeceased))
+    } catch {
+      toast('Litter deleted, but the list failed to refresh — reload the page to see the current state', 'error')
+    }
     // Codex round 5, Blocker 2: the litter is ARCHIVED (kept, not
     // deleted — see api/delete-litter.js) rather than hard-deleted
     // whenever a transferred/claimed dog is still linked to it, so that
@@ -480,6 +543,24 @@ export default function LittersPage({ toast }: Props) {
   const malesOnly = dogs.filter(isEligibleSireDog)
 
   if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
+
+  // Codex round 14: distinct from litters/dogs being genuinely empty —
+  // once all 3 retries are exhausted, this must stay visible (not just
+  // the transient toast) until the user retries successfully. Shown
+  // before branching into the owner/breeder views below since a load
+  // failure means the same thing regardless of role.
+  if (loadError) {
+    return (
+      <div style={{ padding: 32 }}>
+        <div className="empty-state">
+          <div className="empty-state-icon">⚠️</div>
+          <div className="empty-state-title">Couldn't load your litters</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list. Please try again.</div>
+          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={startLoad}>Retry</button>
+        </div>
+      </div>
+    )
+  }
 
   // Pet Owner — show past litters read-only, or nothing if no litters
   if (profile?.role === 'owner') {

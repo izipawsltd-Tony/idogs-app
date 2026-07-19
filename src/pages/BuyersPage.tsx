@@ -173,8 +173,12 @@ export default function BuyersPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
+  const [reloadToken, setReloadToken] = useState(0);
+
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setError('');
     (async () => {
       try {
         const data = await getDogs();
@@ -188,7 +192,7 @@ export default function BuyersPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadToken]);
 
   const buyers = useMemo(() => buildBuyers(dogs), [dogs]);
 
@@ -236,6 +240,7 @@ export default function BuyersPage() {
       {!loading && error && (
         <div className="card">
           <p style={{ margin: 0, color: 'var(--danger)' }}>{error}</p>
+          <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={() => setReloadToken(t => t + 1)}>Retry</button>
         </div>
       )}
 

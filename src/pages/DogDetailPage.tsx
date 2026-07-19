@@ -16,6 +16,7 @@ import {
   isEligibleSireDog
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
+import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
@@ -1072,46 +1073,6 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
 
 // ── SALE & AVAILABILITY PANEL ────────────────────────────────
 
-// Codex round 13: the round-12 fix logged the FULL raw error object to
-// console and, for anything other than a permission-denied, fell back
-// to displaying `e.message` verbatim — a Firestore/network error's
-// message can carry a document path, an internal backend string, or
-// (worst case) get accidentally paired with request-shaped text a
-// future caller adds to an Error's message. Neither the toast nor the
-// console output should ever depend on what an arbitrary thrown value
-// happens to say. This maps ONLY a small, known-safe allowlist of
-// Firebase error `code` values to controlled, pre-written copy — every
-// other code (including no code at all, e.g. a plain thrown string or a
-// non-Firebase Error) falls through to one fixed generic message.
-// Nothing here ever reads `.message`, `.stack`, or any other property.
-const SALE_AVAILABILITY_KNOWN_ERROR_MESSAGES: Record<string, string> = {
-  'permission-denied': "you don't have permission to update this dog anymore — ownership may have changed since this page loaded",
-  'unavailable': 'you appear to be offline, or our servers are temporarily unavailable — please try again in a moment',
-}
-const SALE_AVAILABILITY_GENERIC_ERROR_MESSAGE = 'Failed to save. Please try again, or contact support if this keeps happening.'
-
-// Extracts ONLY a normalized `code` string from an arbitrary thrown
-// value — never any other property, never a `.toString()`/template
-// coercion of the value itself (which could stringify to something
-// containing sensitive text for a non-Error object). Anything that
-// isn't a plain object with a string `code` field normalizes to
-// 'unknown', which always routes to the generic message.
-function normalizeSaleAvailabilityErrorCode(e: unknown): string {
-  if (e && typeof e === 'object' && 'code' in e && typeof (e as { code?: unknown }).code === 'string') {
-    return (e as { code: string }).code
-  }
-  return 'unknown'
-}
-
-function describeSaleAvailabilitySaveFailure(e: unknown): { userMessage: string; logCode: string } {
-  const code = normalizeSaleAvailabilityErrorCode(e)
-  const detail = SALE_AVAILABILITY_KNOWN_ERROR_MESSAGES[code]
-  return {
-    userMessage: detail ? `Failed to save — ${detail}` : SALE_AVAILABILITY_GENERIC_ERROR_MESSAGE,
-    logCode: code,
-  }
-}
-
 function SaleAvailabilityPanel({ dog, onSave, toast }: {
   dog: Dog
   onSave: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
@@ -1185,7 +1146,7 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
       // internal backend string, a stack trace). Only a normalized,
       // already-known-safe `code` is logged; the toast comes from the
       // same small controlled allowlist — see
-      // describeSaleAvailabilitySaveFailure() above.
+      // describeSaleAvailabilitySaveFailure() in ../lib/saleAvailabilityError.ts.
       const { userMessage, logCode } = describeSaleAvailabilitySaveFailure(e)
       console.error('sale-availability-save failed', { code: logCode })
       toast(userMessage, 'error')

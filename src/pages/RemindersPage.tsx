@@ -206,7 +206,8 @@ export default function RemindersPage({ toast }: Props) {
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
           <div className="empty-state-title">Couldn't load reminders</div>
-          <div className="empty-state-desc">Something went wrong. Please refresh the page to try again.</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list. Please try again.</div>
+          <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={loadData}>Retry</button>
         </div>
       ) : filtered.length === 0 ? (
         <div className="empty-state">
