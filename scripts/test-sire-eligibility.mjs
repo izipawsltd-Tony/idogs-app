@@ -129,7 +129,7 @@ function dobYearsAgo(years) {
 // tenantId-only query sees a transferred dog's stale post-claim status). ──
 {
   const detailSrc = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.url), 'utf8')
-  const loaderMatch = detailSrc.match(/Load heat cycles and all dogs[\s\S]{0,2400}?\}, \[dogId\]\)/)
+  const loaderMatch = detailSrc.match(/Load heat cycles and all dogs[\s\S]{0,3200}?\}, \[dogId, user\?\.uid\]\)/)
   check('BreedingTab loader block found', !!loaderMatch)
   if (loaderMatch) {
     const block = loaderMatch[0]
@@ -201,7 +201,7 @@ function dobYearsAgo(years) {
 // dog's name, a sire's name, an email, or other identifying record data. ──
 {
   const detailSrc = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.url), 'utf8')
-  const loaderMatch = detailSrc.match(/Load heat cycles and all dogs[\s\S]{0,2400}?\}, \[dogId\]\)/)
+  const loaderMatch = detailSrc.match(/Load heat cycles and all dogs[\s\S]{0,3200}?\}, \[dogId, user\?\.uid\]\)/)
   if (loaderMatch) {
     const block = loaderMatch[0]
     const logCalls = block.match(/console\.(error|log|warn)\([^)]*\)/g) || []

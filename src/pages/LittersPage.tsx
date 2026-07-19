@@ -199,9 +199,19 @@ export default function LittersPage({ toast }: Props) {
   }
 
   useEffect(() => {
+    // Codex round 15: clear the previous account's litters/dogs
+    // immediately on an account switch (or logout) — loadTokenRef already
+    // stops a stale response from COMMITTING, but without this, the OLD
+    // account's data would still be visibly on screen for the ~300ms
+    // initial delay (and any retries) before the new load resolves.
+    // Keyed on user?.uid (a primitive) rather than the whole `user`
+    // object, so a token refresh for the SAME account doesn't trigger an
+    // unnecessary clear+reload.
+    setLitters([])
+    setDogs([])
     startLoad()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user])
+  }, [user?.uid])
 
   function handleDamChange(damId: string) {
     const dam = dogs.find(d => d.id === damId)

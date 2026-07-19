@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from 'react'
+import { useState, useEffect, useRef, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { createDog, addVaccineRecord, addHealthTest, getDogs } from '../lib/db'
 import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType, parseDobStrict } from '../lib/utils'
@@ -30,6 +30,36 @@ export default function DogNewPage({ toast }: Props) {
   const [scannedDocs, setScannedDocs] = useState<any[]>([])
   const [pendingFiles, setPendingFiles] = useState<Array<{ base64: string; mediaType: string; documentType: string }>>([])
   const [duplicateWarning, setDuplicateWarning] = useState<{ matchedBy: 'microchip' | 'name'; existingDogName: string } | null>(null)
+
+  // Codex round 15: single-flight submission lock. A React state boolean
+  // ALONE isn't a reliable guard here — two rapid clicks/Enter-key
+  // presses (or a click racing a duplicate-key Enter submit) can both
+  // fire their event handlers before React re-renders with the disabled
+  // button, since state updates aren't applied synchronously mid-event.
+  // submittingRef is checked and set SYNCHRONOUSLY as the very first line
+  // of every entry point that leads to createDog() — handleSubmit() and
+  // the "Add anyway" button — before any await, including the duplicate
+  // check's own getDogs() call. `submitting` (state) exists only to drive
+  // the UI (disabled buttons, spinner); the ref is what actually prevents
+  // a second createDog() call. proceedWithCreate() is the single place
+  // that calls createDog() and is the only place that releases the lock
+  // on a terminal outcome — every other exit path (validation error,
+  // duplicate-check load failure, showing the duplicate warning) releases
+  // it explicitly before returning.
+  const submittingRef = useRef(false)
+  const [submitting, setSubmitting] = useState(false)
+
+  function acquireSubmitLock(): boolean {
+    if (submittingRef.current) return false
+    submittingRef.current = true
+    setSubmitting(true)
+    return true
+  }
+  function releaseSubmitLock() {
+    submittingRef.current = false
+    setSubmitting(false)
+  }
+
   const [form, setForm] = useState<DogFormData>({
     name: '', breed: '', sex: 'female',
     dateOfBirth: '', colour: '', microchip: '', ankc: '', notes: '', pedigreeRegister: 'main',
@@ -106,12 +136,17 @@ export default function DogNewPage({ toast }: Props) {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
+    // Synchronous, first line, before any await (including the duplicate
+    // check's own getDogs() call below) — see submittingRef's comment.
+    if (!acquireSubmitLock()) return
     if (!form.name || !form.breed || !form.dateOfBirth) {
       toast('Please fill in name, breed and date of birth', 'error')
+      releaseSubmitLock()
       return
     }
     if (!parseDobStrict(form.dateOfBirth)) {
       toast('Date of birth is not a valid past date', 'error')
+      releaseSubmitLock()
       return
     }
 
@@ -127,11 +162,16 @@ export default function DogNewPage({ toast }: Props) {
       const microchipMatch = form.microchip && active.find((d: any) => d.microchip && d.microchip === form.microchip)
       const nameMatch = !microchipMatch && active.find((d: any) => d.name.trim().toLowerCase() === form.name.trim().toLowerCase())
       if (microchipMatch) {
+        // Pausing for the user's modal decision — release the lock so
+        // either "Add anyway" or a fresh Submit click can acquire it
+        // again; each acquires its own lock at its own entry point.
         setDuplicateWarning({ matchedBy: 'microchip', existingDogName: microchipMatch.name })
+        releaseSubmitLock()
         return
       }
       if (nameMatch) {
         setDuplicateWarning({ matchedBy: 'name', existingDogName: nameMatch.name })
+        releaseSubmitLock()
         return
       }
     } catch {
@@ -139,12 +179,22 @@ export default function DogNewPage({ toast }: Props) {
       // if we can't confirm this isn't a duplicate, we must not create
       // the dog. Fail closed and let the user retry the submit.
       toast('Could not check for duplicate dogs — please try again', 'error')
+      releaseSubmitLock()
       return
     }
 
+    // Lock stays held — proceedWithCreate() is called synchronously from
+    // here with no intervening await, so there's no window for a second
+    // click to slip in; proceedWithCreate() releases it on every exit.
     await proceedWithCreate()
   }
 
+  // Codex round 15: assumes the submit lock is ALREADY held by whichever
+  // entry point called this (handleSubmit's no-duplicate path, or the
+  // "Add anyway" button below) — this is the one function that actually
+  // calls createDog(), and the one place responsible for releasing the
+  // lock on every terminal outcome (success or failure), guaranteeing at
+  // most one successful create per acquired lock.
   async function proceedWithCreate() {
     setLoading(true)
     try {
@@ -213,6 +263,7 @@ export default function DogNewPage({ toast }: Props) {
       toast('Failed to create dog profile', 'error')
     } finally {
       setLoading(false)
+      releaseSubmitLock()
     }
   }
 
@@ -458,8 +509,8 @@ export default function DogNewPage({ toast }: Props) {
               </div>
             )}
             <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
-              <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading}>
-                {loading ? <span className="spinner" /> : (() => {
+              <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading || submitting}>
+                {(loading || submitting) ? <span className="spinner" /> : (() => {
                   const recordCount = scannedDocs.reduce((s, d) => s + (d.vaccines?.length || 0), 0)
                   const base = isOwner ? 'Create Dog ID & passport' : 'Add dog & create passport'
                   return `${base}${recordCount > 0 ? ` (${recordCount} records)` : ''}`
@@ -493,7 +544,14 @@ export default function DogNewPage({ toast }: Props) {
               <button
                 className="btn btn-primary"
                 style={{ flex: 1 }}
+                disabled={submitting}
                 onClick={() => {
+                  // Same single-flight lock as handleSubmit — synchronous,
+                  // first line, before proceedWithCreate's own await.
+                  // A second rapid click on "Add anyway" is a no-op: the
+                  // lock is already held, so acquireSubmitLock() returns
+                  // false and nothing further happens.
+                  if (!acquireSubmitLock()) return
                   setDuplicateWarning(null)
                   proceedWithCreate()
                 }}
@@ -503,6 +561,7 @@ export default function DogNewPage({ toast }: Props) {
               <button
                 className="btn btn-secondary"
                 style={{ flex: 1 }}
+                disabled={submitting}
                 onClick={() => setDuplicateWarning(null)}
               >
                 Go back & check

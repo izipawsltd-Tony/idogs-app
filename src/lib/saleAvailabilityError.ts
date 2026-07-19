@@ -29,11 +29,24 @@ export const SALE_AVAILABILITY_GENERIC_ERROR_MESSAGE = 'Failed to save. Please t
 // This function is guaranteed to never throw, regardless of what `e` is
 // (Symbol, Proxy, throwing getter, non-Error, null, etc.) — any failure
 // while reading `code` is caught and normalizes to 'unknown'.
+//
+// Codex round 15: round 14 read `code` safely but then returned it
+// VERBATIM as long as it was a string — so a hostile or malformed error
+// whose `.code` happened to be a token, a Firestore document path, an
+// email address, or a UID-shaped string would flow straight through into
+// `logCode`, which IS written to console.error. Only the two APPROVED
+// codes this module actually has copy for may ever pass through as-is;
+// every other string — recognized-looking Firestore codes we don't have
+// copy for included — normalizes to the same fixed 'unknown'.
+const SALE_AVAILABILITY_ALLOWED_CODES = new Set(['permission-denied', 'unavailable'])
+
 export function normalizeSaleAvailabilityErrorCode(e: unknown): string {
   try {
     if (e && typeof e === 'object' && 'code' in e) {
       const code = (e as { code?: unknown }).code
-      if (typeof code === 'string') return code
+      if (typeof code === 'string' && SALE_AVAILABILITY_ALLOWED_CODES.has(code)) {
+        return code
+      }
     }
   } catch {
     // Reading/accessing `code` itself threw — fall through to 'unknown'.

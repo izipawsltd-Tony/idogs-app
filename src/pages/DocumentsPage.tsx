@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getAllDocumentsForUser, getDogs, deleteDocument } from '../lib/db'
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
@@ -96,26 +97,40 @@ export default function DocumentsPage({ toast }: Props) {
   const [filter, setFilter] = useState<string>('all')
   const [showUpload, setShowUpload] = useState(false)
 
+  const { beginRequest } = useRequestGuard(user?.uid)
+
   function loadDocuments() {
     if (!user) return
+    const req = beginRequest()
     setLoading(true)
     setLoadError(false)
     Promise.all([
       getAllDocumentsForUser(user.uid),
       getDogs(),
     ]).then(([docs, dogsData]) => {
+      if (!req.isCurrent()) return
       const dogMap: Record<string, Dog> = {}
       dogsData.forEach((d: Dog) => { dogMap[d.id] = d })
       setDocuments(docs)
       setDogs(dogMap)
-    }).catch(() => { setLoadError(true); toast('Failed to load documents', 'error') })
-      .finally(() => setLoading(false))
+    }).catch(() => {
+      if (!req.isCurrent()) return
+      setLoadError(true)
+      toast('Failed to load documents', 'error')
+    }).finally(() => {
+      if (!req.isCurrent()) return
+      setLoading(false)
+    })
   }
 
   useEffect(() => {
+    // Clear the previous account's documents/dog map immediately on an
+    // account switch — a stale document list from a former account must
+    // never linger into the new one's view.
+    setDocuments([]); setDogs({}); setLoadError(false); setFilter('all')
     loadDocuments()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user])
+  }, [user?.uid])
 
   async function handleUpload(doc: any) {
     setDocuments(prev => [doc, ...prev])
@@ -137,14 +152,21 @@ export default function DocumentsPage({ toast }: Props) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>Documents</h1>
-          <p style={{ fontSize: 14, color: 'var(--light)' }}>{documents.length} document{documents.length !== 1 ? 's' : ''} saved</p>
+          {/* Codex round 15: a failed load must never show a document
+              count — 0 or otherwise. It's not "0 documents", it's
+              "unknown", and showing a number here at all implies the
+              load succeeded. */}
+          <p style={{ fontSize: 14, color: 'var(--light)' }}>
+            {loadError ? 'Document count unavailable — load failed' : `${documents.length} document${documents.length !== 1 ? 's' : ''} saved`}
+          </p>
         </div>
-        <button onClick={() => setShowUpload(true)} className="btn btn-primary">
+        <button onClick={() => setShowUpload(true)} className="btn btn-primary" disabled={loadError} title={loadError ? "Can't upload until your documents finish loading" : undefined}>
           + Upload Document
         </button>
       </div>
 
       {/* Filter tabs */}
+      {!loadError && (
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
         {FILTER_TABS.map(type => (
           <button
@@ -167,6 +189,7 @@ export default function DocumentsPage({ toast }: Props) {
           </button>
         ))}
       </div>
+      )}
 
       {loadError ? (
         <div className="card">

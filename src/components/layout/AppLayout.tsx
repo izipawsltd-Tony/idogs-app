@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
+import { useRequestGuard } from '../../hooks/useRequestGuard'
 import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '../../lib/db'
 import { getInitials, AU_STATES } from '../../lib/utils'
 import { Link } from 'react-router-dom'
@@ -125,22 +126,47 @@ export default function AppLayout({ toast }: Props) {
   const [stateModalBreederNum,  setStateModalBreederNum]  = useState('')
   const [savingStateModal,      setSavingStateModal]      = useState(false)
 
-  useEffect(() => {
-    if (!user) return
-    getDogs()
-      .then(dogs => setDogCount(dogs.filter((d: any) => d.status !== 'transferred' && d.transferStatus !== 'pendingClaim').length))
-      .catch(() => setDogCount(null))
-    if (user.email) {
-      claimTransferredDogs(user.uid, user.email, 'check')
-        .then(dogs => setPendingClaimCount(dogs.length))
-        .catch(() => setPendingClaimCount(0))
-    }
-  }, [user])
+  // Codex round 15: AppLayout stays mounted across every /app/* route (it's
+  // the persistent sidebar shell), so — unlike a page component that
+  // remounts on navigation — a stale response here has the longest possible
+  // window to land after an account switch. The dogCount effect was keyed
+  // on the whole `user` object with no stale-response guard at all; the
+  // litterCount effect was keyed ONLY on `isOwner`, so switching between
+  // two DIFFERENT owner accounts (isOwner stays true→true) would never even
+  // re-run it — the sidebar would keep showing the FIRST account's litter
+  // count indefinitely. Both are now keyed on user?.uid with an immediate
+  // clear on switch and a request-guard.
+  const { beginRequest: beginDogCountRequest } = useRequestGuard(user?.uid)
+  const { beginRequest: beginLitterCountRequest } = useRequestGuard(user?.uid)
 
   useEffect(() => {
-    if (!isOwner) { setLitterCount(null); return }
-    getLitters().then(l => setLitterCount(l.length)).catch(() => setLitterCount(0))
-  }, [isOwner])
+    setDogCount(null)
+    setPendingClaimCount(0)
+    if (!user) return
+    const req = beginDogCountRequest()
+    getDogs()
+      .then(dogs => {
+        if (!req.isCurrent()) return
+        setDogCount(dogs.filter((d: any) => d.status !== 'transferred' && d.transferStatus !== 'pendingClaim').length)
+      })
+      .catch(() => { if (req.isCurrent()) setDogCount(null) })
+    if (user.email) {
+      claimTransferredDogs(user.uid, user.email, 'check')
+        .then(dogs => { if (req.isCurrent()) setPendingClaimCount(dogs.length) })
+        .catch(() => { if (req.isCurrent()) setPendingClaimCount(0) })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid])
+
+  useEffect(() => {
+    setLitterCount(null)
+    if (!isOwner || !user) return
+    const req = beginLitterCountRequest()
+    getLitters()
+      .then(l => { if (req.isCurrent()) setLitterCount(l.length) })
+      .catch(() => { if (req.isCurrent()) setLitterCount(0) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, isOwner])
 
   useEffect(() => {
     if (profile && !profile.state) setShowStateModal(true)

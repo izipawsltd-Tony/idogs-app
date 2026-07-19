@@ -22,6 +22,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Dog } from '../types';
 import { getDogs } from '../lib/db';
+import { useAuth } from '../hooks/useAuth';
+import { useRequestGuard } from '../hooks/useRequestGuard';
 
 type Relationship = 'reserved' | 'transferred';
 
@@ -168,31 +170,44 @@ function buildBuyers(dogs: Dog[]): Buyer[] {
 // --- component -------------------------------------------------------------
 
 export default function BuyersPage() {
+  const { user } = useAuth();
   const [dogs, setDogs] = useState<Dog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
   const [reloadToken, setReloadToken] = useState(0);
+  // Codex round 15: this page previously had NO useAuth/user dependency
+  // at all — its load effect only re-ran on reloadToken, so switching
+  // accounts (logout + login as someone else, without a full page
+  // remount) would leave the PREVIOUS account's buyers on screen
+  // indefinitely. beginRequest()'s isCurrent() guard additionally stops
+  // a stale response (from a superseded account OR a superseded retry)
+  // from committing after a newer request has already started.
+  const { beginRequest } = useRequestGuard(user?.uid);
 
   useEffect(() => {
-    let active = true;
-    setLoading(true);
+    // Clear the previous account's buyers immediately on an account
+    // switch — a stale buyer list from a former account must never
+    // linger into the new one's view.
+    setDogs([]);
     setError('');
+    if (!user) { setLoading(false); return; }
+    const req = beginRequest();
+    setLoading(true);
     (async () => {
       try {
         const data = await getDogs();
-        if (active) setDogs(data);
+        if (!req.isCurrent()) return;
+        setDogs(data);
       } catch {
-        if (active) setError('Could not load buyers. Please try again.');
+        if (!req.isCurrent()) return;
+        setError('Could not load buyers. Please try again.');
       } finally {
-        if (active) setLoading(false);
+        if (req.isCurrent()) setLoading(false);
       }
     })();
-    return () => {
-      active = false;
-    };
-  }, [reloadToken]);
+  }, [user?.uid, reloadToken]);
 
   const buyers = useMemo(() => buildBuyers(dogs), [dogs]);
 
@@ -212,7 +227,10 @@ export default function BuyersPage() {
     <div style={{ padding: 32 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap' }}>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)', margin: 0 }}>Buyers</h1>
-        <span className="badge badge-gray">{buyers.length}</span>
+        {/* Codex round 15: hide the count badge entirely on a load
+            failure — showing 0 (or a stale prior count) implies a real,
+            current answer that we don't actually have. */}
+        {!error && <span className="badge badge-gray">{buyers.length}</span>}
       </div>
       <p style={{ marginTop: '0.25rem', color: 'var(--mid)' }}>
         Derived from reservations and transfers. Nothing here is stored separately.

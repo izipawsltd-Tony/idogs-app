@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getDogs, getLitters } from '../lib/db'
 import type { Dog, Litter, ToastMessage } from '../types'
 
@@ -34,20 +35,38 @@ export default function ExportPage({ toast }: Props) {
   // Female dogs only for breeding compliance
   const femaleDogs = dogs.filter(d => d.sex === 'female' && (d as any).status !== 'transferred')
 
+  const { beginRequest } = useRequestGuard(user?.uid)
+
   function loadExportData() {
     if (!user) return
+    const req = beginRequest()
     setLoading(true)
     setLoadError(false)
     Promise.all([getDogs(), getLitters()])
-      .then(([d, l]) => { setDogs(d); setLitters(l) })
-      .catch(() => { setLoadError(true); toast('Failed to load data', 'error') })
-      .finally(() => setLoading(false))
+      .then(([d, l]) => {
+        if (!req.isCurrent()) return
+        setDogs(d); setLitters(l)
+      })
+      .catch(() => {
+        if (!req.isCurrent()) return
+        setLoadError(true)
+        toast('Failed to load data', 'error')
+      })
+      .finally(() => {
+        if (!req.isCurrent()) return
+        setLoading(false)
+      })
   }
 
   useEffect(() => {
+    // Clear the previous account's dogs/litters immediately on an account
+    // switch — a stale selector option or kennel-summary count from a
+    // former account must never linger into the new one's view.
+    setDogs([]); setLitters([]); setLoadError(false)
+    setSelectedDogId(''); setSelectedLitterId('')
     loadExportData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user])
+  }, [user?.uid])
 
   async function handleExport(format: Format) {
     if (!user) return
@@ -169,10 +188,14 @@ export default function ExportPage({ toast }: Props) {
         {scope === 'dog' && (
           <div className="form-group" style={{ marginTop: 16 }}>
             <label className="form-label">Select dog</label>
-            <select className="form-select" value={selectedDogId} onChange={e => setSelectedDogId(e.target.value)}>
-              <option value="">— Choose a dog —</option>
-              {dogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed})</option>)}
-            </select>
+            {loadError ? (
+              <span className="form-hint">⚠️ Your dogs failed to load — retry above before selecting.</span>
+            ) : (
+              <select className="form-select" value={selectedDogId} onChange={e => setSelectedDogId(e.target.value)}>
+                <option value="">— Choose a dog —</option>
+                {dogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed})</option>)}
+              </select>
+            )}
           </div>
         )}
 
@@ -180,10 +203,14 @@ export default function ExportPage({ toast }: Props) {
         {scope === 'litter' && (
           <div className="form-group" style={{ marginTop: 16 }}>
             <label className="form-label">Select litter</label>
-            <select className="form-select" value={selectedLitterId} onChange={e => setSelectedLitterId(e.target.value)}>
-              <option value="">— Choose a litter —</option>
-              {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
+            {loadError ? (
+              <span className="form-hint">⚠️ Your litters failed to load — retry above before selecting.</span>
+            ) : (
+              <select className="form-select" value={selectedLitterId} onChange={e => setSelectedLitterId(e.target.value)}>
+                <option value="">— Choose a litter —</option>
+                {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            )}
           </div>
         )}
 
@@ -201,12 +228,18 @@ export default function ExportPage({ toast }: Props) {
           <div style={{ marginTop: 16 }}>
             <div className="form-group" style={{ marginBottom: 12 }}>
               <label className="form-label">Select female dog</label>
-              <select className="form-select" value={selectedDogId} onChange={e => setSelectedDogId(e.target.value)}>
-                <option value="">— Choose a female dog —</option>
-                {femaleDogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed})</option>)}
-              </select>
-              {femaleDogs.length === 0 && (
-                <span className="form-hint">No female dogs in your account.</span>
+              {loadError ? (
+                <span className="form-hint">⚠️ Your dogs failed to load — retry above before selecting.</span>
+              ) : (
+                <>
+                  <select className="form-select" value={selectedDogId} onChange={e => setSelectedDogId(e.target.value)}>
+                    <option value="">— Choose a female dog —</option>
+                    {femaleDogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed})</option>)}
+                  </select>
+                  {femaleDogs.length === 0 && (
+                    <span className="form-hint">No female dogs in your account.</span>
+                  )}
+                </>
               )}
             </div>
             <div style={{ fontSize: 12, color: 'var(--mid)', background: 'var(--sand)', padding: '10px 14px', borderRadius: 8, lineHeight: 1.6 }}>

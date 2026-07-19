@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { getDogs, getHealthTests } from '../lib/db'
 import { getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS, calculateLifeStage } from '../lib/utils'
 import { useAuth } from '../hooks/useAuth'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 import type { CoverageType } from '../lib/reports'
 import type { Dog, HealthTest, LifeStage, ToastMessage } from '../types'
 
@@ -19,7 +20,7 @@ interface Props {
 }
 
 export default function DogListPage({ toast }: Props) {
-  const { profile } = useAuth()
+  const { user, profile } = useAuth()
   const isOwner = profile?.role === 'owner'
   const [dogs, setDogs] = useState<Dog[]>([])
   const [loading, setLoading] = useState(true)
@@ -54,17 +55,41 @@ export default function DogListPage({ toast }: Props) {
   // exist and the load just failed.
   const [loadError, setLoadError] = useState(false)
 
+  // Codex round 15: this page previously loaded ONCE on mount with no
+  // user/uid dependency at all — getDogs() reads whichever account is
+  // currently signed in AT CALL TIME, so if the SPA ever stays mounted
+  // on /app/dogs across an account switch (logout + login as someone
+  // else, without a full page reload), this would keep showing the
+  // PREVIOUS account's dogs indefinitely. Now keyed on user?.uid, with
+  // an immediate clear on switch and a request-guard so a slow response
+  // from a superseded account/retry can never overwrite fresher state.
+  const { beginRequest } = useRequestGuard(user?.uid)
+
   function loadDogs() {
+    if (!user) { setDogs([]); setLoading(false); return }
+    const req = beginRequest()
     setLoading(true)
     setLoadError(false)
     getDogs()
-      .then(result => { setDogs(result); setLoading(false) })
-      .catch(() => { setLoadError(true); toast('Failed to load dogs', 'error'); setLoading(false) })
+      .then(result => {
+        if (!req.isCurrent()) return
+        setDogs(result)
+        setLoading(false)
+      })
+      .catch(() => {
+        if (!req.isCurrent()) return
+        setLoadError(true)
+        toast('Failed to load dogs', 'error')
+        setLoading(false)
+      })
   }
 
   useEffect(() => {
+    setDogs([])
+    setLoadError(false)
     loadDogs()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid])
 
   useEffect(() => {
     if (!missingTest || dogs.length === 0) { setHealthMap(null); return }
@@ -141,12 +166,19 @@ export default function DogListPage({ toast }: Props) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>My dogs</h1>
-          <p style={{ fontSize: 14, color: 'var(--light)' }}>{activeDogs.length} dog{activeDogs.length !== 1 ? 's' : ''} registered</p>
+          {/* Codex round 15: a failed load must never show a dog count —
+              0 or a stale prior count. */}
+          <p style={{ fontSize: 14, color: 'var(--light)' }}>
+            {loadError ? 'Dog count unavailable — load failed' : `${activeDogs.length} dog${activeDogs.length !== 1 ? 's' : ''} registered`}
+          </p>
         </div>
         <Link to="/app/dogs/new" className="btn btn-primary">{isOwner ? '+ Create Dog ID' : '+ Add dog'}</Link>
       </div>
 
-      {/* Filters */}
+      {/* Filters — hidden entirely on a load failure: search/stage/
+          transferred filters against stale or incomplete `dogs` data
+          would be misleading, and the Transferred(N) count is stale too. */}
+      {!loadError && (
       <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         <input
           className="form-input"
@@ -218,6 +250,7 @@ export default function DogListPage({ toast }: Props) {
           )}
         </div>
       </div>
+      )}
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>

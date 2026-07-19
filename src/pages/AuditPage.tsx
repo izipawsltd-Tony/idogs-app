@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getAuditLogs, getDogs, type AuditEntry } from '../lib/db'
 import type { Dog, ToastMessage } from '../types'
 
@@ -38,24 +39,43 @@ export default function AuditPage({ toast }: Props) {
   const [filterDog, setFilterDog] = useState('')
   const [filterAction, setFilterAction] = useState('')
 
+  // Codex round 15: see useRequestGuard's own comment — guards against a
+  // stale response from a previous account (or a previous retry) landing
+  // after a newer request already started/committed.
+  const { beginRequest } = useRequestGuard(user?.uid)
+
   function loadAudit() {
     if (!user) return
+    const req = beginRequest()
     setLoading(true)
     setLoadError(false)
     Promise.all([
       getAuditLogs(user.uid),
       getDogs(),
     ]).then(([l, d]) => {
+      if (!req.isCurrent()) return
       setLogs(l)
       setDogs(d)
-    }).catch(() => { setLoadError(true); toast('Failed to load audit log', 'error') })
-      .finally(() => setLoading(false))
+    }).catch(() => {
+      if (!req.isCurrent()) return
+      setLoadError(true)
+      toast('Failed to load audit log', 'error')
+    }).finally(() => {
+      if (!req.isCurrent()) return
+      setLoading(false)
+    })
   }
 
   useEffect(() => {
+    // Clear the previous account's activity log/filter dropdown
+    // immediately on an account switch — a stale entry from a former
+    // account (or filters keyed to a dog id that belongs to someone
+    // else now) must never linger into the new account's view.
+    setLogs([]); setDogs([]); setLoadError(false)
+    setFilterDog(''); setFilterAction('')
     loadAudit()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user])
+  }, [user?.uid])
 
   function formatTime(iso: string) {
     try {
@@ -80,15 +100,21 @@ export default function AuditPage({ toast }: Props) {
     <div style={{ padding: 32, maxWidth: 760 }}>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>Activity</h1>
+        {/* Codex round 15: a failed load must never show an update count
+            — 0 or a stale prior count — since that's not the current,
+            genuine answer. */}
         <p style={{ fontSize: 14, color: 'var(--light)' }}>
-          {logs.length} update{logs.length !== 1 ? 's' : ''} on your dogs — a record of what's been added, changed, or removed.
+          {loadError ? 'Activity count unavailable — load failed' : `${logs.length} update${logs.length !== 1 ? 's' : ''} on your dogs — a record of what's been added, changed, or removed.`}
         </p>
         <p style={{ fontSize: 12, color: 'var(--light)', marginTop: 6 }}>
           This only shows activity from your own account. If a dog is transferred to a new owner, they start their own activity history — your past entries stay private to you.
         </p>
       </div>
 
-      {/* Filters */}
+      {/* Filters — hidden on load failure since the dog dropdown's
+          options (and any prior filter selection) could be stale/from a
+          failed reload */}
+      {!loadError && (
       <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
         <select className="form-select" style={{ maxWidth: 200 }} value={filterDog} onChange={e => setFilterDog(e.target.value)}>
           <option value="">All dogs</option>
@@ -106,6 +132,7 @@ export default function AuditPage({ toast }: Props) {
           </button>
         )}
       </div>
+      )}
 
       {loadError ? (
         <div className="empty-state">

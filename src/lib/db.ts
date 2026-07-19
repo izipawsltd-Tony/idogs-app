@@ -227,6 +227,26 @@ export class GetDogsError extends Error {
   }
 }
 
+// Codex round 15: aggregate loaders below (getAllDocumentsForUser,
+// getReminders, getAllRemindersForUser, getAllPendingReminders) fan out
+// into multiple subordinate Firestore queries. Round 14 fixed getDogs()
+// itself; this round closes the same class of bug one layer up — a
+// subordinate query failing must never let the AGGREGATE quietly resolve
+// with a partial/short result indistinguishable from a genuinely
+// complete one.
+export class GetDocumentsError extends Error {
+  constructor(message = 'Failed to load documents. Please try again.') {
+    super(message)
+    this.name = 'GetDocumentsError'
+  }
+}
+export class GetRemindersError extends Error {
+  constructor(message = 'Failed to load reminders. Please try again.') {
+    super(message)
+    this.name = 'GetRemindersError'
+  }
+}
+
 // Codex round 14: browser console logs are visible to anyone with devtools
 // open (or a browser extension reading console output), so the raw
 // Firestore error — which can carry query/index paths, project details, or
@@ -243,7 +263,7 @@ const KNOWN_FIRESTORE_ERROR_CODES = new Set([
   'invalid-argument', 'unknown',
 ])
 
-function safeReadFirestoreErrorCode(err: unknown): string {
+export function safeReadFirestoreErrorCode(err: unknown): string {
   try {
     if (err && typeof err === 'object' && 'code' in err) {
       const code = (err as { code?: unknown }).code
@@ -740,12 +760,28 @@ export async function getReminders(
   const isClaimedByCaller = !!dog && dog.currentOwnerId === userId && dog.tenantId !== userId
   if (!isClaimedByCaller) return tenantReminders
 
+  // Codex round 15: distinguish an EXPECTED deny from a genuine failure.
+  // permission-denied here is a documented, by-design outcome — the
+  // reminders collection's tenant-scoped `list` rule denies this
+  // dogId-only query until the next vaccine edit or daily cron job
+  // reassigns tenantId to the new owner, which is true for every
+  // freshly-claimed dog, not just ones hitting a real outage. Silently
+  // treating THAT as "zero claimed reminders" is correct — it's not a
+  // failure being swallowed, it's an accurately-interpreted deny. Any
+  // OTHER code (unavailable, deadline-exceeded, resource-exhausted,
+  // unknown, ...) means we genuinely don't know whether claimed
+  // reminders exist, so — unlike the permission-denied case — that must
+  // reject the whole call rather than silently present as "none".
   let claimedReminders: Reminder[] = []
   try {
     const claimedSnap = await getDocs(query(collection(db, 'reminders'), where('dogId', '==', dogId)))
     claimedReminders = claimedSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
   } catch (err) {
-    console.error('Failed to fetch claimed-dog reminders for dog detail (expected until tenantId reassignment):', err)
+    const code = safeReadFirestoreErrorCode(err)
+    if (code !== 'permission-denied') {
+      console.error('getReminders: claimed-dog reminder query failed', { code })
+      throw new GetRemindersError()
+    }
   }
 
   const merged = new Map<string, Reminder>()
@@ -790,6 +826,12 @@ export async function getAllRemindersForUser(userId: string): Promise<Reminder[]
   const claimedDogIds = dogs
     .filter(d => d.currentOwnerId === userId && d.tenantId !== userId)
     .map(d => d.id)
+  // Codex round 15: see the matching comment in getReminders() above —
+  // permission-denied is the expected, by-design outcome until tenantId
+  // reassignment and is not treated as a failure; any other code means
+  // this aggregate genuinely doesn't know the claimed-reminder state and
+  // must reject rather than silently present tenant-only results as if
+  // they were the complete answer.
   let claimedReminders: Reminder[] = []
   if (claimedDogIds.length > 0) {
     try {
@@ -798,7 +840,11 @@ export async function getAllRemindersForUser(userId: string): Promise<Reminder[]
       )
       claimedReminders = claimedRemindersSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
     } catch (err) {
-      console.error('Failed to fetch claimed-dog reminders (expected until tenantId reassignment):', err)
+      const code = safeReadFirestoreErrorCode(err)
+      if (code !== 'permission-denied') {
+        console.error('getAllRemindersForUser: claimed-dog reminder query failed', { code })
+        throw new GetRemindersError()
+      }
     }
   }
 
@@ -827,6 +873,8 @@ export async function getAllPendingReminders(): Promise<Reminder[]> {
   const claimedDogIds = dogs
     .filter(d => d.currentOwnerId === userId && d.tenantId !== userId)
     .map(d => d.id)
+  // Codex round 15: same permission-denied-is-expected distinction as
+  // getReminders()/getAllRemindersForUser() above — see those comments.
   let claimedReminders: Reminder[] = []
   if (claimedDogIds.length > 0) {
     try {
@@ -837,7 +885,11 @@ export async function getAllPendingReminders(): Promise<Reminder[]> {
         .map(d => ({ ...d.data(), id: d.id } as Reminder))
         .filter(r => ['pending', 'overdue'].includes(r.status))
     } catch (err) {
-      console.error('Failed to fetch claimed-dog pending reminders (expected until tenantId reassignment):', err)
+      const code = safeReadFirestoreErrorCode(err)
+      if (code !== 'permission-denied') {
+        console.error('getAllPendingReminders: claimed-dog reminder query failed', { code })
+        throw new GetRemindersError()
+      }
     }
   }
 
@@ -1112,7 +1164,21 @@ export async function getAllDocumentsForUser(_userId: string): Promise<any[]> {
   const dogs = await getDogs()
   const accessibleDogIds = dogs.filter(d => d.status !== 'transferred').map(d => d.id)
   if (accessibleDogIds.length === 0) return []
-  const perDog = await Promise.all(accessibleDogIds.map(id => getDogDocuments(id).catch(() => [])))
+  // Codex round 15: previously each per-dog getDogDocuments() call was
+  // individually wrapped in .catch(() => []) — one dog's query failing
+  // (permission blip, network drop) silently contributed zero documents
+  // for that dog while the rest resolved normally, so the aggregate
+  // returned a PARTIAL list with no way for the caller to tell it apart
+  // from a dog that genuinely has no documents. Promise.all (no per-item
+  // catch) now means any one dog's query failing rejects the whole
+  // aggregate, matching getDogs()'s own fail-closed contract.
+  let perDog: any[][]
+  try {
+    perDog = await Promise.all(accessibleDogIds.map(id => getDogDocuments(id)))
+  } catch (err) {
+    console.error('getAllDocumentsForUser: load failed', { code: safeReadFirestoreErrorCode(err) })
+    throw new GetDocumentsError()
+  }
   return perDog.flat().sort((a: any, b: any) => {
     const timeA = a.uploadedAt?.toDate?.()?.getTime() || 0
     const timeB = b.uploadedAt?.toDate?.()?.getTime() || 0

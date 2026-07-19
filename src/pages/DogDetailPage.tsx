@@ -8,8 +8,9 @@ import {
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder,
   addWormingRecord, deleteWormingRecord,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, logAudit, syncLifeStage,
-  getAuditLogs, type AuditEntry, isCurrentOwner
+  getAuditLogs, type AuditEntry, isCurrentOwner, safeReadFirestoreErrorCode
 } from '../lib/db'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 import {
   formatDate, getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS,
   getVaccineStatus, isOverdue, isDueSoon, getTodaysMilestone, ordinal, BREEDER_ID_CONFIG, type Milestone,
@@ -142,17 +143,38 @@ export default function DogDetailPage({ toast }: Props) {
   const [showTransfer, setShowTransfer] = useState(false)
   const [documents, setDocuments] = useState<any[]>([])
 
+  // Codex round 15: keyed on both dogId AND user?.uid — the same
+  // combined-key pattern as BreedingTab above. Without this, a slow
+  // response for the PREVIOUS dogId (fast back/forward navigation between
+  // two dog detail pages) or a stale response spanning an account switch
+  // could land after a newer load has already started and overwrite the
+  // currently-displayed dog's state with the wrong dog's/wrong account's
+  // data.
+  const { beginRequest } = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
+
   useEffect(() => {
+    // Clear the previous dog's state immediately on a dogId/account
+    // switch — a stale frame showing the WRONG dog (or a former
+    // account's dog) must never be visible, even briefly.
+    setDog(null)
+    setVaccines([]); setWormings([]); setHealthTests([])
+    setReminders([]); setRemindersError(false)
+    setNotes([]); setLifeStageEvents([]); setQrUrl('')
+    setScanCount(null); setDocuments([])
     if (!dogId) return
+    const req = beginRequest()
+    setLoading(true)
     async function load() {
       try {
         const d = await getDog(dogId!)
+        if (!req.isCurrent()) return
         if (!d) { navigate('/app/dogs'); return }
         setDog(d)
         // Re-sync lifeStage in case it's drifted out of date (dogs were
         // previously assigned a fixed lifeStage at creation time with
         // nothing updating it afterwards as they aged).
         syncLifeStage(d).then(updatedStage => {
+          if (!req.isCurrent()) return
           if (updatedStage !== d.lifeStage) {
             setDog(prev => prev ? { ...prev, lifeStage: updatedStage } : prev)
           }
@@ -171,10 +193,11 @@ export default function DogDetailPage({ toast }: Props) {
           getReminders(dogId!, user?.uid || '', d)
             .then(r => ({ ok: true as const, data: r }))
             .catch(err => {
-              console.error('Failed to load reminders:', err)
+              console.error('DogDetailPage: failed to load reminders', { code: safeReadFirestoreErrorCode(err) })
               return { ok: false as const, data: [] as Reminder[] }
             }),
         ])
+        if (!req.isCurrent()) return
         setVaccines(v)
         setWormings(w)
         setHealthTests(h)
@@ -197,16 +220,19 @@ export default function DogDetailPage({ toast }: Props) {
           width: 200, margin: 2, errorCorrectionLevel: 'H',
           color: { dark: '#1A3A2A', light: '#FFFFFF' }
         })
+        if (!req.isCurrent()) return
         setQrUrl(url)
       } catch (err) {
-        console.error('Load error:', err)
+        if (!req.isCurrent()) return
+        console.error('DogDetailPage: load failed', { code: safeReadFirestoreErrorCode(err) })
         toast('Failed to load dog', 'error')
       } finally {
-        setLoading(false)
+        if (req.isCurrent()) setLoading(false)
       }
     }
     load()
-  }, [dogId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dogId, user?.uid])
 
   async function handleAddNote() {
     if (!newNote.trim() || !dogId) return
@@ -2591,6 +2617,14 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   // eligible Sire" — is the most likely explanation for a "my Sire is
   // missing" report the actual code couldn't otherwise reproduce.
   const [sireLoadError, setSireLoadError] = useState(false)
+  const { user } = useAuth()
+  // Codex round 15: keyed on both dogId AND user?.uid via a synthetic
+  // combined key — a switch on EITHER (navigating to a different dog's
+  // Breeding tab, or an account switch) must invalidate any in-flight
+  // request from before the switch, so a slow, stale response can never
+  // overwrite this dog's/this account's fresh heat-cycle or Sire-selector
+  // state.
+  const { beginRequest } = useRequestGuard(`${user?.uid || ''}:${dogId}`)
 
   // Litter record state
   const [litterCount, setLitterCount] = useState<number>((dog as any).litterCount ?? 0)
@@ -2629,32 +2663,43 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   // the former breeder's view. That mismatch was why the Heat Cycle Sire
   // dropdown could show dogs My Dogs had already stopped showing.
   useEffect(() => {
+    // Clear the previous dog's/account's heat cycles and Sire selector
+    // immediately — switching dogId (or an account switch, via the
+    // combined key above) must never leave a stale frame showing the
+    // WRONG dog's heat cycles or the wrong account's Sire options.
+    setHeatCycles([])
+    setAllDogs([])
+    setSireLoadError(false)
     if (!dogId) return
+    const req = beginRequest()
+    setLoadingCycles(true)
     async function load() {
       const [cyclesResult, dogsResult] = await Promise.allSettled([
         getDocs(query(collection(db, 'heatCycles'), where('dogId', '==', dogId))),
         getDogs(),
       ])
+      if (!req.isCurrent()) return
       if (cyclesResult.status === 'fulfilled') {
         const cycles = cyclesResult.value.docs.map(d => ({ id: d.id, ...d.data() } as HeatCycle))
         cycles.sort((a, b) => a.heatNumber - b.heatNumber)
         setHeatCycles(cycles)
       } else {
-        console.error('Failed to load heat cycles:', cyclesResult.reason)
+        console.error('BreedingTab: failed to load heat cycles', { code: safeReadFirestoreErrorCode(cyclesResult.reason) })
         toast('Failed to load heat cycle records', 'error')
       }
       if (dogsResult.status === 'fulfilled') {
         setAllDogs(dogsResult.value)
         setSireLoadError(false)
       } else {
-        console.error('Failed to load dogs for sire selector:', dogsResult.reason)
+        console.error('BreedingTab: failed to load dogs for sire selector', { code: safeReadFirestoreErrorCode(dogsResult.reason) })
         setSireLoadError(true)
         toast('Failed to load your dogs for the Sire selector', 'error')
       }
       setLoadingCycles(false)
     }
     load()
-  }, [dogId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dogId, user?.uid])
 
   // Recorded Heat N means the Nth ACTUAL heat-cycle record for this Dam,
   // numbered purely by chronological order of the recorded heatStartDate

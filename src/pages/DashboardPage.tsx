@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 import {
   getDogs, getAllPendingReminders,
   getLitters, getAllDocumentsForUser, getAuditLogs,
@@ -98,8 +99,20 @@ export default function DashboardPage({ toast }: Props) {
   const [documentsError,  setDocumentsError]  = useState(false)
   const [activityError,   setActivityError]   = useState(false)
 
+  // Codex round 15: keyed on user?.uid (a primitive), not the whole
+  // `user` object — Firebase can hand out a new User object on a token
+  // refresh for the SAME account, which must not trigger a reload/clear.
+  // beginRequest()'s isCurrent() check before every state write below
+  // guards against three distinct races: (1) an old account's slow
+  // response landing after switching to a new account (cross-account
+  // leak — the actual security-relevant case), (2) an old retry's
+  // response landing after a newer retry already committed, and (3) any
+  // response landing after unmount.
+  const { beginRequest } = useRequestGuard(user?.uid)
+
   function loadDashboard() {
     if (!user) return
+    const req = beginRequest()
     setLoading(true)
     Promise.allSettled([
       getDogs(),
@@ -108,6 +121,7 @@ export default function DashboardPage({ toast }: Props) {
       getAllDocumentsForUser(user.uid),
       getAuditLogs(user.uid),
     ]).then(([d, r, l, docs, audit]) => {
+      if (!req.isCurrent()) return
       if (d.status === 'fulfilled') { setDogs(d.value); setDogsError(false) } else { setDogsError(true) }
       if (r.status === 'fulfilled') { setReminders(r.value); setRemindersError(false) } else { setRemindersError(true) }
       if (l.status === 'fulfilled') { setLitters(l.value); setLittersError(false) } else { setLittersError(true) }
@@ -121,9 +135,15 @@ export default function DashboardPage({ toast }: Props) {
   }
 
   useEffect(() => {
+    // Clear the PREVIOUS account's data immediately, before the new
+    // account's load even starts — a logout, account switch, or a buyer
+    // claiming a dog mid-session must never leave a stale frame showing
+    // someone else's dogs/reminders/documents/activity, even briefly.
+    setDogs([]); setReminders([]); setLitters([]); setDocuments([]); setRecentActivity([])
+    setDogsError(false); setRemindersError(false); setLittersError(false); setDocumentsError(false); setActivityError(false)
     loadDashboard()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user])
+  }, [user?.uid])
 
   const activeDogs   = dogs.filter(d => (d as any).status !== 'transferred' && (d as any).transferStatus !== 'pendingClaim')
   const overdueCount = reminders.filter(r => r.status !== 'completed' && isOverdue(r.dueDate)).length

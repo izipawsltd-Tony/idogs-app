@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getDogs, getLitters, getHealthTests, getUserProfile } from '../lib/db'
 import { formatDate } from '../lib/utils'
 import {
@@ -41,19 +42,33 @@ export default function ReportsPage({ toast }: Props) {
   const [coverage, setCoverage] = useState<HealthCoverageReport | null>(null)
   const [sales, setSales] = useState<SalesReport | null>(null)
 
-  useEffect(() => { if (user) load() }, [user])
+  const { beginRequest } = useRequestGuard(user?.uid)
+
+  useEffect(() => {
+    // Clear the previous account's reports immediately on an account
+    // switch — stale breeding/litter/coverage/sales figures from a
+    // former account must never linger into the new one's view.
+    setOverview(null); setLitter(null); setCoverage(null); setSales(null)
+    setLoadError(false)
+    if (user) load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid])
 
   async function load() {
+    if (!user) return
+    const req = beginRequest()
     setLoading(true)
     setLoadError(false)
     try {
       const [dogs, litters, profile] = await Promise.all([
         getDogs(),
         getLitters(),
-        user ? getUserProfile(user.uid) : Promise.resolve(null),
+        getUserProfile(user.uid),
       ])
+      if (!req.isCurrent()) return
       const state = (profile as { state?: string } | null)?.state || 'SA'
       const healthArrays = await Promise.all(dogs.map(d => getHealthTests(d.id)))
+      if (!req.isCurrent()) return
       const healthByDog = new Map<string, HealthTest[]>(
         dogs.map((d, i) => [d.id, healthArrays[i]]),
       )
@@ -62,10 +77,11 @@ export default function ReportsPage({ toast }: Props) {
       setCoverage(healthCoverage(dogs, healthByDog))
       setSales(salesAndTransfers(dogs))
     } catch {
+      if (!req.isCurrent()) return
       setLoadError(true)
       toast('Failed to load reports', 'error')
     } finally {
-      setLoading(false)
+      if (req.isCurrent()) setLoading(false)
     }
   }
 

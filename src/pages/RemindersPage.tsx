@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getAllRemindersForUser, getDogs, completeReminder } from '../lib/db'
 import { sendReminderEmail } from '../lib/email'
 import { isOverdue, formatDate } from '../lib/utils'
@@ -23,19 +24,29 @@ export default function RemindersPage({ toast }: Props) {
     if (f === 'overdue' || f === 'upcoming' || f === 'all' || f === 'done') setFilter(f)
   }, [])
 
+  const { beginRequest } = useRequestGuard(user?.uid)
+
   useEffect(() => {
     if (!user) return
+    // Clear the previous account's reminders immediately on an account
+    // switch — stale overdue counts/reminder rows from a former account
+    // must never linger into the new one's view.
+    setReminders([])
+    setLoadError(false)
     loadData()
-  }, [user])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid])
 
   async function loadData() {
     if (!user) return
+    const req = beginRequest()
     setLoading(true)
     try {
       const [remindersData, dogsData] = await Promise.all([
         getAllRemindersForUser(user.uid),
         getDogs(),
       ])
+      if (!req.isCurrent()) return
       const dogMap: Record<string, string> = {}
       dogsData.forEach((d: Dog) => { dogMap[d.id] = d.name })
       const enriched = remindersData.map(r => ({
@@ -44,13 +55,13 @@ export default function RemindersPage({ toast }: Props) {
       }))
       setReminders(enriched)
       setLoadError(false)
-    } catch (err) {
-      console.error('Failed to load reminders:', err)
+    } catch {
+      if (!req.isCurrent()) return
       setReminders([])
       setLoadError(true)
       toast('Failed to load reminders', 'error')
     } finally {
-      setLoading(false)
+      if (req.isCurrent()) setLoading(false)
     }
   }
 
@@ -141,15 +152,18 @@ export default function RemindersPage({ toast }: Props) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>Reminders</h1>
+          {/* Codex round 15: a failed load must never show overdue/
+              upcoming counts — 0 or otherwise — since that's not the
+              genuine count, it's "unknown". */}
           <p style={{ fontSize: 14, color: 'var(--light)' }}>
-            {overdueCount > 0 ? `${overdueCount} overdue · ` : ''}{upcomingCount} due in next 7 days
+            {loadError ? 'Counts unavailable — load failed' : `${overdueCount > 0 ? `${overdueCount} overdue · ` : ''}${upcomingCount} due in next 7 days`}
           </p>
         </div>
         <button
           className="btn btn-primary btn-sm"
           onClick={handleSendEmail}
-          disabled={sending || upcomingCount === 0}
-          title={upcomingCount === 0 ? 'No upcoming reminders to send' : `Send ${upcomingCount} reminder(s) to ${user?.email}`}
+          disabled={sending || upcomingCount === 0 || loadError}
+          title={loadError ? "Can't send until your reminders finish loading" : upcomingCount === 0 ? 'No upcoming reminders to send' : `Send ${upcomingCount} reminder(s) to ${user?.email}`}
         >
           {sending ? (
             <><span className="spinner" style={{ width: 14, height: 14, borderTopColor: '#fff' }} /> Sending…</>
@@ -159,7 +173,8 @@ export default function RemindersPage({ toast }: Props) {
         </button>
       </div>
 
-      {/* Stats */}
+      {/* Stats — hidden entirely on a load failure, not shown as 0s */}
+      {!loadError && (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
         <div style={{ background: overdueCount > 0 ? '#FDEDED' : 'var(--white)', border: `1px solid ${overdueCount > 0 ? '#F3B0B0' : 'var(--border)'}`, borderRadius: 'var(--radius-md)', padding: '16px', textAlign: 'center' }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: overdueCount > 0 ? 'var(--danger)' : 'var(--dark)', lineHeight: 1 }}>{overdueCount}</div>
@@ -174,8 +189,11 @@ export default function RemindersPage({ toast }: Props) {
           <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>Completed</div>
         </div>
       </div>
+      )}
 
-      {/* Filter tabs */}
+      {/* Filter tabs — hidden on load failure since counts/filtering
+          against stale/absent data would be misleading */}
+      {!loadError && (
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         {(['upcoming', 'overdue', 'all', 'done'] as const).map(f => (
           <button
@@ -200,6 +218,7 @@ export default function RemindersPage({ toast }: Props) {
           </button>
         ))}
       </div>
+      )}
 
       {/* Reminder list */}
       {loadError ? (

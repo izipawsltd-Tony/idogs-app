@@ -31,6 +31,16 @@
 // AT MOST ONCE, inside try/catch, and is asserted here to never throw
 // regardless of what kind of hostile value is thrown at it.
 //
+// Round 15, Blocker 4: round 14 read `code` safely but still returned it
+// VERBATIM as long as it was a string — so a `.code` that happened to be
+// a Firestore document path, a bearer token, an email address, or a
+// UID-shaped string (any of which some future or malicious caller could
+// set) would flow straight into `logCode`, which console.error DOES
+// write. Only 'permission-denied' and 'unavailable' — the two codes this
+// module actually has copy for — may ever pass through; every other
+// string, including other real-looking Firestore codes, normalizes to
+// the same fixed 'unknown'. See Section 8 below.
+//
 // Usage: node scripts/test-sale-availability-error-sanitization.mjs (no emulator needed)
 
 import { readFileSync } from 'node:fs'
@@ -280,6 +290,61 @@ const FAKE_DOC_PATH = 'projects/idogs-app-staging/databases/(default)/documents/
     !/[^`]e\.message/.test(panel.replace(/\/\/[^\n]*\n/g, '')))
   check('handleSave()\'s catch block no longer logs the raw error object to console (only a sanitized { code } payload)',
     !/console\.error\([^)]*,\s*e\)/.test(panel) && /console\.error\('sale-availability-save failed', \{ code: logCode \}\)/.test(panel))
+}
+
+// =========================================================================
+// SECTION 8 (round 15, Blocker 4) — only the two APPROVED codes may pass
+// through as-is; every other string — including token/path/email/UID-
+// shaped sensitive-looking text, and other real Firestore codes this
+// module has no copy for — normalizes to the fixed 'unknown'
+// =========================================================================
+{
+  const SENSITIVE_CODE_STRINGS = [
+    'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.fake.token',
+    'projects/idogs-app-staging/databases/(default)/documents/dogs/KdnWPRwxngsIRwNiW8TA',
+    'breeder@idogs.com.au',
+    '4ZcrPyvMabcdef1234567890uidlike',
+    'sk_live_FAKE_SECRET_1234567890',
+    '../../../etc/passwd',
+    '<script>alert(1)</script>',
+  ]
+  for (const sensitive of SENSITIVE_CODE_STRINGS) {
+    const code = normalizeSaleAvailabilityErrorCode({ code: sensitive })
+    check(`sensitive-looking .code string ("${sensitive.slice(0, 24)}...") normalizes to "unknown", never passed through raw`,
+      code === 'unknown')
+  }
+
+  // Real Firestore codes that exist but are NOT in this module's small
+  // approved allowlist — round 13/14 only ever mapped permission-denied
+  // and unavailable to copy; every other genuine code must ALSO
+  // normalize to 'unknown', not leak through just because it looks like
+  // a legitimate Firestore error code.
+  const OTHER_REAL_FIRESTORE_CODES = [
+    'cancelled', 'deadline-exceeded', 'not-found', 'already-exists',
+    'resource-exhausted', 'failed-precondition', 'aborted', 'out-of-range',
+    'unimplemented', 'internal', 'unauthenticated', 'invalid-argument',
+  ]
+  for (const realCode of OTHER_REAL_FIRESTORE_CODES) {
+    check(`real but non-approved Firestore code "${realCode}" also normalizes to "unknown" (allowlist, not a denylist)`,
+      normalizeSaleAvailabilityErrorCode({ code: realCode }) === 'unknown')
+  }
+
+  check('the ONLY two codes that pass through as-is are permission-denied and unavailable',
+    normalizeSaleAvailabilityErrorCode({ code: 'permission-denied' }) === 'permission-denied' &&
+    normalizeSaleAvailabilityErrorCode({ code: 'unavailable' }) === 'unavailable')
+
+  // End-to-end: a sensitive string set as .code must never reach the
+  // "console-safe" { code } payload OR the user-facing toast message.
+  const SECRET_CODE = 'ya29.a0AfH6SMC-fake-oauth-access-token-leaked-here'
+  const result = describeSaleAvailabilitySaveFailure({ code: SECRET_CODE })
+  check('a sensitive .code string never reaches the sanitized logCode', result.logCode === 'unknown')
+  check('a sensitive .code string never reaches the user-facing toast message', !result.userMessage.includes(SECRET_CODE))
+
+  const moduleSrc = readFileSync(new URL('../src/lib/saleAvailabilityError.ts', import.meta.url), 'utf8')
+  check('the module defines an explicit allowlist Set (not just a truthy/typeof string check)',
+    /SALE_AVAILABILITY_ALLOWED_CODES = new Set\(\['permission-denied', 'unavailable'\]\)/.test(moduleSrc))
+  check('normalizeSaleAvailabilityErrorCode checks membership in the allowlist before returning the code',
+    /SALE_AVAILABILITY_ALLOWED_CODES\.has\(code\)/.test(moduleSrc))
 }
 
 await summary()
