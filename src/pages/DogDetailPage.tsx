@@ -121,18 +121,27 @@ export default function DogDetailPage({ toast }: Props) {
   const [tab, setTab] = useState<Tab>('overview')
   const [dog, setDog] = useState<Dog | null>(null)
   const [vaccines, setVaccines] = useState<VaccineRecord[]>([])
+  const [vaccinesError, setVaccinesError] = useState(false)
   const [wormings, setWormings] = useState<WormingRecord[]>([])
+  const [wormingError, setWormingError] = useState(false)
   const [healthTests, setHealthTests] = useState<HealthTest[]>([])
+  const [healthTestsError, setHealthTestsError] = useState(false)
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [remindersError, setRemindersError] = useState(false)
   const [notes, setNotes] = useState<ActivityNote[]>([])
+  const [notesError, setNotesError] = useState(false)
   const [lifeStageEvents, setLifeStageEvents] = useState<AuditEntry[]>([])
+  // Codex round 16: getAuditLogs() also feeds the Timeline tab's life-stage
+  // transition entries — a failure here must not silently look like "this
+  // dog has never changed life stage".
+  const [auditError, setAuditError] = useState(false)
   const [qrUrl, setQrUrl] = useState('')
   // null = unavailable/unknown (load failed or not yet loaded) — must
   // never be conflated with a genuine 0, which is why the load below
   // does not catch getScanCount() into 0 like the other Promise.all
   // entries (ADR-002 Phase C2).
   const [scanCount, setScanCount] = useState<number | null>(null)
+  const [scanCountError, setScanCountError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [newNote, setNewNote] = useState('')
   const [newNoteDate, setNewNoteDate] = useState(() => new Date().toISOString().split('T')[0])
@@ -142,6 +151,7 @@ export default function DogDetailPage({ toast }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
   const [documents, setDocuments] = useState<any[]>([])
+  const [documentsError, setDocumentsError] = useState(false)
 
   // Codex round 15: keyed on both dogId AND user?.uid — the same
   // combined-key pattern as BreedingTab above. Without this, a slow
@@ -157,13 +167,34 @@ export default function DogDetailPage({ toast }: Props) {
     // switch — a stale frame showing the WRONG dog (or a former
     // account's dog) must never be visible, even briefly.
     setDog(null)
-    setVaccines([]); setWormings([]); setHealthTests([])
+    setVaccines([]); setVaccinesError(false)
+    setWormings([]); setWormingError(false)
+    setHealthTests([]); setHealthTestsError(false)
     setReminders([]); setRemindersError(false)
-    setNotes([]); setLifeStageEvents([]); setQrUrl('')
-    setScanCount(null); setDocuments([])
+    setNotes([]); setNotesError(false)
+    setLifeStageEvents([]); setAuditError(false)
+    setQrUrl('')
+    setScanCount(null); setScanCountError(false)
+    setDocuments([]); setDocumentsError(false)
     if (!dogId) return
     const req = beginRequest()
     setLoading(true)
+    // Codex round 16: every subordinate query below previously swallowed
+    // its own failure into []/null via a bare .catch() — indistinguishable
+    // from a dog that genuinely has zero vaccines/worming records/health
+    // tests/activity notes/documents/life-stage transitions. Each now
+    // resolves an {ok, data} result (matching the reminders pattern
+    // already used below), so a failure sets a per-section error flag
+    // instead of silently presenting as empty. Sections are independent —
+    // one tab's query failing must not block the others from loading.
+    function safeLoad<T>(promise: Promise<T>, fallback: T) {
+      return promise
+        .then(data => ({ ok: true as const, data }))
+        .catch((err: unknown) => {
+          console.error('DogDetailPage: subordinate query failed', { code: safeReadFirestoreErrorCode(err) })
+          return { ok: false as const, data: fallback }
+        })
+    }
     async function load() {
       try {
         const d = await getDog(dogId!)
@@ -182,14 +213,14 @@ export default function DogDetailPage({ toast }: Props) {
           // non-critical — if this fails, the page still works, just
           // with a possibly-stale lifeStage badge until next visit
         })
-        const [v, w, h, n, sc, docs, auditLogs, remindersResult] = await Promise.all([
-          getVaccineRecords(dogId!).catch(() => [] as VaccineRecord[]),
-          getWormingRecords(dogId!).catch(() => [] as WormingRecord[]),
-          getHealthTests(dogId!).catch(() => [] as HealthTest[]),
-          getActivityNotes(dogId!).catch(() => [] as ActivityNote[]),
-          getScanCount(dogId!).catch(() => null as number | null),
-          getDogDocuments(dogId!).catch(() => []),
-          getAuditLogs(d.tenantId, dogId!).catch(() => [] as AuditEntry[]),
+        const [vRes, wRes, hRes, nRes, scRes, docsRes, auditRes, remindersResult] = await Promise.all([
+          safeLoad(getVaccineRecords(dogId!), [] as VaccineRecord[]),
+          safeLoad(getWormingRecords(dogId!), [] as WormingRecord[]),
+          safeLoad(getHealthTests(dogId!), [] as HealthTest[]),
+          safeLoad(getActivityNotes(dogId!), [] as ActivityNote[]),
+          safeLoad(getScanCount(dogId!), null as number | null),
+          safeLoad(getDogDocuments(dogId!), [] as any[]),
+          safeLoad(getAuditLogs(d.tenantId, dogId!), [] as AuditEntry[]),
           getReminders(dogId!, user?.uid || '', d)
             .then(r => ({ ok: true as const, data: r }))
             .catch(err => {
@@ -198,9 +229,9 @@ export default function DogDetailPage({ toast }: Props) {
             }),
         ])
         if (!req.isCurrent()) return
-        setVaccines(v)
-        setWormings(w)
-        setHealthTests(h)
+        setVaccines(vRes.data); setVaccinesError(!vRes.ok)
+        setWormings(wRes.data); setWormingError(!wRes.ok)
+        setHealthTests(hRes.data); setHealthTestsError(!hRes.ok)
         // A user who's no longer the current owner (e.g. the original
         // breeder after a buyer claims the dog) must not see this dog's
         // active reminders here — status alone can't tell that apart from
@@ -211,10 +242,11 @@ export default function DogDetailPage({ toast }: Props) {
           ? (isCurrentOwner(d, user?.uid || '') ? remindersResult.data : remindersResult.data.filter(rem => rem.status === 'completed'))
           : [])
         setRemindersError(!remindersResult.ok)
-        setNotes(n)
-        setScanCount(sc)
-        if (docs) setDocuments(docs)
-        setLifeStageEvents(auditLogs.filter(e => e.action === 'life_stage_changed'))
+        setNotes(nRes.data); setNotesError(!nRes.ok)
+        setScanCount(scRes.data); setScanCountError(!scRes.ok)
+        setDocuments(docsRes.data); setDocumentsError(!docsRes.ok)
+        setLifeStageEvents(auditRes.data.filter(e => e.action === 'life_stage_changed'))
+        setAuditError(!auditRes.ok)
         const publicUrl = `${window.location.origin}/p/${d.passportId}`
         const url = await QRCode.toDataURL(publicUrl, {
           width: 200, margin: 2, errorCorrectionLevel: 'H',
@@ -599,16 +631,20 @@ export default function DogDetailPage({ toast }: Props) {
   const isTransferred = ((dog as any).status === 'transferred' || (dog as any).transferStatus === 'pendingClaim') && (dog as any).buyerEmail
   const todaysMilestone = getTodaysMilestone(dog.dateOfBirth, dog.createdAt)
 
+  // Codex round 16: a tab-label count badge is the very first thing a
+  // visitor sees for each section — "(0)" next to "Vaccines" reads as a
+  // confirmed answer just as much as the empty-state copy inside the tab
+  // itself, so it needs the same error-vs-genuinely-empty distinction.
   const TABS: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'scan', label: '📸 iDogs Scan' },
-    { id: 'vaccines', label: `Vaccines (${vaccines.length})` },
-    { id: 'worming', label: `Worming (${wormings.length})` },
+    { id: 'vaccines', label: `Vaccines (${vaccinesError ? '?' : vaccines.length})` },
+    { id: 'worming', label: `Worming (${wormingError ? '?' : wormings.length})` },
     { id: 'health', label: 'Health tests' },
-    { id: 'reminders', label: `Reminders (${reminders.filter(r => r.status !== 'completed').length})` },
+    { id: 'reminders', label: `Reminders (${remindersError ? '?' : reminders.filter(r => r.status !== 'completed').length})` },
     { id: 'passport', label: 'QR Passport' },
     { id: 'timeline', label: 'Timeline' },
-    { id: 'documents', label: `📄 Documents (${documents.length})` },
+    { id: 'documents', label: `📄 Documents (${documentsError ? '?' : documents.length})` },
     ...(dog.sex === 'female' && !isOwner ? [{ id: 'breeding' as Tab, label: '🌸 Breeding' }] : []),
   ]
 
@@ -710,7 +746,7 @@ export default function DogDetailPage({ toast }: Props) {
         <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} onUpdateSale={async (firestoreUpdates, localUpdates) => {
@@ -724,13 +760,18 @@ export default function DogDetailPage({ toast }: Props) {
           <AIScan onResult={handleScanResult} toast={toast} dogId={dog.id} tenantId={user?.uid} />
         </div>
       )}
-      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} />}
-      {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} />}
-      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} />}
+      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} />}
+      {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} />}
+      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} />}
       {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} />}
+      {/* scanCountError isn't threaded through separately — by the time
+          any tab renders, the page-level loading gate has already
+          cleared, so scanCount === null unambiguously means "failed to
+          load" (never "still loading"), which PassportTab's existing
+          "Unavailable" copy already covers correctly (round 13). */}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} toast={toast} />}
-      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} />}
-      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} />}
+      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} />}
+      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} />}
 
       {tab === 'breeding' && !isOwner && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
         await updateDog(dogId!, updates)
@@ -918,12 +959,13 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, onUpdateBreederId, onUpdateSale }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, onUpdateBreederId, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number | null
   toast: (msg: string, type?: ToastMessage['type']) => void
   isOwner: boolean
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
   onUpdateSale: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
+  vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
 }) {
   const { user, profile } = useAuth()
   const [editingBreederId, setEditingBreederId] = useState(false)
@@ -1078,12 +1120,17 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
         <InfoRow label="Passport ID" value={dog.passportId} mono />
         <InfoRow label={provenanceLabel} value={provenanceValue} />
       </InfoSection>
+      {/* Codex round 16: each count here previously read straight off
+          .length with no error awareness — a failed vaccine/worming/
+          health-test query would show "0", indistinguishable from a
+          dog that genuinely has no records, in the one place (the
+          overview) every visit to this page lands on first. */}
       <InfoSection title="Health summary">
-        <InfoRow label="Vaccines recorded" value={String(vaccines.length)} />
-        <InfoRow label="Latest vaccine" value={vaccines[0] ? `${vaccines[0].name} — ${formatDate(vaccines[0].dateGiven)}` : '—'} />
-        <InfoRow label="Next vaccine due" value={vaccines[0]?.nextDue ? formatDate(vaccines[0].nextDue) : '—'} />
-        <InfoRow label="Worming records" value={String(wormings.length)} />
-        <InfoRow label="Health tests" value={String(healthTests.length)} />
+        <InfoRow label="Vaccines recorded" value={vaccinesError ? 'Unavailable' : String(vaccines.length)} />
+        <InfoRow label="Latest vaccine" value={vaccinesError ? 'Unavailable' : vaccines[0] ? `${vaccines[0].name} — ${formatDate(vaccines[0].dateGiven)}` : '—'} />
+        <InfoRow label="Next vaccine due" value={vaccinesError ? 'Unavailable' : vaccines[0]?.nextDue ? formatDate(vaccines[0].nextDue) : '—'} />
+        <InfoRow label="Worming records" value={wormingError ? 'Unavailable' : String(wormings.length)} />
+        <InfoRow label="Health tests" value={healthTestsError ? 'Unavailable' : String(healthTests.length)} />
         <InfoRow label="Passport scans" value={scanCount === null ? 'Unavailable' : String(scanCount)} />
       </InfoSection>
       {dog.notes && (
@@ -1285,7 +1332,7 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
 
 // ── VACCINES TAB ──────────────────────────────────────────────
 
-function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc, onReminderSaved }: {
+function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc, onReminderSaved, error }: {
   dogId: string; dogName: string; tenantId: string; userEmail: string;
   vaccines: VaccineRecord[];
   setVaccines: (v: VaccineRecord[]) => void;
@@ -1293,6 +1340,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
   documents: any[]
   onViewDoc: (path?: string | null, legacyUrl?: string | null) => void
   onReminderSaved: () => void | Promise<void>
+  error?: boolean
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
@@ -1395,9 +1443,9 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Vaccination records</h2>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>+ Add vaccine</button>
+        <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>+ Add vaccine</button>
       </div>
-      {showForm && (
+      {!error && showForm && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div className="form-group">
@@ -1423,7 +1471,13 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
           </div>
         </div>
       )}
-      {vaccines.length === 0 ? (
+      {error ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">⚠️</div>
+          <div className="empty-state-title">Couldn't load vaccine records</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list. Please refresh the page to try again.</div>
+        </div>
+      ) : vaccines.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">💉</div>
           <div className="empty-state-title">No vaccine records</div>
@@ -1539,7 +1593,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
 
 // ── WORMING TAB ───────────────────────────────────────────────
 
-function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings, toast }: {
+function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error }: {
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -1547,6 +1601,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
   wormings: WormingRecord[];
   setWormings: (w: WormingRecord[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
+  error?: boolean
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
@@ -1607,12 +1662,12 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Worming</h2>
-        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)}>
+        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
           {showForm ? 'Cancel' : '+ Add manually'}
         </button>
       </div>
 
-      {showForm && (
+      {!error && showForm && (
         <div className="card" style={{ marginBottom: 16, padding: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}>
@@ -1638,7 +1693,13 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
         </div>
       )}
 
-      {wormings.length === 0 ? (
+      {error ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">⚠️</div>
+          <div className="empty-state-title">Couldn't load worming records</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list. Please refresh the page to try again.</div>
+        </div>
+      ) : wormings.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">💊</div>
           <div className="empty-state-title">No worming records</div>
@@ -1679,7 +1740,7 @@ function formatHealthResult(result: unknown): string {
   return ''
 }
 
-function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast }: {
+function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast, error }: {
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -1687,6 +1748,7 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
   healthTests: HealthTest[];
   setHealthTests: (h: HealthTest[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
+  error?: boolean
 }) {
   const { user } = useAuth()
   const [showForm, setShowForm] = useState(false)
@@ -1798,12 +1860,12 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Health testing</h2>
-        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)}>
+        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
           {showForm ? 'Cancel' : '+ Add manually'}
         </button>
       </div>
 
-      {showForm && (
+      {!error && showForm && (
         <div className="card" style={{ marginBottom: 16, padding: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div className="form-group">
@@ -1840,7 +1902,13 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
         </div>
       )}
 
-      {healthTests.length === 0 ? (
+      {error ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">⚠️</div>
+          <div className="empty-state-title">Couldn't load health tests</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list. Please refresh the page to try again.</div>
+        </div>
+      ) : healthTests.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">🔬</div>
           <div className="empty-state-title">No health tests recorded</div>
@@ -2027,7 +2095,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
 
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
-function DocumentsTab({ documents, setDocuments, dogName, toast }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void }) {
+function DocumentsTab({ documents, setDocuments, dogName, toast, error }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean }) {
   const { user } = useAuth()
   function getDocIcon(type: string) {
     if (type === 'vaccine_card') return '💉'
@@ -2050,7 +2118,13 @@ function DocumentsTab({ documents, setDocuments, dogName, toast }: { documents: 
   return (
     <div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Documents</h2>
-      {documents.length === 0 ? (
+      {error ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">⚠️</div>
+          <div className="empty-state-title">Couldn't load documents</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list. Please refresh the page to try again.</div>
+        </div>
+      ) : documents.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">📄</div>
           <div className="empty-state-title">No documents yet</div>
@@ -2236,7 +2310,7 @@ const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
   note: 'var(--brand-600)',
 }
 
-function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast }: {
+function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast, notesError, auditError, vaccinesError, wormingError, healthTestsError }: {
   dog: Dog; notes: ActivityNote[]; newNote: string; setNewNote: (v: string) => void;
   newNoteDate: string; setNewNoteDate: (v: string) => void;
   onAddNote: () => void; saving: boolean;
@@ -2245,8 +2319,19 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   setNotePhoto: (p: { base64: string; mediaType: string; preview: string } | null) => void;
   uploadingNotePhoto: boolean;
   toast: (msg: string, type?: ToastMessage['type']) => void
+  notesError?: boolean; auditError?: boolean
+  vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
 }) {
   const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
+  // Codex round 16: the Timeline is a MERGE of five independent sources
+  // (notes, life-stage transitions derived from audit logs, vaccines,
+  // wormings, health tests) — each already has its own dedicated error
+  // state on its own tab, but a failure in ANY of them also silently
+  // shrinks THIS merged view with no indication here. Since a partial
+  // merge can't be un-merged into "which specific entries are missing",
+  // this surfaces as one clear banner rather than trying to grey out
+  // individual event types.
+  const hasIncompleteData = !!(notesError || auditError || vaccinesError || wormingError || healthTestsError)
 
   // FIX (bug: iPhone photos ~3MB fail to upload): there was no
   // resize/compression step before base64-encoding. Base64 inflates size
@@ -2378,8 +2463,17 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
         </div>
       </div>
 
+      {hasIncompleteData && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#FFF8E8', border: '1px solid #F0D590', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 13, color: '#8A6D1F' }}>
+          ⚠️ Some parts of {dog.name}'s story failed to load — this timeline may be incomplete. Refresh the page to try again.
+        </div>
+      )}
       {events.length === 0 ? (
-        <div className="empty-state"><div className="empty-state-icon">📝</div><div className="empty-state-title">No story yet</div><div className="empty-state-desc">Add a note, or scan a document, to begin {dog.name}'s story.</div></div>
+        hasIncompleteData ? (
+          <div className="empty-state"><div className="empty-state-icon">⚠️</div><div className="empty-state-title">Couldn't load {dog.name}'s story</div><div className="empty-state-desc">This is a loading error, not an empty story. Please refresh the page to try again.</div></div>
+        ) : (
+          <div className="empty-state"><div className="empty-state-icon">📝</div><div className="empty-state-title">No story yet</div><div className="empty-state-desc">Add a note, or scan a document, to begin {dog.name}'s story.</div></div>
+        )
       ) : (
         <div style={{ position: 'relative', paddingLeft: 36 }}>
           {/* Vertical timeline line */}

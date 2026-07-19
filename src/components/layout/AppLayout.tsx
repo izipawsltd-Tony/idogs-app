@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useState, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useRequestGuard } from '../../hooks/useRequestGuard'
@@ -116,7 +116,13 @@ export default function AppLayout({ toast }: Props) {
   // dogs" on a load failure would misreport a real kennel as empty, the
   // same class of misleading-count bug this round exists to close.
   const [dogCount,    setDogCount]    = useState<number | null>(null)
-  const [pendingClaimCount, setPendingClaimCount] = useState<number>(0)
+  // Codex round 16: was `number`, defaulting to 0 both before the first
+  // load AND on any failure — indistinguishable from "confirmed zero
+  // pending claims", which silently hid a real "you have a dog waiting to
+  // be claimed!" banner on a genuine query failure. Now number | null,
+  // matching dogCount/litterCount's existing null-means-unknown contract;
+  // the banner below only ever renders on a confirmed positive count.
+  const [pendingClaimCount, setPendingClaimCount] = useState<number | null>(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement>(null)
 
@@ -127,21 +133,29 @@ export default function AppLayout({ toast }: Props) {
   const [savingStateModal,      setSavingStateModal]      = useState(false)
 
   // Codex round 15: AppLayout stays mounted across every /app/* route (it's
-  // the persistent sidebar shell), so — unlike a page component that
-  // remounts on navigation — a stale response here has the longest possible
-  // window to land after an account switch. The dogCount effect was keyed
-  // on the whole `user` object with no stale-response guard at all; the
-  // litterCount effect was keyed ONLY on `isOwner`, so switching between
-  // two DIFFERENT owner accounts (isOwner stays true→true) would never even
-  // re-run it — the sidebar would keep showing the FIRST account's litter
-  // count indefinitely. Both are now keyed on user?.uid with an immediate
-  // clear on switch and a request-guard.
+  // the persistent sidebar shell — deliberately NOT covered by the
+  // Outlet's uid-keyed remount above), so — unlike a page component that
+  // gets a fresh instance on every account switch — a stale response here
+  // has the longest possible window to land after an account switch. The
+  // dogCount effect was keyed on the whole `user` object with no
+  // stale-response guard at all; the litterCount effect was keyed ONLY on
+  // `isOwner`, so switching between two DIFFERENT owner accounts
+  // (isOwner stays true→true) would never even re-run it — the sidebar
+  // would keep showing the FIRST account's litter count indefinitely.
+  //
+  // Codex round 16: both clearing effects moved from useEffect to
+  // useLayoutEffect — a passive effect only flushes AFTER the browser has
+  // already painted the render that observed the new uid, so the OLD
+  // account's counts could remain visibly on screen (still showing the
+  // previous account's dog/litter numbers next to the NEW account's name/
+  // avatar elsewhere in the same sidebar) for that one frame. A layout
+  // effect flushes synchronously before paint, closing that window.
   const { beginRequest: beginDogCountRequest } = useRequestGuard(user?.uid)
   const { beginRequest: beginLitterCountRequest } = useRequestGuard(user?.uid)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setDogCount(null)
-    setPendingClaimCount(0)
+    setPendingClaimCount(null)
     if (!user) return
     const req = beginDogCountRequest()
     getDogs()
@@ -153,18 +167,18 @@ export default function AppLayout({ toast }: Props) {
     if (user.email) {
       claimTransferredDogs(user.uid, user.email, 'check')
         .then(dogs => { if (req.isCurrent()) setPendingClaimCount(dogs.length) })
-        .catch(() => { if (req.isCurrent()) setPendingClaimCount(0) })
+        .catch(() => { if (req.isCurrent()) setPendingClaimCount(null) })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setLitterCount(null)
     if (!isOwner || !user) return
     const req = beginLitterCountRequest()
     getLitters()
       .then(l => { if (req.isCurrent()) setLitterCount(l.length) })
-      .catch(() => { if (req.isCurrent()) setLitterCount(0) })
+      .catch(() => { if (req.isCurrent()) setLitterCount(null) })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, isOwner])
 
@@ -453,7 +467,7 @@ export default function AppLayout({ toast }: Props) {
         display: 'flex',
         flexDirection: 'column',
       }}>
-        {pendingClaimCount > 0 && (
+        {pendingClaimCount !== null && pendingClaimCount > 0 && (
           <div style={{ background: 'var(--brand-600)', color: '#fff', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 45 }}>
             <div style={{ fontSize: 14, fontWeight: 500 }}>
               🐾 You have {pendingClaimCount} dog{pendingClaimCount !== 1 ? 's' : ''} waiting to be claimed!
@@ -616,7 +630,24 @@ export default function AppLayout({ toast }: Props) {
 
         {/* Page content */}
         <main style={{ flex: 1 }}>
-          <Outlet />
+          {/* Codex round 16: keying Outlet on the signed-in uid forces
+              React to fully unmount the previous account's page instance
+              and mount a completely fresh one on every account switch —
+              structurally eliminates the whole "old account's stale
+              response/data lingers into the new account's view" race for
+              every routed page (Dashboard, Audit, Documents, Export,
+              DogList, DogDetail, Buyers, Reminders, Reports, Litters,
+              DogNew): a torn-down instance's async continuations can
+              never write to or paint into the new instance, since they're
+              different component instances entirely, not just the same
+              instance with updated props. Keyed on user?.uid (a
+              primitive) rather than the whole `user` object, so a token
+              refresh for the SAME account never triggers an unnecessary
+              remount. AppLayout itself deliberately does NOT remount (it
+              must persist as the sidebar shell across navigation) — its
+              own uid-dependent counts below use useRequestGuard +
+              useLayoutEffect-based clearing directly instead. */}
+          <Outlet key={user?.uid} />
         </main>
       </div>
 

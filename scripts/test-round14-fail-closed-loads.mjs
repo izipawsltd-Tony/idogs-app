@@ -289,7 +289,7 @@ function src(relPath) {
   check('DogNewPage\'s duplicate-check catch block no longer proceeds to creation on failure ("proceed as normal" comment removed)',
     !/proceed as normal/.test(submitBlock))
   check('DogNewPage\'s duplicate-check catch block returns (blocks submission) instead of falling through to proceedWithCreate()',
-    /\} catch \{[\s\S]*?return\r?\n    \}\r?\n\r?\n(?:\s*\/\/[^\n]*\n)*\s*await proceedWithCreate\(\)/.test(submitBlock))
+    /\} catch \{[\s\S]*?return\r?\n    \}\r?\n\r?\n(?:\s*\/\/[^\n]*\n)*\s*await proceedWithCreate\([^)]*\)/.test(submitBlock))
 }
 
 // B7 — RemindersPage / BuyersPage: retry affordance added this round

@@ -367,7 +367,7 @@ export async function getDogByPassportId(passportId: string): Promise<Dog | null
 // error rather than silently reusing an existing ID.
 const MAX_PASSPORT_ID_ATTEMPTS = 5
 
-async function reservePassportId(namePart: string, yearPart: string): Promise<string> {
+async function reservePassportId(namePart: string, yearPart: string, createdByUid: string): Promise<string> {
   for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
     const candidate = `${namePart}-${yearPart}-${nanoid(4)}`
     const reservationRef = doc(db, 'passportReservations', candidate)
@@ -375,7 +375,7 @@ async function reservePassportId(namePart: string, yearPart: string): Promise<st
       await runTransaction(db, async (tx) => {
         const snap = await tx.get(reservationRef)
         if (snap.exists()) throw new Error('PASSPORT_ID_TAKEN')
-        tx.set(reservationRef, { createdAt: serverTimestamp(), createdBy: uid() })
+        tx.set(reservationRef, { createdAt: serverTimestamp(), createdBy: createdByUid })
       })
       return candidate
     } catch (err: any) {
@@ -399,19 +399,33 @@ export async function createDog(
   data: DogFormData,
   sourceType: 'BREEDER_ISSUED' | 'OWNER_CREATED' = 'BREEDER_ISSUED'
 ): Promise<string> {
+  // Codex round 16: captured ONCE, before reservePassportId()'s own
+  // await (a real Firestore transaction — genuine network latency, not
+  // instantaneous). The previous version called uid() again AFTER that
+  // await, when building the addDoc() payload below — if the caller's
+  // Firebase auth session changed during the passport-reservation
+  // transaction (account switch, logout+login as someone else), the new
+  // dog would silently be attributed to the WRONG tenant/owner, using
+  // whoever happened to be signed in when the write finally happened
+  // rather than whoever actually initiated the create. Every identity
+  // field below now uses this single captured value, so the dog is
+  // always attributed to whoever was authenticated at the moment
+  // createDog() was called, regardless of what happens to the auth state
+  // while the passport reservation is in flight.
+  const creatorUid = uid()
   const now = new Date()
   const yearPart = data.dateOfBirth ? data.dateOfBirth.slice(0, 4) : now.getFullYear().toString()
   const namePart = (data.name || 'DOG').slice(0, 3).toUpperCase()
-  const passportId = await reservePassportId(namePart, yearPart)
+  const passportId = await reservePassportId(namePart, yearPart, creatorUid)
   const ref = await addDoc(collection(db, 'dogs'), {
     ...data,
-    tenantId: uid(),
-    currentOwnerId: uid(),
-    createdByUserId: uid(),
+    tenantId: creatorUid,
+    currentOwnerId: creatorUid,
+    createdByUserId: creatorUid,
     sourceType,
     // originBreederId is breeder provenance — omitted for owner-created
     // dogs rather than written as a meaningless copy of tenantId.
-    ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: uid() } : {}),
+    ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: creatorUid } : {}),
     passportId,
     lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
     isDeceased: false,
@@ -760,28 +774,25 @@ export async function getReminders(
   const isClaimedByCaller = !!dog && dog.currentOwnerId === userId && dog.tenantId !== userId
   if (!isClaimedByCaller) return tenantReminders
 
-  // Codex round 15: distinguish an EXPECTED deny from a genuine failure.
-  // permission-denied here is a documented, by-design outcome — the
-  // reminders collection's tenant-scoped `list` rule denies this
-  // dogId-only query until the next vaccine edit or daily cron job
-  // reassigns tenantId to the new owner, which is true for every
-  // freshly-claimed dog, not just ones hitting a real outage. Silently
-  // treating THAT as "zero claimed reminders" is correct — it's not a
-  // failure being swallowed, it's an accurately-interpreted deny. Any
-  // OTHER code (unavailable, deadline-exceeded, resource-exhausted,
-  // unknown, ...) means we genuinely don't know whether claimed
-  // reminders exist, so — unlike the permission-denied case — that must
-  // reject the whole call rather than silently present as "none".
-  let claimedReminders: Reminder[] = []
+  // Codex round 16: round 15 treated permission-denied on this query as an
+  // "expected, by-design" deny (the reminders collection's tenant-scoped
+  // `list` rule denies this dogId-only query until the next vaccine edit
+  // or daily cron job reassigns tenantId post-claim) and silently degraded
+  // to "zero claimed reminders" for that specific code. On review, that
+  // still lets a REAL claimed reminder (e.g. an overdue vaccine on a
+  // freshly-claimed dog) go silently missing for up to ~24h, with the
+  // caller unable to tell "confirmed zero" apart from "unknown, because
+  // this documented rules gap hasn't closed yet" — completeness is
+  // unknown here, not zero. ANY claimed-reminder query failure — including
+  // permission-denied — now rejects the whole call. Callers must show an
+  // explicit, retryable error rather than a confident "all caught up".
+  let claimedReminders: Reminder[]
   try {
     const claimedSnap = await getDocs(query(collection(db, 'reminders'), where('dogId', '==', dogId)))
     claimedReminders = claimedSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
   } catch (err) {
-    const code = safeReadFirestoreErrorCode(err)
-    if (code !== 'permission-denied') {
-      console.error('getReminders: claimed-dog reminder query failed', { code })
-      throw new GetRemindersError()
-    }
+    console.error('getReminders: claimed-dog reminder query failed', { code: safeReadFirestoreErrorCode(err) })
+    throw new GetRemindersError()
   }
 
   const merged = new Map<string, Reminder>()
@@ -826,12 +837,10 @@ export async function getAllRemindersForUser(userId: string): Promise<Reminder[]
   const claimedDogIds = dogs
     .filter(d => d.currentOwnerId === userId && d.tenantId !== userId)
     .map(d => d.id)
-  // Codex round 15: see the matching comment in getReminders() above —
-  // permission-denied is the expected, by-design outcome until tenantId
-  // reassignment and is not treated as a failure; any other code means
-  // this aggregate genuinely doesn't know the claimed-reminder state and
-  // must reject rather than silently present tenant-only results as if
-  // they were the complete answer.
+  // Codex round 16: see the matching comment in getReminders() above —
+  // completeness of the claimed-reminder segment is UNKNOWN on any query
+  // failure, never assumed zero. Every failure (including the previously
+  // exempted permission-denied) now rejects the whole call.
   let claimedReminders: Reminder[] = []
   if (claimedDogIds.length > 0) {
     try {
@@ -840,11 +849,8 @@ export async function getAllRemindersForUser(userId: string): Promise<Reminder[]
       )
       claimedReminders = claimedRemindersSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
     } catch (err) {
-      const code = safeReadFirestoreErrorCode(err)
-      if (code !== 'permission-denied') {
-        console.error('getAllRemindersForUser: claimed-dog reminder query failed', { code })
-        throw new GetRemindersError()
-      }
+      console.error('getAllRemindersForUser: claimed-dog reminder query failed', { code: safeReadFirestoreErrorCode(err) })
+      throw new GetRemindersError()
     }
   }
 
@@ -873,8 +879,9 @@ export async function getAllPendingReminders(): Promise<Reminder[]> {
   const claimedDogIds = dogs
     .filter(d => d.currentOwnerId === userId && d.tenantId !== userId)
     .map(d => d.id)
-  // Codex round 15: same permission-denied-is-expected distinction as
-  // getReminders()/getAllRemindersForUser() above — see those comments.
+  // Codex round 16: see the matching comment in getReminders() above —
+  // fails closed on ANY claimed-reminder query failure, permission-denied
+  // included.
   let claimedReminders: Reminder[] = []
   if (claimedDogIds.length > 0) {
     try {
@@ -885,11 +892,8 @@ export async function getAllPendingReminders(): Promise<Reminder[]> {
         .map(d => ({ ...d.data(), id: d.id } as Reminder))
         .filter(r => ['pending', 'overdue'].includes(r.status))
     } catch (err) {
-      const code = safeReadFirestoreErrorCode(err)
-      if (code !== 'permission-denied') {
-        console.error('getAllPendingReminders: claimed-dog reminder query failed', { code })
-        throw new GetRemindersError()
-      }
+      console.error('getAllPendingReminders: claimed-dog reminder query failed', { code: safeReadFirestoreErrorCode(err) })
+      throw new GetRemindersError()
     }
   }
 

@@ -3,6 +3,17 @@
 // getAllRemindersForUser, getAllPendingReminders) must never let a
 // subordinate query's failure resolve as a normal partial/empty result.
 //
+// Round 16, Blocker 1: round 15 treated permission-denied on the claimed-
+// dog reminder query as an "expected, by-design" deny (the reminders
+// collection's tenant-scoped rule denies it until tenantId reassignment)
+// and silently degraded to "zero claimed reminders" for that specific
+// code — but that still let a REAL claimed reminder go silently missing
+// for up to ~24h with no way for the caller to tell "confirmed zero" apart
+// from "unknown, because this documented rules gap hasn't closed yet".
+// Completeness is unknown on ANY claimed-reminder query failure, never
+// assumed zero — round 16 removes the permission-denied exemption
+// entirely; every failure now rejects with GetRemindersError.
+//
 // db.ts can't be imported directly in this plain-Node script (it
 // transitively imports ./firebase, which needs live Firebase Web SDK
 // config/env vars that don't exist here — same limitation documented in
@@ -37,22 +48,17 @@ async function getAllDocumentsForUserMirror(accessibleDogIds, getDogDocumentsImp
   return perDog.flat()
 }
 
-// ── Mirror of getAllPendingReminders()'s claimed-reminder handling ──
-// (getReminders/getAllRemindersForUser share the identical
-// permission-denied-is-expected / anything-else-rejects shape — see the
-// matching comments in src/lib/db.ts.)
-async function claimedReminderMergeMirror(tenantReminders, claimedDogIds, queryClaimedImpl, readCode) {
+// ── Mirror of getAllPendingReminders()'s claimed-reminder handling
+// (round 16: ANY failure — including permission-denied — rejects; see
+// the matching comments in src/lib/db.ts) ──
+async function claimedReminderMergeMirror(tenantReminders, claimedDogIds, queryClaimedImpl) {
   let claimedReminders = []
   if (claimedDogIds.length > 0) {
     try {
       const snap = await queryClaimedImpl()
       claimedReminders = snap.docs.map(d => d.data())
-    } catch (err) {
-      const code = readCode(err)
-      if (code !== 'permission-denied') {
-        throw new GetRemindersErrorMirror()
-      }
-      // Expected deny — tenantReminders alone is the correct answer.
+    } catch {
+      throw new GetRemindersErrorMirror()
     }
   }
   const merged = new Map()
@@ -106,34 +112,36 @@ await checkAsync('getAllDocumentsForUser mirror: zero accessible dogs still legi
   })())
 
 // =========================================================================
-// SECTION 2 — claimed-reminder aggregators (getReminders,
-// getAllRemindersForUser, getAllPendingReminders): permission-denied is
-// the EXPECTED, by-design outcome until tenantId reassignment — treated
-// as "no claimed reminders yet", not a failure. Any OTHER code means the
-// aggregate genuinely doesn't know the claimed-reminder state and must
-// reject rather than silently present tenant-only results as complete.
+// SECTION 2 (round 16) — claimed-reminder aggregators (getReminders,
+// getAllRemindersForUser, getAllPendingReminders): completeness of the
+// claimed-reminder segment is UNKNOWN on ANY query failure — never
+// assumed zero. permission-denied is no longer a special case; every
+// failure code rejects the whole aggregate, proving no partial
+// tenant-only result can escape as if it were the complete answer.
 // =========================================================================
-function codeReader(err) { return err && err.code ? err.code : 'unknown' }
-
-await checkAsync('claimed-reminder mirror: permission-denied on the claimed query still returns tenant-only reminders (expected deny, not a failure)',
+await checkAsync('claimed-reminder mirror: permission-denied on the claimed query now REJECTS the whole aggregate (round 16 — no longer treated as an expected, harmless deny)',
   (async () => {
-    const tenantReminders = [{ id: 't1' }, { id: 't2' }]
-    const result = await claimedReminderMergeMirror(
-      tenantReminders, ['claimed-dog-1'],
-      async () => { throw Object.assign(new Error('denied'), { code: 'permission-denied' }) },
-      codeReader,
-    )
-    return result.length === 2 && result.every(r => tenantReminders.some(t => t.id === r.id))
+    let threw = false
+    let resolvedWithTenantOnly = false
+    try {
+      const result = await claimedReminderMergeMirror(
+        [{ id: 't1' }, { id: 't2' }], ['claimed-dog-1'],
+        async () => { throw Object.assign(new Error('denied'), { code: 'permission-denied' }) },
+      )
+      resolvedWithTenantOnly = result.length === 2
+    } catch (err) {
+      threw = err instanceof GetRemindersErrorMirror
+    }
+    return threw && !resolvedWithTenantOnly
   })())
 
-await checkAsync('claimed-reminder mirror: a GENUINE failure (unavailable) on the claimed query rejects the whole aggregate, never silently returns tenant-only as if complete',
+await checkAsync('claimed-reminder mirror: a genuine failure (unavailable) on the claimed query also rejects the whole aggregate',
   (async () => {
     let threw = false
     try {
       await claimedReminderMergeMirror(
         [{ id: 't1' }], ['claimed-dog-1'],
         async () => { throw Object.assign(new Error('down'), { code: 'unavailable' }) },
-        codeReader,
       )
     } catch (err) {
       threw = err instanceof GetRemindersErrorMirror
@@ -141,15 +149,25 @@ await checkAsync('claimed-reminder mirror: a GENUINE failure (unavailable) on th
     return threw
   })())
 
-await checkAsync('claimed-reminder mirror: an unknown/unrecognized code on the claimed query also rejects (fail closed, not just a fixed allowlist of "safe" failures)',
+await checkAsync('claimed-reminder mirror: an unknown/unrecognized code on the claimed query also rejects',
   (async () => {
     let threw = false
     try {
       await claimedReminderMergeMirror(
         [{ id: 't1' }], ['claimed-dog-1'],
         async () => { throw Object.assign(new Error('mystery'), { code: 'resource-exhausted' }) },
-        codeReader,
       )
+    } catch (err) {
+      threw = err instanceof GetRemindersErrorMirror
+    }
+    return threw
+  })())
+
+await checkAsync('claimed-reminder mirror: a thrown value with NO code at all also rejects (not just recognized Firestore codes)',
+  (async () => {
+    let threw = false
+    try {
+      await claimedReminderMergeMirror([{ id: 't1' }], ['claimed-dog-1'], async () => { throw new Error('no code here') })
     } catch (err) {
       threw = err instanceof GetRemindersErrorMirror
     }
@@ -162,15 +180,14 @@ await checkAsync('claimed-reminder mirror: both tenant and claimed succeed and a
     const result = await claimedReminderMergeMirror(
       tenantReminders, ['claimed-dog-1'],
       async () => fakeSnap([{ id: 'r1' }, { id: 'r2' }]), // r1 duplicated across both sources
-      codeReader,
     )
     return result.length === 2
   })())
 
-await checkAsync('claimed-reminder mirror: no claimed dogs at all skips the claimed query entirely and returns tenant reminders only',
+await checkAsync('claimed-reminder mirror: no claimed dogs at all skips the claimed query entirely and returns tenant reminders only (legitimate — not a failure)',
   (async () => {
     const tenantReminders = [{ id: 't1' }]
-    const result = await claimedReminderMergeMirror(tenantReminders, [], async () => { throw new Error('should never be called') }, codeReader)
+    const result = await claimedReminderMergeMirror(tenantReminders, [], async () => { throw new Error('should never be called') })
     return result.length === 1 && result[0].id === 't1'
   })())
 
@@ -196,22 +213,24 @@ await checkAsync('claimed-reminder mirror: no claimed dogs at all skips the clai
   const getRemindersMatch = dbSrc.match(/export async function getReminders\([\s\S]*?\n}\r?\n/)
   const getRemindersBlock = getRemindersMatch ? getRemindersMatch[0] : ''
   check('getReminders() source was actually located for inspection', getRemindersBlock.length > 0)
-  check('getReminders() distinguishes permission-denied (expected) from other codes (genuine failure) on the claimed-reminder query',
-    /code !== 'permission-denied'/.test(getRemindersBlock) && /throw new GetRemindersError\(\)/.test(getRemindersBlock))
+  check('getReminders() round 16: NO LONGER special-cases permission-denied on the claimed-reminder query — every failure throws GetRemindersError unconditionally',
+    !/code !== 'permission-denied'/.test(getRemindersBlock) && /throw new GetRemindersError\(\)/.test(getRemindersBlock))
 
   const getAllRemindersMatch = dbSrc.match(/export async function getAllRemindersForUser\([\s\S]*?\n}\r?\n/)
   const getAllRemindersBlock = getAllRemindersMatch ? getAllRemindersMatch[0] : ''
   check('getAllRemindersForUser() source was actually located for inspection', getAllRemindersBlock.length > 0)
-  check('getAllRemindersForUser() distinguishes permission-denied from other codes on the claimed-reminder query',
-    /code !== 'permission-denied'/.test(getAllRemindersBlock) && /throw new GetRemindersError\(\)/.test(getAllRemindersBlock))
+  check('getAllRemindersForUser() round 16: no longer special-cases permission-denied on the claimed-reminder query',
+    !/code !== 'permission-denied'/.test(getAllRemindersBlock) && /throw new GetRemindersError\(\)/.test(getAllRemindersBlock))
 
   const getAllPendingMatch = dbSrc.match(/export async function getAllPendingReminders\([\s\S]*?\n}\r?\n/)
   const getAllPendingBlock = getAllPendingMatch ? getAllPendingMatch[0] : ''
   check('getAllPendingReminders() source was actually located for inspection', getAllPendingBlock.length > 0)
-  check('getAllPendingReminders() distinguishes permission-denied from other codes on the claimed-reminder query',
-    /code !== 'permission-denied'/.test(getAllPendingBlock) && /throw new GetRemindersError\(\)/.test(getAllPendingBlock))
+  check('getAllPendingReminders() round 16: no longer special-cases permission-denied on the claimed-reminder query',
+    !/code !== 'permission-denied'/.test(getAllPendingBlock) && /throw new GetRemindersError\(\)/.test(getAllPendingBlock))
   check('getAllPendingReminders() no longer has an unconditional swallow-to-empty catch around the claimed query',
     !/catch \(err\) \{\s*console\.error\('Failed to fetch claimed-dog pending reminders/.test(dbSrc))
+  check('no reminder aggregator anywhere in db.ts still reads a permission-denied exemption code (round 15\'s exemption fully removed, not just relocated)',
+    !dbSrc.includes("code !== 'permission-denied'"))
 
   check('safeReadFirestoreErrorCode is exported (reusable by page-level loaders for consistent sanitized logging)',
     /export function safeReadFirestoreErrorCode/.test(dbSrc))

@@ -195,4 +195,68 @@ await checkAsync('a request begun while signed out never becomes current after a
   }
 }
 
+// =========================================================================
+// SECTION 8 (round 16, Blocker 2) — UID-keyed remounting: AppLayout
+// renders <Outlet key={user?.uid}/>, structurally eliminating the
+// account-switch race for every routed page in one stroke (a torn-down
+// component instance's async continuations can never write into or paint
+// the new instance, since they're different component instances
+// entirely — not just the same instance with updated props).
+// =========================================================================
+{
+  const appLayoutSrc = readFileSync(new URL('../src/components/layout/AppLayout.tsx', import.meta.url), 'utf8')
+  check('AppLayout renders <Outlet key={user?.uid} /> — forces a full remount of the routed page on every account switch',
+    /<Outlet key=\{user\?\.uid\} \/>/.test(appLayoutSrc))
+  check('AppLayout itself does NOT remount (no key on AppLayout\'s own root) — it must persist as the sidebar shell',
+    !/<AppLayout[^>]*key=/.test(readFileSync(new URL('../src/components/App.tsx', import.meta.url), 'utf8')))
+}
+
+// =========================================================================
+// SECTION 9 (round 16, Blocker 2) — useRequestGuard's uid write moved
+// from a passive useEffect to the render body (render-time ref mutation),
+// and mount-tracking moved from useEffect to useLayoutEffect — both
+// verified behaviorally in test-round16-request-guard-lifecycle.mjs;
+// re-verified here via source pattern as a fast regression tripwire.
+// =========================================================================
+{
+  const guardSrc = readFileSync(new URL('../src/hooks/useRequestGuard.ts', import.meta.url), 'utf8')
+  check('useRequestGuard writes state.setUid(uid) directly in the render body, NOT inside a useEffect',
+    (() => {
+      // The render-time write must appear BEFORE the first useLayoutEffect
+      // call (i.e. outside any effect callback).
+      const setUidIdx = guardSrc.indexOf('state.setUid(uid)')
+      const firstEffectIdx = guardSrc.indexOf('useLayoutEffect(()')
+      return setUidIdx !== -1 && firstEffectIdx !== -1 && setUidIdx < firstEffectIdx
+    })())
+  check('useRequestGuard uses useLayoutEffect (not useEffect) for mount tracking',
+    /useLayoutEffect\(\(\) => \{\s*state\.setMounted\(true\)/.test(guardSrc) && !/useEffect\(\(\) => \{\s*state\.setMounted\(true\)/.test(guardSrc))
+  check('useRequestGuard no longer imports useEffect at all (only useLayoutEffect + useRef)',
+    /import \{ useLayoutEffect, useRef \} from 'react'/.test(guardSrc))
+  check('RequestGuardState.setUid() bumps generation on any uid CHANGE (not just on beginRequest() calls) — closes the A→B→A flip-flop resurrection gap',
+    /setUid\(uid: string \| null \| undefined\) \{\s*if \(uid !== this\.uid\) \{\s*this\.uid = uid\s*this\.generation\+\+/.test(guardSrc))
+}
+
+// =========================================================================
+// SECTION 10 (round 16, Blocker 4) — AppLayout's pending-claim and
+// litter counts use null/unknown on failure, matching dogCount's
+// pre-existing contract, instead of silently defaulting to 0
+// =========================================================================
+{
+  const appLayoutSrc = readFileSync(new URL('../src/components/layout/AppLayout.tsx', import.meta.url), 'utf8')
+  check('pendingClaimCount is typed number | null (not just number)',
+    /const \[pendingClaimCount, setPendingClaimCount\] = useState<number \| null>\(null\)/.test(appLayoutSrc))
+  check('pendingClaimCount is set to null (not 0) on a claimTransferredDogs() failure',
+    /claimTransferredDogs\(user\.uid, user\.email, 'check'\)[\s\S]{0,200}catch\(\(\) => \{ if \(req\.isCurrent\(\)\) setPendingClaimCount\(null\) \}\)/.test(appLayoutSrc))
+  check('the pending-claim banner checks pendingClaimCount !== null before checking > 0 (never renders "0 dogs waiting" for an unknown count)',
+    /pendingClaimCount !== null && pendingClaimCount > 0/.test(appLayoutSrc))
+  check('litterCount is set to null (not 0) on a getLitters() failure',
+    /getLitters\(\)[\s\S]{0,120}catch\(\(\) => \{ if \(req\.isCurrent\(\)\) setLitterCount\(null\) \}\)/.test(appLayoutSrc))
+  check('AppLayout\'s count-clearing effects use useLayoutEffect (clear before paint), not useEffect',
+    (() => {
+      const dogCountEffectMatch = appLayoutSrc.match(/useLayoutEffect\(\(\) => \{\s*setDogCount\(null\)/)
+      const litterCountEffectMatch = appLayoutSrc.match(/useLayoutEffect\(\(\) => \{\s*setLitterCount\(null\)/)
+      return !!dogCountEffectMatch && !!litterCountEffectMatch
+    })())
+}
+
 await summary()

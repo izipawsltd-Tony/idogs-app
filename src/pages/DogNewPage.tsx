@@ -5,6 +5,7 @@ import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType, parseDobStrict 
 import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -60,6 +61,20 @@ export default function DogNewPage({ toast }: Props) {
     setSubmitting(false)
   }
 
+  // Codex round 16: binds every create/submit path to the UID that
+  // INITIATED it, not whatever UID happens to be current when each await
+  // resolves. Combined with submittingRef above: acquireSubmitLock() is
+  // the single-flight gate (prevents a second concurrent attempt),
+  // beginRequest() is the identity gate (detects whether the account
+  // changed mid-operation). This page is also rendered behind
+  // `<Outlet key={user?.uid}/>` (see AppLayout.tsx), so a genuine account
+  // switch actually unmounts this whole instance and mounts a fresh one
+  // for the new account — but that doesn't retroactively cancel an
+  // ALREADY-IN-FLIGHT promise chain from the old instance, so every await
+  // below still explicitly re-checks isCurrent() before proceeding to the
+  // next step, particularly right before createDog() itself.
+  const { beginRequest } = useRequestGuard(user?.uid)
+
   const [form, setForm] = useState<DogFormData>({
     name: '', breed: '', sex: 'female',
     dateOfBirth: '', colour: '', microchip: '', ankc: '', notes: '', pedigreeRegister: 'main',
@@ -69,17 +84,31 @@ export default function DogNewPage({ toast }: Props) {
   // Check free tier limit on mount. This is a safety/precondition check —
   // Codex round 14 requires it fail CLOSED: if we can't confirm the
   // account is under its plan limit, we must not let dog creation proceed.
+  // Codex round 16: bound to the UID that initiated the check — if the
+  // account switches while this is in flight, the result is discarded
+  // (isCurrent() false) rather than applied to whatever account happens
+  // to be signed in when it resolves. No authenticated UID at all blocks
+  // creation outright, same as a failed check.
   function checkLimit() {
+    if (!user) {
+      setLimitCheckError(true)
+      setLoading(false)
+      return
+    }
+    const req = beginRequest()
     setLoading(true)
     setLimitCheckError(false)
     getDogs().then(dogs => {
+      if (!req.isCurrent()) return
       const active = dogs.filter((d: any) => d.status !== 'transferred')
       setActiveDogCount(active.length)
       const isFreePlan = FREE_PLANS.includes(profile?.plan ?? 'free')
       setBlocked(isFreePlan && active.length >= FREE_DOG_LIMIT)
     }).catch(() => {
-      setLimitCheckError(true)
-    }).finally(() => setLoading(false))
+      if (req.isCurrent()) setLimitCheckError(true)
+    }).finally(() => {
+      if (req.isCurrent()) setLoading(false)
+    })
   }
 
   useEffect(() => {
@@ -136,9 +165,18 @@ export default function DogNewPage({ toast }: Props) {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
+    // No authenticated UID at all — block creation outright rather than
+    // attempting a create that has no valid session to attribute it to.
+    if (!user?.uid) {
+      toast('Your session has changed — please sign in again', 'error')
+      return
+    }
     // Synchronous, first line, before any await (including the duplicate
     // check's own getDogs() call below) — see submittingRef's comment.
     if (!acquireSubmitLock()) return
+    // Captures the initiating UID via useRequestGuard — every await below
+    // re-checks req.isCurrent() before proceeding to the next step.
+    const req = beginRequest()
     if (!form.name || !form.breed || !form.dateOfBirth) {
       toast('Please fill in name, breed and date of birth', 'error')
       releaseSubmitLock()
@@ -158,13 +196,26 @@ export default function DogNewPage({ toast }: Props) {
     // re-enter a dog (e.g. correcting a mistaken delete).
     try {
       const existingDogs = await getDogs()
+      if (!req.isCurrent()) {
+        // Codex round 16: the account changed while this duplicate check
+        // was in flight. A stale operation must release its OWN lock —
+        // never leave it held for whatever comes next — and must not act
+        // on a duplicate-check result computed against a different
+        // account's dogs. This page remounts fresh for the new account
+        // (see the Outlet key in AppLayout.tsx), so that fresh instance
+        // will run its own, correctly-scoped check if the user submits
+        // again there.
+        releaseSubmitLock()
+        return
+      }
       const active = existingDogs.filter((d: any) => d.status !== 'transferred')
       const microchipMatch = form.microchip && active.find((d: any) => d.microchip && d.microchip === form.microchip)
       const nameMatch = !microchipMatch && active.find((d: any) => d.name.trim().toLowerCase() === form.name.trim().toLowerCase())
       if (microchipMatch) {
         // Pausing for the user's modal decision — release the lock so
         // either "Add anyway" or a fresh Submit click can acquire it
-        // again; each acquires its own lock at its own entry point.
+        // again; each acquires its own lock (and its own beginRequest())
+        // at its own entry point.
         setDuplicateWarning({ matchedBy: 'microchip', existingDogName: microchipMatch.name })
         releaseSubmitLock()
         return
@@ -186,7 +237,7 @@ export default function DogNewPage({ toast }: Props) {
     // Lock stays held — proceedWithCreate() is called synchronously from
     // here with no intervening await, so there's no window for a second
     // click to slip in; proceedWithCreate() releases it on every exit.
-    await proceedWithCreate()
+    await proceedWithCreate(req)
   }
 
   // Codex round 15: assumes the submit lock is ALREADY held by whichever
@@ -195,13 +246,33 @@ export default function DogNewPage({ toast }: Props) {
   // calls createDog(), and the one place responsible for releasing the
   // lock on every terminal outcome (success or failure), guaranteeing at
   // most one successful create per acquired lock.
-  async function proceedWithCreate() {
+  //
+  // Codex round 16: `req` is the caller's beginRequest() token, captured
+  // at the SAME synchronous moment the lock was acquired. Re-checked
+  // immediately before createDog() — the actual attribution of the new
+  // dog to a tenant is separately hardened at the source in
+  // src/lib/db.ts's createDog() (captures its own uid once, before its
+  // internal passport-reservation await), so this check's job is
+  // specifically to avoid running any FOLLOW-UP action (uploads, vaccine/
+  // health records, navigation) under a session that's no longer the one
+  // that initiated the create.
+  async function proceedWithCreate(req: ReturnType<typeof beginRequest>) {
     setLoading(true)
     try {
+      if (!req.isCurrent()) return
       const dogId = await createDog({
         ...form,
         breederIdValue: form.breederIdType === 'NONE' ? '' : form.breederIdValue,
       }, isOwner ? 'OWNER_CREATED' : 'BREEDER_ISSUED')
+      if (!req.isCurrent()) {
+        // The dog was already correctly created under the INITIATING
+        // account (db.ts captures its own uid before its await, so
+        // attribution is correct regardless of what happened to the
+        // session after this call started) — but this session has since
+        // changed, so no further action (uploads, records, toast,
+        // navigation) should run as if it were still active.
+        return
+      }
 
       // Now that the dog exists, upload any files that were scanned before
       // we had a dogId to attach them to (fixes "fail to save file" when
@@ -546,14 +617,18 @@ export default function DogNewPage({ toast }: Props) {
                 style={{ flex: 1 }}
                 disabled={submitting}
                 onClick={() => {
-                  // Same single-flight lock as handleSubmit — synchronous,
-                  // first line, before proceedWithCreate's own await.
-                  // A second rapid click on "Add anyway" is a no-op: the
-                  // lock is already held, so acquireSubmitLock() returns
-                  // false and nothing further happens.
+                  // Same single-flight lock AND UID binding as
+                  // handleSubmit — both acquired synchronously, first
+                  // line, before proceedWithCreate's own await. A second
+                  // rapid click on "Add anyway" is a no-op: the lock is
+                  // already held, so acquireSubmitLock() returns false
+                  // and nothing further happens. No authenticated UID
+                  // blocks creation outright, same as handleSubmit.
+                  if (!user?.uid) { toast('Your session has changed — please sign in again', 'error'); return }
                   if (!acquireSubmitLock()) return
+                  const req = beginRequest()
                   setDuplicateWarning(null)
-                  proceedWithCreate()
+                  proceedWithCreate(req)
                 }}
               >
                 Add anyway
