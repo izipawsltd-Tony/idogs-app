@@ -1,8 +1,9 @@
 import React from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import ToastContainer from './ui/Toast'
+import type { ToastMessage } from '../types'
 
 // Pages
 import LandingPage from '../pages/LandingPage'
@@ -49,6 +50,25 @@ function BreederOnlyRoute({ children }: { children: React.ReactNode }) {
   if (profile?.role === 'owner') return <Navigate to="/app/dashboard" replace />
   return <>{children}</>
 }
+
+// Codex round 17, Blocker 4: React Router does NOT remount a route's
+// element when only a URL param changes within the same route match —
+// navigating from /app/dogs/A to /app/dogs/B re-renders the SAME
+// DogDetailPage instance with a new dogId, relying entirely on its own
+// internal effects to clear and reload. That's the same class of timing
+// risk useRequestGuard's own render-vs-commit fix (this round) closes for
+// uid tracking — an effect-based clear can still leave a frame where
+// Dog A's fields are visible right after the URL/params for Dog B have
+// already committed. Keying on dogId here forces React to fully unmount
+// the previous dog's instance and mount a completely fresh one on every
+// navigation between two dogs — the same structural guarantee
+// `<Outlet key={user?.uid}/>` gives AppLayout for account switches,
+// applied at the dog level: a torn-down instance's state can never be
+// visible again, and there is no state to accidentally carry over.
+function DogDetailRoute({ toast }: { toast: (msg: string, type?: ToastMessage['type']) => void }) {
+  const { dogId } = useParams<{ dogId: string }>()
+  return <DogDetailPage key={dogId} toast={toast} />
+}
 export default function App() {
   const { toasts, toast, dismiss } = useToast()
 
@@ -76,7 +96,7 @@ export default function App() {
           <Route path="dashboard" element={<DashboardPage toast={toast} />} />
           <Route path="dogs" element={<DogListPage toast={toast} />} />
           <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
-          <Route path="dogs/:dogId" element={<DogDetailPage toast={toast} />} />
+          <Route path="dogs/:dogId" element={<DogDetailRoute toast={toast} />} />
           <Route path="litters" element={<LittersPage toast={toast} />} />
           <Route path="reminders" element={<RemindersPage toast={toast} />} />
           <Route path="settings" element={<SettingsPage toast={toast} />} />

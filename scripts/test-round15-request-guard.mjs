@@ -212,21 +212,28 @@ await checkAsync('a request begun while signed out never becomes current after a
 }
 
 // =========================================================================
-// SECTION 9 (round 16, Blocker 2) — useRequestGuard's uid write moved
-// from a passive useEffect to the render body (render-time ref mutation),
-// and mount-tracking moved from useEffect to useLayoutEffect — both
-// verified behaviorally in test-round16-request-guard-lifecycle.mjs;
-// re-verified here via source pattern as a fast regression tripwire.
+// SECTION 9 — useRequestGuard's uid tracking. Round 16 moved it from a
+// passive useEffect to a render-time ref mutation; round 17 found THAT
+// unsafe too (a render can be called by React without ever committing,
+// and a render-body mutation would still have applied even though
+// nothing from that render was ever painted) and moved it into a
+// useLayoutEffect instead — commit-phase-only. Full behavioral coverage
+// (including the "abandoned render" structural guarantee, given this
+// environment's testing-tool limitations) lives in
+// test-round16-request-guard-lifecycle.mjs Section 7; re-verified here
+// via source pattern as a fast regression tripwire.
 // =========================================================================
 {
   const guardSrc = readFileSync(new URL('../src/hooks/useRequestGuard.ts', import.meta.url), 'utf8')
-  check('useRequestGuard writes state.setUid(uid) directly in the render body, NOT inside a useEffect',
+  check('useRequestGuard round 17: state.setUid(uid) is called ONLY inside a useLayoutEffect — never in the render body',
     (() => {
-      // The render-time write must appear BEFORE the first useLayoutEffect
-      // call (i.e. outside any effect callback).
-      const setUidIdx = guardSrc.indexOf('state.setUid(uid)')
-      const firstEffectIdx = guardSrc.indexOf('useLayoutEffect(()')
-      return setUidIdx !== -1 && firstEffectIdx !== -1 && setUidIdx < firstEffectIdx
+      const hookBodyMatch = guardSrc.match(/export function useRequestGuard\([\s\S]*?\n}\r?\n/)
+      const hookBody = hookBodyMatch ? hookBodyMatch[0] : ''
+      if (!hookBody) return false
+      const firstEffectIdx = hookBody.indexOf('useLayoutEffect(')
+      const renderBody = firstEffectIdx === -1 ? hookBody : hookBody.slice(0, firstEffectIdx)
+      const wrappedMatch = /useLayoutEffect\(\(\) => \{\s*state\.setUid\(uid\)\s*\}, \[state, uid\]\)/.test(hookBody)
+      return !/state\.setUid\(/.test(renderBody) && wrappedMatch
     })())
   check('useRequestGuard uses useLayoutEffect (not useEffect) for mount tracking',
     /useLayoutEffect\(\(\) => \{\s*state\.setMounted\(true\)/.test(guardSrc) && !/useEffect\(\(\) => \{\s*state\.setMounted\(true\)/.test(guardSrc))
@@ -245,12 +252,21 @@ await checkAsync('a request begun while signed out never becomes current after a
   const appLayoutSrc = readFileSync(new URL('../src/components/layout/AppLayout.tsx', import.meta.url), 'utf8')
   check('pendingClaimCount is typed number | null (not just number)',
     /const \[pendingClaimCount, setPendingClaimCount\] = useState<number \| null>\(null\)/.test(appLayoutSrc))
+  // Codex round 17: the catch bodies grew a second statement
+  // (setPendingClaimError(true)/setLitterCountError(true), for the new
+  // explicit Retry affordance) — still guarded by the same
+  // req.isCurrent() check, still setting the count to null rather than 0,
+  // just no longer a single bare statement in braces.
   check('pendingClaimCount is set to null (not 0) on a claimTransferredDogs() failure',
-    /claimTransferredDogs\(user\.uid, user\.email, 'check'\)[\s\S]{0,200}catch\(\(\) => \{ if \(req\.isCurrent\(\)\) setPendingClaimCount\(null\) \}\)/.test(appLayoutSrc))
+    /claimTransferredDogs\(user\.uid, user\.email, 'check'\)[\s\S]{0,300}catch\(\(\) => \{ if \(req\.isCurrent\(\)\) \{ setPendingClaimCount\(null\); setPendingClaimError\(true\) \} \}\)/.test(appLayoutSrc))
   check('the pending-claim banner checks pendingClaimCount !== null before checking > 0 (never renders "0 dogs waiting" for an unknown count)',
     /pendingClaimCount !== null && pendingClaimCount > 0/.test(appLayoutSrc))
   check('litterCount is set to null (not 0) on a getLitters() failure',
-    /getLitters\(\)[\s\S]{0,120}catch\(\(\) => \{ if \(req\.isCurrent\(\)\) setLitterCount\(null\) \}\)/.test(appLayoutSrc))
+    /getLitters\(\)[\s\S]{0,200}catch\(\(\) => \{ if \(req\.isCurrent\(\)\) \{ setLitterCount\(null\); setLitterCountError\(true\) \} \}\)/.test(appLayoutSrc))
+  check('a failed dog/litter/pending-claim count load surfaces an explicit Retry affordance (round 17), not just a silent null',
+    /dogCountError && \(/.test(appLayoutSrc) && /pendingClaimError && \(/.test(appLayoutSrc) && /litterCountError && isOwner && \(/.test(appLayoutSrc))
+  check('Retry calls re-run the SAME uid/generation-guarded loader function, not a bare re-fetch',
+    /onClick=\{loadDogAndClaimCounts\}/.test(appLayoutSrc) && /onClick=\{loadLitterCount\}/.test(appLayoutSrc))
   check('AppLayout\'s count-clearing effects use useLayoutEffect (clear before paint), not useEffect',
     (() => {
       const dogCountEffectMatch = appLayoutSrc.match(/useLayoutEffect\(\(\) => \{\s*setDogCount\(null\)/)

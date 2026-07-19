@@ -123,6 +123,16 @@ export default function AppLayout({ toast }: Props) {
   // matching dogCount/litterCount's existing null-means-unknown contract;
   // the banner below only ever renders on a confirmed positive count.
   const [pendingClaimCount, setPendingClaimCount] = useState<number | null>(null)
+  // Codex round 17: null already means "unknown" (loading OR failed) for
+  // all three counts, but the UI had no way to tell those two unknown
+  // states apart — so a genuine load failure looked identical to "still
+  // loading" forever, with no way for the user to recover short of an
+  // account switch or full page reload. These error flags let the sidebar
+  // show an explicit Retry affordance only once a load has actually
+  // failed, never while it's still in flight.
+  const [dogCountError, setDogCountError] = useState(false)
+  const [pendingClaimError, setPendingClaimError] = useState(false)
+  const [litterCountError, setLitterCountError] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement>(null)
 
@@ -153,32 +163,53 @@ export default function AppLayout({ toast }: Props) {
   const { beginRequest: beginDogCountRequest } = useRequestGuard(user?.uid)
   const { beginRequest: beginLitterCountRequest } = useRequestGuard(user?.uid)
 
-  useLayoutEffect(() => {
-    setDogCount(null)
-    setPendingClaimCount(null)
+  // Codex round 17: extracted from the effect body so the same
+  // uid/generation-guarded load can be re-run from an explicit Retry
+  // click, not just on mount/uid-change. Each call takes its own fresh
+  // req token from beginDogCountRequest() — a click that fires after the
+  // account has already switched is bound to the OLD uid's generation, so
+  // isCurrent() is false by the time it would resolve and its stale
+  // result never commits, same guarantee as the original effect.
+  function loadDogAndClaimCounts() {
     if (!user) return
     const req = beginDogCountRequest()
+    setDogCountError(false)
     getDogs()
       .then(dogs => {
         if (!req.isCurrent()) return
         setDogCount(dogs.filter((d: any) => d.status !== 'transferred' && d.transferStatus !== 'pendingClaim').length)
       })
-      .catch(() => { if (req.isCurrent()) setDogCount(null) })
+      .catch(() => { if (req.isCurrent()) { setDogCount(null); setDogCountError(true) } })
     if (user.email) {
+      setPendingClaimError(false)
       claimTransferredDogs(user.uid, user.email, 'check')
         .then(dogs => { if (req.isCurrent()) setPendingClaimCount(dogs.length) })
-        .catch(() => { if (req.isCurrent()) setPendingClaimCount(null) })
+        .catch(() => { if (req.isCurrent()) { setPendingClaimCount(null); setPendingClaimError(true) } })
     }
+  }
+
+  function loadLitterCount() {
+    if (!isOwner || !user) return
+    const req = beginLitterCountRequest()
+    setLitterCountError(false)
+    getLitters()
+      .then(l => { if (req.isCurrent()) setLitterCount(l.length) })
+      .catch(() => { if (req.isCurrent()) { setLitterCount(null); setLitterCountError(true) } })
+  }
+
+  useLayoutEffect(() => {
+    setDogCount(null)
+    setPendingClaimCount(null)
+    setDogCountError(false)
+    setPendingClaimError(false)
+    loadDogAndClaimCounts()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
 
   useLayoutEffect(() => {
     setLitterCount(null)
-    if (!isOwner || !user) return
-    const req = beginLitterCountRequest()
-    getLitters()
-      .then(l => { if (req.isCurrent()) setLitterCount(l.length) })
-      .catch(() => { if (req.isCurrent()) setLitterCount(null) })
+    setLitterCountError(false)
+    loadLitterCount()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, isOwner])
 
@@ -420,8 +451,17 @@ export default function AppLayout({ toast }: Props) {
             </div>
             {dogLimit < 9999 ? (
               <>
-                <div style={{ fontSize: 11, color: 'var(--mid)', marginBottom: 5 }}>
-                  {dogCount === null ? '—' : dogCount} / {dogLimit} dogs
+                <div style={{ fontSize: 11, color: 'var(--mid)', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>{dogCount === null ? '—' : dogCount} / {dogLimit} dogs</span>
+                  {dogCountError && (
+                    <button
+                      onClick={loadDogAndClaimCounts}
+                      style={{ fontSize: 10, color: 'var(--brand-600)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                      title="Couldn't load your dog count"
+                    >
+                      Retry
+                    </button>
+                  )}
                 </div>
                 <div style={{ height: 4, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{
@@ -434,8 +474,17 @@ export default function AppLayout({ toast }: Props) {
                 </div>
               </>
             ) : (
-              <div style={{ fontSize: 11, color: 'var(--mid)' }}>
-                {dogCount === null ? '—' : dogCount} dogs · Unlimited
+              <div style={{ fontSize: 11, color: 'var(--mid)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>{dogCount === null ? '—' : dogCount} dogs · Unlimited</span>
+                {dogCountError && (
+                  <button
+                    onClick={loadDogAndClaimCounts}
+                    style={{ fontSize: 10, color: 'var(--brand-600)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                    title="Couldn't load your dog count"
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             )}
             {planCfg.upgrade && (
@@ -475,6 +524,38 @@ export default function AppLayout({ toast }: Props) {
             <Link to="/app/claim-dogs" className="btn btn-sm" style={{ background: '#fff', color: 'var(--brand-600)', border: 'none' }}>
               Review transfer
             </Link>
+          </div>
+        )}
+        {/* Codex round 17: a failed pending-claim check previously left
+            pendingClaimCount at null with no visible sign anything went
+            wrong — indistinguishable from "confirmed zero pending
+            claims". A dog genuinely waiting to be claimed could go
+            unnoticed indefinitely. This banner only shows on a confirmed
+            error (not during normal loading, and never once a successful
+            check has run), and Retry re-runs the same uid/generation-
+            guarded check. */}
+        {pendingClaimError && (
+          <div style={{ background: 'var(--gold-50, #FDF3DC)', color: '#8A6D1F', padding: '10px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid #F0D590', zIndex: 45 }}>
+            <div style={{ fontSize: 13 }}>⚠️ Couldn't check for dogs waiting to be claimed.</div>
+            <button
+              onClick={loadDogAndClaimCounts}
+              className="btn btn-sm"
+              style={{ background: 'transparent', border: '1px solid #8A6D1F', color: '#8A6D1F' }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        {litterCountError && isOwner && (
+          <div style={{ background: 'var(--gold-50, #FDF3DC)', color: '#8A6D1F', padding: '10px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid #F0D590', zIndex: 45 }}>
+            <div style={{ fontSize: 13 }}>⚠️ Couldn't load your litter count — the Litters section may be hidden until this succeeds.</div>
+            <button
+              onClick={loadLitterCount}
+              className="btn btn-sm"
+              style={{ background: 'transparent', border: '1px solid #8A6D1F', color: '#8A6D1F' }}
+            >
+              Retry
+            </button>
           </div>
         )}
 

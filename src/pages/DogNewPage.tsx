@@ -47,17 +47,42 @@ export default function DogNewPage({ toast }: Props) {
   // on a terminal outcome — every other exit path (validation error,
   // duplicate-check load failure, showing the duplicate warning) releases
   // it explicitly before returning.
+  //
+  // Codex round 17: acquire/release are now TOKEN-specific. acquireSubmitLock()
+  // must stay the absolute FIRST gate — before beginRequest() — because
+  // beginRequest() bumps a shared monotonic generation counter (see
+  // useRequestGuard): if a second, ultimately-rejected concurrent call
+  // were allowed to call beginRequest() before losing the lock race, it
+  // would invalidate the FIRST (legitimately proceeding) call's token as
+  // a side effect, even though the first call is the one actually
+  // running. So acquireSubmitLock() hands back its OWN, separate
+  // lock-ownership token (a fresh Symbol) — independent of
+  // beginRequest()'s staleness token — and only the winner goes on to
+  // call beginRequest(). releaseSubmitLock() only actually releases if
+  // the token passed in still owns the lock. Under the current control
+  // flow this is defense-in-depth (only the operation that successfully
+  // acquired the lock ever reaches a release call site for it, since a
+  // second concurrent attempt fails acquireSubmitLock() immediately and
+  // never reaches its own release), but it directly prevents a class of
+  // bug where a stale operation's cleanup (e.g. a finally block running
+  // after the account already switched) could otherwise release a lock a
+  // newer operation now legitimately holds.
   const submittingRef = useRef(false)
+  const lockOwnerTokenRef = useRef<symbol | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  function acquireSubmitLock(): boolean {
-    if (submittingRef.current) return false
+  function acquireSubmitLock(): symbol | null {
+    if (submittingRef.current) return null
+    const token = Symbol('dog-new-submit-lock')
     submittingRef.current = true
+    lockOwnerTokenRef.current = token
     setSubmitting(true)
-    return true
+    return token
   }
-  function releaseSubmitLock() {
+  function releaseSubmitLock(token: symbol) {
+    if (lockOwnerTokenRef.current !== token) return
     submittingRef.current = false
+    lockOwnerTokenRef.current = null
     setSubmitting(false)
   }
 
@@ -72,8 +97,18 @@ export default function DogNewPage({ toast }: Props) {
   // for the new account — but that doesn't retroactively cancel an
   // ALREADY-IN-FLIGHT promise chain from the old instance, so every await
   // below still explicitly re-checks isCurrent() before proceeding to the
-  // next step, particularly right before createDog() itself.
+  // next step — not just before createDog(), but after every subsequent
+  // await too (each file upload, each vaccine/health write, and again
+  // immediately before the final toast/navigate).
   const { beginRequest } = useRequestGuard(user?.uid)
+
+  // Codex round 17: survives across a retry of the SAME component
+  // instance — if createDog() already succeeded in an earlier attempt
+  // (the dog and its passport were created) but a LATER step (uploads,
+  // vaccine/health writes) failed, a resubmit must resume by reusing this
+  // dogId rather than calling createDog() again, which would create a
+  // second, duplicate Dog/Passport for the same submission.
+  const createdDogIdRef = useRef<string | null>(null)
 
   const [form, setForm] = useState<DogFormData>({
     name: '', breed: '', sex: 'female',
@@ -172,19 +207,21 @@ export default function DogNewPage({ toast }: Props) {
       return
     }
     // Synchronous, first line, before any await (including the duplicate
-    // check's own getDogs() call below) — see submittingRef's comment.
-    if (!acquireSubmitLock()) return
+    // check's own getDogs() call below) and BEFORE beginRequest() — see
+    // the lock comment above for why the ordering matters.
+    const lockToken = acquireSubmitLock()
+    if (!lockToken) return
     // Captures the initiating UID via useRequestGuard — every await below
     // re-checks req.isCurrent() before proceeding to the next step.
     const req = beginRequest()
     if (!form.name || !form.breed || !form.dateOfBirth) {
       toast('Please fill in name, breed and date of birth', 'error')
-      releaseSubmitLock()
+      releaseSubmitLock(lockToken)
       return
     }
     if (!parseDobStrict(form.dateOfBirth)) {
       toast('Date of birth is not a valid past date', 'error')
-      releaseSubmitLock()
+      releaseSubmitLock(lockToken)
       return
     }
 
@@ -205,7 +242,7 @@ export default function DogNewPage({ toast }: Props) {
         // (see the Outlet key in AppLayout.tsx), so that fresh instance
         // will run its own, correctly-scoped check if the user submits
         // again there.
-        releaseSubmitLock()
+        releaseSubmitLock(lockToken)
         return
       }
       const active = existingDogs.filter((d: any) => d.status !== 'transferred')
@@ -217,12 +254,12 @@ export default function DogNewPage({ toast }: Props) {
         // again; each acquires its own lock (and its own beginRequest())
         // at its own entry point.
         setDuplicateWarning({ matchedBy: 'microchip', existingDogName: microchipMatch.name })
-        releaseSubmitLock()
+        releaseSubmitLock(lockToken)
         return
       }
       if (nameMatch) {
         setDuplicateWarning({ matchedBy: 'name', existingDogName: nameMatch.name })
-        releaseSubmitLock()
+        releaseSubmitLock(lockToken)
         return
       }
     } catch {
@@ -230,14 +267,14 @@ export default function DogNewPage({ toast }: Props) {
       // if we can't confirm this isn't a duplicate, we must not create
       // the dog. Fail closed and let the user retry the submit.
       toast('Could not check for duplicate dogs — please try again', 'error')
-      releaseSubmitLock()
+      releaseSubmitLock(lockToken)
       return
     }
 
     // Lock stays held — proceedWithCreate() is called synchronously from
     // here with no intervening await, so there's no window for a second
     // click to slip in; proceedWithCreate() releases it on every exit.
-    await proceedWithCreate(req)
+    await proceedWithCreate(req, lockToken)
   }
 
   // Codex round 15: assumes the submit lock is ALREADY held by whichever
@@ -252,34 +289,56 @@ export default function DogNewPage({ toast }: Props) {
   // immediately before createDog() — the actual attribution of the new
   // dog to a tenant is separately hardened at the source in
   // src/lib/db.ts's createDog() (captures its own uid once, before its
-  // internal passport-reservation await), so this check's job is
+  // internal passport-reservation transaction), so this check's job is
   // specifically to avoid running any FOLLOW-UP action (uploads, vaccine/
   // health records, navigation) under a session that's no longer the one
   // that initiated the create.
-  async function proceedWithCreate(req: ReturnType<typeof beginRequest>) {
+  //
+  // Codex round 17: re-checks req.isCurrent() after EVERY await, not just
+  // before createDog() — each file upload, each vaccine/health write, and
+  // once more immediately before the terminal toast/navigate. An account
+  // switch/logout partway through stops all remaining writes rather than
+  // racing them to completion under a session that's no longer active.
+  // createdDogIdRef makes retrying safe: if createDog() already succeeded
+  // in an earlier attempt but a later step failed, this resumes from the
+  // existing dogId instead of creating a second, duplicate Dog/Passport.
+  // Every previously-silent `.catch(() => {})` is now an explicit,
+  // counted failure, surfaced honestly in the final toast instead of
+  // disappearing — a partial failure is never reported as either total
+  // success or total failure.
+  async function proceedWithCreate(req: ReturnType<typeof beginRequest>, lockToken: symbol) {
     setLoading(true)
     try {
       if (!req.isCurrent()) return
-      const dogId = await createDog({
-        ...form,
-        breederIdValue: form.breederIdType === 'NONE' ? '' : form.breederIdValue,
-      }, isOwner ? 'OWNER_CREATED' : 'BREEDER_ISSUED')
-      if (!req.isCurrent()) {
-        // The dog was already correctly created under the INITIATING
-        // account (db.ts captures its own uid before its await, so
-        // attribution is correct regardless of what happened to the
-        // session after this call started) — but this session has since
-        // changed, so no further action (uploads, records, toast,
-        // navigation) should run as if it were still active.
-        return
+
+      let dogId = createdDogIdRef.current
+      if (!dogId) {
+        dogId = await createDog({
+          ...form,
+          breederIdValue: form.breederIdType === 'NONE' ? '' : form.breederIdValue,
+        }, isOwner ? 'OWNER_CREATED' : 'BREEDER_ISSUED')
+        createdDogIdRef.current = dogId
+        if (!req.isCurrent()) {
+          // The dog was already correctly created under the INITIATING
+          // account (db.ts captures its own uid before its transaction,
+          // so attribution is correct regardless of what happened to the
+          // session after this call started) — but this session has
+          // since changed, so no further action (uploads, records, toast,
+          // navigation) should run as if it were still active. dogId is
+          // remembered above so a future resume never duplicates it.
+          return
+        }
       }
 
-      // Now that the dog exists, upload any files that were scanned before
-      // we had a dogId to attach them to (fixes "fail to save file" when
-      // scanning during dog creation).
+      // Now that the dog exists, upload any files that were scanned
+      // before we had a dogId to attach them to (fixes "fail to save
+      // file" when scanning during dog creation). Every failure is
+      // counted, never silently discarded.
       let filesSaved = 0
+      let uploadFailures = 0
       if (user?.uid && pendingFiles.length > 0) {
         for (const f of pendingFiles) {
+          if (!req.isCurrent()) return
           try {
             const uploadRes = await fetch('/api/upload-document', {
               method: 'POST',
@@ -294,16 +353,21 @@ export default function DogNewPage({ toast }: Props) {
               }),
             })
             if (uploadRes.ok) filesSaved++
+            else uploadFailures++
           } catch {
-            // continue trying remaining files even if one upload fails
+            uploadFailures++
           }
         }
       }
+      if (!req.isCurrent()) return
 
+      let recordFailures = 0
       for (const doc of scannedDocs) {
         if (doc.vaccines) {
           for (const v of doc.vaccines) {
-            if (v.name) {
+            if (!v.name) continue
+            if (!req.isCurrent()) return
+            try {
               await addVaccineRecord({
                 dogId,
                 name: v.name,
@@ -311,30 +375,61 @@ export default function DogNewPage({ toast }: Props) {
                 nextDue: v.nextDue || '',
                 vetClinic: v.vetClinic || '',
                 uncertain: v.uncertain || false,
-              }).catch(() => {})
+              })
+            } catch {
+              recordFailures++
             }
           }
         }
         if (doc.healthTest?.result && doc.healthTest?.testType) {
-          await addHealthTest({
-            dogId,
-            testType: doc.healthTest.testType,
-            result: doc.healthTest.result,
-            dateTested: doc.healthTest.dateTested || '',
-            lab: doc.healthTest.lab || '',
-            certNumber: doc.healthTest.certNumber || '',
-          }).catch(() => {})
+          if (!req.isCurrent()) return
+          try {
+            await addHealthTest({
+              dogId,
+              testType: doc.healthTest.testType,
+              result: doc.healthTest.result,
+              dateTested: doc.healthTest.dateTested || '',
+              lab: doc.healthTest.lab || '',
+              certNumber: doc.healthTest.certNumber || '',
+            })
+          } catch {
+            recordFailures++
+          }
         }
       }
+
+      // One last check before the terminal toast/navigate — a switch
+      // that happened during the very last write above must still stop
+      // this session from acting as if it were the active one.
+      if (!req.isCurrent()) return
+
       const totalVaccines = scannedDocs.reduce((sum, d) => sum + (d.vaccines?.length || 0), 0)
-      const fileNote = pendingFiles.length > 0 ? `, ${filesSaved}/${pendingFiles.length} document(s) saved` : ''
-      toast(`${form.name} added with ${totalVaccines} vaccine record(s)${fileNote}!`)
+      const totalFailures = uploadFailures + recordFailures
+      if (totalFailures > 0) {
+        // Honest partial-failure reporting: the dog and its passport DO
+        // exist (created atomically — see db.ts) — this must never read
+        // as total failure, but it must also never silently claim full
+        // success while records are actually missing.
+        const savedNote = pendingFiles.length > 0 ? ` ${filesSaved}/${pendingFiles.length} document(s) saved.` : ''
+        toast(`${form.name} was created, but ${totalFailures} record${totalFailures !== 1 ? 's' : ''} failed to save.${savedNote} Open the dog's page to add them.`, 'error')
+      } else {
+        const fileNote = pendingFiles.length > 0 ? `, ${filesSaved}/${pendingFiles.length} document(s) saved` : ''
+        toast(`${form.name} added with ${totalVaccines} vaccine record(s)${fileNote}!`)
+      }
       navigate(`/app/dogs/${dogId}`)
     } catch {
-      toast('Failed to create dog profile', 'error')
+      if (createdDogIdRef.current) {
+        // The dog itself was already created (this failure happened in a
+        // follow-up step, or on a resumed retry after one) — never claim
+        // total failure when a real, saved Dog/Passport already exists.
+        toast(`${form.name} was created, but some records failed to save. Open the dog's page to check and retry.`, 'error')
+        if (req.isCurrent()) navigate(`/app/dogs/${createdDogIdRef.current}`)
+      } else {
+        toast('Failed to create dog profile', 'error')
+      }
     } finally {
       setLoading(false)
-      releaseSubmitLock()
+      releaseSubmitLock(lockToken)
     }
   }
 
@@ -618,17 +713,22 @@ export default function DogNewPage({ toast }: Props) {
                 disabled={submitting}
                 onClick={() => {
                   // Same single-flight lock AND UID binding as
-                  // handleSubmit — both acquired synchronously, first
-                  // line, before proceedWithCreate's own await. A second
-                  // rapid click on "Add anyway" is a no-op: the lock is
-                  // already held, so acquireSubmitLock() returns false
-                  // and nothing further happens. No authenticated UID
-                  // blocks creation outright, same as handleSubmit.
+                  // handleSubmit — lock acquired synchronously, first,
+                  // BEFORE beginRequest() (see the lock comment above for
+                  // why that order matters), before proceedWithCreate's
+                  // own await. A second rapid click on "Add anyway" is a
+                  // no-op: the lock is already held, so acquireSubmitLock()
+                  // returns null and nothing further happens. No
+                  // authenticated UID blocks creation outright, same as
+                  // handleSubmit. This resumes safely even if a PREVIOUS
+                  // "Add anyway"/submit already created the dog — see
+                  // createdDogIdRef in proceedWithCreate().
                   if (!user?.uid) { toast('Your session has changed — please sign in again', 'error'); return }
-                  if (!acquireSubmitLock()) return
+                  const lockToken = acquireSubmitLock()
+                  if (!lockToken) return
                   const req = beginRequest()
                   setDuplicateWarning(null)
-                  proceedWithCreate(req)
+                  proceedWithCreate(req, lockToken)
                 }}
               >
                 Add anyway

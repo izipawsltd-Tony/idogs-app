@@ -367,26 +367,6 @@ export async function getDogByPassportId(passportId: string): Promise<Dog | null
 // error rather than silently reusing an existing ID.
 const MAX_PASSPORT_ID_ATTEMPTS = 5
 
-async function reservePassportId(namePart: string, yearPart: string, createdByUid: string): Promise<string> {
-  for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
-    const candidate = `${namePart}-${yearPart}-${nanoid(4)}`
-    const reservationRef = doc(db, 'passportReservations', candidate)
-    try {
-      await runTransaction(db, async (tx) => {
-        const snap = await tx.get(reservationRef)
-        if (snap.exists()) throw new Error('PASSPORT_ID_TAKEN')
-        tx.set(reservationRef, { createdAt: serverTimestamp(), createdBy: createdByUid })
-      })
-      return candidate
-    } catch (err: any) {
-      if (err?.message !== 'PASSPORT_ID_TAKEN') throw err
-      // else: genuine collision on this specific candidate — loop and
-      // try a fresh one, up to the bound above.
-    }
-  }
-  throw new Error('Could not generate a unique passport ID — please try again')
-}
-
 // sourceType defaults to BREEDER_ISSUED so LittersPage.tsx's puppy-add
 // flow (and any other caller that doesn't pass one) is unaffected. Only
 // DogNewPage.tsx passes 'OWNER_CREATED' explicitly, for the pet-owner
@@ -395,47 +375,99 @@ async function reservePassportId(namePart: string, yearPart: string, createdByUi
 // tenantId/currentOwnerId/createdByUserId are always derived from the
 // authenticated session (uid()) — never accepted from the caller — so
 // there is no way for a caller to assign ownership to another user.
+//
+// Codex round 16: creatorUid captured ONCE, before any await — the
+// previous version called uid() again after reservePassportId()'s own
+// await (a real Firestore transaction — genuine network latency), so an
+// auth change mid-call could attribute the new dog to the wrong tenant.
+//
+// Codex round 17: reservePassportId() + a separate addDoc() replaced
+// with ONE atomic transaction. Previously, the passport reservation
+// committed in its OWN transaction, and the dog document was created
+// afterwards via a completely separate, non-transactional addDoc() call —
+// if that second write failed for ANY reason (network drop, quota,
+// permission edge case), the reservation was already permanently
+// committed with nothing to show for it: a genuine orphan, silently
+// burning one candidate out of the ~1M-per-cohort passportId space
+// forever, with no dog and no way to reclaim it. Now: the Dog's document
+// reference is generated FIRST (doc(collection(db, 'dogs')) — a pure
+// client-side ID allocation, no network round-trip, no write) and both
+// the reservation and the dog document are staged inside the SAME
+// runTransaction() call, bound together via reservation.dogId. Firestore
+// transactions are all-or-nothing: if anything in the callback throws
+// (including the uniqueness check), NEITHER write is ever committed — no
+// orphaned reservation, no orphaned dog, regardless of what fails or
+// when. The retry loop's `dogRef` is reused across PASSPORT_ID_TAKEN
+// retries (never regenerated) — safe because a failed attempt commits
+// NOTHING, so there is no partial state at that id to collide with.
+// Firestore's own internal transaction retry (triggered by a detected
+// write conflict during commit, not by our PASSPORT_ID_TAKEN catch below)
+// re-runs this same callback verbatim — safe by construction, since the
+// callback is a pure sequence of reads and staged writes with no
+// external side effects, so re-running it before an eventual single
+// commit is idempotent.
 export async function createDog(
   data: DogFormData,
   sourceType: 'BREEDER_ISSUED' | 'OWNER_CREATED' = 'BREEDER_ISSUED'
 ): Promise<string> {
-  // Codex round 16: captured ONCE, before reservePassportId()'s own
-  // await (a real Firestore transaction — genuine network latency, not
-  // instantaneous). The previous version called uid() again AFTER that
-  // await, when building the addDoc() payload below — if the caller's
-  // Firebase auth session changed during the passport-reservation
-  // transaction (account switch, logout+login as someone else), the new
-  // dog would silently be attributed to the WRONG tenant/owner, using
-  // whoever happened to be signed in when the write finally happened
-  // rather than whoever actually initiated the create. Every identity
-  // field below now uses this single captured value, so the dog is
-  // always attributed to whoever was authenticated at the moment
-  // createDog() was called, regardless of what happens to the auth state
-  // while the passport reservation is in flight.
   const creatorUid = uid()
   const now = new Date()
   const yearPart = data.dateOfBirth ? data.dateOfBirth.slice(0, 4) : now.getFullYear().toString()
   const namePart = (data.name || 'DOG').slice(0, 3).toUpperCase()
-  const passportId = await reservePassportId(namePart, yearPart, creatorUid)
-  const ref = await addDoc(collection(db, 'dogs'), {
-    ...data,
-    tenantId: creatorUid,
-    currentOwnerId: creatorUid,
-    createdByUserId: creatorUid,
-    sourceType,
-    // originBreederId is breeder provenance — omitted for owner-created
-    // dogs rather than written as a meaningless copy of tenantId.
-    ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: creatorUid } : {}),
-    passportId,
-    lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
-    isDeceased: false,
-    photos: [],
-    notes: data.notes || '',
-    status: 'active',
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  })
-  return ref.id
+
+  // Generated first — a pure client-side ID allocation with no network
+  // round-trip and no write. Reused across every PASSPORT_ID_TAKEN retry
+  // below; see the function-level comment for why that's safe.
+  const dogRef = doc(collection(db, 'dogs'))
+
+  for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
+    const candidate = `${namePart}-${yearPart}-${nanoid(4)}`
+    const reservationRef = doc(db, 'passportReservations', candidate)
+    try {
+      await runTransaction(db, async (tx) => {
+        const reservationSnap = await tx.get(reservationRef)
+        if (reservationSnap.exists()) throw new Error('PASSPORT_ID_TAKEN')
+        tx.set(reservationRef, {
+          createdAt: serverTimestamp(),
+          createdBy: creatorUid,
+          // Bound to the exact dog this reservation belongs to — mirrors
+          // the same dogId-binding convention api/create-litter-puppy.js
+          // already uses server-side for its own reservation+dog
+          // transaction, so a reservation can never be mistaken for a
+          // match against a different dog just because createdBy happens
+          // to agree.
+          dogId: dogRef.id,
+        })
+        tx.set(dogRef, {
+          ...data,
+          tenantId: creatorUid,
+          currentOwnerId: creatorUid,
+          createdByUserId: creatorUid,
+          sourceType,
+          // originBreederId is breeder provenance — omitted for
+          // owner-created dogs rather than written as a meaningless copy
+          // of tenantId.
+          ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: creatorUid } : {}),
+          passportId: candidate,
+          lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
+          isDeceased: false,
+          photos: [],
+          notes: data.notes || '',
+          status: 'active',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        })
+      })
+      return dogRef.id
+    } catch (err: any) {
+      if (err?.message !== 'PASSPORT_ID_TAKEN') throw err
+      // else: genuine collision on this specific candidate — the WHOLE
+      // transaction (reservation AND dog write) rolled back, so nothing
+      // was committed. Loop and try a fresh candidate, up to the bound
+      // above — dogRef itself is untouched and safe to reuse.
+    }
+  }
+  throw new Error('Could not generate a unique passport ID — please try again')
 }
 
 // Codex round 3, Blocker 3, then moved server-side + hardened in Codex

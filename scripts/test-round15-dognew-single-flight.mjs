@@ -288,7 +288,7 @@ await checkAsync('A\'s createDog() is in flight → account switches to B before
         // this specific fix.
         capturedUidAtCreateTime = mirror.getTrackedUid()
         createCalls++
-        await sleep(10) // simulates reservePassportId()'s real Firestore transaction latency
+        await sleep(10) // simulates createDog()'s real Firestore runTransaction() latency
         return 'dog-1'
       },
       form: { name: 'Luna', breed: 'Labrador', dateOfBirth: '2020-01-01', microchip: '' },
@@ -328,89 +328,128 @@ await checkAsync('no authenticated UID at all: "Add anyway" also blocks immediat
   })())
 
 // =========================================================================
-// SECTION 4c (round 16) — the createDog() uid-capture-before-await fix in
-// src/lib/db.ts, isolated: uid MUST be read once, before
-// reservePassportId()'s own await, not re-read afterwards when building
-// the addDoc() payload.
+// SECTION 4c (round 16, updated round 17) — the createDog() uid-capture-
+// before-await fix in src/lib/db.ts, isolated: uid MUST be read once,
+// before the function's own internal await, not re-read afterwards when
+// building the write payload.
+//
+// Codex round 17: the internal await this section is guarding against
+// changed shape — round 16 had a separate reservePassportId() transaction
+// followed by a non-transactional addDoc(); round 17 replaced both with
+// ONE runTransaction() call that stages the reservation and the Dog write
+// together (see scripts/test-passport-uniqueness.mjs for the emulator-
+// backed atomicity tests of that transaction itself). The uid-capture-
+// before-await risk this section tests is unchanged in kind — a
+// runTransaction() call is still a real Firestore round-trip an account
+// switch could land inside — so the source-pattern checks below were
+// updated to look for the new shape (creatorUid before runTransaction(),
+// tx.set(dogRef, {...creatorUid...})) instead of the removed
+// reservePassportId()/addDoc() pair.
 // =========================================================================
 {
   // Mirrors the BUGGY (pre-round-16) shape: reads uid() again after the
   // await, so a uid change during the await changes the attributed owner.
-  async function createDogBuggyMirror(reservePassportIdImpl, getCurrentUid) {
-    await reservePassportIdImpl()
+  async function createDogBuggyMirror(transactionImpl, getCurrentUid) {
+    await transactionImpl()
     return { tenantId: getCurrentUid(), currentOwnerId: getCurrentUid() } // BUG: re-read after await
   }
-  // Mirrors the FIXED (round-16) shape: uid captured once, before the await.
-  async function createDogFixedMirror(reservePassportIdImpl, getCurrentUid) {
+  // Mirrors the FIXED (round-16/17) shape: uid captured once, before the await.
+  async function createDogFixedMirror(transactionImpl, getCurrentUid) {
     const creatorUid = getCurrentUid()
-    await reservePassportIdImpl()
+    await transactionImpl()
     return { tenantId: creatorUid, currentOwnerId: creatorUid }
   }
 
-  await checkAsync('BUGGY shape (for contrast): a uid switch during reservePassportId()\'s await DOES leak into tenantId — demonstrates the bug this round fixes actually existed',
+  await checkAsync('BUGGY shape (for contrast): a uid switch during the transaction\'s await DOES leak into tenantId — demonstrates the bug this round fixes actually existed',
     (async () => {
       let currentUid = 'account-A'
       const result = await createDogBuggyMirror(async () => {
         await sleep(5)
-        currentUid = 'account-B' // account switches mid-reservation
+        currentUid = 'account-B' // account switches mid-transaction
       }, () => currentUid)
       return result.tenantId === 'account-B' // proves the bug: dog attributed to the WRONG (later) account
     })())
 
-  await checkAsync('FIXED shape: a uid switch during reservePassportId()\'s await does NOT leak into tenantId — always attributed to the account that initiated the create',
+  await checkAsync('FIXED shape: a uid switch during the transaction\'s await does NOT leak into tenantId — always attributed to the account that initiated the create',
     (async () => {
       let currentUid = 'account-A'
       const result = await createDogFixedMirror(async () => {
         await sleep(5)
-        currentUid = 'account-B' // account switches mid-reservation
+        currentUid = 'account-B' // account switches mid-transaction
       }, () => currentUid)
       return result.tenantId === 'account-A' && result.currentOwnerId === 'account-A'
     })())
 
+  // db.ts uses CRLF line endings — \r?\n throughout, not a bare \n.
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
-  const createDogMatch = dbSrc.match(/export async function createDog\([\s\S]*?\n}\r?\n/)
+  const createDogMatch = dbSrc.match(/export async function createDog\([\s\S]*?\r?\n}\r?\n/)
   const createDogBlock = createDogMatch ? createDogMatch[0] : ''
   check('createDog() source was actually located for inspection', createDogBlock.length > 0)
-  check('createDog() captures uid() into creatorUid BEFORE calling reservePassportId() (before its own internal await)',
+  check('createDog() captures uid() into creatorUid BEFORE the runTransaction() call (before its own internal await)',
     createDogBlock.indexOf('const creatorUid = uid()') > -1 &&
-    createDogBlock.indexOf('const creatorUid = uid()') < createDogBlock.indexOf('await reservePassportId('))
+    createDogBlock.indexOf('const creatorUid = uid()') < createDogBlock.indexOf('await runTransaction('))
   check('createDog() uses creatorUid (not a fresh uid() call) for tenantId', /tenantId: creatorUid/.test(createDogBlock))
   check('createDog() uses creatorUid (not a fresh uid() call) for currentOwnerId', /currentOwnerId: creatorUid/.test(createDogBlock))
   check('createDog() uses creatorUid (not a fresh uid() call) for createdByUserId', /createdByUserId: creatorUid/.test(createDogBlock))
-  check('createDog() no longer calls uid() again inside the addDoc() payload (only the one captured value is used)',
+  check('createDog() no longer calls uid() again inside the Dog write payload (only the one captured value is used)',
     (() => {
-      const addDocMatch = createDogBlock.match(/addDoc\(collection\(db, 'dogs'\), \{[\s\S]*?\}\)/)
-      const addDocBlock = addDocMatch ? addDocMatch[0] : ''
-      return addDocBlock.length > 0 && !/uid\(\)/.test(addDocBlock)
+      const dogSetMatch = createDogBlock.match(/tx\.set\(dogRef, \{[\s\S]*?\r?\n {8}\}\)/)
+      const dogSetBlock = dogSetMatch ? dogSetMatch[0] : ''
+      return dogSetBlock.length > 0 && !/uid\(\)/.test(dogSetBlock)
     })())
-  check('reservePassportId() now takes the caller\'s captured uid as a parameter, rather than reading uid() itself inside its own transaction',
-    /async function reservePassportId\(namePart: string, yearPart: string, createdByUid: string\)/.test(dbSrc) &&
-    /createdBy: createdByUid/.test(dbSrc))
+  check('no standalone reservePassportId() function remains — reservation + Dog write are staged in the same runTransaction() callback as createDog() itself',
+    !/function reservePassportId/.test(dbSrc) &&
+    /tx\.set\(reservationRef,/.test(createDogBlock) &&
+    /tx\.set\(dogRef,/.test(createDogBlock))
+  check('the reservation write uses creatorUid for createdBy (same captured value, not a fresh uid() read)',
+    /createdBy: creatorUid/.test(createDogBlock))
 }
 
 // =========================================================================
 // SECTION 5 — source-pattern checks against the REAL DogNewPage.tsx
+//
+// Codex round 17: the lock itself was redesigned — acquireSubmitLock() now
+// returns a per-call `symbol | null` OWNERSHIP TOKEN (not a boolean), and
+// releaseSubmitLock(token) only actually releases if the passed token
+// still owns the lock (see the round-17 comment in DogNewPage.tsx for why:
+// a rejected concurrent caller must never be able to invalidate the
+// winner's beginRequest() generation by calling beginRequest() before
+// losing the lock race — acquireSubmitLock() is always called strictly
+// BEFORE beginRequest(), not after). Every check below was updated to
+// match that token-based shape instead of the old boolean one.
 // =========================================================================
 {
+  // DogNewPage.tsx uses CRLF line endings — \r?\n throughout, not a bare \n.
   const src = readFileSync(new URL('../src/pages/DogNewPage.tsx', import.meta.url), 'utf8')
 
   check('submittingRef is a useRef (synchronous), not just useState', /const submittingRef = useRef\(false\)/.test(src))
-  check('acquireSubmitLock() is defined and checks the ref synchronously', /function acquireSubmitLock\(\)[\s\S]{0,120}if \(submittingRef\.current\) return false/.test(src))
+  check('lockOwnerTokenRef holds the current lock-owning token (synchronous), not just useState',
+    /const lockOwnerTokenRef = useRef<symbol \| null>\(null\)/.test(src))
+  check('acquireSubmitLock() checks the ref synchronously and returns null (not a boolean) when already locked',
+    /function acquireSubmitLock\(\): symbol \| null \{\s*if \(submittingRef\.current\) return null/.test(src))
+  check('acquireSubmitLock() mints a fresh Symbol as the ownership token on each successful acquire',
+    /const token = Symbol\(['"]dog-new-submit-lock['"]\)/.test(src))
+  check('releaseSubmitLock(token) only releases if the passed token still owns the lock (token-specific release)',
+    /function releaseSubmitLock\(token: symbol\) \{\s*if \(lockOwnerTokenRef\.current !== token\) return/.test(src))
 
-  const handleSubmitMatch = src.match(/async function handleSubmit\(e: FormEvent\)[\s\S]*?\n  \}\r?\n\r?\n  \/\/ Codex round 15: assumes/)
+  const handleSubmitMatch = src.match(/async function handleSubmit\(e: FormEvent\)[\s\S]*?\r?\n  \}\r?\n\r?\n  \/\/ Codex round 15: assumes/)
   const handleSubmitBlock = handleSubmitMatch ? handleSubmitMatch[0] : ''
   check('handleSubmit() was actually located for inspection (sanity check on the pattern above)', handleSubmitBlock.length > 0)
   check('handleSubmit() acquires the submit lock right after e.preventDefault() — only comments and a synchronous (no-await) UID-presence guard may sit between them (round 16: "if no authenticated UID, block creation")',
-    /e\.preventDefault\(\)(?:\s*\/\/[^\n]*\n|\s*if \(!user\?\.uid\)[\s\S]*?return\r?\n\s*\}\r?\n)*\s*if \(!acquireSubmitLock\(\)\) return/.test(handleSubmitBlock))
+    /e\.preventDefault\(\)(?:\s*\/\/[^\n]*\r?\n|\s*if \(!user\?\.uid\)[\s\S]*?return\r?\n\s*\}\r?\n)*\s*const lockToken = acquireSubmitLock\(\)\r?\n\s*if \(!lockToken\) return/.test(handleSubmitBlock))
   check('handleSubmit() does not await anything before acquiring the submit lock',
     !/await[\s\S]*?acquireSubmitLock/.test(handleSubmitBlock.slice(0, handleSubmitBlock.indexOf('acquireSubmitLock()') + 1)))
   check('handleSubmit() acquires the lock BEFORE the duplicate check\'s getDogs() call',
-    handleSubmitBlock.indexOf('acquireSubmitLock()') < handleSubmitBlock.indexOf('await getDogs()'))
-  check('handleSubmit() captures a beginRequest() token (UID binding) right after acquiring the lock, before any await',
-    handleSubmitBlock.indexOf('beginRequest()') > handleSubmitBlock.indexOf('acquireSubmitLock()') &&
-    handleSubmitBlock.indexOf('beginRequest()') < handleSubmitBlock.indexOf('await getDogs()'))
+    handleSubmitBlock.indexOf('const lockToken = acquireSubmitLock()') < handleSubmitBlock.indexOf('await getDogs()'))
+  check('handleSubmit() captures a beginRequest() token (UID binding) right after acquiring the lock, before any await — using the literal `const req = beginRequest()` call site, not just any mention of the word',
+    handleSubmitBlock.indexOf('const req = beginRequest()') > handleSubmitBlock.indexOf('const lockToken = acquireSubmitLock()') &&
+    handleSubmitBlock.indexOf('const req = beginRequest()') < handleSubmitBlock.indexOf('await getDogs()'))
   check('handleSubmit() re-verifies req.isCurrent() after the duplicate check\'s await, before proceeding',
     /await getDogs\(\)[\s\S]*?if \(!req\.isCurrent\(\)\)/.test(handleSubmitBlock))
+  check('every early return after acquiring the lock in handleSubmit() releases it with the SAME lockToken (never a bare releaseSubmitLock())',
+    !/releaseSubmitLock\(\)/.test(handleSubmitBlock) && /releaseSubmitLock\(lockToken\)/.test(handleSubmitBlock))
+  check('handleSubmit() hands the lock token through to proceedWithCreate() rather than releasing it early on the success path',
+    /await proceedWithCreate\(req, lockToken\)/.test(handleSubmitBlock))
 
   // Locate the ACTUAL "Add anyway" button JSX (not an earlier comment
   // mentioning the same phrase) by anchoring on its onClick handler,
@@ -421,11 +460,24 @@ await checkAsync('no authenticated UID at all: "Add anyway" also blocks immediat
   check('"Add anyway" onClick was actually located for inspection (sanity check on the pattern above)', addAnywayBlock.length > 0)
   check('"Add anyway" onClick checks for an authenticated UID before doing anything else',
     /if \(!user\?\.uid\)/.test(addAnywayBlock))
-  check('"Add anyway" onClick acquires the submit lock AND a fresh beginRequest() token before calling proceedWithCreate()',
-    /if \(!acquireSubmitLock\(\)\) return[\s\S]*?const req = beginRequest\(\)[\s\S]*?proceedWithCreate\(req\)/.test(addAnywayBlock))
-  check('"Add anyway" button is disabled while submitting', /disabled=\{submitting\}[\s\S]{0,300}Add anyway/.test(src))
+  check('"Add anyway" onClick acquires the submit lock (token-based) BEFORE a fresh beginRequest() call, then calls proceedWithCreate() with both',
+    /const lockToken = acquireSubmitLock\(\)\r?\n\s*if \(!lockToken\) return\r?\n\s*const req = beginRequest\(\)[\s\S]*?proceedWithCreate\(req, lockToken\)/.test(addAnywayBlock))
 
-  check('proceedWithCreate() releases the lock in a finally block', /releaseSubmitLock\(\)/.test(src) && /\} finally \{\s*setLoading\(false\)\s*releaseSubmitLock\(\)/.test(src))
+  // The onClick handler body between the button's `disabled` prop and the
+  // "Add anyway" label text is a large, heavily-commented block (round 17
+  // added several more lines to it) — search across the button's whole
+  // JSX rather than a short fixed character budget that a future comment
+  // addition could push the label past again.
+  const addAnywayButtonMatch = src.match(/<button\s+className="btn btn-primary"[\s\S]*?Add anyway\s*<\/button>/)
+  check('"Add anyway" button is disabled while submitting',
+    !!addAnywayButtonMatch && /disabled=\{submitting\}/.test(addAnywayButtonMatch[0]))
+
+  // Checks for an actual bare `releaseSubmitLock()` CALL (i.e. followed by
+  // a statement terminator/whitespace, not just any substring match) —
+  // the header comment above legitimately mentions the function name in
+  // prose without arguments, which must not count as a real violation.
+  check('proceedWithCreate() releases the lock via the token-specific releaseSubmitLock(lockToken), never a bare releaseSubmitLock() call',
+    !/releaseSubmitLock\(\)\s*[\r\n;]/.test(src) && /\} finally \{\s*setLoading\(false\)\r?\n\s*releaseSubmitLock\(lockToken\)/.test(src))
   check('the submit button is disabled while submitting', /disabled=\{loading \|\| submitting\}/.test(src))
 }
 

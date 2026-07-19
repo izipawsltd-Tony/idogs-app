@@ -9,12 +9,18 @@
 // Round 15 covered useRequestGuard.beginRequest()/isCurrent() only via
 // direct calls against the RequestGuardState class — real coverage of the
 // class's own logic, but it couldn't prove anything about the HOOK's
-// render/effect-timing behavior, which is exactly what round 16 fixes:
+// render/effect-timing behavior, which is exactly what round 16 fixed:
 // round 15 updated the tracked uid inside a passive useEffect, so a stale
 // response from the OLD uid could still read the OLD uid and wrongly
 // report itself current for one full passive-effect cycle AFTER a render
-// had already committed showing the NEW uid. Round 16 moves the uid write
-// into the render body itself (a ref mutation, not a state setter).
+// had already committed showing the NEW uid. Round 16 moved the uid write
+// into the render body itself (a ref mutation, not a state setter) — but
+// that turned out to be unsafe too (see Section 7, round 17): a render
+// function can be called by React without ever being committed (an
+// abandoned/interrupted render), and a render-body mutation would still
+// have applied even though nothing from that render was ever painted.
+// Round 17 moves the uid write into a useLayoutEffect instead — commit-
+// phase-only, so it only ever runs for a render that actually happened.
 //
 // This suite renders an ACTUAL function component using the REAL
 // useRequestGuard hook from src/hooks/useRequestGuard.ts (Node 24 executes
@@ -27,6 +33,7 @@
 //
 // Usage: node scripts/test-round16-request-guard-lifecycle.mjs (no emulator needed)
 
+import { readFileSync } from 'node:fs'
 import React, { useState, useLayoutEffect, useEffect } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { useRequestGuard } from '../src/hooks/useRequestGuard.ts'
@@ -291,6 +298,84 @@ function renderHarness(uid, controls, mode) {
 
   act(() => { renderer.unmount() })
   check('StrictMode: request is invalid after unmount', !req.isCurrent())
+}
+
+// =========================================================================
+// SECTION 7 (round 17) — "guard mutation during render" removed: uid
+// tracking must be commit-only, so an abandoned/uncommitted render can
+// never invalidate a still-current, still-painted request.
+//
+// Testing-tool limitation, stated plainly: react-test-renderer's public
+// API does not expose a way to genuinely abandon a render before commit
+// (there is no supported way to start a render and discard it without
+// going through TestRenderer.create()/.update(), both of which always
+// run the full commit + layout-effect cycle synchronously — confirmed
+// empirically while building this suite, including WITHOUT wrapping
+// calls in act(), which made no difference: layout effects are always
+// synchronous with commit in both React DOM and react-test-renderer,
+// unlike passive effects). There is no lower-level hook in this
+// environment (no jsdom, no react-dom/client, no access to React's
+// internal Scheduler/Fiber APIs) to force React to start-then-discard a
+// render. Given that constraint, this section proves the STRUCTURAL
+// guarantee instead: the hook contains no render-body mutation for an
+// abandoned render to ever apply in the first place, verified by
+// (a) a source-pattern check that RequestGuardState.setUid() is only
+// ever called from inside a useLayoutEffect body in the real file, and
+// (b) confirming every COMMITTED uid transition (the only kind
+// observable through this tool) is still correctly picked up, so the
+// fix didn't trade "unsafe but working" for "safe but broken".
+// =========================================================================
+{
+  const guardSrc = readFileSync(new URL('../src/hooks/useRequestGuard.ts', import.meta.url), 'utf8')
+
+  check('useRequestGuard() contains NO render-body call to state.setUid(...) — the only call site is inside a useLayoutEffect',
+    (() => {
+      const hookBodyMatch = guardSrc.match(/export function useRequestGuard\([\s\S]*?\n}\r?\n/)
+      const hookBody = hookBodyMatch ? hookBodyMatch[0] : ''
+      if (!hookBody) return false
+      // Exactly one call to state.setUid(, and it must be inside the
+      // useLayoutEffect(() => { ... }, [state, uid]) block, not loose in
+      // the function body before/after any effect.
+      const setUidCalls = (hookBody.match(/state\.setUid\(/g) || []).length
+      const effectWrappedMatch = hookBody.match(/useLayoutEffect\(\(\) => \{\s*state\.setUid\(uid\)\s*\}, \[state, uid\]\)/)
+      return setUidCalls === 1 && !!effectWrappedMatch
+    })())
+
+  check('the render body (everything before the first useLayoutEffect call) contains no state mutation at all',
+    (() => {
+      const hookBodyMatch = guardSrc.match(/export function useRequestGuard\([\s\S]*?\n}\r?\n/)
+      const hookBody = hookBodyMatch ? hookBodyMatch[0] : ''
+      const firstEffectIdx = hookBody.indexOf('useLayoutEffect(')
+      if (firstEffectIdx === -1) return false
+      const renderBody = hookBody.slice(0, firstEffectIdx)
+      return !/state\.set(Uid|Mounted)\(/.test(renderBody)
+    })())
+
+  check('mount-tracking is ALSO commit-only (useLayoutEffect, not render body or useEffect)',
+    /useLayoutEffect\(\(\) => \{\s*state\.setMounted\(true\)/.test(guardSrc) &&
+    !/useEffect\(\(\) => \{\s*state\.setMounted\(true\)/.test(guardSrc))
+}
+
+{
+  // Confirms the fix didn't regress the basic committed-transition case:
+  // every uid value that genuinely commits is still picked up correctly,
+  // in strict sequence, with no committed transition ever silently
+  // skipped or applied out of order.
+  const controls = {}
+  const renderer = renderHarness('seq-A', controls)
+  const reqA = controls.beginRequest()
+  act(() => { renderer.update(React.createElement(Harness, { uid: 'seq-B', controls })) })
+  const reqB = controls.beginRequest()
+  act(() => { renderer.update(React.createElement(Harness, { uid: 'seq-C', controls })) })
+  const reqC = controls.beginRequest()
+
+  check('round 17 regression check: after two committed uid transitions, only the LATEST (C) token is current',
+    !reqA.isCurrent() && !reqB.isCurrent() && reqC.isCurrent())
+
+  act(() => { controls.commit(reqC, 'seq-C-data') })
+  check('round 17 regression check: the current token commits its data normally', controls.getRenderedText() === 'seq-C-data')
+
+  act(() => { renderer.unmount() })
 }
 
 await summary()

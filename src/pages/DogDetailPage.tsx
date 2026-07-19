@@ -162,6 +162,133 @@ export default function DogDetailPage({ toast }: Props) {
   // data.
   const { beginRequest } = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
 
+  // Codex round 17, Blocker 4: each subordinate section gets its OWN
+  // independent request-guard instance (not the main loader's shared
+  // `beginRequest` above) so that retrying one section (e.g. Vaccines)
+  // doesn't invalidate an unrelated section's own in-flight retry (e.g.
+  // Worming) — they'd otherwise all share one generation counter and
+  // spuriously invalidate each other. All are still keyed on the same
+  // `${uid}:${dogId}` identity, so a genuine account/dog switch (or this
+  // component's own dogId/uid-keyed remount) still invalidates every
+  // section's retry uniformly. "Retry commits only for current UID +
+  // dogId + token" — the combined key covers UID+dogId, isCurrent()
+  // covers the token/generation.
+  const vaccinesGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
+  const wormingGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
+  const healthGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
+  const documentsGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
+  const scanCountGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
+  const remindersGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
+  const timelineGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
+
+  function retryVaccines() {
+    if (!dogId) return
+    const req = vaccinesGuard.beginRequest()
+    setVaccinesError(false)
+    getVaccineRecords(dogId).then(data => {
+      if (!req.isCurrent()) return
+      setVaccines(data); setVaccinesError(false)
+    }).catch(err => {
+      if (!req.isCurrent()) return
+      console.error('DogDetailPage: vaccines retry failed', { code: safeReadFirestoreErrorCode(err) })
+      setVaccinesError(true)
+    })
+  }
+  function retryWorming() {
+    if (!dogId) return
+    const req = wormingGuard.beginRequest()
+    setWormingError(false)
+    getWormingRecords(dogId).then(data => {
+      if (!req.isCurrent()) return
+      setWormings(data); setWormingError(false)
+    }).catch(err => {
+      if (!req.isCurrent()) return
+      console.error('DogDetailPage: worming retry failed', { code: safeReadFirestoreErrorCode(err) })
+      setWormingError(true)
+    })
+  }
+  function retryHealthTests() {
+    if (!dogId) return
+    const req = healthGuard.beginRequest()
+    setHealthTestsError(false)
+    getHealthTests(dogId).then(data => {
+      if (!req.isCurrent()) return
+      setHealthTests(data); setHealthTestsError(false)
+    }).catch(err => {
+      if (!req.isCurrent()) return
+      console.error('DogDetailPage: health tests retry failed', { code: safeReadFirestoreErrorCode(err) })
+      setHealthTestsError(true)
+    })
+  }
+  function retryDocuments() {
+    if (!dogId) return
+    const req = documentsGuard.beginRequest()
+    setDocumentsError(false)
+    getDogDocuments(dogId).then(data => {
+      if (!req.isCurrent()) return
+      setDocuments(data); setDocumentsError(false)
+    }).catch(err => {
+      if (!req.isCurrent()) return
+      console.error('DogDetailPage: documents retry failed', { code: safeReadFirestoreErrorCode(err) })
+      setDocumentsError(true)
+    })
+  }
+  function retryScanCount() {
+    if (!dogId) return
+    const req = scanCountGuard.beginRequest()
+    setScanCountError(false)
+    getScanCount(dogId).then(data => {
+      if (!req.isCurrent()) return
+      setScanCount(data); setScanCountError(false)
+    }).catch(err => {
+      if (!req.isCurrent()) return
+      console.error('DogDetailPage: scan count retry failed', { code: safeReadFirestoreErrorCode(err) })
+      setScanCountError(true)
+    })
+  }
+  function retryReminders() {
+    if (!dogId || !dog) return
+    const req = remindersGuard.beginRequest()
+    setRemindersError(false)
+    getReminders(dogId, user?.uid || '', dog).then(r => {
+      if (!req.isCurrent()) return
+      setReminders(isCurrentOwner(dog, user?.uid || '') ? r : r.filter(rem => rem.status === 'completed'))
+      setRemindersError(false)
+    }).catch(err => {
+      if (!req.isCurrent()) return
+      console.error('DogDetailPage: reminders retry failed', { code: safeReadFirestoreErrorCode(err) })
+      setRemindersError(true)
+    })
+  }
+  // Covers BOTH of the Timeline tab's own sources (activity notes, and
+  // life-stage events derived from audit logs) with a single retry —
+  // vaccines/worming/health tests (the Timeline's other three merged
+  // inputs) each already have their own dedicated retry above.
+  function retryTimeline() {
+    if (!dogId || !dog) return
+    const req = timelineGuard.beginRequest()
+    setNotesError(false)
+    setAuditError(false)
+    Promise.all([
+      getActivityNotes(dogId)
+        .then(data => ({ ok: true as const, data }))
+        .catch((err: unknown) => {
+          console.error('DogDetailPage: timeline (notes) retry failed', { code: safeReadFirestoreErrorCode(err) })
+          return { ok: false as const, data: [] as ActivityNote[] }
+        }),
+      getAuditLogs(dog.tenantId, dogId)
+        .then(data => ({ ok: true as const, data }))
+        .catch((err: unknown) => {
+          console.error('DogDetailPage: timeline (audit) retry failed', { code: safeReadFirestoreErrorCode(err) })
+          return { ok: false as const, data: [] as AuditEntry[] }
+        }),
+    ]).then(([nRes, auditRes]) => {
+      if (!req.isCurrent()) return
+      setNotes(nRes.data); setNotesError(!nRes.ok)
+      setLifeStageEvents(auditRes.data.filter(e => e.action === 'life_stage_changed')); setAuditError(!auditRes.ok)
+    })
+  }
+
   useEffect(() => {
     // Clear the previous dog's state immediately on a dogId/account
     // switch — a stale frame showing the WRONG dog (or a former
@@ -340,12 +467,17 @@ export default function DogDetailPage({ toast }: Props) {
   // any vaccine save so the tab reflects the new reminder right away.
   async function refreshReminders() {
     if (!dogId || !dog) return
+    const req = remindersGuard.beginRequest()
     try {
       const r = await getReminders(dogId, user?.uid || '', dog)
+      if (!req.isCurrent()) return
       setReminders(isCurrentOwner(dog, user?.uid || '') ? r : r.filter(rem => rem.status === 'completed'))
       setRemindersError(false)
     } catch (err) {
-      console.error('Failed to refresh reminders:', err)
+      if (!req.isCurrent()) return
+      // Codex round 17: fixed operation name + allowlisted code only —
+      // never the raw error (this previously logged `err` verbatim).
+      console.error('DogDetailPage: refreshReminders failed', { code: safeReadFirestoreErrorCode(err) })
       setRemindersError(true)
     }
   }
@@ -760,18 +892,18 @@ export default function DogDetailPage({ toast }: Props) {
           <AIScan onResult={handleScanResult} toast={toast} dogId={dog.id} tenantId={user?.uid} />
         </div>
       )}
-      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} />}
-      {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} />}
-      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} />}
-      {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} />}
-      {/* scanCountError isn't threaded through separately — by the time
-          any tab renders, the page-level loading gate has already
-          cleared, so scanCount === null unambiguously means "failed to
-          load" (never "still loading"), which PassportTab's existing
-          "Unavailable" copy already covers correctly (round 13). */}
-      {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} toast={toast} />}
-      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} />}
-      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} />}
+      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} onRetry={retryVaccines} />}
+      {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} />}
+      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} onRetry={retryHealthTests} />}
+      {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} onRetry={retryReminders} />}
+      {/* scanCount === null unambiguously means "failed to load" (never
+          "still loading", since the page-level loading gate has already
+          cleared by the time any tab renders) — PassportTab's own
+          "Unavailable" copy covers that (round 13); round 17 adds an
+          explicit Retry action alongside it. */}
+      {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />}
+      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} onRetry={retryDocuments} />}
+      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} />}
 
       {tab === 'breeding' && !isOwner && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
         await updateDog(dogId!, updates)
@@ -1321,7 +1453,7 @@ function InfoSection({ title, children }: { title: string; children: React.React
   )
 }
 
-function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
       <span style={{ color: 'var(--light)' }}>{label}</span>
@@ -1332,7 +1464,7 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
 
 // ── VACCINES TAB ──────────────────────────────────────────────
 
-function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc, onReminderSaved, error }: {
+function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc, onReminderSaved, error, onRetry }: {
   dogId: string; dogName: string; tenantId: string; userEmail: string;
   vaccines: VaccineRecord[];
   setVaccines: (v: VaccineRecord[]) => void;
@@ -1341,6 +1473,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
   onViewDoc: (path?: string | null, legacyUrl?: string | null) => void
   onReminderSaved: () => void | Promise<void>
   error?: boolean
+  onRetry?: () => void
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
@@ -1475,7 +1608,8 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
           <div className="empty-state-title">Couldn't load vaccine records</div>
-          <div className="empty-state-desc">This is a loading error, not an empty list. Please refresh the page to try again.</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list.</div>
+          {onRetry && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={onRetry}>Retry</button>}
         </div>
       ) : vaccines.length === 0 ? (
         <div className="empty-state">
@@ -1593,7 +1727,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
 
 // ── WORMING TAB ───────────────────────────────────────────────
 
-function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error }: {
+function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error, onRetry }: {
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -1602,6 +1736,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
   setWormings: (w: WormingRecord[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
   error?: boolean
+  onRetry?: () => void
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
@@ -1697,7 +1832,8 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
           <div className="empty-state-title">Couldn't load worming records</div>
-          <div className="empty-state-desc">This is a loading error, not an empty list. Please refresh the page to try again.</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list.</div>
+          {onRetry && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={onRetry}>Retry</button>}
         </div>
       ) : wormings.length === 0 ? (
         <div className="empty-state">
@@ -1740,7 +1876,7 @@ function formatHealthResult(result: unknown): string {
   return ''
 }
 
-function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast, error }: {
+function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast, error, onRetry }: {
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -1749,6 +1885,7 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
   setHealthTests: (h: HealthTest[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
   error?: boolean
+  onRetry?: () => void
 }) {
   const { user } = useAuth()
   const [showForm, setShowForm] = useState(false)
@@ -1906,7 +2043,8 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
           <div className="empty-state-title">Couldn't load health tests</div>
-          <div className="empty-state-desc">This is a loading error, not an empty list. Please refresh the page to try again.</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list.</div>
+          {onRetry && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={onRetry}>Retry</button>}
         </div>
       ) : healthTests.length === 0 ? (
         <div className="empty-state">
@@ -1989,23 +2127,31 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
 
 // ── REMINDERS TAB ─────────────────────────────────────────────
 
-function RemindersTab({ reminders, setReminders, toast, error }: {
+function RemindersTab({ reminders, setReminders, toast, error, onRetry }: {
   reminders: Reminder[];
   setReminders: (r: Reminder[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
   error?: boolean
+  onRetry?: () => void
 }) {
   async function handleComplete(id: string) {
-    await completeReminder(id)
-    setReminders(reminders.map(r => r.id === id ? { ...r, status: 'completed' as const } : r))
-    toast('Reminder completed ✓')
+    try {
+      await completeReminder(id)
+      setReminders(reminders.map(r => r.id === id ? { ...r, status: 'completed' as const } : r))
+      toast('Reminder completed ✓')
+    } catch (err) {
+      // Codex round 17: fixed operation name + allowlisted code only —
+      // never the raw error.
+      console.error('RemindersTab: completeReminder failed', { code: safeReadFirestoreErrorCode(err) })
+      toast('Failed to complete reminder — please try again', 'error')
+    }
   }
   const active = reminders.filter(r => r.status !== 'completed')
   return (
     <div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Reminders</h2>
       {error ? (
-        <div className="card"><div className="empty-state"><div className="empty-state-icon">⚠️</div><div className="empty-state-title">Couldn't load reminders</div><div className="empty-state-desc">Something went wrong. Please refresh the page to try again.</div></div></div>
+        <div className="card"><div className="empty-state"><div className="empty-state-icon">⚠️</div><div className="empty-state-title">Couldn't load reminders</div><div className="empty-state-desc">This is a loading error, not an empty list.</div>{onRetry && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={onRetry}>Retry</button>}</div></div>
       ) : active.length === 0 ? (
         <div className="card"><div className="empty-state"><div className="empty-state-icon">✅</div><div className="empty-state-title">All clear</div></div></div>
       ) : (
@@ -2031,8 +2177,10 @@ function RemindersTab({ reminders, setReminders, toast, error }: {
 
 // ── PASSPORT TAB ──────────────────────────────────────────────
 
-function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
+function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetryScanCount, toast }: {
   dog: Dog; qrUrl: string; publicUrl: string; scanCount: number | null;
+  scanCountError?: boolean
+  onRetryScanCount?: () => void
   toast: (msg: string, type?: ToastMessage['type']) => void
 }) {
   function copyUrl() { navigator.clipboard.writeText(publicUrl); toast('Passport link copied!') }
@@ -2079,7 +2227,11 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)', marginBottom: 12 }}>Passport details</div>
           <InfoRow label="Passport ID" value={dog.passportId} mono />
           <InfoRow label="Public URL" value={publicUrl} />
-          <InfoRow label="Total scans" value={scanCount === null ? 'Unavailable' : String(scanCount)} />
+          <InfoRow label="Total scans" value={
+            scanCount === null
+              ? <>Unavailable{scanCountError && onRetryScanCount && <button className="btn btn-ghost btn-sm" style={{ marginLeft: 8, padding: '2px 8px', fontSize: 12 }} onClick={onRetryScanCount}>Retry</button>}</>
+              : String(scanCount)
+          } />
           <InfoRow label="Status" value={dog.isDeceased ? 'Remembered' : 'Active'} />
         </div>
         <div className="card">
@@ -2095,7 +2247,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, toast }: {
 
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
-function DocumentsTab({ documents, setDocuments, dogName, toast, error }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean }) {
+function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void }) {
   const { user } = useAuth()
   function getDocIcon(type: string) {
     if (type === 'vaccine_card') return '💉'
@@ -2122,7 +2274,8 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error }: { docu
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
           <div className="empty-state-title">Couldn't load documents</div>
-          <div className="empty-state-desc">This is a loading error, not an empty list. Please refresh the page to try again.</div>
+          <div className="empty-state-desc">This is a loading error, not an empty list.</div>
+          {onRetry && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={onRetry}>Retry</button>}
         </div>
       ) : documents.length === 0 ? (
         <div className="empty-state">
@@ -2310,7 +2463,7 @@ const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
   note: 'var(--brand-600)',
 }
 
-function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast, notesError, auditError, vaccinesError, wormingError, healthTestsError }: {
+function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast, notesError, auditError, vaccinesError, wormingError, healthTestsError, onRetry }: {
   dog: Dog; notes: ActivityNote[]; newNote: string; setNewNote: (v: string) => void;
   newNoteDate: string; setNewNoteDate: (v: string) => void;
   onAddNote: () => void; saving: boolean;
@@ -2321,6 +2474,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   toast: (msg: string, type?: ToastMessage['type']) => void
   notesError?: boolean; auditError?: boolean
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
+  onRetry?: () => void
 }) {
   const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
   // Codex round 16: the Timeline is a MERGE of five independent sources
@@ -2457,20 +2611,29 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
         )}
 
         <div>
-          <button className="btn btn-primary btn-sm" onClick={onAddNote} disabled={saving || !newNote.trim()}>
+          <button className="btn btn-primary btn-sm" onClick={onAddNote} disabled={saving || !newNote.trim() || hasIncompleteData} title={hasIncompleteData ? "Some of the dog's story failed to load — retry before adding a note" : undefined}>
             {saving ? <span className="spinner" /> : uploadingNotePhoto ? 'Uploading photo…' : 'Add note'}
           </button>
+          {hasIncompleteData && !saving && (
+            <span style={{ fontSize: 12, color: 'var(--light)', marginLeft: 8 }}>Retry the failed sections above before adding a note.</span>
+          )}
         </div>
       </div>
 
       {hasIncompleteData && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#FFF8E8', border: '1px solid #F0D590', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 13, color: '#8A6D1F' }}>
-          ⚠️ Some parts of {dog.name}'s story failed to load — this timeline may be incomplete. Refresh the page to try again.
+          <span style={{ flex: 1 }}>⚠️ Some parts of {dog.name}'s story failed to load — this timeline may be incomplete.</span>
+          {onRetry && <button className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12 }} onClick={onRetry}>Retry</button>}
         </div>
       )}
       {events.length === 0 ? (
         hasIncompleteData ? (
-          <div className="empty-state"><div className="empty-state-icon">⚠️</div><div className="empty-state-title">Couldn't load {dog.name}'s story</div><div className="empty-state-desc">This is a loading error, not an empty story. Please refresh the page to try again.</div></div>
+          <div className="empty-state">
+            <div className="empty-state-icon">⚠️</div>
+            <div className="empty-state-title">Couldn't load {dog.name}'s story</div>
+            <div className="empty-state-desc">This is a loading error, not an empty story.</div>
+            {onRetry && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={onRetry}>Retry</button>}
+          </div>
         ) : (
           <div className="empty-state"><div className="empty-state-icon">📝</div><div className="empty-state-title">No story yet</div><div className="empty-state-desc">Add a note, or scan a document, to begin {dog.name}'s story.</div></div>
         )
