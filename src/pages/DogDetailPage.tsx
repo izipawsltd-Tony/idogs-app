@@ -1134,8 +1134,21 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
 
       await onSave(firestoreUpdates, localUpdates)
       toast('Sale & availability updated')
-    } catch {
-      toast('Failed to save', 'error')
+    } catch (e) {
+      // Previously a bare `catch { toast('Failed to save', 'error') }` —
+      // the actual error (a Firestore permission-denied because
+      // ownership changed after this page loaded, a network failure,
+      // anything) was discarded entirely: never logged, never surfaced
+      // beyond the same generic message every time. Every other save
+      // handler on this page (saveHeatCycle, etc.) already logs + shows
+      // the real error; this brings availability save in line with that.
+      console.error('Sale & availability save failed:', e)
+      const code = (e as { code?: string })?.code
+      const detail =
+        code === 'permission-denied'
+          ? "you don't have permission to update this dog anymore — ownership may have changed since this page loaded"
+          : e instanceof Error && e.message ? e.message : undefined
+      toast(detail ? `Failed to save — ${detail}` : 'Failed to save', 'error')
     } finally {
       setSaving(false)
     }
@@ -2526,6 +2539,35 @@ function calcWhelpingEstimate(matingDate: string): string {
   return d.toISOString().split('T')[0]
 }
 
+// api/_lib/parent-eligibility.js's validateBreedingParent() returns a
+// specific `reason` code alongside its generic top-level `error` message
+// (e.g. "Dam is not an eligible breeding parent") — but that reason was
+// never surfaced to the user, only logged nowhere at all. Every rejection
+// reason (missing DOB, underage, deceased, wrong sex, not currently
+// controlled, not Active, mid-transfer, or the record not existing)
+// collapsed into the exact same generic toast, so there was no way to
+// tell "this Dam genuinely isn't old enough yet" apart from "this Dam's
+// date of birth field is corrupted" apart from "you don't actually own
+// this dog anymore" without opening devtools and reading the raw API
+// response. This maps each reason code to an actionable, specific
+// explanation — see saveHeatCycle() below, which appends it to the error.
+const PARENT_ELIGIBILITY_REASON_LABELS: Record<string, string> = {
+  PARENT_NOT_FOUND: 'the dog record could not be found',
+  PARENT_NOT_CONTROLLED: "it's not currently in your active kennel — ownership may have changed since this page loaded",
+  PARENT_WRONG_SEX: "its recorded sex doesn't match this role",
+  PARENT_DECEASED: 'it is marked as deceased',
+  PARENT_NOT_ACTIVE: "its status isn't Active",
+  PARENT_TRANSFERRED: 'it has been transferred or is pending a claim by a new owner',
+  PARENT_INVALID_DOB: 'its date of birth is missing or not a valid, real calendar date',
+  PARENT_UNDERAGE: "it hasn't yet reached the minimum breeding age (12 months)",
+}
+
+function describeParentEligibilityFailure(err: { error?: string; reason?: string }, fallback: string): string {
+  const base = err.error || fallback
+  const detail = err.reason ? PARENT_ELIGIBILITY_REASON_LABELS[err.reason] : undefined
+  return detail ? `${base} — ${detail}` : base
+}
+
 function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   dog: Dog
   dogId: string
@@ -2718,7 +2760,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        throw new Error(err.error || `Save heat cycle failed (${res.status})`)
+        throw new Error(describeParentEligibilityFailure(err, `Save heat cycle failed (${res.status})`))
       }
       const result = await res.json()
       const savedData = { ...cycleFields, dogId, tenantId: dog.tenantId, id: result.cycleId }
@@ -3070,6 +3112,16 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
   // Eligible Sire candidates — living, currently-owned, non-puppy males
   // (same predicate LittersPage uses for its own Sire dropdown)
   const maleDogs = allDogs.filter(isEligibleSireDog)
+  // Codex round 12 — distinct from maleDogs: ANY male dog in the
+  // account, regardless of breeding eligibility. Needed only to give an
+  // accurate empty-state message below — a breeder whose only male is
+  // still puppy-stage (or was just transferred/marked deceased) has a
+  // male dog "in their account" (visible in My Dogs); the dropdown
+  // previously said "No male dogs in your account" for this exact case,
+  // which is simply false and was the direct cause of "my Sire is
+  // missing" reports — the dog was never missing, just not YET (or no
+  // longer) an eligible breeding candidate.
+  const anyMaleDogsExist = allDogs.some(d => d.sex === 'male')
 
   function set(field: keyof HeatCycle, value: any) {
     setForm(prev => {
@@ -3167,7 +3219,7 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
                       >
                         <option value="">Select sire from my dogs…</option>
                         {maleDogs.length === 0
-                          ? <option disabled>No male dogs in your account</option>
+                          ? <option disabled>{anyMaleDogsExist ? 'No male dogs currently eligible (too young, transferred, or deceased)' : 'No male dogs in your account'}</option>
                           : maleDogs.map(d => (
                             <option key={d.id} value={d.id}>
                               {d.name} — {d.breed} {(d as any).pedigreeRegister === 'limited' ? '⚠️ Limited Reg' : ''} {(d as any).ankc ? `(${(d as any).ankc})` : ''}

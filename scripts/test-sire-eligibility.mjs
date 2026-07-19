@@ -175,6 +175,23 @@ function dobYearsAgo(years) {
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
   check('getDogs() merges results through a Map keyed by doc id (dedup by construction)',
     /const dogMap = new Map<string, Dog>\(\)/.test(dbSrc) && /dogMap\.set\(d\.id,/.test(dbSrc))
+
+  // Codex round 12: getDogs() itself — the canonical source every My
+  // Dogs/Sire/Dam view relies on — previously combined its two queries
+  // (tenantId, currentOwnerId) via a bare Promise.all, the exact same
+  // coupling-failure shape already fixed in DogDetailPage's BreedingTab
+  // loader above (a transient failure on EITHER query silently blanked
+  // the WHOLE result, hiding every dog the caller controls, including
+  // ones the failing query had nothing to do with). This is the more
+  // likely root cause of an intermittently "missing" dog in My Dogs than
+  // any Firestore Rules or ownership-field issue, since getDogs() has no
+  // rules-eligibility filtering of its own at all.
+  const getDogsBlockMatch = dbSrc.match(/export async function getDogs\(\)[\s\S]*?\r?\n}\r?\n/)
+  const getDogsBlock = getDogsBlockMatch ? getDogsBlockMatch[0] : ''
+  check('getDogs() itself uses Promise.allSettled for its two dog queries (not a coupling Promise.all)',
+    getDogsBlock.includes('Promise.allSettled') && !/Promise\.all\(\[/.test(getDogsBlock))
+  check('getDogs() only throws when BOTH queries fail, not when just one does',
+    /breederResult\.status === 'rejected' && ownerResult\.status === 'rejected'/.test(getDogsBlock))
 }
 
 // ── Test 8d: no PII logging — the new/changed console.error calls in the
@@ -223,6 +240,78 @@ function dobYearsAgo(years) {
   check('api/_lib/parent-eligibility.js enforces requiredSex (Dam-only for Dam validation)', /dogData\.sex !== requiredSex/.test(eligibilitySrc))
   const saveHeatCycleSrc = readFileSync(new URL('../api/save-heat-cycle.js', import.meta.url), 'utf8')
   check('api/save-heat-cycle.js validates the Dam with requiredSex: \'female\'', /requiredSex:\s*'female'/.test(saveHeatCycleSrc))
+}
+
+// ── Test 11: "Add Heat fails with a generic message" investigation
+// (Codex round 12) — api/_lib/parent-eligibility.js's validateBreedingParent()
+// always returns a SPECIFIC `reason` code (PARENT_INVALID_DOB,
+// PARENT_UNDERAGE, PARENT_NOT_ACTIVE, etc.) alongside its generic
+// top-level `error` string, but DogDetailPage.tsx's saveHeatCycle()
+// previously discarded `reason` entirely — every possible rejection
+// cause surfaced as the exact same "Dam is not an eligible breeding
+// parent" toast, indistinguishable from each other without opening
+// devtools. This is the most plausible explanation for a report like
+// "Add Heat for [a specific Dam] just says Failed to save" — the
+// generic wording IS what shipped, regardless of which of the 8 reason
+// codes actually fired. ──
+{
+  const detailSrc = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.url), 'utf8')
+
+  check('DogDetailPage defines a reason-code -> human label map for parent-eligibility failures',
+    /PARENT_ELIGIBILITY_REASON_LABELS/.test(detailSrc))
+
+  const eligibilitySrc2 = readFileSync(new URL('../api/_lib/parent-eligibility.js', import.meta.url), 'utf8')
+  const serverReasonCodes = [...eligibilitySrc2.matchAll(/reason:\s*'([A-Z_]+)'/g)].map(m => m[1])
+  check('api/_lib/parent-eligibility.js actually defines multiple distinct reason codes (sanity check on the source pattern above)',
+    serverReasonCodes.length >= 6)
+  const labelsBlockMatch = detailSrc.match(/PARENT_ELIGIBILITY_REASON_LABELS[\s\S]*?\r?\n}/)
+  const labelsBlock = labelsBlockMatch ? labelsBlockMatch[0] : ''
+  check('every server-defined reason code has a corresponding human-readable label (none silently falls back to generic)',
+    serverReasonCodes.length > 0 && serverReasonCodes.every(code => labelsBlock.includes(code)))
+
+  check('saveHeatCycle() routes the server error through the reason-label translator, not just err.error alone',
+    /describeParentEligibilityFailure\(err,/.test(detailSrc))
+
+  // Sanity-check the translator's actual behavior in isolation (mirrors
+  // its real logic, since it's inline TSX rather than an importable
+  // plain-JS module).
+  function describeParentEligibilityFailure(err, fallback, labels) {
+    const base = err.error || fallback
+    const detail = err.reason ? labels[err.reason] : undefined
+    return detail ? `${base} — ${detail}` : base
+  }
+  const labels = { PARENT_INVALID_DOB: 'its date of birth is missing or not a valid, real calendar date' }
+  check('translator appends the specific reason when one is present',
+    describeParentEligibilityFailure({ error: 'Dam is not an eligible breeding parent', reason: 'PARENT_INVALID_DOB' }, 'fallback', labels)
+      === 'Dam is not an eligible breeding parent — its date of birth is missing or not a valid, real calendar date')
+  check('translator falls back to the generic message when no reason code is present (never throws on a malformed response)',
+    describeParentEligibilityFailure({ error: 'Dam is not an eligible breeding parent' }, 'fallback', labels)
+      === 'Dam is not an eligible breeding parent')
+  check('translator falls back to the HTTP-status message when the response body is empty (JSON parse failure)',
+    describeParentEligibilityFailure({}, 'Save heat cycle failed (500)', labels) === 'Save heat cycle failed (500)')
+
+  check('DogDetailPage: no bare "Sir" typo in the new labels either', !/\bSir\b(?!e)/.test(detailSrc.match(/PARENT_ELIGIBILITY_REASON_LABELS[\s\S]*?\r?\n}/)?.[0] || ''))
+}
+
+// ── Test 12: "Sale & availability Save reports Failed to save" (Codex
+// round 12) — SaleAvailabilityPanel's handleSave() previously had a
+// BARE `catch { toast('Failed to save', 'error') }`: the actual thrown
+// error (a Firestore permission-denied, a network failure, anything)
+// was discarded completely — never logged to console, never reflected
+// in the toast beyond the same fixed string every time. Every OTHER
+// save handler on this same page (saveHeatCycle, etc.) already logs +
+// surfaces the real error; this section confirms availability save now
+// matches that pattern instead of being the one silent exception. ──
+{
+  const detailSrc = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.url), 'utf8')
+  const panelMatch = detailSrc.match(/function SaleAvailabilityPanel\([\s\S]*?\n  async function handleSave\(\)[\s\S]*?\r?\n  }\r?\n/)
+  const panel = panelMatch ? panelMatch[0] : ''
+  check('SaleAvailabilityPanel.handleSave() was actually located for inspection (sanity check on the source pattern above)',
+    panel.length > 0)
+  check('handleSave() no longer has a bare catch that discards the error (catch binds the error variable)',
+    /catch\s*\(e\)/.test(panel) && !/\}\s*catch\s*\{/.test(panel))
+  check('handleSave() logs the real error to console on failure', /console\.error\([^)]*Sale & availability save failed/.test(panel))
+  check('handleSave() surfaces permission-denied specifically (ownership-changed hint), not just the generic message unconditionally', /permission-denied/.test(panel))
 }
 
 await summary()
