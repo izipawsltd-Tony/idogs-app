@@ -163,27 +163,50 @@ export function makeChecker() {
     // nested calls) runs INSIDE this AsyncLocalStorage context for the
     // whole rest of its execution — see summary()'s own re-entrancy
     // check below, which is what this context makes possible.
-    queueMicrotask(() => assertionContext.run({ label: shaped.label }, async () => {
-      let cond
-      try {
-        const resolved = typeof shaped.condInput === 'function' ? shaped.condInput() : shaped.condInput
-        cond = isThenable(resolved) ? await resolved : resolved
-      } catch (err) {
-        const detail = err && err.message ? err.message : String(err)
-        console.log(`FAIL: ${shaped.label} (threw/rejected: ${detail}) ${shaped.extra}`)
-        fail++
+    //
+    // Codex round 11: `context` is a fresh, per-call MUTABLE object (not
+    // just a label) specifically so summary() can record "this
+    // assertion misused me" directly onto it — see summary()'s own
+    // `activeAssertion.summaryMisused = true` below. That flag is
+    // checked unconditionally AFTER the thunk settles, regardless of
+    // what `cond` ended up being: a re-entrant summary() call is a bug
+    // no matter whether the thunk went on to return true, discarded the
+    // rejected Promise summary() handed back, awaited-and-caught it, or
+    // attached its own `.catch()` to it. Being a fresh object per call
+    // (never a shared/module-level flag) also means concurrent
+    // assertions can never leak this state into each other — each has
+    // its own `context`, and AsyncLocalStorage keeps them isolated even
+    // when their executions interleave.
+    queueMicrotask(() => {
+      const context = { label: shaped.label, summaryMisused: false }
+      assertionContext.run(context, async () => {
+        let cond
+        try {
+          const resolved = typeof shaped.condInput === 'function' ? shaped.condInput() : shaped.condInput
+          cond = isThenable(resolved) ? await resolved : resolved
+        } catch (err) {
+          const detail = err && err.message ? err.message : String(err)
+          console.log(`FAIL: ${shaped.label} (threw/rejected: ${detail}) ${shaped.extra}`)
+          fail++
+          resolveSettlement()
+          return
+        }
+        if (context.summaryMisused) {
+          console.log(`FAIL: ${shaped.label} (summary() was called re-entrantly from inside this assertion's own condition — that is never allowed, even though the condition itself otherwise resolved truthy, or the rejection summary() returned was discarded/caught) ${shaped.extra}`)
+          fail++
+          resolveSettlement()
+          return
+        }
+        if (cond) {
+          console.log(`PASS: ${shaped.label}`)
+          pass++
+        } else {
+          console.log(`FAIL: ${shaped.label} ${shaped.extra}`)
+          fail++
+        }
         resolveSettlement()
-        return
-      }
-      if (cond) {
-        console.log(`PASS: ${shaped.label}`)
-        pass++
-      } else {
-        console.log(`FAIL: ${shaped.label} ${shaped.extra}`)
-        fail++
-      }
-      resolveSettlement()
-    }))
+      })
+    })
 
     return settlement
   }
@@ -256,6 +279,16 @@ export function makeChecker() {
   function summary() {
     const activeAssertion = assertionContext.getStore()
     if (activeAssertion) {
+      // Codex round 11: record the misuse on THIS assertion's own
+      // context object BEFORE returning — this is what lets checkAsync()
+      // force a FAIL after the thunk settles even if it never
+      // awaits/uses this returned Promise at all (see checkAsync()
+      // above). Set unconditionally on every re-entrant call (harmless
+      // if summary() is somehow called more than once from within the
+      // same assertion — the assertion is still only ever counted as
+      // exactly one FAIL, at the single checkAsync() call site that
+      // reads this flag).
+      activeAssertion.summaryMisused = true
       const rejected = Promise.reject(new Error(
         `summary() was called from inside checkAsync()'s own condition for "${activeAssertion.label}" ` +
         `(directly, or after an await inside it). summary() waits for every pending assertion to settle, ` +

@@ -173,10 +173,10 @@ async function captureLogs(fn) {
   check('The summary line matches the established "${pass} passed, ${fail} failed" format every test file already expects', !!summaryLine && summaryLine.includes('1 passed, 1 failed') && summaryLine.includes('1 skipped'))
 }
 
-// Shared by SECTIONS 7, 8, and 9: writes a tiny throwaway .mjs to the OS
-// temp dir, runs it with `node`, and returns its actual stdout/stderr/
-// exit code. Needed because summary() calls process.exit() — running
-// these scenarios in-process would kill this test file too.
+// Shared by SECTIONS 7, 8, 9, and 10: writes a tiny throwaway .mjs to
+// the OS temp dir, runs it with `node`, and returns its actual stdout/
+// stderr/exit code. Needed because summary() calls process.exit() —
+// running these scenarios in-process would kill this test file too.
 //
 // `timeoutMs` (default 8000 — generous next to the ~15-100ms delays
 // these scenarios actually use) is a WATCHDOG: if a scenario under test
@@ -186,13 +186,18 @@ async function captureLogs(fn) {
 // SECTION 9 (re-entrant summary()) case relies on this to turn "the fix
 // is broken and it hangs again" into a fast, clear test FAILURE rather
 // than a stuck process.
+//
+// `nodeArgs` (default []) lets SECTION 10 run a scenario under
+// `--unhandled-rejections=strict`, to prove the discarded-Promise
+// misuse detection never relies on Node's default (more lenient)
+// unhandled-rejection handling to look clean.
 const checkModuleUrl = new URL('./_lib/test-check.mjs', import.meta.url).href
 
-function runChild(body, timeoutMs = 8000) {
+function runChild(body, timeoutMs = 8000, nodeArgs = []) {
   const file = join(tmpdir(), `test-check-async-child-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`)
   writeFileSync(file, `import { makeChecker } from '${checkModuleUrl}'\n${body}\n`, 'utf8')
   try {
-    const stdout = execFileSync('node', [file], { encoding: 'utf8', timeout: timeoutMs })
+    const stdout = execFileSync('node', [...nodeArgs, file], { encoding: 'utf8', timeout: timeoutMs })
     return { status: 0, stdout, stderr: '', timedOut: false }
   } catch (err) {
     return { status: err.status, stdout: err.stdout ?? '', stderr: err.stderr ?? '', timedOut: err.signal != null }
@@ -453,6 +458,148 @@ await summary()
   check('prior discarded-summary repro: remains nonzero for the delayed false', priorDiscardedRepro.status === 1)
   check('prior discarded-summary repro: the delayed false is still what gets reported, not a deadlock error', priorDiscardedRepro.stdout.includes('FAIL: lost false') && priorDiscardedRepro.stdout.includes('0 passed, 1 failed'))
   check('prior discarded-summary repro: no unhandled rejection warning on stderr from the discarded inner call', !/UnhandledPromiseRejection|unhandledRejection/i.test(priorDiscardedRepro.stderr))
+}
+
+// =========================================================================
+// SECTION 10 — discarded re-entrant summary() can no longer false-PASS
+// (Codex round 11). SECTION 9's fix correctly turned a re-entrant
+// summary() call into a rejection when the thunk's own return value
+// chain actually depended on it (`() => summary()`). But if the thunk
+// called summary(), threw the returned Promise away entirely (or
+// awaited-and-caught it, or attached its own .catch()), and then
+// separately returned/resolved `true`, checkAsync() had no way to know
+// summary() had ever been called — `cond` came out `true`, and the
+// misuse was completely invisible: PASS, exit 0. Fixed by giving each
+// checkAsync() execution its own MUTABLE AsyncLocalStorage context
+// object; summary() now writes `summaryMisused = true` onto that
+// specific context BEFORE returning its rejected Promise, and
+// checkAsync() checks that flag unconditionally after the thunk
+// settles — forcing a FAIL regardless of what `cond` ended up being,
+// and regardless of whether the rejected Promise was ever
+// awaited/used/caught by the caller at all. Every scenario here has a
+// watchdog timeout; the misuse tests are also written so a genuine
+// false/rejection can never accidentally mask a false-PASS regression
+// (each thunk resolves/returns something UNAMBIGUOUSLY truthy — a bare
+// `true` — so if the misuse detection ever regresses, these would fail
+// by going back to "1 passed, 0 failed", not by coincidentally still
+// failing for an unrelated reason).
+// =========================================================================
+{
+  // 1. Discarded summary() call, then a synchronous `true`.
+  const discardedSyncTrue = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('discarded summary then true', () => {
+  summary()
+  return true
+})
+await summary()
+`)
+  check('1. discarded summary() + sync true: does not time out (no hang)', discardedSyncTrue.timedOut === false)
+  check('1. discarded summary() + sync true: forced to FAIL, not a false PASS', discardedSyncTrue.stdout.includes('0 passed, 1 failed'))
+  check('1. discarded summary() + sync true: FAIL message names the re-entrant misuse', discardedSyncTrue.stdout.includes('summary() was called re-entrantly'))
+  check('1. discarded summary() + sync true: exits 1', discardedSyncTrue.status === 1)
+  check('1. discarded summary() + sync true: no unhandled rejection warning on stderr', !/UnhandledPromiseRejection|unhandledRejection/i.test(discardedSyncTrue.stderr))
+
+  // 2. Discarded summary() call, an unrelated await, then `true`.
+  const discardedAsyncTrue = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('discarded async summary', async () => {
+  summary()
+  await Promise.resolve()
+  return true
+})
+await summary()
+`)
+  check('2. discarded summary() + await + true: does not time out (no hang)', discardedAsyncTrue.timedOut === false)
+  check('2. discarded summary() + await + true: forced to FAIL, not a false PASS', discardedAsyncTrue.stdout.includes('0 passed, 1 failed'))
+  check('2. discarded summary() + await + true: exits 1', discardedAsyncTrue.status === 1)
+  check('2. discarded summary() + await + true: no unhandled rejection warning on stderr', !/UnhandledPromiseRejection|unhandledRejection/i.test(discardedAsyncTrue.stderr))
+
+  // 3. The thunk explicitly awaits summary() inside a try/catch that
+  // SWALLOWS the rejection, then still returns `true`.
+  const awaitCaughtTrue = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('await/catch summary then true', async () => {
+  try { await summary() } catch (e) { /* swallow */ }
+  return true
+})
+await summary()
+`)
+  check('3. await + catch summary() + true: does not time out (no hang)', awaitCaughtTrue.timedOut === false)
+  check('3. await + catch summary() + true: still forced to FAIL', awaitCaughtTrue.stdout.includes('0 passed, 1 failed'))
+  check('3. await + catch summary() + true: exits 1', awaitCaughtTrue.status === 1)
+
+  // 4. The thunk attaches its OWN .catch() to summary()'s returned
+  // Promise (never awaiting it), then still returns `true`.
+  const explicitCatchTrue = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('summary().catch then true', () => {
+  summary().catch(() => {})
+  return true
+})
+await summary()
+`)
+  check('4. summary().catch() + true: does not time out (no hang)', explicitCatchTrue.timedOut === false)
+  check('4. summary().catch() + true: still forced to FAIL', explicitCatchTrue.stdout.includes('0 passed, 1 failed'))
+  check('4. summary().catch() + true: exits 1', explicitCatchTrue.status === 1)
+  check('4. summary().catch() + true: no unhandled rejection warning on stderr', !/UnhandledPromiseRejection|unhandledRejection/i.test(explicitCatchTrue.stderr))
+
+  // 5. Two CONCURRENT assertions: one misuses summary(), the other is
+  // completely clean. The clean one must still PASS — misuse state must
+  // never leak between assertions via any shared/global flag.
+  const concurrentIsolation = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('misused', () => { summary(); return true })
+checkAsync('clean', () => new Promise(resolve => setTimeout(() => resolve(true), 20)))
+await summary()
+`)
+  check('5. concurrent misuse does not leak into a separate clean assertion: does not time out', concurrentIsolation.timedOut === false)
+  check('5. concurrent misuse does not leak into a separate clean assertion: exactly one pass, one fail', concurrentIsolation.stdout.includes('1 passed, 1 failed'))
+  check('5. concurrent misuse does not leak into a separate clean assertion: the clean one is explicitly a PASS', concurrentIsolation.stdout.includes('PASS: clean'))
+  check('5. concurrent misuse does not leak into a separate clean assertion: the misused one is explicitly a FAIL', concurrentIsolation.stdout.includes('FAIL: misused'))
+  check('5. concurrent misuse does not leak into a separate clean assertion: exits 1 (one genuine misuse)', concurrentIsolation.status === 1)
+
+  // 6. Legitimate top-level summary() call while an unrelated
+  // fire-and-forget check is still pending — must still drain normally
+  // (unaffected by any of the above; no assertion here ever touches
+  // summary() itself).
+  const legitTopLevel = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('fire-and-forget true', () => new Promise(resolve => setTimeout(() => resolve(true), 25)))
+await summary()
+`)
+  check('6. legitimate top-level summary() with a pending fire-and-forget check: does not time out', legitTopLevel.timedOut === false)
+  check('6. legitimate top-level summary() with a pending fire-and-forget check: drains and passes correctly', legitTopLevel.stdout.includes('1 passed, 0 failed'))
+  check('6. legitimate top-level summary() with a pending fire-and-forget check: exits 0', legitTopLevel.status === 0)
+
+  // 7. The SECTION 9 cycle cases (thunk's own return value chain IS
+  // summary()'s promise) must still terminate with exactly ONE recorded
+  // failure — not two (no double counting between the catch-block path
+  // and the new summaryMisused check).
+  const returnedCycleStillOne = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('cycle', () => summary())
+await summary()
+`)
+  check('7. returned/awaited summary() cycle still terminates: does not time out', returnedCycleStillOne.timedOut === false)
+  check('7. returned/awaited summary() cycle still terminates: exactly one failure, not double-counted', returnedCycleStillOne.stdout.includes('0 passed, 1 failed'))
+  check('7. returned/awaited summary() cycle still terminates: exits 1', returnedCycleStillOne.status === 1)
+
+  // 8. No unhandled rejection under Node's STRICTEST rejection-handling
+  // mode — proves the safety net does not merely happen to look clean
+  // under the default mode.
+  const strictMode = runChild(`
+const { checkAsync, summary } = makeChecker()
+checkAsync('discarded summary then true', () => {
+  summary()
+  return true
+})
+await summary()
+`, 8000, ['--unhandled-rejections=strict'])
+  check('8. --unhandled-rejections=strict: does not time out (no hang)', strictMode.timedOut === false)
+  check('8. --unhandled-rejections=strict: still correctly forced to FAIL', strictMode.stdout.includes('0 passed, 1 failed'))
+  check('8. --unhandled-rejections=strict: exits 1 (not crashed by an unhandled rejection)', strictMode.status === 1)
+  check('8. --unhandled-rejections=strict: no unhandled rejection warning/crash on stderr', !/UnhandledPromiseRejection|unhandledRejection/i.test(strictMode.stderr))
 }
 
 await summary()
