@@ -176,22 +176,24 @@ function dobYearsAgo(years) {
   check('getDogs() merges results through a Map keyed by doc id (dedup by construction)',
     /const dogMap = new Map<string, Dog>\(\)/.test(dbSrc) && /dogMap\.set\(d\.id,/.test(dbSrc))
 
-  // Codex round 12: getDogs() itself — the canonical source every My
-  // Dogs/Sire/Dam view relies on — previously combined its two queries
-  // (tenantId, currentOwnerId) via a bare Promise.all, the exact same
-  // coupling-failure shape already fixed in DogDetailPage's BreedingTab
-  // loader above (a transient failure on EITHER query silently blanked
-  // the WHOLE result, hiding every dog the caller controls, including
-  // ones the failing query had nothing to do with). This is the more
-  // likely root cause of an intermittently "missing" dog in My Dogs than
-  // any Firestore Rules or ownership-field issue, since getDogs() has no
-  // rules-eligibility filtering of its own at all.
+  // Codex round 12 tried Promise.allSettled here (a transient failure on
+  // EITHER of getDogs()'s two queries silently blanked the WHOLE result
+  // under the prior bare Promise.all) — but round 13 reverted that: a
+  // dog reachable only via the OTHER, successful query then looked like
+  // a perfectly normal, COMPLETE result, with no way for any of the ~14
+  // consumers across this app to tell "genuinely fewer dogs" apart from
+  // "some data silently failed to load". Fail-closed (reject the whole
+  // call, never a partial array) is the safer contract — see
+  // test-get-dogs-partial-data-safety.mjs for the full round-13
+  // behavioral coverage (both-succeed, tenant-fails, owner-fails,
+  // one-succeeds-empty-while-the-other-fails, dedup, and proof a
+  // failure can never resolve as a normal result).
   const getDogsBlockMatch = dbSrc.match(/export async function getDogs\(\)[\s\S]*?\r?\n}\r?\n/)
   const getDogsBlock = getDogsBlockMatch ? getDogsBlockMatch[0] : ''
-  check('getDogs() itself uses Promise.allSettled for its two dog queries (not a coupling Promise.all)',
-    getDogsBlock.includes('Promise.allSettled') && !/Promise\.all\(\[/.test(getDogsBlock))
-  check('getDogs() only throws when BOTH queries fail, not when just one does',
-    /breederResult\.status === 'rejected' && ownerResult\.status === 'rejected'/.test(getDogsBlock))
+  check('getDogs() uses Promise.all (fail-closed), not Promise.allSettled, for its two dog queries',
+    /Promise\.all\(\[/.test(getDogsBlock) && !/Promise\.allSettled/.test(getDogsBlock))
+  check('getDogs() throws on either query failing (never silently returns a partial result)',
+    /throw new GetDogsError\(\)/.test(getDogsBlock))
 }
 
 // ── Test 8d: no PII logging — the new/changed console.error calls in the
@@ -294,14 +296,18 @@ function dobYearsAgo(years) {
 }
 
 // ── Test 12: "Sale & availability Save reports Failed to save" (Codex
-// round 12) — SaleAvailabilityPanel's handleSave() previously had a
-// BARE `catch { toast('Failed to save', 'error') }`: the actual thrown
-// error (a Firestore permission-denied, a network failure, anything)
-// was discarded completely — never logged to console, never reflected
-// in the toast beyond the same fixed string every time. Every OTHER
-// save handler on this same page (saveHeatCycle, etc.) already logs +
-// surfaces the real error; this section confirms availability save now
-// matches that pattern instead of being the one silent exception. ──
+// round 12, hardened round 13) — SaleAvailabilityPanel's handleSave()
+// originally had a BARE `catch { toast('Failed to save', 'error') }`:
+// the actual thrown error was discarded completely, never logged, never
+// reflected in the toast beyond the same fixed string every time. Round
+// 12 fixed that but overcorrected — it logged the FULL raw error object
+// and fell back to displaying `e.message` verbatim for anything other
+// than permission-denied, which could leak a document path or backend
+// text. Round 13 replaced that with a small known-safe code allowlist;
+// see test-sale-availability-error-sanitization.mjs for that round's
+// full behavioral coverage. This section just confirms the catch block
+// still binds and routes through the sanitizer, rather than either of
+// the two previous failure modes (silent discard, or raw leak). ──
 {
   const detailSrc = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.url), 'utf8')
   const panelMatch = detailSrc.match(/function SaleAvailabilityPanel\([\s\S]*?\n  async function handleSave\(\)[\s\S]*?\r?\n  }\r?\n/)
@@ -310,8 +316,9 @@ function dobYearsAgo(years) {
     panel.length > 0)
   check('handleSave() no longer has a bare catch that discards the error (catch binds the error variable)',
     /catch\s*\(e\)/.test(panel) && !/\}\s*catch\s*\{/.test(panel))
-  check('handleSave() logs the real error to console on failure', /console\.error\([^)]*Sale & availability save failed/.test(panel))
-  check('handleSave() surfaces permission-denied specifically (ownership-changed hint), not just the generic message unconditionally', /permission-denied/.test(panel))
+  check('handleSave() logs a SANITIZED payload to console on failure (operation name + normalized code, not the raw error)',
+    /console\.error\('sale-availability-save failed', \{ code: logCode \}\)/.test(panel))
+  check('handleSave() still surfaces permission-denied specifically (ownership-changed hint), not just the generic message unconditionally', /permission-denied/.test(panel))
 }
 
 await summary()

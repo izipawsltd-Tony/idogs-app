@@ -110,7 +110,11 @@ export default function AppLayout({ toast }: Props) {
   const hideReminders = (profile as any)?.hideReminders === true
 
   const [litterCount, setLitterCount] = useState<number | null>(null)
-  const [dogCount,    setDogCount]    = useState<number>(0)
+  // Codex round 13: null means "not yet loaded / failed to load", never
+  // conflated with 0 (a genuinely dog-less account) — showing "0 / 2
+  // dogs" on a load failure would misreport a real kennel as empty, the
+  // same class of misleading-count bug this round exists to close.
+  const [dogCount,    setDogCount]    = useState<number | null>(null)
   const [pendingClaimCount, setPendingClaimCount] = useState<number>(0)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement>(null)
@@ -125,7 +129,7 @@ export default function AppLayout({ toast }: Props) {
     if (!user) return
     getDogs()
       .then(dogs => setDogCount(dogs.filter((d: any) => d.status !== 'transferred' && d.transferStatus !== 'pendingClaim').length))
-      .catch(() => setDogCount(0))
+      .catch(() => setDogCount(null))
     if (user.email) {
       claimTransferredDogs(user.uid, user.email, 'check')
         .then(dogs => setPendingClaimCount(dogs.length))
@@ -193,7 +197,10 @@ export default function AppLayout({ toast }: Props) {
   const planCfg = getPlanCfg(profile?.plan)
   const planLabel = profile?.plan === 'trial' ? 'Free Trial' : planCfg.label
   const dogLimit  = planCfg.dogLimit
-  const dogPct    = dogLimit >= 9999 ? 100 : Math.min(100, Math.round((dogCount / dogLimit) * 100))
+  // dogCount === null (load failed) intentionally shows an EMPTY bar, not
+  // a full one — a load failure shouldn't visually read as "at your
+  // limit" when the real count is simply unknown right now.
+  const dogPct    = dogCount === null ? 0 : dogLimit >= 9999 ? 100 : Math.min(100, Math.round((dogCount / dogLimit) * 100))
   const displayName = profile?.kennelName || profile?.firstName || 'User'
   const roleLabel   =
     profile?.role === 'breeder' ? 'Breeder' :
@@ -374,7 +381,7 @@ export default function AppLayout({ toast }: Props) {
             {dogLimit < 9999 ? (
               <>
                 <div style={{ fontSize: 11, color: 'var(--mid)', marginBottom: 5 }}>
-                  {dogCount} / {dogLimit} dogs
+                  {dogCount === null ? '—' : dogCount} / {dogLimit} dogs
                 </div>
                 <div style={{ height: 4, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{
@@ -388,7 +395,7 @@ export default function AppLayout({ toast }: Props) {
               </>
             ) : (
               <div style={{ fontSize: 11, color: 'var(--mid)' }}>
-                {dogCount} dogs · Unlimited
+                {dogCount === null ? '—' : dogCount} dogs · Unlimited
               </div>
             )}
             {planCfg.upgrade && (

@@ -1072,6 +1072,46 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
 
 // ── SALE & AVAILABILITY PANEL ────────────────────────────────
 
+// Codex round 13: the round-12 fix logged the FULL raw error object to
+// console and, for anything other than a permission-denied, fell back
+// to displaying `e.message` verbatim — a Firestore/network error's
+// message can carry a document path, an internal backend string, or
+// (worst case) get accidentally paired with request-shaped text a
+// future caller adds to an Error's message. Neither the toast nor the
+// console output should ever depend on what an arbitrary thrown value
+// happens to say. This maps ONLY a small, known-safe allowlist of
+// Firebase error `code` values to controlled, pre-written copy — every
+// other code (including no code at all, e.g. a plain thrown string or a
+// non-Firebase Error) falls through to one fixed generic message.
+// Nothing here ever reads `.message`, `.stack`, or any other property.
+const SALE_AVAILABILITY_KNOWN_ERROR_MESSAGES: Record<string, string> = {
+  'permission-denied': "you don't have permission to update this dog anymore — ownership may have changed since this page loaded",
+  'unavailable': 'you appear to be offline, or our servers are temporarily unavailable — please try again in a moment',
+}
+const SALE_AVAILABILITY_GENERIC_ERROR_MESSAGE = 'Failed to save. Please try again, or contact support if this keeps happening.'
+
+// Extracts ONLY a normalized `code` string from an arbitrary thrown
+// value — never any other property, never a `.toString()`/template
+// coercion of the value itself (which could stringify to something
+// containing sensitive text for a non-Error object). Anything that
+// isn't a plain object with a string `code` field normalizes to
+// 'unknown', which always routes to the generic message.
+function normalizeSaleAvailabilityErrorCode(e: unknown): string {
+  if (e && typeof e === 'object' && 'code' in e && typeof (e as { code?: unknown }).code === 'string') {
+    return (e as { code: string }).code
+  }
+  return 'unknown'
+}
+
+function describeSaleAvailabilitySaveFailure(e: unknown): { userMessage: string; logCode: string } {
+  const code = normalizeSaleAvailabilityErrorCode(e)
+  const detail = SALE_AVAILABILITY_KNOWN_ERROR_MESSAGES[code]
+  return {
+    userMessage: detail ? `Failed to save — ${detail}` : SALE_AVAILABILITY_GENERIC_ERROR_MESSAGE,
+    logCode: code,
+  }
+}
+
 function SaleAvailabilityPanel({ dog, onSave, toast }: {
   dog: Dog
   onSave: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
@@ -1135,20 +1175,20 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
       await onSave(firestoreUpdates, localUpdates)
       toast('Sale & availability updated')
     } catch (e) {
-      // Previously a bare `catch { toast('Failed to save', 'error') }` —
-      // the actual error (a Firestore permission-denied because
-      // ownership changed after this page loaded, a network failure,
-      // anything) was discarded entirely: never logged, never surfaced
-      // beyond the same generic message every time. Every other save
-      // handler on this page (saveHeatCycle, etc.) already logs + shows
-      // the real error; this brings availability save in line with that.
-      console.error('Sale & availability save failed:', e)
-      const code = (e as { code?: string })?.code
-      const detail =
-        code === 'permission-denied'
-          ? "you don't have permission to update this dog anymore — ownership may have changed since this page loaded"
-          : e instanceof Error && e.message ? e.message : undefined
-      toast(detail ? `Failed to save — ${detail}` : 'Failed to save', 'error')
+      // Codex round 12 fixed the original bare
+      // `catch { toast('Failed to save', 'error') }` (which discarded
+      // the error completely) but went too far the other way — it
+      // logged the FULL raw error object and, for anything other than
+      // permission-denied, displayed `e.message` verbatim in the toast.
+      // Neither the console nor the user should ever see whatever an
+      // arbitrary thrown value happens to say (a document path, an
+      // internal backend string, a stack trace). Only a normalized,
+      // already-known-safe `code` is logged; the toast comes from the
+      // same small controlled allowlist — see
+      // describeSaleAvailabilitySaveFailure() above.
+      const { userMessage, logCode } = describeSaleAvailabilitySaveFailure(e)
+      console.error('sale-availability-save failed', { code: logCode })
+      toast(userMessage, 'error')
     } finally {
       setSaving(false)
     }
@@ -2582,6 +2622,14 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const [editingCycle, setEditingCycle] = useState<HeatCycle | null>(null)
   const [saving, setSaving] = useState(false)
   const [allDogs, setAllDogs] = useState<Dog[]>([])
+  // Codex round 13: distinct from allDogs being genuinely empty of
+  // eligible Sires — a failed load must never render through the same
+  // "No male dogs currently eligible" copy the dropdown shows for a
+  // real, empty result (see HeatCycleModal below). That exact conflation
+  // — a query failure silently looking identical to "you have no
+  // eligible Sire" — is the most likely explanation for a "my Sire is
+  // missing" report the actual code couldn't otherwise reproduce.
+  const [sireLoadError, setSireLoadError] = useState(false)
 
   // Litter record state
   const [litterCount, setLitterCount] = useState<number>((dog as any).litterCount ?? 0)
@@ -2636,8 +2684,11 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       }
       if (dogsResult.status === 'fulfilled') {
         setAllDogs(dogsResult.value)
+        setSireLoadError(false)
       } else {
         console.error('Failed to load dogs for sire selector:', dogsResult.reason)
+        setSireLoadError(true)
+        toast('Failed to load your dogs for the Sire selector', 'error')
       }
       setLoadingCycles(false)
     }
@@ -3088,6 +3139,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         <HeatCycleModal
           cycle={editingCycle}
           allDogs={allDogs}
+          sireLoadError={sireLoadError}
           onClose={() => { setShowAddHeat(false); setEditingCycle(null) }}
           onSave={saveHeatCycle}
           saving={saving}
@@ -3099,9 +3151,10 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
 
 // ── HEAT CYCLE MODAL ─────────────────────────────────────────
 
-function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
+function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving }: {
   cycle: HeatCycle
   allDogs: Dog[]
+  sireLoadError: boolean
   onClose: () => void
   onSave: (c: HeatCycle) => Promise<void>
   saving: boolean
@@ -3219,7 +3272,7 @@ function HeatCycleModal({ cycle, allDogs, onClose, onSave, saving }: {
                       >
                         <option value="">Select sire from my dogs…</option>
                         {maleDogs.length === 0
-                          ? <option disabled>{anyMaleDogsExist ? 'No male dogs currently eligible (too young, transferred, or deceased)' : 'No male dogs in your account'}</option>
+                          ? <option disabled>{sireLoadError ? '⚠️ Could not load your dogs — try closing and reopening this form' : anyMaleDogsExist ? 'No male dogs currently eligible (too young, transferred, or deceased)' : 'No male dogs in your account'}</option>
                           : maleDogs.map(d => (
                             <option key={d.id} value={d.id}>
                               {d.name} — {d.breed} {(d as any).pedigreeRegister === 'limited' ? '⚠️ Limited Reg' : ''} {(d as any).ankc ? `(${(d as any).ankc})` : ''}

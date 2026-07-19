@@ -200,48 +200,60 @@ function normalizeDog(raw: Dog): Dog {
   }
 }
 
+// Codex round 13: getDogs() briefly (round 12) used Promise.allSettled so
+// a transient failure on ONE of the two ownership queries wouldn't blank
+// the whole list — well-intentioned, but it meant a caller who only
+// checks `dogs.length === 0` (or filters for an eligible Sire/Dam) had NO
+// way to tell "genuinely zero dogs" apart from "half the data failed to
+// load" — a PARTIAL array presented itself as a perfectly normal COMPLETE
+// one. That's worse than the outage it was trying to soften: a real dog
+// silently missing from My Dogs or a selector, with no error shown
+// anywhere, is exactly the class of bug this whole round exists to fix.
+// Threading a typed "was this partial?" result through the ~14 different
+// call sites across this app (My Dogs, both breeding selectors, sidebar
+// counts, reminders, reports, buyers, documents, exports — see git log
+// for the round-13 report's full consumer audit) would be the "correct"
+// fix, but doing that safely for every one of them in one pass is a much
+// larger, riskier change than this round's actual scope. Reverting to
+// Promise.all (fail-closed) is the safe choice: every consumer that
+// already existed before round 12 was written assuming getDogs() either
+// resolves with the FULL list or rejects — this restores exactly that
+// contract, so those call sites' existing error handling is correct
+// again without needing to touch them.
+export class GetDogsError extends Error {
+  constructor(message = 'Failed to load dogs. Please try again.') {
+    super(message)
+    this.name = 'GetDogsError'
+  }
+}
+
 export async function getDogs(): Promise<Dog[]> {
   const currentUid = uid()
   if (!currentUid) return []
 
-  // Codex round 12 — Promise.all here meant a transient failure on
-  // EITHER query (e.g. a momentary permission-denied/network blip on
-  // just the currentOwnerId query) took the WHOLE call down, silently
-  // hiding every dog the caller controls — including ones sourced only
-  // via tenantId, which had nothing wrong with them. This is the exact
-  // same failure class already fixed in DogDetailPage.tsx's BreedingTab
-  // (see that file's own comment: "a Promise.all here previously meant
-  // a failure on either query ... silently emptied BOTH" lists) — this
-  // is getDogs() itself, the canonical source EVERY "My Dogs"/Sire/Dam
-  // view in the app relies on, so the same fix belongs here too.
-  // Promise.allSettled means a dog reachable via the OTHER, successful
-  // query still shows up instead of the entire list going blank.
-  const [breederResult, ownerResult] = await Promise.allSettled([
-    getDocs(query(collection(db, 'dogs'), where('tenantId', '==', currentUid))),
-    getDocs(query(collection(db, 'dogs'), where('currentOwnerId', '==', currentUid)))
-  ])
-
-  if (breederResult.status === 'rejected' && ownerResult.status === 'rejected') {
-    throw breederResult.reason
+  let breederSnap, ownerSnap
+  try {
+    [breederSnap, ownerSnap] = await Promise.all([
+      getDocs(query(collection(db, 'dogs'), where('tenantId', '==', currentUid))),
+      getDocs(query(collection(db, 'dogs'), where('currentOwnerId', '==', currentUid)))
+    ])
+  } catch (err) {
+    // Full detail goes to the console for debugging (never shown to the
+    // user); the THROWN error is a fixed, sanitized message only — the
+    // raw Firestore error can carry internal query/index details that
+    // have no business surfacing in a UI-facing exception.
+    console.error('getDogs(): failed to load dogs', err)
+    throw new GetDogsError()
   }
 
   const dogMap = new Map<string, Dog>()
 
-  if (breederResult.status === 'fulfilled') {
-    breederResult.value.docs.forEach(d => {
-      dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
-    })
-  } else {
-    console.error('getDogs(): tenantId query failed, dogs sourced only via currentOwnerId may be incomplete:', breederResult.reason)
-  }
-
-  if (ownerResult.status === 'fulfilled') {
-    ownerResult.value.docs.forEach(d => {
-      dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
-    })
-  } else {
-    console.error('getDogs(): currentOwnerId query failed, transferred-in dogs may be missing from this list:', ownerResult.reason)
-  }
+  breederSnap.docs.forEach(d => {
+    dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
+  })
+  ownerSnap.docs.forEach(d => {
+    dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
+  })
 
   return Array.from(dogMap.values()).map(dog => {
     // If the current user is the breeder (tenantId) but not the current owner,

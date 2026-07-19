@@ -45,11 +45,25 @@ export default function DogListPage({ toast }: Props) {
       : null
   const [healthMap, setHealthMap] = useState<Map<string, HealthTest[]> | null>(null)
   const [healthLoading, setHealthLoading] = useState(false)
+  // Codex round 13: distinct from `dogs` being genuinely empty — a
+  // failed load must never render as "No dogs yet, add your first dog"
+  // (see the empty-state block below). The toast alone isn't enough:
+  // it's transient and easy to miss, while the page's own persistent
+  // empty-state copy would otherwise keep telling the user they have no
+  // dogs indefinitely, which is actively misleading if some genuinely
+  // exist and the load just failed.
+  const [loadError, setLoadError] = useState(false)
 
-  useEffect(() => {
+  function loadDogs() {
+    setLoading(true)
+    setLoadError(false)
     getDogs()
       .then(result => { setDogs(result); setLoading(false) })
-      .catch(() => { toast('Failed to load dogs', 'error'); setLoading(false) })
+      .catch(() => { setLoadError(true); toast('Failed to load dogs', 'error'); setLoading(false) })
+  }
+
+  useEffect(() => {
+    loadDogs()
   }, [])
 
   useEffect(() => {
@@ -207,6 +221,15 @@ export default function DogListPage({ toast }: Props) {
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><div className="spinner" /></div>
+      ) : loadError ? (
+        <div className="card">
+          <div className="empty-state">
+            <div className="empty-state-icon">⚠️</div>
+            <div className="empty-state-title">Couldn't load your dogs</div>
+            <div className="empty-state-desc">This is a loading error, not an empty list — your dogs are still there. Please try again.</div>
+            <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={loadDogs}>Retry</button>
+          </div>
+        </div>
       ) : missingTest ? (
         <>
           <div style={{
