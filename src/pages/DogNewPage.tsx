@@ -67,12 +67,20 @@ export default function DogNewPage({ toast }: Props) {
   // bug where a stale operation's cleanup (e.g. a finally block running
   // after the account already switched) could otherwise release a lock a
   // newer operation now legitimately holds.
+  //
+  // Codex round 18: acquireSubmitLock() also refuses once
+  // committedDogIdRef (below) is set — a Dog/Passport has already been
+  // created by this mounted instance, so the single-flight lock's normal
+  // release-then-reacquire cycle (validation error, duplicate check,
+  // even a genuinely failed createDog() call) must NOT be enough to let
+  // this instance create a SECOND dog. That reopens the lock only for
+  // the "createDog() itself never committed" case, which is unaffected.
   const submittingRef = useRef(false)
   const lockOwnerTokenRef = useRef<symbol | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   function acquireSubmitLock(): symbol | null {
-    if (submittingRef.current) return null
+    if (submittingRef.current || committedDogIdRef.current) return null
     const token = Symbol('dog-new-submit-lock')
     submittingRef.current = true
     lockOwnerTokenRef.current = token
@@ -102,13 +110,28 @@ export default function DogNewPage({ toast }: Props) {
   // immediately before the final toast/navigate).
   const { beginRequest } = useRequestGuard(user?.uid)
 
-  // Codex round 17: survives across a retry of the SAME component
-  // instance — if createDog() already succeeded in an earlier attempt
-  // (the dog and its passport were created) but a LATER step (uploads,
-  // vaccine/health writes) failed, a resubmit must resume by reusing this
-  // dogId rather than calling createDog() again, which would create a
-  // second, duplicate Dog/Passport for the same submission.
-  const createdDogIdRef = useRef<string | null>(null)
+  // Codex round 18 (replaces round 17's createdDogIdRef "resume" design,
+  // flagged by Codex as an unsafe identity/idempotency gap): Dog+Passport
+  // creation is atomic and, once it commits, TERMINAL for this mounted
+  // instance — there is no resumable retry. This ref is set EXACTLY ONCE,
+  // the instant createDog() resolves, and is used ONLY to:
+  //   (a) permanently block acquireSubmitLock() from ever succeeding
+  //       again on this instance (no second createDog() call, ever —
+  //       not on follow-up failure, not on a double-click/Enter, not on
+  //       "Add anyway", not after the user edits the form);
+  //   (b) drive the permanently-disabled submit UI (see dogCreated state
+  //       below — refs alone don't trigger re-renders);
+  //   (c) let the catch block below report an honest partial-failure
+  //       message and navigate to the dog that DOES exist, if some
+  //       later step in THIS SAME already-in-flight call throws.
+  // It is never read to skip a createDog() call — proceedWithCreate()
+  // always calls createDog() exactly once, because it can only ever run
+  // once per instance (acquireSubmitLock() guarantees that).
+  const committedDogIdRef = useRef<string | null>(null)
+  // Mirrors committedDogIdRef for rendering — refs don't cause a
+  // re-render, so the submit/"Add anyway" buttons need this state flag
+  // to actually go (and stay) disabled once a Dog has been created.
+  const [dogCreated, setDogCreated] = useState(false)
 
   const [form, setForm] = useState<DogFormData>({
     name: '', breed: '', sex: 'female',
@@ -299,35 +322,51 @@ export default function DogNewPage({ toast }: Props) {
   // once more immediately before the terminal toast/navigate. An account
   // switch/logout partway through stops all remaining writes rather than
   // racing them to completion under a session that's no longer active.
-  // createdDogIdRef makes retrying safe: if createDog() already succeeded
-  // in an earlier attempt but a later step failed, this resumes from the
-  // existing dogId instead of creating a second, duplicate Dog/Passport.
-  // Every previously-silent `.catch(() => {})` is now an explicit,
-  // counted failure, surfaced honestly in the final toast instead of
-  // disappearing — a partial failure is never reported as either total
-  // success or total failure.
+  //
+  // Codex round 18: this function now runs AT MOST ONCE per mounted
+  // instance — acquireSubmitLock() refuses re-entry the instant
+  // committedDogIdRef is set (see above), so there is no "resume" branch
+  // here anymore: createDog() is always called, exactly once. form/
+  // pendingFiles/scannedDocs are snapshotted synchronously at the top,
+  // before any await — the Dog and its follow-up records are built ONLY
+  // from this frozen snapshot, so an edit the user makes to the form
+  // (or a new scan) WHILE this operation is in flight can never attach
+  // to the Dog already being created. Every previously-silent
+  // `.catch(() => {})` is a counted, categorised failure, surfaced
+  // honestly in the final toast — a partial failure is never reported as
+  // either total success or total failure, and a fully successful
+  // follow-up is never re-run (there is nothing left to replay it from).
   async function proceedWithCreate(req: ReturnType<typeof beginRequest>, lockToken: symbol) {
     setLoading(true)
+    const formSnapshot = form
+    const pendingFilesSnapshot = pendingFiles
+    const scannedDocsSnapshot = scannedDocs
     try {
       if (!req.isCurrent()) return
 
-      let dogId = createdDogIdRef.current
-      if (!dogId) {
-        dogId = await createDog({
-          ...form,
-          breederIdValue: form.breederIdType === 'NONE' ? '' : form.breederIdValue,
-        }, isOwner ? 'OWNER_CREATED' : 'BREEDER_ISSUED')
-        createdDogIdRef.current = dogId
-        if (!req.isCurrent()) {
-          // The dog was already correctly created under the INITIATING
-          // account (db.ts captures its own uid before its transaction,
-          // so attribution is correct regardless of what happened to the
-          // session after this call started) — but this session has
-          // since changed, so no further action (uploads, records, toast,
-          // navigation) should run as if it were still active. dogId is
-          // remembered above so a future resume never duplicates it.
-          return
-        }
+      const dogId = await createDog({
+        ...formSnapshot,
+        breederIdValue: formSnapshot.breederIdType === 'NONE' ? '' : formSnapshot.breederIdValue,
+      }, isOwner ? 'OWNER_CREATED' : 'BREEDER_ISSUED')
+
+      // Terminal the instant createDog() commits — see the ref/state
+      // declarations above. Nothing below this line, and no future event
+      // on this instance, may ever call createDog() again.
+      committedDogIdRef.current = dogId
+      setDogCreated(true)
+
+      if (!req.isCurrent()) {
+        // The dog was already correctly created under the INITIATING
+        // account (db.ts captures its own uid before its transaction, so
+        // attribution is correct regardless of what happened to the
+        // session after this call started) — but this session has since
+        // changed, so no further action (uploads, records, toast,
+        // navigation) runs as if it were still active. The Dog remains
+        // safely created; this mounted instance will not attempt to
+        // create another one (committedDogIdRef is already set), and the
+        // account-switch itself unmounts this instance via AppLayout's
+        // uid-keyed Outlet.
+        return
       }
 
       // Now that the dog exists, upload any files that were scanned
@@ -336,8 +375,8 @@ export default function DogNewPage({ toast }: Props) {
       // counted, never silently discarded.
       let filesSaved = 0
       let uploadFailures = 0
-      if (user?.uid && pendingFiles.length > 0) {
-        for (const f of pendingFiles) {
+      if (user?.uid && pendingFilesSnapshot.length > 0) {
+        for (const f of pendingFilesSnapshot) {
           if (!req.isCurrent()) return
           try {
             const uploadRes = await fetch('/api/upload-document', {
@@ -349,7 +388,7 @@ export default function DogNewPage({ toast }: Props) {
                 dogId,
                 tenantId: user.uid,
                 documentType: f.documentType,
-                extractedData: { dogName: form.name },
+                extractedData: { dogName: formSnapshot.name },
               }),
             })
             if (uploadRes.ok) filesSaved++
@@ -361,8 +400,13 @@ export default function DogNewPage({ toast }: Props) {
       }
       if (!req.isCurrent()) return
 
-      let recordFailures = 0
-      for (const doc of scannedDocs) {
+      // Vaccine and health-test failures are tracked separately (not
+      // merged into one generic "records" counter) so the partial-
+      // failure message can name which categories actually failed,
+      // without ever including raw backend error details.
+      let vaccineFailures = 0
+      let healthFailures = 0
+      for (const doc of scannedDocsSnapshot) {
         if (doc.vaccines) {
           for (const v of doc.vaccines) {
             if (!v.name) continue
@@ -377,7 +421,7 @@ export default function DogNewPage({ toast }: Props) {
                 uncertain: v.uncertain || false,
               })
             } catch {
-              recordFailures++
+              vaccineFailures++
             }
           }
         }
@@ -393,7 +437,7 @@ export default function DogNewPage({ toast }: Props) {
               certNumber: doc.healthTest.certNumber || '',
             })
           } catch {
-            recordFailures++
+            healthFailures++
           }
         }
       }
@@ -403,27 +447,35 @@ export default function DogNewPage({ toast }: Props) {
       // this session from acting as if it were the active one.
       if (!req.isCurrent()) return
 
-      const totalVaccines = scannedDocs.reduce((sum, d) => sum + (d.vaccines?.length || 0), 0)
-      const totalFailures = uploadFailures + recordFailures
+      const totalVaccines = scannedDocsSnapshot.reduce((sum, d) => sum + (d.vaccines?.length || 0), 0)
+      const totalFailures = uploadFailures + vaccineFailures + healthFailures
       if (totalFailures > 0) {
-        // Honest partial-failure reporting: the dog and its passport DO
+        // Honest partial-failure reporting: the Dog and its Passport DO
         // exist (created atomically — see db.ts) — this must never read
         // as total failure, but it must also never silently claim full
-        // success while records are actually missing.
-        const savedNote = pendingFiles.length > 0 ? ` ${filesSaved}/${pendingFiles.length} document(s) saved.` : ''
-        toast(`${form.name} was created, but ${totalFailures} record${totalFailures !== 1 ? 's' : ''} failed to save.${savedNote} Open the dog's page to add them.`, 'error')
+        // success while records are actually missing. Category counts
+        // are safe/sanitized (just what failed, not why) — never a raw
+        // backend error.
+        const failedCategories: string[] = []
+        if (uploadFailures > 0) failedCategories.push(`${uploadFailures} document${uploadFailures !== 1 ? 's' : ''}`)
+        if (vaccineFailures > 0) failedCategories.push(`${vaccineFailures} vaccine record${vaccineFailures !== 1 ? 's' : ''}`)
+        if (healthFailures > 0) failedCategories.push(`${healthFailures} health record${healthFailures !== 1 ? 's' : ''}`)
+        toast(`${formSnapshot.name} and its passport were created, but some additional records were not saved (${failedCategories.join(', ')}). Open the dog's page to add them.`, 'error')
       } else {
-        const fileNote = pendingFiles.length > 0 ? `, ${filesSaved}/${pendingFiles.length} document(s) saved` : ''
-        toast(`${form.name} added with ${totalVaccines} vaccine record(s)${fileNote}!`)
+        const fileNote = pendingFilesSnapshot.length > 0 ? `, ${filesSaved}/${pendingFilesSnapshot.length} document(s) saved` : ''
+        toast(`${formSnapshot.name} added with ${totalVaccines} vaccine record(s)${fileNote}!`)
       }
       navigate(`/app/dogs/${dogId}`)
     } catch {
-      if (createdDogIdRef.current) {
-        // The dog itself was already created (this failure happened in a
-        // follow-up step, or on a resumed retry after one) — never claim
-        // total failure when a real, saved Dog/Passport already exists.
-        toast(`${form.name} was created, but some records failed to save. Open the dog's page to check and retry.`, 'error')
-        if (req.isCurrent()) navigate(`/app/dogs/${createdDogIdRef.current}`)
+      if (committedDogIdRef.current) {
+        // The Dog itself was already created (this failure happened in a
+        // follow-up step) — never claim total failure when a real, saved
+        // Dog/Passport already exists. This is a terminal outcome for
+        // this instance too — no retry is offered or automatically
+        // attempted; the user is directed to the Dog's own page to add
+        // whatever is missing.
+        toast(`${formSnapshot.name} and its passport were created, but some additional records were not saved. Open the dog's page to add them.`, 'error')
+        if (req.isCurrent()) navigate(`/app/dogs/${committedDogIdRef.current}`)
       } else {
         toast('Failed to create dog profile', 'error')
       }
@@ -675,7 +727,7 @@ export default function DogNewPage({ toast }: Props) {
               </div>
             )}
             <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
-              <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading || submitting}>
+              <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading || submitting || dogCreated}>
                 {(loading || submitting) ? <span className="spinner" /> : (() => {
                   const recordCount = scannedDocs.reduce((s, d) => s + (d.vaccines?.length || 0), 0)
                   const base = isOwner ? 'Create Dog ID & passport' : 'Add dog & create passport'
@@ -710,7 +762,7 @@ export default function DogNewPage({ toast }: Props) {
               <button
                 className="btn btn-primary"
                 style={{ flex: 1 }}
-                disabled={submitting}
+                disabled={submitting || dogCreated}
                 onClick={() => {
                   // Same single-flight lock AND UID binding as
                   // handleSubmit — lock acquired synchronously, first,
@@ -720,9 +772,17 @@ export default function DogNewPage({ toast }: Props) {
                   // no-op: the lock is already held, so acquireSubmitLock()
                   // returns null and nothing further happens. No
                   // authenticated UID blocks creation outright, same as
-                  // handleSubmit. This resumes safely even if a PREVIOUS
-                  // "Add anyway"/submit already created the dog — see
-                  // createdDogIdRef in proceedWithCreate().
+                  // handleSubmit.
+                  //
+                  // Codex round 18: this is NOT a resumable retry. If a
+                  // Dog was already committed by this instance (this
+                  // modal shouldn't normally still be open in that case,
+                  // since duplicateWarning is only ever set before
+                  // createDog() is ever called — this is defense in
+                  // depth), acquireSubmitLock() refuses outright via
+                  // committedDogIdRef and nothing further happens.
+                  // proceedWithCreate() always creates a fresh Dog from
+                  // the current form snapshot; it never reuses an old id.
                   if (!user?.uid) { toast('Your session has changed — please sign in again', 'error'); return }
                   const lockToken = acquireSubmitLock()
                   if (!lockToken) return
@@ -736,7 +796,7 @@ export default function DogNewPage({ toast }: Props) {
               <button
                 className="btn btn-secondary"
                 style={{ flex: 1 }}
-                disabled={submitting}
+                disabled={submitting || dogCreated}
                 onClick={() => setDuplicateWarning(null)}
               >
                 Go back & check
