@@ -15,11 +15,18 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { getStorage } from 'firebase-admin/storage'
+import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 
+// Bounded staging-isolation safety patch: storageBucket is intentionally
+// NOT passed here anymore — it used to fall back to
+// `${FIREBASE_PROJECT_ID}.firebasestorage.app`, and ultimately to the
+// hardcoded PRODUCTION bucket name if even FIREBASE_PROJECT_ID was
+// missing. The bucket is now resolved explicitly, per request, via
+// requireStorageBucket() below and passed directly to
+// getStorage().bucket(name) at the point of use — never defaulted here.
 if (!getApps().length) {
   let privateKey = process.env.FIREBASE_PRIVATE_KEY || ''
   privateKey = privateKey.replace(/\\n/g, '\n')
-  const defaultBucket = process.env.FIREBASE_PROJECT_ID ? `${process.env.FIREBASE_PROJECT_ID}.firebasestorage.app` : 'idogs-app.firebasestorage.app'
 
   initializeApp({
     credential: cert({
@@ -27,7 +34,6 @@ if (!getApps().length) {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey,
     }),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || defaultBucket,
   })
 }
 
@@ -36,6 +42,16 @@ const SIGNED_URL_TTL_MS = 10 * 60 * 1000 // 10 minutes
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  // Fail closed BEFORE any Firebase/Storage request, and before even
+  // verifying the caller's token — a missing/malformed
+  // FIREBASE_STORAGE_BUCKET must never be papered over by silently
+  // targeting production, regardless of who's asking.
+  const bucketName = requireStorageBucket()
+  if (!bucketName) {
+    logConfigError('get-signed-url', 'STORAGE_BUCKET_NOT_CONFIGURED')
+    return res.status(500).json({ error: 'FIREBASE_STORAGE_BUCKET not configured' })
   }
 
   // 1. Verify the caller is signed in
@@ -97,7 +113,7 @@ export default async function handler(req, res) {
     }
 
     // 4. Issue the signed URL
-    const bucket = getStorage().bucket()
+    const bucket = getStorage().bucket(bucketName)
     const file = bucket.file(filePath)
     const [exists] = await file.exists()
     if (!exists) {

@@ -1,5 +1,6 @@
 // api/create-checkout.js — Create Stripe checkout session
 import Stripe from 'stripe'
+import { requireAppUrl, logConfigError } from './_lib/require-config.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 
@@ -19,6 +20,16 @@ export default async function handler(req, res) {
   const priceId = PRICE_IDS[plan]
   if (!priceId) return res.status(400).json({ error: 'Invalid plan' })
 
+  // Fail closed BEFORE creating the Stripe session — its success/cancel
+  // URLs are baked in at creation time, so a missing/malformed APP_URL
+  // must never be papered over by redirecting a real paying customer to
+  // production instead of this deployment.
+  const appUrl = requireAppUrl()
+  if (!appUrl) {
+    logConfigError('create-checkout', 'APP_URL_NOT_CONFIGURED')
+    return res.status(500).json({ error: 'APP_URL not configured' })
+  }
+
   try {
     const lineItems = [{ price: priceId, quantity: 1 }]
     if (smsAddon && PRICE_IDS.sms_addon) {
@@ -30,8 +41,8 @@ export default async function handler(req, res) {
       payment_method_types: ['card'],
       customer_email: userEmail,
       line_items: lineItems,
-      success_url: `${process.env.APP_URL || 'https://idogs.com.au'}/app/billing?success=1`,
-      cancel_url: `${process.env.APP_URL || 'https://idogs.com.au'}/app/billing?cancelled=1`,
+      success_url: `${appUrl}/app/billing?success=1`,
+      cancel_url: `${appUrl}/app/billing?cancelled=1`,
       metadata: { userId, plan },
       subscription_data: {
         metadata: { userId, plan },

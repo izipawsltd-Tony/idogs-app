@@ -4,6 +4,14 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 
+// Bounded staging-isolation safety patch: this endpoint never touches
+// Firebase Storage (it only reads Firestore and returns generated HTML/
+// CSV) — the `storageBucket` option here did nothing except carry a
+// hardcoded fallback to the PRODUCTION bucket name
+// ('idogs-app.firebasestorage.app') that would have silently applied to
+// any FUTURE code path in this file that started using Storage without
+// noticing the fallback was still there. Removed outright rather than
+// validated, since there is no actual storage operation to fail-close.
 if (!getApps().length) {
   initializeApp({
     credential: cert({
@@ -11,7 +19,6 @@ if (!getApps().length) {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     }),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'idogs-app.firebasestorage.app',
   })
 }
 

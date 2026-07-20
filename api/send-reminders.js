@@ -4,6 +4,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
+import { requireAppUrl, logConfigError } from './_lib/require-config.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -135,6 +136,18 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
+  // Fail closed BEFORE doing any work — this handler makes internal
+  // server-to-server calls back into /api/send-email using APP_URL as
+  // the base. A missing/malformed APP_URL must never be papered over by
+  // silently calling PRODUCTION's live send-email endpoint (which would
+  // actually send real email through production's own credentials) from
+  // a staging/Preview deployment's cron run.
+  const appUrl = requireAppUrl()
+  if (!appUrl) {
+    logConfigError('send-reminders', 'APP_URL_NOT_CONFIGURED')
+    return res.status(500).json({ error: 'APP_URL not configured' })
+  }
+
   try {
     const today = new Date()
     let smsSent = 0
@@ -168,7 +181,7 @@ export default async function handler(req, res) {
           const milestone = getTodaysDogMilestone(dog.dateOfBirth, dogCreatedAt)
           if (milestone) {
             try {
-              await fetch(`${process.env.APP_URL || 'https://idogs.com.au'}/api/send-email`, {
+              await fetch(`${appUrl}/api/send-email`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                 body: JSON.stringify({
@@ -309,7 +322,7 @@ export default async function handler(req, res) {
               // Send email reminder
               if (user.email) {
                 try {
-                  await fetch(`${process.env.APP_URL || 'https://idogs.com.au'}/api/send-email`, {
+                  await fetch(`${appUrl}/api/send-email`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                     body: JSON.stringify({
@@ -452,7 +465,7 @@ export default async function handler(req, res) {
 
                 if (user.email) {
                   try {
-                    await fetch(`${process.env.APP_URL || 'https://idogs.com.au'}/api/send-email`, {
+                    await fetch(`${appUrl}/api/send-email`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                       body: JSON.stringify({
