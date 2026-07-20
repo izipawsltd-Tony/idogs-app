@@ -30,6 +30,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getStorage } from 'firebase-admin/storage'
 import { getFirestore } from 'firebase-admin/firestore'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
+import { logSanitizedError } from './_lib/http-helpers.js'
 
 // Bounded staging-isolation safety patch: storageBucket is intentionally
 // NOT passed here anymore — it used to fall back to
@@ -135,7 +136,11 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ success: true, fileUrl })
   } catch (err) {
-    console.error(`${uploadType === 'note' ? 'Note photo' : 'Photo'} upload error:`, err)
-    return res.status(500).json({ error: 'Upload failed', message: String(err) })
+    // Round 19: never echo String(err) (a GCS SDK error can embed the
+    // bucket/file path) to the client, and log only a fixed operation
+    // label + allowlisted code — never the raw error. uploadType is one
+    // of exactly two server-controlled values (never raw request text).
+    logSanitizedError(`upload (${uploadType})`, 'UPLOAD_FAILED')
+    return res.status(500).json({ error: 'Upload failed' })
   }
 }

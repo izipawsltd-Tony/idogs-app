@@ -6,6 +6,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getStorage } from 'firebase-admin/storage'
 import { getFirestore } from 'firebase-admin/firestore'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
+import { logSanitizedError } from './_lib/http-helpers.js'
 
 // Init Firebase Admin (once)
 //
@@ -125,11 +126,12 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ success: true, filePath })
   } catch (err) {
-    console.error('Upload error full:', JSON.stringify({
-      message: err.message,
-      code: err.code,
-      stack: err.stack?.slice(0, 500),
-    }))
-    return res.status(500).json({ error: 'Upload failed', message: err.message, code: err.code })
+    // Round 19: the previous version logged AND returned err.message/
+    // err.code/a stack slice to the client — any of which can carry the
+    // storage path, bucket name, or other config/provider detail. Never
+    // echo any of it; log only a fixed operation label + allowlisted
+    // code.
+    logSanitizedError('upload-document', 'UPLOAD_FAILED')
+    return res.status(500).json({ error: 'Upload failed' })
   }
 }

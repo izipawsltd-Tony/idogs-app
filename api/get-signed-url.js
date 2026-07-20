@@ -16,6 +16,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { getStorage } from 'firebase-admin/storage'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
+import { logSanitizedError } from './_lib/http-helpers.js'
 
 // Bounded staging-isolation safety patch: storageBucket is intentionally
 // NOT passed here anymore — it used to fall back to
@@ -127,7 +128,10 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ url, expiresInSeconds: SIGNED_URL_TTL_MS / 1000 })
   } catch (err) {
-    console.error('get-signed-url error:', err)
-    return res.status(500).json({ error: 'Internal error', message: err.message })
+    // Round 19: never echo err.message (a GCS SDK error can embed the
+    // bucket/file path) to the client, and log only a fixed operation
+    // label + allowlisted code — never the raw error.
+    logSanitizedError('get-signed-url', 'SIGNED_URL_FAILED')
+    return res.status(500).json({ error: 'Internal error' })
   }
 }

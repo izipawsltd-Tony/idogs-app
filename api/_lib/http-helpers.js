@@ -57,6 +57,22 @@ export function parseJsonBody(req) {
 // a name field doesn't need 10,000 characters).
 export const MAX_STRING_LENGTH = 10000
 
+// Round 19 (bounded staging-isolation safety patch), requirement 3: in
+// the checkout and Storage endpoints, a generic catch-all error must
+// never echo err.message/String(err)/err.stack to the client, and
+// server logs must carry only a FIXED operation label plus an
+// allowlisted, normalized code — never the raw error object, which can
+// carry config values, URLs, bucket/file paths, or provider payloads
+// (e.g. a Google Cloud Storage or Stripe SDK error's own message often
+// embeds exactly that kind of detail). Call sites that don't use the
+// full withApiErrorHandling()/ApiError wrapper (get-signed-url.js,
+// upload-document.js, upload.js, create-checkout.js each keep their own
+// existing try/catch shape) use this directly in their catch block
+// instead of `console.error(label, err)`.
+export function logSanitizedError(operation, code) {
+  console.error(`${operation}: operation failed`, { code })
+}
+
 // Standard handler wrapper: runs `fn(req, res)`, and turns any thrown
 // ApiError into its declared status/message, and anything else into a
 // sanitized 500 (full detail logged server-side via console.error,

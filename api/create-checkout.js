@@ -1,6 +1,7 @@
 // api/create-checkout.js — Create Stripe checkout session
 import Stripe from 'stripe'
 import { requireAppUrl, logConfigError } from './_lib/require-config.js'
+import { logSanitizedError } from './_lib/http-helpers.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 
@@ -51,7 +52,10 @@ export default async function handler(req, res) {
     })
     return res.status(200).json({ url: session.url })
   } catch (err) {
-    console.error('Checkout error:', err)
-    return res.status(500).json({ error: 'Failed to create checkout', message: err.message })
+    // Round 19: never echo err.message (a Stripe SDK error can embed
+    // request/account detail) to the client, and log only a fixed
+    // operation label + allowlisted code — never the raw error.
+    logSanitizedError('create-checkout', 'CHECKOUT_SESSION_FAILED')
+    return res.status(500).json({ error: 'Failed to create checkout' })
   }
 }
