@@ -18,6 +18,7 @@ import {
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
+import { describeTransferFailure } from '../lib/transferError'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
@@ -966,8 +967,15 @@ function TransferModal({
     setError('')
     try {
       await onTransfer(buyerName.trim(), buyerEmail.trim().toLowerCase(), buyerPhone.trim() || undefined)
-    } catch {
-      setError('Something went wrong. Please try again.')
+    } catch (err) {
+      // Round 20: never log/surface the raw error here — it can carry a
+      // Firestore document path, this caller's UID, or the buyer name/
+      // email just entered above. Only a fixed operation name and a
+      // normalized, allowlisted code are safe to log — see
+      // describeTransferFailure() in ../lib/transferError.ts.
+      const { userMessage, logCode, logOperation } = describeTransferFailure(err)
+      console.error(logOperation, { code: logCode })
+      setError(userMessage)
       setLoading(false)
     }
   }

@@ -7,6 +7,7 @@ import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, pars
 import type { Litter, Dog, ToastMessage } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { sendTransferEmail } from '../lib/email'
+import { describeTransferFailure } from '../lib/transferError'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -542,8 +543,15 @@ export default function LittersPage({ toast }: Props) {
       setTransferEmail('')
       setTransferPhone('')
       setTransferConfirm(false)
-    } catch {
-      setTransferError('Something went wrong. Please try again.')
+    } catch (err) {
+      // Round 20: never log/surface the raw error — it can carry a
+      // Firestore document path, this caller's UID, or the buyer name/
+      // email just entered above. Only a fixed operation name and a
+      // normalized, allowlisted code are safe to log — see
+      // describeTransferFailure() in ../lib/transferError.ts.
+      const { userMessage, logCode, logOperation } = describeTransferFailure(err)
+      console.error(logOperation, { code: logCode })
+      setTransferError(userMessage)
     } finally {
       setTransferring(false)
     }
