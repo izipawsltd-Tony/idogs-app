@@ -55,7 +55,12 @@ const src = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.u
   const wrappedQueries = [
     'getVaccineRecords(dogId!)', 'getWormingRecords(dogId!)', 'getHealthTests(dogId!)',
     'getActivityNotes(dogId!)', 'getScanCount(dogId!)', 'getDogDocuments(dogId!)',
-    "getAuditLogs(d.tenantId, dogId!)",
+    // Round 20 follow-up: queried by the VIEWER's own uid, not d.tenantId
+    // (the dog's permanent original-breeder provenance) — see
+    // test-auditlogs-claimed-dog-scope.mjs for the behavioral emulator
+    // coverage of why this changed (a claimed dog's new owner querying by
+    // d.tenantId was a cross-tenant read Firestore Rules correctly denied).
+    "getAuditLogs(user?.uid || '', dogId!)",
   ]
   for (const q of wrappedQueries) {
     check(`${q} is routed through safeLoad(), not a bare .catch(() => fallback)`,
@@ -188,6 +193,34 @@ const src = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.u
     /hasIncompleteData && \(/.test(src) && /may be incomplete/.test(src))
   check('TimelineTab\'s genuinely-empty "No story yet" is distinguished from an incomplete-data empty state',
     /Couldn't load \{dog\.name\}'s story/.test(src) && /No story yet/.test(src))
+}
+
+// =========================================================================
+// SECTION 8 — Round 20 follow-up: BOTH getAuditLogs() call sites in
+// DogDetailPage (the main loader above, and retryTimeline()'s own retry)
+// must query by the authenticated VIEWER's own uid, never by the dog's
+// tenantId. The dog's tenantId is permanent original-breeder provenance —
+// once a dog is claimed, tenantId != the new owner's uid forever, so a
+// query filtered on it is a cross-tenant read the auditLogs `list` rule
+// (resource.data.tenantId == request.auth.uid) correctly denies, which
+// surfaced as a permanent Timeline load failure for every claimed dog's
+// new owner (not specific to any one dog's data shape). Neither call site
+// may regress back to dog.tenantId/d.tenantId — see
+// test-auditlogs-claimed-dog-scope.mjs for the behavioral emulator proof
+// that querying by the viewer's own uid still excludes the former
+// breeder's pre-transfer audit history (privacy boundary preserved).
+// =========================================================================
+{
+  check("main loader's getAuditLogs call uses the viewer's own uid, not d.tenantId",
+    src.includes("safeLoad(getAuditLogs(user?.uid || '', dogId!)"))
+  check('main loader no longer queries getAuditLogs with d.tenantId or dog.tenantId',
+    !/getAuditLogs\(\s*d\.tenantId/.test(src) && !/getAuditLogs\(\s*dog\.tenantId/.test(src))
+
+  const retryTimelineMatch = src.match(/function retryTimeline\(\)[\s\S]*?\r?\n  \}\r?\n/)
+  const retryTimelineBlock = retryTimelineMatch ? retryTimelineMatch[0] : ''
+  check('retryTimeline() was located for inspection (sanity check on the pattern above)', retryTimelineBlock.length > 0)
+  check("retryTimeline()'s getAuditLogs call uses the viewer's own uid, not dog.tenantId",
+    retryTimelineBlock.includes("getAuditLogs(user?.uid || '', dogId)"))
 }
 
 await summary()

@@ -277,7 +277,7 @@ export default function DogDetailPage({ toast }: Props) {
           console.error('DogDetailPage: timeline (notes) retry failed', { code: safeReadFirestoreErrorCode(err) })
           return { ok: false as const, data: [] as ActivityNote[] }
         }),
-      getAuditLogs(dog.tenantId, dogId)
+      getAuditLogs(user?.uid || '', dogId)
         .then(data => ({ ok: true as const, data }))
         .catch((err: unknown) => {
           console.error('DogDetailPage: timeline (audit) retry failed', { code: safeReadFirestoreErrorCode(err) })
@@ -348,7 +348,21 @@ export default function DogDetailPage({ toast }: Props) {
           safeLoad(getActivityNotes(dogId!), [] as ActivityNote[]),
           safeLoad(getScanCount(dogId!), null as number | null),
           safeLoad(getDogDocuments(dogId!), [] as any[]),
-          safeLoad(getAuditLogs(d.tenantId, dogId!), [] as AuditEntry[]),
+          // Query with the VIEWER's own uid, not d.tenantId (the dog's
+          // permanent original-breeder provenance) — matches AuditPage.tsx
+          // and DashboardPage.tsx, both of which already call
+          // getAuditLogs(user.uid). Once a dog is claimed, tenantId never
+          // changes to the new owner (by design — see the Firestore
+          // Collections note on two-tier audit access), so a query filtered
+          // on d.tenantId is a cross-tenant read the new owner was never
+          // meant to make: auditLogs' `list` rule (resource.data.tenantId
+          // == request.auth.uid) correctly denies it, but the resulting
+          // permission-denied surfaced as a genuine Timeline load failure
+          // instead of the intended "pre-claim history stays private"
+          // outcome. Querying by the viewer's own uid returns exactly the
+          // life-stage events recorded since THIS viewer became
+          // tenant/owner — never the former breeder's pre-transfer history.
+          safeLoad(getAuditLogs(user?.uid || '', dogId!), [] as AuditEntry[]),
           getReminders(dogId!, user?.uid || '', d)
             .then(r => ({ ok: true as const, data: r }))
             .catch(err => {
