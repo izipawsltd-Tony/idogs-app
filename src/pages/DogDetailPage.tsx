@@ -2836,6 +2836,42 @@ interface HeatCycle {
   puppiesAlive?: number
   notes?: string
   createdAt?: string
+  // Present on a record fetched from Firestore ({ id: d.id, ...d.data() }
+  // — see the heatCycles load effect below), never part of the editable
+  // form shape. Declared here only so TypeScript knows they can appear on
+  // a HeatCycle value; HEAT_CYCLE_WRITABLE_FIELDS below is what actually
+  // keeps them out of any write payload.
+  dogId?: string
+  tenantId?: string
+  updatedAt?: string
+}
+
+// Every field the user can actually edit in HeatCycleModal, and nothing
+// else — mirrors api/_lib/heat-cycle-schema.js's ALL_FIELDS exactly (keep
+// both lists in sync if either changes). `id`/`dogId`/`tenantId`/
+// `createdAt`/`updatedAt` are deliberately absent: identity and
+// server-managed metadata that must never be read out of a fetched
+// record and echoed back into a write payload. See saveHeatCycle() below
+// — the bug this fixes was passing the ENTIRE fetched HeatCycle object
+// (id excepted) through to the API on edit, so those four fields rode
+// along and the server's own allowlist correctly rejected the whole
+// request as "Unknown field(s): tenantId, updatedAt, dogId, createdAt".
+const HEAT_CYCLE_WRITABLE_FIELDS = [
+  'heatNumber', 'heatStartDate', 'heatEndDate',
+  'matingDate', 'matingMethod', 'semenType', 'sireName', 'sireReg', 'sireId', 'sirePedigreeRegister', 'vetClinic', 'progesteroneTested',
+  'pregnancyConfirmed', 'ultrasoundDate', 'whelpingEstimate', 'whelpingActual', 'whelpingMethod',
+  'puppiesBorn', 'puppiesAlive',
+  'notes',
+] as const satisfies readonly (keyof HeatCycle)[]
+
+type WritableHeatCycleFields = Omit<HeatCycle, 'id' | 'dogId' | 'tenantId' | 'createdAt' | 'updatedAt'>
+
+function toWritableHeatCycleFields(cycle: HeatCycle): WritableHeatCycleFields {
+  const clean = {} as WritableHeatCycleFields
+  for (const field of HEAT_CYCLE_WRITABLE_FIELDS) {
+    if (cycle[field] !== undefined) (clean as any)[field] = cycle[field]
+  }
+  return clean
 }
 
 function calcWhelpingEstimate(matingDate: string): string {
@@ -3088,7 +3124,16 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     try {
       if (!auth.currentUser) throw new Error('Not signed in')
       const idToken = await auth.currentUser.getIdToken()
-      const { id: cycleId, ...cycleFields } = cycle
+      const cycleId = cycle.id
+      // Explicit writable DTO, not a spread of the fetched record: when
+      // editing an existing heat cycle, `cycle` originates from
+      // heatCycles state ({ id: d.id, ...d.data() } — see the load effect
+      // above), which carries Firestore's own dogId/tenantId/createdAt/
+      // updatedAt alongside the editable fields. Spreading that whole
+      // object (minus only `id`) sent those four straight to the API,
+      // which correctly rejects them via its own allowlist — this is what
+      // "Unknown field(s): tenantId, updatedAt, dogId, createdAt" was.
+      const cycleFields = toWritableHeatCycleFields(cycle)
       const res = await fetch('/api/save-heat-cycle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
@@ -3099,7 +3144,11 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         throw new Error(describeParentEligibilityFailure(err, `Save heat cycle failed (${res.status})`))
       }
       const result = await res.json()
-      const savedData = { ...cycleFields, dogId, tenantId: dog.tenantId, id: result.cycleId }
+      // createdAt: preserved from the original fetched record on edit
+      // (never sent to/echoed from the server — see cycleFields above),
+      // or left undefined on a brand-new create (the server sets the
+      // real value; it's picked up on next reload/re-fetch).
+      const savedData = { ...cycleFields, dogId, tenantId: dog.tenantId, createdAt: cycle.createdAt, id: result.cycleId }
       if (cycleId) {
         setHeatCycles(prev => prev.map(c => c.id === cycleId ? savedData : c))
       } else {
