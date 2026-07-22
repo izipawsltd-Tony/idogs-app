@@ -76,7 +76,91 @@ service cloud.firestore {
     // through what looks like an ordinary client update.
     function dogProtectedFieldsUnchanged() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType']);
+        .hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType', 'originBreederId']);
+    }
+
+    // Hotfix — allow a legitimate SECOND (or later) transfer. The
+    // buyerEmail/buyerName/transferredAt/previousOwnerId immutability
+    // clauses below exist to stop a claimed owner from silently editing
+    // or erasing their dog's EXISTING transfer/claim record — but
+    // api/claim-transferred-dogs.js deliberately never clears those same
+    // four fields after a claim (they're kept as permanent provenance of
+    // the FIRST transfer), so once any dog has been transferred once,
+    // those clauses also — unintentionally — blocked the real current
+    // owner from ever starting a legitimate NEW transfer, since starting
+    // one requires writing new values into those exact fields. Confirmed
+    // production incident: idogsbreeder@gmail.com (Honey's genuine,
+    // claimed current owner) got "Something went wrong" on every attempt
+    // to transfer Honey onward, purely from this rule, with zero
+    // workaround.
+    //
+    // This function recognizes the EXACT, narrow shape
+    // transferDogOwnership() (src/lib/db.ts) always writes for a
+    // brand-new transfer — not just "the buyer fields changed" (which
+    // would also match a hostile isolated rewrite) — so isolated edits,
+    // provenance rewrites, and malformed/partial transitions still fail
+    // every one of these conditions and stay denied exactly as before.
+    function isLegitimateNewTransferTransition(dog) {
+      return isEffectiveDogOwner(dog) &&
+        // Must be starting from a non-pending state — can't begin ANOTHER
+        // transfer while one is already awaiting claim (that would let
+        // the currently-pending buyer/provenance fields be silently
+        // overwritten before the pending buyer ever claims).
+        dog.get('status', 'active') != 'transferred' &&
+        dog.get('transferStatus', null) != 'pendingClaim' &&
+        // Must land exactly on the post-write shape transferDogOwnership()
+        // always produces.
+        request.resource.data.get('status', null) == 'transferred' &&
+        request.resource.data.get('transferStatus', null) == 'pendingClaim' &&
+        // currentOwnerId never moves in this write — only the Admin SDK
+        // claim route ever reassigns it, and only after the new buyer
+        // actually claims.
+        request.resource.data.get('currentOwnerId', null) == dog.get('currentOwnerId', null) &&
+        // previousOwnerId must become exactly the authenticated caller's
+        // own uid — the CURRENT owner recording themselves as this
+        // transfer's seller, never an arbitrary/spoofed identity.
+        request.resource.data.get('previousOwnerId', null) == request.auth.uid &&
+        // The buyer fields this transition exists to unlock must actually
+        // be present as non-empty strings in the same write — never a
+        // null/removed value smuggled through under the transition's
+        // cover, and never a non-string type.
+        request.resource.data.get('buyerEmail', '') is string && request.resource.data.get('buyerEmail', '').size() > 0 &&
+        request.resource.data.get('buyerName', '') is string && request.resource.data.get('buyerName', '').size() > 0 &&
+        request.resource.data.get('transferredAt', '') is string && request.resource.data.get('transferredAt', '').size() > 0;
+    }
+
+    // Either NOTHING about the transfer shape changed (the ordinary case —
+    // ANY other field being edited on a dog with or without transfer
+    // history), OR this exact write is a legitimate new-transfer
+    // transition (see isLegitimateNewTransferTransition above). A write
+    // that changes any piece of the transfer shape WITHOUT matching the
+    // full transition shape (an isolated buyerEmail edit, a spoofed
+    // previousOwnerId, a status/transferStatus flip with no buyer fields,
+    // etc.) matches neither branch and is denied. status/transferStatus
+    // are included in the "untouched" branch's equality checks (not just
+    // the four provenance fields) specifically so a write can't flip a
+    // dog to status:'transferred' while leaving buyerEmail/buyerName/
+    // transferredAt/previousOwnerId merely UNCHANGED (still carrying the
+    // PREVIOUS transfer's values) — that combination would pass the old
+    // four-field-only check (nothing about those four fields differs) yet
+    // leave the document in an inconsistent "transferred but pointing at
+    // the wrong/stale buyer" state; requiring status/transferStatus to
+    // also stay put forces any status change through the full,
+    // strictly-validated transition instead.
+    function dogTransferProvenanceValid() {
+      return isLegitimateNewTransferTransition(resource.data) ||
+        (
+          (resource.data.get('buyerEmail', null) == null ||
+           request.resource.data.get('buyerEmail', null) == resource.data.get('buyerEmail', null)) &&
+          (resource.data.get('buyerName', null) == null ||
+           request.resource.data.get('buyerName', null) == resource.data.get('buyerName', null)) &&
+          (resource.data.get('transferredAt', null) == null ||
+           request.resource.data.get('transferredAt', null) == resource.data.get('transferredAt', null)) &&
+          (resource.data.get('previousOwnerId', null) == null ||
+           request.resource.data.get('previousOwnerId', null) == resource.data.get('previousOwnerId', null)) &&
+          request.resource.data.get('status', null) == resource.data.get('status', 'active') &&
+          request.resource.data.get('transferStatus', null) == resource.data.get('transferStatus', null)
+        );
     }
 
     // A dog "belongs to" whoever is its breeder (tenantId) or its current
@@ -139,28 +223,23 @@ service cloud.firestore {
       // createdByUserId/sourceType through what looks like an ordinary
       // update — changed only by the Admin SDK claim route, which
       // bypasses these rules entirely.
-      // Ownership-history fields are immutable once set — a dog's
-      // transfer/claim record is permanent provenance, never something
-      // the current owner (who, post-claim, is the buyer — the very
-      // person the history is about) should be able to edit away. Each
-      // check only fires once the OLD value is already non-null, so the
-      // FIRST write (transferDogOwnership() setting these for the first
-      // time, or the Admin SDK claim route setting claimedAt/claimedBy)
-      // remains allowed — only a later attempt to change or clear an
-      // already-set value is blocked. buyerPhone is deliberately left
-      // out: a contact-detail typo fix isn't a history-tampering risk
+      // Ownership-history fields are protected — a dog's transfer/claim
+      // record is provenance, never something the current owner (who,
+      // post-claim, is the buyer — the very person the history is about)
+      // should be able to silently edit or erase. buyerEmail/buyerName/
+      // transferredAt/previousOwnerId may ONLY change together as part of
+      // a legitimate NEW transfer (dogTransferProvenanceValid() above) —
+      // any isolated edit of one of them, or a change that doesn't match
+      // that exact transition shape, stays denied. claimedAt/claimedBy
+      // have no legitimate second-write path at all (only the Admin SDK
+      // claim route ever sets them, once) and remain flatly immutable
+      // once set, same as before. buyerPhone is deliberately left out of
+      // both: a contact-detail typo fix isn't a history-tampering risk
       // the way erasing buyerEmail/transferredAt/previousOwnerId/
       // claimedAt/claimedBy would be.
       allow update: if isEffectiveDogOwner(resource.data) &&
         dogProtectedFieldsUnchanged() &&
-        (resource.data.get('buyerEmail', null) == null ||
-         request.resource.data.get('buyerEmail', null) == resource.data.get('buyerEmail', null)) &&
-        (resource.data.get('buyerName', null) == null ||
-         request.resource.data.get('buyerName', null) == resource.data.get('buyerName', null)) &&
-        (resource.data.get('transferredAt', null) == null ||
-         request.resource.data.get('transferredAt', null) == resource.data.get('transferredAt', null)) &&
-        (resource.data.get('previousOwnerId', null) == null ||
-         request.resource.data.get('previousOwnerId', null) == resource.data.get('previousOwnerId', null)) &&
+        dogTransferProvenanceValid() &&
         (resource.data.get('claimedAt', null) == null ||
          request.resource.data.get('claimedAt', null) == resource.data.get('claimedAt', null)) &&
         (resource.data.get('claimedBy', null) == null ||

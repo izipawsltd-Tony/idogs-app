@@ -115,13 +115,20 @@ const otherOwnerUid = await newUser('otherowner')
   try { await updateDoc(doc(db, 'dogs', dogId), { name: 'Hacked' }) } catch (err) { strangerWriteDenied = isDenied(err) }
   check('1-BreederIssued', 'Unrelated user denied write', strangerWriteDenied)
 
-  // Simulate transfer: breeder marks pendingClaim (currentOwnerId untouched — matches transferDogOwnership())
+  // Simulate transfer: breeder marks pendingClaim (currentOwnerId
+  // untouched — matches transferDogOwnership()'s REAL full write shape,
+  // src/lib/db.ts: status, transferStatus, previousOwnerId, buyerName,
+  // buyerEmail, transferredAt all set together — the Hotfix rule now
+  // requires this exact shape for a status-changing write, not just the
+  // buyer fields alone).
   await as('breeder')
   let transferMarkOk = true
   try {
     await updateDoc(doc(db, 'dogs', dogId), {
       status: 'transferred', transferStatus: 'pendingClaim',
+      previousOwnerId: breederUid,
       buyerEmail: email('newowner'), buyerName: 'New Owner',
+      transferredAt: new Date().toISOString(),
     })
   } catch (err) { transferMarkOk = false }
   check('1-BreederIssued', 'Breeder can mark dog pendingClaim (transferDogOwnership shape)', transferMarkOk)

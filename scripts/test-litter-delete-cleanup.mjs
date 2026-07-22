@@ -528,8 +528,17 @@ const strangerUid = await newUser('stranger')
     tenantId: breederUid, damId: damId9, name: 'Litter9', notes: '', actualBirthDate: '2026-01-01', puppyIds: [pendingPupId],
   })
   // Breeder marks the puppy as pending-claim (currentOwnerId untouched —
-  // matches transferDogOwnership()'s real shape)
-  await updateDoc(doc(db, 'dogs', pendingPupId), { status: 'transferred', transferStatus: 'pendingClaim', buyerEmail: 'buyer9@example.com', buyerName: 'Buyer Nine' })
+  // matches transferDogOwnership()'s REAL full write shape, src/lib/db.ts:
+  // status, transferStatus, previousOwnerId, buyerName, buyerEmail,
+  // transferredAt all set together — the Hotfix rule now requires this
+  // exact shape for a status-changing write, not just the buyer fields
+  // alone).
+  await updateDoc(doc(db, 'dogs', pendingPupId), {
+    status: 'transferred', transferStatus: 'pendingClaim',
+    previousOwnerId: breederUid,
+    buyerEmail: 'buyer9@example.com', buyerName: 'Buyer Nine',
+    transferredAt: new Date().toISOString(),
+  })
 
   const litterSnap = await getDoc(doc(db, 'litters', litterId9))
   const candidateSnaps = await Promise.all((litterSnap.data().puppyIds || []).map(id => getDoc(doc(db, 'dogs', id))))
