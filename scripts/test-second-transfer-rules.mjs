@@ -28,6 +28,25 @@
 //   1. firebase emulators:start --only auth,firestore --project demo-idogs-qa
 //   2. FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 \
 //      node scripts/test-second-transfer-rules.mjs
+//
+// Proven cumulative full-suite interaction (test-infrastructure only, not a
+// Rules or app defect): running test-round17-dogdetail-completeness.mjs +
+// test-round5-schemas.mjs + test-sale-availability-error-sanitization.mjs +
+// test-scan-count-api.mjs immediately before this file — while all sharing
+// one long-lived emulator process/project namespace — makes 12 of this
+// file's own checks fail (bisected down to that exact 4-file combination;
+// no smaller subset reproduces it; 3,000 dummy documents alone and generic
+// connection-cycle load alone do not reproduce it either). This file always
+// passes 28/28 in isolation against the identical rules. Rather than a
+// separate emulator process (the repo has no test-runner to hook that into
+// — every file here just connects via env vars to whatever emulator is
+// already running), this file uses its OWN distinct emulator project ID
+// below: the Firestore/Auth emulator keeps a fully separate in-memory
+// namespace per projectId while still applying the same firebase.json
+// rules to all of them, so this gives genuine data isolation from whatever
+// the other 40 files write into demo-idogs-qa, without needing a second
+// emulator process or any change to how the emulator is started.
+const EMULATOR_PROJECT_ID = 'demo-idogs-qa-transfer2'
 
 import { initializeApp } from 'firebase/app'
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword } from 'firebase/auth'
@@ -35,14 +54,14 @@ import { getFirestore, connectFirestoreEmulator, doc, updateDoc } from 'firebase
 import { initializeApp as initAdminApp } from 'firebase-admin/app'
 import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
 
-const app = initializeApp({ projectId: 'demo-idogs-qa', apiKey: 'fake-api-key' })
+const app = initializeApp({ projectId: EMULATOR_PROJECT_ID, apiKey: 'fake-api-key' })
 const auth = getAuth(app)
 const db = getFirestore(app)
 connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
 connectFirestoreEmulator(db, '127.0.0.1', 8080)
 
 process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
-const adminApp = initAdminApp({ projectId: 'demo-idogs-qa' })
+const adminApp = initAdminApp({ projectId: EMULATOR_PROJECT_ID })
 const adminDb = getAdminFirestore(adminApp)
 async function seedDog(dogId, data) {
   await adminDb.collection('dogs').doc(dogId).set(data)
