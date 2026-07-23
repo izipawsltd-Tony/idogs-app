@@ -243,7 +243,6 @@ export default function LittersPage({ toast }: Props) {
         expectedDueDate: form.expectedDueDate,
         actualBirthDate: form.actualBirthDate,
         notes: form.notes,
-        puppyIds: [],
       })
       const updated = await getLitters()
       setLitters(updated)

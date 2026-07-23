@@ -1002,6 +1002,27 @@ export async function getLitters(): Promise<Litter[]> {
     .filter(litter => !litter.archived)
 }
 
+// Bug 2 fix: the create payload a caller may legitimately supply — never
+// `Omit<Litter, ...>`, which only strips id/createdAt/tenantId and left
+// puppyIds (required on Litter, so TypeScript FORCED every caller to
+// invent a value for it — LittersPage.tsx supplied `puppyIds: []`) and
+// archived/archivedAt (optional, so no compile error, but still an
+// unprotected leak path if a caller ever spread a fetched Litter record
+// in here instead of building a fresh literal) able to reach the
+// request body. All three are server-managed: puppyIds always starts
+// `[]` (api/create-litter.js sets it, never reads it from the client),
+// and archived/archivedAt are set exclusively by api/delete-litter.js.
+export interface CreateLitterInput {
+  name?: string
+  damId: string
+  sireId?: string | null
+  sireName?: string | null
+  matingSuspectedDate?: string
+  expectedDueDate?: string
+  actualBirthDate?: string
+  notes?: string
+}
+
 // Codex round 3, Blocker 1 — litter creation must verify the Dam (and
 // Sire, if set) "meets actual minimum breeding maturity", which needs
 // real date arithmetic Firestore Rules has no functions for. This now
@@ -1009,13 +1030,38 @@ export async function getLitters(): Promise<Litter[]> {
 // api/_lib/parent-eligibility.js) instead of writing to Firestore
 // directly — firestore.rules denies a direct client create outright, so
 // this is the only path.
-export async function createLitter(data: Omit<Litter, 'id' | 'createdAt' | 'tenantId'>): Promise<string> {
+export async function createLitter(data: CreateLitterInput): Promise<string> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
+  // Explicit DTO, not a forwarded/spread `data` object — mirrors
+  // api/_lib/litter-schema.js's own CREATE_FIELDS allowlist (damId/sireId
+  // handled separately server-side) so no future field added to
+  // CreateLitterInput or the Litter read model can silently reach this
+  // request body without this line being touched too.
+  //
+  // sireId is destructured out of the body separately server-side (before
+  // sanitizeLitterInput runs), so `null` is safe there. sireName is NOT —
+  // it flows into sanitizeLitterInput's per-field loop, which treats any
+  // present key (checked via `!== undefined`, which `null` satisfies) as
+  // "validate me", and validateTextField() requires `typeof value ===
+  // 'string'`. Sending `sireName: null` (which JSON.stringify preserves,
+  // unlike `undefined`, which it drops) would throw "sireName must be a
+  // string" for every litter without a manual external sire name — the
+  // common case. Omit the key entirely instead when there's no value.
+  const payload = {
+    damId: data.damId,
+    sireId: data.sireId ?? null,
+    ...(data.sireName ? { sireName: data.sireName } : {}),
+    name: data.name,
+    matingSuspectedDate: data.matingSuspectedDate,
+    expectedDueDate: data.expectedDueDate,
+    actualBirthDate: data.actualBirthDate,
+    notes: data.notes,
+  }
   const res = await fetch('/api/create-litter', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
