@@ -99,13 +99,15 @@ export default function BillingPage({ toast }: Props) {
     if (planId === 'free') return
     setLoading(planId)
     try {
+      const idToken = await user.getIdToken()
       const res = await fetch('/api/create-checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
           plan: planId,
-          userId: user.uid,
-          userEmail: user.email,
           smsAddon,
         }),
       })

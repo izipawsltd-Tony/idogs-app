@@ -182,9 +182,32 @@ service cloud.firestore {
     // _lib/parent-eligibility.js). See those files for the canonical
     // policy (Codex round 3, Blocker 1).
 
-    // ── users/{uid} — only the account owner can read/write their own profile ──
+    // Billing state is owned exclusively by trusted Admin SDK services.
+    function userBillingFields() {
+      return [
+        'plan',
+        'subscriptionStatus',
+        'stripeCustomerId',
+        'stripeSubscriptionId',
+        'trialEndsAt',
+        'planActivatedAt'
+      ];
+    }
+
+    // ── users/{uid} — owners manage non-billing profile fields only ──
     match /users/{userId} {
-      allow read, write: if isOwnerUser(userId);
+      allow read: if isOwnerUser(userId);
+      allow create: if isOwnerUser(userId) &&
+        !request.resource.data.keys().hasAny(userBillingFields());
+      allow update: if isOwnerUser(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(userBillingFields());
+      // Deleting a document that contains protected fields would also delete
+      // trusted billing state. Unbilled profiles retain the existing client
+      // account-deletion path; billed profiles require a future trusted
+      // cancellation/account-deletion service.
+      allow delete: if isOwnerUser(userId) &&
+        !resource.data.keys().hasAny(userBillingFields());
     }
 
     // ── dogs/{dogId} ──

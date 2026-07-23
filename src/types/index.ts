@@ -282,8 +282,12 @@ export interface UserProfile {
   state: 'NSW' | 'VIC' | 'QLD' | 'SA' | 'WA' | 'TAS' | 'ACT' | 'NT'
   postcode: string
   role: 'breeder' | 'owner' | 'admin'
-  plan: 'trial' | 'starter' | 'professional' | 'kennel'
-  trialEndsAt: string
+  plan?: 'free' | 'trial' | 'starter' | 'basic' | 'professional' | 'pro' | 'kennel'
+  trialEndsAt?: string
+  subscriptionStatus?: string
+  stripeCustomerId?: string
+  stripeSubscriptionId?: string
+  planActivatedAt?: string
   // Account-level Breeder ID (e.g. DACO number for SA breeders). Mandatory
   // for active breeders in most states, but some breeders genuinely don't
   // have one yet (e.g. dogs too young to be bred from yet) — so this is

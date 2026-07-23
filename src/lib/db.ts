@@ -121,14 +121,21 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
 }
 
 export async function createUserProfile(userId: string, data: Partial<UserProfile>): Promise<void> {
-  const trialEnd = new Date()
-  trialEnd.setDate(trialEnd.getDate() + 30)
+  // Billing-owned state is intentionally absent from browser-created
+  // profiles. Only trusted Admin SDK billing services may add it.
+  const {
+    plan: _plan,
+    trialEndsAt: _trialEndsAt,
+    subscriptionStatus: _subscriptionStatus,
+    stripeCustomerId: _stripeCustomerId,
+    stripeSubscriptionId: _stripeSubscriptionId,
+    planActivatedAt: _planActivatedAt,
+    ...profileData
+  } = data
   await setDoc(doc(db, 'users', userId), {
-    ...data,
+    ...profileData,
     uid: userId,
     role: data.role || 'breeder',
-    plan: 'trial',
-    trialEndsAt: trialEnd.toISOString(),
     createdAt: serverTimestamp(),
   })
 }
