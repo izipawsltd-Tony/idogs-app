@@ -24,6 +24,15 @@ function dog(id, overrides = {}) {
   return { currentOwnerId: 'owner-1', status: 'active', isDeceased: false, createdAt: '2026-01-01T00:00:00Z', ...overrides, id }
 }
 
+// Mimics a real firebase-admin Timestamp read back from a serverTimestamp()
+// write — createDog() (client SDK, the main "+ Add dog" UI flow) writes
+// createdAt this way, never as a plain string. Found via live staging QA
+// (2026-07-24): the fix below is a direct regression test for that bug.
+function fakeTimestamp(isoString) {
+  const d = new Date(isoString)
+  return { toDate: () => d, _seconds: Math.floor(d.getTime() / 1000) }
+}
+
 await checkAsync('getOwnedActiveDogsSorted excludes another owner\'s dogs, transferred/restricted/archived dogs, and deceased dogs', async () => {
   const db = createFakeFirestore({
     dogs: {
@@ -49,6 +58,35 @@ await checkAsync('getOwnedActiveDogsSorted sorts oldest-created-first', async ()
   })
   const result = await db.runTransaction(tx => getOwnedActiveDogsSorted(tx, db, 'owner-1'))
   return result.map(d => d.id).join(',') === 'oldest,middle,newer'
+})
+
+await checkAsync('getOwnedActiveDogsSorted correctly orders dogs whose createdAt is a Firestore Timestamp object (serverTimestamp()), not just a string — regression test for the live QA bug', async () => {
+  const db = createFakeFirestore({
+    dogs: {
+      newestTimestamp: dog('newestTimestamp', { createdAt: fakeTimestamp('2026-03-01T00:00:00Z') }),
+      oldestTimestamp: dog('oldestTimestamp', { createdAt: fakeTimestamp('2026-01-01T00:00:00Z') }),
+      middleString: dog('middleString', { createdAt: '2026-02-01T00:00:00Z' }),
+    },
+  })
+  const result = await db.runTransaction(tx => getOwnedActiveDogsSorted(tx, db, 'owner-1'))
+  return result.map(d => d.id).join(',') === 'oldestTimestamp,middleString,newestTimestamp'
+})
+
+await checkAsync('reconcileDogCapTx keeps the TRUE earliest-created dogs active even when their createdAt is a Timestamp object, demoting a brand-new dog instead of an old one', async () => {
+  const db = createFakeFirestore({
+    dogs: {
+      old1: dog('old1', { createdAt: fakeTimestamp('2026-01-01T00:00:00Z') }),
+      old2: dog('old2', { createdAt: fakeTimestamp('2026-01-02T00:00:00Z') }),
+      old3: dog('old3', { createdAt: fakeTimestamp('2026-01-03T00:00:00Z') }),
+      brandNew: dog('brandNew', { createdAt: fakeTimestamp('2026-07-24T00:00:00Z') }),
+    },
+  })
+  const result = await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'free'))
+  const old1 = await db.collection('dogs').doc('old1').get()
+  const brandNew = await db.collection('dogs').doc('brandNew').get()
+  return result.demoted.sort().join(',') === 'brandNew,old3' &&
+    old1.data().status === 'active' &&
+    brandNew.data().status === 'restricted'
 })
 
 await checkAsync('reconcileDogCapTx is a no-op when already within cap', async () => {

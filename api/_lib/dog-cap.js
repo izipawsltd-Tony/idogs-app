@@ -21,12 +21,27 @@ export function capForPlan(plan) {
   return plan === 'plus' ? DOG_CAP.plus : DOG_CAP.free
 }
 
+// createdAt is NOT a consistent shape across creation paths: createDog()
+// (client SDK, the main "+ Add dog" UI flow) writes it via Firestore's
+// serverTimestamp() sentinel, which the Admin SDK reads back as a real
+// Timestamp instance (with a .toDate() method) — never a string.
+// create-litter-puppy.js (Admin SDK), by contrast, writes a plain
+// `new Date().toISOString()` string. Found via live staging QA: treating
+// only the string shape as "known" silently sorted every serverTimestamp()
+// dog as if it had no createdAt at all (falling back to '', tying with
+// every other such dog and leaving their relative order to whatever
+// arbitrary sequence Firestore's un-ordered where() query happened to
+// return) — on an account where every dog came through the client SDK
+// path, this meant "earliest-created stays active" was not actually being
+// honored; only the correct COUNT was. Both real shapes are normalized to
+// an ISO string here; a genuinely missing/malformed value still falls back
+// to '' (sorts first/oldest) rather than throwing or being excluded.
 function createdAtKey(dog) {
-  // createdAt is an ISO string on every dog created via createDog()/
-  // create-litter-puppy.js; a legacy doc missing it sorts first (oldest)
-  // rather than throwing or being silently excluded — the safest default
-  // when we can't tell how old a record actually is.
-  return typeof dog.createdAt === 'string' ? dog.createdAt : ''
+  const raw = dog.createdAt
+  if (typeof raw === 'string') return raw
+  if (raw && typeof raw.toDate === 'function') return raw.toDate().toISOString()
+  if (raw && typeof raw._seconds === 'number') return new Date(raw._seconds * 1000).toISOString()
+  return ''
 }
 
 // Returns every dog this uid currently, actively owns — eligible for the
