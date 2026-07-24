@@ -76,10 +76,24 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
         case 'checkout.session.completed': {
           const session = event.data.object
           const userId = extractUserId(session)
-          if (!userId || !session.subscription) break
+          if (!userId || !session.subscription) {
+            console.error('stripe-webhook: checkout.session.completed no-op', {
+              hasUserId: !!userId, hasSubscription: !!session.subscription,
+            })
+            break
+          }
           const subscription = await getSubscription(session.subscription)
           const interval = resolveInterval(subscription)
-          if (!interval) break // price id not on the allowlist — never grant entitlement off an unrecognized price
+          if (!interval) {
+            // Diagnostic only — never logs the actual price id (that's not
+            // a secret, but keeping this strictly structural avoids any
+            // ambiguity). Safe to remove once staging E2E is confirmed.
+            console.error('stripe-webhook: checkout.session.completed unrecognized price', {
+              itemCount: subscription?.items?.data?.length ?? 0,
+              hasPriceOnFirstItem: !!subscription?.items?.data?.[0]?.price?.id,
+            })
+            break // price id not on the allowlist — never grant entitlement off an unrecognized price
+          }
           const nowIso = now().toISOString()
           await db.collection('users').doc(userId).set({
             plan: 'plus',

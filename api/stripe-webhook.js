@@ -32,7 +32,13 @@ async function getRawBody(req) {
 
 const processWebhook = createWebhookHandler({
   constructEvent: (rawBody, sig) => stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET),
-  getSubscription: subscriptionId => stripe.subscriptions.retrieve(subscriptionId),
+  // Explicit expand — `items.data[].price` is not guaranteed present on a
+  // bare subscriptions.retrieve() call across every Stripe API version;
+  // resolveInterval() (webhook-handler.js) needs the real price id to
+  // allowlist-check against CHECKOUT_PRICE_IDS, and a missing price here
+  // would silently no-op the whole entitlement grant (a safe failure mode,
+  // but a real bug — found via live staging QA 2026-07-24).
+  getSubscription: subscriptionId => stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] }),
   db: getFirestore(),
 })
 
