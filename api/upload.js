@@ -31,6 +31,7 @@ import { getStorage } from 'firebase-admin/storage'
 import { getFirestore } from 'firebase-admin/firestore'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
+import { canAddDogRecord } from './_lib/dog-access.js'
 
 // Bounded staging-isolation safety patch: storageBucket is intentionally
 // NOT passed here anymore — it used to fall back to
@@ -91,8 +92,17 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Dog not found' })
     }
     const dog = dogSnap.data()
-    const isAuthorized = dog.tenantId === uid || dog.currentOwnerId === uid
-    if (!isAuthorized) {
+    // Codex H8 (round 2) — both branches below create/overwrite new
+    // dog-associated content (the dogs.profilePhoto field, or a photo
+    // destined for a new ActivityNote), so this must match
+    // firestore.rules' dogAllowsNewRecords (current effective owner only,
+    // never on a restricted dog) — not the broader read-level
+    // tenantId-OR-currentOwnerId check this used to have, which let a
+    // former breeder (tenantId still matches, no longer currentOwnerId)
+    // overwrite a dog they no longer own's profile photo, or upload note
+    // photos for a dog whose activityNotes writes firestore.rules would
+    // otherwise deny outright.
+    if (!canAddDogRecord(dog, uid)) {
       return res.status(403).json({ error: 'Not authorized to upload photos for this dog' })
     }
 

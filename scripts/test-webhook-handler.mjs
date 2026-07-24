@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
 import { createFakeFirestore } from './test-helpers/fake-firestore.mjs'
-import { createWebhookHandler } from '../api/_lib/webhook-handler.js'
+import { createWebhookHandler, claimEvent, runFencedTransaction, evaluateSubscriptionEvent } from '../api/_lib/webhook-handler.js'
 import { CHECKOUT_PRICE_IDS } from '../api/_lib/checkout-handler.js'
 
 const { check, checkAsync, summary } = makeChecker()
@@ -35,10 +35,11 @@ function makeHandler({ db, subscriptions = {}, nowFn = () => new Date('2026-07-2
   return { process, calls, db: firestore }
 }
 
-function subFixture({ id = 'sub_1', priceId = CHECKOUT_PRICE_IDS.plus_monthly, status = 'active', startDate = 1753315200, userId = 'user-1' } = {}) {
+function subFixture({ id = 'sub_1', priceId = CHECKOUT_PRICE_IDS.plus_monthly, status = 'active', startDate = 1753315200, userId = 'user-1', customer = 'cus_1' } = {}) {
   return {
     id,
     status,
+    customer,
     start_date: startDate,
     metadata: { userId, plan: 'plus' },
     items: { data: [{ price: { id: priceId } }] },
@@ -49,8 +50,8 @@ async function fire(processFn, event, sig = 'good-signature') {
   return processFn(Buffer.from(JSON.stringify(event)), sig)
 }
 
-function checkoutEvent({ id, evtId = 'evt_checkout', subscriptionId = 'sub_1', userId = 'user-1', created = 1000 }) {
-  return { id: evtId, type: 'checkout.session.completed', created, data: { object: { metadata: { userId }, subscription: subscriptionId, customer: 'cus_1' } } }
+function checkoutEvent({ id, evtId = 'evt_checkout', subscriptionId = 'sub_1', userId = 'user-1', created = 1000, customer = 'cus_1' }) {
+  return { id: evtId, type: 'checkout.session.completed', created, data: { object: { metadata: { userId }, subscription: subscriptionId, customer } } }
 }
 
 function subUpdatedEvent({ evtId, subscription, created }) {
@@ -122,6 +123,45 @@ await checkAsync('a FAILED event is retriable on redelivery — the second, succ
   return first.status === 500 && second.status === 200 && user.plan === 'plus' && calls.getSubscription.length === 2
 })
 
+await checkAsync('a genuine failure AFTER effects have already committed (but before completion could be marked) still marks the event failed, not completed — effects are NOT rolled back (separate transactions), and a retry then completes cleanly without re-duplicating anything', async () => {
+  const seeded = createFakeFirestore()
+  let txCallCount = 0
+  const wrappedDb = {
+    collection: (...args) => seeded.collection(...args),
+    async runTransaction(fn) {
+      txCallCount++
+      // Call 1 = claimEvent, call 2 = the checkout effect transaction
+      // (where plan/plusScansUsed actually get written), call 3 = the
+      // completion-marking transaction — fail exactly there, simulating
+      // a crash/network drop between "effects landed" and "completed
+      // recorded".
+      if (txCallCount === 3) throw new Error('simulated failure right after effects committed')
+      return seeded.runTransaction(fn)
+    },
+  }
+  const process = createWebhookHandler({
+    constructEvent: rawBody => JSON.parse(rawBody.toString()),
+    getSubscription: async id => subFixture({ id }),
+    db: wrappedDb,
+    now: () => new Date('2026-07-24T00:00:00Z'),
+  })
+  const event = checkoutEvent({ evtId: 'evt_late_fail' })
+  const res = await fire(process, event)
+  const userAfterFailure = (await seeded.collection('users').doc('user-1').get()).data()
+  const storedAfterFailure = (await seeded.collection('processedStripeEvents').doc('evt_late_fail').get()).data()
+  check('The effect (plan grant) DID commit despite the later failure — separate transactions, no rollback of the first', userAfterFailure?.plan === 'plus')
+  check('The event is marked failed, not completed', res.status === 500 && storedAfterFailure.status === 'failed')
+
+  // Retry: claimEvent reclaims the 'failed' event immediately (no
+  // staleness wait needed for a failed status), applyEvent runs again —
+  // the effect write is idempotent (an absolute `plan: 'plus'` set, not
+  // an increment), so re-applying it is harmless, and this time
+  // completion is NOT interrupted.
+  const retryRes = await fire(process, event)
+  const storedAfterRetry = (await seeded.collection('processedStripeEvents').doc('evt_late_fail').get()).data()
+  return retryRes.status === 200 && storedAfterRetry.status === 'completed'
+})
+
 await checkAsync('a completed event redelivered is a true no-op duplicate — no re-processing, Stripe API not called again', async () => {
   const { process, db, calls } = makeHandler({ subscriptions: { sub_1: subFixture() } })
   const event = checkoutEvent({ evtId: 'evt_dup' })
@@ -143,13 +183,120 @@ await checkAsync('a fresh (non-stale) pending claim from a genuinely concurrent 
 
 await checkAsync('a STALE pending claim (owning invocation presumably crashed) is reclaimed and actually processed', async () => {
   const seeded = createFakeFirestore({
-    processedStripeEvents: { evt_stale: { type: 'checkout.session.completed', status: 'pending', claimedAt: '2026-07-24T00:00:00.000Z', attempts: 1 } },
+    processedStripeEvents: { evt_stale: { type: 'checkout.session.completed', status: 'pending', claimedAt: '2026-07-24T00:00:00.000Z', attempts: 1, leaseToken: 'stale-token-from-handler-A' } },
   })
   const { process, db } = makeHandler({ db: seeded, subscriptions: { sub_1: subFixture() }, nowFn: () => new Date('2026-07-24T00:01:00.000Z') /* 60s later, past the 55s threshold */ })
   const res = await fire(process, checkoutEvent({ evtId: 'evt_stale' }))
   const stored = db._dump('processedStripeEvents')['evt_stale']
   const user = (await db.collection('users').doc('user-1').get()).data()
-  return res.status === 200 && !res.body.duplicate && stored.status === 'completed' && stored.attempts === 2 && user.plan === 'plus'
+  return res.status === 200 && !res.body.duplicate && stored.status === 'completed' && stored.attempts === 2 && user.plan === 'plus' && stored.leaseToken !== 'stale-token-from-handler-A'
+})
+
+// ── H1 (round 2): lease-token fencing — the core new mechanism ────────
+// Tests the exported claimEvent/runFencedTransaction primitives directly
+// (same DI-testability pattern as api/_lib/create-dog-core.js), since a
+// genuinely slow-but-not-crashed handler being reclaimed mid-flight can't
+// be reliably reproduced by racing two black-box processWebhook() calls
+// (there is no hook to pause one mid-transaction) — the primitives are
+// exactly what processWebhook itself is built from, so testing them
+// directly is testing the real mechanism, not a reimplementation.
+
+await checkAsync('genuinely concurrent claimEvent() calls for the SAME brand-new event: exactly one wins, the other is told it\'s a duplicate — no double-claim', async () => {
+  const seeded = createFakeFirestore()
+  const eventRef = seeded.collection('processedStripeEvents').doc('evt_race')
+  const now = () => new Date('2026-07-24T00:00:00Z')
+  const [a, b] = await Promise.all([
+    claimEvent(seeded, eventRef, 'checkout.session.completed', now),
+    claimEvent(seeded, eventRef, 'checkout.session.completed', now),
+  ])
+  const claimedCount = [a, b].filter(r => r.claimed).length
+  const winner = a.claimed ? a : b
+  const loser = a.claimed ? b : a
+  return claimedCount === 1 && typeof winner.leaseToken === 'string' && winner.leaseToken.length > 0 && loser.claimed === false
+})
+
+await checkAsync('a RECLAIMED (stale) handler\'s late write, using its now-superseded leaseToken, is fenced out — does not commit', async () => {
+  const seeded = createFakeFirestore()
+  const eventRef = seeded.collection('processedStripeEvents').doc('evt_reclaim')
+  const userRef = seeded.collection('users').doc('user-1')
+
+  // Handler A claims, then goes silent (simulating a genuinely slow —
+  // not crashed — invocation, e.g. a hung downstream Stripe API call).
+  const claimA = await claimEvent(seeded, eventRef, 'checkout.session.completed', () => new Date('2026-07-24T00:00:00Z'))
+  check('Handler A\'s initial claim succeeds', claimA.claimed === true)
+
+  // 60s later (past STALE_PENDING_MS), a redelivery reclaims the event —
+  // handler B is now the legitimate owner, holding a DIFFERENT token.
+  const claimB = await claimEvent(seeded, eventRef, 'checkout.session.completed', () => new Date('2026-07-24T00:01:00Z'))
+  check('Handler B successfully reclaims the stale event with a fresh token', claimB.claimed === true && claimB.leaseToken !== claimA.leaseToken)
+
+  // Handler B does its (legitimate) work first.
+  const bResult = await runFencedTransaction(seeded, eventRef, claimB.leaseToken, async tx => {
+    tx.set(userRef, { plan: 'plus', plusScansUsed: 0 }, { merge: true })
+  })
+  check('Handler B\'s write commits (fenced:false)', bResult.fenced === false)
+
+  // NOW handler A, unaware it was ever reclaimed, finally wakes up and
+  // tries to commit using its OLD (superseded) token.
+  const aResult = await runFencedTransaction(seeded, eventRef, claimA.leaseToken, async tx => {
+    tx.set(userRef, { plan: 'plus', plusScansUsed: 0, corruptedByStaleHandlerA: true }, { merge: true })
+  })
+  check('Handler A\'s late write is fenced out (fenced:true) — never runs', aResult.fenced === true)
+
+  const user = (await userRef.get()).data()
+  return user.corruptedByStaleHandlerA === undefined
+})
+
+await checkAsync('a reclaimed handler cannot mark completion either — only the current lease holder can', async () => {
+  const seeded = createFakeFirestore()
+  const eventRef = seeded.collection('processedStripeEvents').doc('evt_reclaim_complete')
+  const claimA = await claimEvent(seeded, eventRef, 'checkout.session.completed', () => new Date('2026-07-24T00:00:00Z'))
+  const claimB = await claimEvent(seeded, eventRef, 'checkout.session.completed', () => new Date('2026-07-24T00:01:00Z'))
+
+  // A tries to mark the event completed using its stale token.
+  const aComplete = await runFencedTransaction(seeded, eventRef, claimA.leaseToken, async tx => {
+    tx.set(eventRef, { status: 'completed', completedAt: 'FROM-STALE-HANDLER-A' }, { merge: true })
+  })
+  check('Handler A cannot mark completion (fenced:true)', aComplete.fenced === true)
+
+  // B (the legitimate current owner) can.
+  const bComplete = await runFencedTransaction(seeded, eventRef, claimB.leaseToken, async tx => {
+    tx.set(eventRef, { status: 'completed', completedAt: 'FROM-HANDLER-B' }, { merge: true })
+  })
+  check('Handler B CAN mark completion (fenced:false)', bComplete.fenced === false)
+
+  const stored = (await eventRef.get()).data()
+  return stored.status === 'completed' && stored.completedAt === 'FROM-HANDLER-B'
+})
+
+await checkAsync('Codex H1 core regression: a reclaimed handler\'s late "duplicate checkout" write can never reset plusScansUsed after the legitimate owner already completed and the user has since used scans', async () => {
+  const seeded = createFakeFirestore()
+  const eventRef = seeded.collection('processedStripeEvents').doc('evt_scans_regression')
+  const userRef = seeded.collection('users').doc('user-1')
+
+  const claimA = await claimEvent(seeded, eventRef, 'checkout.session.completed', () => new Date('2026-07-24T00:00:00Z'))
+  const claimB = await claimEvent(seeded, eventRef, 'checkout.session.completed', () => new Date('2026-07-24T00:01:00Z'))
+
+  // B legitimately applies the checkout — fresh Plus grant, 0 scans used.
+  await runFencedTransaction(seeded, eventRef, claimB.leaseToken, async tx => {
+    tx.set(userRef, { plan: 'plus', plusScansUsed: 0 }, { merge: true })
+  })
+  // B marks completion.
+  await runFencedTransaction(seeded, eventRef, claimB.leaseToken, async tx => {
+    tx.set(eventRef, { status: 'completed', completedAt: 'now' }, { merge: true })
+  })
+
+  // Time passes; the user legitimately uses 3 AI scans.
+  await userRef.set({ plusScansUsed: 3 }, { merge: true })
+
+  // Handler A FINALLY wakes up and attempts the exact write it would have
+  // made — re-zeroing plusScansUsed as if this were a fresh checkout.
+  const aLateAttempt = await runFencedTransaction(seeded, eventRef, claimA.leaseToken, async tx => {
+    tx.set(userRef, { plan: 'plus', plusScansUsed: 0 }, { merge: true })
+  })
+
+  const user = (await userRef.get()).data()
+  return aLateAttempt.fenced === true && user.plusScansUsed === 3 // NOT reset back to 0
 })
 
 // ── checkout.session.completed — allowlist, reactivation ──────────────
@@ -181,9 +328,14 @@ await checkAsync('checkout.session.completed with an unrecognized price id never
 
 // ── H5: out-of-order / stale subscription events ──────────────────────
 
-await checkAsync('an OLD subscription.deleted arriving AFTER a newer active subscription is already stored: no-op, does not downgrade', async () => {
+await checkAsync('a SUPERSEDED subscription\'s late deleted event (the account has already recorded events for it in the past, then moved on) is a no-op, does not downgrade', async () => {
   const seeded = createFakeFirestore({
-    users: { 'user-1': { plan: 'plus', stripeSubscriptionId: 'sub_new', lastKnownSubscriptionId: 'sub_new', subscriptionEventTimestamps: { sub_new: 500 } } },
+    // sub_old is PREVIOUSLY KNOWN (present in subscriptionEventTimestamps)
+    // but no longer current — exactly the "moved away from" case that
+    // must stay rejected. This is different from a subscription id the
+    // account has NEVER seen before (see the A-to-B replacement tests
+    // below), which must NOT be rejected.
+    users: { 'user-1': { plan: 'plus', stripeSubscriptionId: 'sub_new', stripeCustomerId: 'cus_new', lastKnownSubscriptionId: 'sub_new', subscriptionEventTimestamps: { sub_old: 50, sub_new: 500 } } },
     dogs: {
       d1: { currentOwnerId: 'user-1', status: 'active', isDeceased: false, createdAt: '2026-01-01T00:00:00Z' },
       d2: { currentOwnerId: 'user-1', status: 'active', isDeceased: false, createdAt: '2026-01-02T00:00:00Z' },
@@ -191,21 +343,106 @@ await checkAsync('an OLD subscription.deleted arriving AFTER a newer active subs
     },
   })
   const { process } = makeHandler({ db: seeded })
-  const res = await fire(process, subDeletedEvent({ evtId: 'evt_old_delete', subscription: subFixture({ id: 'sub_old' }), created: 100 }))
+  const res = await fire(process, subDeletedEvent({ evtId: 'evt_old_delete', subscription: subFixture({ id: 'sub_old', customer: 'cus_old' }), created: 100 }))
   const user = (await seeded.collection('users').doc('user-1').get()).data()
   const d3 = (await seeded.collection('dogs').doc('d3').get()).data()
   return res.status === 200 && user.plan === 'plus' && user.stripeSubscriptionId === 'sub_new' && d3.status === 'active'
 })
 
-await checkAsync('an OLD subscription.updated(active) arriving AFTER a newer subscription is stored: no-op, does not re-grant/overwrite the newer subscription id', async () => {
+await checkAsync('a SUPERSEDED subscription\'s late updated(active) event is a no-op, does not re-grant/overwrite the current subscription id', async () => {
   const seeded = createFakeFirestore({
-    users: { 'user-1': { plan: 'plus', stripeSubscriptionId: 'sub_new', billingInterval: 'annual', lastKnownSubscriptionId: 'sub_new', subscriptionEventTimestamps: { sub_new: 500 } } },
+    users: { 'user-1': { plan: 'plus', stripeSubscriptionId: 'sub_new', stripeCustomerId: 'cus_new', billingInterval: 'annual', lastKnownSubscriptionId: 'sub_new', subscriptionEventTimestamps: { sub_old: 30, sub_new: 500 } } },
   })
   const { process } = makeHandler({ db: seeded })
-  await fire(process, subUpdatedEvent({ evtId: 'evt_old_update', subscription: subFixture({ id: 'sub_old', status: 'active', priceId: CHECKOUT_PRICE_IDS.plus_monthly }), created: 50 }))
+  await fire(process, subUpdatedEvent({ evtId: 'evt_old_update', subscription: subFixture({ id: 'sub_old', status: 'active', priceId: CHECKOUT_PRICE_IDS.plus_monthly, customer: 'cus_old' }), created: 50 }))
   const user = (await seeded.collection('users').doc('user-1').get()).data()
   return user.billingInterval === 'annual' && user.stripeSubscriptionId === 'sub_new'
 })
+
+// ── H5 (round 2): A-to-B legitimate subscription replacement ──────────
+// The core round-1 bug: ANY different subscription id was treated as
+// stale, which didn't just block a late/old event — it permanently
+// blocked switching to a genuinely NEW subscription too, since the new
+// id is also "different" from the old one.
+
+await checkAsync('subscription A canceled, then subscription B activated (a genuine cancel-and-resubscribe): B\'s checkout IS applied, not rejected as stale', async () => {
+  const seeded = createFakeFirestore({
+    users: { 'user-1': { plan: 'free', stripeSubscriptionId: null, stripeCustomerId: 'cus_A', lastKnownSubscriptionId: 'sub_A', subscriptionEventTimestamps: { sub_A: 100 } } },
+  })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_B: subFixture({ id: 'sub_B', customer: 'cus_B' }) } })
+  const res = await fire(process, checkoutEvent({ evtId: 'evt_b_activated', subscriptionId: 'sub_B', created: 500 }))
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  return res.status === 200 && user.plan === 'plus' && user.stripeSubscriptionId === 'sub_B' && user.lastKnownSubscriptionId === 'sub_B'
+})
+
+await checkAsync('once B is current, a LATE event for A (arriving after B) is ignored — does not resurrect A or overwrite B', async () => {
+  const seeded = createFakeFirestore({
+    users: { 'user-1': { plan: 'plus', stripeSubscriptionId: 'sub_B', stripeCustomerId: 'cus_B', lastKnownSubscriptionId: 'sub_B', subscriptionEventTimestamps: { sub_A: 100, sub_B: 500 } } },
+  })
+  const { process } = makeHandler({ db: seeded })
+  // A late subscription.updated(past_due) for A, timestamped BEFORE B's
+  // own recorded event but delivered (arrives) after B is already current.
+  await fire(process, subUpdatedEvent({ evtId: 'evt_late_a', subscription: subFixture({ id: 'sub_A', status: 'past_due', customer: 'cus_A' }), created: 200 }))
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  return user.plan === 'plus' && user.stripeSubscriptionId === 'sub_B' && user.pastDueSince === undefined
+})
+
+await checkAsync('a subscription id NEVER seen before is always treated as a legitimate new subscription, even via subscription.updated (not just checkout)', async () => {
+  const seeded = createFakeFirestore({
+    users: { 'user-1': { plan: 'free' } }, // brand-new account, no subscription history at all
+  })
+  const { process } = makeHandler({ db: seeded })
+  await fire(process, subUpdatedEvent({ evtId: 'evt_bootstrap', subscription: subFixture({ id: 'sub_fresh', status: 'active', customer: 'cus_fresh' }), created: 10 }))
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  return user.plan === 'plus' && user.lastKnownSubscriptionId === 'sub_fresh' && user.stripeCustomerId === 'cus_fresh'
+})
+
+// ── H5 (round 2): same-second events must not be dropped ──────────────
+
+await checkAsync('two DISTINCT events for the same subscription sharing the exact same event.created second are BOTH applied (Stripe timestamps are only second-resolution)', async () => {
+  const seeded = createFakeFirestore({
+    users: { 'user-1': { plan: 'plus', stripeCustomerId: 'cus_1', lastKnownSubscriptionId: 'sub_1', subscriptionEventTimestamps: { sub_1: 500 } } },
+  })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_1: subFixture({ id: 'sub_1', customer: 'cus_1' }) } })
+  // Both timestamped 1000 — a same-second tie.
+  const first = await fire(process, subUpdatedEvent({ evtId: 'evt_tie_1', subscription: subFixture({ id: 'sub_1', status: 'past_due' }), created: 1000 }))
+  const afterFirst = (await seeded.collection('users').doc('user-1').get()).data()
+  const second = await fire(process, { id: 'evt_tie_2', type: 'invoice.payment_succeeded', created: 1000, data: { object: { subscription: 'sub_1', customer: 'cus_1' } } })
+  const afterSecond = (await seeded.collection('users').doc('user-1').get()).data()
+  return first.status === 200 && afterFirst.subscriptionStatus === 'past_due' && typeof afterFirst.pastDueSince === 'string' &&
+    second.status === 200 && afterSecond.plan === 'plus' && afterSecond.pastDueSince === null // the second, same-second event (payment recovery) still applied
+})
+
+await checkAsync('same-second checkout.session.completed and customer.subscription.updated for the same new subscription are BOTH applied, neither dropped as a tie', async () => {
+  const seeded = createFakeFirestore({ users: { 'user-1': { plan: 'free' } } })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_tie: subFixture({ id: 'sub_tie', customer: 'cus_tie' }) } })
+  const checkoutRes = await fire(process, checkoutEvent({ evtId: 'evt_tie_checkout', subscriptionId: 'sub_tie', created: 2000, customer: 'cus_tie' }))
+  const updateRes = await fire(process, subUpdatedEvent({ evtId: 'evt_tie_update', subscription: subFixture({ id: 'sub_tie', status: 'active', priceId: CHECKOUT_PRICE_IDS.plus_annual, customer: 'cus_tie' }), created: 2000 }))
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  return checkoutRes.status === 200 && updateRes.status === 200 && user.plan === 'plus' && user.billingInterval === 'annual'
+})
+
+// ── H5 (round 2): customer ownership ───────────────────────────────────
+
+await checkAsync('an event for the CURRENT subscription carrying a MISMATCHED customer id is rejected (data-integrity anomaly, never trusted)', async () => {
+  const seeded = createFakeFirestore({
+    users: { 'user-1': { plan: 'plus', subscriptionStatus: 'active', stripeCustomerId: 'cus_real', lastKnownSubscriptionId: 'sub_1', subscriptionEventTimestamps: { sub_1: 100 } } },
+  })
+  const { process } = makeHandler({ db: seeded })
+  await fire(process, subUpdatedEvent({ evtId: 'evt_customer_mismatch', subscription: subFixture({ id: 'sub_1', status: 'past_due', customer: 'cus_impostor' }), created: 900 }))
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  return user.subscriptionStatus === 'active' && user.pastDueSince === undefined && user.stripeCustomerId === 'cus_real'
+})
+
+await checkAsync('evaluateSubscriptionEvent: a brand-new subscription freely adopts any customer id (safe first-association), even if the account had a DIFFERENT customer id on an old, superseded subscription', () => {
+  const profile = { lastKnownSubscriptionId: 'sub_old', stripeCustomerId: 'cus_old', subscriptionEventTimestamps: { sub_old: 100 } }
+  const result = evaluateSubscriptionEvent(profile, { subscriptionId: 'sub_new', eventCreated: 200, eventCustomerId: 'cus_new' })
+  return result.stale === false && result.isNewSubscription === true
+})
+check(
+  'evaluateSubscriptionEvent: the CURRENT subscription with no stored customer id yet (first-ever association) is never rejected for "mismatch"',
+  evaluateSubscriptionEvent({ lastKnownSubscriptionId: 'sub_1', subscriptionEventTimestamps: { sub_1: 100 } }, { subscriptionId: 'sub_1', eventCreated: 200, eventCustomerId: 'cus_1' }).stale === false
+)
 
 await checkAsync('an out-of-order event for the SAME subscription (earlier event.created arriving after a later one already applied) does not overwrite', async () => {
   const seeded = createFakeFirestore({
@@ -327,12 +564,20 @@ await checkAsync('invoice.payment_succeeded on an already-current account is a h
   return user.plan === 'plus' && user.subscriptionStatus === 'active'
 })
 
-await checkAsync('invoice.payment_succeeded for a stale (superseded) subscription is a no-op', async () => {
-  const seeded = createFakeFirestore({ users: { 'user-1': { plan: 'plus', stripeSubscriptionId: 'sub_new', lastKnownSubscriptionId: 'sub_new', pastDueSince: null } } })
-  const { process } = makeHandler({ db: seeded, subscriptions: { sub_old: subFixture({ id: 'sub_old' }) } })
-  await fire(process, { id: 'evt_paid_stale', type: 'invoice.payment_succeeded', created: 500, data: { object: { subscription: 'sub_old' } } })
+await checkAsync('invoice.payment_succeeded for a SUPERSEDED (previously known, no longer current) subscription is a no-op', async () => {
+  const seeded = createFakeFirestore({ users: { 'user-1': { plan: 'plus', stripeSubscriptionId: 'sub_new', stripeCustomerId: 'cus_new', lastKnownSubscriptionId: 'sub_new', subscriptionEventTimestamps: { sub_old: 50 }, pastDueSince: null } } })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_old: subFixture({ id: 'sub_old', customer: 'cus_old' }) } })
+  await fire(process, { id: 'evt_paid_stale', type: 'invoice.payment_succeeded', created: 500, data: { object: { subscription: 'sub_old', customer: 'cus_old' } } })
   const user = (await seeded.collection('users').doc('user-1').get()).data()
   return user.stripeSubscriptionId === 'sub_new'
+})
+
+await checkAsync('invoice.payment_succeeded for a subscription id NEVER seen before is applied (new-subscription bootstrap, not rejected as stale)', async () => {
+  const seeded = createFakeFirestore({ users: { 'user-1': { plan: 'free' } } })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_boot: subFixture({ id: 'sub_boot', customer: 'cus_boot' }) } })
+  await fire(process, { id: 'evt_paid_boot', type: 'invoice.payment_succeeded', created: 500, data: { object: { subscription: 'sub_boot', customer: 'cus_boot' } } })
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  return user.lastKnownSubscriptionId === 'sub_boot' && user.stripeCustomerId === 'cus_boot'
 })
 
 // ── invoice.payment_failed — deliberate no-op ─────────────────────────

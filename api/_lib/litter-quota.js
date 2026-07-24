@@ -100,6 +100,26 @@ export function writeLitterQuotaLedgerEntry(tx, db, { tenantId, litterId, whelpi
   tx.set(ref, { tenantId, litterId, whelpingDate, recordedAt: new Date().toISOString() })
 }
 
+// Codex H7 (round 2) — before a pre-ledger litter's LIVE document is hard-
+// deleted (api/delete-litter.js), its quota evidence must be preserved
+// permanently. hasLitterWithinRollingWindow's live-collection fallback
+// (above) only works while the litter document still exists; once it's
+// gone, a litter that whelped without ever having a ledger entry (created
+// before the ledger system existed, or before this specific backfill
+// existed) leaves no trace at all, silently freeing up its rolling-window
+// slot. Used to decide whether a delete needs to backfill a ledger entry
+// — and, independently, to guard against ever writing a SECOND entry for
+// a litter that already has one (a litter created after the ledger
+// system existed already got one from create-litter.js/update-litter.js
+// at whelping-date-set time; backfilling again here would double-count
+// it in hasLitterWithinRollingWindow, though that function is itself a
+// boolean OR-scan so a duplicate wouldn't cause a false negative — this
+// guard keeps the ledger clean and auditable regardless).
+export async function hasLedgerEntryForLitter(tx, db, litterId) {
+  const snap = await tx.get(db.collection('litterQuotaLedger').where('litterId', '==', litterId))
+  return !snap.empty
+}
+
 // §4.1 — "A Plus account may hold at most one un-dated planned litter at
 // a time." Checked against the LIVE litters collection (not the ledger —
 // an un-dated litter was never counted, so it isn't and shouldn't be

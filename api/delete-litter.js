@@ -61,6 +61,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { resolveLitterMembership, partitionConfirmedMembers } from './_lib/litter-eligibility.js'
+import { hasLedgerEntryForLitter, writeLitterQuotaLedgerEntry } from './_lib/litter-quota.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -123,17 +124,32 @@ async function handler(req, res) {
     const { confirmed, reverseOnly, ambiguousCount } = resolveLitterMembership(litterId, forwardFetched, reverseFetched)
     const { eligible, preserved } = partitionConfirmedMembers(confirmed, uid)
 
-    for (const puppy of eligible) {
-      tx.delete(db.collection('dogs').doc(puppy.id))
-    }
-
     // Codex round 6, Blocker 1: a reverse-only dog's own litterId still
     // points at this litter — even though it's never touched (deleted or
     // relinked), the LITTER document itself must survive for that
     // reference to stay resolvable. Only when NEITHER a confirmed-
     // preserved dog NOR a reverse-only dog remains linked is it safe to
     // hard-delete.
-    if (preserved.length === 0 && reverseOnly.length === 0) {
+    const willHardDelete = preserved.length === 0 && reverseOnly.length === 0
+
+    // Codex H7 (round 2) — a dated (whelped) litter about to be hard-
+    // deleted must not lose its quota evidence. This READ must happen
+    // here, before any write below (Firestore transactions require all
+    // reads to precede the first write) — a litter with no ledger entry
+    // yet (pre-ledger, or created before this backfill existed) needs one
+    // written atomically with the delete itself.
+    const hasDatedBirth = typeof litter.actualBirthDate === 'string' && litter.actualBirthDate.length > 0
+    const needsLedgerBackfill = willHardDelete && hasDatedBirth && !(await hasLedgerEntryForLitter(tx, db, litterId))
+
+    // ── Writes ──
+    for (const puppy of eligible) {
+      tx.delete(db.collection('dogs').doc(puppy.id))
+    }
+
+    if (willHardDelete) {
+      if (needsLedgerBackfill) {
+        writeLitterQuotaLedgerEntry(tx, db, { tenantId: litter.tenantId, litterId, whelpingDate: litter.actualBirthDate })
+      }
       tx.delete(litterRef)
       return { deletedCount: eligible.length, preservedCount: 0, ambiguousCount, litterDeleted: true, litterArchived: false }
     }

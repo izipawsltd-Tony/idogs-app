@@ -508,13 +508,20 @@ await checkAsync('api/upload.js: config-mismatch server log contains no bucket n
     !/price_1TiaZn5lmfxrCiH3GCzSSuAy/.test(checkoutSrc) && !/price_1Tiabb5lmfxrCiH3kBdaQsRH/.test(checkoutSrc) &&
     !/price_1TiU7j5lmfxrCiH3J1WbbrLR/.test(checkoutSrc) && !/price_1Tialb5lmfxrCiH3pe82Abps/.test(checkoutSrc))
 
+  // Codex H8 (round 2): both endpoints moved from the READ-level
+  // `dog.tenantId === uid || dog.currentOwnerId === uid` check to the
+  // shared, stricter api/_lib/dog-access.js#canAddDogRecord (current
+  // effective owner only, denies restricted dogs) — the old inline
+  // pattern is gone by design, not an accidental drift; see
+  // test-h8-admin-upload-authorization.mjs for the actual behavioral
+  // coverage of the new authorization logic.
   const uploadDocSrc = readFileSync(new URL('../api/upload-document.js', import.meta.url), 'utf8')
-  check('api/upload-document.js still verifies caller ownership (tenantId/currentOwnerId) before writing — authorization logic untouched',
-    /dog\.tenantId === uid \|\| dog\.currentOwnerId === uid/.test(uploadDocSrc))
+  check('api/upload-document.js still verifies caller ownership before writing, now via the shared canAddDogRecord() (Codex H8 round 2) — not the old inline tenantId-OR-currentOwnerId read-level check',
+    /canAddDogRecord\(dog, uid\)/.test(uploadDocSrc) && !/dog\.tenantId === uid \|\| dog\.currentOwnerId === uid/.test(uploadDocSrc))
 
   const uploadSrc = readFileSync(new URL('../api/upload.js', import.meta.url), 'utf8')
-  check('api/upload.js still verifies caller ownership before writing — authorization logic untouched',
-    /dog\.tenantId === uid \|\| dog\.currentOwnerId === uid/.test(uploadSrc))
+  check('api/upload.js still verifies caller ownership before writing, now via the shared canAddDogRecord() (Codex H8 round 2) — not the old inline tenantId-OR-currentOwnerId read-level check',
+    /canAddDogRecord\(dog, uid\)/.test(uploadSrc) && !/dog\.tenantId === uid \|\| dog\.currentOwnerId === uid/.test(uploadSrc))
 
   const sendRemindersSrc = readFileSync(new URL('../api/send-reminders.js', import.meta.url), 'utf8')
   check('api/send-reminders.js email BODY links to idogs.com.au are untouched (production is the only place these cron emails realistically send from)',

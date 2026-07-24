@@ -7,6 +7,7 @@ import { getStorage } from 'firebase-admin/storage'
 import { getFirestore } from 'firebase-admin/firestore'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
+import { canAddDogRecord } from './_lib/dog-access.js'
 
 // Init Firebase Admin (once)
 //
@@ -79,8 +80,13 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Dog not found' })
     }
     const dog = dogSnap.data()
-    const isAuthorized = dog.tenantId === uid || dog.currentOwnerId === uid
-    if (!isAuthorized) {
+    // Codex H8 (round 2) — a document upload CREATES a new documents/{id}
+    // record, so this must match firestore.rules' dogAllowsNewRecords
+    // (current effective owner only, and never on a restricted dog) —
+    // not the broader read-level tenantId-OR-currentOwnerId check this
+    // used to have, which let a former breeder (tenantId still matches,
+    // no longer currentOwnerId) upload onto a dog they no longer own.
+    if (!canAddDogRecord(dog, uid)) {
       return res.status(403).json({ error: 'Not authorized to upload documents for this dog' })
     }
 
