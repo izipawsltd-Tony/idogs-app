@@ -18,14 +18,24 @@ const SUPER_ADMIN_EMAILS = [
 ]
 
 // ── Plan configuration ──
+// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED): only two
+// real entitlements, Free (2 dogs) and Plus (5 dogs) — see
+// api/_lib/dog-cap.js's DOG_CAP and api/_lib/entitlements.js's
+// computeEffectivePlan(), which this display must stay consistent with.
+// Found via live staging QA (2026-07-24): this table used to carry the
+// legacy four-tier limits (starter/basic/pro/professional/kennel, up to
+// "Unlimited") — an account on any of those legacy values is actually
+// capped at 2 server-side (computeEffectivePlan treats anything other
+// than 'plus' as free), so showing its old inflated limit here was
+// actively misleading, not just stale: a legacy-plan account with 6 dogs
+// showed "6 dogs · Unlimited" while the server would restrict 4 of them
+// down to 2 active the moment anything triggered reconciliation. Only
+// 'plus' gets the Plus config now; every other value (including every
+// legacy plan name) falls through to Free, matching server behavior
+// exactly.
 const PLAN_CONFIG: Record<string, { label: string; dogLimit: number; upgrade: boolean }> = {
-  free:         { label: 'Free Plan',    dogLimit: 2,    upgrade: true },
-  trial:        { label: 'Free Trial',   dogLimit: 2,    upgrade: true },
-  starter:      { label: 'Basic Plan',   dogLimit: 10,   upgrade: true },
-  basic:        { label: 'Basic Plan',   dogLimit: 10,   upgrade: true },
-  pro:          { label: 'Pro Plan',     dogLimit: 20,   upgrade: true },
-  professional: { label: 'Pro Plan',     dogLimit: 20,   upgrade: true },
-  kennel:       { label: 'Kennel Plan',  dogLimit: 9999, upgrade: false },
+  plus: { label: 'Plus Plan', dogLimit: 5, upgrade: false },
+  free: { label: 'Free Plan', dogLimit: 2, upgrade: true },
 }
 
 function getPlanCfg(plan?: string) {

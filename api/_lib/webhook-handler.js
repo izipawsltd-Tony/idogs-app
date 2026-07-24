@@ -95,20 +95,34 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
             break // price id not on the allowlist — never grant entitlement off an unrecognized price
           }
           const nowIso = now().toISOString()
-          await db.collection('users').doc(userId).set({
-            plan: 'plus',
-            subscriptionStatus: subscription.status,
-            stripeCustomerId: session.customer,
-            stripeSubscriptionId: session.subscription,
-            billingInterval: interval,
-            planActivatedAt: nowIso,
-            pastDueSince: null,
-            // First period for AI-scan quota purposes — §3.1 "On upgrade
-            // to Plus, 10 scans granted immediately for the first period".
-            scanPeriodAnchorDay: subscriptionStartAnchorDay(subscription),
-            plusScansUsed: 0,
-            plusScansPeriodStart: nowIso,
-          }, { merge: true })
+          const userRef = db.collection('users').doc(userId)
+          // Found via live staging QA (2026-07-24): this is the actual
+          // INITIAL upgrade-grant event (Stripe's checkout flow fires
+          // checkout.session.completed, not customer.subscription.created
+          // — Tony's webhook isn't even subscribed to the latter). Restricted
+          // dogs must be reactivated up to the new Plus cap of 5 HERE, not
+          // only on a later customer.subscription.updated — otherwise a
+          // brand-new upgrade leaves every previously-restricted dog stuck
+          // restricted until some unrelated future subscription-update event
+          // happens to fire. Reads (inside reactivateUpToCapTx) must precede
+          // writes in this transaction — it runs before the tx.set below.
+          await db.runTransaction(async tx => {
+            await reactivateUpToCapTx(tx, db, userId, 'plus')
+            tx.set(userRef, {
+              plan: 'plus',
+              subscriptionStatus: subscription.status,
+              stripeCustomerId: session.customer,
+              stripeSubscriptionId: session.subscription,
+              billingInterval: interval,
+              planActivatedAt: nowIso,
+              pastDueSince: null,
+              // First period for AI-scan quota purposes — §3.1 "On upgrade
+              // to Plus, 10 scans granted immediately for the first period".
+              scanPeriodAnchorDay: subscriptionStartAnchorDay(subscription),
+              plusScansUsed: 0,
+              plusScansPeriodStart: nowIso,
+            }, { merge: true })
+          })
           break
         }
 

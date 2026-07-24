@@ -77,6 +77,30 @@ await checkAsync('checkout.session.completed grants Plus and initializes scan-qu
     user.pastDueSince === null
 })
 
+await checkAsync('checkout.session.completed reactivates restricted dogs up to the new Plus cap of 5 — regression test for the live QA bug (initial upgrade must reactivate, not just a later subscription.updated)', async () => {
+  const seeded = createFakeFirestore({
+    dogs: {
+      active1: { currentOwnerId: 'user-1', status: 'active', isDeceased: false, createdAt: '2026-01-01T00:00:00Z' },
+      active2: { currentOwnerId: 'user-1', status: 'active', isDeceased: false, createdAt: '2026-01-02T00:00:00Z' },
+      r1: { currentOwnerId: 'user-1', status: 'restricted', isDeceased: false, createdAt: '2026-01-03T00:00:00Z' },
+      r2: { currentOwnerId: 'user-1', status: 'restricted', isDeceased: false, createdAt: '2026-01-04T00:00:00Z' },
+      r3: { currentOwnerId: 'user-1', status: 'restricted', isDeceased: false, createdAt: '2026-01-05T00:00:00Z' },
+      r4: { currentOwnerId: 'user-1', status: 'restricted', isDeceased: false, createdAt: '2026-01-06T00:00:00Z' }, // 6th — stays restricted, cap is 5
+    },
+  })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_1: subFixture() } })
+  await fire(process, {
+    id: 'evt_reactivate_on_checkout',
+    type: 'checkout.session.completed',
+    data: { object: { metadata: { userId: 'user-1' }, subscription: 'sub_1', customer: 'cus_1' } },
+  })
+  const r1 = (await seeded.collection('dogs').doc('r1').get()).data()
+  const r2 = (await seeded.collection('dogs').doc('r2').get()).data()
+  const r3 = (await seeded.collection('dogs').doc('r3').get()).data()
+  const r4 = (await seeded.collection('dogs').doc('r4').get()).data()
+  return r1.status === 'active' && r2.status === 'active' && r3.status === 'active' && r4.status === 'restricted'
+})
+
 await checkAsync('checkout.session.completed with an unrecognized price id never grants Plus (allowlist enforced)', async () => {
   const { process, db } = makeHandler({ subscriptions: { sub_evil: subFixture({ priceId: 'price_attacker_injected' }) } })
   await fire(process, {
