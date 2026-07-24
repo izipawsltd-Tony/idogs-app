@@ -20,6 +20,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { isPastDueGraceExpired } from './_lib/entitlements.js'
 import { reconcileDogCapTx } from './_lib/dog-cap.js'
+import { checkCronAuth } from './_lib/cron-auth.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -34,9 +35,11 @@ if (!getApps().length) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const authHeader = req.headers['x-cron-secret']
-  if (authHeader !== process.env.CRON_SECRET) {
-    return res.status(401).json({ error: 'Unauthorized' })
+  // Fails closed on a missing/empty CRON_SECRET (Codex H4) — see
+  // api/_lib/cron-auth.js.
+  const auth = checkCronAuth(req)
+  if (!auth.authorized) {
+    return res.status(auth.status).json(auth.body)
   }
 
   const db = getFirestore()

@@ -313,6 +313,10 @@ export interface UserProfile {
   plusScansUsed?: number
   plusScansPeriodStart?: string
   freeScansUsed?: number
+  // Codex H5 — out-of-order Stripe event ownership tracking; see
+  // api/_lib/webhook-handler.js's isStaleSubscriptionEvent().
+  lastKnownSubscriptionId?: string
+  subscriptionEventTimestamps?: Record<string, number>
   // Account-level Breeder ID (e.g. DACO number for SA breeders). Mandatory
   // for active breeders in most states, but some breeders genuinely don't
   // have one yet (e.g. dogs too young to be bred from yet) — so this is

@@ -84,7 +84,10 @@ async function handler(req, res) {
   if (!damId || typeof damId !== 'string') {
     throw new ApiError(400, 'damId is required')
   }
-  if (sireId !== undefined && typeof sireId !== 'string') {
+  // Codex Medium item: a client omitting the sire safely sends `sireId:
+  // null` (e.g. JSON.stringify of an unset form field), not `undefined` —
+  // treat both the same as "no sire", not a validation error.
+  if (sireId !== undefined && sireId !== null && typeof sireId !== 'string') {
     throw new ApiError(400, 'sireId must be a string')
   }
 

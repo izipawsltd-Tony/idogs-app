@@ -591,28 +591,31 @@ await checkAsync('no authenticated UID at all: "Add anyway" also blocks immediat
     })())
 
   // db.ts uses CRLF line endings — \r?\n throughout, not a bare \n.
+  //
+  // Codex H2 update: the stale-uid-capture race this section originally
+  // guarded against (round 15/16/17: capture uid() once before the
+  // transaction's internal await, never re-read after) is now
+  // STRUCTURALLY IMPOSSIBLE for createDog() specifically, not just fixed
+  // — dog creation moved server-side (api/create-dog.js), and
+  // createDog() itself no longer captures or sends any uid at all. The
+  // server derives its own `uid` from a freshly-verified Firebase ID
+  // token on every single request; there is no client-captured value that
+  // could go stale across an await, because none is ever read or sent.
+  // See test-passport-uniqueness.mjs's Section 1 for the direct
+  // replacement property. The checks below assert the NEW shape:
+  // createDog() is a thin, side-effect-free fetch wrapper with no
+  // runTransaction/tx.set of its own left in db.ts at all.
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
-  const createDogMatch = dbSrc.match(/export async function createDog\([\s\S]*?\r?\n}\r?\n/)
+  const createDogMatch = dbSrc.match(/export async function createDog\([\s\S]*?\r?\n\}\r?\n/)
   const createDogBlock = createDogMatch ? createDogMatch[0] : ''
   check('createDog() source was actually located for inspection', createDogBlock.length > 0)
-  check('createDog() captures uid() into creatorUid BEFORE the runTransaction() call (before its own internal await)',
-    createDogBlock.indexOf('const creatorUid = uid()') > -1 &&
-    createDogBlock.indexOf('const creatorUid = uid()') < createDogBlock.indexOf('await runTransaction('))
-  check('createDog() uses creatorUid (not a fresh uid() call) for tenantId', /tenantId: creatorUid/.test(createDogBlock))
-  check('createDog() uses creatorUid (not a fresh uid() call) for currentOwnerId', /currentOwnerId: creatorUid/.test(createDogBlock))
-  check('createDog() uses creatorUid (not a fresh uid() call) for createdByUserId', /createdByUserId: creatorUid/.test(createDogBlock))
-  check('createDog() no longer calls uid() again inside the Dog write payload (only the one captured value is used)',
-    (() => {
-      const dogSetMatch = createDogBlock.match(/tx\.set\(dogRef, \{[\s\S]*?\r?\n {8}\}\)/)
-      const dogSetBlock = dogSetMatch ? dogSetMatch[0] : ''
-      return dogSetBlock.length > 0 && !/uid\(\)/.test(dogSetBlock)
-    })())
-  check('no standalone reservePassportId() function remains — reservation + Dog write are staged in the same runTransaction() callback as createDog() itself',
-    !/function reservePassportId/.test(dbSrc) &&
-    /tx\.set\(reservationRef,/.test(createDogBlock) &&
-    /tx\.set\(dogRef,/.test(createDogBlock))
-  check('the reservation write uses creatorUid for createdBy (same captured value, not a fresh uid() read)',
-    /createdBy: creatorUid/.test(createDogBlock))
+  check('createDog() sends a Bearer token from the CURRENT session (auth.currentUser.getIdToken()), never a value captured earlier and reused', /await auth\.currentUser\?\.getIdToken\(\)|await auth\.currentUser!\.getIdToken\(\)|const idToken = await auth\.currentUser\.getIdToken\(\)/.test(createDogBlock))
+  check('createDog() posts to the trusted server endpoint, not a direct Firestore write', /fetch\('\/api\/create-dog'/.test(createDogBlock))
+  check('createDog() no longer performs its own Firestore transaction (no runTransaction/tx.set left in db.ts for dog creation)',
+    !/runTransaction/.test(createDogBlock) && !/tx\.set\(dogRef,/.test(createDogBlock) && !/tx\.set\(reservationRef,/.test(createDogBlock))
+  check('no standalone reservePassportId() function remains in db.ts', !/function reservePassportId/.test(dbSrc))
+  check('no unused nanoid/runTransaction imports remain in db.ts after the create-dog client transaction was removed',
+    !/import\s*\{[^}]*\bnanoid\b[^}]*\}/.test(dbSrc) && !/import\s*\{[^}]*\brunTransaction\b[^}]*\}\s*from\s*'firebase\/firestore'/.test(dbSrc))
 }
 
 // =========================================================================

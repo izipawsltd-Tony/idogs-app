@@ -75,6 +75,8 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { parseDobStrictServer, ageInMonths } from './_lib/parent-eligibility.js'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { sanitizePuppyPayload, PuppyPayloadValidationError, PAYLOAD_FIELDS } from './_lib/puppy-payload-schema.js'
+import { capForPlan, getOwnedActiveDogsSorted } from './_lib/dog-cap.js'
+import { computeEffectivePlan } from './_lib/entitlements.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -284,6 +286,18 @@ async function handler(req, res) {
           throw new Error('PASSPORT_ID_TAKEN')
         }
 
+        // Codex H2 — a litter puppy is dog creation too, and must be
+        // just as cap-aware as api/create-dog.js: the status decision is
+        // made from a count taken INSIDE this same transaction. Never
+        // blocks — a puppy created beyond the cap simply lands
+        // 'restricted' instead of 'active'.
+        const userSnap = await tx.get(db.collection('users').doc(uid))
+        const profile = userSnap.exists ? userSnap.data() : {}
+        const plan = computeEffectivePlan(profile)
+        const cap = capForPlan(plan)
+        const activeDogs = await getOwnedActiveDogsSorted(tx, db, uid)
+        const puppyStatus = activeDogs.length >= cap ? 'restricted' : 'active'
+
         const nowIso = new Date().toISOString()
         // Codex round 5, Blocker 4: bind this reservation to the exact
         // dogId + operationId, not just createdBy.
@@ -300,7 +314,7 @@ async function handler(req, res) {
           lifeStage: initialLifeStage(normalizedPayload.dateOfBirth),
           isDeceased: false,
           photos: [],
-          status: 'active',
+          status: puppyStatus,
           createdAt: nowIso,
           updatedAt: nowIso,
         })

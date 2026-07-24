@@ -36,12 +36,33 @@ export function capForPlan(plan) {
 // honored; only the correct COUNT was. Both real shapes are normalized to
 // an ISO string here; a genuinely missing/malformed value still falls back
 // to '' (sorts first/oldest) rather than throwing or being excluded.
+// Also accepts a native Date instance directly (Codex Medium item) — not
+// a shape any current write path produces, but a cheap, safe addition
+// since callers of these helpers are not guaranteed to stay Admin-SDK-only.
 function createdAtKey(dog) {
   const raw = dog.createdAt
   if (typeof raw === 'string') return raw
+  if (raw instanceof Date) return raw.toISOString()
   if (raw && typeof raw.toDate === 'function') return raw.toDate().toISOString()
   if (raw && typeof raw._seconds === 'number') return new Date(raw._seconds * 1000).toISOString()
   return ''
+}
+
+// Secondary comparator for createdAtKey ties (Codex Medium item —
+// deterministic dog-ID tie-breaking). Two dogs created in the same
+// request batch (e.g. a litter's puppies, all written with the same
+// `new Date().toISOString()` value) previously had their relative order
+// left to whatever arbitrary sequence Firestore's un-ordered where()
+// query happened to return, which could vary between reads — undermining
+// the "earliest-created stays active" cap rule's determinism. Sorting by
+// `id` as a tiebreaker doesn't recover true creation order (Firestore
+// auto-IDs aren't chronological) but guarantees the SAME dog is picked
+// consistently across repeated calls, which is what §3.3 predictability
+// actually requires.
+function compareDogsByCreatedAt(a, b) {
+  const byCreatedAt = createdAtKey(a).localeCompare(createdAtKey(b))
+  if (byCreatedAt !== 0) return byCreatedAt
+  return a.id.localeCompare(b.id)
 }
 
 // Returns every dog this uid currently, actively owns — eligible for the
@@ -53,7 +74,7 @@ export async function getOwnedActiveDogsSorted(tx, db, uid) {
   const dogs = snap.docs
     .map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
     .filter(d => (d.status || 'active') === 'active' && d.isDeceased !== true)
-  dogs.sort((a, b) => createdAtKey(a).localeCompare(createdAtKey(b)))
+  dogs.sort(compareDogsByCreatedAt)
   return dogs
 }
 
@@ -95,7 +116,7 @@ export async function reactivateUpToCapTx(tx, db, uid, plan) {
   const all = activeSnap.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
   const currentlyActive = all.filter(d => (d.status || 'active') === 'active' && d.isDeceased !== true)
   const restricted = all.filter(d => d.status === 'restricted' && d.isDeceased !== true)
-  restricted.sort((a, b) => createdAtKey(a).localeCompare(createdAtKey(b)))
+  restricted.sort(compareDogsByCreatedAt)
 
   const room = Math.max(0, cap - currentlyActive.length)
   const toReactivate = restricted.slice(0, room)

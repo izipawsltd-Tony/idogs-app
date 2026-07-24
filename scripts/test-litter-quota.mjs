@@ -15,13 +15,20 @@ import {
 
 const { check, checkAsync, summary } = makeChecker()
 
-// ── isWithinRollingWindow — "within the 365 days preceding" ──────────
+// ── isWithinRollingWindow — symmetric, bidirectional (Codex H6) ──────
 
-check('a date exactly on the new date is within the window (0 days back)', isWithinRollingWindow('2026-07-24', '2026-07-24'))
+check('a date exactly on the new date is within the window (0 days apart)', isWithinRollingWindow('2026-07-24', '2026-07-24'))
 check('364 days before is within the window', isWithinRollingWindow('2025-07-25', '2026-07-24'))
 check('exactly 365 days before is within the window (inclusive boundary)', isWithinRollingWindow('2025-07-24', '2026-07-24'))
 check('366 days before is OUTSIDE the window', !isWithinRollingWindow('2025-07-23', '2026-07-24'))
-check('a date AFTER the new date is not "preceding" and is outside the window', !isWithinRollingWindow('2026-08-01', '2026-07-24'))
+
+// Codex H6 regression: the existing entry being chronologically AFTER
+// the new date must conflict just as much as the reverse — backdating a
+// litter must not evade the check by exploiting direction.
+check('a date 8 days AFTER the new date conflicts (H6: symmetric, not just "preceding")', isWithinRollingWindow('2026-08-01', '2026-07-24'))
+check('364 days AFTER the new date conflicts', isWithinRollingWindow('2027-07-23', '2026-07-24'))
+check('exactly 365 days AFTER the new date conflicts (inclusive boundary, both directions)', isWithinRollingWindow('2027-07-24', '2026-07-24'))
+check('366 days AFTER the new date is OUTSIDE the window', !isWithinRollingWindow('2027-07-25', '2026-07-24'))
 
 // ── hasLitterWithinRollingWindow — reads litterQuotaLedger only ──────
 
@@ -47,6 +54,17 @@ await checkAsync('a ledger entry 400 days earlier does NOT block (outside the ro
   return blocked === false
 })
 
+await checkAsync('Codex H6 regression: BACKDATING — a litter recorded with a LATER date first still blocks a subsequently-added EARLIER date within 365 days, regardless of creation order', async () => {
+  const db = createFakeFirestore({
+    // The ledger entry's whelpingDate (2027-03-01) is chronologically
+    // AFTER the new litter being checked (2027-01-10) — exactly the
+    // direction the pre-fix one-directional check missed.
+    litterQuotaLedger: { e1: { tenantId: 'tenant-1', litterId: 'litter-later', whelpingDate: '2027-03-01' } },
+  })
+  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2027-01-10'))
+  return blocked === true
+})
+
 await checkAsync('a ledger entry belonging to a DIFFERENT tenant never blocks (tenant isolation)', async () => {
   const db = createFakeFirestore({
     litterQuotaLedger: { e1: { tenantId: 'someone-else', litterId: 'litter-x', whelpingDate: '2026-07-01' } },
@@ -66,6 +84,57 @@ await checkAsync('deleting the underlying litter document does not remove its le
   // ledger is a SEPARATE collection this fake never had a litters/litter-1
   // doc in to begin with, so this proves the ledger check works with no
   // dependency on the litter document existing at all.
+  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
+  return blocked === true
+})
+
+// ── Codex H7: pre-ledger historical litters must still count ─────────
+
+await checkAsync('a HISTORICAL litter (dated, live document, NO ledger entry — created before this quota system existed) blocks a new litter within its window', async () => {
+  const db = createFakeFirestore({
+    litters: { legacyLitter: { tenantId: 'tenant-1', actualBirthDate: '2026-06-01', archived: false } },
+  })
+  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
+  return blocked === true
+})
+
+await checkAsync('an ARCHIVED historical litter (no ledger entry) still counts — archiving must not restore quota, even for pre-ledger records', async () => {
+  const db = createFakeFirestore({
+    litters: { legacyArchived: { tenantId: 'tenant-1', actualBirthDate: '2026-06-01', archived: true } },
+  })
+  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
+  return blocked === true
+})
+
+await checkAsync('a historical litter outside the window (400 days) does not block', async () => {
+  const db = createFakeFirestore({
+    litters: { legacyOld: { tenantId: 'tenant-1', actualBirthDate: '2024-06-01', archived: false } },
+  })
+  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-07-24'))
+  return blocked === false
+})
+
+await checkAsync('a historical litter belonging to a different tenant never blocks', async () => {
+  const db = createFakeFirestore({
+    litters: { otherTenant: { tenantId: 'someone-else', actualBirthDate: '2026-06-01', archived: false } },
+  })
+  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
+  return blocked === false
+})
+
+await checkAsync('excludeLitterId excludes a litter from the live-collection fallback scan too (self-check during activation)', async () => {
+  const db = createFakeFirestore({
+    litters: { self: { tenantId: 'tenant-1', actualBirthDate: '2026-06-01', archived: false } },
+  })
+  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01', 'self'))
+  return blocked === false
+})
+
+await checkAsync('a ledger-backed litter is not double-scanned into a false negative — still blocks correctly when also present live', async () => {
+  const db = createFakeFirestore({
+    litterQuotaLedger: { e1: { tenantId: 'tenant-1', litterId: 'litter-1', whelpingDate: '2026-06-01' } },
+    litters: { 'litter-1': { tenantId: 'tenant-1', actualBirthDate: '2026-06-01', archived: false } },
+  })
   const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
   return blocked === true
 })

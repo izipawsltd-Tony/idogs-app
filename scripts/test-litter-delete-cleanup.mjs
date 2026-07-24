@@ -129,7 +129,7 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId = `dam_${R}`
-  await setDoc(doc(db, 'dogs', damId), {
+  await adminDb.collection('dogs').doc(damId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
@@ -139,23 +139,23 @@ const strangerUid = await newUser('stranger')
     puppyIds: [`p1_${R}`, `p2_${R}`, `p3_${R}`],
   })
   // p1, p2: confirmed members, still fully breeder-controlled
-  await setDoc(doc(db, 'dogs', `p1_${R}`), {
+  await adminDb.collection('dogs').doc(`p1_${R}`).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Pup1', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId,
   })
-  await setDoc(doc(db, 'dogs', `p2_${R}`), {
+  await adminDb.collection('dogs').doc(`p2_${R}`).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Pup2', sex: 'female', status: 'active', dateOfBirth: '2026-01-01', litterId,
   })
   // p3: confirmed member, but transferred to a buyer — must be preserved
-  await setDoc(doc(db, 'dogs', `p3_${R}`), {
+  await adminDb.collection('dogs').doc(`p3_${R}`).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Pup3', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId,
   })
   await adminDb.collection('dogs').doc(`p3_${R}`).update({ currentOwnerId: buyerUid, status: 'active' })
   // Unrelated dog — never part of this litter
   const unrelatedId = `unrelated_${R}`
-  await setDoc(doc(db, 'dogs', unrelatedId), {
+  await adminDb.collection('dogs').doc(unrelatedId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Unrelated', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
   })
@@ -200,12 +200,12 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId2 = `dam2_${R}`
-  await setDoc(doc(db, 'dogs', damId2), {
+  await adminDb.collection('dogs').doc(damId2).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam2', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const litterId2 = `litter2_${R}`
-  await setDoc(doc(db, 'dogs', `ap1_${R}`), {
+  await adminDb.collection('dogs').doc(`ap1_${R}`).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'AtomicPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId2,
   })
@@ -214,7 +214,7 @@ const strangerUid = await newUser('stranger')
   // pointing at a dog that was never actually this breeder's own).
   await as('stranger')
   const strangerDogId = `strangerdog_${R}`
-  await setDoc(doc(db, 'dogs', strangerDogId), {
+  await adminDb.collection('dogs').doc(strangerDogId).set({
     tenantId: strangerUid, currentOwnerId: strangerUid, createdByUserId: strangerUid,
     sourceType: 'BREEDER_ISSUED', name: 'StrangerDog', sex: 'male', status: 'active', dateOfBirth: '2020-01-01',
   })
@@ -253,7 +253,7 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId3 = `dam3_${R}`
-  await setDoc(doc(db, 'dogs', damId3), {
+  await adminDb.collection('dogs').doc(damId3).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam3', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
@@ -276,7 +276,7 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId4 = `dam4_${R}`
-  await setDoc(doc(db, 'dogs', damId4), {
+  await adminDb.collection('dogs').doc(damId4).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam4', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
@@ -284,7 +284,7 @@ const strangerUid = await newUser('stranger')
   const thisLitterId = `thislitter_${R}`
   const crossLinkedPupId = `crosslinked_${R}`
   // This puppy genuinely belongs to otherLitterId (its own litterId says so)
-  await setDoc(doc(db, 'dogs', crossLinkedPupId), {
+  await adminDb.collection('dogs').doc(crossLinkedPupId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'CrossLinkedPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
     litterId: otherLitterId,
@@ -316,7 +316,7 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId5 = `dam5b_${R}`
-  await setDoc(doc(db, 'dogs', damId5), {
+  await adminDb.collection('dogs').doc(damId5).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam5b', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
@@ -324,7 +324,7 @@ const strangerUid = await newUser('stranger')
   // A legacy puppy: genuinely listed in this litter's puppyIds, but
   // predates the litterId field — no way to CONFIRM membership from its
   // own record.
-  await setDoc(doc(db, 'dogs', legacyPupId), {
+  await adminDb.collection('dogs').doc(legacyPupId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'LegacyPup', sex: 'male', status: 'active', dateOfBirth: '2020-06-01',
     // no litterId field at all
@@ -354,7 +354,7 @@ const strangerUid = await newUser('stranger')
     tenantId: breederUid, damId: damId5, name: 'Litter5c', notes: '', puppyIds: [],
   })
   const standaloneDogId = `standalone5_${R}`
-  await setDoc(doc(db, 'dogs', standaloneDogId), {
+  await adminDb.collection('dogs').doc(standaloneDogId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Standalone', sex: 'male', status: 'active', dateOfBirth: '2018-01-01',
   })
@@ -373,13 +373,13 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId6 = `dam6_${R}`
-  await setDoc(doc(db, 'dogs', damId6), {
+  await adminDb.collection('dogs').doc(damId6).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam6', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const litterId6 = `litter6_${R}`
   const racePupId = `racepup_${R}`
-  await setDoc(doc(db, 'dogs', racePupId), {
+  await adminDb.collection('dogs').doc(racePupId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'RacePup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
     litterId: litterId6,
@@ -423,14 +423,14 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId7 = `dam7_${R}`
-  await setDoc(doc(db, 'dogs', damId7), {
+  await adminDb.collection('dogs').doc(damId7).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam7', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const litterId7 = `litter7_${R}`
   const pupIds = [`p7a_${R}`, `p7b_${R}`, `p7c_${R}`, `p7d_${R}`]
   for (const id of pupIds) {
-    await setDoc(doc(db, 'dogs', id), {
+    await adminDb.collection('dogs').doc(id).set({
       tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
       sourceType: 'BREEDER_ISSUED', name: id, sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId7,
     })
@@ -471,13 +471,13 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId8 = `dam8_${R}`
-  await setDoc(doc(db, 'dogs', damId8), {
+  await adminDb.collection('dogs').doc(damId8).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam8', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const litterId8 = `litter8_${R}`
   const pupId8 = `p8_${R}`
-  await setDoc(doc(db, 'dogs', pupId8), {
+  await adminDb.collection('dogs').doc(pupId8).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Pup8', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId8,
   })
@@ -514,13 +514,13 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId9 = `dam9_${R}`
-  await setDoc(doc(db, 'dogs', damId9), {
+  await adminDb.collection('dogs').doc(damId9).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam9', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
   const litterId9 = `litter9_${R}`
   const pendingPupId = `pendingpup9_${R}`
-  await setDoc(doc(db, 'dogs', pendingPupId), {
+  await adminDb.collection('dogs').doc(pendingPupId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'PendingPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId: litterId9,
   })
@@ -571,7 +571,7 @@ const strangerUid = await newUser('stranger')
 {
   await as('breeder')
   const damId10 = `dam10_${R}`
-  await setDoc(doc(db, 'dogs', damId10), {
+  await adminDb.collection('dogs').doc(damId10).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Dam10', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
   })
@@ -580,7 +580,7 @@ const strangerUid = await newUser('stranger')
   // currentOwnerId is (unusually) back to the breeder AND status/
   // transferStatus look clean, but buyerEmail proves this dog has
   // ownership history — must still be preserved.
-  await setDoc(doc(db, 'dogs', historyPupId), {
+  await adminDb.collection('dogs').doc(historyPupId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'HistoryPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
     litterId: litterId10, buyerEmail: 'past-buyer@example.com',

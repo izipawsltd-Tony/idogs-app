@@ -72,6 +72,32 @@ await checkAsync('getOwnedActiveDogsSorted correctly orders dogs whose createdAt
   return result.map(d => d.id).join(',') === 'oldestTimestamp,middleString,newestTimestamp'
 })
 
+await checkAsync('getOwnedActiveDogsSorted correctly orders a dog whose createdAt is a native Date instance (Codex Medium item), mixed with string/Timestamp shapes', async () => {
+  const db = createFakeFirestore({
+    dogs: {
+      newestDate: dog('newestDate', { createdAt: new Date('2026-03-01T00:00:00Z') }),
+      oldestString: dog('oldestString', { createdAt: '2026-01-01T00:00:00Z' }),
+      middleTimestamp: dog('middleTimestamp', { createdAt: fakeTimestamp('2026-02-01T00:00:00Z') }),
+    },
+  })
+  const result = await db.runTransaction(tx => getOwnedActiveDogsSorted(tx, db, 'owner-1'))
+  return result.map(d => d.id).join(',') === 'oldestString,middleTimestamp,newestDate'
+})
+
+await checkAsync('getOwnedActiveDogsSorted breaks createdAt ties deterministically by dog id (Codex Medium item) — same result across repeated calls regardless of read order', async () => {
+  const db = createFakeFirestore({
+    dogs: {
+      zulu: dog('zulu', { createdAt: '2026-01-01T00:00:00Z' }),
+      alpha: dog('alpha', { createdAt: '2026-01-01T00:00:00Z' }),
+      mike: dog('mike', { createdAt: '2026-01-01T00:00:00Z' }),
+    },
+  })
+  const first = await db.runTransaction(tx => getOwnedActiveDogsSorted(tx, db, 'owner-1'))
+  const second = await db.runTransaction(tx => getOwnedActiveDogsSorted(tx, db, 'owner-1'))
+  const order = first.map(d => d.id).join(',')
+  return order === 'alpha,mike,zulu' && second.map(d => d.id).join(',') === order
+})
+
 await checkAsync('reconcileDogCapTx keeps the TRUE earliest-created dogs active even when their createdAt is a Timestamp object, demoting a brand-new dog instead of an old one', async () => {
   const db = createFakeFirestore({
     dogs: {

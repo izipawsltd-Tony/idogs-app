@@ -155,8 +155,15 @@ function partitionLitterPuppies(dogs, puppyIds) {
 {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
   const dogsBlock = (rules.match(/match \/dogs\/\{dogId\} \{[\s\S]*?\n    \}/) || [''])[0]
-  check('dogs create requires a validly-shaped dateOfBirth (isValidDobString)',
-    /isValidDobString\(request\.resource\.data\.dateOfBirth\)/.test(dogsBlock))
+  // Codex H2: dog creation moved server-side entirely — dogs/{dogId}
+  // create is now `if false` outright, so there is no rules-level DOB
+  // format check left to assert on. The same YYYY-MM-DD calendar
+  // round-trip validation now happens in api/create-dog.js via
+  // isValidCalendarDateString, before the create transaction ever starts
+  // (see test-dob-validation.mjs for the dedicated coverage of that).
+  check('dogs create is denied outright in rules (moved server-side, Codex H2)', /allow create: if false;/.test(dogsBlock))
+  const createDogSrc = readFileSync(new URL('../api/create-dog.js', import.meta.url), 'utf8')
+  check('api/create-dog.js enforces the DOB format check that used to live in rules', /isValidCalendarDateString\(data\.dateOfBirth\)/.test(createDogSrc))
   const littersBlock = (rules.match(/match \/litters\/\{id\} \{[\s\S]*?\n    \}/) || [''])[0]
   // Codex round 4, Blocker 3: litters update is no longer a conditional
   // in-rules check (DOB-format-while-puppies-exist) — it's denied
@@ -213,7 +220,10 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   const { user } = await createUserWithEmailAndPassword(auth, `dobpolicy.${R}@emulator.local`, PW)
   const uid = user.uid
 
-  // ── Test 9: dogs create requires non-empty dateOfBirth ──
+  // ── Test 9: dogs create is denied outright in rules, regardless of
+  // dateOfBirth shape (Codex H2 — moved server-side to api/create-dog.js,
+  // which enforces the DOB check instead; see test-passport-uniqueness.mjs
+  // for end-to-end coverage of that endpoint). ──
   {
     let emptyDenied = false
     try {
@@ -222,7 +232,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
         sourceType: 'BREEDER_ISSUED', name: 'NoDobPup', sex: 'male', status: 'active', dateOfBirth: '',
       })
     } catch (err) { emptyDenied = isDenied(err) }
-    check('9-DogsRule', 'Creating a dog with an empty dateOfBirth is rejected', emptyDenied)
+    check('9-DogsRule', 'A direct client dogs create with an empty dateOfBirth is denied', emptyDenied)
 
     let missingDenied = false
     try {
@@ -231,16 +241,16 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
         sourceType: 'BREEDER_ISSUED', name: 'MissingDobPup', sex: 'male', status: 'active',
       })
     } catch (err) { missingDenied = isDenied(err) }
-    check('9-DogsRule', 'Creating a dog with no dateOfBirth field at all is rejected', missingDenied)
+    check('9-DogsRule', 'A direct client dogs create with no dateOfBirth field at all is denied', missingDenied)
 
-    let validOk = true
+    let validAlsoDenied = false
     try {
       await setDoc(doc(db, 'dogs', `validdobpup_${R}`), {
         tenantId: uid, currentOwnerId: uid, createdByUserId: uid,
         sourceType: 'BREEDER_ISSUED', name: 'ValidDobPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
       })
-    } catch (err) { validOk = false }
-    check('9-DogsRule', 'Creating a dog with a valid dateOfBirth still succeeds', validOk)
+    } catch (err) { validAlsoDenied = isDenied(err) }
+    check('9-DogsRule', 'A direct client dogs create is denied even with a validly-shaped dateOfBirth — there is no in-rules carve-out left at all (must go through api/create-dog.js)', validAlsoDenied)
   }
 
   // ── Test 10: a direct client litters update is now denied
@@ -251,8 +261,13 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   // end (via an Admin SDK mirror) in test-atomic-transactions.mjs's
   // Section 4. ──
   {
+    // Codex H2: dogs create is denied outright for direct client writes —
+    // this fixture (the litter's own dam) is seeded via the Admin SDK,
+    // same as every other test file's fixtures post-H2. Only the LITTER
+    // update rule is this test's actual target; the dam's existence is
+    // incidental setup.
     const damId = `dobdam_${R}`
-    await setDoc(doc(db, 'dogs', damId), {
+    await adminDb.collection('dogs').doc(damId).set({
       tenantId: uid, currentOwnerId: uid, createdByUserId: uid,
       sourceType: 'BREEDER_ISSUED', name: 'DobDam', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
     })
@@ -282,7 +297,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   // the full eligibility-logic coverage) ──
   {
     const damId11 = `dobdam11_${R}`
-    await setDoc(doc(db, 'dogs', damId11), {
+    await adminDb.collection('dogs').doc(damId11).set({
       tenantId: uid, currentOwnerId: uid, createdByUserId: uid,
       sourceType: 'BREEDER_ISSUED', name: 'DobDam11', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
     })

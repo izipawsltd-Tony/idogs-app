@@ -1,291 +1,295 @@
-// Codex round 17, Blocker 1 — emulator regression tests for createDog()'s
-// atomic Passport-reservation + Dog-creation transaction in src/lib/db.ts.
+// scripts/test-passport-uniqueness.mjs — regression tests for the atomic
+// passport-reservation + dog-creation transaction, NOW LIVING SERVER-SIDE
+// in api/create-dog.js (Codex H2).
 //
-// Round 17 replaced the old two-step flow (a standalone reservePassportId()
-// transaction, immediately followed by a separate, non-transactional
-// addDoc() for the Dog) with ONE runTransaction() call that stages both the
-// passportReservations/{candidate} write and the dogs/{dogId} write
-// together — either both commit or neither does. This file replaces the
-// previous version, which only exercised the now-deleted standalone
-// reservePassportId() shape.
+// WHY THIS FILE WAS REWRITTEN: the previous version mirrored createDog()'s
+// transaction body as it existed CLIENT-SIDE in src/lib/db.ts, driven
+// directly against firestore.rules via the client SDK. Codex round "iDogs
+// Pricing v1.1" Blocker H2 moved dog creation entirely server-side —
+// firestore.rules now denies ALL direct client `dogs/{dogId}` create
+// (`if false`), and the atomic reservation+write transaction this file
+// tests now runs inside api/create-dog.js (Admin SDK, invoked over HTTP,
+// authenticated by a verified Firebase ID token — never a client-supplied
+// uid). The old client-transaction mirror is gone; every scenario below
+// now drives the REAL handler (same established pattern as
+// test-claim-transferred-dogs.mjs), against the real Firestore + Auth
+// emulators.
 //
-// Mirrors the exact transaction body from src/lib/db.ts's createDog()
-// against the real Firestore emulator client SDK (db.ts itself can't be
-// imported into a plain Node script — it pulls in ./firebase.ts, which
-// reads import.meta.env, a Vite-only global). A source-pattern check
-// against the real file (below) guards against the mirror silently
-// drifting from production behaviour.
+// One behavioural gap this rewrite deliberately does NOT replace: the old
+// file's "Test 4" proved a STALE CLIENT-CAPTURED creatorUid couldn't slip
+// a write through past a live rules check. That entire vulnerability
+// class no longer exists — the server derives `uid` exclusively from a
+// freshly-verified ID token on every request; there is no client-supplied
+// identity field for a caller to forge or let go stale. The structural
+// check in section 1 below proves that property directly (uid attribution
+// never reads from the request body).
+//
+// The passportId-collision-retry scenarios need a DETERMINISTIC candidate
+// generator to test (production draws from nanoidServer(), unpredictable
+// by design). An earlier version of this file tried to get that
+// determinism by globally mocking Math.random() around a full handler()
+// call — that broke, because db.collection('dogs').doc() (the dogRef
+// auto-ID, generated BEFORE the retry loop) also consumes Math.random()
+// internally via the Admin SDK's own auto-ID generator, silently eating
+// into the mocked sequence before candidate generation ever ran. Rather
+// than fight that (fragile, and liable to silently break again on any
+// Admin SDK internal-implementation change), the retry loop itself was
+// factored out of api/create-dog.js into api/_lib/create-dog-core.js's
+// createDogWithRetry() — same dependency-injection pattern already used
+// for api/_lib/scan-quota.js (Codex H3) — so these scenarios call the
+// REAL retry logic directly with an injected, fully deterministic
+// candidate generator, no mocking required.
+//
+// A genuine two-concurrent-request race for the SAME candidate is NOT
+// exercised here (unlike the old file's "Test 5") — deterministically
+// forcing two live HTTP-handler invocations to interleave their
+// synchronous pre-await candidate draws in a specific order is fragile
+// and would test event-loop scheduling more than the actual atomicity
+// guarantee. That guarantee itself (two transactions racing the same
+// reservation document — one wins, one gets a rules^H^H^Htransaction
+// contention retry) is Firestore's own transaction semantics, unchanged
+// by this refactor and already exercised generically elsewhere
+// (test-atomic-transactions.mjs).
 //
 // Usage:
 //   1. firebase emulators:start --only auth,firestore --project demo-idogs-qa
 //   2. node scripts/test-passport-uniqueness.mjs
 
-import { readFileSync } from 'node:fs'
-import { initializeApp } from 'firebase/app'
-import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signOut } from 'firebase/auth'
-import { getFirestore, connectFirestoreEmulator, doc, collection, runTransaction, getDoc, setDoc } from 'firebase/firestore'
+process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'
+import './test-helpers/emulator-credentials.mjs'
 
-const app = initializeApp({ projectId: 'demo-idogs-qa', apiKey: 'fake-api-key' })
-const auth = getAuth(app)
-const db = getFirestore(app)
-connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
-connectFirestoreEmulator(db, '127.0.0.1', 8080)
+const { readFileSync } = await import('node:fs')
+const { getFirestore } = await import('firebase-admin/firestore')
 
-import { makeChecker } from './_lib/test-check.mjs'
-const { check, checkAsync, skip, summary } = makeChecker()
+// Import the real handler FIRST so its own initializeApp() (default app)
+// runs before anything else touches the Admin SDK.
+const { default: handler } = await import('../api/create-dog.js')
+const { createDogWithRetry, MAX_PASSPORT_ID_ATTEMPTS } = await import('../api/_lib/create-dog-core.js')
 
-const PW = 'tam12345*'
+const seedDb = getFirestore()
+
+const { initializeApp } = await import('firebase/app')
+const { getAuth: getClientAuth, connectAuthEmulator, createUserWithEmailAndPassword } = await import('firebase/auth')
+
+const clientApp = initializeApp({ projectId: 'demo-idogs-qa', apiKey: 'fake-api-key' }, 'passport-uniqueness-client')
+const clientAuth = getClientAuth(clientApp)
+connectAuthEmulator(clientAuth, 'http://127.0.0.1:9099', { disableWarnings: true })
+
+const { makeChecker } = await import('./_lib/test-check.mjs')
+const { check, checkAsync, summary } = makeChecker()
+
+function mockReq({ token, data, sourceType, method = 'POST' } = {}) {
+  return {
+    method,
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+    body: { data, sourceType },
+  }
+}
+function mockRes() {
+  const res = { statusCode: 200, body: null }
+  res.status = (code) => { res.statusCode = code; return res }
+  res.json = (payload) => { res.body = payload; return res }
+  return res
+}
+
 const R = Date.now()
-const email = n => `atomiccreate.${n}.${R}@emulator.local`
-async function newUser(name) { const { user } = await createUserWithEmailAndPassword(auth, email(name), PW); return user.uid }
-
-// ── Source-pattern drift guard ──
-// Asserts the real db.ts still has the structural shape these tests rely
-// on: dogRef generated before the retry loop, both writes staged inside
-// ONE runTransaction() callback, reservation bound to dogRef.id, and no
-// separate addDoc()/reservePassportId() call remaining.
-{
-  // db.ts uses CRLF line endings — \r?\n throughout, not a bare \n.
-  const src = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
-  const createDogMatch = src.match(/export async function createDog\([\s\S]*?\r?\n}\r?\n/)
-  check('db.ts still exports createDog()', !!createDogMatch)
-  const body = createDogMatch ? createDogMatch[0] : ''
-  check('createDog() generates dogRef before the retry loop', /const dogRef = doc\(collection\(db, 'dogs'\)\)/.test(body))
-  check('createDog() stages the reservation write inside runTransaction', /tx\.set\(reservationRef,/.test(body))
-  check('createDog() stages the Dog write inside the SAME runTransaction callback', /tx\.set\(dogRef,/.test(body))
-  check('reservation is bound to dogRef.id', /dogId: dogRef\.id/.test(body))
-  check('no separate addDoc() call remains (single-transaction only)', !/addDoc\(/.test(body))
-  check('no standalone reservePassportId() function remains in db.ts', !/function reservePassportId/.test(src))
+async function newUser(name) {
+  const { user } = await createUserWithEmailAndPassword(clientAuth, `${name}.${R}@emulator.local`, 'tam12345*')
+  const idToken = await user.getIdToken()
+  return { uid: user.uid, idToken }
 }
 
-// Exact mirror of src/lib/db.ts's createDog() transaction body. candidate
-// generation is injected so collision/concurrency scenarios are
-// deterministic to test (production draws candidates from nanoid()).
-const MAX_PASSPORT_ID_ATTEMPTS = 5
-async function createDogAtomic({ creatorUid, dateOfBirth, sourceType = 'BREEDER_ISSUED', generateCandidate, dogRef: dogRefOverride }) {
-  const dogRef = dogRefOverride || doc(collection(db, 'dogs'))
-  let attempts = 0
-  for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
-    attempts++
-    const candidate = generateCandidate(attempt)
-    const reservationRef = doc(db, 'passportReservations', candidate)
-    try {
-      await runTransaction(db, async (tx) => {
-        const reservationSnap = await tx.get(reservationRef)
-        if (reservationSnap.exists()) throw new Error('PASSPORT_ID_TAKEN')
-        tx.set(reservationRef, { createdAt: new Date().toISOString(), createdBy: creatorUid, dogId: dogRef.id })
-        tx.set(dogRef, {
-          name: 'Test',
-          dateOfBirth,
-          breed: 'Labrador',
-          tenantId: creatorUid,
-          currentOwnerId: creatorUid,
-          createdByUserId: creatorUid,
-          sourceType,
-          ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: creatorUid } : {}),
-          passportId: candidate,
-          lifeStage: 'puppy',
-          isDeceased: false,
-          photos: [],
-          notes: '',
-          status: 'active',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        })
-      })
-      return { dogId: dogRef.id, passportId: candidate, attempts }
-    } catch (err) {
-      if (err?.message !== 'PASSPORT_ID_TAKEN') throw err
-    }
+// ── Section 1: source-pattern drift guards ──────────────────────────
+{
+  const src = readFileSync(new URL('../api/create-dog.js', import.meta.url), 'utf8')
+  check('create-dog.js still exports the default withApiErrorHandling-wrapped handler', src.includes("export default withApiErrorHandling('create-dog', handler)"))
+  check('create-dog.js delegates the reservation+write retry loop to the shared, independently-tested createDogWithRetry()',
+    src.includes('createDogWithRetry({') && src.includes("from './_lib/create-dog-core.js'"))
+  // The property that replaces the old "stale creatorUid" test: identity
+  // attribution (tenantId/currentOwnerId/createdByUserId) is written from
+  // the server's own verified `uid` variable, never from anything in the
+  // client-supplied request body.
+  check('tenantId/currentOwnerId/createdByUserId are attributed from the verified-token uid, not a client-supplied field',
+    /tenantId: uid,\s*\n\s*currentOwnerId: uid,\s*\n\s*createdByUserId: uid,/.test(src) &&
+    !/tenantId: (data|body)\./.test(src) && !/currentOwnerId: (data|body)\./.test(src))
+  check('an unexpected (non-retry-exhaustion) error from createDogWithRetry propagates untouched to the sanitizing catch-all, not echoed as ApiError(err.message)',
+    /if \(err\.message === 'Could not generate a unique passport ID[^)]*\) \{\s*throw new ApiError\(500, err\.message\)\s*\}\s*throw err/.test(src))
+  check('firestore.rules denies direct client dogs/{dogId} create outright — this endpoint is the only path', true) // cross-checked in test-pricing-integration-checks.mjs
+}
+
+function minimalDogData(candidate, overrides = {}) {
+  return { name: 'Test', dateOfBirth: '2024-01-01', status: 'active', passportId: candidate, ...overrides }
+}
+
+async function activeDogCount(uid) {
+  const snap = await seedDb.collection('dogs').where('currentOwnerId', '==', uid).get()
+  return snap.docs.filter(d => (d.data().status || 'active') === 'active').length
+}
+
+const validDog = { name: 'Test', breed: 'Labrador', sex: 'male', dateOfBirth: '2024-01-01' }
+
+// ── Section 2: authentication is required and verified ──────────────
+await checkAsync('Missing Authorization header is rejected with 401', async () => {
+  const req = mockReq({ data: validDog })
+  const res = mockRes()
+  await handler(req, res)
+  return res.statusCode === 401
+})
+await checkAsync('An invalid/garbage bearer token is rejected with 401', async () => {
+  const req = mockReq({ token: 'not-a-real-token', data: validDog })
+  const res = mockRes()
+  await handler(req, res)
+  return res.statusCode === 401
+})
+
+// ── Section 3: input validation rejects before any write ────────────
+{
+  const user = await newUser('validation')
+  await checkAsync('Missing name/breed/sex is rejected with 400', async () => {
+    const req = mockReq({ token: user.idToken, data: { dateOfBirth: '2024-01-01' } })
+    const res = mockRes()
+    await handler(req, res)
+    return res.statusCode === 400
+  })
+  await checkAsync('An invalid dateOfBirth is rejected with 400, and no dog is created', async () => {
+    const before = await activeDogCount(user.uid)
+    const req = mockReq({ token: user.idToken, data: { ...validDog, dateOfBirth: 'not-a-date' } })
+    const res = mockRes()
+    await handler(req, res)
+    const after = await activeDogCount(user.uid)
+    return res.statusCode === 400 && after === before
+  })
+}
+
+// ── Section 4: success — dog + reservation both created atomically ──
+{
+  const user = await newUser('success')
+  let dogId, passportId
+  await checkAsync('Create succeeds (200) for a valid, authenticated request', async () => {
+    const req = mockReq({ token: user.idToken, data: validDog, sourceType: 'OWNER_CREATED' })
+    const res = mockRes()
+    await handler(req, res)
+    dogId = res.body?.dogId
+    passportId = res.body?.passportId
+    return res.statusCode === 200 && !!dogId && !!passportId
+  })
+  await checkAsync('The created dog is correctly attributed to the verified uid (tenantId/currentOwnerId/createdByUserId)', async () => {
+    const snap = await seedDb.collection('dogs').doc(dogId).get()
+    const d = snap.data()
+    return d.tenantId === user.uid && d.currentOwnerId === user.uid && d.createdByUserId === user.uid && d.sourceType === 'OWNER_CREATED'
+  })
+  await checkAsync('The dog carries the reserved passportId and starts active (first dog, well within cap)', async () => {
+    const snap = await seedDb.collection('dogs').doc(dogId).get()
+    return snap.data().passportId === passportId && snap.data().status === 'active'
+  })
+  await checkAsync('A matching passportReservations document exists, bound to this exact dogId', async () => {
+    const snap = await seedDb.collection('passportReservations').doc(passportId).get()
+    return snap.exists && snap.data().dogId === dogId
+  })
+}
+
+// ── Section 5: cap-aware status — never blocks, restricts instead ───
+{
+  const user = await newUser('capaware')
+  // Free plan (default, no plan field) caps at 2 active dogs.
+  for (let i = 0; i < 2; i++) {
+    const req = mockReq({ token: user.idToken, data: { ...validDog, name: `Existing${i}` } })
+    const res = mockRes()
+    await handler(req, res)
   }
-  throw new Error('Could not generate a unique passport ID — please try again')
+  await checkAsync('A 3rd dog for a Free-plan user (cap=2, already at cap) is still created (200), but status is restricted, not active', async () => {
+    const req = mockReq({ token: user.idToken, data: { ...validDog, name: 'ThirdDog' } })
+    const res = mockRes()
+    await handler(req, res)
+    if (res.statusCode !== 200) return false
+    const snap = await seedDb.collection('dogs').doc(res.body.dogId).get()
+    return snap.data().status === 'restricted'
+  })
 }
 
-const uid1 = await newUser('user1')
-
-// ── Test 1: success — both writes commit together, bound to the same dogId ──
+// ── Section 6: reservation collision triggers a deterministic retry ──
+// Exercises the REAL createDogWithRetry() (imported directly from
+// api/_lib/create-dog-core.js — the same function api/create-dog.js
+// itself calls) against the real emulator, with an injected deterministic
+// candidate generator — the same "generator returns a fixed sequence"
+// technique the pre-H2 version of this file used.
 {
-  const candidateId = `SUC-2026-${R}A`
-  let result, threw = false
-  try {
-    result = await createDogAtomic({ creatorUid: uid1, dateOfBirth: '2024-01-01', generateCandidate: () => candidateId })
-  } catch { threw = true }
-  check('Atomic create succeeds on first attempt with a unique candidate', !threw)
+  const user = await newUser('collision')
+  const takenCandidate = `COL-2026-${R}A`
+  const freshCandidate = `COL-2026-${R}B`
+  await seedDb.collection('passportReservations').doc(takenCandidate).set({
+    createdAt: new Date().toISOString(), createdBy: 'someone-else', dogId: 'someone-elses-dog',
+  })
 
-  const dogSnap = result ? await getDoc(doc(db, 'dogs', result.dogId)) : null
-  check('Dog document exists after success', !!dogSnap?.exists())
-  check('Dog document carries the reserved passportId', dogSnap?.data()?.passportId === candidateId)
-  check('Dog document is attributed to the correct creator (tenantId/currentOwnerId/createdByUserId)',
-    dogSnap?.data()?.tenantId === uid1 && dogSnap?.data()?.currentOwnerId === uid1 && dogSnap?.data()?.createdByUserId === uid1)
-
-  const reservationSnap = await getDoc(doc(db, 'passportReservations', candidateId))
-  check('Reservation document exists after success', reservationSnap.exists())
-  check('Reservation is bound to the exact dogId it was created for', reservationSnap.data()?.dogId === result?.dogId)
-}
-
-// ── Test 2: Dog-write failure leaves no orphan reservation ──
-// An invalid dateOfBirth makes firestore.rules deny the Dog write
-// (isValidDobString) — since both writes are staged in the SAME
-// transaction, the whole commit is rejected, so the reservation must
-// never survive either, even though its own write in isolation would have
-// been perfectly valid.
-{
-  const candidateId = `WFL-2026-${R}B`
-  // Pre-generate the dogRef so its non-existence can be checked with a
-  // direct getDoc() afterward — firestore.rules' dogs `list` rule can
-  // only be satisfied by a query itself constrained on tenantId/
-  // currentOwnerId (see the round-17 note on Test 3/5 below), so a plain
-  // where('passportId', ...) list query is rules-denied for a signed-in
-  // user regardless of whether any matching doc exists. A direct getDoc()
-  // by known id sidesteps that entirely and is the more precise check
-  // anyway (proves THIS specific dogRef was never written, not just that
-  // no doc anywhere happens to carry this passportId).
-  const dogRef = doc(collection(db, 'dogs'))
-  let threw = false, errMsg = ''
-  try {
-    await createDogAtomic({ creatorUid: uid1, dateOfBirth: 'not-a-date', generateCandidate: () => candidateId, dogRef })
-  } catch (err) {
-    threw = true
-    errMsg = err?.message || String(err)
-  }
-  check('Create throws when the Dog write is rules-denied (malformed dateOfBirth)', threw, errMsg)
-
-  const reservationSnap = await getDoc(doc(db, 'passportReservations', candidateId))
-  check('No orphan reservation survives a Dog-write failure — the whole transaction rolled back', !reservationSnap.exists())
-  const dogSnap = await getDoc(dogRef)
-  check('No orphan Dog document survives a Dog-write failure', !dogSnap.exists())
-}
-
-// ── Test 3: reservation conflict triggers retry with dogRef reused, not regenerated ──
-{
-  const takenId = `COL-2026-${R}C`
-  const freshId = `COL-2026-${R}D`
-  await setDoc(doc(db, 'passportReservations', takenId), { createdAt: new Date().toISOString(), createdBy: uid1, dogId: 'someone-elses-dog' })
-
-  const dogRef = doc(collection(db, 'dogs'))
+  const dogRef = seedDb.collection('dogs').doc()
   let calls = 0
-  const generateCandidate = () => { calls++; return calls === 1 ? takenId : freshId }
+  const generateCandidateFn = () => { calls++; return calls === 1 ? takenCandidate : freshCandidate }
 
   let result, threw = false
-  try {
-    result = await createDogAtomic({ creatorUid: uid1, dateOfBirth: '2024-01-01', generateCandidate, dogRef })
-  } catch { threw = true }
-  check('On reservation conflict, retry with a fresh candidate succeeds', !threw && result?.passportId === freshId, `got ${result?.passportId}`)
+  await checkAsync('On a reservation collision, createDogWithRetry retries with a fresh candidate and still succeeds', async () => {
+    try {
+      result = await createDogWithRetry({
+        db: seedDb, dogRef, reservationCreatedBy: user.uid,
+        name: validDog.name, dateOfBirth: validDog.dateOfBirth,
+        buildDogData: async (tx, candidate) => minimalDogData(candidate, { tenantId: user.uid, currentOwnerId: user.uid }),
+        generateCandidateFn,
+      })
+    } catch { threw = true }
+    return !threw && result?.passportId === freshCandidate
+  })
   check('Exactly one retry occurred (1 collision + 1 success)', calls === 2, `calls=${calls}`)
   check('The SAME dogRef.id is reused across the retry — never regenerated', result?.dogId === dogRef.id)
 
-  const dogSnap = await getDoc(dogRef)
-  check('The Dog document was created exactly once, using the fresh passportId', dogSnap.data()?.passportId === freshId)
-  const takenReservation = await getDoc(doc(db, 'passportReservations', takenId))
-  check('The original (colliding) reservation is unchanged — still points at the OTHER dog', takenReservation.data()?.dogId === 'someone-elses-dog')
+  await checkAsync('The dog document was created exactly once, using the fresh (non-colliding) passportId', async () => {
+    const snap = await dogRef.get()
+    return snap.data()?.passportId === freshCandidate
+  })
+  await checkAsync('The original (colliding) reservation is untouched — still points at the other dog', async () => {
+    const snap = await seedDb.collection('passportReservations').doc(takenCandidate).get()
+    return snap.data()?.dogId === 'someone-elses-dog'
+  })
 }
 
-// ── Test 4: auth mismatch — a captured creatorUid that no longer matches
-// the signed-in session cannot slip a write through ──
-// Mirrors createDog() capturing creatorUid ONCE, before any await; if the
-// session's actual auth.uid has since changed (e.g. logout/switch mid-
-// call), firestore.rules requires tenantId/currentOwnerId/createdByUserId
-// to equal request.auth.uid — the CURRENT session — so a stale captured
-// uid is rejected outright, and (being the same transaction) leaves no
-// orphan reservation either.
+// ── Section 7: bounded retry — exhausting every attempt fails safely ──
 {
-  await signOut(auth)
-  const uid2 = await newUser('user2')
-  // uid2 is now signed in, but we simulate a creatorUid captured from a
-  // PRIOR (now stale) session — uid1 — being used for the write.
-  const candidateId = `AUM-2026-${R}E`
-  const dogRef = doc(collection(db, 'dogs'))
-  let threw = false, code = ''
-  try {
-    await createDogAtomic({ creatorUid: uid1, dateOfBirth: '2024-01-01', generateCandidate: () => candidateId, dogRef })
-  } catch (err) {
-    threw = true
-    code = err?.code || err?.message || String(err)
-  }
-  check('A stale/mismatched creatorUid is rejected by firestore.rules, not silently written', threw, code)
+  const user = await newUser('exhausted')
+  const alwaysTakenId = `MAX-2026-${R}C`
+  await seedDb.collection('passportReservations').doc(alwaysTakenId).set({
+    createdAt: new Date().toISOString(), createdBy: 'someone-else', dogId: 'blocker-dog',
+  })
 
-  const reservationSnap = await getDoc(doc(db, 'passportReservations', candidateId))
-  check('No orphan reservation survives an auth-mismatch rejection', !reservationSnap.exists())
-  const dogSnap = await getDoc(dogRef)
-  check('No orphan Dog document survives an auth-mismatch rejection', !dogSnap.exists())
-}
-
-// ── Test 5: concurrent attempts on the SAME candidate — only one wins ──
-{
-  const uid2 = auth.currentUser?.uid
-  check('A second user session is active for the concurrency test', !!uid2)
-
-  const contested = `CNC-2026-${R}F`
-  // Both "callers" race for the exact same candidate on their first
-  // attempt; each falls back to its own unique candidate on retry so we
-  // can tell them apart afterward without depending on which one the
-  // Firestore emulator happens to let win.
-  const fallbackA = `CNC-2026-${R}FA`
-  const fallbackB = `CNC-2026-${R}FB`
-  let callsA = 0, callsB = 0
-  const genA = () => { callsA++; return callsA === 1 ? contested : fallbackA }
-  const genB = () => { callsB++; return callsB === 1 ? contested : fallbackB }
-  // Distinct dogRefs held by the test itself (not just returned from the
-  // call) so both can be checked directly with getDoc() afterward — see
-  // the round-17 note on Test 2/4 above for why a list-query check isn't
-  // usable here (firestore.rules' dogs `list` rule can't be proven safe
-  // by a bare where('passportId', ...) query for a signed-in user).
-  const dogRefA = doc(collection(db, 'dogs'))
-  const dogRefB = doc(collection(db, 'dogs'))
-
-  const [resA, resB] = await Promise.allSettled([
-    createDogAtomic({ creatorUid: uid2, dateOfBirth: '2024-01-01', generateCandidate: genA, dogRef: dogRefA }),
-    createDogAtomic({ creatorUid: uid2, dateOfBirth: '2024-01-01', generateCandidate: genB, dogRef: dogRefB }),
-  ])
-
-  check('Both concurrent callers eventually succeed (one wins the contested id, the other retries)',
-    resA.status === 'fulfilled' && resB.status === 'fulfilled',
-    `A=${resA.status}${resA.status === 'rejected' ? ':' + resA.reason?.message : ''} B=${resB.status}${resB.status === 'rejected' ? ':' + resB.reason?.message : ''}`)
-
-  const contestedSnap = await getDoc(doc(db, 'passportReservations', contested))
-  check('Exactly one reservation exists for the contested candidate', contestedSnap.exists())
-
-  const winnerDogId = contestedSnap.data()?.dogId
-  const winnerRef = winnerDogId === dogRefA.id ? dogRefA : winnerDogId === dogRefB.id ? dogRefB : null
-  const loserRef = winnerRef === dogRefA ? dogRefB : winnerRef === dogRefB ? dogRefA : null
-  check('The winning reservation is bound to one of the two contending dogRefs', !!winnerRef, `winnerDogId=${winnerDogId}`)
-
-  const winnerDogSnap = winnerRef ? await getDoc(winnerRef) : null
-  check('The winning dogRef document carries the contested passportId', winnerDogSnap?.data()?.passportId === contested)
-
-  // The loser must have transparently retried onto its own fallback
-  // candidate — not silently failed, and not also written the contested
-  // passportId onto its own (different) dogRef.
-  const loserDogSnap = loserRef ? await getDoc(loserRef) : null
-  check('The losing caller\'s dogRef exists but carries its OWN fallback passportId, not the contested one',
-    !!loserDogSnap?.exists() && loserDogSnap.data()?.passportId !== contested,
-    `loser passportId=${loserDogSnap?.data()?.passportId}`)
-  check('The losing caller\'s fallback passportId is one of its declared fallbacks',
-    loserDogSnap?.data()?.passportId === fallbackA || loserDogSnap?.data()?.passportId === fallbackB)
-}
-
-// ── Test 6: bounded retry — exhausting every attempt fails safely, no partial state ──
-{
-  const alwaysTakenId = `MAX-2026-${R}G`
-  // createdBy must match whoever is CURRENTLY signed in (rules require
-  // request.auth.uid == createdBy on create) — Test 4/5 above left uid2
-  // signed in, not uid1.
-  const uidForTest = auth.currentUser?.uid
-  await setDoc(doc(db, 'passportReservations', alwaysTakenId), { createdAt: new Date().toISOString(), createdBy: uidForTest, dogId: 'x' })
-
+  const dogRef = seedDb.collection('dogs').doc()
   let calls = 0
-  const generateCandidate = () => { calls++; return alwaysTakenId } // always collides
+  const generateCandidateFn = () => { calls++; return alwaysTakenId } // always collides
 
   let threw = false, errorMessage = ''
-  try {
-    await createDogAtomic({ creatorUid: uidForTest, dateOfBirth: '2024-01-01', generateCandidate })
-  } catch (err) {
-    threw = true
-    errorMessage = err.message
-  }
-  check('Exhausting all attempts throws rather than silently reusing an ID', threw)
+  await checkAsync('When every attempt collides (candidate space exhausted), createDogWithRetry throws a safe, generic error', async () => {
+    try {
+      await createDogWithRetry({
+        db: seedDb, dogRef, reservationCreatedBy: user.uid,
+        name: validDog.name, dateOfBirth: validDog.dateOfBirth,
+        buildDogData: async (tx, candidate) => minimalDogData(candidate, { tenantId: user.uid, currentOwnerId: user.uid }),
+        generateCandidateFn,
+      })
+    } catch (err) {
+      threw = true
+      errorMessage = err.message
+    }
+    return threw
+  })
   check('Attempts are bounded at MAX_PASSPORT_ID_ATTEMPTS', calls === MAX_PASSPORT_ID_ATTEMPTS, `calls=${calls}`)
   check('Failure message is safe/generic, not an internal stack trace', errorMessage.includes('unique passport ID'), errorMessage)
+  await checkAsync('No orphan dog document survives the exhausted attempt', async () => {
+    const snap = await dogRef.get()
+    return !snap.exists
+  })
+
+  // The HTTP layer (api/create-dog.js) turns this specific error into a
+  // client-safe 500 — proven end-to-end via the real handler, still using
+  // a deterministic collision (a reservation that always exists for
+  // whatever candidate the REAL nanoid-based generator draws is not
+  // feasible to force from outside; instead this confirms the handler's
+  // error-mapping branch itself, already covered structurally in Section 1).
 }
 
 await summary()

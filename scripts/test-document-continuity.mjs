@@ -74,7 +74,7 @@ const ownerCreatorUid = await newUser('ownercreator')
 // ── Breeder-owned dog with a document ──
 const breederDogId = `bDog_${R}`
 await as('breeder')
-await setDoc(doc(db, 'dogs', breederDogId), { tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid, sourceType: 'BREEDER_ISSUED', status: 'active', dateOfBirth: '2020-01-01' })
+await adminDb.collection('dogs').doc(breederDogId).set({ tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid, sourceType: 'BREEDER_ISSUED', status: 'active', dateOfBirth: '2020-01-01' })
 await setDoc(doc(db, 'documents', `bDoc_${R}`), { dogId: breederDogId, tenantId: breederUid, documentType: 'vaccine_card' })
 
 let breederDocs = await getAllDocumentsForUserFor(breederUid)
@@ -83,7 +83,7 @@ check('Breeder sees their own dog\'s document', breederDocs.some(d => d.dogId ==
 // ── Owner-created dog with a document ──
 const ownerCreatedDogId = `ocDog_${R}`
 await as('ownercreator')
-await setDoc(doc(db, 'dogs', ownerCreatedDogId), { tenantId: ownerCreatorUid, currentOwnerId: ownerCreatorUid, createdByUserId: ownerCreatorUid, sourceType: 'OWNER_CREATED', status: 'active', dateOfBirth: '2020-01-01' })
+await adminDb.collection('dogs').doc(ownerCreatedDogId).set({ tenantId: ownerCreatorUid, currentOwnerId: ownerCreatorUid, createdByUserId: ownerCreatorUid, sourceType: 'OWNER_CREATED', status: 'active', dateOfBirth: '2020-01-01' })
 await setDoc(doc(db, 'documents', `ocDoc_${R}`), { dogId: ownerCreatedDogId, tenantId: ownerCreatorUid, documentType: 'other' })
 let ocDocs = await getAllDocumentsForUserFor(ownerCreatorUid)
 check('Owner sees their own owner-created dog\'s document', ocDocs.some(d => d.dogId === ownerCreatedDogId))
@@ -91,7 +91,7 @@ check('Owner sees their own owner-created dog\'s document', ocDocs.some(d => d.d
 // ── Transfer + claim: pre-transfer document must follow to new owner ──
 const claimDogId = `claimDog_${R}`
 await as('breeder')
-await setDoc(doc(db, 'dogs', claimDogId), { tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid, sourceType: 'BREEDER_ISSUED', status: 'active', dateOfBirth: '2020-01-01' })
+await adminDb.collection('dogs').doc(claimDogId).set({ tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid, sourceType: 'BREEDER_ISSUED', status: 'active', dateOfBirth: '2020-01-01' })
 await setDoc(doc(db, 'documents', `claimDoc_${R}`), { dogId: claimDogId, tenantId: breederUid, documentType: 'pedigree' })
 
 // former breeder currently still sees it (still current owner at this point)

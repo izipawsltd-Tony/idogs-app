@@ -178,7 +178,17 @@ function dobYearsAgo(years) {
 {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
   check('firestore.rules defines isValidDobString with the same YYYY-MM-DD shape', /function isValidDobString\(dob\)/.test(rules) && /\^\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}\$/.test(rules))
-  check('dogs create requires isValidDobString', /isValidDobString\(request\.resource\.data\.dateOfBirth\)/.test(rules))
+  // Codex H2: dog creation moved server-side entirely — firestore.rules'
+  // dogs/{dogId} create is now `if false` outright (no direct client
+  // create path exists to gate a DOB format on). The same YYYY-MM-DD
+  // calendar-round-trip validation isValidDobString used to enforce here
+  // is now enforced by api/create-dog.js's isValidCalendarDateString
+  // (api/_lib/date-utils.js) before the create transaction ever starts.
+  const createDogSrc = readFileSync(new URL('../api/create-dog.js', import.meta.url), 'utf8')
+  const dateUtilsSrc = readFileSync(new URL('../api/_lib/date-utils.js', import.meta.url), 'utf8')
+  check('dogs/{dogId} create is denied outright in rules (moved server-side)', /match \/dogs\/\{dogId\}\s*\{[\s\S]*?allow create: if false;/.test(rules))
+  check('api/create-dog.js validates dateOfBirth through isValidCalendarDateString before any write', /if \(!isValidCalendarDateString\(data\.dateOfBirth\)\)/.test(createDogSrc))
+  check('isValidCalendarDateString enforces the same YYYY-MM-DD shape and calendar round-trip as the old rules-level isValidDobString', /\^\(\\d\{4\}\)-\(\\d\{2\}\)-\(\\d\{2\}\)\$/.test(dateUtilsSrc) && /getFullYear\(\) === year && parsed\.getMonth\(\) === month - 1 && parsed\.getDate\(\) === day/.test(dateUtilsSrc))
   // Codex round 4, Blocker 3: litters update moved entirely server-side
   // (denied outright in rules) — the actualBirthDate-format-while-
   // puppies-exist invariant is now enforced in api/update-litter.js

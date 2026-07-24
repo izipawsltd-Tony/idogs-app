@@ -5,6 +5,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
 import { requireAppUrl, logConfigError } from './_lib/require-config.js'
+import { checkCronAuth } from './_lib/cron-auth.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -128,10 +129,11 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
 }
 
 export default async function handler(req, res) {
-  // Security: only allow from GitHub Actions or internal
-  const authHeader = req.headers['x-cron-secret']
-  if (authHeader !== process.env.CRON_SECRET) {
-    return res.status(401).json({ error: 'Unauthorized' })
+  // Security: only allow from GitHub Actions or internal — fails closed
+  // on a missing/empty CRON_SECRET (Codex H4). See api/_lib/cron-auth.js.
+  const auth = checkCronAuth(req)
+  if (!auth.authorized) {
+    return res.status(auth.status).json(auth.body)
   }
 
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })

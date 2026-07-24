@@ -89,15 +89,25 @@ const otherOwnerUid = await newUser('otherowner')
   const dogId = `biDog_${R}`
   await as('breeder')
 
-  // Breeder create
-  let createOk = true
+  // Codex H2: dog creation moved server-side entirely (api/create-dog.js)
+  // — firestore.rules now denies ALL direct client dogs/{dogId} create
+  // outright, regardless of field shape. Fixtures below are seeded via
+  // the Admin SDK (bypasses rules, matches how the real trusted endpoint
+  // writes); this section's actual target is read/update/transfer
+  // access, not create. The create-denial itself is asserted once, here.
+  let createDenied = false
   try {
     await setDoc(doc(db, 'dogs', dogId), {
       tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
       sourceType: 'BREEDER_ISSUED', name: 'Rex', status: 'active', dateOfBirth: '2020-01-01',
     })
-  } catch (err) { createOk = false }
-  check('1-BreederIssued', 'Breeder can create a breeder-issued dog', createOk)
+  } catch (err) { createDenied = isDenied(err) }
+  check('1-BreederIssued', 'A direct client dogs create is denied outright (Codex H2 — moved server-side)', createDenied)
+
+  await adminDb.collection('dogs').doc(dogId).set({
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Rex', status: 'active', dateOfBirth: '2020-01-01',
+  })
 
   // Breeder read before transfer
   let readOk = true
@@ -176,48 +186,29 @@ const otherOwnerUid = await newUser('otherowner')
   const dogId = `ocDog_${R}`
   await as('ownercreator')
 
-  let createOk = true
+  // Codex H2: dog creation is server-only now — a direct client create is
+  // denied outright regardless of field shape (no more nuanced per-field
+  // "arbitrary currentOwnerId/createdByUserId/tenantId" carve-out to
+  // individually probe; ANY create attempt, well-formed or not, is
+  // denied). Seed via the Admin SDK instead; this section's actual target
+  // is read/update access on an owner-created dog.
+  let createDenied = false
   try {
     await setDoc(doc(db, 'dogs', dogId), {
       tenantId: ownerCreatorUid, currentOwnerId: ownerCreatorUid, createdByUserId: ownerCreatorUid,
       sourceType: 'OWNER_CREATED', name: 'Bella', status: 'active', dateOfBirth: '2020-01-01',
     })
-  } catch (err) { createOk = false }
-  check('2-OwnerCreated', 'Owner can create their own dog', createOk)
+  } catch (err) { createDenied = isDenied(err) }
+  check('2-OwnerCreated', 'A direct client dogs create is denied even for a well-formed owner-created payload (Codex H2)', createDenied)
+
+  await adminDb.collection('dogs').doc(dogId).set({
+    tenantId: ownerCreatorUid, currentOwnerId: ownerCreatorUid, createdByUserId: ownerCreatorUid,
+    sourceType: 'OWNER_CREATED', name: 'Bella', status: 'active', dateOfBirth: '2020-01-01',
+  })
 
   let readOk = true
   try { await getDoc(doc(db, 'dogs', dogId)) } catch (err) { readOk = false }
   check('2-OwnerCreated', 'Owner can read their own dog', readOk)
-
-  // Client cannot assign arbitrary currentOwnerId at creation
-  let arbitraryOwnerDenied = false
-  try {
-    await setDoc(doc(db, 'dogs', `ocDog_bad1_${R}`), {
-      tenantId: ownerCreatorUid, currentOwnerId: strangerUid, createdByUserId: ownerCreatorUid,
-      sourceType: 'OWNER_CREATED', name: 'Bad', dateOfBirth: '2020-01-01',
-    })
-  } catch (err) { arbitraryOwnerDenied = isDenied(err) }
-  check('2-OwnerCreated', 'Client cannot assign arbitrary currentOwnerId at create', arbitraryOwnerDenied)
-
-  // Client cannot assign arbitrary createdByUserId at creation
-  let arbitraryCreatorDenied = false
-  try {
-    await setDoc(doc(db, 'dogs', `ocDog_bad2_${R}`), {
-      tenantId: ownerCreatorUid, currentOwnerId: ownerCreatorUid, createdByUserId: strangerUid,
-      sourceType: 'OWNER_CREATED', name: 'Bad', dateOfBirth: '2020-01-01',
-    })
-  } catch (err) { arbitraryCreatorDenied = isDenied(err) }
-  check('2-OwnerCreated', 'Client cannot assign arbitrary createdByUserId at create', arbitraryCreatorDenied)
-
-  // Client cannot assign arbitrary tenantId at creation
-  let arbitraryTenantDenied = false
-  try {
-    await setDoc(doc(db, 'dogs', `ocDog_bad3_${R}`), {
-      tenantId: strangerUid, currentOwnerId: ownerCreatorUid, createdByUserId: ownerCreatorUid,
-      sourceType: 'OWNER_CREATED', name: 'Bad', dateOfBirth: '2020-01-01',
-    })
-  } catch (err) { arbitraryTenantDenied = isDenied(err) }
-  check('2-OwnerCreated', 'Client cannot assign arbitrary tenantId at create', arbitraryTenantDenied)
 
   // Other owners denied
   await as('otherowner')
@@ -264,7 +255,7 @@ const otherOwnerUid = await newUser('otherowner')
   // Admin SDK claim route (api/claim-transferred-dogs.js).
   const dogId = `claimDog_${R}`
   await as('breeder')
-  await setDoc(doc(db, 'dogs', dogId), {
+  await adminDb.collection('dogs').doc(dogId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'Claimable', status: 'active', dateOfBirth: '2020-01-01',
   })
@@ -286,7 +277,7 @@ const otherOwnerUid = await newUser('otherowner')
 {
   const dogId = `relDog_${R}`
   await as('breeder')
-  await setDoc(doc(db, 'dogs', dogId), {
+  await adminDb.collection('dogs').doc(dogId).set({
     tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'RecordsDog', status: 'active', dateOfBirth: '2020-01-01',
   })

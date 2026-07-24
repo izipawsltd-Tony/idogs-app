@@ -36,13 +36,22 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const WINDOW_MS = 365 * DAY_MS
 
 // Both dates are 'YYYY-MM-DD' strings (already validated calendar dates
-// by litter-schema.js). "within the 365 days preceding" (§3.4) — a
-// one-directional, inclusive check against the PAST relative to the new
-// date, exactly as worded in the pricing record.
+// by litter-schema.js). Symmetric, timezone-safe (UTC midnight anchored)
+// absolute-distance check — two litter dates within 365 days of EACH
+// OTHER conflict, regardless of which was recorded first or which is
+// chronologically earlier.
+//
+// Codex H6: the original wording ("within the 365 days preceding")
+// implemented a one-directional check (existing <= proposed only), which
+// missed backdating — creating a LATER litter first, then adding an
+// EARLIER one within the same 365-day window, compared the existing
+// entry as being "after" the new date and let the new one through
+// uncontested. Two litters less than 365 days apart must conflict no
+// matter which one was entered into the ledger first.
 export function isWithinRollingWindow(existingDate, newDate) {
   const existing = new Date(`${existingDate}T00:00:00Z`).getTime()
   const proposed = new Date(`${newDate}T00:00:00Z`).getTime()
-  return existing <= proposed && existing >= proposed - WINDOW_MS
+  return Math.abs(existing - proposed) <= WINDOW_MS
 }
 
 // Reads every ledger entry for this tenant (single where(), filtered/
@@ -53,11 +62,36 @@ export function isWithinRollingWindow(existingDate, newDate) {
 // and ledger entry that follow — closes the race where two concurrent
 // litter creations could otherwise both pass the check before either
 // commits.
-export async function hasLitterWithinRollingWindow(tx, db, tenantId, newDate) {
-  const snap = await tx.get(db.collection('litterQuotaLedger').where('tenantId', '==', tenantId))
-  return snap.docs.some(d => {
+//
+// Codex H7 — the ledger alone is blind to litters created before this
+// quota system existed: they have a real, dated `actualBirthDate` on the
+// live litters/{id} document but no litterQuotaLedger entry, so checking
+// the ledger only would silently ignore a genuine recent whelping and let
+// a second litter through within the same rolling window. As a safe
+// fallback, this also scans the live `litters` collection for any dated
+// litter within the window — not limited to ledger-less ones (a
+// ledger-backed litter already matches above; re-matching it here via the
+// live collection is redundant, never a source of double-blocking, since
+// this function only ever returns a boolean). See
+// docs/LITTER_QUOTA_HISTORICAL_BACKFILL_PLAN.md for the production plan
+// to eventually ledger-back every historical litter so this fallback scan
+// becomes purely defensive rather than load-bearing — NOT executed by
+// this code, and NOT required for correctness today (this fallback
+// already covers it).
+export async function hasLitterWithinRollingWindow(tx, db, tenantId, newDate, excludeLitterId = null) {
+  const ledgerSnap = await tx.get(db.collection('litterQuotaLedger').where('tenantId', '==', tenantId))
+  const ledgerHit = ledgerSnap.docs.some(d => {
     const entry = d.data()
     return typeof entry.whelpingDate === 'string' && isWithinRollingWindow(entry.whelpingDate, newDate)
+  })
+  if (ledgerHit) return true
+
+  const liveSnap = await tx.get(db.collection('litters').where('tenantId', '==', tenantId))
+  return liveSnap.docs.some(d => {
+    if (excludeLitterId && d.id === excludeLitterId) return false
+    const litter = d.data()
+    return typeof litter.actualBirthDate === 'string' && litter.actualBirthDate.length > 0 &&
+      isWithinRollingWindow(litter.actualBirthDate, newDate)
   })
 }
 

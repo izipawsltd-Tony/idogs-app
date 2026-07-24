@@ -75,21 +75,37 @@ export function createFakeFirestore(seedByCollection = {}) {
     }
   }
 
+  // Serializes every transaction against this fake db instance — a
+  // conservative over-approximation of real Firestore's per-document
+  // transaction contention/retry semantics, but correct for what the
+  // concurrency tests (Codex H3 — atomic quota reservation) need to
+  // prove: a second concurrent transaction never observes state from
+  // before an overlapping first transaction's write has landed. Chained
+  // on `.then(ok, ok)` so a thrown transaction body still lets queued
+  // transactions run afterward, instead of stalling the queue forever.
+  let transactionQueue = Promise.resolve()
+
   async function runTransaction(fn) {
-    const tx = {
-      async get(refOrQuery) {
-        return refOrQuery.get()
-      },
-      set(ref, data, opts) {
-        const existing = colMap(ref.collectionName).get(ref.id) || {}
-        colMap(ref.collectionName).set(ref.id, opts?.merge ? { ...existing, ...data } : { ...data })
-      },
-      update(ref, data) {
-        const existing = colMap(ref.collectionName).get(ref.id) || {}
-        colMap(ref.collectionName).set(ref.id, { ...existing, ...data })
-      },
+    const run = async () => {
+      const tx = {
+        async get(refOrQuery) {
+          return refOrQuery.get()
+        },
+        set(ref, data, opts) {
+          const existing = colMap(ref.collectionName).get(ref.id) || {}
+          colMap(ref.collectionName).set(ref.id, opts?.merge ? { ...existing, ...data } : { ...data })
+        },
+        update(ref, data) {
+          const existing = colMap(ref.collectionName).get(ref.id) || {}
+          colMap(ref.collectionName).set(ref.id, { ...existing, ...data })
+        },
+      }
+      return fn(tx)
     }
-    return fn(tx)
+    const settle = () => undefined
+    const result = transactionQueue.then(run, run)
+    transactionQueue = result.then(settle, settle)
+    return result
   }
 
   return {

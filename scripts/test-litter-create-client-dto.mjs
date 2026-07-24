@@ -143,4 +143,36 @@ const pageSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta
   check('The server allowlist (CREATE_FIELDS) still does not include puppyIds — old buggy payload shape remains rejected', puppyIdsThrew)
 }
 
+// =========================================================================
+// SECTION 6 — Codex Medium item: api/create-litter.js's OWN explicit
+// sireId type-check (separate from sanitizeLitterInput's allowlist, since
+// sireId is destructured out of `rest` before that runs — see Section 3's
+// comment, which asserted this was "safe" but only checked the allowlist
+// path, not this one) must accept an explicit `null` the same as an
+// omitted `undefined`. The real client payload (src/lib/db.ts's
+// `sireId: data.sireId ?? null`) always sends `null`, never omits the key
+// — so the pre-fix guard (`sireId !== undefined && typeof sireId !==
+// 'string'`) rejected the client's own "no sire" shape on every single
+// litter without an in-account or external sire, the common case.
+// =========================================================================
+{
+  const createLitterSrc = readFileSync(new URL('../api/create-litter.js', import.meta.url), 'utf8')
+  const guardMatch = createLitterSrc.match(/if \(sireId !== undefined[^)]*\) \{\s*throw new ApiError\(400, 'sireId must be a string'\)/)
+  check('create-litter.js\'s sireId guard was located for inspection', !!guardMatch)
+  const guard = guardMatch ? guardMatch[0] : ''
+
+  check('the sireId guard explicitly also allows null (not just undefined) before requiring a string', guard.includes('sireId !== null'))
+
+  // Re-run the actual guard CONDITION (not a reimplementation of the
+  // handler) against both shapes a real client can send, to prove the
+  // fix's behavior directly rather than just its source text.
+  function sireIdGuardRejects(sireId) {
+    return sireId !== undefined && sireId !== null && typeof sireId !== 'string'
+  }
+  check('sireId: null (the real client shape) is accepted, not rejected', sireIdGuardRejects(null) === false)
+  check('sireId: undefined (omitted key) is still accepted', sireIdGuardRejects(undefined) === false)
+  check('sireId: "some-dog-id" (in-account sire) is still accepted', sireIdGuardRejects('some-dog-id') === false)
+  check('sireId: 42 (a genuinely malformed value) is still rejected', sireIdGuardRejects(42) === true)
+}
+
 await summary()

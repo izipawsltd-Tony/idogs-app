@@ -132,7 +132,7 @@ async function handler(req, res) {
       if (plan !== 'plus') {
         return { ok: false, status: 403, body: { error: LITTER_PLAN_GATE_MESSAGE, reason: 'LITTER_PLAN_GATE' } }
       }
-      const withinWindow = await hasLitterWithinRollingWindow(tx, db, uid, safePatch.actualBirthDate)
+      const withinWindow = await hasLitterWithinRollingWindow(tx, db, uid, safePatch.actualBirthDate, litterId)
       if (withinWindow) {
         return { ok: false, status: 409, body: { error: LITTER_QUOTA_BLOCK_MESSAGE, reason: 'LITTER_QUOTA_EXCEEDED' } }
       }

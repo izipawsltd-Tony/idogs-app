@@ -16,12 +16,13 @@ const { check, summary } = makeChecker()
 const claimSource = readFileSync(new URL('../api/claim-transferred-dogs.js', import.meta.url), 'utf8')
 const setStatusSource = readFileSync(new URL('../api/set-dog-status.js', import.meta.url), 'utf8')
 const exportSource = readFileSync(new URL('../api/export-report.js', import.meta.url), 'utf8')
-const scanSource = readFileSync(new URL('../api/scan.js', import.meta.url), 'utf8')
 const passportSource = readFileSync(new URL('../api/passport.js', import.meta.url), 'utf8')
 const rulesSource = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
 const createLitterSource = readFileSync(new URL('../api/create-litter.js', import.meta.url), 'utf8')
 const updateLitterSource = readFileSync(new URL('../api/update-litter.js', import.meta.url), 'utf8')
 const dbSource = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
+const createDogSource = readFileSync(new URL('../api/create-dog.js', import.meta.url), 'utf8')
+const createLitterPuppySource = readFileSync(new URL('../api/create-litter-puppy.js', import.meta.url), 'utf8')
 
 // ── §4.4 Transfer/claim is never blocked by quota ─────────────────────
 
@@ -69,23 +70,15 @@ check(
     exportSource.includes("data.tenantId !== uid") // litter scope check
 )
 
-// ── §2.5/§3.1 AI scan: quota checked before spend, decremented only on success ──
-
-check(
-  'scan.js checks remaining quota BEFORE calling the Anthropic API (never spends budget on an already-exhausted account)',
-  scanSource.indexOf('remainingScans(profile, plan)') < scanSource.indexOf("fetch('https://api.anthropic.com")
-)
-check(
-  'scan.js only increments usage AFTER a successful response, never inside the response.ok===false branch',
-  (() => {
-    const errorBranchIdx = scanSource.indexOf("res.status(500).json({ error: 'Claude API error'")
-    // Matches only the CALL site (`await incrementScanUsage(...)`), not the
-    // function's own `async function incrementScanUsage(...)` declaration
-    // earlier in the file, which would otherwise always sort first.
-    const incrementCallIdx = scanSource.indexOf('await incrementScanUsage(')
-    return errorBranchIdx > -1 && incrementCallIdx > errorBranchIdx
-  })()
-)
+// ── §2.5/§3.1 AI scan quota — Codex H3 ────────────────────────────────
+// The reserve-before-call / rollback-on-failure / concurrency behavior
+// itself is covered by real BEHAVIORAL tests now (Codex Medium item:
+// "replace structural/source-order assertions with behavioural retry,
+// failure and concurrency tests") — see scripts/test-scan-quota.mjs,
+// which exercises api/_lib/scan-quota.js and api/_lib/scan-handler.js
+// directly, including a genuine concurrent-reservation race. Only the
+// data-protection check (which is a Rules/field-visibility property, not
+// a scan.js control-flow property) stays here.
 check(
   'AI scan usage counters (freeScansUsed/plusScansUsed/etc) are listed as protected billing fields — a client can never self-grant scans',
   ['freeScansUsed', 'plusScansUsed', 'plusScansPeriodStart', 'scanPeriodAnchorDay'].every(f => rulesSource.includes(`'${f}'`))
@@ -104,14 +97,31 @@ check(
 check('create-litter.js gates Free accounts (0 litter allowance) before any write', createLitterSource.includes('LITTER_PLAN_GATE_MESSAGE'))
 check('create-litter.js enforces the rolling-window check against the immutable ledger, not the live litters collection', createLitterSource.includes('hasLitterWithinRollingWindow(tx, db, uid, whelpingDate)'))
 check('update-litter.js locks actualBirthDate once activated — no re-dating evasion path', updateLitterSource.includes('LITTER_DATE_LOCKED_MESSAGE'))
-check('update-litter.js re-runs the SAME rolling-window check on first-time activation via update (not just at create)', updateLitterSource.includes('hasLitterWithinRollingWindow(tx, db, uid, safePatch.actualBirthDate)'))
+check('update-litter.js re-runs the SAME rolling-window check on first-time activation via update (not just at create), self-excluded (Codex H7)', updateLitterSource.includes('hasLitterWithinRollingWindow(tx, db, uid, safePatch.actualBirthDate, litterId)'))
 
-// ── Dog creation self-heals the cap without ever blocking creation ────
+// ── Dog creation is server-enforced and cap-aware; never blocked (Codex H2) ──
 
 check(
-  'createDog() and createLitterPuppyAtomic() both trigger best-effort cap reconciliation after a successful write — creation itself is never blocked by quota',
-  dbSource.includes('reconcileDogCapBestEffort()') &&
-    (dbSource.match(/reconcileDogCapBestEffort\(\)/g) || []).length >= 2
+  'createDog() (src/lib/db.ts) no longer runs a client-side Firestore transaction — routes through the trusted /api/create-dog endpoint instead',
+  dbSource.includes("fetch('/api/create-dog'") && !/export async function createDog[\s\S]{0,400}runTransaction/.test(dbSource)
+)
+check(
+  'firestore.rules denies ALL direct client dogs/{dogId} create — creation is only possible through the trusted server endpoint',
+  /match \/dogs\/\{dogId\}\s*\{[\s\S]*?allow create: if false;/.test(rulesSource) &&
+    rulesSource.includes('api/create-dog.js')
+)
+check(
+  'api/create-dog.js computes the cap-aware active/restricted status from a live count taken INSIDE the same reservation+write transaction — never blocks creation',
+  createDogSource.includes('computeEffectivePlan(profile)') &&
+    createDogSource.includes('capForPlan(plan)') &&
+    createDogSource.includes('getOwnedActiveDogsSorted(tx, db, uid)') &&
+    createDogSource.includes("activeDogs.length >= cap ? 'restricted' : 'active'")
+)
+check(
+  'api/create-litter-puppy.js (fresh-creation path) computes the same cap-aware status inline, not via a follow-up best-effort call',
+  createLitterPuppySource.includes('computeEffectivePlan(profile)') &&
+    createLitterPuppySource.includes('capForPlan(plan)') &&
+    createLitterPuppySource.includes("activeDogs.length >= cap ? 'restricted' : 'active'")
 )
 
 await summary()

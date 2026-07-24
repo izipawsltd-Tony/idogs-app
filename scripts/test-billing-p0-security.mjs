@@ -158,6 +158,9 @@ const protectedFields = [
   'plusScansUsed',
   'plusScansPeriodStart',
   'freeScansUsed',
+  // Codex H5 — out-of-order Stripe event ownership tracking.
+  'lastKnownSubscriptionId',
+  'subscriptionEventTimestamps',
 ]
 
 for (const field of protectedFields) {

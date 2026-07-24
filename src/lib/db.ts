@@ -1,34 +1,13 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, setDoc, Timestamp, runTransaction
+  query, where, serverTimestamp, setDoc, Timestamp
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage } from '../types'
-import { nanoid, calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
+import { calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
 
 function uid(): string {
   return auth.currentUser?.uid ?? ''
-}
-
-// Best-effort dog-cap self-correction (iDogs Pricing v1.1 §3.2) — called
-// after any client-side write that could newly push the caller's active
-// dog count over their plan's cap (createDog(), a claimed transfer, an
-// upgrade/downgrade). Never throws: a reconciliation failure must not
-// block the create/claim the user is actually waiting on, since the next
-// trigger (or api/set-dog-status.js's own cap check) will self-correct.
-// See api/reconcile-dog-cap.js for why this can't just be a Firestore
-// Rule (no cross-document count primitive there).
-async function reconcileDogCapBestEffort(): Promise<void> {
-  try {
-    if (!auth.currentUser) return
-    const idToken = await auth.currentUser.getIdToken()
-    await fetch('/api/reconcile-dog-cap', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${idToken}` },
-    })
-  } catch {
-    // Self-healing on the next trigger — never surface this to the user.
-  }
 }
 
 function toDate(ts: Timestamp | string | undefined): string {
@@ -159,6 +138,8 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
     plusScansUsed: _plusScansUsed,
     plusScansPeriodStart: _plusScansPeriodStart,
     freeScansUsed: _freeScansUsed,
+    lastKnownSubscriptionId: _lastKnownSubscriptionId,
+    subscriptionEventTimestamps: _subscriptionEventTimestamps,
     ...profileData
   } = data
   await setDoc(doc(db, 'users', userId), {
@@ -387,124 +368,39 @@ export async function getDogByPassportId(passportId: string): Promise<Dog | null
   return normalizeDog({ ...d.data(), id: d.id } as Dog)
 }
 
-// ADR-002 Phase C1 — passportId uniqueness. `dogs` documents use a
-// Firestore auto-generated ID, so passportId (a separate string field)
-// has no built-in uniqueness guarantee. `passportReservations/{passportId}`
-// is a dedicated index collection — its document ID IS the passportId —
-// used purely to atomically claim a candidate before it's written onto
-// any dog. A Firestore transaction's read-then-write is atomic against
-// concurrent transactions touching the same document, so two callers
-// racing on the exact same candidate can never both succeed: one wins
-// the reservation, the other's transaction throws and retries with a
-// fresh candidate. Bounded at MAX_PASSPORT_ID_ATTEMPTS — with a 32-char
-// alphabet and 4-char suffix (~1M combinations per name+year cohort),
-// exhausting every attempt on genuine collisions is not expected in
-// practice; a persistent failure past the bound surfaces as a thrown
-// error rather than silently reusing an existing ID.
-const MAX_PASSPORT_ID_ATTEMPTS = 5
-
-// sourceType defaults to BREEDER_ISSUED so LittersPage.tsx's puppy-add
-// flow (and any other caller that doesn't pass one) is unaffected. Only
-// DogNewPage.tsx passes 'OWNER_CREATED' explicitly, for the pet-owner
-// creation flow (ADR-001 Phase 2). IMPORTED is intentionally not part of
-// this parameter's type yet — not exposed until that flow exists.
-// tenantId/currentOwnerId/createdByUserId are always derived from the
-// authenticated session (uid()) — never accepted from the caller — so
-// there is no way for a caller to assign ownership to another user.
-//
-// Codex round 16: creatorUid captured ONCE, before any await — the
-// previous version called uid() again after reservePassportId()'s own
-// await (a real Firestore transaction — genuine network latency), so an
-// auth change mid-call could attribute the new dog to the wrong tenant.
-//
-// Codex round 17: reservePassportId() + a separate addDoc() replaced
-// with ONE atomic transaction. Previously, the passport reservation
-// committed in its OWN transaction, and the dog document was created
-// afterwards via a completely separate, non-transactional addDoc() call —
-// if that second write failed for ANY reason (network drop, quota,
-// permission edge case), the reservation was already permanently
-// committed with nothing to show for it: a genuine orphan, silently
-// burning one candidate out of the ~1M-per-cohort passportId space
-// forever, with no dog and no way to reclaim it. Now: the Dog's document
-// reference is generated FIRST (doc(collection(db, 'dogs')) — a pure
-// client-side ID allocation, no network round-trip, no write) and both
-// the reservation and the dog document are staged inside the SAME
-// runTransaction() call, bound together via reservation.dogId. Firestore
-// transactions are all-or-nothing: if anything in the callback throws
-// (including the uniqueness check), NEITHER write is ever committed — no
-// orphaned reservation, no orphaned dog, regardless of what fails or
-// when. The retry loop's `dogRef` is reused across PASSPORT_ID_TAKEN
-// retries (never regenerated) — safe because a failed attempt commits
-// NOTHING, so there is no partial state at that id to collide with.
-// Firestore's own internal transaction retry (triggered by a detected
-// write conflict during commit, not by our PASSPORT_ID_TAKEN catch below)
-// re-runs this same callback verbatim — safe by construction, since the
-// callback is a pure sequence of reads and staged writes with no
-// external side effects, so re-running it before an eventual single
-// commit is idempotent.
+// Codex H2 — dog creation moved server-side (api/create-dog.js, Admin
+// SDK). It used to be a pure CLIENT-side Firestore transaction here
+// (passport-reservation + dog write), gated only by firestore.rules'
+// ownership/DOB-format checks — but Rules has no way to count how many
+// dogs this uid already has 'active' (no cross-document aggregate-count
+// primitive), so nothing actually enforced the Free=2/Plus=5 cap against
+// a caller that bypassed the app's own UI (a modified build, or a direct
+// Firestore SDK call). firestore.rules now denies direct client
+// `dogs/{dogId}` create outright (`if false`), matching the same pattern
+// already used for litters/heat-cycles/puppies — this function is now a
+// thin wrapper around the trusted endpoint, which computes the cap-aware
+// active/restricted status from a live count taken inside the SAME
+// transaction as the reservation + write. sourceType defaults to
+// BREEDER_ISSUED so LittersPage.tsx's puppy-add flow (and any other
+// caller that doesn't pass one) is unaffected; only DogNewPage.tsx passes
+// 'OWNER_CREATED' explicitly.
 export async function createDog(
   data: DogFormData,
   sourceType: 'BREEDER_ISSUED' | 'OWNER_CREATED' = 'BREEDER_ISSUED'
 ): Promise<string> {
-  const creatorUid = uid()
-  const now = new Date()
-  const yearPart = data.dateOfBirth ? data.dateOfBirth.slice(0, 4) : now.getFullYear().toString()
-  const namePart = (data.name || 'DOG').slice(0, 3).toUpperCase()
-
-  // Generated first — a pure client-side ID allocation with no network
-  // round-trip and no write. Reused across every PASSPORT_ID_TAKEN retry
-  // below; see the function-level comment for why that's safe.
-  const dogRef = doc(collection(db, 'dogs'))
-
-  for (let attempt = 0; attempt < MAX_PASSPORT_ID_ATTEMPTS; attempt++) {
-    const candidate = `${namePart}-${yearPart}-${nanoid(4)}`
-    const reservationRef = doc(db, 'passportReservations', candidate)
-    try {
-      await runTransaction(db, async (tx) => {
-        const reservationSnap = await tx.get(reservationRef)
-        if (reservationSnap.exists()) throw new Error('PASSPORT_ID_TAKEN')
-        tx.set(reservationRef, {
-          createdAt: serverTimestamp(),
-          createdBy: creatorUid,
-          // Bound to the exact dog this reservation belongs to — mirrors
-          // the same dogId-binding convention api/create-litter-puppy.js
-          // already uses server-side for its own reservation+dog
-          // transaction, so a reservation can never be mistaken for a
-          // match against a different dog just because createdBy happens
-          // to agree.
-          dogId: dogRef.id,
-        })
-        tx.set(dogRef, {
-          ...data,
-          tenantId: creatorUid,
-          currentOwnerId: creatorUid,
-          createdByUserId: creatorUid,
-          sourceType,
-          // originBreederId is breeder provenance — omitted for
-          // owner-created dogs rather than written as a meaningless copy
-          // of tenantId.
-          ...(sourceType === 'BREEDER_ISSUED' ? { originBreederId: creatorUid } : {}),
-          passportId: candidate,
-          lifeStage: calculateLifeStage(data.dateOfBirth, data.breed),
-          isDeceased: false,
-          photos: [],
-          notes: data.notes || '',
-          status: 'active',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        })
-      })
-      await reconcileDogCapBestEffort()
-      return dogRef.id
-    } catch (err: any) {
-      if (err?.message !== 'PASSPORT_ID_TAKEN') throw err
-      // else: genuine collision on this specific candidate — the WHOLE
-      // transaction (reservation AND dog write) rolled back, so nothing
-      // was committed. Loop and try a fresh candidate, up to the bound
-      // above — dogRef itself is untouched and safe to reuse.
-    }
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/create-dog', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ data, sourceType }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Create dog failed (${res.status})`)
   }
-  throw new Error('Could not generate a unique passport ID — please try again')
+  const result = await res.json()
+  return result.dogId
 }
 
 // Codex round 3, Blocker 3, then moved server-side + hardened in Codex
@@ -565,9 +461,6 @@ export async function createLitterPuppyAtomic(
     throw new Error(err.error || `Add puppy failed (${res.status})`)
   }
   const result = await res.json()
-  if (!result.alreadyExisted) {
-    await reconcileDogCapBestEffort()
-  }
   return { dogId: result.dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted }
 }
 

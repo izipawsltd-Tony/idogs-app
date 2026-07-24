@@ -164,11 +164,36 @@ service cloud.firestore {
     }
 
     // A dog "belongs to" whoever is its breeder (tenantId) or its current
-    // owner (currentOwnerId) — both should be able to see/manage it.
+    // owner (currentOwnerId) — both should be able to SEE it. This is a
+    // READ-only provenance grant: the original breeder keeps visibility
+    // into a dog's records after transfer (their own compliance/audit
+    // history), but — see dogWriteAccess below — never an ongoing
+    // management right over the CURRENT owner's data.
     function dogBelongsToUser(dogId) {
       let dog = get(/databases/$(database)/documents/dogs/$(dogId)).data;
       return isSignedIn() &&
         (dog.tenantId == request.auth.uid || dog.currentOwnerId == request.auth.uid);
+    }
+
+    // Codex H8 — write access (create/update/delete of a dog's
+    // vaccine/worming/health-test/activity-note/document records) requires
+    // the EFFECTIVE CURRENT owner, never just historical tenantId. Before
+    // this fix, dogBelongsToUser's read grant was reused for writes too,
+    // so a former breeder could still update or delete the CURRENT owner's
+    // records on a dog they no longer own, merely because tenantId still
+    // pointed at them. tenantId is permanent provenance — legitimate for
+    // read/audit (dogBelongsToUser above), never for write. Mirrors
+    // isEffectiveDogOwner()'s currentOwnerId-first, tenantId-fallback
+    // contract (a legacy dog that never had currentOwnerId written still
+    // uses tenantId as its only ownership signal — same as everywhere
+    // else in this file that gates a WRITE).
+    function dogWriteAccess(dogId) {
+      let dog = get(/databases/$(database)/documents/dogs/$(dogId)).data;
+      return isSignedIn() && (
+        ('currentOwnerId' in dog)
+          ? dog.currentOwnerId == request.auth.uid
+          : (('tenantId' in dog) && dog.tenantId == request.auth.uid)
+      );
     }
 
     // iDogs Pricing v1.1 §3.3: a 'restricted' dog's Withheld column is "No
@@ -178,9 +203,12 @@ service cloud.firestore {
     // below; existing records remain readable, and this deliberately does
     // NOT also gate update/delete of a record created before the dog
     // became restricted — the pricing record only calls out new records.
+    // Requires dogWriteAccess (Codex H8), not dogBelongsToUser — a former
+    // breeder must not be able to add NEW records to the current owner's
+    // dog any more than they can edit/delete existing ones.
     function dogAllowsNewRecords(dogId) {
       let dog = get(/databases/$(database)/documents/dogs/$(dogId)).data;
-      return dogBelongsToUser(dogId) && dog.get('status', 'active') != 'restricted';
+      return dogWriteAccess(dogId) && dog.get('status', 'active') != 'restricted';
     }
 
     // NOTE: full Sire/Dam breeding-parent eligibility (sex, ownership,
@@ -214,7 +242,13 @@ service cloud.firestore {
         'scanPeriodAnchorDay',
         'plusScansUsed',
         'plusScansPeriodStart',
-        'freeScansUsed'
+        'freeScansUsed',
+        // Codex H5 — out-of-order Stripe event ownership tracking. A
+        // client that could set/clear these could trick the webhook's
+        // staleness guard into accepting a stale or forged event as
+        // current, or into rejecting a legitimate one.
+        'lastKnownSubscriptionId',
+        'subscriptionEventTimestamps'
       ];
     }
 
@@ -342,23 +376,21 @@ service cloud.firestore {
         !('claimedAt' in resource.data) &&
         !('claimedBy' in resource.data);
 
-      // Creator becomes tenantId/currentOwnerId/createdByUserId — a client
-      // cannot assign ownership to anyone else at creation time either
-      // (createDog() always derives all three from the authenticated uid).
-      // dateOfBirth must be a validly-shaped YYYY-MM-DD string on create —
-      // both existing callers (DogNewPage's form, LittersPage's
-      // litter-puppy flow) already enforce this via parseDobStrict at the
-      // UI layer; this closes the gap for any future caller and
-      // specifically stops a litter puppy ever being created with an
-      // empty/malformed dateOfBirth. Format-only (see isValidDobString) —
-      // rejecting a future-dated or age-implausible DOB stays a
-      // client+service-layer concern, since rules have no generic date
-      // arithmetic to check that with.
-      allow create: if isSignedIn() &&
-        request.resource.data.tenantId == request.auth.uid &&
-        request.resource.data.currentOwnerId == request.auth.uid &&
-        request.resource.data.createdByUserId == request.auth.uid &&
-        isValidDobString(request.resource.data.dateOfBirth);
+      // Codex H2 — direct client create is now denied outright. Rules
+      // cannot count how many dogs this uid already has 'active'
+      // (Firestore Rules has no cross-document aggregate-count
+      // primitive), so the ownership/DOB-format checks this rule used to
+      // run were never enough to enforce the Free=2/Plus=5 cap — a
+      // client (a modified build, or a direct Firestore SDK call from
+      // devtools, bypassing the app UI's own best-effort
+      // reconcileDogCapBestEffort() follow-up entirely) could create
+      // unlimited 'active' dogs. Mirrors the exact pattern already used
+      // for litters/heat-cycles/puppies: the risky write moves to a
+      // trusted Admin SDK endpoint (api/create-dog.js) that computes the
+      // cap-aware status from a live count taken inside the SAME
+      // transaction as the write. Never blocks creation — an over-cap
+      // dog simply lands 'restricted' instead of 'active'.
+      allow create: if false;
     }
 
     // ── passportReservations/{passportId} — uniqueness index for
@@ -376,20 +408,40 @@ service cloud.firestore {
     }
 
     // ── Records keyed by dogId — access follows the parent dog's ownership ──
+    // Codex H8: read stays dogBelongsToUser (tenantId OR currentOwnerId —
+    // the former breeder keeps provenance visibility after a transfer);
+    // update/delete now require dogWriteAccess (currentOwnerId only, with
+    // legacy tenantId fallback) — a former breeder can no longer edit or
+    // delete the current owner's records just because tenantId still
+    // points at them.
+    //
+    // `resource == null ||` on every read rule below: found while writing
+    // this round's Rules tests — a get() on a document that has just been
+    // deleted (e.g. a caller confirming its own delete succeeded) has
+    // resource == null, and dereferencing resource.data on that throws
+    // rather than denying, which Firestore Rules treats as an error, not
+    // a clean deny. Same guard already used elsewhere in this file (see
+    // dogs/{dogId}'s read rule and reminders/{id}'s allow get) — a missing
+    // document exposes no data either way, so denying it outright is both
+    // safe and correct, and now consistent across every collection here.
     match /vaccineRecords/{id} {
-      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
+      allow update, delete: if dogWriteAccess(resource.data.dogId);
       allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     match /wormingRecords/{id} {
-      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
+      allow update, delete: if dogWriteAccess(resource.data.dogId);
       allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     match /healthTests/{id} {
-      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
+      allow update, delete: if dogWriteAccess(resource.data.dogId);
       allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     match /activityNotes/{id} {
-      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
+      allow update, delete: if dogWriteAccess(resource.data.dogId);
       allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
 
@@ -403,7 +455,10 @@ service cloud.firestore {
     // _lib/parent-eligibility.js). Direct client create/update is
     // denied outright (Codex round 3, Blocker 1).
     match /heatCycles/{id} {
-      allow read, delete: if dogBelongsToUser(resource.data.dogId);
+      allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
+      // Codex H8: delete now requires dogWriteAccess (current owner only),
+      // same rationale as the dogId-keyed collections above.
+      allow delete: if dogWriteAccess(resource.data.dogId);
       allow create, update: if false;
     }
 
@@ -416,7 +471,8 @@ service cloud.firestore {
     // match a literal field the rule compares against; a get()-based rule
     // like dogBelongsToUser doesn't have that restriction.) ──
     match /documents/{id} {
-      allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
+      allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
+      allow update, delete: if dogWriteAccess(resource.data.dogId);
       allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     // NOTE: get and list are split (rather than a combined `read`) so that
