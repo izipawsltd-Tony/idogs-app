@@ -1,5 +1,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
+import { getFirestore } from 'firebase-admin/firestore'
+import { computeEffectivePlan, remainingScans, rollScanPeriod } from './_lib/entitlements.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -8,6 +10,29 @@ if (!getApps().length) {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     }),
+  })
+}
+
+// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §2.5/§3.1, LOCKED):
+// Free gets 2 scans for the account's entire lifetime (never resets),
+// Plus gets 10/month reset anchored to subscription.start_date. Consumed
+// only after a real model response comes back — never on a Claude API
+// error or an internal exception.
+async function incrementScanUsage(db, userRef, plan) {
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(userRef)
+    const profile = snap.exists ? snap.data() : {}
+    if (plan === 'plus') {
+      const rolled = rollScanPeriod(profile)
+      tx.set(userRef, {
+        plusScansUsed: rolled.plusScansUsed + 1,
+        plusScansPeriodStart: rolled.plusScansPeriodStart,
+        scanPeriodAnchorDay: rolled.scanPeriodAnchorDay,
+      }, { merge: true })
+    } else {
+      const used = typeof profile.freeScansUsed === 'number' && profile.freeScansUsed >= 0 ? profile.freeScansUsed : 0
+      tx.set(userRef, { freeScansUsed: used + 1 }, { merge: true })
+    }
   })
 }
 
@@ -27,8 +52,10 @@ export default async function handler(req, res) {
   if (!idToken) {
     return res.status(401).json({ error: 'Missing Authorization header' })
   }
+  let uid
   try {
-    await getAuth().verifyIdToken(idToken)
+    const decoded = await getAuth().verifyIdToken(idToken)
+    uid = decoded.uid
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
@@ -41,6 +68,35 @@ export default async function handler(req, res) {
   const { image, mediaType } = req.body
   if (!image) {
     return res.status(400).json({ error: 'No file provided' })
+  }
+
+  const db = getFirestore()
+  const userRef = db.collection('users').doc(uid)
+
+  // Pre-flight quota check — never spends Anthropic API budget when the
+  // caller has nothing left. The actual decrement happens only after a
+  // successful response, below.
+  const userSnap = await userRef.get()
+  const profile = userSnap.exists ? userSnap.data() : {}
+  const plan = computeEffectivePlan(profile)
+  const { remaining, periodState } = remainingScans(profile, plan)
+  if (remaining <= 0) {
+    return res.status(403).json({
+      error: plan === 'plus'
+        ? 'You have used all 10 AI scans for this billing period.'
+        : 'You have used both of your free AI scans. Upgrade to Plus for 10 scans/month.',
+      reason: 'SCAN_QUOTA_EXCEEDED',
+      plan,
+    })
+  }
+  // Catches this account's stored period state up to "now" even when the
+  // scan below fails later — safe/idempotent regardless of outcome.
+  if (plan === 'plus' && periodState?.rolled) {
+    await userRef.set({
+      plusScansUsed: periodState.plusScansUsed,
+      plusScansPeriodStart: periodState.plusScansPeriodStart,
+      scanPeriodAnchorDay: periodState.scanPeriodAnchorDay,
+    }, { merge: true })
   }
 
   const isPDF = mediaType === 'application/pdf'
@@ -126,6 +182,13 @@ IMPORTANT extraction rules:
     }
 
     const text = data.content?.[0]?.text || ''
+
+    // A real model response came back — this counts as a successful
+    // process for quota purposes (§3.1) regardless of whether its JSON
+    // parses cleanly below; a parse fallback is still real spent budget,
+    // not a failed/errored scan. Decremented once, here, never on the
+    // response.ok===false branch above or the catch block below.
+    await incrementScanUsage(db, userRef, plan)
 
     try {
       const clean = text.replace(/```json\n?|\n?```/g, '').trim()

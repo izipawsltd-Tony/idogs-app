@@ -36,7 +36,7 @@ function makeRoute({
 
 async function invoke(route, {
   authorization,
-  body = { plan: 'basic' },
+  body = { plan: 'plus_monthly' },
 } = {}) {
   const res = makeRes()
   await route.handler({
@@ -63,7 +63,7 @@ await checkAsync('request-body userId cannot override verified identity', async 
   const route = makeRoute()
   const res = await invoke(route, {
     authorization: 'Bearer valid-token',
-    body: { plan: 'basic', userId: 'attacker-selected-uid' },
+    body: { plan: 'plus_monthly', userId: 'attacker-selected-uid' },
   })
   return res.statusCode === 403 && route.calls.sessions.length === 0
 })
@@ -72,7 +72,7 @@ await checkAsync('request-body email cannot override verified identity', async (
   const route = makeRoute()
   const res = await invoke(route, {
     authorization: 'Bearer valid-token',
-    body: { plan: 'basic', userEmail: 'victim@example.com' },
+    body: { plan: 'plus_monthly', userEmail: 'victim@example.com' },
   })
   return res.statusCode === 403 && route.calls.sessions.length === 0
 })
@@ -86,12 +86,30 @@ await checkAsync('unsupported plan remains rejected', async () => {
   return res.statusCode === 400 && route.calls.sessions.length === 0
 })
 
-await checkAsync('authenticated Checkout uses only server-derived customer and metadata identity', async () => {
+// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED): the
+// legacy basic/pro/kennel/sms_addon four-tier prices are retired — none
+// of them should be selectable through this endpoint anymore.
+for (const legacyPlan of ['basic', 'pro', 'kennel', 'sms_addon', 'starter']) {
+  await checkAsync(`retired legacy plan '${legacyPlan}' is rejected, not silently accepted`, async () => {
+    const route = makeRoute()
+    const res = await invoke(route, { authorization: 'Bearer valid-token', body: { plan: legacyPlan } })
+    return res.statusCode === 400 && route.calls.sessions.length === 0
+  })
+}
+
+check(
+  'exactly the two Plus price ids are allowlisted — no $40 launch-offer price, no legacy tiers',
+  Object.keys(CHECKOUT_PRICE_IDS).length === 2 &&
+    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TwZZL5lmfxrCiH3IeSldxni' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TwZa25lmfxrCiH3L1PL7jMd'
+)
+
+await checkAsync('authenticated Checkout (monthly) uses only server-derived customer and metadata identity, and grants no trial', async () => {
   const route = makeRoute()
   const res = await invoke(route, {
     authorization: 'Bearer valid-token',
     body: {
-      plan: 'pro',
+      plan: 'plus_monthly',
       userId: 'verified-uid',
       userEmail: 'VERIFIED@example.com',
     },
@@ -101,9 +119,22 @@ await checkAsync('authenticated Checkout uses only server-derived customer and m
     route.calls.sessions.length === 1 &&
     params.customer_email === 'verified@example.com' &&
     params.metadata.userId === 'verified-uid' &&
+    params.metadata.plan === 'plus' &&
+    params.metadata.interval === 'monthly' &&
     params.subscription_data.metadata.userId === 'verified-uid' &&
-    params.metadata.plan === 'pro' &&
-    params.line_items[0].price === CHECKOUT_PRICE_IDS.pro
+    params.subscription_data.metadata.plan === 'plus' &&
+    params.subscription_data.trial_period_days === undefined &&
+    params.line_items[0].price === CHECKOUT_PRICE_IDS.plus_monthly
+})
+
+await checkAsync('authenticated Checkout (annual) selects the annual price and interval metadata', async () => {
+  const route = makeRoute()
+  const res = await invoke(route, { authorization: 'Bearer valid-token', body: { plan: 'plus_annual' } })
+  const params = route.calls.sessions[0]
+  return res.statusCode === 200 &&
+    params.metadata.interval === 'annual' &&
+    params.line_items[0].price === CHECKOUT_PRICE_IDS.plus_annual &&
+    params.line_items.length === 1 // no sms_addon line item exists anymore
 })
 
 const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
@@ -116,6 +147,17 @@ const protectedFields = [
   'stripeSubscriptionId',
   'trialEndsAt',
   'planActivatedAt',
+  // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md) additions —
+  // server-owned by api/stripe-webhook.js / api/enforce-billing-grace.js /
+  // api/scan.js. A client that could set freeScansUsed/plusScansUsed
+  // downward, or plan to 'plus' directly, would defeat quota enforcement
+  // entirely.
+  'pastDueSince',
+  'billingInterval',
+  'scanPeriodAnchorDay',
+  'plusScansUsed',
+  'plusScansPeriodStart',
+  'freeScansUsed',
 ]
 
 for (const field of protectedFields) {

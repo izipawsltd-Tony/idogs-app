@@ -346,6 +346,10 @@ export default function DogListPage({ toast }: Props) {
 
 function DogCard({ dog }: { dog: Dog }) {
   const isTransferred = dog.status === 'transferred' || (dog as any).transferStatus === 'pendingClaim'
+  // iDogs Pricing v1.1 §3.2/§3.3 — over the account's plan cap after a
+  // downgrade. Read-only: viewable, transferable, but no edits/new
+  // records/AI scans until the user upgrades or swaps it back to active.
+  const isRestricted = dog.status === 'restricted'
   const actualStage = dog.isDeceased ? 'remembered' : calculateLifeStage(dog.dateOfBirth, dog.breed)
   return (
     <Link to={`/app/dogs/${dog.id}`} style={{ textDecoration: 'none' }}>
@@ -370,6 +374,11 @@ function DogCard({ dog }: { dog: Dog }) {
                 <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', background: 'rgba(255,255,255,0.9)', padding: '4px 10px', borderRadius: 20, border: '1px solid var(--border)' }}>Transferred</span>
               </div>
             )}
+            {!isTransferred && isRestricted && (
+              <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gold)', background: 'rgba(255,255,255,0.9)', padding: '4px 10px', borderRadius: 20, border: '1px solid var(--border)' }}>🔒 Restricted</span>
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ height: 160, background: 'linear-gradient(135deg, var(--brand-50), var(--sand))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 44 }}>
@@ -391,6 +400,8 @@ function DogCard({ dog }: { dog: Dog }) {
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {isTransferred ? (
                 <span className="badge badge-gray" style={{ fontSize: 10 }}>→ {(dog as any).buyerName}</span>
+              ) : isRestricted ? (
+                <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)' }}>🔒 Restricted</span>
               ) : (
                 <span className="badge badge-green" style={{ fontSize: 10 }}>QR ✓</span>
               )}

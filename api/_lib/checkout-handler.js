@@ -2,11 +2,25 @@ import { requireAppUrl } from './require-config.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 
+// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED). Only two
+// real Stripe Checkout price ids exist for iDogs — Plus Monthly and Plus
+// Annual. The legacy Basic/Pro/Kennel/SMS-addon four-tier prices are
+// retired here (no live customers referenced them — see CLAUDE.md
+// "Trạng thái production"), never selectable through this endpoint again.
+// The $40 launch-offer price mentioned in §1.1 of the record is explicitly
+// NOT implemented per this round's scope.
 export const CHECKOUT_PRICE_IDS = Object.freeze({
-  basic: 'price_1TiaZn5lmfxrCiH3GCzSSuAy',
-  pro: 'price_1Tiabb5lmfxrCiH3kBdaQsRH',
-  kennel: 'price_1TiU7j5lmfxrCiH3J1WbbrLR',
-  sms_addon: 'price_1Tialb5lmfxrCiH3pe82Abps',
+  plus_monthly: 'price_1TwZZL5lmfxrCiH3IeSldxni',
+  plus_annual: 'price_1TwZa25lmfxrCiH3L1PL7jMd',
+})
+
+// Both keys resolve to the same entitlement — Plus. The billing interval
+// (monthly vs annual) only matters for the Stripe price/checkout UI and for
+// computing the AI-scan reset anchor (api/stripe-webhook.js); it is never a
+// separate entitlement tier.
+const INTERVAL_BY_PLAN_KEY = Object.freeze({
+  plus_monthly: 'monthly',
+  plus_annual: 'annual',
 })
 
 function bodyOf(req) {
@@ -64,29 +78,24 @@ export function createCheckoutHandler({
       return res.status(403).json({ error: 'Authenticated identity mismatch' })
     }
 
-    const { plan, smsAddon } = body
-    const priceId = CHECKOUT_PRICE_IDS[plan]
+    const { plan: planKey } = body
+    const priceId = CHECKOUT_PRICE_IDS[planKey]
     if (!priceId) {
       return res.status(400).json({ error: 'Invalid plan' })
     }
-
-    const lineItems = [{ price: priceId, quantity: 1 }]
-    if (smsAddon && CHECKOUT_PRICE_IDS.sms_addon) {
-      lineItems.push({ price: CHECKOUT_PRICE_IDS.sms_addon, quantity: 1 })
-    }
+    const interval = INTERVAL_BY_PLAN_KEY[planKey]
 
     try {
       const session = await createSession({
         mode: 'subscription',
         payment_method_types: ['card'],
         customer_email: email,
-        line_items: lineItems,
+        line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${appUrl}/app/billing?success=1`,
         cancel_url: `${appUrl}/app/billing?cancelled=1`,
-        metadata: { userId: uid, plan },
+        metadata: { userId: uid, plan: 'plus', interval, priceId },
         subscription_data: {
-          metadata: { userId: uid, plan },
-          trial_period_days: 30,
+          metadata: { userId: uid, plan: 'plus', interval, priceId },
         },
       })
       return res.status(200).json({ url: session.url })

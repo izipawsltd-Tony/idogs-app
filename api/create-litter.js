@@ -39,6 +39,15 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { validateBreedingParent } from './_lib/parent-eligibility.js'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { sanitizeLitterInput, LitterValidationError, CREATE_FIELDS } from './_lib/litter-schema.js'
+import { computeEffectivePlan } from './_lib/entitlements.js'
+import {
+  hasLitterWithinRollingWindow,
+  hasOtherUndatedPlannedLitter,
+  writeLitterQuotaLedgerEntry,
+  LITTER_QUOTA_BLOCK_MESSAGE,
+  LITTER_PLAN_GATE_MESSAGE,
+  LITTER_PLANNED_DUPLICATE_MESSAGE,
+} from './_lib/litter-quota.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -115,6 +124,30 @@ async function handler(req, res) {
       }
     }
 
+    // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §1.1/§3.4/§4.1,
+    // LOCKED): Free has 0 litter allowance; Plus is capped at one
+    // whelped litter per rolling 365 days, plus at most one un-dated
+    // planned litter at a time. All reads happen here, before the single
+    // write below, per transaction rules.
+    const userSnap = await tx.get(db.collection('users').doc(uid))
+    const plan = computeEffectivePlan(userSnap.exists ? userSnap.data() : {})
+    if (plan !== 'plus') {
+      return { ok: false, status: 403, body: { error: LITTER_PLAN_GATE_MESSAGE, reason: 'LITTER_PLAN_GATE' } }
+    }
+
+    const whelpingDate = safeFields.actualBirthDate || ''
+    if (whelpingDate) {
+      const withinWindow = await hasLitterWithinRollingWindow(tx, db, uid, whelpingDate)
+      if (withinWindow) {
+        return { ok: false, status: 409, body: { error: LITTER_QUOTA_BLOCK_MESSAGE, reason: 'LITTER_QUOTA_EXCEEDED' } }
+      }
+    } else {
+      const hasPlanned = await hasOtherUndatedPlannedLitter(tx, db, uid)
+      if (hasPlanned) {
+        return { ok: false, status: 409, body: { error: LITTER_PLANNED_DUPLICATE_MESSAGE, reason: 'LITTER_PLANNED_DUPLICATE' } }
+      }
+    }
+
     const dam = damSnap.data()
     tx.set(litterRef, {
       tenantId: uid,
@@ -129,6 +162,9 @@ async function handler(req, res) {
       puppyIds: [],
       createdAt: new Date().toISOString(),
     })
+    if (whelpingDate) {
+      writeLitterQuotaLedgerEntry(tx, db, { tenantId: uid, litterId: litterRef.id, whelpingDate })
+    }
     return { ok: true }
   })
 

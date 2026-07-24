@@ -31,6 +31,14 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { partitionLitterCandidatesServer } from './_lib/litter-eligibility.js'
 import { sanitizeLitterInput, LitterValidationError, UPDATE_FIELDS } from './_lib/litter-schema.js'
+import { computeEffectivePlan } from './_lib/entitlements.js'
+import {
+  hasLitterWithinRollingWindow,
+  writeLitterQuotaLedgerEntry,
+  LITTER_QUOTA_BLOCK_MESSAGE,
+  LITTER_PLAN_GATE_MESSAGE,
+  LITTER_DATE_LOCKED_MESSAGE,
+} from './_lib/litter-quota.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -96,11 +104,38 @@ async function handler(req, res) {
 
     const puppyIds = litter.puppyIds || []
     const hasPuppies = puppyIds.length > 0
+    const previousActualBirthDate = litter.actualBirthDate || ''
     const dobChanged = Object.prototype.hasOwnProperty.call(safePatch, 'actualBirthDate') &&
-      safePatch.actualBirthDate !== (litter.actualBirthDate || '')
+      safePatch.actualBirthDate !== previousActualBirthDate
+
+    // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §3.4/§4.1,
+    // LOCKED) — "Prevent whelpingDate edits from evading quota." The
+    // simplest fully-correct enforcement: once a litter has been
+    // activated (actualBirthDate already set, meaning a litterQuotaLedger
+    // entry already exists for it), that date is locked — no further
+    // change, including clearing it back to un-dated. Only the FIRST
+    // transition from un-dated to dated (the §4.1 "activation" moment) is
+    // allowed, and that path re-runs the same rolling-window check
+    // api/create-litter.js applies at creation.
+    if (dobChanged && previousActualBirthDate) {
+      return { ok: false, status: 409, body: { error: LITTER_DATE_LOCKED_MESSAGE, reason: 'LITTER_DATE_LOCKED' } }
+    }
 
     if (dobChanged && hasPuppies && !safePatch.actualBirthDate) {
       return { ok: false, status: 400, body: { error: 'This litter has puppies — actual birth date cannot be cleared' } }
+    }
+
+    const isActivating = dobChanged && !previousActualBirthDate && !!safePatch.actualBirthDate
+    if (isActivating) {
+      const userSnap = await tx.get(db.collection('users').doc(uid))
+      const plan = computeEffectivePlan(userSnap.exists ? userSnap.data() : {})
+      if (plan !== 'plus') {
+        return { ok: false, status: 403, body: { error: LITTER_PLAN_GATE_MESSAGE, reason: 'LITTER_PLAN_GATE' } }
+      }
+      const withinWindow = await hasLitterWithinRollingWindow(tx, db, uid, safePatch.actualBirthDate)
+      if (withinWindow) {
+        return { ok: false, status: 409, body: { error: LITTER_QUOTA_BLOCK_MESSAGE, reason: 'LITTER_QUOTA_EXCEEDED' } }
+      }
     }
 
     let updatedPuppyCount = 0
@@ -116,6 +151,9 @@ async function handler(req, res) {
     }
 
     tx.update(litterRef, safePatch)
+    if (isActivating) {
+      writeLitterQuotaLedgerEntry(tx, db, { tenantId: uid, litterId, whelpingDate: safePatch.actualBirthDate })
+    }
     return { ok: true, updatedPuppyCount }
   })
 

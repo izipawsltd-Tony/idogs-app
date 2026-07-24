@@ -171,6 +171,18 @@ service cloud.firestore {
         (dog.tenantId == request.auth.uid || dog.currentOwnerId == request.auth.uid);
     }
 
+    // iDogs Pricing v1.1 §3.3: a 'restricted' dog's Withheld column is "No
+    // new health records or documents" — narrower than the blanket "no
+    // editing" applied to the dog document itself (see dogs/{dogId}
+    // update above). Used only for CREATE on the dogId-keyed subcollections
+    // below; existing records remain readable, and this deliberately does
+    // NOT also gate update/delete of a record created before the dog
+    // became restricted — the pricing record only calls out new records.
+    function dogAllowsNewRecords(dogId) {
+      let dog = get(/databases/$(database)/documents/dogs/$(dogId)).data;
+      return dogBelongsToUser(dogId) && dog.get('status', 'active') != 'restricted';
+    }
+
     // NOTE: full Sire/Dam breeding-parent eligibility (sex, ownership,
     // deceased, DOB validity, AND actual minimum-age maturity — which
     // needs real date arithmetic this rules language has no functions
@@ -183,6 +195,12 @@ service cloud.firestore {
     // policy (Codex round 3, Blocker 1).
 
     // Billing state is owned exclusively by trusted Admin SDK services.
+    // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED) adds
+    // pastDueSince/billingInterval/scanPeriodAnchorDay/plusScansUsed/
+    // plusScansPeriodStart/freeScansUsed — all written only by
+    // api/stripe-webhook.js, api/enforce-billing-grace.js, or api/scan.js,
+    // never by the browser (a client that could set freeScansUsed to 0 or
+    // plusScansUsed downward would defeat the entire AI-scan quota).
     function userBillingFields() {
       return [
         'plan',
@@ -190,7 +208,13 @@ service cloud.firestore {
         'stripeCustomerId',
         'stripeSubscriptionId',
         'trialEndsAt',
-        'planActivatedAt'
+        'planActivatedAt',
+        'pastDueSince',
+        'billingInterval',
+        'scanPeriodAnchorDay',
+        'plusScansUsed',
+        'plusScansPeriodStart',
+        'freeScansUsed'
       ];
     }
 
@@ -260,9 +284,20 @@ service cloud.firestore {
       // both: a contact-detail typo fix isn't a history-tampering risk
       // the way erasing buyerEmail/transferredAt/previousOwnerId/
       // claimedAt/claimedBy would be.
+      // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §3.3, LOCKED):
+      // a 'restricted' dog is read-only — no field edits — with exactly
+      // one exception: a legitimate NEW transfer transition must still be
+      // allowed even while restricted ("Transfer still allowed —
+      // preserves chain of custody"; a restricted dog is never blocked
+      // from being sold on). status/archived<->active swaps go through
+      // api/set-dog-status.js (Admin SDK, bypasses these Rules entirely,
+      // with its own cap-aware check) — this clause only needs to stop an
+      // ORDINARY client edit (name/breed/notes/etc) from landing on a
+      // restricted dog.
       allow update: if isEffectiveDogOwner(resource.data) &&
         dogProtectedFieldsUnchanged() &&
         dogTransferProvenanceValid() &&
+        (resource.data.get('status', 'active') != 'restricted' || isLegitimateNewTransferTransition(resource.data)) &&
         (resource.data.get('claimedAt', null) == null ||
          request.resource.data.get('claimedAt', null) == resource.data.get('claimedAt', null)) &&
         (resource.data.get('claimedBy', null) == null ||
@@ -343,19 +378,19 @@ service cloud.firestore {
     // ── Records keyed by dogId — access follows the parent dog's ownership ──
     match /vaccineRecords/{id} {
       allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
-      allow create: if dogBelongsToUser(request.resource.data.dogId);
+      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     match /wormingRecords/{id} {
       allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
-      allow create: if dogBelongsToUser(request.resource.data.dogId);
+      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     match /healthTests/{id} {
       allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
-      allow create: if dogBelongsToUser(request.resource.data.dogId);
+      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     match /activityNotes/{id} {
       allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
-      allow create: if dogBelongsToUser(request.resource.data.dogId);
+      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
 
     // ── heatCycles — read/delete use the same dogBelongsToUser access
@@ -382,7 +417,7 @@ service cloud.firestore {
     // like dogBelongsToUser doesn't have that restriction.) ──
     match /documents/{id} {
       allow read, update, delete: if dogBelongsToUser(resource.data.dogId);
-      allow create: if dogBelongsToUser(request.resource.data.dogId);
+      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     // NOTE: get and list are split (rather than a combined `read`) so that
     // an existence-check on a not-yet-created reminder (e.g.
@@ -445,6 +480,26 @@ service cloud.firestore {
     // all, and no client action should ever be able to forge, inspect,
     // or tamper with an operation record.
     match /litterPuppyOperations/{id} {
+      allow read, write: if false;
+    }
+
+    // ── processedStripeEvents — webhook idempotency ledger
+    // (api/_lib/webhook-handler.js). Written exclusively by the Admin SDK
+    // to detect a redelivered/replayed Stripe event before applying its
+    // entitlement effects twice. No legitimate client access pattern.
+    match /processedStripeEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    // ── litterQuotaLedger — immutable record of every litter that has
+    // ever counted against the rolling-365-day quota (iDogs Pricing v1.1
+    // §3.4, LOCKED). Written exclusively by api/create-litter.js /
+    // api/update-litter.js (Admin SDK) when a litter's whelping date
+    // (actualBirthDate) is first set, and deliberately NEVER deleted —
+    // this is what makes "delete/archive must not restore quota" actually
+    // hold even when a litter document itself is later hard-deleted (see
+    // api/delete-litter.js). No legitimate client access pattern.
+    match /litterQuotaLedger/{id} {
       allow read, write: if false;
     }
 

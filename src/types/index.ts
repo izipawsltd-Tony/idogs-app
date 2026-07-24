@@ -56,7 +56,14 @@ export interface Dog {
   // back to the forward-reference-only check.
   litterId?: string
   // ── Ownership (already written by transferDogOwnership) ──
-  status?: 'active' | 'transferred'
+  // 'restricted' / 'archived' added for iDogs Pricing v1.1
+  // (Pricing_Decision_Record_v1.1.md §3.2). 'restricted' is system-imposed
+  // (over the account's plan cap after a downgrade) — read-only, still
+  // transferable, reversible by upgrading or swapping. 'archived' is a
+  // deliberate user action to shelve a record — different cause, different
+  // reversal path, must never be merged with 'restricted'. Both are
+  // orthogonal to 'transferred', which is unrelated to plan entitlements.
+  status?: 'active' | 'transferred' | 'restricted' | 'archived'
   buyerName?: string
   buyerEmail?: string
   buyerPhone?: string
@@ -282,12 +289,30 @@ export interface UserProfile {
   state: 'NSW' | 'VIC' | 'QLD' | 'SA' | 'WA' | 'TAS' | 'ACT' | 'NT'
   postcode: string
   role: 'breeder' | 'owner' | 'admin'
-  plan?: 'free' | 'trial' | 'starter' | 'basic' | 'professional' | 'pro' | 'kennel'
+  // 'plus' is the only paid entitlement under iDogs Pricing v1.1
+  // (Pricing_Decision_Record_v1.1.md, LOCKED). Legacy values
+  // (trial/starter/basic/professional/pro/kennel) are kept in the union
+  // for backward compatibility with pre-existing account data only —
+  // never issued by new checkout/webhook code, and treated as 'free' by
+  // computeEffectivePlan() (api/_lib/entitlements.js) and its client
+  // mirror if either sees one.
+  plan?: 'free' | 'plus' | 'trial' | 'starter' | 'basic' | 'professional' | 'pro' | 'kennel'
   trialEndsAt?: string
   subscriptionStatus?: string
   stripeCustomerId?: string
   stripeSubscriptionId?: string
   planActivatedAt?: string
+  // ── iDogs Pricing v1.1 billing/quota state — server-owned (Admin SDK
+  // only: api/stripe-webhook.js, api/enforce-billing-grace.js,
+  // api/scan.js), protected from client writes by firestore.rules'
+  // userBillingFields(). See api/_lib/entitlements.js for how these are
+  // read/derived. ──
+  billingInterval?: 'monthly' | 'annual'
+  pastDueSince?: string | null
+  scanPeriodAnchorDay?: number
+  plusScansUsed?: number
+  plusScansPeriodStart?: string
+  freeScansUsed?: number
   // Account-level Breeder ID (e.g. DACO number for SA breeders). Mandatory
   // for active breeders in most states, but some breeders genuinely don't
   // have one yet (e.g. dogs too young to be bred from yet) — so this is

@@ -2,7 +2,9 @@
 // Supports: per-dog, per-litter, full-kennel × PDF + CSV
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
+import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
+import { computeEffectivePlan } from './_lib/entitlements.js'
 
 // Bounded staging-isolation safety patch: this endpoint never touches
 // Firebase Storage (it only reads Firestore and returns generated HTML/
@@ -544,8 +546,33 @@ function generateBreedingPDFHTML(dog, profile, userState) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
+  // SECURITY FIX: this endpoint had NO auth check at all, and trusted
+  // `tenantId` directly from the request body to decide what data to
+  // return — a signed-out or arbitrary caller could fetch any tenant's
+  // full kennel export. Also, 'dog'/'litter'/'breeding' scope never
+  // verified `id` actually belonged to the caller at all. Now requires a
+  // verified Firebase ID token, and `tenantId` in the body must equal the
+  // verified uid (matching how ExportPage.tsx already always sends
+  // `tenantId: user.uid` — the caller's own uid, never a dog's own
+  // tenantId, which can legitimately differ post-transfer).
+  const authHeader = req.headers.authorization || ''
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!idToken) {
+    return res.status(401).json({ error: 'Missing Authorization header' })
+  }
+  let uid
+  try {
+    const decoded = await getAuth().verifyIdToken(idToken)
+    uid = decoded.uid
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired token' })
+  }
+
   const { scope, id, tenantId, format } = req.body
   if (!scope || !tenantId || !format) return res.status(400).json({ error: 'Missing params' })
+  if (tenantId !== uid) {
+    return res.status(403).json({ error: 'Authenticated identity mismatch' })
+  }
 
   try {
     let data, profile
@@ -554,17 +581,38 @@ export default async function handler(req, res) {
     const userSnap = await db.collection('users').doc(tenantId).get()
     profile = userSnap.data()
 
+    // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §1.1, LOCKED):
+    // Report/data export (PDF, CSV) is a Plus-only feature — distinct
+    // from "original document download" (a user's own uploaded file),
+    // which stays free for everyone and isn't gated here at all.
+    const plan = computeEffectivePlan(profile)
+    if (plan !== 'plus') {
+      return res.status(403).json({
+        error: 'PDF and CSV report export is an iDogs Plus feature. Upgrade to Plus to export kennel, dog, or litter reports.',
+        reason: 'EXPORT_PLAN_GATE',
+      })
+    }
+
     if (scope === 'dog') {
       data = await fetchDogFull(id)
       if (!data) return res.status(404).json({ error: 'Dog not found' })
+      if (data.tenantId !== uid && data.currentOwnerId !== uid) {
+        return res.status(403).json({ error: 'Not your dog' })
+      }
     } else if (scope === 'litter') {
       data = await fetchLitterFull(id)
       if (!data) return res.status(404).json({ error: 'Litter not found' })
+      if (data.tenantId !== uid) {
+        return res.status(403).json({ error: 'Not your litter' })
+      }
     } else if (scope === 'kennel') {
       data = await fetchKennelFull(tenantId)
     } else if (scope === 'breeding') {
       data = await fetchBreedingFull(id)
       if (!data) return res.status(404).json({ error: 'Dog not found' })
+      if (data.tenantId !== uid && data.currentOwnerId !== uid) {
+        return res.status(403).json({ error: 'Not your dog' })
+      }
       // Breeding compliance is PDF only
       const html = generateBreedingPDFHTML(data, profile, req.body.userState)
       const filename = `${data.name}_breeding_compliance_${new Date().toISOString().slice(0,10)}`

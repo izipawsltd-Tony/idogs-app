@@ -77,9 +77,10 @@ export default function ExportPage({ toast }: Props) {
 
     setExporting(format)
     try {
+      const idToken = await user.getIdToken()
       const res = await fetch('/api/export-report', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
         body: JSON.stringify({
           scope,
           id: scope === 'dog' ? selectedDogId : scope === 'litter' ? selectedLitterId : scope === 'breeding' ? selectedDogId : null,
@@ -89,7 +90,16 @@ export default function ExportPage({ toast }: Props) {
         }),
       })
 
-      if (!res.ok) throw new Error('Export failed')
+      if (!res.ok) {
+        if (res.status === 403) {
+          const body = await res.json().catch(() => ({}))
+          if (body.reason === 'EXPORT_PLAN_GATE') {
+            toast('PDF/CSV export is an iDogs Plus feature. Upgrade to Plus to export reports.', 'error')
+            return
+          }
+        }
+        throw new Error('Export failed')
+      }
 
       if (format === 'csv') {
         const blob = await res.blob()

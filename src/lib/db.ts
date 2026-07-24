@@ -10,6 +10,27 @@ function uid(): string {
   return auth.currentUser?.uid ?? ''
 }
 
+// Best-effort dog-cap self-correction (iDogs Pricing v1.1 §3.2) — called
+// after any client-side write that could newly push the caller's active
+// dog count over their plan's cap (createDog(), a claimed transfer, an
+// upgrade/downgrade). Never throws: a reconciliation failure must not
+// block the create/claim the user is actually waiting on, since the next
+// trigger (or api/set-dog-status.js's own cap check) will self-correct.
+// See api/reconcile-dog-cap.js for why this can't just be a Firestore
+// Rule (no cross-document count primitive there).
+async function reconcileDogCapBestEffort(): Promise<void> {
+  try {
+    if (!auth.currentUser) return
+    const idToken = await auth.currentUser.getIdToken()
+    await fetch('/api/reconcile-dog-cap', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+  } catch {
+    // Self-healing on the next trigger — never surface this to the user.
+  }
+}
+
 function toDate(ts: Timestamp | string | undefined): string {
   if (!ts) return ''
   if (typeof ts === 'string') return ts
@@ -130,6 +151,14 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
     stripeCustomerId: _stripeCustomerId,
     stripeSubscriptionId: _stripeSubscriptionId,
     planActivatedAt: _planActivatedAt,
+    // iDogs Pricing v1.1 billing/quota state — same server-owned-only
+    // contract as the six fields above (firestore.rules userBillingFields()).
+    pastDueSince: _pastDueSince,
+    billingInterval: _billingInterval,
+    scanPeriodAnchorDay: _scanPeriodAnchorDay,
+    plusScansUsed: _plusScansUsed,
+    plusScansPeriodStart: _plusScansPeriodStart,
+    freeScansUsed: _freeScansUsed,
     ...profileData
   } = data
   await setDoc(doc(db, 'users', userId), {
@@ -465,6 +494,7 @@ export async function createDog(
           updatedAt: serverTimestamp(),
         })
       })
+      await reconcileDogCapBestEffort()
       return dogRef.id
     } catch (err: any) {
       if (err?.message !== 'PASSPORT_ID_TAKEN') throw err
@@ -535,6 +565,9 @@ export async function createLitterPuppyAtomic(
     throw new Error(err.error || `Add puppy failed (${res.status})`)
   }
   const result = await res.json()
+  if (!result.alreadyExisted) {
+    await reconcileDogCapBestEffort()
+  }
   return { dogId: result.dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted }
 }
 

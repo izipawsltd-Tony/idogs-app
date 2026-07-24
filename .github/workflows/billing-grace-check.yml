@@ -1,0 +1,27 @@
+name: Billing Grace Period Check
+
+# Daily sweep for api/enforce-billing-grace.js — downgrades any account
+# whose 7-day past_due grace period (Pricing_Decision_Record_v1.1.md §4.2)
+# has expired. Points at STAGING (idogs-app-staging) only, matching this
+# round's "Stripe Test Mode + idogs-app-staging only" scope — do not point
+# this at idogs.com.au until the feature has been staging-verified and
+# explicitly approved for production, same gate as every other production
+# deploy in this repo.
+
+on:
+  schedule:
+    - cron: '15 22 * * *'  # 8:15am AEST (UTC+10) = 10:15pm UTC — just after daily-reminders
+  workflow_dispatch:
+
+jobs:
+  enforce-billing-grace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger billing grace check API (staging)
+        run: |
+          curl -X POST https://idogs-app-staging.vercel.app/api/enforce-billing-grace \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            --fail \
+            --silent \
+            --show-error

@@ -71,13 +71,28 @@ async function readPDF(file: File): Promise<{ base64: string; mediaType: string 
 }
 
 export default function AIScan({ onResult, toast, dogId }: Props) {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [scanning, setScanning] = useState(false)
   const [preview, setPreview] = useState<string | null>(null)
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | null>(null)
   const [result, setResult] = useState<ScanResult | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [currentFile, setCurrentFile] = useState<File | null>(null)
+
+  // Display-only mirror of api/_lib/entitlements.js's remainingScans() —
+  // iDogs Pricing v1.1 §2.5/§3.1 (LOCKED). Enforcement happens server-side
+  // in api/scan.js regardless of what this shows; this is purely so the
+  // user isn't surprised by a quota-exceeded error on their first attempt.
+  // Plus's monthly rollover isn't recomputed here (that needs the real
+  // anchor-day math in entitlements.js) — plusScansUsed is only ever
+  // stale in the user's favor (shows fewer remaining than they may
+  // actually have right after an unreported rollover), never the other
+  // way around, so it can't cause a client-side false "you have scans
+  // left" that the server would then reject.
+  const isPlus = profile?.plan === 'plus'
+  const scanQuotaRemaining = isPlus
+    ? Math.max(0, 10 - (profile?.plusScansUsed || 0))
+    : Math.max(0, 2 - (profile?.freeScansUsed || 0))
 
   async function handleFile(file: File) {
     if (!file) return
@@ -239,6 +254,16 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
             </div>
           </div>
         )}
+      </div>
+
+      <div style={{ fontSize: 12, color: scanQuotaRemaining > 0 ? 'var(--light)' : 'var(--error)', marginTop: -10, marginBottom: 16, textAlign: 'center' }}>
+        {scanQuotaRemaining > 0
+          ? isPlus
+            ? `${scanQuotaRemaining} of 10 AI scans left this month`
+            : `${scanQuotaRemaining} of 2 free AI scans left (one-time)`
+          : isPlus
+            ? "You've used all 10 AI scans for this billing period — resets next period."
+            : 'Free AI scans used up — upgrade to Plus for 10/month.'}
       </div>
 
       {/* Preview */}

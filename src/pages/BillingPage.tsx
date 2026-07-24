@@ -7,97 +7,54 @@ interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
-const PLANS = [
-  {
-    id: 'free',
-    name: 'Free',
-    price: 0,
-    icon: '🐾',
-    color: '#5C5A54',
-    description: 'Perfect for pet owners with 1-2 dogs',
-    features: [
-      'Up to 2 dogs',
-      'QR Passport for each dog',
-      'Vaccination & health records',
-      'Email reminders',
-      'Public passport page',
-    ],
-    cta: 'Current plan',
-    isFree: true,
-  },
-  {
-    id: 'basic',
-    name: 'Basic',
-    price: 5,
-    icon: '🐕',
-    color: 'var(--brand-600)',
-    description: 'For casual breeders and growing families',
-    features: [
-      'Up to 10 dogs',
-      'Everything in Free',
-      'AI Document Scan',
-      'Document storage',
-      'Export PDF & CSV reports',
-      'Ownership transfer',
-    ],
-  },
-  {
-    id: 'pro',
-    name: 'Pro',
-    price: 12,
-    icon: '🏆',
-    color: 'var(--brand-300)',
-    description: 'For active breeders and growing kennels',
-    popular: true,
-    features: [
-      'Up to 20 dogs',
-      'Everything in Basic',
-      'Litter management',
-      'Audit trail',
-      'SMS reminders (+$3/month)',
-      'Priority email support',
-    ],
-  },
-  {
-    id: 'kennel',
-    name: 'Kennel',
-    price: 29,
-    icon: '🏠',
-    color: 'var(--gold-500)',
-    description: 'For professional kennels',
-    features: [
-      'Unlimited dogs',
-      'Everything in Pro',
-      'Full compliance export',
-      'Multi-litter management',
-      'Advanced audit trail',
-      'Priority support',
-    ],
-  },
+// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §1.1, LOCKED) —
+// only two real entitlements: Free and Plus. Monthly/Annual are billing
+// intervals of Plus, not separate tiers. The $40 annual launch offer is
+// deliberately NOT implemented. Prices/caps below are the single source
+// of truth for this page — keep in sync with api/_lib/checkout-handler.js
+// (price ids), api/_lib/dog-cap.js (DOG_CAP), api/_lib/entitlements.js
+// (SCAN_QUOTA) if any of these ever change.
+const FREE_FEATURES = [
+  'Up to 2 dogs',
+  'Permanent Dog ID & QR Passport',
+  'Health records & email reminders',
+  'Ownership transfer',
+  '2 free AI scans — one-time',
 ]
+const PLUS_FEATURES = [
+  'Up to 5 dogs',
+  'Everything in Free',
+  '10 AI Document Scans / month',
+  '1 litter per 12 months',
+  'PDF & CSV report export',
+]
+
+type IntervalKey = 'plus_monthly' | 'plus_annual'
 
 export default function BillingPage({ toast }: Props) {
   const { user, profile } = useAuth()
   const [searchParams] = useSearchParams()
-  const [loading, setLoading] = useState<string | null>(null)
-  const [smsAddon, setSmsAddon] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [interval, setInterval] = useState<IntervalKey>('plus_monthly')
 
-  const currentPlan = profile?.plan || 'trial'
+  const isPlus = profile?.plan === 'plus'
   const isOwner = profile?.role === 'owner'
+  const billingInterval = (profile as any)?.billingInterval as 'monthly' | 'annual' | undefined
+  const subscriptionStatus = (profile as any)?.subscriptionStatus as string | undefined
+  const isPastDue = isPlus && subscriptionStatus === 'past_due'
 
   useEffect(() => {
     if (searchParams.get('success')) {
-      toast('🎉 Subscription activated! Welcome to iDogs.', 'success')
+      toast('🎉 Subscription activated! Welcome to iDogs Plus.', 'success')
     }
     if (searchParams.get('cancelled')) {
-      toast('Subscription cancelled — you can try again anytime.', 'info')
+      toast('Checkout cancelled — you can try again anytime.', 'info')
     }
   }, [])
 
-  async function handleSubscribe(planId: string) {
+  async function handleSubscribe(planKey: IntervalKey) {
     if (!user) return
-    if (planId === 'free') return
-    setLoading(planId)
+    setLoading(true)
     try {
       const idToken = await user.getIdToken()
       const res = await fetch('/api/create-checkout', {
@@ -106,10 +63,7 @@ export default function BillingPage({ toast }: Props) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({
-          plan: planId,
-          smsAddon,
-        }),
+        body: JSON.stringify({ plan: planKey }),
       })
       if (!res.ok) throw new Error('Failed to create checkout')
       const { url } = await res.json()
@@ -117,182 +71,155 @@ export default function BillingPage({ toast }: Props) {
     } catch {
       toast('Failed to start checkout. Please try again.', 'error')
     } finally {
-      setLoading(null)
+      setLoading(false)
     }
   }
 
-  const planLabel = (plan: string) => {
-    if (plan === 'trial') return '30-day free trial'
-    if (plan === 'free') return 'Free'
-    return plan.charAt(0).toUpperCase() + plan.slice(1)
-  }
-
   return (
-    <div style={{ padding: 32, maxWidth: 1000 }}>
+    <div style={{ padding: 32, maxWidth: 800 }}>
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>
           Billing & Plans
         </h1>
         <p style={{ fontSize: 14, color: 'var(--light)' }}>
-          Simple pricing — start free, upgrade when you need more.
+          Simple pricing — free forever for 1-2 dogs, upgrade when you need more.
         </p>
       </div>
 
       {/* Current plan banner */}
       <div style={{
-        background: currentPlan === 'trial' ? 'var(--gold-light)' : 'var(--green-light)',
-        border: `1px solid ${currentPlan === 'trial' ? 'rgba(200,151,31,0.2)' : 'rgba(8,80,65,0.12)'}`,
+        background: isPastDue ? 'var(--gold-light)' : isPlus ? 'var(--green-light)' : 'var(--sand)',
+        border: `1px solid ${isPastDue ? 'rgba(200,151,31,0.3)' : isPlus ? 'rgba(8,80,65,0.12)' : 'var(--border)'}`,
         borderRadius: 12, padding: '14px 20px', marginBottom: 28,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
         <div>
-          <span style={{ fontSize: 14, fontWeight: 600, color: currentPlan === 'trial' ? 'var(--gold)' : 'var(--green)' }}>
-            {currentPlan === 'trial' ? '🎉 ' : '✓ '}Current plan: {planLabel(currentPlan)}
+          <span style={{ fontSize: 14, fontWeight: 600, color: isPastDue ? 'var(--gold)' : isPlus ? 'var(--green)' : 'var(--dark)' }}>
+            {isPastDue ? '⚠️ ' : isPlus ? '✓ ' : '🐾 '}
+            Current plan: {isPlus ? `Plus (${billingInterval === 'annual' ? 'Annual' : 'Monthly'})` : 'Free'}
           </span>
-          {currentPlan === 'trial' && (
+          {isPastDue && (
             <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 2 }}>
-              Your trial includes all features. Choose a plan before it ends.
+              Your last payment failed. Plus access continues for a 7-day grace period — please update your payment method.
             </div>
           )}
         </div>
-        {currentPlan !== 'trial' && (
-          <span style={{ fontSize: 12, color: 'var(--green)', background: '#fff', padding: '4px 12px', borderRadius: 20, fontWeight: 600 }}>
-            Active
-          </span>
-        )}
       </div>
 
       {/* Free tier highlight */}
-      {isOwner && (
+      {isOwner && !isPlus && (
         <div style={{ background: 'var(--green-light)', border: '1px solid rgba(8,80,65,0.12)', borderRadius: 12, padding: '14px 20px', marginBottom: 20, fontSize: 13, color: 'var(--green)' }}>
           🐾 <strong>Pet Owner perk:</strong> iDogs is free forever for up to 2 dogs. No credit card needed.
         </div>
       )}
 
-      {/* SMS Add-on toggle */}
-      <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>📱 SMS Reminders add-on — $3/month</div>
-          <div style={{ fontSize: 13, color: 'var(--light)' }}>Get SMS alerts for vaccine and worming due dates. Available on Basic, Pro and Kennel plans.</div>
+      {/* Monthly/Annual selector */}
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 24 }}>
+        <div style={{ display: 'inline-flex', background: 'var(--sand)', borderRadius: 10, padding: 4 }}>
+          <button
+            onClick={() => setInterval('plus_monthly')}
+            style={{
+              padding: '8px 18px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600,
+              cursor: 'pointer', background: interval === 'plus_monthly' ? '#fff' : 'transparent',
+              color: interval === 'plus_monthly' ? 'var(--dark)' : 'var(--light)',
+              boxShadow: interval === 'plus_monthly' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+            }}
+          >
+            Monthly
+          </button>
+          <button
+            onClick={() => setInterval('plus_annual')}
+            style={{
+              padding: '8px 18px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600,
+              cursor: 'pointer', background: interval === 'plus_annual' ? '#fff' : 'transparent',
+              color: interval === 'plus_annual' ? 'var(--dark)' : 'var(--light)',
+              boxShadow: interval === 'plus_annual' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            Annual
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--green)', background: 'var(--green-light)', padding: '2px 6px', borderRadius: 20 }}>
+              SAVE ~18%
+            </span>
+          </button>
         </div>
-        <button
-          onClick={() => setSmsAddon(!smsAddon)}
-          style={{
-            width: 48, height: 26, borderRadius: 13, flexShrink: 0,
-            background: smsAddon ? 'var(--green)' : 'var(--border)',
-            border: 'none', cursor: 'pointer',
-            position: 'relative', transition: 'background 0.2s',
-          }}
-        >
-          <span style={{
-            position: 'absolute', top: 3,
-            left: smsAddon ? 22 : 4,
-            width: 20, height: 20,
-            background: '#fff', borderRadius: '50%',
-            transition: 'left 0.2s',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-          }} />
-        </button>
       </div>
 
       {/* Plans grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 32 }}>
-        {PLANS.map(plan => {
-          const isCurrentPlan = currentPlan === plan.id || (plan.id === 'free' && currentPlan === 'trial' && isOwner)
-          const isPopular = plan.popular
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 32 }}>
+        {/* Free */}
+        <div style={{ background: '#fff', border: '2px solid var(--border)', borderRadius: 16, padding: 20 }}>
+          <div style={{ fontSize: 24, marginBottom: 6 }}>🐾</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Free</div>
+          <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>Perfect for pet owners with 1-2 dogs</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--dark)', marginBottom: 16 }}>$0</div>
+          <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {FREE_FEATURES.map(f => (
+              <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}>
+                <span style={{ color: 'var(--mid)', flexShrink: 0 }}>✓</span>{f}
+              </li>
+            ))}
+          </ul>
+          <div style={{
+            textAlign: 'center', padding: '9px', background: !isPlus ? 'var(--green-light)' : 'var(--sand)',
+            borderRadius: 10, fontSize: 12, fontWeight: 600, color: !isPlus ? 'var(--green)' : 'var(--mid)',
+          }}>
+            {!isPlus ? '✓ Current plan' : 'Always free'}
+          </div>
+        </div>
 
-          return (
-            <div
-              key={plan.id}
-              style={{
-                background: '#fff',
-                border: `2px solid ${isPopular ? plan.color : 'var(--border)'}`,
-                borderRadius: 16,
-                overflow: 'hidden',
-                position: 'relative',
-                boxShadow: isPopular ? `0 4px 20px ${plan.color}20` : 'none',
-              }}
-            >
-              {isPopular && (
-                <div style={{
-                  background: plan.color, color: '#fff',
-                  fontSize: 11, fontWeight: 700, textAlign: 'center',
-                  padding: '5px', letterSpacing: '0.05em',
-                }}>
-                  MOST POPULAR
-                </div>
-              )}
-
-              <div style={{ padding: '16px 16px 0' }}>
-                <div style={{ fontSize: 24, marginBottom: 6 }}>{plan.icon}</div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>{plan.name}</div>
-                <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>{plan.description}</div>
-
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 4 }}>
-                  {plan.price === 0 ? (
-                    <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: plan.color }}>Free</span>
-                  ) : (
-                    <>
-                      <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: plan.color }}>
-                        ${smsAddon && plan.id !== 'free' ? plan.price + 3 : plan.price}
-                      </span>
-                      <span style={{ fontSize: 12, color: 'var(--light)' }}>AUD/mo</span>
-                    </>
-                  )}
-                </div>
-                {smsAddon && plan.id !== 'free' && (
-                  <div style={{ fontSize: 11, color: 'var(--green)', marginBottom: 8 }}>incl. SMS +$3</div>
-                )}
-
-                <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 16px', display: 'flex', flexDirection: 'column', gap: 7 }}>
-                  {plan.features.map(f => (
-                    <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}>
-                      <span style={{ color: plan.color, flexShrink: 0 }}>✓</span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div style={{ padding: '0 16px 16px' }}>
-                {isCurrentPlan || plan.isFree ? (
-                  <div style={{
-                    textAlign: 'center', padding: '9px',
-                    background: 'var(--green-light)', borderRadius: 10,
-                    fontSize: 12, fontWeight: 600, color: 'var(--green)',
-                  }}>
-                    {isCurrentPlan ? '✓ Current plan' : 'Always free'}
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => handleSubscribe(plan.id)}
-                    disabled={loading !== null}
-                    style={{
-                      width: '100%', padding: '10px',
-                      background: isPopular ? plan.color : 'var(--white)',
-                      color: isPopular ? '#fff' : plan.color,
-                      border: `2px solid ${plan.color}`,
-                      borderRadius: 10, fontSize: 13, fontWeight: 600,
-                      cursor: loading ? 'not-allowed' : 'pointer',
-                      opacity: loading && loading !== plan.id ? 0.5 : 1,
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {loading === plan.id
-                      ? <><span className="spinner" style={{ width: 13, height: 13, borderTopColor: isPopular ? '#fff' : plan.color }} /> Processing…</>
-                      : `Start free — 30 days`}
-                  </button>
-                )}
-              </div>
+        {/* Plus */}
+        <div style={{ background: '#fff', border: '2px solid var(--green)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 4px 20px rgba(8,80,65,0.12)' }}>
+          <div style={{ background: 'var(--green)', color: '#fff', fontSize: 11, fontWeight: 700, textAlign: 'center', padding: 5, letterSpacing: '0.05em' }}>
+            MOST POPULAR
+          </div>
+          <div style={{ padding: 20 }}>
+            <div style={{ fontSize: 24, marginBottom: 6 }}>🏆</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Plus</div>
+            <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>For active breeders with a growing kennel</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>
+                {interval === 'plus_annual' ? '$49' : '$5'}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--light)' }}>{interval === 'plus_annual' ? 'AUD/year' : 'AUD/month'}</span>
             </div>
-          )
-        })}
+            <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 16 }}>
+              {interval === 'plus_annual' ? '≈ $4.08/month, billed annually' : `$${(5 * 12)} AUD/year if paid monthly`}
+            </div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {PLUS_FEATURES.map(f => (
+                <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}>
+                  <span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}
+                </li>
+              ))}
+            </ul>
+            {isPlus ? (
+              <div style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>
+                ✓ Current plan
+              </div>
+            ) : (
+              <button
+                onClick={() => handleSubscribe(interval)}
+                disabled={loading}
+                style={{
+                  width: '100%', padding: '10px', background: 'var(--green)', color: '#fff',
+                  border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                  cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1,
+                }}
+              >
+                {loading
+                  ? <><span className="spinner" style={{ width: 13, height: 13, borderTopColor: '#fff' }} /> Processing…</>
+                  : `Upgrade to Plus — ${interval === 'plus_annual' ? '$49/year' : '$5/month'}`}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Note */}
       <div style={{ background: 'var(--sand)', borderRadius: 12, padding: '14px 20px', marginBottom: 24, fontSize: 13, color: 'var(--mid)' }}>
         🐾 <strong>1-2 dogs?</strong> iDogs is always free — no credit card, no trial, no expiry.
-        SMS reminders available as $3/month add-on on any paid plan.
+        Ownership transfer and your dog's permanent QR Passport are free on every plan.
       </div>
 
       {/* FAQ */}
@@ -301,11 +228,11 @@ export default function BillingPage({ toast }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {[
             { q: 'Is the free plan really free forever?', a: 'Yes — up to 2 dogs is free forever. No credit card required, no expiry.' },
-            { q: 'How does the SMS add-on work?', a: 'Add $3/month to any paid plan to receive SMS alerts for upcoming vaccine and worming due dates on your mobile.' },
-            { q: 'Can I cancel anytime?', a: 'Yes — cancel anytime from your Stripe billing portal. Your data is kept for 30 days after cancellation.' },
-            { q: 'What happens when my trial ends?', a: 'You can continue with a paid plan or downgrade to the free plan (up to 2 dogs). Your data is never deleted.' },
+            { q: 'What happens if I have more than 5 dogs on Plus (or more than 2 on Free)?', a: 'Nothing is ever deleted. Dogs beyond your plan’s limit become read-only — you can still view them, transfer them, and their QR Passport keeps working. You choose which dogs stay active, and can swap at any time.' },
+            { q: 'How do the 10 AI scans/month work?', a: 'Plus includes 10 AI Document Scans every month, resetting on your billing date — whether you’re on Monthly or Annual. Unused scans don’t roll over. Free accounts get 2 scans total, for the life of the account.' },
+            { q: 'Can I cancel anytime?', a: 'Yes — cancel anytime from your billing portal. You keep Plus access until the end of your current billing period, and your data is never deleted.' },
+            { q: 'What if my payment fails?', a: 'You keep full Plus access for 7 days while we retry the payment. After that, your account moves to the Free plan (no data is ever deleted) until payment succeeds.' },
             { q: 'Is my payment secure?', a: 'Yes — payments are processed by Stripe, PCI DSS Level 1 certified. We never store your card details.' },
-            { q: 'Can I upgrade or downgrade?', a: 'Yes — switch plans anytime. Upgrades take effect immediately; downgrades apply at the next billing cycle.' },
           ].map((item, i, arr) => (
             <div key={i} style={{ paddingBottom: i < arr.length - 1 ? 14 : 0, borderBottom: i < arr.length - 1 ? '1px solid var(--sand)' : 'none' }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>{item.q}</div>

@@ -13,6 +13,19 @@
 // Firebase ID token — the email used to match transferred dogs comes
 // from the VERIFIED token claim, not anything the client could spoof.
 //
+// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §4.4, LOCKED):
+// "Transfer is never blocked by the recipient's quota. If the receiving
+// account has no room, the incoming dog arrives with status ==
+// restricted." The claim itself always succeeds regardless of quota —
+// only which claimed dogs land 'active' vs 'restricted' depends on how
+// much cap room the buyer's account has, computed inside the SAME
+// transaction as the claim writes (see api/_lib/dog-cap.js) so a
+// concurrent claim/dog-creation can't race the count. When multiple
+// transferred dogs are claimed in one call, room is filled earliest-
+// transferred-first — an arbitrary but deterministic and defensible tie
+// break, consistent with the earliest-created-stays-active default used
+// everywhere else in this pricing model (§3.3).
+//
 // POST /api/claim-transferred-dogs
 // Headers: Authorization: Bearer <Firebase ID token>
 // Returns: { claimed: number }
@@ -20,6 +33,8 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
+import { capForPlan, getOwnedActiveDogsSorted } from './_lib/dog-cap.js'
+import { computeEffectivePlan } from './_lib/entitlements.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -58,29 +73,25 @@ export default async function handler(req, res) {
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})
   const action = body.action === 'check' ? 'check' : 'claim'
 
+  const db = getFirestore()
+
+  // Match on status === 'transferred' rather than transferStatus ===
+  // 'pendingClaim'. transferDogOwnership() sets BOTH fields on every
+  // new transfer, but production dogs transferred before this
+  // rewrite only ever had `status: 'transferred'` — never
+  // `transferStatus` at all (that field didn't exist yet). Querying
+  // by transferStatus alone would silently orphan every
+  // already-transferred production dog: they'd never appear as
+  // claimable again, with no error and no visible sign anything was
+  // wrong. status is the one field both the old and new transfer
+  // paths always set, so it's the backward-compatible match.
+  const buildQuery = () => db.collection('dogs')
+    .where('buyerEmail', '==', email.toLowerCase())
+    .where('status', '==', 'transferred')
+
   try {
-    const db = getFirestore()
-
-    // Match on status === 'transferred' rather than transferStatus ===
-    // 'pendingClaim'. transferDogOwnership() sets BOTH fields on every
-    // new transfer, but production dogs transferred before this
-    // rewrite only ever had `status: 'transferred'` — never
-    // `transferStatus` at all (that field didn't exist yet). Querying
-    // by transferStatus alone would silently orphan every
-    // already-transferred production dog: they'd never appear as
-    // claimable again, with no error and no visible sign anything was
-    // wrong. status is the one field both the old and new transfer
-    // paths always set, so it's the backward-compatible match.
-    const dogsSnap = await db.collection('dogs')
-      .where('buyerEmail', '==', email.toLowerCase())
-      .where('status', '==', 'transferred')
-      .get()
-
-    if (dogsSnap.empty) {
-      return res.status(200).json({ dogs: [], claimed: 0 })
-    }
-
     if (action === 'check') {
+      const dogsSnap = await buildQuery().get()
       const dogs = []
       dogsSnap.forEach(d => {
         const data = d.data()
@@ -95,22 +106,43 @@ export default async function handler(req, res) {
       return res.status(200).json({ dogs })
     }
 
-    const batch = db.batch()
-    dogsSnap.docs.forEach(d => {
-      batch.update(d.ref, {
-        // tenantId intentionally NOT updated — it must stay as the
-        // original breeder's uid forever so their getDogs() still works.
-        currentOwnerId: uid,
-        status: 'active',
-        transferStatus: FieldValue.delete(),
-        claimedAt: new Date().toISOString(),
-        claimedBy: uid,
-        updatedAt: new Date(),
-      })
-    })
-    await batch.commit()
+    const result = await db.runTransaction(async tx => {
+      // ── Reads first ──
+      const dogsSnap = await tx.get(buildQuery())
+      if (dogsSnap.empty) return { claimed: 0 }
 
-    return res.status(200).json({ claimed: dogsSnap.size })
+      const userRef = db.collection('users').doc(uid)
+      const userSnap = await tx.get(userRef)
+      const profile = userSnap.exists ? userSnap.data() : {}
+      const plan = computeEffectivePlan(profile)
+      const cap = capForPlan(plan)
+      const currentActive = await getOwnedActiveDogsSorted(tx, db, uid)
+      let room = Math.max(0, cap - currentActive.length)
+
+      const claimedDocs = dogsSnap.docs.slice().sort(
+        (a, b) => String(a.data().transferredAt || '').localeCompare(String(b.data().transferredAt || ''))
+      )
+
+      // ── Writes ──
+      const nowIso = new Date().toISOString()
+      for (const d of claimedDocs) {
+        const grantActive = room > 0
+        if (grantActive) room--
+        tx.update(d.ref, {
+          // tenantId intentionally NOT updated — it must stay as the
+          // original breeder's uid forever so their getDogs() still works.
+          currentOwnerId: uid,
+          status: grantActive ? 'active' : 'restricted',
+          transferStatus: FieldValue.delete(),
+          claimedAt: nowIso,
+          claimedBy: uid,
+          updatedAt: nowIso,
+        })
+      }
+      return { claimed: claimedDocs.length }
+    })
+
+    return res.status(200).json({ claimed: result.claimed })
   } catch (err) {
     console.error('claim-transferred-dogs error:', err)
     return res.status(500).json({ error: 'Internal error', message: err.message })

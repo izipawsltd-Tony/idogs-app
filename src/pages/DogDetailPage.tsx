@@ -150,6 +150,7 @@ export default function DogDetailPage({ toast }: Props) {
   const [uploadingNotePhoto, setUploadingNotePhoto] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [statusActionLoading, setStatusActionLoading] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
   const [documents, setDocuments] = useState<any[]>([])
   const [documentsError, setDocumentsError] = useState(false)
@@ -475,6 +476,40 @@ export default function DogDetailPage({ toast }: Props) {
     }
   }
 
+  // iDogs Pricing v1.1 §3.3 — 'activate' (from restricted) and 'restore'
+  // (from archived) both re-check the caller's plan cap server-side
+  // (api/set-dog-status.js, transactional) before promoting a dog back to
+  // 'active'; a 409 here means the account is already at its cap and the
+  // server correctly refused, not a bug.
+  async function handleSetDogStatus(action: 'activate' | 'restore' | 'restrict' | 'archive') {
+    if (!dogId || !user) return
+    setStatusActionLoading(true)
+    try {
+      const idToken = await user.getIdToken()
+      const res = await fetch('/api/set-dog-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ dogId, action }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(body.error || 'Failed to update dog status')
+      }
+      setDog(prev => prev ? { ...prev, status: body.status } as typeof prev : prev)
+      toast(
+        action === 'activate' || action === 'restore'
+          ? `${dog?.name || 'Dog'} is now active`
+          : action === 'restrict'
+            ? `${dog?.name || 'Dog'} moved to restricted`
+            : `${dog?.name || 'Dog'} archived`
+      )
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to update dog status', 'error')
+    } finally {
+      setStatusActionLoading(false)
+    }
+  }
+
   // addVaccineRecord()/updateVaccineRecord() upsert a reminder doc in
   // Firestore immediately, but this page's `reminders` state was only
   // ever loaded once on mount — the Reminders tab count/list stayed
@@ -776,6 +811,14 @@ export default function DogDetailPage({ toast }: Props) {
   })()
   const overdueReminders = reminders.filter(r => r.status === 'overdue' || (r.status === 'pending' && isOverdue(r.dueDate)))
   const isTransferred = ((dog as any).status === 'transferred' || (dog as any).transferStatus === 'pendingClaim') && (dog as any).buyerEmail
+  // iDogs Pricing v1.1 §3.2/§3.3 — 'restricted' (over the account's plan
+  // cap after a downgrade, system-imposed) and 'archived' (a deliberate
+  // user action) are both read-only, distinct reversal paths. Actual
+  // enforcement is server-side (firestore.rules + api/set-dog-status.js);
+  // this banner is the UI signal so the user isn't surprised by a
+  // permission error on their first edit attempt.
+  const isRestricted = (dog as any).status === 'restricted'
+  const isArchived = (dog as any).status === 'archived'
   const todaysMilestone = getTodaysMilestone(dog.dateOfBirth, dog.createdAt)
 
   // Codex round 16: a tab-label count badge is the very first thing a
@@ -825,6 +868,10 @@ export default function DogDetailPage({ toast }: Props) {
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.name}</h1>
             {isTransferred ? (
               <span className="badge badge-gray">Transferred</span>
+            ) : isRestricted ? (
+              <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)' }}>🔒 Restricted</span>
+            ) : isArchived ? (
+              <span className="badge badge-gray">Archived</span>
             ) : (
               <span className="badge badge-green" style={{ fontSize: 11 }}>QR ✓</span>
             )}
@@ -845,6 +892,25 @@ export default function DogDetailPage({ toast }: Props) {
           {isTransferred && (
             <div style={{ marginTop: 8, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', padding: '6px 10px', borderRadius: 8, display: 'inline-block' }}>
               Transferred to <strong>{(dog as any).buyerName}</strong> · {(dog as any).buyerEmail}
+            </div>
+          )}
+          {isRestricted && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>
+                🔒 This dog is over your plan's limit and is read-only — the record, Dog ID, and QR Passport all still work, and it can still be transferred.
+                {' '}<Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>Upgrade to Plus</Link> or activate it in place of another dog.
+              </span>
+              <button className="btn btn-sm" disabled={statusActionLoading} onClick={() => handleSetDogStatus('activate')} style={{ background: '#fff', border: '1px solid rgba(200,151,31,0.4)', color: 'var(--gold)', flexShrink: 0 }}>
+                {statusActionLoading ? <span className="spinner" /> : 'Activate this dog'}
+              </button>
+            </div>
+          )}
+          {isArchived && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', border: '1px solid var(--border)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>📦 This dog is archived — read-only until restored.</span>
+              <button className="btn btn-sm btn-secondary" disabled={statusActionLoading} onClick={() => handleSetDogStatus('restore')}>
+                {statusActionLoading ? <span className="spinner" /> : 'Restore this dog'}
+              </button>
             </div>
           )}
         </div>
