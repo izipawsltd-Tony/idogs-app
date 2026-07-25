@@ -288,6 +288,44 @@ export function isDogTransferred(dog: Pick<Dog, 'status'> & { transferStatus?: s
   return dog.status === 'transferred' || dog.transferStatus === 'pendingClaim'
 }
 
+// Mirrors firestore.rules' dogs/{dogId} `allow delete` rule and
+// api/_lib/litter-eligibility.js's isDogHistoryBearing field-for-field —
+// this repo's established pattern for a Rules-authoritative check that
+// also needs a client-side UI preview (see litter-eligibility.js's own
+// header comment on why these stay hand-synced duplicates rather than a
+// shared cross-runtime import: LittersPage.tsx already keeps its own
+// local copy for exactly this reason). NEVER authoritative — deletion is
+// still enforced by Firestore Rules, unchanged; this only decides
+// whether the UI offers the Delete action and what it tells the user, so
+// a stale client read here is harmless (the server always re-decides
+// fresh). Presence, not truthiness — even an explicit null counts as
+// history, matching the Rule's `'field' in resource.data` semantics; a
+// field simply never having been written is the only "clean" case.
+const DOG_HISTORY_FIELD_NAMES = ['buyerEmail', 'previousOwnerId', 'transferredAt', 'claimedAt', 'claimedBy'] as const
+
+export function isDogHistoryBearing(dog: Record<string, unknown>): boolean {
+  return DOG_HISTORY_FIELD_NAMES.some(field => Object.prototype.hasOwnProperty.call(dog, field))
+}
+
+// Whether the current user could actually delete this dog right now, per
+// the exact same three gates as firestore.rules' dogs delete rule:
+// effective current owner, no transfer in flight, and no ownership-
+// history field present at all. The history check alone is what also
+// catches a CLAIMED dog whose status has already reverted to 'active' —
+// claiming (api/claim-transferred-dogs.js) resets status and clears
+// transferStatus, but buyerEmail/previousOwnerId/transferredAt/
+// claimedAt/claimedBy are permanent provenance and never cleared, so
+// isDogTransferred() alone would wrongly call such a dog deletable.
+// Deliberately a pure function of (dog, userId) only — never touches
+// profile/role state — so its answer can't drift across a role switch or
+// a stale client cache; only fresh dog data changes the outcome.
+export function isDogDeletableByUser(dog: Dog, userId: string): boolean {
+  if (!userId || dog.currentOwnerId !== userId) return false
+  if (isDogTransferred(dog)) return false
+  if (isDogHistoryBearing(dog as unknown as Record<string, unknown>)) return false
+  return true
+}
+
 // The sex-agnostic half of Sire/Dam eligibility — a dog only makes sense
 // as a *current breeder-controlled* breeding pick (regardless of which
 // sex-specific role it's being considered for) if it's living, still

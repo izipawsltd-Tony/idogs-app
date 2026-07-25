@@ -14,7 +14,7 @@ import { useRequestGuard } from '../hooks/useRequestGuard'
 import {
   formatDate, getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS,
   getVaccineStatus, isOverdue, isDueSoon, getTodaysMilestone, ordinal, BREEDER_ID_CONFIG, type Milestone,
-  isEligibleSireDog
+  isEligibleSireDog, isDogTransferred, isDogHistoryBearing, isDogDeletableByUser
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
@@ -455,6 +455,15 @@ export default function DogDetailPage({ toast }: Props) {
 
   async function handleDelete() {
     if (!dogId || !dog) return
+    // Client-side gate only — the button that calls this is itself
+    // disabled when !isDogDeletableByUser(dog, ...), but a stale local
+    // `dog` (e.g. transferred/claimed in another tab since this page
+    // loaded) could still reach this call, so re-check fresh here too.
+    // Firestore Rules remain the sole authority either way.
+    if (!isDogDeletableByUser(dog, user?.uid || '')) {
+      toast("This dog has ownership/transfer history and can't be deleted — try Archive instead, or refresh the page.", 'error')
+      return
+    }
     if (!confirm(`Delete ${dog.name}? This cannot be undone.`)) return
     setDeleting(true)
     try {
@@ -470,8 +479,21 @@ export default function DogDetailPage({ toast }: Props) {
       })
       toast(`${dog.name} deleted`)
       navigate('/app/dogs')
-    } catch {
-      toast('Failed to delete', 'error')
+    } catch (err) {
+      // Codex: a bare "Failed to delete" gave no signal when the real
+      // cause was Firestore Rules' own permanent transfer-history
+      // protection (see firestore.rules' dogs delete rule) — which the
+      // button above should already prevent reaching this catch at all,
+      // but a stale client read or a rules change elsewhere could still
+      // land here. Distinguish that specific, expected-by-design denial
+      // from a genuine unexpected failure.
+      const code = safeReadFirestoreErrorCode(err)
+      toast(
+        code === 'permission-denied'
+          ? "Couldn't delete — this dog has ownership/transfer history that permanently protects it from deletion. Try Archive instead, or refresh the page if this dog's status just changed."
+          : 'Failed to delete — please try again',
+        'error'
+      )
       setDeleting(false)
     }
   }
@@ -819,6 +841,37 @@ export default function DogDetailPage({ toast }: Props) {
   // permission error on their first edit attempt.
   const isRestricted = (dog as any).status === 'restricted'
   const isArchived = (dog as any).status === 'archived'
+
+  // Delete visibility/guidance (bug fix): firestore.rules' dogs delete
+  // rule permanently denies deletion of ANY dog carrying transfer/claim
+  // history, regardless of current status — see isDogDeletableByUser()'s
+  // own comment in src/lib/utils.ts for why isTransferred/isArchived
+  // alone can't detect this (a claimed dog's status reverts to 'active').
+  // isCurrentEffectiveOwner gates visibility entirely: a former breeder
+  // viewing a dog claimed by someone else has currentOwnerId pointing at
+  // the buyer now, and has no dog-management actions available here at
+  // all (view-only) — Delete is hidden outright rather than shown
+  // disabled, since there's nothing to explain beyond the existing
+  // "Transferred to X" banner above.
+  const isCurrentEffectiveOwner = dog.currentOwnerId === user?.uid
+  const dogIsMidTransfer = isDogTransferred(dog)
+  const dogHasPermanentHistory = isDogHistoryBearing(dog as unknown as Record<string, unknown>)
+  const canDeleteDog = isCurrentEffectiveOwner && !dogIsMidTransfer && !dogHasPermanentHistory
+  const deleteBlockedReason = !isCurrentEffectiveOwner
+    ? undefined
+    : dogIsMidTransfer
+      ? 'This dog has a pending transfer and cannot be deleted until it is claimed or the transfer is cancelled.'
+      : dogHasPermanentHistory
+        ? "This dog has permanent ownership/transfer history and can't be deleted — that record is part of its compliance audit trail. Archive it instead to shelve it (reversible anytime)."
+        : undefined
+  // Archiving is a real, already-working alternative here (api/set-dog-
+  // status.js's archive action accepts status 'active'/'restricted' —
+  // unlike delete, it does NOT check the history fields at all, since
+  // archiving never erases anything) — but only when it would actually
+  // succeed: not mid-transfer (the endpoint explicitly 409s on that) and
+  // not already archived (that state already has its own Restore banner
+  // below).
+  const canOfferArchiveInsteadOfDelete = isCurrentEffectiveOwner && dogHasPermanentHistory && !dogIsMidTransfer && !isArchived
   const todaysMilestone = getTodaysMilestone(dog.dateOfBirth, dog.createdAt)
 
   // Codex round 16: a tab-label count badge is the very first thing a
@@ -913,6 +966,14 @@ export default function DogDetailPage({ toast }: Props) {
               </button>
             </div>
           )}
+          {canOfferArchiveInsteadOfDelete && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', border: '1px solid var(--border)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>🔒 This dog has permanent ownership/transfer history, so it can't be deleted — that record is part of its compliance audit trail. You can archive it instead to shelve it (reversible anytime).</span>
+              <button className="btn btn-sm btn-secondary" disabled={statusActionLoading} onClick={() => handleSetDogStatus('archive')}>
+                {statusActionLoading ? <span className="spinner" /> : '📦 Archive this dog'}
+              </button>
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">View passport ↗</a>
@@ -925,14 +986,22 @@ export default function DogDetailPage({ toast }: Props) {
               🔄 Transfer
             </button>
           )}
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            className="btn btn-sm"
-            style={{ background: 'var(--redL, #FDEDED)', color: 'var(--error)', border: '1px solid #F3B0B0' }}
-          >
-            {deleting ? <span className="spinner" /> : '🗑 Delete'}
-          </button>
+          {isCurrentEffectiveOwner && (
+            <button
+              onClick={canDeleteDog ? handleDelete : undefined}
+              disabled={deleting || !canDeleteDog}
+              title={deleteBlockedReason}
+              className="btn btn-sm"
+              style={{
+                background: canDeleteDog ? 'var(--redL, #FDEDED)' : '#F0EFED',
+                color: canDeleteDog ? 'var(--error)' : 'var(--light)',
+                border: `1px solid ${canDeleteDog ? '#F3B0B0' : 'var(--border)'}`,
+                cursor: canDeleteDog ? 'pointer' : 'not-allowed',
+              }}
+            >
+              {deleting ? <span className="spinner" /> : '🗑 Delete'}
+            </button>
+          )}
         </div>
       </div>
 
