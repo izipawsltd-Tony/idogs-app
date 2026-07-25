@@ -79,29 +79,24 @@ check(
   (files.landing.match(/PDF, JPG and PNG document support/g) || []).length === 2
 )
 
-// ── Guarantee / cancel-anytime NOT published yet (deliberate, see file header) ──
+// ── Guarantee / cancel-anytime / billing-portal NOT published yet (deliberate, see file header) ──
+//
+// Round 2: BillingPage.tsx's own FAQ used to claim "cancel anytime from
+// your billing portal" — the same unsupported claim as everywhere else,
+// just missed in the first pass because "cancel anytime" wasn't checked
+// against billing.tsx and "billing portal" wasn't checked at all. Both
+// gaps are closed below so this specific claim (or the general shape of
+// it — any Stripe Billing Portal / self-service "manage subscription"
+// promise) cannot silently return in any of these files while self-service
+// cancellation still doesn't exist.
 
+for (const [name, source] of Object.entries(files)) {
+  check(`${name}.tsx does not claim "cancel anytime"`, !/cancel anytime/i.test(source))
+  check(`${name}.tsx does not reference a "billing portal"`, !/billing portal/i.test(source))
+}
 check(
   'No page publishes "money-back guarantee" copy this round (self-service cancellation does not exist yet)',
   Object.values(files).every(source => !/money-back guarantee/i.test(source))
 )
-check(
-  'LandingPage.tsx no longer claims "cancel anytime" anywhere on the page (pricing section or final CTA strip)',
-  !/cancel anytime/i.test(files.landing)
-)
-check(
-  'SignupPage.tsx does not claim "cancel anytime"',
-  !/cancel anytime/i.test(files.signup)
-)
-check(
-  'LoginPage.tsx does not claim "cancel anytime"',
-  !/cancel anytime/i.test(files.login)
-)
-// NOTE: BillingPage.tsx's existing FAQ ("cancel anytime from your billing
-// portal") is deliberately left untouched this round — it predates this
-// task and isn't one of the 5 prohibited trial phrases in scope. It is the
-// SAME underlying false claim (no billing portal exists) and should be
-// fixed together with the Stripe Billing Portal prerequisite work — see
-// the final report, not asserted against here.
 
 await summary()
