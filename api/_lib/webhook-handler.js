@@ -308,18 +308,36 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
             subscriptionStatus: subscription.status,
             stripeSubscriptionId: session.subscription,
             billingInterval: interval,
-            planActivatedAt: nowIso,
             pastDueSince: null,
             ...subscriptionTrackingFields(profile, session.subscription, event.created, eventCustomerId),
             // First period for AI-scan quota purposes — §3.1 "On upgrade
             // to Plus, 10 scans granted immediately for the first period".
-            // Codex H1 (round 2): this reset only ever lands ONCE per
-            // genuine checkout completion now — runFencedTransaction
-            // guarantees a reclaimed (fenced-out) duplicate invocation of
-            // THIS SAME event can never reach this write a second time.
             scanPeriodAnchorDay: subscriptionStartAnchorDay(subscription),
-            plusScansUsed: 0,
-            plusScansPeriodStart: nowIso,
+            // Codex H1 (round 3): lease-token fencing only prevents a
+            // CONCURRENT duplicate application of this event within one
+            // lease — it does NOT (and structurally cannot) make a
+            // SEQUENTIAL retry across leases idempotent on its own. If
+            // this event's effects already committed once but the
+            // completion-marking write then failed (crash, timeout, cold
+            // start eviction — claimEvent's 'failed' status is always
+            // retriable by design), Stripe redelivers the SAME event,
+            // and by then the user may have legitimately consumed scans.
+            // evaluation.isNewSubscription (evaluateSubscriptionEvent)
+            // is exactly the signal that distinguishes "this subscription
+            // has never been the account's current one before" (a
+            // genuine first activation, or a legitimate A-to-B
+            // replacement) from "this subscription is ALREADY current"
+            // (a retry of an event whose effects already landed). Only a
+            // genuine new activation may initialize these three fields —
+            // a retry must preserve whatever quota state has evolved
+            // since, and the ORIGINAL activation timestamp, not silently
+            // reset them. Omitting the keys entirely (not writing them at
+            // all) relies on tx.set's merge:true to leave the existing
+            // stored values untouched, exactly as if this write never
+            // happened for these three fields.
+            ...(evaluation.isNewSubscription
+              ? { planActivatedAt: nowIso, plusScansUsed: 0, plusScansPeriodStart: nowIso }
+              : {}),
           }, { merge: true })
         })
         return

@@ -123,7 +123,7 @@ await checkAsync('a FAILED event is retriable on redelivery — the second, succ
   return first.status === 500 && second.status === 200 && user.plan === 'plus' && calls.getSubscription.length === 2
 })
 
-await checkAsync('a genuine failure AFTER effects have already committed (but before completion could be marked) still marks the event failed, not completed — effects are NOT rolled back (separate transactions), and a retry then completes cleanly without re-duplicating anything', async () => {
+await checkAsync('Codex H1 round 3 regression: a genuine failure AFTER checkout effects have already committed, then a redelivery of the SAME event, still marks the event failed->completed and refreshes tracking fields — but does NOT re-zero plusScansUsed/plusScansPeriodStart, and does NOT reset planActivatedAt, once the user has legitimately consumed scans in between', async () => {
   const seeded = createFakeFirestore()
   let txCallCount = 0
   const wrappedDb = {
@@ -146,20 +146,46 @@ await checkAsync('a genuine failure AFTER effects have already committed (but be
     now: () => new Date('2026-07-24T00:00:00Z'),
   })
   const event = checkoutEvent({ evtId: 'evt_late_fail' })
+
+  // ── 1-2: first delivery commits effects, then fails before completion ──
   const res = await fire(process, event)
   const userAfterFailure = (await seeded.collection('users').doc('user-1').get()).data()
   const storedAfterFailure = (await seeded.collection('processedStripeEvents').doc('evt_late_fail').get()).data()
-  check('The effect (plan grant) DID commit despite the later failure — separate transactions, no rollback of the first', userAfterFailure?.plan === 'plus')
+  check('The effect (plan grant + fresh quota) DID commit despite the later failure — separate transactions, no rollback of the first', userAfterFailure?.plan === 'plus' && userAfterFailure?.plusScansUsed === 0)
   check('The event is marked failed, not completed', res.status === 500 && storedAfterFailure.status === 'failed')
+  const originalPlanActivatedAt = userAfterFailure.planActivatedAt
+  const originalPeriodStart = userAfterFailure.plusScansPeriodStart
+  check('planActivatedAt and plusScansPeriodStart were recorded on the genuine first activation', typeof originalPlanActivatedAt === 'string' && typeof originalPeriodStart === 'string')
 
-  // Retry: claimEvent reclaims the 'failed' event immediately (no
-  // staleness wait needed for a failed status), applyEvent runs again —
-  // the effect write is idempotent (an absolute `plan: 'plus'` set, not
-  // an increment), so re-applying it is harmless, and this time
-  // completion is NOT interrupted.
+  // ── 3: the user consumes AI scans before Stripe redelivers ──
+  await seeded.collection('users').doc('user-1').set({ plusScansUsed: 4 }, { merge: true })
+
+  // ── 4-5: Stripe redelivers the exact same event ──
   const retryRes = await fire(process, event)
   const storedAfterRetry = (await seeded.collection('processedStripeEvents').doc('evt_late_fail').get()).data()
-  return retryRes.status === 200 && storedAfterRetry.status === 'completed'
+  const userAfterRetry = (await seeded.collection('users').doc('user-1').get()).data()
+
+  // ── 6: assertions ──
+  check('plusScansUsed remains 4 — NOT reset back to 0 by the retry', userAfterRetry.plusScansUsed === 4, `got ${userAfterRetry.plusScansUsed}`)
+  check('plusScansPeriodStart is unchanged from the original activation', userAfterRetry.plusScansPeriodStart === originalPeriodStart)
+  check('planActivatedAt is unchanged from the original activation', userAfterRetry.planActivatedAt === originalPlanActivatedAt)
+  check('plan remains plus', userAfterRetry.plan === 'plus')
+  check('the event becomes completed on the retry', retryRes.status === 200 && storedAfterRetry.status === 'completed')
+  // Tracking/status fields still legitimately refresh on the retry (not
+  // frozen entirely — only the quota-initialization fields are guarded).
+  check('subscriptionStatus/billingInterval/stripeSubscriptionId still refresh normally on the retry (only quota-init fields are guarded, not the whole write)', userAfterRetry.subscriptionStatus === 'active' && userAfterRetry.billingInterval === 'monthly' && userAfterRetry.stripeSubscriptionId === 'sub_1')
+  return true
+})
+
+await checkAsync('a genuinely NEW replacement subscription (A-to-B) still initializes a fresh quota period exactly once — the round-3 guard does not block legitimate new activations', async () => {
+  const seeded = createFakeFirestore({
+    users: { 'user-1': { plan: 'free', stripeSubscriptionId: null, stripeCustomerId: 'cus_A', lastKnownSubscriptionId: 'sub_A', subscriptionEventTimestamps: { sub_A: 100 }, plusScansUsed: 7 /* leftover from the old, now-canceled subscription — must NOT carry over */ } },
+  })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_B: subFixture({ id: 'sub_B', customer: 'cus_B' }) } })
+  const res = await fire(process, checkoutEvent({ evtId: 'evt_new_sub_b', subscriptionId: 'sub_B', created: 500, customer: 'cus_B' }))
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  return res.status === 200 && user.plan === 'plus' && user.stripeSubscriptionId === 'sub_B' &&
+    user.plusScansUsed === 0 && typeof user.plusScansPeriodStart === 'string' && typeof user.planActivatedAt === 'string'
 })
 
 await checkAsync('a completed event redelivered is a true no-op duplicate — no re-processing, Stripe API not called again', async () => {
