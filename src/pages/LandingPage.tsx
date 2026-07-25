@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import {
+  PLUS_MONTHLY_PRICE_AUD,
+  PLUS_ANNUAL_PRICE_AUD,
+  DOG_CAP_FREE,
+  DOG_CAP_PLUS,
+  SCAN_QUOTA_FREE_LIFETIME,
+  SCAN_QUOTA_PLUS_MONTHLY,
+} from '../lib/pricingCopy'
 
 // ── FEATURE FLAGS ──────────────────────────────────────────────
 // Set SHOW_SOCIAL_PROOF = true when real data is available
@@ -274,9 +282,9 @@ export default function LandingPage() {
 
           <div style={{ textAlign: 'center' }}>
             <button onClick={() => navigate('/signup')} className="btn btn-primary" style={{ fontSize: 16, padding: '16px 40px', borderRadius: 12, height: 'auto' }}>
-              Start Free for 30 Days →
+              Get Started Free →
             </button>
-            <p style={{ fontSize: 13, color: 'var(--light)', marginTop: 12 }}>Free forever for 1-2 dogs · Paid plans from $5/month</p>
+            <p style={{ fontSize: 13, color: 'var(--light)', marginTop: 12 }}>Free forever for 1-2 dogs · Plus from ${PLUS_MONTHLY_PRICE_AUD}/month</p>
           </div>
         </div>
       </section>
@@ -411,15 +419,63 @@ export default function LandingPage() {
         <div style={{ maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
           <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12 }}>Pricing</div>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(26px,4vw,40px)', fontWeight: 600, color: 'var(--dark)', marginBottom: 12, letterSpacing: '-0.02em' }}>Simple, transparent pricing</h2>
-          <p style={{ fontSize: 16, color: 'var(--mid)', maxWidth: 500, margin: '0 auto 48px' }}>30-day free trial on all plans. No credit card required. Cancel anytime.</p>
-          <div className="pricing-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12, maxWidth: 1000, margin: '0 auto 24px' }}>
-            <PricingCard plan="Free" price={0} desc="Pet owners with 1-2 dogs" features={['Up to 2 dogs — forever free','QR Passport for each dog','Vaccination & health records','Email reminders','Public passport page']} onStart={() => navigate('/signup')} isFree />
-            <PricingCard plan="Basic" price={5} desc="Casual breeders & growing families" features={['Up to 10 dogs','Everything in Free','AI Document Scan','Document storage','Export PDF & CSV','Ownership transfer']} onStart={() => navigate('/signup')} />
-            <PricingCard plan="Pro" price={12} desc="Active breeders & growing kennels" featured features={['Up to 20 dogs','Everything in Basic','Litter management','Audit trail','SMS reminders +$3/mo','Priority support']} onStart={() => navigate('/signup')} />
-            <PricingCard plan="Kennel" price={29} desc="Professional kennels" features={['Unlimited dogs','Everything in Pro','Full compliance export','Multi-litter management','Advanced audit trail','Priority support']} onStart={() => navigate('/signup')} />
+          <p style={{ fontSize: 16, color: 'var(--mid)', maxWidth: 500, margin: '0 auto 48px' }}>Free forever for 1-2 dogs. Upgrade to Plus anytime — no trial, no lock-in, cancel anytime.</p>
+          <div className="pricing-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 16, maxWidth: 980, margin: '0 auto 24px' }}>
+            <PricingCard
+              plan="Free"
+              priceLabel="$0"
+              priceSub="Forever free"
+              desc="Pet owners with 1-2 dogs"
+              features={[
+                `Up to ${DOG_CAP_FREE} dogs`,
+                'Permanent Dog ID & QR Passport',
+                'Health records',
+                'Email reminders',
+                'Ownership transfer',
+                `${SCAN_QUOTA_FREE_LIFETIME} AI Document Scans total`,
+                'No PDF/CSV export',
+              ]}
+              ctaLabel="Get started free →"
+              onStart={() => navigate('/signup')}
+              isFree
+            />
+            <PricingCard
+              plan="Plus Monthly"
+              priceLabel={`$${PLUS_MONTHLY_PRICE_AUD}`}
+              priceSub="AUD / month"
+              desc="Active breeders & growing kennels"
+              features={[
+                `Up to ${DOG_CAP_PLUS} dogs`,
+                'Everything in Free',
+                `${SCAN_QUOTA_PLUS_MONTHLY} AI Document Scans / month`,
+                'Document storage',
+                'PDF & CSV report export',
+                'PDF, JPG and PNG document support',
+              ]}
+              ctaLabel="Choose Plus Monthly →"
+              onStart={() => navigate('/signup')}
+            />
+            <PricingCard
+              plan="Plus Annual"
+              priceLabel={`$${PLUS_ANNUAL_PRICE_AUD}`}
+              priceSub="AUD / year"
+              desc="Same Plus features, billed once a year"
+              badge={`Save ~${Math.round((1 - PLUS_ANNUAL_PRICE_AUD / (PLUS_MONTHLY_PRICE_AUD * 12)) * 100)}%`}
+              features={[
+                `Up to ${DOG_CAP_PLUS} dogs`,
+                'Everything in Free',
+                `${SCAN_QUOTA_PLUS_MONTHLY} AI Document Scans / month`,
+                'Document storage',
+                'PDF & CSV report export',
+                'PDF, JPG and PNG document support',
+              ]}
+              ctaLabel="Choose Plus Annual →"
+              onStart={() => navigate('/signup')}
+              featured
+            />
           </div>
-          <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>All prices in AUD · Paid plans include 30-day free trial · Cancel anytime</p>
-          <p style={{ fontSize: 12, color: 'var(--mid)' }}>🐾 <strong>1-2 dogs?</strong> iDogs is free forever — no credit card, no expiry. · 📱 SMS reminders available as $3/month add-on.</p>
+          <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>All prices in AUD · No trial · Cancel anytime</p>
+          <p style={{ fontSize: 12, color: 'var(--mid)' }}>🐾 <strong>1-2 dogs?</strong> iDogs is free forever — no credit card, no expiry.</p>
         </div>
       </section>
 
@@ -511,7 +567,7 @@ export default function LandingPage() {
               { q: "Can my vet or the new owner access my dog's records?", a: "The QR Passport is publicly accessible (no login required) showing vaccine status and basic health info. Full records are only accessible to the dog's registered owner." },
               { q: "What happens to my data if I cancel?", a: "Your data is kept for 30 days after cancellation. You can export everything as PDF or CSV before leaving. We never delete your dogs' stories without notice." },
               { q: "Can I migrate from Excel or another system?", a: "Yes — you can manually add records or use our AI Document Scan to photograph existing paperwork. Most breeders are fully migrated within a day." },
-              { q: "Is the 30-day trial really free?", a: "Yes — no credit card required. You get full access to all features for 30 days. After that, choose a plan or your account switches to read-only." },
+              { q: "Is the Free plan really free forever?", a: "Yes — up to 2 dogs is free forever, no credit card required, no expiry. Upgrade to Plus anytime if you need more dogs or AI scans." },
             ].map((item, i, arr) => (
               <div key={i} style={{ padding: '20px 0', borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>{item.q}</div>
@@ -526,7 +582,7 @@ export default function LandingPage() {
       <section style={{ background: 'var(--green)', padding: '100px 24px' }}>
         <div style={{ maxWidth: 700, margin: '0 auto', textAlign: 'center' }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(28px,5vw,48px)', fontWeight: 600, color: '#fff', lineHeight: 1.15, letterSpacing: '-0.03em', marginBottom: 16 }}>Give every dog a passport today.</h2>
-          <p style={{ fontSize: 17, color: 'rgba(255,255,255,0.7)', marginBottom: 40, lineHeight: 1.6 }}>Start free for 30 days. No credit card. Your dogs' stories start the moment you sign up.</p>
+          <p style={{ fontSize: 17, color: 'rgba(255,255,255,0.7)', marginBottom: 40, lineHeight: 1.6 }}>Free forever for 1-2 dogs. No credit card required. Your dogs' stories start the moment you sign up.</p>
           <button onClick={() => navigate('/signup')} style={{ height: 54, padding: '0 36px', borderRadius: 12, background: 'var(--dark)', color: '#fff', fontSize: 16, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)' }}>
             Create Your Dog's Passport Free →
           </button>
@@ -699,9 +755,9 @@ function PhoneMockup() {
   )
 }
 
-function PricingCard({ plan, desc, price, features, featured, isFree, onStart }: {
-  plan: string; desc: string; price: number;
-  features: string[]; featured?: boolean; isFree?: boolean; onStart: () => void
+function PricingCard({ plan, desc, priceLabel, priceSub, badge, features, featured, isFree, ctaLabel, onStart }: {
+  plan: string; desc: string; priceLabel: string; priceSub: string; badge?: string;
+  features: string[]; featured?: boolean; isFree?: boolean; ctaLabel: string; onStart: () => void
 }) {
   return (
     <div style={{
@@ -712,24 +768,19 @@ function PricingCard({ plan, desc, price, features, featured, isFree, onStart }:
       boxShadow: featured ? '0 8px 32px rgba(8,80,65,0.12)' : 'none',
     }}>
       {featured && (
-        <div style={{ position: 'absolute', top: -13, left: '50%', transform: 'translateX(-50%)', background: 'var(--green)', color: '#fff', fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: 20, whiteSpace: 'nowrap', letterSpacing: '.04em' }}>Most popular</div>
+        <div style={{ position: 'absolute', top: -13, left: '50%', transform: 'translateX(-50%)', background: 'var(--green)', color: '#fff', fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: 20, whiteSpace: 'nowrap', letterSpacing: '.04em' }}>Best value</div>
       )}
       <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 4 }}>{plan}</div>
       <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 16 }}>{desc}</div>
-      {isFree ? (
-        <div style={{ marginBottom: 16 }}>
-          <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--mid)' }}>Free</span>
-          <div style={{ fontSize: 12, color: 'var(--green)', background: 'var(--green-light)', padding: '3px 10px', borderRadius: 20, display: 'inline-block', marginTop: 6, fontWeight: 500, marginLeft: 8 }}>forever</div>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: isFree ? 'var(--mid)' : featured ? 'var(--green)' : 'var(--dark)' }}>{priceLabel}</span>
+          <span style={{ fontSize: 13, color: 'var(--light)' }}>{priceSub}</span>
         </div>
-      ) : (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 6 }}>
-            <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: featured ? 'var(--green)' : 'var(--dark)' }}>${price}</span>
-            <span style={{ fontSize: 13, color: 'var(--light)' }}>AUD/month</span>
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--gold)', background: 'var(--gold-light)', padding: '3px 10px', borderRadius: 20, display: 'inline-block', fontWeight: 500 }}>🎉 30 days free — no card</div>
-        </div>
-      )}
+        {badge && (
+          <div style={{ fontSize: 12, color: 'var(--green)', background: 'var(--green-light)', padding: '3px 10px', borderRadius: 20, display: 'inline-block', fontWeight: 500 }}>{badge}</div>
+        )}
+      </div>
       <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, margin: '0 0 24px' }}>
         {features.map(f => (
           <li key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, fontSize: 13, color: 'var(--mid)', lineHeight: 1.4 }}>
@@ -747,7 +798,7 @@ function PricingCard({ plan, desc, price, features, featured, isFree, onStart }:
         border: isFree ? '1.5px solid var(--border)' : featured ? 'none' : '1.5px solid var(--green)',
         cursor: 'pointer',
         transition: 'all 0.15s',
-      }}>{isFree ? 'Get started free →' : 'Start free trial →'}</button>
+      }}>{ctaLabel}</button>
     </div>
   )
 }

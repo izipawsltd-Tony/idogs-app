@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useSearchParams } from 'react-router-dom'
 import type { ToastMessage } from '../types'
+import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -179,12 +180,14 @@ export default function BillingPage({ toast }: Props) {
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>For active breeders with a growing kennel</div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
               <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>
-                {interval === 'plus_annual' ? '$49' : '$5'}
+                {interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}
               </span>
               <span style={{ fontSize: 12, color: 'var(--light)' }}>{interval === 'plus_annual' ? 'AUD/year' : 'AUD/month'}</span>
             </div>
             <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 16 }}>
-              {interval === 'plus_annual' ? '≈ $4.08/month, billed annually' : `$${(5 * 12)} AUD/year if paid monthly`}
+              {interval === 'plus_annual'
+                ? `≈ $${(PLUS_ANNUAL_PRICE_AUD / 12).toFixed(2)}/month, billed annually`
+                : `$${PLUS_MONTHLY_PRICE_AUD * 12} AUD/year if paid monthly`}
             </div>
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               {PLUS_FEATURES.map(f => (
@@ -209,7 +212,7 @@ export default function BillingPage({ toast }: Props) {
               >
                 {loading
                   ? <><span className="spinner" style={{ width: 13, height: 13, borderTopColor: '#fff' }} /> Processing…</>
-                  : `Upgrade to Plus — ${interval === 'plus_annual' ? '$49/year' : '$5/month'}`}
+                  : `Upgrade to Plus — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}
               </button>
             )}
           </div>
