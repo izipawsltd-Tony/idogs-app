@@ -161,6 +161,8 @@ const protectedFields = [
   // Codex H5 — out-of-order Stripe event ownership tracking.
   'lastKnownSubscriptionId',
   'subscriptionEventTimestamps',
+  // Codex H1 (round 4) — quota-initialization ownership marker.
+  'plusScansSubscriptionId',
 ]
 
 for (const field of protectedFields) {

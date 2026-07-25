@@ -248,7 +248,14 @@ service cloud.firestore {
         // staleness guard into accepting a stale or forged event as
         // current, or into rejecting a legitimate one.
         'lastKnownSubscriptionId',
-        'subscriptionEventTimestamps'
+        'subscriptionEventTimestamps',
+        // Codex H1 (round 4) — quota-initialization ownership marker. A
+        // client that could set this to an arbitrary value could trick
+        // the webhook handler into treating its NEXT legitimate event as
+        // a "genuine new activation" and re-zeroing plusScansUsed on
+        // demand — this field must be exactly as protected as
+        // plusScansUsed itself.
+        'plusScansSubscriptionId'
       ];
     }
 

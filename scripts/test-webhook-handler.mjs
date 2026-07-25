@@ -153,6 +153,7 @@ await checkAsync('Codex H1 round 3 regression: a genuine failure AFTER checkout 
   const storedAfterFailure = (await seeded.collection('processedStripeEvents').doc('evt_late_fail').get()).data()
   check('The effect (plan grant + fresh quota) DID commit despite the later failure — separate transactions, no rollback of the first', userAfterFailure?.plan === 'plus' && userAfterFailure?.plusScansUsed === 0)
   check('The event is marked failed, not completed', res.status === 500 && storedAfterFailure.status === 'failed')
+  check('plusScansSubscriptionId marker was set to sub_1 on the genuine first activation', userAfterFailure.plusScansSubscriptionId === 'sub_1')
   const originalPlanActivatedAt = userAfterFailure.planActivatedAt
   const originalPeriodStart = userAfterFailure.plusScansPeriodStart
   check('planActivatedAt and plusScansPeriodStart were recorded on the genuine first activation', typeof originalPlanActivatedAt === 'string' && typeof originalPeriodStart === 'string')
@@ -169,6 +170,7 @@ await checkAsync('Codex H1 round 3 regression: a genuine failure AFTER checkout 
   check('plusScansUsed remains 4 — NOT reset back to 0 by the retry', userAfterRetry.plusScansUsed === 4, `got ${userAfterRetry.plusScansUsed}`)
   check('plusScansPeriodStart is unchanged from the original activation', userAfterRetry.plusScansPeriodStart === originalPeriodStart)
   check('planActivatedAt is unchanged from the original activation', userAfterRetry.planActivatedAt === originalPlanActivatedAt)
+  check('plusScansSubscriptionId marker is unchanged (still sub_1) after the retry — round 4: the marker itself is never corrupted or re-derived by a retry', userAfterRetry.plusScansSubscriptionId === 'sub_1')
   check('plan remains plus', userAfterRetry.plan === 'plus')
   check('the event becomes completed on the retry', retryRes.status === 200 && storedAfterRetry.status === 'completed')
   // Tracking/status fields still legitimately refresh on the retry (not
@@ -179,13 +181,171 @@ await checkAsync('Codex H1 round 3 regression: a genuine failure AFTER checkout 
 
 await checkAsync('a genuinely NEW replacement subscription (A-to-B) still initializes a fresh quota period exactly once — the round-3 guard does not block legitimate new activations', async () => {
   const seeded = createFakeFirestore({
-    users: { 'user-1': { plan: 'free', stripeSubscriptionId: null, stripeCustomerId: 'cus_A', lastKnownSubscriptionId: 'sub_A', subscriptionEventTimestamps: { sub_A: 100 }, plusScansUsed: 7 /* leftover from the old, now-canceled subscription — must NOT carry over */ } },
+    users: { 'user-1': { plan: 'free', stripeSubscriptionId: null, stripeCustomerId: 'cus_A', lastKnownSubscriptionId: 'sub_A', subscriptionEventTimestamps: { sub_A: 100 }, plusScansSubscriptionId: 'sub_A', plusScansUsed: 7 /* leftover from the old, now-canceled subscription — must NOT carry over */ } },
   })
   const { process } = makeHandler({ db: seeded, subscriptions: { sub_B: subFixture({ id: 'sub_B', customer: 'cus_B' }) } })
   const res = await fire(process, checkoutEvent({ evtId: 'evt_new_sub_b', subscriptionId: 'sub_B', created: 500, customer: 'cus_B' }))
   const user = (await seeded.collection('users').doc('user-1').get()).data()
   return res.status === 200 && user.plan === 'plus' && user.stripeSubscriptionId === 'sub_B' &&
+    user.plusScansSubscriptionId === 'sub_B' &&
     user.plusScansUsed === 0 && typeof user.plusScansPeriodStart === 'string' && typeof user.planActivatedAt === 'string'
+})
+
+// ── H1 (round 4): plusScansSubscriptionId quota-ownership marker ──────
+// Round 3's evaluation.isNewSubscription (derived from
+// lastKnownSubscriptionId) broke when Stripe delivers
+// customer.subscription.updated(active) for a brand-new subscription B
+// BEFORE B's own checkout.session.completed: the updated(active) event
+// already makes B "current" (lastKnownSubscriptionId = B) without
+// touching quota (deliberate, for Monthly<->Annual switching), so the
+// later checkout event sees isNewSubscription: false and never
+// initializes B's quota either — B silently inherits whatever
+// usage/timestamps the RETIRED subscription A left behind. These tests
+// exercise the plusScansSubscriptionId marker fix directly, in both
+// possible delivery orders, plus the specific edge cases called out in
+// the round-4 task.
+
+await checkAsync('[order 1] subscription.updated(active B) arrives BEFORE checkout(B): the update event initializes B, the later checkout preserves it', async () => {
+  const seeded = createFakeFirestore({
+    users: {
+      'user-1': {
+        plan: 'plus', stripeSubscriptionId: 'sub_A', stripeCustomerId: 'cus_A',
+        lastKnownSubscriptionId: 'sub_A', subscriptionEventTimestamps: { sub_A: 100 },
+        plusScansSubscriptionId: 'sub_A', plusScansUsed: 9,
+        plusScansPeriodStart: '2026-01-01T00:00:00.000Z', planActivatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_B: subFixture({ id: 'sub_B', customer: 'cus_B' }) }, nowFn: () => new Date('2026-07-24T00:00:00Z') })
+
+  // subscription.updated(active) for B arrives first.
+  const updateRes = await fire(process, subUpdatedEvent({ evtId: 'evt_order1_update', subscription: subFixture({ id: 'sub_B', status: 'active', customer: 'cus_B' }), created: 500 }))
+  const afterUpdate = (await seeded.collection('users').doc('user-1').get()).data()
+  check('[order 1] the update event alone correctly initializes B\'s quota (marker was sub_A, now sub_B)', updateRes.status === 200 && afterUpdate.plusScansSubscriptionId === 'sub_B' && afterUpdate.plusScansUsed === 0)
+  check('[order 1] A\'s leftover usage (9) does not survive into B\'s fresh period', afterUpdate.plusScansUsed !== 9)
+  const bPeriodStart = afterUpdate.plusScansPeriodStart
+  const bActivatedAt = afterUpdate.planActivatedAt
+
+  // The user consumes 2 scans against B before B's checkout event arrives.
+  await seeded.collection('users').doc('user-1').set({ plusScansUsed: 2 }, { merge: true })
+
+  // checkout(B) arrives second.
+  const checkoutRes = await fire(process, checkoutEvent({ evtId: 'evt_order1_checkout', subscriptionId: 'sub_B', created: 600, customer: 'cus_B' }))
+  const afterCheckout = (await seeded.collection('users').doc('user-1').get()).data()
+  check('[order 1] the later checkout(B) is accepted (not stale — B is already current)', checkoutRes.status === 200)
+  check('[order 1] checkout(B) preserves B\'s already-consumed usage (2), does not re-zero it', afterCheckout.plusScansUsed === 2, `got ${afterCheckout.plusScansUsed}`)
+  check('[order 1] checkout(B) preserves B\'s original period start/activation timestamps', afterCheckout.plusScansPeriodStart === bPeriodStart && afterCheckout.planActivatedAt === bActivatedAt)
+  return afterCheckout.plusScansSubscriptionId === 'sub_B'
+})
+
+await checkAsync('[order 2] checkout(B) arrives BEFORE subscription.updated(active B): checkout initializes B, the later update preserves usage', async () => {
+  const seeded = createFakeFirestore({ users: { 'user-1': { plan: 'free' } } })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_B: subFixture({ id: 'sub_B', customer: 'cus_B' }) }, nowFn: () => new Date('2026-07-24T00:00:00Z') })
+
+  const checkoutRes = await fire(process, checkoutEvent({ evtId: 'evt_order2_checkout', subscriptionId: 'sub_B', created: 500, customer: 'cus_B' }))
+  const afterCheckout = (await seeded.collection('users').doc('user-1').get()).data()
+  check('[order 2] checkout(B) initializes B\'s quota', checkoutRes.status === 200 && afterCheckout.plusScansSubscriptionId === 'sub_B' && afterCheckout.plusScansUsed === 0)
+  const bPeriodStart = afterCheckout.plusScansPeriodStart
+  const bActivatedAt = afterCheckout.planActivatedAt
+
+  // Non-zero B usage injected before the update event arrives.
+  await seeded.collection('users').doc('user-1').set({ plusScansUsed: 6 }, { merge: true })
+
+  const updateRes = await fire(process, subUpdatedEvent({ evtId: 'evt_order2_update', subscription: subFixture({ id: 'sub_B', status: 'active', customer: 'cus_B' }), created: 600 }))
+  const afterUpdate = (await seeded.collection('users').doc('user-1').get()).data()
+  check('[order 2] the later update(active B) is accepted', updateRes.status === 200)
+  check('[order 2] the update preserves B\'s already-consumed usage (6), does not re-zero it', afterUpdate.plusScansUsed === 6, `got ${afterUpdate.plusScansUsed}`)
+  check('[order 2] the update preserves B\'s original period start/activation timestamps', afterUpdate.plusScansPeriodStart === bPeriodStart && afterUpdate.planActivatedAt === bActivatedAt)
+  return afterUpdate.plusScansSubscriptionId === 'sub_B'
+})
+
+await checkAsync('invoice.payment_succeeded recovery that establishes a NEW subscription B initializes quota exactly once; a later B event preserves it', async () => {
+  const seeded = createFakeFirestore({
+    // A lingering past_due flag from an unrelated, retired history — the
+    // account has never had quota initialized for sub_B specifically.
+    users: { 'user-1': { plan: 'plus', pastDueSince: '2026-06-01T00:00:00.000Z', stripeSubscriptionId: 'sub_A', stripeCustomerId: 'cus_A' } },
+  })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_B: subFixture({ id: 'sub_B', customer: 'cus_B' }) }, nowFn: () => new Date('2026-07-24T00:00:00Z') })
+
+  const invoiceRes = await fire(process, { id: 'evt_invoice_new_b', type: 'invoice.payment_succeeded', created: 500, data: { object: { subscription: 'sub_B', customer: 'cus_B' } } })
+  const afterInvoice = (await seeded.collection('users').doc('user-1').get()).data()
+  check('invoice.payment_succeeded establishing new B initializes B\'s quota exactly once', invoiceRes.status === 200 && afterInvoice.plusScansSubscriptionId === 'sub_B' && afterInvoice.plusScansUsed === 0)
+  const bPeriodStart = afterInvoice.plusScansPeriodStart
+  const bActivatedAt = afterInvoice.planActivatedAt
+
+  await seeded.collection('users').doc('user-1').set({ plusScansUsed: 3 }, { merge: true })
+
+  const updateRes = await fire(process, subUpdatedEvent({ evtId: 'evt_invoice_new_b_followup', subscription: subFixture({ id: 'sub_B', status: 'active', customer: 'cus_B' }), created: 600 }))
+  const afterUpdate = (await seeded.collection('users').doc('user-1').get()).data()
+  check('a later B event preserves the usage accumulated after the invoice-driven activation', updateRes.status === 200 && afterUpdate.plusScansUsed === 3, `got ${afterUpdate.plusScansUsed}`)
+  return afterUpdate.plusScansPeriodStart === bPeriodStart && afterUpdate.planActivatedAt === bActivatedAt
+})
+
+await checkAsync('a LATE event for retired A, arriving after B is fully current, is rejected — cannot change B\'s marker or quota', async () => {
+  const seeded = createFakeFirestore({
+    users: {
+      'user-1': {
+        plan: 'plus', stripeSubscriptionId: 'sub_B', stripeCustomerId: 'cus_B',
+        lastKnownSubscriptionId: 'sub_B', subscriptionEventTimestamps: { sub_A: 100, sub_B: 500 },
+        plusScansSubscriptionId: 'sub_B', plusScansUsed: 6,
+        plusScansPeriodStart: '2026-07-01T00:00:00.000Z', planActivatedAt: '2026-07-01T00:00:00.000Z',
+      },
+    },
+  })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_A: subFixture({ id: 'sub_A', customer: 'cus_A' }) }, nowFn: () => new Date('2026-07-24T00:00:00Z') })
+
+  // A late invoice.payment_succeeded for the retired subscription A.
+  const res = await fire(process, { id: 'evt_late_a_invoice', type: 'invoice.payment_succeeded', created: 200, data: { object: { subscription: 'sub_A', customer: 'cus_A' } } })
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  check('the late A event is accepted for delivery (200) but its effects are rejected as stale internally', res.status === 200)
+  check('B\'s marker is untouched by the late A event', user.plusScansSubscriptionId === 'sub_B')
+  check('B\'s usage is untouched', user.plusScansUsed === 6)
+  check('B\'s period start / activation timestamps are untouched', user.plusScansPeriodStart === '2026-07-01T00:00:00.000Z' && user.planActivatedAt === '2026-07-01T00:00:00.000Z')
+  return user.lastKnownSubscriptionId === 'sub_B' && user.stripeCustomerId === 'cus_B'
+})
+
+await checkAsync('legacy document with no plusScansSubscriptionId marker at all, but stripeSubscriptionId already names the current subscription: the marker is backfilled WITHOUT resetting legitimate existing usage', async () => {
+  const seeded = createFakeFirestore({
+    users: {
+      // Predates the round-4 marker entirely — no plusScansSubscriptionId
+      // field exists on this document (not even as undefined/null; the
+      // key is simply absent, as a real pre-migration document would be).
+      'user-1': {
+        plan: 'plus', stripeSubscriptionId: 'sub_1', stripeCustomerId: 'cus_1',
+        lastKnownSubscriptionId: 'sub_1', subscriptionEventTimestamps: { sub_1: 100 },
+        plusScansUsed: 8, plusScansPeriodStart: '2026-06-01T00:00:00.000Z', planActivatedAt: '2026-05-01T00:00:00.000Z',
+      },
+    },
+  })
+  const { process } = makeHandler({ db: seeded, nowFn: () => new Date('2026-07-24T00:00:00Z') })
+
+  const res = await fire(process, subUpdatedEvent({ evtId: 'evt_legacy_backfill', subscription: subFixture({ id: 'sub_1', status: 'active', customer: 'cus_1' }), created: 900 }))
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  check('the legacy-document event is accepted', res.status === 200)
+  check('the marker is backfilled to the account\'s existing current subscription', user.plusScansSubscriptionId === 'sub_1')
+  check('legitimate existing usage (8) is NOT reset just because the marker was previously absent', user.plusScansUsed === 8, `got ${user.plusScansUsed}`)
+  check('the original period start / activation timestamps are preserved, not reset', user.plusScansPeriodStart === '2026-06-01T00:00:00.000Z' && user.planActivatedAt === '2026-05-01T00:00:00.000Z')
+  return true
+})
+
+await checkAsync('legacy document with no marker AND a genuinely different/new subscription: full initialization still happens correctly (legacy fallback does not over-preserve)', async () => {
+  const seeded = createFakeFirestore({
+    users: {
+      'user-1': {
+        plan: 'plus', stripeSubscriptionId: 'sub_old', stripeCustomerId: 'cus_old',
+        lastKnownSubscriptionId: 'sub_old', subscriptionEventTimestamps: { sub_old: 100 },
+        plusScansUsed: 8, plusScansPeriodStart: '2026-06-01T00:00:00.000Z', planActivatedAt: '2026-05-01T00:00:00.000Z',
+        // no plusScansSubscriptionId — legacy document
+      },
+    },
+  })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_new: subFixture({ id: 'sub_new', customer: 'cus_new' }) }, nowFn: () => new Date('2026-07-24T00:00:00Z') })
+
+  const res = await fire(process, checkoutEvent({ evtId: 'evt_legacy_new_sub', subscriptionId: 'sub_new', created: 900, customer: 'cus_new' }))
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  check('checkout for a genuinely new subscription is accepted', res.status === 200)
+  check('the marker is set to the NEW subscription, not left pointing at the old one', user.plusScansSubscriptionId === 'sub_new')
+  return user.plusScansUsed === 0 && user.plusScansPeriodStart !== '2026-06-01T00:00:00.000Z' && user.planActivatedAt !== '2026-05-01T00:00:00.000Z'
 })
 
 await checkAsync('a completed event redelivered is a true no-op duplicate — no re-processing, Stripe API not called again', async () => {
@@ -560,7 +720,13 @@ await checkAsync('subscription.deleted downgrades to free, clears stripeSubscrip
 
 await checkAsync('switching Monthly -> Annual on the same subscription does not reset plusScansUsed, only the anchor', async () => {
   const seeded = createFakeFirestore({
-    users: { 'user-1': { plan: 'plus', plusScansUsed: 7, plusScansPeriodStart: '2026-07-01T00:00:00.000Z', scanPeriodAnchorDay: 1, billingInterval: 'monthly', lastKnownSubscriptionId: 'sub_1', subscriptionEventTimestamps: { sub_1: 100 } } },
+    // stripeSubscriptionId included: every real code path that sets
+    // lastKnownSubscriptionId (the original checkout, in this case) sets
+    // it together with stripeSubscriptionId — a realistic prior state,
+    // not a round-4-specific addition. Codex H1 (round 4): also needed
+    // for quotaInitFields' legacy-compatibility fallback to correctly
+    // recognize sub_1 as already-current and preserve plusScansUsed.
+    users: { 'user-1': { plan: 'plus', stripeSubscriptionId: 'sub_1', plusScansUsed: 7, plusScansPeriodStart: '2026-07-01T00:00:00.000Z', scanPeriodAnchorDay: 1, billingInterval: 'monthly', lastKnownSubscriptionId: 'sub_1', subscriptionEventTimestamps: { sub_1: 100 } } },
   })
   const { process } = makeHandler({ db: seeded, subscriptions: { sub_1: subFixture({ priceId: CHECKOUT_PRICE_IDS.plus_annual, startDate: 1753315200 }) } })
   await fire(process, subUpdatedEvent({ evtId: 'evt_switch', subscription: subFixture({ id: 'sub_1', status: 'active', priceId: CHECKOUT_PRICE_IDS.plus_annual, startDate: 1753315200 }), created: 200 }))

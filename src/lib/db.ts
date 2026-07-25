@@ -140,6 +140,7 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
     freeScansUsed: _freeScansUsed,
     lastKnownSubscriptionId: _lastKnownSubscriptionId,
     subscriptionEventTimestamps: _subscriptionEventTimestamps,
+    plusScansSubscriptionId: _plusScansSubscriptionId,
     ...profileData
   } = data
   await setDoc(doc(db, 'users', userId), {

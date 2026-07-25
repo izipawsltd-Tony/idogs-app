@@ -179,6 +179,62 @@ function subscriptionTrackingFields(profile, subscriptionId, eventCreated, event
   return fields
 }
 
+// Codex H1 (round 4) — plusScansSubscriptionId is a bounded, durable,
+// single-scalar marker recording which subscription id the CURRENT
+// plusScansUsed/plusScansPeriodStart/planActivatedAt values belong to.
+// Deliberately independent of lastKnownSubscriptionId (which exists
+// purely for evaluateSubscriptionEvent's ordering/staleness decision, not
+// quota ownership) — Stripe does not guarantee delivery order between
+// checkout.session.completed and customer.subscription.updated(active)
+// for the same brand-new subscription. Round 3's fix
+// (evaluation.isNewSubscription, derived from lastKnownSubscriptionId)
+// broke exactly this case: if subscription.updated(active) for a new
+// subscription B arrives FIRST, it already makes B "current"
+// (lastKnownSubscriptionId = B) without touching quota (the ACTIVE
+// branch deliberately never resets plusScansUsed, to preserve the
+// Monthly<->Annual switch behavior). B's own checkout.session.completed
+// then arrives, sees isNewSubscription: false (B is already "current"
+// by lastKnownSubscriptionId's reckoning), and never initializes quota
+// either — B silently inherits whatever usage/timestamps the RETIRED
+// subscription A left behind.
+//
+// This marker sidesteps that entirely: every activation path compares
+// ONLY this one field directly against the subscription id it is about
+// to grant Plus for, independent of event delivery order, event type, or
+// whatever lastKnownSubscriptionId currently says.
+//
+//   marker === subscriptionId  -> already initialized for this exact
+//                                  subscription; never touch usage/
+//                                  timestamps again, no matter how many
+//                                  further events (retries, later
+//                                  activations, reactivations) arrive.
+//   marker !== subscriptionId  -> genuine first activation for this
+//                                  subscription; initialize once.
+//
+// Legacy compatibility: a user document written before this marker
+// existed has plusScansSubscriptionId === undefined. If
+// stripeSubscriptionId already names THIS subscription as the account's
+// current one, this is not a new activation — it's an old record
+// catching up to the new marker for the first time; the marker is
+// backfilled alone, and existing usage/timestamps are left exactly as
+// they are. Only a document with neither signal pointing at this
+// subscription is treated as a genuine new activation.
+function quotaInitFields(profile, subscriptionId, nowIso) {
+  const marker = profile?.plusScansSubscriptionId
+  if (marker === subscriptionId) {
+    return {}
+  }
+  if (marker === undefined && profile?.stripeSubscriptionId === subscriptionId) {
+    return { plusScansSubscriptionId: subscriptionId }
+  }
+  return {
+    plusScansSubscriptionId: subscriptionId,
+    plusScansUsed: 0,
+    plusScansPeriodStart: nowIso,
+    planActivatedAt: nowIso,
+  }
+}
+
 // Stripe subscription.status values this pricing record defines explicit
 // behavior for. Anything else (incomplete, paused, ...) only has its
 // status recorded — plan is never silently flipped for a status this
@@ -313,31 +369,13 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
             // First period for AI-scan quota purposes — §3.1 "On upgrade
             // to Plus, 10 scans granted immediately for the first period".
             scanPeriodAnchorDay: subscriptionStartAnchorDay(subscription),
-            // Codex H1 (round 3): lease-token fencing only prevents a
-            // CONCURRENT duplicate application of this event within one
-            // lease — it does NOT (and structurally cannot) make a
-            // SEQUENTIAL retry across leases idempotent on its own. If
-            // this event's effects already committed once but the
-            // completion-marking write then failed (crash, timeout, cold
-            // start eviction — claimEvent's 'failed' status is always
-            // retriable by design), Stripe redelivers the SAME event,
-            // and by then the user may have legitimately consumed scans.
-            // evaluation.isNewSubscription (evaluateSubscriptionEvent)
-            // is exactly the signal that distinguishes "this subscription
-            // has never been the account's current one before" (a
-            // genuine first activation, or a legitimate A-to-B
-            // replacement) from "this subscription is ALREADY current"
-            // (a retry of an event whose effects already landed). Only a
-            // genuine new activation may initialize these three fields —
-            // a retry must preserve whatever quota state has evolved
-            // since, and the ORIGINAL activation timestamp, not silently
-            // reset them. Omitting the keys entirely (not writing them at
-            // all) relies on tx.set's merge:true to leave the existing
-            // stored values untouched, exactly as if this write never
-            // happened for these three fields.
-            ...(evaluation.isNewSubscription
-              ? { planActivatedAt: nowIso, plusScansUsed: 0, plusScansPeriodStart: nowIso }
-              : {}),
+            // Codex H1 (round 4): quota initialization is now gated on
+            // the plusScansSubscriptionId marker, not
+            // evaluation.isNewSubscription — see quotaInitFields' own
+            // comment for why lastKnownSubscriptionId-derived state
+            // breaks when subscription.updated(active) for this same new
+            // subscription happens to arrive BEFORE this checkout event.
+            ...quotaInitFields(profile, session.subscription, nowIso),
           }, { merge: true })
         })
         return
@@ -362,8 +400,18 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
             if (evaluation.stale) return
             // §3.1 "Switching Monthly <-> Annual: No new quota granted...
             // the reset anchor moves to the new subscription's start_date
-            // from the next period onward" — plusScansUsed is deliberately
-            // NOT reset here, only the anchor day is refreshed.
+            // from the next period onward" — for the SAME subscription id,
+            // quotaInitFields' marker already matches, so it correctly
+            // omits plusScansUsed/plusScansPeriodStart here, same as
+            // before. Codex H1 (round 4): this branch is ALSO a genuine
+            // activation path — if a brand-new subscription B's
+            // subscription.updated(active) happens to arrive BEFORE B's
+            // own checkout.session.completed (Stripe does not guarantee
+            // ordering between the two), B's quota must be initialized
+            // HERE, not silently deferred to a checkout event that may
+            // arrive later (or, under the old lastKnownSubscriptionId-
+            // based check, never initialize at all — see quotaInitFields'
+            // own comment).
             await reactivateUpToCapTx(tx, db, userId, 'plus')
             tx.set(userRef, {
               plan: 'plus',
@@ -372,6 +420,7 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
               pastDueSince: null,
               scanPeriodAnchorDay: subscriptionStartAnchorDay(subscription),
               ...subscriptionTrackingFields(profile, subscriptionId, event.created, eventCustomerId),
+              ...quotaInitFields(profile, subscriptionId, now().toISOString()),
             }, { merge: true })
           })
         } else if (status === 'past_due') {
@@ -485,6 +534,17 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
               subscriptionStatus: 'active',
               pastDueSince: null,
               ...tracking,
+              // Codex H1 (round 4): this branch is a genuine activation
+              // path too — almost always a same-subscription past_due
+              // recovery (marker already matches, quotaInitFields
+              // correctly omits these fields), but if this invoice
+              // happens to be for a subscription this account has never
+              // had quota initialized for (e.g. a new subscription B's
+              // payment succeeding while an old, unrelated past_due flag
+              // from a retired subscription A is still on record),
+              // quotaInitFields correctly initializes B's quota fresh,
+              // independent of A's history.
+              ...quotaInitFields(profile, subscriptionId, now().toISOString()),
             }, { merge: true })
           } else {
             // "Harmless" only in the sense of never touching plan/status —
