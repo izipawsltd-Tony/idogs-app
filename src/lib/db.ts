@@ -712,21 +712,54 @@ async function upsertVaccineReminder(
   }
 }
 
+// Production bug fix: firestore.rules' reminders `get`/`list` rules now
+// also grant read access via dogBelongsToUser(resource.data.dogId) (the
+// same trust boundary already used for vaccineRecords/healthTests/etc —
+// see the "Production bug fix" comment there), so a claimed dog's
+// current owner CAN now read its reminders even before the original
+// breeder's tenantId on that reminder doc gets reassigned. That grant
+// falls through to a per-document get() on dogs/{dogId} whenever the
+// reminder's tenantId doesn't already match the caller — and Firestore
+// caps a single query's rule evaluation at 20 such get()/exists() calls
+// (empirically confirmed via the Rules emulator: 20 dogIds in one `in`
+// query succeeds, 21 is denied outright — see
+// scripts/test-reminders-rules-emulator.mjs). That is a DIFFERENT, lower
+// ceiling than Firestore's own native `in`-operator value limit (30),
+// which is what claimedDogIds used to be capped to — so a single
+// unbatched query is not safe here even within Firestore's own query
+// limits. queryRemindersByDogIds() below batches into chunks of 20,
+// queried in parallel, so every claimed dog is covered, not just the
+// first 20 or 30.
+const REMINDER_DOG_ID_QUERY_BATCH_SIZE = 20
+
+export function chunk<T>(items: T[], size: number): T[][] {
+  const batches: T[][] = []
+  for (let i = 0; i < items.length; i += size) batches.push(items.slice(i, i + size))
+  return batches
+}
+
+// Queries reminders for ALL given dogIds, batched to stay within the
+// Rules get()-call budget described above. Batches run in parallel via
+// Promise.all, which is also what gives this its fail-closed contract:
+// if ANY batch's query rejects, the whole call rejects immediately and
+// none of the other batches' (possibly already-resolved) data is used —
+// callers must never treat a partial batch success as a complete result.
+async function queryRemindersByDogIds(dogIds: string[]) {
+  const batches = chunk(dogIds, REMINDER_DOG_ID_QUERY_BATCH_SIZE)
+  const snaps = await Promise.all(
+    batches.map(batch => getDocs(query(collection(db, 'reminders'), where('dogId', 'in', batch))))
+  )
+  return snaps.flatMap(snap => snap.docs)
+}
+
 // Per-dog reminders (used in DogDetailPage). Always runs the tenantId-scoped
-// query first — a dogId-only query can't satisfy the tenant-scoped `list`
-// rule on the reminders collection in production, since Firestore must be
-// able to prove the rule holds from the query's own where-clauses alone,
-// not from inspecting matched documents; a dogId-only query is denied
-// outright. The optional `dog` param mirrors the claimed-dog merge already
+// query first. The optional `dog` param mirrors the claimed-dog merge also
 // used by getAllRemindersForUser() below: when the caller is the dog's
 // current owner via a claim rather than the original tenant, a claimed
 // dog's older reminder doc still carries the original breeder's tenantId
-// until the next vaccine save or cron run reassigns it, so a second,
-// best-effort dogId-only query is attempted to catch that case. That query
-// has no tenantId filter, so it's expected to be denied by the same list
-// rule once the reminder's tenantId hasn't been reassigned yet in a
-// stricter rule environment — wrapped so a deny there doesn't discard the
-// tenantReminders that already loaded successfully.
+// until the next vaccine save or cron run reassigns it, so a second query
+// (now Rules-permitted via dogBelongsToUser — see above) is attempted to
+// catch that case.
 export async function getReminders(
   dogId: string,
   userId: string,
@@ -740,22 +773,14 @@ export async function getReminders(
   const isClaimedByCaller = !!dog && dog.currentOwnerId === userId && dog.tenantId !== userId
   if (!isClaimedByCaller) return tenantReminders
 
-  // Codex round 16: round 15 treated permission-denied on this query as an
-  // "expected, by-design" deny (the reminders collection's tenant-scoped
-  // `list` rule denies this dogId-only query until the next vaccine edit
-  // or daily cron job reassigns tenantId post-claim) and silently degraded
-  // to "zero claimed reminders" for that specific code. On review, that
-  // still lets a REAL claimed reminder (e.g. an overdue vaccine on a
-  // freshly-claimed dog) go silently missing for up to ~24h, with the
-  // caller unable to tell "confirmed zero" apart from "unknown, because
-  // this documented rules gap hasn't closed yet" — completeness is
-  // unknown here, not zero. ANY claimed-reminder query failure — including
-  // permission-denied — now rejects the whole call. Callers must show an
-  // explicit, retryable error rather than a confident "all caught up".
+  // Codex round 16: ANY claimed-reminder query failure — including
+  // permission-denied — rejects the whole call. Completeness is UNKNOWN
+  // on failure, never assumed zero; callers must show an explicit,
+  // retryable error rather than a confident "all caught up".
   let claimedReminders: Reminder[]
   try {
-    const claimedSnap = await getDocs(query(collection(db, 'reminders'), where('dogId', '==', dogId)))
-    claimedReminders = claimedSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+    const claimedDocs = await queryRemindersByDogIds([dogId])
+    claimedReminders = claimedDocs.map(d => ({ ...d.data(), id: d.id } as Reminder))
   } catch (err) {
     console.error('getReminders: claimed-dog reminder query failed', { code: safeReadFirestoreErrorCode(err) })
     throw new GetRemindersError()
@@ -785,21 +810,13 @@ export async function getAllRemindersForUser(userId: string): Promise<Reminder[]
 
   // A claimed dog's reminder doc keeps the original breeder's tenantId
   // until the next vaccine save or daily cron run reassigns it — this
-  // query attempts to find those anyway so a buyer sees a claimed dog's
-  // reminders immediately, without waiting for that reassignment. Reuses
-  // the `dogs` array from getDogs() above (already includes claimed dogs
-  // via the currentOwnerId union) instead of a second Firestore query.
-  // (Firestore 'in' caps at 30 values — fine at this app's scale.)
-  //
-  // This query has no tenantId filter, so it can never satisfy the
-  // tenant-scoped `list` rule on reminders in production — Firestore
-  // denies it outright whenever the reminder doc's tenantId still belongs
-  // to someone else, which is true for every claimed dog until that
-  // reassignment happens. It's wrapped here so that expected failure
-  // doesn't discard the already-valid tenantReminders above; the known
-  // tradeoff is a just-claimed dog's pre-existing reminder stays invisible
-  // to the new owner until their next vaccine edit or the next cron run
-  // reassigns tenantId — not indefinitely, but not immediate either.
+  // query (now Rules-permitted via dogBelongsToUser — see
+  // queryRemindersByDogIds() above) finds those anyway so a buyer sees a
+  // claimed dog's reminders immediately, without waiting for that
+  // reassignment. Reuses the `dogs` array from getDogs() above (already
+  // includes claimed dogs via the currentOwnerId union) instead of a
+  // second Firestore query. Batched internally — every claimed dog is
+  // queried, not just the first 20 or 30.
   const claimedDogIds = dogs
     .filter(d => d.currentOwnerId === userId && d.tenantId !== userId)
     .map(d => d.id)
@@ -810,10 +827,8 @@ export async function getAllRemindersForUser(userId: string): Promise<Reminder[]
   let claimedReminders: Reminder[] = []
   if (claimedDogIds.length > 0) {
     try {
-      const claimedRemindersSnap = await getDocs(
-        query(collection(db, 'reminders'), where('dogId', 'in', claimedDogIds.slice(0, 30)))
-      )
-      claimedReminders = claimedRemindersSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+      const claimedDocs = await queryRemindersByDogIds(claimedDogIds)
+      claimedReminders = claimedDocs.map(d => ({ ...d.data(), id: d.id } as Reminder))
     } catch (err) {
       console.error('getAllRemindersForUser: claimed-dog reminder query failed', { code: safeReadFirestoreErrorCode(err) })
       throw new GetRemindersError()
@@ -847,14 +862,13 @@ export async function getAllPendingReminders(): Promise<Reminder[]> {
     .map(d => d.id)
   // Codex round 16: see the matching comment in getReminders() above —
   // fails closed on ANY claimed-reminder query failure, permission-denied
-  // included.
+  // included. Batched internally (queryRemindersByDogIds) — every claimed
+  // dog is queried, not just the first 20 or 30.
   let claimedReminders: Reminder[] = []
   if (claimedDogIds.length > 0) {
     try {
-      const claimedSnap = await getDocs(
-        query(collection(db, 'reminders'), where('dogId', 'in', claimedDogIds.slice(0, 30)))
-      )
-      claimedReminders = claimedSnap.docs
+      const claimedDocs = await queryRemindersByDogIds(claimedDogIds)
+      claimedReminders = claimedDocs
         .map(d => ({ ...d.data(), id: d.id } as Reminder))
         .filter(r => ['pending', 'overdue'].includes(r.status))
     } catch (err) {

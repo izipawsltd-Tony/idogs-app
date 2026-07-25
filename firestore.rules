@@ -488,14 +488,39 @@ service cloud.firestore {
     // doesn't get denied — `resource == null` for a get on a missing doc,
     // and dereferencing resource.data on null previously errored out the
     // whole rule, which Firestore treats as a deny. A missing document
-    // still exposes no data either way. `list` keeps the stricter
-    // tenantId-only check since query results always have real data.
+    // still exposes no data either way.
+    //
+    // Production bug fix: `reminders` was the one dogId-keyed collection
+    // that never got the same dogBelongsToUser() read grant as its
+    // siblings (vaccineRecords/wormingRecords/healthTests/documents/
+    // activityNotes/heatCycles below all use it). src/lib/db.ts's
+    // getReminders()/getAllRemindersForUser()/getAllPendingReminders()
+    // each run a "claimed dog" query keyed only on dogId (no tenantId
+    // filter) to surface reminders on a dog the caller currently owns via
+    // transfer/claim, whose reminder docs still carry the ORIGINAL
+    // breeder's tenantId — dogs.tenantId is permanent provenance by
+    // design (see api/send-reminders.js's getReminderEligibleDogs()
+    // comment) and is never reassigned, so this was a GUARANTEED,
+    // permanent permission-denied for every account holding a claimed
+    // dog, not a transient gap — the tenantId-only rule below could never
+    // statically satisfy a query with no tenantId filter. Adding
+    // dogBelongsToUser(resource.data.dogId) as a second, OR'd grant on
+    // get/list only (never create/update/delete — those stay strictly
+    // tenantId-scoped, matching every write path today) closes this using
+    // the exact same trust boundary already applied to every sibling
+    // collection: a dog's current owner may READ its records, exactly as
+    // they already can for vaccines/health/worming/documents/notes. The
+    // cheap tenantId check stays first so the common case (breeder or
+    // already-reassigned reminder) never pays the extra get() cost.
     match /reminders/{id} {
       allow get: if isSignedIn()
-        && (resource == null || resource.data.tenantId == request.auth.uid);
+        && (resource == null
+            || resource.data.tenantId == request.auth.uid
+            || dogBelongsToUser(resource.data.dogId));
 
       allow list: if isSignedIn()
-        && resource.data.tenantId == request.auth.uid;
+        && (resource.data.tenantId == request.auth.uid
+            || dogBelongsToUser(resource.data.dogId));
 
       allow create: if isSignedIn()
         && request.resource.data.tenantId == request.auth.uid;
