@@ -118,7 +118,7 @@ export default function LoginPage({ toast }: Props) {
         <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--mid)' }}>
           Don't have an account?{' '}
           <Link to="/signup" style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none' }}>
-            Start free trial
+            Create free account
           </Link>
         </p>
       </div>

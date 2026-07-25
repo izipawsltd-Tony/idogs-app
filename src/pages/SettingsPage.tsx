@@ -278,7 +278,7 @@ export default function SettingsPage({ toast }: Props) {
                 </span>
               </div>
             )}
-            <SettingRow label="Plan" value={profile?.plan === 'trial' ? '30-day free trial' : profile?.plan || '—'} />
+            <SettingRow label="Plan" value={profile?.plan === 'trial' ? 'Free' : profile?.plan || '—'} />
           </div>
         )}
       </div>

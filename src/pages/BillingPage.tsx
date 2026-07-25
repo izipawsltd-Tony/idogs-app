@@ -221,7 +221,7 @@ export default function BillingPage({ toast }: Props) {
 
       {/* Note */}
       <div style={{ background: 'var(--sand)', borderRadius: 12, padding: '14px 20px', marginBottom: 24, fontSize: 13, color: 'var(--mid)' }}>
-        🐾 <strong>1-2 dogs?</strong> iDogs is always free — no credit card, no trial, no expiry.
+        🐾 <strong>1-2 dogs?</strong> iDogs is free forever for up to 2 dogs — no credit card, no expiry.
         Ownership transfer and your dog's permanent QR Passport are free on every plan.
       </div>
 

@@ -84,7 +84,7 @@ export default function SignupPage({ toast }: Props) {
           </Link>
           <div style={{ marginTop: 12 }}>
             <span style={{ fontSize: 13, fontWeight: 500, padding: '4px 12px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)' }}>
-              🎉 30-day free trial — no credit card
+              🐾 Free forever for up to 2 dogs
             </span>
           </div>
         </div>
@@ -208,7 +208,7 @@ export default function SignupPage({ toast }: Props) {
             </div>
 
             <button type="submit" className="btn btn-primary" style={{ width: '100%', height: 48, fontSize: 15, marginTop: 4, opacity: !agreedToTerms ? 0.6 : 1 }} disabled={loading || !agreedToTerms}>
-              {loading ? <span className="spinner" /> : 'Create account — free for 30 days'}
+              {loading ? <span className="spinner" /> : 'Create free account'}
             </button>
 
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '10px 12px', borderRadius: 8, background: agreedToTerms ? 'var(--green-light)' : 'var(--sand)', border: `1px solid ${agreedToTerms ? 'rgba(8,80,65,0.15)' : 'var(--border)'}`, transition: 'all 0.15s' }}>

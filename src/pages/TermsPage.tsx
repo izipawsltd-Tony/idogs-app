@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD, DOG_CAP_FREE, DOG_CAP_PLUS } from '../lib/pricingCopy'
 
 export default function TermsPage() {
   const lastUpdated = '15 June 2026'
@@ -43,16 +44,13 @@ export default function TermsPage() {
           </LegalSection>
 
           <LegalSection title="4. Subscription Plans and Billing">
-            <p>iDogs offers the following subscription plans (AUD, per month):</p>
+            <p>iDogs offers the following plans (AUD):</p>
             <ul>
-              <li><strong>Free:</strong> Up to 2 dogs, QR passport, health records, email reminders — free forever</li>
-              <li><strong>Basic — $5/month:</strong> Up to 10 dogs, AI Document Scan, documents, ownership transfer, export</li>
-              <li><strong>Pro — $12/month:</strong> Up to 20 dogs, litter management, audit trail, SMS reminders add-on</li>
-              <li><strong>Kennel — $29/month:</strong> Unlimited dogs, full compliance export, priority support</li>
-              <li><strong>SMS Add-on — $3/month:</strong> SMS reminders on any paid plan</li>
+              <li><strong>Free:</strong> Up to {DOG_CAP_FREE} dogs, QR passport, health records, email reminders — free forever</li>
+              <li><strong>Plus Monthly — ${PLUS_MONTHLY_PRICE_AUD}/month:</strong> Up to {DOG_CAP_PLUS} dogs, AI Document Scans, document storage, PDF/CSV export</li>
+              <li><strong>Plus Annual — ${PLUS_ANNUAL_PRICE_AUD}/year:</strong> Same Plus features as Plus Monthly, billed annually</li>
             </ul>
-            <p>All plans include a 30-day free trial. No credit card is required to start a trial. After the trial period, a payment method is required to continue using paid features.</p>
-            <p>Payments are processed by Stripe. We do not store your payment card details. Subscriptions are billed monthly and renew automatically unless cancelled.</p>
+            <p>Payments are processed by Stripe. We do not store your payment card details. Subscriptions renew automatically at the end of each billing period unless cancelled.</p>
             <p>You may cancel at any time. Cancellation takes effect at the end of the current billing period. No refunds are provided for partial months.</p>
           </LegalSection>
 

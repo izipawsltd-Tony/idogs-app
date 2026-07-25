@@ -419,7 +419,7 @@ export default function LandingPage() {
         <div style={{ maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
           <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12 }}>Pricing</div>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(26px,4vw,40px)', fontWeight: 600, color: 'var(--dark)', marginBottom: 12, letterSpacing: '-0.02em' }}>Simple, transparent pricing</h2>
-          <p style={{ fontSize: 16, color: 'var(--mid)', maxWidth: 500, margin: '0 auto 48px' }}>Free forever for 1-2 dogs. Upgrade to Plus anytime — no trial, no lock-in, cancel anytime.</p>
+          <p style={{ fontSize: 16, color: 'var(--mid)', maxWidth: 500, margin: '0 auto 48px' }}>Free forever for 1-2 dogs. Upgrade to Plus anytime.</p>
           <div className="pricing-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 16, maxWidth: 980, margin: '0 auto 24px' }}>
             <PricingCard
               plan="Free"
@@ -474,7 +474,7 @@ export default function LandingPage() {
               featured
             />
           </div>
-          <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>All prices in AUD · No trial · Cancel anytime</p>
+          <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>All prices in AUD</p>
           <p style={{ fontSize: 12, color: 'var(--mid)' }}>🐾 <strong>1-2 dogs?</strong> iDogs is free forever — no credit card, no expiry.</p>
         </div>
       </section>
@@ -587,7 +587,7 @@ export default function LandingPage() {
             Create Your Dog's Passport Free →
           </button>
           <div style={{ marginTop: 20, fontSize: 12, color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, flexWrap: 'wrap' }}>
-            <span>🇦🇺 Asia-Pacific hosting</span><span>🔒 Privacy Act compliant</span><span>⚡ Cancel anytime</span>
+            <span>🇦🇺 Asia-Pacific hosting</span><span>🔒 Privacy Act compliant</span><span>⚡ No credit card required</span>
           </div>
         </div>
       </section>
@@ -781,7 +781,7 @@ function PricingCard({ plan, desc, priceLabel, priceSub, badge, features, featur
           <div style={{ fontSize: 12, color: 'var(--green)', background: 'var(--green-light)', padding: '3px 10px', borderRadius: 20, display: 'inline-block', fontWeight: 500 }}>{badge}</div>
         )}
       </div>
-      <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, margin: '0 0 24px' }}>
+      <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, margin: '0 0 24px', textAlign: 'left' }}>
         {features.map(f => (
           <li key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, fontSize: 13, color: 'var(--mid)', lineHeight: 1.4 }}>
             <span style={{ width: 16, height: 16, borderRadius: '50%', background: 'var(--green-light)', flexShrink: 0, marginTop: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'var(--green)', fontWeight: 600 }}>✓</span>
