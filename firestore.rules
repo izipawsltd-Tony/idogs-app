@@ -557,6 +557,35 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // ── litterShowcases/{litterId} — iDogs Litter Showcase MVP (Slice 1).
+    // Document id == litterId (one Showcase per litter, enforced
+    // structurally by api/create-showcase.js refusing to overwrite an
+    // existing doc). Same posture as litters above and for the same
+    // reason: "does litterId belong to this caller", "is puppyId a
+    // current member of this litter", and "one Showcase per litter" all
+    // need cross-document reads/validation Firestore Rules cannot safely
+    // express (no loops over a dynamic puppies map, no way to compare
+    // against another document's array from inside a single rule
+    // predicate at scale) — so every write goes exclusively through the
+    // trusted Admin SDK endpoints: api/create-showcase.js,
+    // api/set-showcase-enabled.js, api/update-showcase-puppy.js,
+    // api/bulk-update-showcase-puppies.js. Read stays client-side (the
+    // breeder's own Litters page reads its own Showcase directly) —
+    // scoped to the owning tenant only, same as litters' own read rule.
+    // Deliberately does NOT allow anonymous/public read — Slice 1 has no
+    // public Showcase page yet (SECURITY: "Do not allow anonymous access
+    // yet"); a future public page must go through its own trusted Admin
+    // SDK endpoint returning an allowlisted projection, never a direct
+    // client read of this document (which is breeder-only and, being
+    // keyed purely by puppyId → {visible, availability}, carries no
+    // buyer/microchip/vet/ownership data anyway — but the access
+    // boundary is enforced here regardless, not by what happens to be in
+    // the document today).
+    match /litterShowcases/{litterId} {
+      allow read: if isSignedIn() && resource.data.tenantId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
     // ── litterPuppyOperations — internal idempotency ledger for
     // api/create-litter-puppy.js (Codex round 4, Blocker 4). Written
     // exclusively by that endpoint (Admin SDK) atomically with the Dog
