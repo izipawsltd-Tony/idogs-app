@@ -10,6 +10,7 @@ import { db } from '../lib/firebase'
 import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
 import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability } from '../types'
 import { useAuth } from '../hooks/useAuth'
+import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
 import { sendTransferEmail } from '../lib/email'
 import { describeTransferFailure } from '../lib/transferError'
 
@@ -174,6 +175,29 @@ export default function LittersPage({ toast }: Props) {
   const loadTokenRef = useRef(0)
   const [loadError, setLoadError] = useState(false)
 
+  // Codex fix-round finding (Showcase account-switch race): an in-flight
+  // Showcase read or mutation started under account A can resolve AFTER
+  // the account-switch effect below has already reset all Showcase state
+  // for account B — without a guard, that late resolution would call
+  // setShowcases/setShowcaseError/setShowcaseLoading/setShowcaseBusy with
+  // account A's data and silently resurrect it under account B. See
+  // useShowcaseRequestGuard.ts (src/hooks) for the full design rationale
+  // — extracted as a plain, no-React-dependency class specifically so a
+  // Node test can exercise the exact production guard logic directly,
+  // mirroring useRequestGuard.ts's own RequestGuardState split.
+  const showcaseGuard = useShowcaseRequestGuard()
+
+  // Only true immediately after `gen` was captured (before its await) —
+  // false once the account has switched (or the component has unmounted)
+  // in the meantime. Every Showcase async function must check this
+  // before EVERY state write that happens after an `await`, including in
+  // catch/finally blocks — a stale continuation that fails this check
+  // must silently no-op, never toast, never touch showcases/
+  // showcaseLoading/showcaseBusy/showcaseError for any litterId.
+  function isShowcaseRequestCurrent(gen: number): boolean {
+    return mountedRef.current && showcaseGuard.isCurrent(gen)
+  }
+
   useEffect(() => {
     mountedRef.current = true
     return () => { mountedRef.current = false }
@@ -235,6 +259,16 @@ export default function LittersPage({ toast }: Props) {
     // open with data that was never re-fetched for the new user. All five
     // pieces of Showcase UI state are reset together, exactly like
     // litters/dogs above.
+    //
+    // Codex fix-round finding (Showcase account-switch race): bumping the
+    // Showcase guard's account generation here, in the SAME synchronous
+    // effect body as the resets above, is what actually closes the race
+    // — any Showcase request already in flight for the OLD account
+    // captured the OLD generation number before its own first `await`,
+    // so isShowcaseRequestCurrent() will find it stale the instant its
+    // continuation resumes, no matter how long after this effect runs
+    // that turns out to be.
+    showcaseGuard.bumpAccountGeneration()
     setShowcases({})
     setShowcaseLoading({})
     setShowcaseBusy({})
@@ -246,14 +280,25 @@ export default function LittersPage({ toast }: Props) {
   // ── Litter Showcase (Slice 1) ──────────────────────────────────
 
   async function loadShowcase(litterId: string) {
+    // Captured BEFORE the first await — see useShowcaseRequestGuard.ts
+    // for why this must read the guard's live generation counter, not
+    // the `user`/`profile` values closed over by this call (a closure
+    // over a stale render never observes a LATER account switch), and
+    // why a per-account (not per-request) generation is what lets a
+    // DIFFERENT litter's concurrent Showcase call proceed unaffected by
+    // this one.
+    const gen = showcaseGuard.currentGeneration()
     setShowcaseLoading(prev => ({ ...prev, [litterId]: true }))
     setShowcaseError(prev => ({ ...prev, [litterId]: '' }))
     try {
       const result = await getShowcaseForLitter(litterId)
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcases(prev => ({ ...prev, [litterId]: result }))
     } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseError(prev => ({ ...prev, [litterId]: err instanceof Error && err.message ? err.message : 'Failed to load Showcase' }))
     } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseLoading(prev => ({ ...prev, [litterId]: false }))
     }
   }
@@ -270,51 +315,67 @@ export default function LittersPage({ toast }: Props) {
   }, [expandedLitter])
 
   async function handleCreateShowcase(litterId: string) {
+    const gen = showcaseGuard.currentGeneration()
     setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
     try {
       const showcase = await createShowcase(litterId)
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcases(prev => ({ ...prev, [litterId]: showcase }))
       toast('Showcase created — no puppies are shown until you select them')
     } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
       toast(err instanceof Error && err.message ? err.message : 'Failed to create Showcase', 'error')
     } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
     }
   }
 
   async function handleToggleShowcaseEnabled(litterId: string, current: LitterShowcase) {
+    const gen = showcaseGuard.currentGeneration()
     setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
     try {
       const showcase = await setShowcaseEnabled(litterId, !current.enabled)
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcases(prev => ({ ...prev, [litterId]: showcase }))
       toast(showcase.enabled ? 'Showcase enabled' : 'Showcase disabled — puppy selection kept')
     } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
       toast(err instanceof Error && err.message ? err.message : 'Failed to update Showcase', 'error')
     } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
     }
   }
 
   async function handleTogglePuppyVisible(litterId: string, puppyId: string, visible: boolean) {
+    const gen = showcaseGuard.currentGeneration()
     setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
     try {
       const showcase = await updateShowcasePuppy(litterId, puppyId, { visible })
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcases(prev => ({ ...prev, [litterId]: showcase }))
     } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
       toast(err instanceof Error && err.message ? err.message : 'Failed to update puppy', 'error')
     } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
     }
   }
 
   async function handlePuppyAvailabilityChange(litterId: string, puppyId: string, availability: ShowcaseAvailability) {
+    const gen = showcaseGuard.currentGeneration()
     setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
     try {
       const showcase = await updateShowcasePuppy(litterId, puppyId, { availability })
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcases(prev => ({ ...prev, [litterId]: showcase }))
     } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
       toast(err instanceof Error && err.message ? err.message : 'Failed to update puppy', 'error')
     } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
     }
   }
@@ -326,14 +387,18 @@ export default function LittersPage({ toast }: Props) {
   }
 
   async function handleShowcaseBulkAction(litterId: string, action: ShowcaseBulkAction) {
+    const gen = showcaseGuard.currentGeneration()
     setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
     try {
       const showcase = await bulkUpdateShowcasePuppies(litterId, action)
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcases(prev => ({ ...prev, [litterId]: showcase }))
       toast(BULK_ACTION_LABELS[action])
     } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
       toast(err instanceof Error && err.message ? err.message : 'Failed to update Showcase', 'error')
     } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
     }
   }

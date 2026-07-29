@@ -17,7 +17,14 @@
 //   4. A REAL mounted-component test (react-test-renderer + act()) proving
 //      an account switch resets all Showcase UI state (Codex fix-round
 //      finding 3) — no emulator needed.
-//   5. Emulator-only behavioral tests that import and call the REAL
+//   5. Unit tests against the REAL ShowcaseRequestGuardState class, plus a
+//      REAL mounted-component test using the REAL useShowcaseRequestGuard()
+//      hook, proving a Showcase read/mutation still PENDING when the
+//      account switches never resurrects the previous account's data —
+//      the account-switch REQUEST race, distinct from (and on top of) the
+//      synchronous reset Section 4 covers (Codex fix-round finding on
+//      LittersPage's Showcase account-switch guard) — no emulator needed.
+//   6. Emulator-only behavioral tests that import and call the REAL
 //      api/*.js handlers directly with mock req/res objects, against a
 //      local Firestore/Auth emulator — skipped gracefully (not silently
 //      dropped from the pass count) when no emulator is reachable.
@@ -126,6 +133,29 @@ const { check, checkAsync, skip, summary } = makeChecker()
   check('Account switch resets litters and dogs', /setLitters\(\[\]\)/.test(accountSwitchEffect) && /setDogs\(\[\]\)/.test(accountSwitchEffect))
   check('Account switch resets all four Showcase state maps', /setShowcases\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseLoading\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseBusy\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseError\(\{\}\)/.test(accountSwitchEffect))
   check('Account switch collapses any expanded litter panel', /setExpandedLitter\(null\)/.test(accountSwitchEffect))
+  // Codex fix-round finding (Showcase account-switch REQUEST race): the
+  // account-switch effect must also bump the Showcase guard's account
+  // generation, in the SAME synchronous effect body as the resets above
+  // — this is what invalidates any request already in flight for the
+  // OLD account.
+  check('Account switch bumps the Showcase request guard\'s account generation', /showcaseGuard\.bumpAccountGeneration\(\)/.test(accountSwitchEffect))
+
+  check('LittersPage.tsx imports the REAL useShowcaseRequestGuard hook (not a reimplemented/inline guard)', /import \{ useShowcaseRequestGuard \} from '\.\.\/hooks\/useShowcaseRequestGuard'/.test(littersPageSrc))
+  check('LittersPage.tsx defines isShowcaseRequestCurrent combining mountedRef AND the guard\'s isCurrent()', /function isShowcaseRequestCurrent\(gen: number\): boolean \{\s*return mountedRef\.current && showcaseGuard\.isCurrent\(gen\)/.test(littersPageSrc))
+
+  // Every one of the six Showcase async functions must (1) capture the
+  // generation via the guard BEFORE its own first await, and (2) check
+  // isShowcaseRequestCurrent after ONLY awaiting — never bump/mutate the
+  // guard itself (only the account-switch effect above may do that).
+  const showcaseHandlerNames = ['loadShowcase', 'handleCreateShowcase', 'handleToggleShowcaseEnabled', 'handleTogglePuppyVisible', 'handlePuppyAvailabilityChange', 'handleShowcaseBulkAction']
+  for (const name of showcaseHandlerNames) {
+    const fnMatch = littersPageSrc.match(new RegExp(`async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`))
+    const fnBody = fnMatch ? fnMatch[0] : ''
+    check(`${name} was found`, fnBody.length > 0)
+    check(`${name} captures the guard's generation before its first await`, /const gen = showcaseGuard\.currentGeneration\(\)/.test(fnBody))
+    const guardCheckCount = (fnBody.match(/if \(!isShowcaseRequestCurrent\(gen\)\) return/g) || []).length
+    check(`${name} checks isShowcaseRequestCurrent after every await (in the success path, catch, AND finally — at least 3 checks)`, guardCheckCount >= 3, `found ${guardCheckCount}`)
+  }
 
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
   check('lib/db.ts Showcase mutations all call trusted server endpoints (never a direct Firestore write to litterShowcases)', /fetch\('\/api\/create-showcase'/.test(dbSrc) && /fetch\('\/api\/set-showcase-enabled'/.test(dbSrc) && /fetch\('\/api\/update-showcase-puppy'/.test(dbSrc) && /fetch\('\/api\/bulk-update-showcase-puppies'/.test(dbSrc))
@@ -267,7 +297,251 @@ const { check, checkAsync, skip, summary } = makeChecker()
   act(() => { renderer.unmount() })
 }
 
-// ── Section 5: emulator-only end-to-end behavioral tests ──
+// ── Section 5: Showcase account-switch REQUEST race (Codex fix-round
+// finding — a pending Showcase read/mutation started under account A can
+// resolve AFTER switching to account B and resurrect A's data). Unlike
+// Section 4 above (which only proves the SYNCHRONOUS reset fires), this
+// section proves the ASYNC race itself is closed, and does so two ways:
+//
+//   5a. Unit tests against the REAL, extracted ShowcaseRequestGuardState
+//       class (src/hooks/useShowcaseRequestGuard.ts) — not a hand-mirrored
+//       copy — proving its generation semantics: concurrent operations
+//       for the SAME account never invalidate each other, but ALL of them
+//       invalidate together, at once, the instant the account changes.
+//
+//   5b. A REAL mounted-component test (react-test-renderer + act()) using
+//       the REAL useShowcaseRequestGuard() hook, with a harness whose
+//       startRead()/startMutation() are line-for-line copies of
+//       LittersPage.tsx's own loadShowcase()/handleCreateShowcase() guard
+//       shape (capture gen → await → check isCurrent in every
+//       try/catch/finally branch) — only the actual network call
+//       (getShowcaseForLitter/createShowcase) is swapped for an
+//       externally-controlled deferred Promise, which is the only way to
+//       deterministically force a REAL pending request to resolve AFTER a
+//       REAL account switch inside a test. This is the same "wrap the
+//       real hook in a harness that fakes only the I/O boundary" pattern
+//       test-round16-request-guard-lifecycle.mjs already established for
+//       useRequestGuard — not a duplicate reimplementation of the guard
+//       itself, which is imported and used unmodified. ──
+{
+  const React = (await import('react')).default
+  const { useState, useEffect, useRef } = React
+  const TestRenderer = (await import('react-test-renderer')).default
+  const { act } = TestRenderer
+  const { ShowcaseRequestGuardState, useShowcaseRequestGuard } = await import('../src/hooks/useShowcaseRequestGuard.ts')
+
+  function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
+  function createDeferred() {
+    let resolve, reject
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej })
+    return { promise, resolve, reject }
+  }
+
+  // ── 5a: real ShowcaseRequestGuardState unit tests ──
+  {
+    const guard = new ShowcaseRequestGuardState()
+    const genLitterA = guard.currentGeneration()
+    const genLitterB = guard.currentGeneration()
+    check('5a', 'Two litters\' operations captured back-to-back (no account switch between them) get the SAME generation', genLitterA === genLitterB)
+    check('5a', 'Both are current before any account switch', guard.isCurrent(genLitterA) && guard.isCurrent(genLitterB))
+
+    guard.bumpAccountGeneration()
+    check('5a', 'After an account switch, BOTH earlier litters\' generations become stale TOGETHER — neither cancelled the other, the switch invalidated both', !guard.isCurrent(genLitterA) && !guard.isCurrent(genLitterB))
+
+    const genAfterSwitch1 = guard.currentGeneration()
+    const genAfterSwitch2 = guard.currentGeneration()
+    check('5a', 'Two more litters\' operations under the NEW account also share one generation and remain mutually non-interfering', genAfterSwitch1 === genAfterSwitch2 && guard.isCurrent(genAfterSwitch1) && guard.isCurrent(genAfterSwitch2))
+
+    guard.bumpAccountGeneration()
+    check('5a', 'A second account switch invalidates the post-first-switch generation too — stale generations never become current again', !guard.isCurrent(genAfterSwitch1) && !guard.isCurrent(genLitterA))
+  }
+
+  // ── 5b: real mounted-component harness, wrapping the REAL useShowcaseRequestGuard() ──
+  function ShowcaseRaceHarness({ uid, controls }) {
+    const mountedRef = useRef(true)
+    const showcaseGuard = useShowcaseRequestGuard()
+    const [showcases, setShowcases] = useState({})
+    const [showcaseLoading, setShowcaseLoading] = useState({})
+    const [showcaseBusy, setShowcaseBusy] = useState({})
+    const [showcaseError, setShowcaseError] = useState({})
+
+    useEffect(() => {
+      mountedRef.current = true
+      return () => { mountedRef.current = false }
+    }, [])
+
+    function isShowcaseRequestCurrent(gen) {
+      return mountedRef.current && showcaseGuard.isCurrent(gen)
+    }
+
+    // Line-for-line the same shape as LittersPage.tsx's own account-switch
+    // effect: reset + bump, together, in one synchronous effect body.
+    useEffect(() => {
+      showcaseGuard.bumpAccountGeneration()
+      setShowcases({})
+      setShowcaseLoading({})
+      setShowcaseBusy({})
+      setShowcaseError({})
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [uid])
+
+    // Line-for-line the same guard shape as loadShowcase() — only
+    // getShowcaseForLitter(litterId) is replaced with an
+    // externally-controlled `fetchPromise`.
+    async function startRead(litterId, fetchPromise) {
+      const gen = showcaseGuard.currentGeneration()
+      setShowcaseLoading(prev => ({ ...prev, [litterId]: true }))
+      setShowcaseError(prev => ({ ...prev, [litterId]: '' }))
+      try {
+        const result = await fetchPromise
+        if (!isShowcaseRequestCurrent(gen)) return
+        setShowcases(prev => ({ ...prev, [litterId]: result }))
+      } catch (err) {
+        if (!isShowcaseRequestCurrent(gen)) return
+        setShowcaseError(prev => ({ ...prev, [litterId]: err instanceof Error ? err.message : 'failed' }))
+      } finally {
+        if (!isShowcaseRequestCurrent(gen)) return
+        setShowcaseLoading(prev => ({ ...prev, [litterId]: false }))
+      }
+    }
+
+    // Line-for-line the same guard shape as handleCreateShowcase() — only
+    // createShowcase(litterId) is replaced with an externally-controlled
+    // `mutationPromise`.
+    async function startMutation(litterId, mutationPromise) {
+      const gen = showcaseGuard.currentGeneration()
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+      try {
+        const result = await mutationPromise
+        if (!isShowcaseRequestCurrent(gen)) return
+        setShowcases(prev => ({ ...prev, [litterId]: result }))
+      } catch (err) {
+        if (!isShowcaseRequestCurrent(gen)) return
+        setShowcaseError(prev => ({ ...prev, [litterId]: err instanceof Error ? err.message : 'failed' }))
+      } finally {
+        if (!isShowcaseRequestCurrent(gen)) return
+        setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+      }
+    }
+
+    controls.startRead = startRead
+    controls.startMutation = startMutation
+    controls.getState = () => ({ showcases, showcaseLoading, showcaseBusy, showcaseError })
+    return null
+  }
+
+  // ── Scenario 1 (required by the fix-round task): a pending READ
+  // resolves after an account switch — 1. account A starts a read, 2.
+  // switch to account B before it resolves, 3. resolve account A's
+  // request, 4. account A's data/error/loading is not committed for B. ──
+  {
+    const controlsA = {}
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(ShowcaseRaceHarness, { uid: 'accountA', controls: controlsA }))
+    })
+
+    const readDeferred = createDeferred()
+    act(() => { controlsA.startRead('litterX', readDeferred.promise) })
+    const midFlight = controlsA.getState()
+    check('5b-read', '1. Account A\'s read is genuinely pending (loading=true, nothing resolved yet)', midFlight.showcaseLoading.litterX === true && midFlight.showcases.litterX === undefined)
+
+    // 2. Switch to account B BEFORE account A's read resolves.
+    const controlsB = {}
+    act(() => {
+      renderer.update(React.createElement(ShowcaseRaceHarness, { uid: 'accountB', controls: controlsB }))
+    })
+    const rightAfterSwitch = controlsB.getState()
+    check('5b-read', 'Immediately after the switch, account B starts with empty Showcase state', Object.keys(rightAfterSwitch.showcases).length === 0 && Object.keys(rightAfterSwitch.showcaseLoading).length === 0)
+
+    // 3. NOW resolve account A's stale, still-pending read.
+    await act(async () => {
+      readDeferred.resolve({ litterId: 'litterX', tenantId: 'accountA', enabled: true, puppies: { evilPupFromAccountA: { visible: true, availability: 'available' } }, createdAt: 'x', updatedAt: 'x' })
+      await sleep(10)
+    })
+
+    // 4. Account A's data/loading must not be committed or rendered for account B.
+    const afterStaleResolve = controlsB.getState()
+    check('5b-read', '4. Account A\'s stale read result is NOT committed into account B\'s showcases', Object.keys(afterStaleResolve.showcases).length === 0)
+    check('5b-read', 'Account A\'s data never appears ANYWHERE in account B\'s state, not even nested', !JSON.stringify(afterStaleResolve).includes('evilPupFromAccountA') && !JSON.stringify(afterStaleResolve).includes('accountA'))
+    check('5b-read', 'Account B\'s showcaseLoading for litterX is not left stuck true by A\'s stale finally block', afterStaleResolve.showcaseLoading.litterX !== true)
+    check('5b-read', 'Account B\'s showcaseError for litterX was not set by A\'s stale request either', !afterStaleResolve.showcaseError.litterX)
+
+    // Sanity: account B's OWN fresh read still works normally afterward.
+    const freshDeferred = createDeferred()
+    act(() => { controlsB.startRead('litterX', freshDeferred.promise) })
+    await act(async () => {
+      freshDeferred.resolve({ litterId: 'litterX', tenantId: 'accountB', enabled: false, puppies: {}, createdAt: 'y', updatedAt: 'y' })
+      await sleep(10)
+    })
+    check('5b-read', 'Sanity: account B\'s own fresh (non-stale) read DOES commit normally', controlsB.getState().showcases.litterX?.tenantId === 'accountB')
+
+    act(() => { renderer.unmount() })
+  }
+
+  // ── Scenario 2 (required by the fix-round task): "at least one pending
+  // Showcase MUTATION across an account switch" — a pending create-
+  // Showcase-style mutation must not resurrect account A's busy/data
+  // state under account B either. ──
+  {
+    const controlsA = {}
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(ShowcaseRaceHarness, { uid: 'accountA', controls: controlsA }))
+    })
+
+    const mutationDeferred = createDeferred()
+    act(() => { controlsA.startMutation('litterY', mutationDeferred.promise) })
+    check('5b-mutation', 'Account A\'s mutation is genuinely pending (busy=true)', controlsA.getState().showcaseBusy.litterY === true)
+
+    const controlsB = {}
+    act(() => {
+      renderer.update(React.createElement(ShowcaseRaceHarness, { uid: 'accountB', controls: controlsB }))
+    })
+    check('5b-mutation', 'Immediately after the switch, account B starts with empty showcaseBusy', Object.keys(controlsB.getState().showcaseBusy).length === 0)
+
+    await act(async () => {
+      mutationDeferred.resolve({ litterId: 'litterY', tenantId: 'accountA', enabled: true, puppies: { evilMutationFromA: { visible: true, availability: 'available' } }, createdAt: 'x', updatedAt: 'x' })
+      await sleep(10)
+    })
+
+    const afterStaleMutation = controlsB.getState()
+    check('5b-mutation', "Account A's stale mutation result is NOT committed into account B's showcases", Object.keys(afterStaleMutation.showcases).length === 0)
+    check('5b-mutation', "Account A's stale mutation never appears anywhere in account B's state", !JSON.stringify(afterStaleMutation).includes('evilMutationFromA'))
+    check('5b-mutation', "Account B's showcaseBusy for litterY is not left stuck true by A's stale finally block", afterStaleMutation.showcaseBusy.litterY !== true)
+
+    act(() => { renderer.unmount() })
+  }
+
+  // ── Scenario 3: a REJECTED (not just resolved) stale request must also
+  // never surface an error for the wrong account. ──
+  {
+    const controlsA = {}
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(ShowcaseRaceHarness, { uid: 'accountA', controls: controlsA }))
+    })
+    const failDeferred = createDeferred()
+    act(() => { controlsA.startRead('litterZ', failDeferred.promise) })
+
+    const controlsB = {}
+    act(() => {
+      renderer.update(React.createElement(ShowcaseRaceHarness, { uid: 'accountB', controls: controlsB }))
+    })
+
+    await act(async () => {
+      failDeferred.reject(new Error('account-A-specific failure message'))
+      await sleep(10)
+    })
+    const afterStaleRejection = controlsB.getState()
+    check('5b-reject', "A stale REJECTED request from account A does not set an error for account B", !afterStaleRejection.showcaseError.litterZ)
+    check('5b-reject', "Account A's failure message never appears in account B's state", !JSON.stringify(afterStaleRejection).includes('account-A-specific failure message'))
+
+    act(() => { renderer.unmount() })
+  }
+}
+
+// ── Section 6: emulator-only end-to-end behavioral tests ──
 if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
   await import('./test-helpers/emulator-credentials.mjs')
   const { getFirestore } = await import('firebase-admin/firestore')
@@ -587,6 +861,6 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
 
   await summary()
 } else {
-  skip('Section 5 (emulator end-to-end behavioral tests, including the finding-1 timestamp tests)', 'set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
+  skip('Section 6 (emulator end-to-end behavioral tests, including the finding-1 timestamp tests)', 'set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
   await summary()
 }
