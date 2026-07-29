@@ -17,9 +17,9 @@
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
-import { checkBreederPlusAccess, loadOwnedLitter, loadOwnedShowcase } from './_lib/showcase-access.js'
+import { checkBreederPlusAccess, loadOwnedLitter, loadOwnedShowcase, readShowcaseForResponse } from './_lib/showcase-access.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -71,18 +71,20 @@ async function handler(req, res) {
     const { error: litterError } = await loadOwnedLitter(tx, db, litterId, uid)
     if (litterError) return litterError
 
-    const { showcase, error: showcaseError } = await loadOwnedShowcase(tx, db, litterId, uid)
+    const { error: showcaseError } = await loadOwnedShowcase(tx, db, litterId, uid)
     if (showcaseError) return showcaseError
 
-    const nowIso = new Date().toISOString()
-    tx.update(showcaseRef, { enabled, updatedAt: nowIso })
-    return { ok: true, showcase: { ...showcase, enabled, updatedAt: nowIso } }
+    // Codex fix-round finding 1: updatedAt is a trusted Firestore server
+    // timestamp — see readShowcaseForResponse (showcase-access.js).
+    tx.update(showcaseRef, { enabled, updatedAt: FieldValue.serverTimestamp() })
+    return { ok: true }
   })
 
   if (!result.ok) {
     return res.status(result.status).json(result.body)
   }
-  return res.status(200).json({ showcase: result.showcase })
+  const showcase = await readShowcaseForResponse(db, litterId)
+  return res.status(200).json({ showcase })
 }
 
 export default withApiErrorHandling('set-showcase-enabled', handler)

@@ -29,9 +29,9 @@
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
-import { checkBreederPlusAccess, loadOwnedLitter, loadOwnedShowcase } from './_lib/showcase-access.js'
+import { checkBreederPlusAccess, loadOwnedLitter, loadOwnedShowcase, readShowcaseForResponse } from './_lib/showcase-access.js'
 import { mergePuppyEntry, validatePuppyPatch, ShowcaseValidationError } from './_lib/showcase-schema.js'
 
 if (!getApps().length) {
@@ -101,26 +101,23 @@ async function handler(req, res) {
 
     const existingEntry = showcase.puppies?.[puppyId]
     const mergedEntry = mergePuppyEntry(existingEntry, patch)
-    const nowIso = new Date().toISOString()
 
     // set()+merge:true deep-merges nested map fields — this only ever
     // touches puppies.<puppyId>, leaving every sibling puppy entry (and
     // any other top-level field) untouched, without needing a
     // dot-notation field path built from a dynamic (Dog-document) id.
-    tx.set(showcaseRef, { puppies: { [puppyId]: mergedEntry }, updatedAt: nowIso }, { merge: true })
+    // Codex fix-round finding 1: updatedAt is a trusted Firestore server
+    // timestamp — see readShowcaseForResponse (showcase-access.js).
+    tx.set(showcaseRef, { puppies: { [puppyId]: mergedEntry }, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
 
-    const updatedShowcase = {
-      ...showcase,
-      puppies: { ...(showcase.puppies || {}), [puppyId]: mergedEntry },
-      updatedAt: nowIso,
-    }
-    return { ok: true, showcase: updatedShowcase }
+    return { ok: true }
   })
 
   if (!result.ok) {
     return res.status(result.status).json(result.body)
   }
-  return res.status(200).json({ showcase: result.showcase })
+  const showcase = await readShowcaseForResponse(db, litterId)
+  return res.status(200).json({ showcase })
 }
 
 export default withApiErrorHandling('update-showcase-puppy', handler)

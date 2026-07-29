@@ -27,9 +27,9 @@
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
-import { checkBreederPlusAccess, loadOwnedLitter } from './_lib/showcase-access.js'
+import { checkBreederPlusAccess, loadOwnedLitter, readShowcaseForResponse } from './_lib/showcase-access.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -85,23 +85,26 @@ async function handler(req, res) {
       return { ok: false, status: 409, body: { error: 'A Showcase already exists for this litter', reason: 'SHOWCASE_ALREADY_EXISTS' } }
     }
 
-    const nowIso = new Date().toISOString()
-    const data = {
+    // Codex fix-round finding 1: createdAt/updatedAt are trusted Firestore
+    // server timestamps, never a client- or app-server-clock value — see
+    // readShowcaseForResponse (showcase-access.js) for how the resolved
+    // value is read back for the API response below.
+    tx.set(showcaseRef, {
       litterId,
       tenantId: uid,
       enabled: false,
       puppies: {},
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    }
-    tx.set(showcaseRef, data)
-    return { ok: true, showcase: data }
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    return { ok: true }
   })
 
   if (!result.ok) {
     return res.status(result.status).json(result.body)
   }
-  return res.status(200).json({ showcase: result.showcase })
+  const showcase = await readShowcaseForResponse(db, litterId)
+  return res.status(200).json({ showcase })
 }
 
 export default withApiErrorHandling('create-showcase', handler)

@@ -4,11 +4,20 @@
 // authorization boundary around all of it).
 //
 // Same established pattern as test-h7-litter-delete-ledger-backfill.mjs
-// / test-passport-uniqueness.mjs / test-claim-transferred-dogs.mjs:
+// / test-passport-uniqueness.mjs / test-claim-transferred-dogs.mjs /
+// test-round16-request-guard-lifecycle.mjs:
 //   1. Pure-logic unit tests against the REAL api/_lib/showcase-schema.js
 //      functions (not a hand-copied mirror).
-//   2. Structural assertions on firestore.rules and LittersPage.tsx.
-//   3. Emulator-only behavioral tests that import and call the REAL
+//   2. Structural assertions on firestore.rules, LittersPage.tsx, lib/db.ts,
+//      and the four API endpoints (including the Codex fix-round finding 1
+//      server-timestamp convention).
+//   3. getEffectivePlanClient (src/lib/utils.ts) vs. the REAL server-side
+//      computeEffectivePlan (api/_lib/entitlements.js, importable
+//      directly) parity tests (Codex fix-round finding 2).
+//   4. A REAL mounted-component test (react-test-renderer + act()) proving
+//      an account switch resets all Showcase UI state (Codex fix-round
+//      finding 3) — no emulator needed.
+//   5. Emulator-only behavioral tests that import and call the REAL
 //      api/*.js handlers directly with mock req/res objects, against a
 //      local Firestore/Auth emulator — skipped gracefully (not silently
 //      dropped from the pass count) when no emulator is reachable.
@@ -99,15 +108,166 @@ const { check, checkAsync, skip, summary } = makeChecker()
 
   const littersPageSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
   check('LittersPage.tsx manages Showcase via lib/db.ts server-endpoint wrappers, not direct Firestore writes', /createShowcase\(litterId\)/.test(littersPageSrc) && /setShowcaseEnabled\(litterId, !current\.enabled\)/.test(littersPageSrc) && /updateShowcasePuppy\(litterId, puppyId, \{ visible \}\)/.test(littersPageSrc) && /bulkUpdateShowcasePuppies\(litterId, action\)/.test(littersPageSrc))
-  check('LittersPage.tsx gates Showcase management to Plus-plan accounts client-side (server is still the authoritative gate)', /profile\?\.plan !== 'plus'/.test(littersPageSrc))
+  // Codex fix-round finding 2: the raw `profile?.plan !== 'plus'` check is
+  // gone — gating must go through the shared client mirror of
+  // computeEffectivePlan (getEffectivePlanClient), not a bare plan-field
+  // comparison that ignores expired past_due grace.
+  check('LittersPage.tsx gates Showcase management via getEffectivePlanClient (accounts for past_due grace expiry), not a raw plan-field check', /getEffectivePlanClient\(profile\) !== 'plus'/.test(littersPageSrc) && !/\{profile\?\.plan !== 'plus'/.test(littersPageSrc))
+  check('LittersPage.tsx imports getEffectivePlanClient from lib/utils', /import \{[^}]*getEffectivePlanClient[^}]*\} from '\.\.\/lib\/utils'/.test(littersPageSrc))
   check('LittersPage.tsx never reads/writes the dogs collection when handling Showcase puppy state (Requirement 7)', !/updateDoc\([^)]*dogs[^)]*visible/.test(littersPageSrc))
+
+  // Codex fix-round finding 3: switching accounts must reset every piece
+  // of Showcase UI state, not just litters/dogs. Anchored to the SAME
+  // useEffect block (from its opening comment through the `[user?.uid]`
+  // dependency array) so this can't pass by matching a reset call that
+  // lives somewhere unrelated in the file.
+  const accountSwitchEffect = (littersPageSrc.match(/useEffect\(\(\) => \{\s*\/\/ Codex round 15[\s\S]*?\}, \[user\?\.uid\]\)/) || [''])[0]
+  check('The account-switch useEffect was found (anchored to its Codex round 15 comment through the [user?.uid] dep array)', accountSwitchEffect.length > 0)
+  check('Account switch resets litters and dogs', /setLitters\(\[\]\)/.test(accountSwitchEffect) && /setDogs\(\[\]\)/.test(accountSwitchEffect))
+  check('Account switch resets all four Showcase state maps', /setShowcases\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseLoading\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseBusy\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseError\(\{\}\)/.test(accountSwitchEffect))
+  check('Account switch collapses any expanded litter panel', /setExpandedLitter\(null\)/.test(accountSwitchEffect))
 
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
   check('lib/db.ts Showcase mutations all call trusted server endpoints (never a direct Firestore write to litterShowcases)', /fetch\('\/api\/create-showcase'/.test(dbSrc) && /fetch\('\/api\/set-showcase-enabled'/.test(dbSrc) && /fetch\('\/api\/update-showcase-puppy'/.test(dbSrc) && /fetch\('\/api\/bulk-update-showcase-puppies'/.test(dbSrc))
   check('lib/db.ts Showcase read uses getDoc directly (Rules-scoped to the owning tenant, no server round-trip needed)', /getDoc\(doc\(db, 'litterShowcases', litterId\)\)/.test(dbSrc))
+
+  const apiFiles = ['create-showcase.js', 'set-showcase-enabled.js', 'update-showcase-puppy.js', 'bulk-update-showcase-puppies.js']
+  for (const file of apiFiles) {
+    const src = readFileSync(new URL(`../api/${file}`, import.meta.url), 'utf8')
+    check(`api/${file} uses FieldValue.serverTimestamp() for updatedAt, never new Date().toISOString()`, /updatedAt: FieldValue\.serverTimestamp\(\)/.test(src) && !/updatedAt: nowIso/.test(src) && !/new Date\(\)\.toISOString\(\)/.test(src))
+    check(`api/${file} reads the resolved document back via readShowcaseForResponse before responding`, /const showcase = await readShowcaseForResponse\(db, litterId\)/.test(src))
+  }
+  const createSrc = readFileSync(new URL('../api/create-showcase.js', import.meta.url), 'utf8')
+  check('api/create-showcase.js uses FieldValue.serverTimestamp() for createdAt too', /createdAt: FieldValue\.serverTimestamp\(\)/.test(createSrc))
 }
 
-// ── Section 3: emulator-only end-to-end behavioral tests ──
+// ── Section 3: getEffectivePlanClient parity with the server's
+// computeEffectivePlan (Codex fix-round finding 2). Cross-checks the
+// REAL server-side function (api/_lib/entitlements.js, importable
+// directly — plain JS) against a plain-JS mirror of getEffectivePlanClient
+// (src/lib/utils.ts, TypeScript — can't be imported into a Node script
+// without compilation, so this mirrors it field-for-field, same
+// established pattern as every other client/server logic pair in this
+// suite) across the four scenarios the fix-round explicitly calls out. ──
+{
+  const { computeEffectivePlan } = await import('../api/_lib/entitlements.js')
+
+  const PLAN_GRACE_MS = 7 * 24 * 60 * 60 * 1000
+  function getEffectivePlanClientMirror(profile, now = new Date()) {
+    const rawPlan = profile?.plan === 'plus' ? 'plus' : 'free'
+    if (rawPlan !== 'plus') return 'free'
+    if (profile?.subscriptionStatus === 'past_due' && profile?.pastDueSince) {
+      const since = new Date(profile.pastDueSince).getTime()
+      if (!Number.isNaN(since) && now.getTime() - since > PLAN_GRACE_MS) return 'free'
+    }
+    return 'plus'
+  }
+
+  const now = new Date('2026-07-29T12:00:00.000Z')
+  const scenarios = [
+    { label: 'active Plus (no past_due at all)', profile: { plan: 'plus' }, expect: 'plus' },
+    { label: 'Free plan', profile: { plan: 'free' }, expect: 'free' },
+    { label: 'past_due within the 7-day grace window (1 day ago)', profile: { plan: 'plus', subscriptionStatus: 'past_due', pastDueSince: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000).toISOString() }, expect: 'plus' },
+    { label: 'past_due AFTER the 7-day grace window has expired (8 days ago)', profile: { plan: 'plus', subscriptionStatus: 'past_due', pastDueSince: new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000).toISOString() }, expect: 'free' },
+    // Boundary cases, still both sides.
+    { label: 'past_due exactly at the grace boundary (7 days ago, not yet expired)', profile: { plan: 'plus', subscriptionStatus: 'past_due', pastDueSince: new Date(now.getTime() - PLAN_GRACE_MS).toISOString() }, expect: 'plus' },
+    { label: 'no profile document at all', profile: null, expect: 'free' },
+  ]
+  for (const s of scenarios) {
+    const serverResult = computeEffectivePlan(s.profile, now)
+    const clientResult = getEffectivePlanClientMirror(s.profile, now)
+    check(`Server computeEffectivePlan: ${s.label} → ${s.expect}`, serverResult === s.expect, `got ${serverResult}`)
+    check(`Client getEffectivePlanClient mirror: ${s.label} → ${s.expect}`, clientResult === s.expect, `got ${clientResult}`)
+    check(`Client and server AGREE for: ${s.label}`, clientResult === serverResult)
+  }
+
+  // Structural: the ACTUAL utils.ts source implements the same grace
+  // constant and the same past_due+pastDueSince gate the mirror above
+  // encodes — not just a same-named function that happens to always
+  // return 'plus'.
+  const utilsSrc = readFileSync(new URL('../src/lib/utils.ts', import.meta.url), 'utf8')
+  check('utils.ts exports getEffectivePlanClient', /export function getEffectivePlanClient\(/.test(utilsSrc))
+  check('utils.ts uses the same 7-day grace constant as api/_lib/entitlements.js', /PLAN_GRACE_MS = 7 \* 24 \* 60 \* 60 \* 1000/.test(utilsSrc))
+  check('utils.ts checks subscriptionStatus === \'past_due\' && pastDueSince before treating an account as downgraded', /profile\?\.subscriptionStatus === 'past_due' && profile\?\.pastDueSince/.test(utilsSrc))
+}
+
+// ── Section 4: account-switch reset — a REAL mounted-component test
+// (react-test-renderer + act(), same established pattern as
+// test-round16-request-guard-lifecycle.mjs) proving a useEffect keyed on
+// the account identifier, reproducing LittersPage's exact reset shape,
+// actually clears every piece of Showcase state (not just litters/dogs)
+// the moment the account changes — not merely that the source CONTAINS
+// the right setter calls (Section 2 above already proves that
+// separately), but that mounting, seeding stale state, and switching
+// accounts produces the correct RENDERED outcome. No emulator needed. ──
+{
+  const React = (await import('react')).default
+  const { useState, useEffect } = React
+  const TestRenderer = (await import('react-test-renderer')).default
+  const { act } = TestRenderer
+
+  function ShowcaseResetHarness({ uid, controls }) {
+    const [litters, setLitters] = useState(['stale-litter'])
+    const [dogs, setDogs] = useState(['stale-dog'])
+    const [showcases, setShowcases] = useState({})
+    const [showcaseLoading, setShowcaseLoading] = useState({})
+    const [showcaseBusy, setShowcaseBusy] = useState({})
+    const [showcaseError, setShowcaseError] = useState({})
+    const [expandedLitter, setExpandedLitter] = useState(null)
+
+    // Mirrors LittersPage.tsx's account-switch useEffect exactly: same
+    // dependency array shape ([uid], the harness's equivalent of
+    // [user?.uid]), same seven reset calls.
+    useEffect(() => {
+      setLitters([])
+      setDogs([])
+      setShowcases({})
+      setShowcaseLoading({})
+      setShowcaseBusy({})
+      setShowcaseError({})
+      setExpandedLitter(null)
+    }, [uid])
+
+    controls.getState = () => ({ litters, dogs, showcases, showcaseLoading, showcaseBusy, showcaseError, expandedLitter })
+    controls.seedStaleShowcaseState = () => {
+      setShowcases({ litterX: { enabled: true, puppies: { pupX: { visible: true, availability: 'available' } } } })
+      setShowcaseLoading({ litterX: true })
+      setShowcaseBusy({ litterX: true })
+      setShowcaseError({ litterX: 'a stale error from the previous account' })
+      setExpandedLitter('litterX')
+    }
+    return null
+  }
+
+  const controlsA = {}
+  let renderer
+  act(() => {
+    renderer = TestRenderer.create(React.createElement(ShowcaseResetHarness, { uid: 'accountA', controls: controlsA }))
+  })
+  act(() => { controlsA.seedStaleShowcaseState() })
+
+  const seeded = controlsA.getState()
+  check('Sanity: seeding stale Showcase state for account A actually took effect', seeded.showcases.litterX?.enabled === true && seeded.expandedLitter === 'litterX' && seeded.showcaseError.litterX === 'a stale error from the previous account')
+
+  // The account-switch itself: re-render with a DIFFERENT uid, exactly
+  // as LittersPage does when useAuth()'s user changes.
+  const controlsB = {}
+  act(() => {
+    renderer.update(React.createElement(ShowcaseResetHarness, { uid: 'accountB', controls: controlsB }))
+  })
+  const afterSwitch = controlsB.getState()
+
+  check('After switching accounts, showcases is reset to empty — account A\'s Showcase data is not reused for account B', Object.keys(afterSwitch.showcases).length === 0)
+  check('After switching accounts, showcaseLoading is reset to empty', Object.keys(afterSwitch.showcaseLoading).length === 0)
+  check('After switching accounts, showcaseBusy is reset to empty', Object.keys(afterSwitch.showcaseBusy).length === 0)
+  check('After switching accounts, showcaseError is reset to empty — account A\'s stale error message is not shown for account B', Object.keys(afterSwitch.showcaseError).length === 0)
+  check('After switching accounts, expandedLitter collapses back to null — account A\'s expanded litter panel is not left open for account B', afterSwitch.expandedLitter === null)
+  check('After switching accounts, litters/dogs are also reset (unaffected sibling behavior)', afterSwitch.litters.length === 0 && afterSwitch.dogs.length === 0)
+
+  act(() => { renderer.unmount() })
+}
+
+// ── Section 5: emulator-only end-to-end behavioral tests ──
 if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
   await import('./test-helpers/emulator-credentials.mjs')
   const { getFirestore } = await import('firebase-admin/firestore')
@@ -365,8 +525,68 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     await signOut(clientAuth).catch(() => {})
   }
 
+  // ── Test 9 (Codex fix-round finding 1): persisted createdAt/updatedAt
+  // are trusted Firestore server timestamps, and updatedAt genuinely
+  // advances after a mutation ── reads the RAW Firestore document via the
+  // Admin SDK (bypassing readShowcaseForResponse's own ISO-string
+  // conversion) to prove the STORED value is a real resolved Timestamp,
+  // not a `new Date().toISOString()` app-clock string — a plain string
+  // would fail the `instanceof Timestamp` check below even though it
+  // might still happen to look date-like.
+  {
+    const { Timestamp } = await import('firebase-admin/firestore')
+    const breeder = await newUser('sc9breeder', breederPlusProfile)
+    const litterId = `litter9_${R}`
+    await seedLitter(breeder.uid, litterId, [])
+
+    const createRes = mockRes()
+    await createShowcaseHandler(mockReq({ litterId }, breeder.idToken), createRes)
+    check('9', 'create-showcase succeeds', createRes.statusCode === 200, JSON.stringify(createRes.body))
+
+    const rawAfterCreate = (await seedDb.collection('litterShowcases').doc(litterId).get()).data()
+    check('9', 'The RAW persisted createdAt is a genuine Firestore Timestamp (FieldValue.serverTimestamp() resolved it), not a plain string', rawAfterCreate.createdAt instanceof Timestamp)
+    check('9', 'The RAW persisted updatedAt is a genuine Firestore Timestamp', rawAfterCreate.updatedAt instanceof Timestamp)
+    check('9', 'On create, createdAt and updatedAt resolve to the same commit (equal to the millisecond)', rawAfterCreate.createdAt.toMillis() === rawAfterCreate.updatedAt.toMillis())
+
+    const createdIso = createRes.body.showcase.createdAt
+    const updatedIsoBefore = createRes.body.showcase.updatedAt
+    check('9', 'The API response createdAt is a plain, parseable ISO string (never a raw Timestamp object)', typeof createdIso === 'string' && !Number.isNaN(new Date(createdIso).getTime()))
+    check('9', 'The API response updatedAt is a plain, parseable ISO string', typeof updatedIsoBefore === 'string' && !Number.isNaN(new Date(updatedIsoBefore).getTime()))
+    check('9', 'The API response ISO string matches the raw Timestamp it was converted from', createdIso === rawAfterCreate.createdAt.toDate().toISOString())
+
+    // A small real delay so a second server-resolved timestamp is
+    // guaranteed to land in a later millisecond than the first, even on
+    // a very fast local emulator round trip.
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    const enableRes = mockRes()
+    await setEnabledHandler(mockReq({ litterId, enabled: true }, breeder.idToken), enableRes)
+    check('9', 'set-showcase-enabled succeeds', enableRes.statusCode === 200, JSON.stringify(enableRes.body))
+
+    const rawAfterUpdate = (await seedDb.collection('litterShowcases').doc(litterId).get()).data()
+    check('9', 'updatedAt (raw Timestamp) genuinely advances after a mutation', rawAfterUpdate.updatedAt.toMillis() > rawAfterCreate.updatedAt.toMillis())
+    check('9', 'createdAt (raw Timestamp) is untouched by an update — only updatedAt moves', rawAfterUpdate.createdAt.toMillis() === rawAfterCreate.createdAt.toMillis())
+    check('9', 'The API response updatedAt string also advances after the mutation', enableRes.body.showcase.updatedAt !== updatedIsoBefore && new Date(enableRes.body.showcase.updatedAt).getTime() > new Date(updatedIsoBefore).getTime())
+    check('9', 'The API response createdAt string is unchanged after the mutation', enableRes.body.showcase.createdAt === createdIso)
+
+    // A second mutation type (update-showcase-puppy) is covered too —
+    // the fix touched all four endpoints identically.
+    await seedPuppy(breeder.uid, `pup9_${R}`, litterId)
+    await seedDb.collection('litters').doc(litterId).update({ puppyIds: [`pup9_${R}`] })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const puppyRes = mockRes()
+    await updatePuppyHandler(mockReq({ litterId, puppyId: `pup9_${R}`, visible: true }, breeder.idToken), puppyRes)
+    check('9', 'update-showcase-puppy also advances updatedAt via a trusted server timestamp', puppyRes.body.showcase.updatedAt !== enableRes.body.showcase.updatedAt && new Date(puppyRes.body.showcase.updatedAt).getTime() > new Date(enableRes.body.showcase.updatedAt).getTime())
+
+    // And bulk-update-showcase-puppies.
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const bulkRes = mockRes()
+    await bulkHandler(mockReq({ litterId, action: 'clear_all' }, breeder.idToken), bulkRes)
+    check('9', 'bulk-update-showcase-puppies also advances updatedAt via a trusted server timestamp', bulkRes.body.showcase.updatedAt !== puppyRes.body.showcase.updatedAt && new Date(bulkRes.body.showcase.updatedAt).getTime() > new Date(puppyRes.body.showcase.updatedAt).getTime())
+  }
+
   await summary()
 } else {
-  skip('Section 3 (emulator end-to-end behavioral tests)', 'set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
+  skip('Section 5 (emulator end-to-end behavioral tests, including the finding-1 timestamp tests)', 'set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
   await summary()
 }

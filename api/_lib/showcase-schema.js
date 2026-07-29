@@ -19,6 +19,24 @@ export const AVAILABILITY_VALUES = Object.freeze(['available', 'on_hold', 'reser
 export const DEFAULT_AVAILABILITY = 'available'
 export const DEFAULT_VISIBLE = false
 
+// Codex fix-round finding 1: createdAt/updatedAt are written with
+// FieldValue.serverTimestamp() (a trusted, server-resolved value — never
+// a client- or app-server-clock-controlled `new Date().toISOString()`),
+// so every API response must convert the resolved Admin SDK Timestamp
+// back to a plain ISO string before it can be safely JSON-serialized —
+// this project's own documented convention (see CLAUDE.md's Firestore
+// Collections section: `data.createdAt?.toDate?.()?.toISOString() ||
+// data.createdAt || ''`), also mirrored server-side by
+// api/_lib/dog-cap.js's createdAtKey(). The `|| value || ''` fallback
+// keeps this safe even for the (not currently reachable, since callers
+// always re-read after a committed write — see readShowcaseForResponse
+// in showcase-access.js) case of an unresolved sentinel or a legacy
+// plain-string value: it never throws and never leaks a raw Timestamp
+// object into a JSON response.
+export function resolveTimestampIso(value) {
+  return value?.toDate?.()?.toISOString() || value || ''
+}
+
 export const BULK_ACTIONS = Object.freeze(['select_all', 'clear_all', 'show_available_only'])
 
 // Always returns a COMPLETE two-field entry — never a partial one — so a

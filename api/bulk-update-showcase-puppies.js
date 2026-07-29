@@ -20,9 +20,9 @@
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
-import { checkBreederPlusAccess, loadOwnedLitter, loadOwnedShowcase } from './_lib/showcase-access.js'
+import { checkBreederPlusAccess, loadOwnedLitter, loadOwnedShowcase, readShowcaseForResponse } from './_lib/showcase-access.js'
 import { applyBulkAction, validateBulkAction, ShowcaseValidationError } from './_lib/showcase-schema.js'
 
 if (!getApps().length) {
@@ -83,20 +83,22 @@ async function handler(req, res) {
 
     const puppyIds = litter.puppyIds || []
     const newPuppies = applyBulkAction(action, showcase.puppies, puppyIds)
-    const nowIso = new Date().toISOString()
 
     // Plain update() replaces the whole `puppies` field (not a merge) —
     // deliberate here, so entries for puppies no longer in litter.puppyIds
-    // are actually dropped rather than retained forever.
-    tx.update(showcaseRef, { puppies: newPuppies, updatedAt: nowIso })
+    // are actually dropped rather than retained forever. Codex fix-round
+    // finding 1: updatedAt is a trusted Firestore server timestamp — see
+    // readShowcaseForResponse (showcase-access.js).
+    tx.update(showcaseRef, { puppies: newPuppies, updatedAt: FieldValue.serverTimestamp() })
 
-    return { ok: true, showcase: { ...showcase, puppies: newPuppies, updatedAt: nowIso } }
+    return { ok: true }
   })
 
   if (!result.ok) {
     return res.status(result.status).json(result.body)
   }
-  return res.status(200).json({ showcase: result.showcase })
+  const showcase = await readShowcaseForResponse(db, litterId)
+  return res.status(200).json({ showcase })
 }
 
 export default withApiErrorHandling('bulk-update-showcase-puppies', handler)

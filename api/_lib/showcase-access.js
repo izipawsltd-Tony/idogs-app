@@ -21,6 +21,7 @@
 // endpoints.
 
 import { computeEffectivePlan } from './entitlements.js'
+import { resolveTimestampIso } from './showcase-schema.js'
 
 export const SHOWCASE_ROLE_PLAN_GATE_MESSAGE = 'Litter Showcase is available to Plus-plan breeders'
 
@@ -71,4 +72,30 @@ export async function loadOwnedShowcase(tx, db, litterId, uid) {
     return { error: { ok: false, status: 403, body: { error: 'Not your showcase' } } }
   }
   return { showcase }
+}
+
+// Codex fix-round finding 1: createdAt/updatedAt are now written with
+// FieldValue.serverTimestamp() — a sentinel that only resolves to a real
+// value once Firestore commits the write, and can never be read back
+// from inside the SAME transaction that wrote it. Every mutation
+// endpoint (create/set-enabled/update-puppy/bulk) calls this AFTER its
+// db.runTransaction() has successfully committed, doing one extra plain
+// (non-transactional) read to fetch the now-resolved document and
+// convert its timestamps to plain ISO strings via resolveTimestampIso —
+// so a JSON API response never has to carry a raw Admin SDK Timestamp
+// (or an unresolved sentinel) at all, keeping every response the same
+// `createdAt: string; updatedAt: string` shape LitterShowcase has always
+// had client-side. A benign race (another write landing between commit
+// and this read) is possible but harmless — it would only ever surface
+// a MORE current state than what this request itself just wrote, never
+// a stale or incorrect one.
+export async function readShowcaseForResponse(db, litterId) {
+  const snap = await db.collection('litterShowcases').doc(litterId).get()
+  const data = snap.data()
+  return {
+    ...data,
+    litterId: snap.id,
+    createdAt: resolveTimestampIso(data.createdAt),
+    updatedAt: resolveTimestampIso(data.updatedAt),
+  }
 }

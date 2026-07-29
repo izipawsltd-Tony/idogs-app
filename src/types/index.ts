@@ -214,6 +214,12 @@ export interface LitterShowcase {
   // defaults api/_lib/showcase-schema.js applies server-side on first
   // write.
   puppies: Record<string, ShowcasePuppyEntry>
+  // Written server-side with FieldValue.serverTimestamp() (never a
+  // client- or app-server-clock value) — every API response converts the
+  // resolved Admin SDK Timestamp to an ISO string before it's ever sent
+  // (see readShowcaseForResponse in api/_lib/showcase-access.js), so this
+  // field is always a plain string by the time it reaches the client,
+  // same as every other *createdAt/*updatedAt field in this file.
   createdAt: string
   updatedAt: string
 }

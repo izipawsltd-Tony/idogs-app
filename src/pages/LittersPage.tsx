@@ -7,7 +7,7 @@ import {
 import type { ShowcaseBulkAction } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict } from '../lib/utils'
+import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
 import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { sendTransferEmail } from '../lib/email'
@@ -225,6 +225,21 @@ export default function LittersPage({ toast }: Props) {
     setLitters([])
     setDogs([])
     startLoad()
+    // Codex fix-round findings, item 3: Showcase state is keyed by
+    // litterId, and litterIds are not guaranteed unique ACROSS accounts —
+    // without this reset, switching accounts (or logging out and into a
+    // different one in the same tab) could render a stale previous
+    // account's cached Showcase (puppies map, enabled flag, in-flight
+    // busy/error state) against a same-named litterId that happens to
+    // belong to the NEW account, or simply leave an expandedLitter panel
+    // open with data that was never re-fetched for the new user. All five
+    // pieces of Showcase UI state are reset together, exactly like
+    // litters/dogs above.
+    setShowcases({})
+    setShowcaseLoading({})
+    setShowcaseBusy({})
+    setShowcaseError({})
+    setExpandedLitter(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
 
@@ -1088,7 +1103,7 @@ export default function LittersPage({ toast }: Props) {
                     {/* ── LITTER SHOWCASE (Slice 1) ── */}
                     <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)' }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 10 }}>🎪 Litter Showcase</div>
-                      {profile?.plan !== 'plus' ? (
+                      {getEffectivePlanClient(profile) !== 'plus' ? (
                         <div style={{ fontSize: 13, color: 'var(--light)' }}>
                           Litter Showcase is a Plus-plan feature — upgrade to curate which puppies from this litter can be showcased.
                         </div>
