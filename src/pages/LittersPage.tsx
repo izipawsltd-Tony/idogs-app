@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership } from '../lib/db'
+import {
+  getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
+  getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, bulkUpdateShowcasePuppies, DEFAULT_SHOWCASE_PUPPY_ENTRY,
+} from '../lib/db'
+import type { ShowcaseBulkAction } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict } from '../lib/utils'
-import type { Litter, Dog, ToastMessage } from '../types'
+import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { sendTransferEmail } from '../lib/email'
 import { describeTransferFailure } from '../lib/transferError'
@@ -92,6 +96,16 @@ export default function LittersPage({ toast }: Props) {
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [expandedLitter, setExpandedLitter] = useState<string | null>(null)
+
+  // ── Litter Showcase (Slice 1) ──
+  // Keyed by litterId. `undefined` = not yet loaded, `null` = loaded and
+  // confirmed no Showcase exists yet for that litter. Loaded lazily (on
+  // expand), not up front for every litter — a breeder typically expands
+  // one litter at a time.
+  const [showcases, setShowcases] = useState<Record<string, LitterShowcase | null | undefined>>({})
+  const [showcaseLoading, setShowcaseLoading] = useState<Record<string, boolean>>({})
+  const [showcaseBusy, setShowcaseBusy] = useState<Record<string, boolean>>({})
+  const [showcaseError, setShowcaseError] = useState<Record<string, string>>({})
 
   // Edit litter state
   const [editingLitter, setEditingLitter] = useState<string | null>(null)
@@ -213,6 +227,101 @@ export default function LittersPage({ toast }: Props) {
     startLoad()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
+
+  // ── Litter Showcase (Slice 1) ──────────────────────────────────
+
+  async function loadShowcase(litterId: string) {
+    setShowcaseLoading(prev => ({ ...prev, [litterId]: true }))
+    setShowcaseError(prev => ({ ...prev, [litterId]: '' }))
+    try {
+      const result = await getShowcaseForLitter(litterId)
+      setShowcases(prev => ({ ...prev, [litterId]: result }))
+    } catch (err) {
+      setShowcaseError(prev => ({ ...prev, [litterId]: err instanceof Error && err.message ? err.message : 'Failed to load Showcase' }))
+    } finally {
+      setShowcaseLoading(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  // Lazily loads a litter's Showcase the first time it's expanded — not
+  // for every litter up front. `profile?.role === 'owner'` never expands
+  // into the breeder controls branch at all (see the render below), so
+  // this only ever fires for a breeder/admin viewing their own litters.
+  useEffect(() => {
+    if (expandedLitter && profile?.role !== 'owner' && showcases[expandedLitter] === undefined) {
+      loadShowcase(expandedLitter)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedLitter])
+
+  async function handleCreateShowcase(litterId: string) {
+    setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    try {
+      const showcase = await createShowcase(litterId)
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      toast('Showcase created — no puppies are shown until you select them')
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to create Showcase', 'error')
+    } finally {
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  async function handleToggleShowcaseEnabled(litterId: string, current: LitterShowcase) {
+    setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    try {
+      const showcase = await setShowcaseEnabled(litterId, !current.enabled)
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      toast(showcase.enabled ? 'Showcase enabled' : 'Showcase disabled — puppy selection kept')
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to update Showcase', 'error')
+    } finally {
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  async function handleTogglePuppyVisible(litterId: string, puppyId: string, visible: boolean) {
+    setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    try {
+      const showcase = await updateShowcasePuppy(litterId, puppyId, { visible })
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to update puppy', 'error')
+    } finally {
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  async function handlePuppyAvailabilityChange(litterId: string, puppyId: string, availability: ShowcaseAvailability) {
+    setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    try {
+      const showcase = await updateShowcasePuppy(litterId, puppyId, { availability })
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to update puppy', 'error')
+    } finally {
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  const BULK_ACTION_LABELS: Record<ShowcaseBulkAction, string> = {
+    select_all: 'All puppies are now shown in the Showcase',
+    clear_all: 'All puppies are now hidden from the Showcase',
+    show_available_only: 'Only available puppies are now shown in the Showcase',
+  }
+
+  async function handleShowcaseBulkAction(litterId: string, action: ShowcaseBulkAction) {
+    setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    try {
+      const showcase = await bulkUpdateShowcasePuppies(litterId, action)
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      toast(BULK_ACTION_LABELS[action])
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to update Showcase', 'error')
+    } finally {
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
 
   function handleDamChange(damId: string) {
     const dam = dogs.find(d => d.id === damId)
@@ -975,6 +1084,44 @@ export default function LittersPage({ toast }: Props) {
                         </div>
                       )}
                     </div>
+
+                    {/* ── LITTER SHOWCASE (Slice 1) ── */}
+                    <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 10 }}>🎪 Litter Showcase</div>
+                      {profile?.plan !== 'plus' ? (
+                        <div style={{ fontSize: 13, color: 'var(--light)' }}>
+                          Litter Showcase is a Plus-plan feature — upgrade to curate which puppies from this litter can be showcased.
+                        </div>
+                      ) : showcaseLoading[litter.id] ? (
+                        <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
+                      ) : showcaseError[litter.id] ? (
+                        <div style={{ fontSize: 13, color: 'var(--mid)' }}>
+                          <p style={{ marginBottom: 8 }}>Couldn't load Showcase — {showcaseError[litter.id]}</p>
+                          <button className="btn btn-secondary btn-sm" onClick={() => loadShowcase(litter.id)}>Retry</button>
+                        </div>
+                      ) : !showcases[litter.id] ? (
+                        <div style={{ fontSize: 13, color: 'var(--mid)' }}>
+                          <p style={{ marginBottom: 10 }}>No Showcase yet for this litter. Creating one shows zero puppies until you explicitly select them.</p>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => handleCreateShowcase(litter.id)}
+                            disabled={!!showcaseBusy[litter.id]}
+                          >
+                            {showcaseBusy[litter.id] ? <span className="spinner" /> : '+ Create Showcase'}
+                          </button>
+                        </div>
+                      ) : (
+                        <ShowcaseManager
+                          showcase={showcases[litter.id] as LitterShowcase}
+                          puppyDogs={puppyDogs}
+                          busy={!!showcaseBusy[litter.id]}
+                          onToggleEnabled={() => handleToggleShowcaseEnabled(litter.id, showcases[litter.id] as LitterShowcase)}
+                          onToggleVisible={(puppyId, visible) => handleTogglePuppyVisible(litter.id, puppyId, visible)}
+                          onAvailabilityChange={(puppyId, availability) => handlePuppyAvailabilityChange(litter.id, puppyId, availability)}
+                          onBulkAction={(action) => handleShowcaseBulkAction(litter.id, action)}
+                        />
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1086,6 +1233,113 @@ function PuppyFormFields({ form, onChange }: { form: PuppyForm; onChange: (f: Pu
         <label className="form-label">Notes</label>
         <input className="form-input" placeholder="Any distinguishing features…" value={form.notes} onChange={e => set('notes', e.target.value)} />
       </div>
+    </div>
+  )
+}
+
+// ── LITTER SHOWCASE MANAGER (Slice 1) ───────────────────────────
+// Renders per-litter, only for a breeder/admin on a Plus plan viewing an
+// already-created Showcase (see the empty/upgrade/loading/error states
+// handled by the caller in the main component above). Every mutation
+// here goes through lib/db.ts's showcase functions, which call the
+// trusted server endpoints — this component never writes to Firestore
+// directly, and never touches the `dogs` collection at all (Slice 1
+// requirement 7: hiding a puppy must not modify or delete its
+// underlying record).
+
+const AVAILABILITY_LABELS: Record<ShowcaseAvailability, string> = {
+  available: 'Available',
+  on_hold: 'On hold',
+  reserved: 'Reserved',
+  unavailable: 'Unavailable',
+}
+
+function ShowcaseManager({
+  showcase, puppyDogs, busy, onToggleEnabled, onToggleVisible, onAvailabilityChange, onBulkAction,
+}: {
+  showcase: LitterShowcase
+  puppyDogs: Dog[]
+  busy: boolean
+  onToggleEnabled: () => void
+  onToggleVisible: (puppyId: string, visible: boolean) => void
+  onAvailabilityChange: (puppyId: string, availability: ShowcaseAvailability) => void
+  onBulkAction: (action: ShowcaseBulkAction) => void
+}) {
+  const visibleCount = puppyDogs.filter(p => (showcase.puppies?.[p.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY).visible).length
+
+  return (
+    <div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: busy ? 'default' : 'pointer', marginBottom: 4 }}>
+        <input
+          type="checkbox"
+          checked={showcase.enabled}
+          disabled={busy}
+          onChange={onToggleEnabled}
+          aria-label={showcase.enabled ? 'Disable Showcase' : 'Enable Showcase'}
+          style={{ width: 16, height: 16, accentColor: 'var(--brand-600)' }}
+        />
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>
+          {showcase.enabled ? 'Showcase enabled' : 'Showcase disabled'}
+        </span>
+      </label>
+      <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
+        Puppy selection below is kept whether the Showcase is enabled or disabled.
+      </p>
+
+      {puppyDogs.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '16px', color: 'var(--light)', fontSize: 13 }}>
+          No puppies in this litter yet — add puppies above to include them here.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 12, color: 'var(--mid)' }}>{visibleCount} of {puppyDogs.length} puppies shown</span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onBulkAction('select_all')}>Select all</button>
+              <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onBulkAction('clear_all')}>Clear all</button>
+              <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onBulkAction('show_available_only')}>Show available only</button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {puppyDogs.map(puppy => {
+              const entry = showcase.puppies?.[puppy.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY
+              const checkboxId = `showcase-visible-${puppy.id}`
+              return (
+                <div
+                  key={puppy.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--white)', flexWrap: 'wrap' }}
+                >
+                  <input
+                    id={checkboxId}
+                    type="checkbox"
+                    checked={entry.visible}
+                    disabled={busy}
+                    onChange={e => onToggleVisible(puppy.id, e.target.checked)}
+                    style={{ width: 16, height: 16, accentColor: 'var(--brand-600)', flexShrink: 0 }}
+                  />
+                  <label htmlFor={checkboxId} style={{ flex: 1, minWidth: 100, fontSize: 13, fontWeight: 500, color: 'var(--dark)', cursor: busy ? 'default' : 'pointer' }}>
+                    {puppy.name}
+                    <span style={{ fontWeight: 400, color: 'var(--light)' }}> · {puppy.sex === 'female' ? '♀' : '♂'}</span>
+                  </label>
+                  <select
+                    className="form-select"
+                    value={entry.availability}
+                    disabled={busy}
+                    onChange={e => onAvailabilityChange(puppy.id, e.target.value as ShowcaseAvailability)}
+                    style={{ fontSize: 12, padding: '4px 8px', minWidth: 120 }}
+                    aria-label={`Availability for ${puppy.name}`}
+                  >
+                    {(Object.keys(AVAILABILITY_LABELS) as ShowcaseAvailability[]).map(value => (
+                      <option key={value} value={value}>{AVAILABILITY_LABELS[value]}</option>
+                    ))}
+                  </select>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
     </div>
   )
 }

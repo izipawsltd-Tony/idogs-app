@@ -3,7 +3,7 @@ import {
   query, where, serverTimestamp, setDoc, Timestamp
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
-import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage } from '../types'
+import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage, LitterShowcase, ShowcaseAvailability, ShowcasePuppyEntry } from '../types'
 import { calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
 
 function uid(): string {
@@ -1081,6 +1081,102 @@ export async function removePuppyFromLitter(litterId: string, puppyId: string): 
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error || `Remove puppy failed (${res.status})`)
   }
+}
+
+// ── LITTER SHOWCASE (Slice 1) ───────────────────────────────────
+// Mutations all go through trusted server endpoints (Admin SDK,
+// firestore.rules denies direct client writes to litterShowcases/{id}
+// outright — see that rule's own comment) — same shape as every litter
+// mutation above. Reads stay client-side: firestore.rules scopes
+// litterShowcases/{id} read to the owning tenant only, same as litters.
+
+// Display-only default for a puppy that has never been individually
+// touched — mirrors DEFAULT_VISIBLE/DEFAULT_AVAILABILITY in
+// api/_lib/showcase-schema.js exactly. Never written to Firestore by
+// the client; only used to render a sensible default row before the
+// breeder has interacted with a given puppy.
+export const DEFAULT_SHOWCASE_PUPPY_ENTRY: ShowcasePuppyEntry = { visible: false, availability: 'available' }
+
+// Returns null if no Showcase has been created for this litter yet —
+// not an error, just "not created" (Slice 1 requirement 1: a Showcase
+// is opt-in, created explicitly by the breeder).
+export async function getShowcaseForLitter(litterId: string): Promise<LitterShowcase | null> {
+  const snap = await getDoc(doc(db, 'litterShowcases', litterId))
+  if (!snap.exists()) return null
+  return { ...snap.data(), litterId: snap.id } as LitterShowcase
+}
+
+export async function createShowcase(litterId: string): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/create-showcase', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Create showcase failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
+}
+
+export async function setShowcaseEnabled(litterId: string, enabled: boolean): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/set-showcase-enabled', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, enabled }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update showcase failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
+}
+
+// `patch` may include visible and/or availability — only the field(s)
+// present are changed server-side (Slice 1 requirement 5: availability
+// changes must never alter visibility, and vice versa).
+export async function updateShowcasePuppy(
+  litterId: string,
+  puppyId: string,
+  patch: { visible?: boolean; availability?: ShowcaseAvailability }
+): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/update-showcase-puppy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, puppyId, ...patch }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update showcase puppy failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
+}
+
+export type ShowcaseBulkAction = 'select_all' | 'clear_all' | 'show_available_only'
+
+export async function bulkUpdateShowcasePuppies(litterId: string, action: ShowcaseBulkAction): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/bulk-update-showcase-puppies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, action }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Bulk update showcase failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
 }
 
 // ── AUDIT TRAIL ──────────────────────────────────────────────

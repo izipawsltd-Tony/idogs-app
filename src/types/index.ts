@@ -185,6 +185,39 @@ export interface Litter {
   archivedAt?: string
 }
 
+// ── Litter Showcase (Slice 1) ──────────────────────────────────
+// One per litter (document id == litterId). Deliberately its own
+// collection, never fields on Litter/Dog — see api/create-showcase.js's
+// own comment: this keeps "hiding a puppy must not modify or delete its
+// underlying [Dog] record" true structurally (this type never touches
+// Dog at all), and keeps the schema ready for a later public page to
+// consume as an allowlisted projection without ever needing direct
+// client access to the full Litter/Dog documents.
+export type ShowcaseAvailability = 'available' | 'on_hold' | 'reserved' | 'unavailable'
+
+export interface ShowcasePuppyEntry {
+  // Slice 1 requirement 3: a puppy is hidden from the Showcase unless
+  // explicitly enabled — this is that flag, independent of availability
+  // (requirement 4/5).
+  visible: boolean
+  availability: ShowcaseAvailability
+}
+
+export interface LitterShowcase {
+  litterId: string
+  tenantId: string
+  enabled: boolean
+  // Keyed by puppyId (Dog document id). A puppy simply absent from this
+  // map has never been individually touched — treat it as
+  // { visible: false, availability: 'available' } for display purposes
+  // (see DEFAULT_SHOWCASE_PUPPY_ENTRY in lib/db.ts), matching the exact
+  // defaults api/_lib/showcase-schema.js applies server-side on first
+  // write.
+  puppies: Record<string, ShowcasePuppyEntry>
+  createdAt: string
+  updatedAt: string
+}
+
 // ═════════════════════════════════════════════════════════════
 // ⚠ IZIPAWS-TARGET SCHEMA — NOT USED BY iDogs V1 (satellite).
 //
