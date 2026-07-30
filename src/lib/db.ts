@@ -1138,6 +1138,46 @@ export async function setShowcaseEnabled(litterId: string, enabled: boolean): Pr
   return result.showcase
 }
 
+// Slice 2: mints a brand-new public share token, immediately
+// invalidating any previously-shared link. Returns the RAW token
+// exactly once — it is never persisted server-side (only its hash is),
+// so the caller must copy/display it now; there is no way to retrieve
+// the same link again later, only to rotate a new one.
+export async function rotateShowcaseShare(litterId: string, shareExpiresAt?: string | null): Promise<{ showcase: LitterShowcase; shareToken: string }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/rotate-showcase-share', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, shareExpiresAt: shareExpiresAt ?? null }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Get share link failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// Slice 2: pauses/resumes the CURRENT share link, and/or changes its
+// expiry, without generating a new token — the previously-shared URL
+// keeps working once re-enabled. Requires rotateShowcaseShare() to have
+// been called at least once already.
+export async function updateShowcaseShare(litterId: string, patch: { shareEnabled?: boolean; shareExpiresAt?: string | null }): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/update-showcase-share', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, ...patch }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update share link failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
+}
+
 // `patch` may include visible and/or availability — only the field(s)
 // present are changed server-side (Slice 1 requirement 5: availability
 // changes must never alter visibility, and vice versa).

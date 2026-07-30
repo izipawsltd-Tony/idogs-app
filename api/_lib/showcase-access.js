@@ -97,5 +97,15 @@ export async function readShowcaseForResponse(db, litterId) {
     litterId: snap.id,
     createdAt: resolveTimestampIso(data.createdAt),
     updatedAt: resolveTimestampIso(data.updatedAt),
+    // Slice 2: shareRotatedAt is written the same way (a trusted
+    // FieldValue.serverTimestamp() sentinel) whenever it's actually set
+    // — but unlike createdAt/updatedAt (always present), it starts as a
+    // real `null` on every freshly-created Showcase. resolveTimestampIso
+    // itself would coerce that `null` into `''` (its fallback for "not a
+    // Timestamp and falsy"), which is a real type/meaning difference
+    // (`string | null` — "never rotated" vs "rotated at an unknown
+    // time") — so this is handled explicitly here instead of trusting
+    // resolveTimestampIso's generic fallback.
+    shareRotatedAt: data.shareRotatedAt ? resolveTimestampIso(data.shareRotatedAt) : null,
   }
 }

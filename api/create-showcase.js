@@ -96,6 +96,12 @@ async function handler(req, res) {
       puppies: {},
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
+      // Slice 2: no share link exists until the breeder explicitly
+      // requests one via api/rotate-showcase-share.js.
+      shareTokenHash: null,
+      shareEnabled: false,
+      shareRotatedAt: null,
+      shareExpiresAt: null,
     })
     return { ok: true }
   })

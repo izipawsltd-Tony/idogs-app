@@ -222,6 +222,29 @@ export interface LitterShowcase {
   // same as every other *createdAt/*updatedAt field in this file.
   createdAt: string
   updatedAt: string
+  // ── Slice 2: public share link ──────────────────────────────
+  // `shareTokenHash` is sha256(rawToken) — the RAW token is never
+  // persisted anywhere (generated in api/rotate-showcase-share.js,
+  // returned to the caller exactly once, then discarded server-side).
+  // Firestore doc IDs (litterId) never appear in the public URL and
+  // never authorize access on their own — api/showcase-public.js looks
+  // a Showcase up ONLY by matching shareTokenHash, so guessing/enumer-
+  // ating a litterId grants nothing without the actual token.
+  //
+  // `shareEnabled` is deliberately a SEPARATE flag from `enabled`
+  // above — `enabled` (Slice 1) governs the breeder's own curation
+  // state and has never gated any public exposure; `shareEnabled`
+  // is the dedicated on/off switch for the public link itself, so a
+  // breeder can pause sharing without losing their curated puppy
+  // selection AND without needing a new link once they turn it back on
+  // (see api/update-showcase-share.js). The public endpoint requires
+  // BOTH `enabled` and `shareEnabled` to be true, plus a matching,
+  // unexpired token — see isShareLive() in api/_lib/showcase-share.js.
+  shareTokenHash: string | null
+  shareEnabled: boolean
+  shareRotatedAt: string | null
+  // ISO date string; null means "no expiry".
+  shareExpiresAt: string | null
 }
 
 // ═════════════════════════════════════════════════════════════

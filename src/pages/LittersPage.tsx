@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
   getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, bulkUpdateShowcasePuppies, DEFAULT_SHOWCASE_PUPPY_ENTRY,
+  rotateShowcaseShare, updateShowcaseShare,
 } from '../lib/db'
 import type { ShowcaseBulkAction } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
@@ -119,6 +120,15 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   // failed; cleared at the start of every new attempt (so a retry
   // doesn't keep showing a stale failure) and never set on success.
   const [showcaseSaveError, setShowcaseSaveError] = useState<Record<string, string>>({})
+
+  // Slice 2: public share link state, keyed by litterId like the
+  // showcase state above. `shareLastRotatedToken` is IN-MEMORY ONLY —
+  // the raw token is never persisted anywhere (server or client) once
+  // this component unmounts/reloads; api/rotate-showcase-share.js
+  // returns it exactly once, at generation time.
+  const [shareBusy, setShareBusy] = useState<Record<string, boolean>>({})
+  const [shareError, setShareError] = useState<Record<string, string>>({})
+  const [shareLastRotatedToken, setShareLastRotatedToken] = useState<Record<string, string>>({})
 
   // Edit litter state
   const [editingLitter, setEditingLitter] = useState<string | null>(null)
@@ -286,6 +296,13 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     setShowcaseBusy({})
     setShowcaseError({})
     setShowcaseSaveError({})
+    // Slice 2: a rotated-but-unsaved share token must never survive an
+    // account switch — it belongs to the OLD account's litter, and this
+    // component has no legitimate reason to keep displaying it once a
+    // different account is signed in.
+    setShareBusy({})
+    setShareError({})
+    setShareLastRotatedToken({})
     setExpandedLitter(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
@@ -369,6 +386,50 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     } finally {
       if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  // Slice 2: mints a new public share token, invalidating any link
+  // shared before this. Stores the raw (one-time) token in local state
+  // only — never anywhere persisted — so the UI can show/copy it once.
+  async function handleRotateShare(litterId: string) {
+    const gen = showcaseGuard.currentGeneration()
+    setShareBusy(prev => ({ ...prev, [litterId]: true }))
+    setShareError(prev => ({ ...prev, [litterId]: '' }))
+    try {
+      const { showcase, shareToken } = await rotateShowcaseShare(litterId)
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      setShareLastRotatedToken(prev => ({ ...prev, [litterId]: shareToken }))
+      toast('New share link created — copy it now, it will not be shown again')
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
+      const message = err instanceof Error && err.message ? err.message : 'Failed to create share link'
+      setShareError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShareBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  async function handleToggleShareEnabled(litterId: string, current: LitterShowcase) {
+    const gen = showcaseGuard.currentGeneration()
+    setShareBusy(prev => ({ ...prev, [litterId]: true }))
+    setShareError(prev => ({ ...prev, [litterId]: '' }))
+    try {
+      const showcase = await updateShowcaseShare(litterId, { shareEnabled: !current.shareEnabled })
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      toast(showcase.shareEnabled ? 'Share link enabled' : 'Share link paused')
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
+      const message = err instanceof Error && err.message ? err.message : 'Failed to update share link'
+      setShareError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShareBusy(prev => ({ ...prev, [litterId]: false }))
     }
   }
 
@@ -1291,6 +1352,11 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                           onToggleVisible={(puppyId, visible) => handleTogglePuppyVisible(litter.id, puppyId, visible)}
                           onAvailabilityChange={(puppyId, availability) => handlePuppyAvailabilityChange(litter.id, puppyId, availability)}
                           onBulkAction={(action) => handleShowcaseBulkAction(litter.id, action)}
+                          shareBusy={!!shareBusy[litter.id]}
+                          shareError={shareError[litter.id] || ''}
+                          shareLastRotatedToken={shareLastRotatedToken[litter.id]}
+                          onRotateShare={() => handleRotateShare(litter.id)}
+                          onToggleShareEnabled={() => handleToggleShareEnabled(litter.id, showcases[litter.id] as LitterShowcase)}
                         />
                       )}
                     </div>
@@ -1428,6 +1494,7 @@ const AVAILABILITY_LABELS: Record<ShowcaseAvailability, string> = {
 
 function ShowcaseManager({
   showcase, puppyDogs, busy, saveError, onToggleEnabled, onToggleVisible, onAvailabilityChange, onBulkAction,
+  shareBusy, shareError, shareLastRotatedToken, onRotateShare, onToggleShareEnabled,
 }: {
   showcase: LitterShowcase
   puppyDogs: Dog[]
@@ -1437,6 +1504,13 @@ function ShowcaseManager({
   onToggleVisible: (puppyId: string, visible: boolean) => void
   onAvailabilityChange: (puppyId: string, availability: ShowcaseAvailability) => void
   onBulkAction: (action: ShowcaseBulkAction) => void
+  shareBusy: boolean
+  shareError: string
+  // Only ever set immediately after THIS session rotated a link — never
+  // reconstructed from `showcase` (which only ever carries the hash).
+  shareLastRotatedToken: string | undefined
+  onRotateShare: () => void
+  onToggleShareEnabled: () => void
 }) {
   const visibleCount = puppyDogs.filter(p => (showcase.puppies?.[p.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY).visible).length
 
@@ -1458,16 +1532,70 @@ function ShowcaseManager({
       <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 4 }}>
         Puppy selection below is kept whether the Showcase is enabled or disabled.
       </p>
-      {/* Codex fix-round finding: "enabled/disabled" must never read as
-          "published/public" — Slice 1 has no public Showcase page,
-          link, or viewer of any kind yet (see firestore.rules'
-          litterShowcases rule: read is scoped to the owning tenant
-          only, no anonymous access). This flag currently only controls
-          what THIS breeder workspace panel itself does — nothing is
-          shared outside your account by turning it on. */}
+      {/* Codex fix-round finding (kept, still true): "enabled/disabled"
+          above must never read as "published/public" on its own — it
+          only controls this breeder workspace panel's own curation
+          state. Slice 2 adds the ACTUAL public link below, as an
+          explicit, separate, opt-in action — turning the Showcase
+          "enabled" above never by itself shares anything; a link must
+          be generated AND turned on. */}
       <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
-        This does not publish anything publicly yet — no one outside your account can view it. Public sharing is planned for a future update.
+        Turning the Showcase on above only affects this panel — nothing is shared publicly until you generate a link below.
       </p>
+
+      <div style={{ marginBottom: 14, padding: 10, background: 'var(--sand)', borderRadius: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)', marginBottom: 6 }}>Public share link</div>
+        {!showcase.shareTokenHash ? (
+          <>
+            <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
+              No link yet — nothing outside your account can view this Showcase.
+            </p>
+            <button className="btn btn-secondary btn-sm" disabled={shareBusy} onClick={onRotateShare}>
+              {shareBusy ? <span className="spinner" /> : 'Get share link'}
+            </button>
+          </>
+        ) : (
+          <>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: shareBusy ? 'default' : 'pointer', marginBottom: 8 }}>
+              <input
+                type="checkbox"
+                checked={showcase.shareEnabled}
+                disabled={shareBusy}
+                onChange={onToggleShareEnabled}
+                aria-label={showcase.shareEnabled ? 'Pause public link' : 'Resume public link'}
+                style={{ width: 16, height: 16, accentColor: 'var(--brand-600)' }}
+              />
+              <span style={{ fontSize: 13 }}>{showcase.shareEnabled ? 'Public link is live' : 'Public link is paused'}</span>
+            </label>
+            {shareLastRotatedToken ? (
+              <div style={{ marginBottom: 8 }}>
+                <p style={{ fontSize: 11, color: 'var(--danger)', marginBottom: 4 }}>Copy this now — it won&apos;t be shown again after you leave this page.</p>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    className="form-input"
+                    readOnly
+                    value={`${window.location.origin}/s/${shareLastRotatedToken}`}
+                    style={{ fontSize: 12 }}
+                    onFocus={e => e.target.select()}
+                  />
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/s/${shareLastRotatedToken}`) }}
+                  >Copy</button>
+                </div>
+              </div>
+            ) : (
+              <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
+                A link exists but is only ever shown once, right after it&apos;s created — generate a new one below if you no longer have it saved.
+              </p>
+            )}
+            <button className="btn btn-secondary btn-sm" disabled={shareBusy} onClick={onRotateShare}>
+              {shareBusy ? <span className="spinner" /> : 'Generate new link (invalidates the current one)'}
+            </button>
+          </>
+        )}
+        {shareError && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>⚠️ {shareError}</p>}
+      </div>
 
       {/* UI gap fix: every toggle/select/bulk action already saves
           immediately (autosave, one field per network call — see
