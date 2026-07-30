@@ -24,10 +24,19 @@
 //      the account-switch REQUEST race, distinct from (and on top of) the
 //      synchronous reset Section 4 covers (Codex fix-round finding on
 //      LittersPage's Showcase account-switch guard) — no emulator needed.
-//   6. Emulator-only behavioral tests that import and call the REAL
+//   6. A REAL mounted-component test (react-test-renderer + act()) using
+//      the REAL useShowcaseRequestGuard() hook, proving save success, save
+//      failure (preserving the last successfully saved state), a
+//      successful retry clearing a stale failure, and that `busy` flips
+//      synchronously (the double-submit-prevention mechanism) — the
+//      "no Save button / no visible autosave status" UI-gap fix — no
+//      emulator needed.
+//   7. Emulator-only behavioral tests that import and call the REAL
 //      api/*.js handlers directly with mock req/res objects, against a
 //      local Firestore/Auth emulator — skipped gracefully (not silently
 //      dropped from the pass count) when no emulator is reachable.
+//      Includes a reload-persistence test proving a fresh, independent
+//      read after a save returns exactly what was saved.
 //
 // Usage:
 //   1. firebase emulators:start --only auth,firestore --project demo-idogs-qa
@@ -135,7 +144,7 @@ const { check, checkAsync, skip, summary } = makeChecker()
   const accountSwitchEffect = (littersPageSrc.match(/useEffect\(\(\) => \{\s*\/\/ Codex round 15[\s\S]*?\}, \[user\?\.uid\]\)/) || [''])[0]
   check('The account-switch useEffect was found (anchored to its Codex round 15 comment through the [user?.uid] dep array)', accountSwitchEffect.length > 0)
   check('Account switch resets litters and dogs', /setLitters\(\[\]\)/.test(accountSwitchEffect) && /setDogs\(\[\]\)/.test(accountSwitchEffect))
-  check('Account switch resets all four Showcase state maps', /setShowcases\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseLoading\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseBusy\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseError\(\{\}\)/.test(accountSwitchEffect))
+  check('Account switch resets all five Showcase state maps (including the UI-gap-fix showcaseSaveError)', /setShowcases\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseLoading\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseBusy\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseError\(\{\}\)/.test(accountSwitchEffect) && /setShowcaseSaveError\(\{\}\)/.test(accountSwitchEffect))
   check('Account switch collapses any expanded litter panel', /setExpandedLitter\(null\)/.test(accountSwitchEffect))
   // Codex fix-round finding (Showcase account-switch REQUEST race): the
   // account-switch effect must also bump the Showcase guard's account
@@ -160,6 +169,41 @@ const { check, checkAsync, skip, summary } = makeChecker()
     const guardCheckCount = (fnBody.match(/if \(!isShowcaseRequestCurrent\(gen\)\) return/g) || []).length
     check(`${name} checks isShowcaseRequestCurrent after every await (in the success path, catch, AND finally — at least 3 checks)`, guardCheckCount >= 3, `found ${guardCheckCount}`)
   }
+
+  // UI gap fix: the four "editing surface" handlers (not loadShowcase,
+  // not handleCreateShowcase — see ShowcaseManager's own comment for why
+  // those two are out of scope) must clear any stale showcaseSaveError
+  // at the start of a new attempt and set it on failure, so a failed
+  // save shows reliable inline status without ever hiding the puppy list
+  // (that's what showcaseError, a DIFFERENT state, does for LOAD
+  // failures only).
+  const editHandlerNames = ['handleToggleShowcaseEnabled', 'handleTogglePuppyVisible', 'handlePuppyAvailabilityChange', 'handleShowcaseBulkAction']
+  for (const name of editHandlerNames) {
+    const fnMatch = littersPageSrc.match(new RegExp(`async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`))
+    const fnBody = fnMatch ? fnMatch[0] : ''
+    check(`${name} clears showcaseSaveError at the start of every new attempt`, /setShowcaseSaveError\(prev => \(\{ \.\.\.prev, \[litterId\]: '' \}\)\)/.test(fnBody))
+    check(`${name} sets showcaseSaveError on failure (guarded by isShowcaseRequestCurrent, same as every other post-await write)`, /setShowcaseSaveError\(prev => \(\{ \.\.\.prev, \[litterId\]: message \}\)\)/.test(fnBody))
+    check(`${name} never optimistically writes to showcases before the server confirms (no setShowcases call outside the success branch)`, (fnBody.match(/setShowcases\(/g) || []).length === 1)
+  }
+
+  // UI gap fix: ShowcaseManager itself — status feedback + disabled wiring.
+  const showcaseManagerMatch = littersPageSrc.match(/function ShowcaseManager\(\{[\s\S]*?\n}\n/)
+  const showcaseManagerSrc = showcaseManagerMatch ? showcaseManagerMatch[0] : ''
+  check('ShowcaseManager was found', showcaseManagerSrc.length > 0)
+  check('ShowcaseManager accepts a saveError prop distinct from the Showcase enabled/disabled (publish) status', /saveError: string/.test(showcaseManagerSrc))
+  check('ShowcaseManager renders a "Saving…" state while busy', /busy \? \([\s\S]{0,220}Saving…/.test(showcaseManagerSrc))
+  check('ShowcaseManager renders the save failure message when saveError is set', /saveError \? \([\s\S]{0,120}Save failed/.test(showcaseManagerSrc))
+  check('ShowcaseManager renders an explicit "All changes saved" confirmation as the default/idle state', /All changes saved/.test(showcaseManagerSrc))
+  check('The save-status region uses role="status" + aria-live="polite" so screen readers announce it', /role="status" aria-live="polite"/.test(showcaseManagerSrc))
+  // Double-submit prevention: every interactive control must be disabled
+  // while busy — this (not the account/generation guard, which only
+  // protects against a STALE response committing, not against a second
+  // click being dispatched at all) is what actually stops a double
+  // submission: `busy` flips true synchronously before any await in
+  // every handler above, so React re-renders every one of these controls
+  // as disabled before a second click could ever be dispatched.
+  const disabledBusyCount = (showcaseManagerSrc.match(/disabled=\{busy\}/g) || []).length
+  check('Every interactive Showcase control (enable toggle, 3 bulk buttons, per-puppy checkbox, per-puppy select) is disabled while busy — at least 6 controls', disabledBusyCount >= 6, `found ${disabledBusyCount}`)
 
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
   check('lib/db.ts Showcase mutations all call trusted server endpoints (never a direct Firestore write to litterShowcases)', /fetch\('\/api\/create-showcase'/.test(dbSrc) && /fetch\('\/api\/set-showcase-enabled'/.test(dbSrc) && /fetch\('\/api\/update-showcase-puppy'/.test(dbSrc) && /fetch\('\/api\/bulk-update-showcase-puppies'/.test(dbSrc))
@@ -545,7 +589,186 @@ const { check, checkAsync, skip, summary } = makeChecker()
   }
 }
 
-// ── Section 6: emulator-only end-to-end behavioral tests ──
+// ── Section 6: Save-status UX regression (Codex UI-gap finding — "no
+// Save button and no visible autosave status/success confirmation").
+// This slice was ALREADY autosave by design (every toggle/select/bulk
+// action calls its own trusted server endpoint immediately — see
+// Section 2's checks above proving each handler only ever writes to
+// `showcases` inside its success branch, never optimistically). What
+// was missing was reliable status feedback. A REAL mounted-component
+// test (react-test-renderer + act(), same pattern as Sections 4/5) using
+// the REAL useShowcaseRequestGuard() hook, with a harness whose
+// saveMutation() is a line-for-line copy of the four edit handlers'
+// guard shape — proving save success, save failure (with the last
+// successfully saved state preserved, never partially overwritten), a
+// successful retry clearing a stale failure, and that `busy` flips true
+// SYNCHRONOUSLY before any await (the actual mechanism, together with
+// disabled={busy} — checked structurally in Section 2 — that prevents a
+// double submission; there is no separate per-litter generation to rely
+// on for this, by design — see useShowcaseRequestGuard.ts). ──
+{
+  const React = (await import('react')).default
+  const { useState, useEffect, useRef } = React
+  const TestRenderer = (await import('react-test-renderer')).default
+  const { act } = TestRenderer
+  const { useShowcaseRequestGuard } = await import('../src/hooks/useShowcaseRequestGuard.ts')
+
+  function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
+  function createDeferred() {
+    let resolve, reject
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej })
+    return { promise, resolve, reject }
+  }
+
+  function SaveStatusHarness({ uid, controls }) {
+    const mountedRef = useRef(true)
+    const showcaseGuard = useShowcaseRequestGuard()
+    const [showcases, setShowcases] = useState({})
+    const [showcaseBusy, setShowcaseBusy] = useState({})
+    const [showcaseSaveError, setShowcaseSaveError] = useState({})
+
+    useEffect(() => {
+      mountedRef.current = true
+      return () => { mountedRef.current = false }
+    }, [])
+    function isShowcaseRequestCurrent(gen) {
+      return mountedRef.current && showcaseGuard.isCurrent(gen)
+    }
+    useEffect(() => {
+      showcaseGuard.bumpAccountGeneration()
+      setShowcases({})
+      setShowcaseBusy({})
+      setShowcaseSaveError({})
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [uid])
+
+    // Line-for-line the same shape as handleTogglePuppyVisible /
+    // handlePuppyAvailabilityChange / handleToggleShowcaseEnabled /
+    // handleShowcaseBulkAction — only the network call is swapped for an
+    // externally-controlled deferred promise.
+    async function saveMutation(litterId, mutationPromise) {
+      const gen = showcaseGuard.currentGeneration()
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+      setShowcaseSaveError(prev => ({ ...prev, [litterId]: '' }))
+      try {
+        const result = await mutationPromise
+        if (!isShowcaseRequestCurrent(gen)) return
+        setShowcases(prev => ({ ...prev, [litterId]: result }))
+      } catch (err) {
+        if (!isShowcaseRequestCurrent(gen)) return
+        setShowcaseSaveError(prev => ({ ...prev, [litterId]: err instanceof Error ? err.message : 'failed' }))
+      } finally {
+        if (!isShowcaseRequestCurrent(gen)) return
+        setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+      }
+    }
+
+    controls.saveMutation = saveMutation
+    controls.getState = () => ({ showcases, showcaseBusy, showcaseSaveError })
+    // Mirrors ShowcaseManager's own three-state derivation exactly.
+    controls.deriveStatus = (litterId) => {
+      if (showcaseBusy[litterId]) return 'saving'
+      if (showcaseSaveError[litterId]) return 'error'
+      return 'saved'
+    }
+    return null
+  }
+
+  // ── Test A: save success ──
+  {
+    const controls = {}
+    let renderer
+    act(() => { renderer = TestRenderer.create(React.createElement(SaveStatusHarness, { uid: 'acct', controls })) })
+
+    const d = createDeferred()
+    act(() => { controls.saveMutation('litterA', d.promise) })
+    check('save-status', 'While a save is in flight, status is "saving"', controls.deriveStatus('litterA') === 'saving')
+
+    await act(async () => {
+      d.resolve({ litterId: 'litterA', tenantId: 'acct', enabled: true, puppies: { p1: { visible: true, availability: 'available' } }, createdAt: 'x', updatedAt: 'x' })
+      await sleep(10)
+    })
+    check('save-status', 'After a successful save, status flips to "saved" (not "saving", not "error")', controls.deriveStatus('litterA') === 'saved')
+    check('save-status', 'The successfully saved value is actually committed into state', controls.getState().showcases.litterA?.puppies?.p1?.visible === true)
+
+    act(() => { renderer.unmount() })
+  }
+
+  // ── Test B: save failure preserves the last successfully saved state ──
+  {
+    const controls = {}
+    let renderer
+    act(() => { renderer = TestRenderer.create(React.createElement(SaveStatusHarness, { uid: 'acct', controls })) })
+
+    const d1 = createDeferred()
+    act(() => { controls.saveMutation('litterB', d1.promise) })
+    await act(async () => {
+      d1.resolve({ litterId: 'litterB', tenantId: 'acct', enabled: true, puppies: { p1: { visible: true, availability: 'available' } }, createdAt: 'x', updatedAt: 'x' })
+      await sleep(10)
+    })
+    const lastGoodState = controls.getState().showcases.litterB
+    check('save-status', 'Sanity: a first successful save established a last-known-good state', lastGoodState?.puppies?.p1?.visible === true)
+
+    const d2 = createDeferred()
+    act(() => { controls.saveMutation('litterB', d2.promise) })
+    check('save-status', 'A second, now-failing save also shows "saving" while in flight', controls.deriveStatus('litterB') === 'saving')
+
+    await act(async () => {
+      d2.reject(new Error('simulated network failure'))
+      await sleep(10)
+    })
+    check('save-status', 'After a FAILED save, status is "error"', controls.deriveStatus('litterB') === 'error')
+    check('save-status', 'The failure message is captured for display', controls.getState().showcaseSaveError.litterB === 'simulated network failure')
+    check('save-status', 'REQUIRED UX: the last successfully saved state is preserved byte-for-byte after a failed save — no partial/corrupt write', JSON.stringify(controls.getState().showcases.litterB) === JSON.stringify(lastGoodState))
+
+    // A subsequent successful retry must clear the stale failure.
+    const d3 = createDeferred()
+    act(() => { controls.saveMutation('litterB', d3.promise) })
+    await act(async () => {
+      d3.resolve({ litterId: 'litterB', tenantId: 'acct', enabled: true, puppies: { p1: { visible: false, availability: 'available' } }, createdAt: 'x', updatedAt: 'y' })
+      await sleep(10)
+    })
+    check('save-status', 'A successful retry clears the stale failure and returns status to "saved"', controls.deriveStatus('litterB') === 'saved' && !controls.getState().showcaseSaveError.litterB)
+
+    act(() => { renderer.unmount() })
+  }
+
+  // ── Test C: double-submit prevention — busy flips true SYNCHRONOUSLY,
+  // before any await, in the same tick as the triggering call. Combined
+  // with Section 2's structural proof that every interactive control is
+  // disabled={busy}, this is what actually prevents a second submission
+  // — there is no per-litter generation to fall back on if the disabled
+  // attribute were somehow bypassed (by design — see
+  // useShowcaseRequestGuard.ts's own comment on why generation is
+  // account-scoped only), so this synchronous timing guarantee is load
+  // bearing. ──
+  {
+    const controls = {}
+    let renderer
+    act(() => { renderer = TestRenderer.create(React.createElement(SaveStatusHarness, { uid: 'acct', controls })) })
+
+    const d = createDeferred()
+    // The setShowcaseBusy(true) inside saveMutation happens BEFORE its
+    // first await, so it's part of THIS act() call's synchronous work —
+    // act() flushes it before returning, and BEFORE the promise itself
+    // has any chance to resolve (it's still unsettled) or for a second
+    // click to be dispatched. Read via getState() AFTER act() returns
+    // (not inside the same callback — act() only flushes/re-renders once
+    // its synchronous callback has fully returned, so a getState() call
+    // made from WITHIN the callback would still see the pre-render
+    // closure, same pattern already used by every "Sanity: ... pending"
+    // check in Section 5 above).
+    act(() => { controls.saveMutation('litterC', d.promise) })
+    check('save-status', 'showcaseBusy is already true synchronously — flushed before the save\'s promise has any chance to resolve or a second click could be dispatched', controls.getState().showcaseBusy.litterC === true)
+
+    await act(async () => { d.resolve({ litterId: 'litterC', tenantId: 'acct', enabled: false, puppies: {}, createdAt: 'x', updatedAt: 'x' }); await sleep(10) })
+    check('save-status', 'busy correctly clears back to false once the save completes', controls.getState().showcaseBusy.litterC === false)
+
+    act(() => { renderer.unmount() })
+  }
+}
+
+// ── Section 7: emulator-only end-to-end behavioral tests ──
 if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
   await import('./test-helpers/emulator-credentials.mjs')
   const { getFirestore } = await import('firebase-admin/firestore')
@@ -955,8 +1178,69 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('9', 'bulk-update-showcase-puppies also advances updatedAt via a trusted server timestamp', bulkRes.body.showcase.updatedAt !== puppyRes.body.showcase.updatedAt && new Date(bulkRes.body.showcase.updatedAt).getTime() > new Date(puppyRes.body.showcase.updatedAt).getTime())
   }
 
+  // ── Test 10 (UI-gap fix — REQUIRED UX: "After reload, all successfully
+  // saved values must persist"): a FRESH, INDEPENDENT read — a raw
+  // Firestore get(), not the write response the mutation itself
+  // returned — after each of the four editing mutations, proving the
+  // value genuinely persisted server-side and isn't merely an artifact
+  // of the response payload. Simulates the real "reload the page /
+  // re-expand the litter" flow, which calls getShowcaseForLitter() fresh
+  // (src/lib/db.ts), independent of whatever the mutation call itself
+  // last returned. ──
+  {
+    const breeder = await newUser('sc10breeder', breederPlusProfile)
+    const litterId = `litter10_${R}`
+    const p1 = `p1_${R}_10`
+    await seedLitter(breeder.uid, litterId, [p1])
+    await seedPuppy(breeder.uid, p1, litterId)
+    await createShowcaseHandler(mockReq({ litterId }, breeder.idToken), mockRes())
+
+    await updatePuppyHandler(mockReq({ litterId, puppyId: p1, visible: true, availability: 'reserved' }, breeder.idToken), mockRes())
+    await setEnabledHandler(mockReq({ litterId, enabled: true }, breeder.idToken), mockRes())
+
+    // A genuinely independent read — mirrors getShowcaseForLitter()'s own
+    // getDoc() call, not the mutation handlers' own response.
+    const reloaded = await seedDb.collection('litterShowcases').doc(litterId).get()
+    const reloadedData = reloaded.data()
+    check('10', 'After "reload" (a fresh, independent read), the enabled flag persisted', reloadedData.enabled === true)
+    check('10', 'After "reload", the puppy visibility persisted', reloadedData.puppies[p1].visible === true)
+    check('10', 'After "reload", the puppy availability persisted', reloadedData.puppies[p1].availability === 'reserved')
+
+    // A second reload after a bulk action, confirming the same holds for
+    // that mutation path too.
+    await bulkHandler(mockReq({ litterId, action: 'clear_all' }, breeder.idToken), mockRes())
+    const reloadedAfterBulk = (await seedDb.collection('litterShowcases').doc(litterId).get()).data()
+    check('10', 'After "reload", a bulk action\'s result also persisted (visible cleared)', reloadedAfterBulk.puppies[p1].visible === false)
+    check('10', 'After "reload", the bulk action did not touch availability (still "reserved")', reloadedAfterBulk.puppies[p1].availability === 'reserved')
+  }
+
+  // ── Test 11 (UI-gap fix — REQUIRED UX: "unauthorized writes" must still
+  // be denied via the autosave-triggered endpoints, so the owner's UI
+  // never shows "All changes saved" for a write that actually belongs to
+  // someone else). This is the same guarantee Test 5 already proves for
+  // every endpoint — restated explicitly here in the context of this
+  // specific fix, plus a check that a denied write leaves NO trace in the
+  // persisted document (not even a partial field). ──
+  {
+    const owner = await newUser('sc11owner', breederPlusProfile)
+    const stranger = await newUser('sc11stranger', breederPlusProfile)
+    const litterId = `litter11_${R}`
+    const p1 = `p1_${R}_11`
+    await seedLitter(owner.uid, litterId, [p1])
+    await seedPuppy(owner.uid, p1, litterId)
+    await createShowcaseHandler(mockReq({ litterId }, owner.idToken), mockRes())
+    await updatePuppyHandler(mockReq({ litterId, puppyId: p1, visible: false, availability: 'available' }, owner.idToken), mockRes())
+
+    const strangerRes = mockRes()
+    await updatePuppyHandler(mockReq({ litterId, puppyId: p1, visible: true, availability: 'unavailable' }, stranger.idToken), strangerRes)
+    check('11', 'A stranger\'s attempt to save a puppy change via the autosave endpoint is denied (403)', strangerRes.statusCode === 403)
+
+    const afterDeniedWrite = (await seedDb.collection('litterShowcases').doc(litterId).get()).data()
+    check('11', 'The denied write left NO trace at all — the owner\'s last genuinely saved values are completely unchanged', afterDeniedWrite.puppies[p1].visible === false && afterDeniedWrite.puppies[p1].availability === 'available')
+  }
+
   await summary()
 } else {
-  skip('Section 6 (emulator end-to-end behavioral tests, including the finding-1 timestamp tests)', 'set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
+  skip('Section 7 (emulator end-to-end behavioral tests, including the finding-1 timestamp tests and the UI-gap-fix reload-persistence test)', 'set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
   await summary()
 }

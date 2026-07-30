@@ -107,6 +107,17 @@ export default function LittersPage({ toast }: Props) {
   const [showcaseLoading, setShowcaseLoading] = useState<Record<string, boolean>>({})
   const [showcaseBusy, setShowcaseBusy] = useState<Record<string, boolean>>({})
   const [showcaseError, setShowcaseError] = useState<Record<string, string>>({})
+  // UI gap fix: distinct from showcaseError (which is only ever the LOAD
+  // failure — it drives the whole-panel "Couldn't load Showcase — Retry"
+  // empty state, replacing ShowcaseManager entirely) — this is the most
+  // recent EDIT/save failure for a litter whose Showcase already loaded
+  // successfully. Kept separate so a failed toggle/availability/bulk
+  // action shows an inline status message WITHIN the still-visible
+  // ShowcaseManager panel, never hides the puppy list the breeder was
+  // just looking at. Non-empty = the last save attempt for this litter
+  // failed; cleared at the start of every new attempt (so a retry
+  // doesn't keep showing a stale failure) and never set on success.
+  const [showcaseSaveError, setShowcaseSaveError] = useState<Record<string, string>>({})
 
   // Edit litter state
   const [editingLitter, setEditingLitter] = useState<string | null>(null)
@@ -273,6 +284,7 @@ export default function LittersPage({ toast }: Props) {
     setShowcaseLoading({})
     setShowcaseBusy({})
     setShowcaseError({})
+    setShowcaseSaveError({})
     setExpandedLitter(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
@@ -334,6 +346,11 @@ export default function LittersPage({ toast }: Props) {
   async function handleToggleShowcaseEnabled(litterId: string, current: LitterShowcase) {
     const gen = showcaseGuard.currentGeneration()
     setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    // UI gap fix: clear any stale failure from a PREVIOUS attempt the
+    // moment a new one starts — otherwise a successful retry would still
+    // show the old "Save failed" message for the instant before this
+    // request itself resolves.
+    setShowcaseSaveError(prev => ({ ...prev, [litterId]: '' }))
     try {
       const showcase = await setShowcaseEnabled(litterId, !current.enabled)
       if (!isShowcaseRequestCurrent(gen)) return
@@ -341,7 +358,13 @@ export default function LittersPage({ toast }: Props) {
       toast(showcase.enabled ? 'Showcase enabled' : 'Showcase disabled — puppy selection kept')
     } catch (err) {
       if (!isShowcaseRequestCurrent(gen)) return
-      toast(err instanceof Error && err.message ? err.message : 'Failed to update Showcase', 'error')
+      const message = err instanceof Error && err.message ? err.message : 'Failed to update Showcase'
+      // Deliberately does NOT touch `showcases` here — no optimistic
+      // update was ever applied (the checkbox is bound to the last
+      // server-CONFIRMED value), so the UI already shows the last
+      // successfully saved state automatically; this only surfaces WHY.
+      setShowcaseSaveError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
     } finally {
       if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
@@ -351,13 +374,16 @@ export default function LittersPage({ toast }: Props) {
   async function handleTogglePuppyVisible(litterId: string, puppyId: string, visible: boolean) {
     const gen = showcaseGuard.currentGeneration()
     setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    setShowcaseSaveError(prev => ({ ...prev, [litterId]: '' }))
     try {
       const showcase = await updateShowcasePuppy(litterId, puppyId, { visible })
       if (!isShowcaseRequestCurrent(gen)) return
       setShowcases(prev => ({ ...prev, [litterId]: showcase }))
     } catch (err) {
       if (!isShowcaseRequestCurrent(gen)) return
-      toast(err instanceof Error && err.message ? err.message : 'Failed to update puppy', 'error')
+      const message = err instanceof Error && err.message ? err.message : 'Failed to update puppy'
+      setShowcaseSaveError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
     } finally {
       if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
@@ -367,13 +393,16 @@ export default function LittersPage({ toast }: Props) {
   async function handlePuppyAvailabilityChange(litterId: string, puppyId: string, availability: ShowcaseAvailability) {
     const gen = showcaseGuard.currentGeneration()
     setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    setShowcaseSaveError(prev => ({ ...prev, [litterId]: '' }))
     try {
       const showcase = await updateShowcasePuppy(litterId, puppyId, { availability })
       if (!isShowcaseRequestCurrent(gen)) return
       setShowcases(prev => ({ ...prev, [litterId]: showcase }))
     } catch (err) {
       if (!isShowcaseRequestCurrent(gen)) return
-      toast(err instanceof Error && err.message ? err.message : 'Failed to update puppy', 'error')
+      const message = err instanceof Error && err.message ? err.message : 'Failed to update puppy'
+      setShowcaseSaveError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
     } finally {
       if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
@@ -389,6 +418,7 @@ export default function LittersPage({ toast }: Props) {
   async function handleShowcaseBulkAction(litterId: string, action: ShowcaseBulkAction) {
     const gen = showcaseGuard.currentGeneration()
     setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    setShowcaseSaveError(prev => ({ ...prev, [litterId]: '' }))
     try {
       const showcase = await bulkUpdateShowcasePuppies(litterId, action)
       if (!isShowcaseRequestCurrent(gen)) return
@@ -396,7 +426,9 @@ export default function LittersPage({ toast }: Props) {
       toast(BULK_ACTION_LABELS[action])
     } catch (err) {
       if (!isShowcaseRequestCurrent(gen)) return
-      toast(err instanceof Error && err.message ? err.message : 'Failed to update Showcase', 'error')
+      const message = err instanceof Error && err.message ? err.message : 'Failed to update Showcase'
+      setShowcaseSaveError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
     } finally {
       if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
@@ -1195,6 +1227,7 @@ export default function LittersPage({ toast }: Props) {
                           showcase={showcases[litter.id] as LitterShowcase}
                           puppyDogs={puppyDogs}
                           busy={!!showcaseBusy[litter.id]}
+                          saveError={showcaseSaveError[litter.id] || ''}
                           onToggleEnabled={() => handleToggleShowcaseEnabled(litter.id, showcases[litter.id] as LitterShowcase)}
                           onToggleVisible={(puppyId, visible) => handleTogglePuppyVisible(litter.id, puppyId, visible)}
                           onAvailabilityChange={(puppyId, availability) => handlePuppyAvailabilityChange(litter.id, puppyId, availability)}
@@ -1335,11 +1368,12 @@ const AVAILABILITY_LABELS: Record<ShowcaseAvailability, string> = {
 }
 
 function ShowcaseManager({
-  showcase, puppyDogs, busy, onToggleEnabled, onToggleVisible, onAvailabilityChange, onBulkAction,
+  showcase, puppyDogs, busy, saveError, onToggleEnabled, onToggleVisible, onAvailabilityChange, onBulkAction,
 }: {
   showcase: LitterShowcase
   puppyDogs: Dog[]
   busy: boolean
+  saveError: string
   onToggleEnabled: () => void
   onToggleVisible: (puppyId: string, visible: boolean) => void
   onAvailabilityChange: (puppyId: string, availability: ShowcaseAvailability) => void
@@ -1362,9 +1396,39 @@ function ShowcaseManager({
           {showcase.enabled ? 'Showcase enabled' : 'Showcase disabled'}
         </span>
       </label>
-      <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
+      <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
         Puppy selection below is kept whether the Showcase is enabled or disabled.
       </p>
+
+      {/* UI gap fix: every toggle/select/bulk action already saves
+          immediately (autosave, one field per network call — see
+          handleToggleShowcaseEnabled/handleTogglePuppyVisible/
+          handlePuppyAvailabilityChange/handleShowcaseBulkAction above).
+          There is no local draft buffer to lose, so there is no explicit
+          "Save changes" button and no unsaved-changes-on-close warning to
+          add — see this component's own header note in the source for
+          the full reasoning. What was genuinely missing was RELIABLE,
+          always-accurate status feedback proving that autosave actually
+          happened. role="status"/aria-live so screen readers announce a
+          state change without needing focus to move here. Deliberately
+          NOT the same visual line as "Showcase enabled/disabled" above —
+          that is PUBLISH status; this is DRAFT-PERSISTENCE status. A
+          disabled Showcase can still say "All changes saved" (its config
+          is saved, just not public), and an enabled one can briefly say
+          "Saving…" mid-edit without implying it went offline. */}
+      <div role="status" aria-live="polite" style={{ fontSize: 12, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+        {busy ? (
+          <span style={{ color: 'var(--mid)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="spinner" style={{ width: 12, height: 12 }} /> Saving…
+          </span>
+        ) : saveError ? (
+          <span style={{ color: 'var(--danger)' }}>
+            ⚠️ Save failed — {saveError} — showing your last saved version.
+          </span>
+        ) : (
+          <span style={{ color: 'var(--brand-600)' }}>✓ All changes saved</span>
+        )}
+      </div>
 
       {puppyDogs.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '16px', color: 'var(--light)', fontSize: 13 }}>
