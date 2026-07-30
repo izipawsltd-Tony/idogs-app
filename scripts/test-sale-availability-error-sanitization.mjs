@@ -51,7 +51,7 @@ import {
   SALE_AVAILABILITY_GENERIC_ERROR_MESSAGE,
 } from '../src/lib/saleAvailabilityError.ts'
 
-const { check, summary } = makeChecker()
+const { check, skip, summary } = makeChecker()
 
 // A fake secret-bearing value that must NEVER appear in any output this
 // suite inspects — used across several scenarios below.
@@ -345,6 +345,180 @@ const FAKE_DOC_PATH = 'projects/idogs-app-staging/databases/(default)/documents/
     /SALE_AVAILABILITY_ALLOWED_CODES = new Set\(\['permission-denied', 'unavailable'\]\)/.test(moduleSrc))
   check('normalizeSaleAvailabilityErrorCode checks membership in the allowlist before returning the code',
     /SALE_AVAILABILITY_ALLOWED_CODES\.has\(code\)/.test(moduleSrc))
+}
+
+// =========================================================================
+// SECTION 9 (Codex fix-round — Sale & Availability permission failure):
+// structural proof of the actual fix, plus a Rules-emulator permission
+// matrix proving the ALLOWED and DENIED cases directly.
+//
+// Root cause: SaleAvailabilityPanel was gated purely on the account ROLE
+// (`!isOwner`, i.e. "is a breeder-role account"), never on whether the
+// viewer is THIS SPECIFIC dog's current effective owner
+// (dog.currentOwnerId === user?.uid). A litter's puppy list
+// (LittersPage.tsx) links to every puppy's detail page regardless of
+// transfer status — including a "Transferred" one — so a former breeder
+// could reach a transferred/claimed-away puppy's Overview tab, see an
+// EDITABLE Sale & Availability form, and have every save attempt denied
+// by firestore.rules' dogs/{dogId} update rule (isEffectiveDogOwner()),
+// surfacing as "you don't have permission to update this dog anymore".
+// That denial was always CORRECT Rules behavior — the bug was presenting
+// an editable form to someone Rules would never allow to save. The fix
+// threads DogDetailPage's existing isCurrentEffectiveOwner flag (already
+// used to gate the Delete button) down through OverviewTab to also gate
+// SaleAvailabilityPanel — no firestore.rules change at all.
+// =========================================================================
+{
+  const detailSrc = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.url), 'utf8')
+  check('OverviewTab accepts isCurrentEffectiveOwner as its own prop, distinct from isOwner (account role)',
+    /isCurrentEffectiveOwner: boolean/.test(detailSrc))
+  check('The OverviewTab call site passes isCurrentEffectiveOwner (not just isOwner)',
+    /<OverviewTab[^>]*isCurrentEffectiveOwner=\{isCurrentEffectiveOwner\}/.test(detailSrc))
+  check('SaleAvailabilityPanel is now gated on BOTH !isOwner AND isCurrentEffectiveOwner',
+    /\{!isOwner && isCurrentEffectiveOwner && <SaleAvailabilityPanel/.test(detailSrc))
+  check('SaleAvailabilityPanel is no longer gated on !isOwner alone (the actual bug)',
+    !/\{!isOwner && <SaleAvailabilityPanel/.test(detailSrc))
+}
+
+if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+  const { initializeApp } = await import('firebase/app')
+  const { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword } = await import('firebase/auth')
+  const { getFirestore, connectFirestoreEmulator, doc, updateDoc } = await import('firebase/firestore')
+  const { initializeApp: initAdminApp } = await import('firebase-admin/app')
+  const { getFirestore: getAdminFirestore } = await import('firebase-admin/firestore')
+
+  const app = initializeApp({ projectId: 'demo-idogs-qa', apiKey: 'fake-api-key' }, 'sale-availability-client')
+  const clientAuth = getAuth(app)
+  const clientDb = getFirestore(app)
+  connectAuthEmulator(clientAuth, 'http://127.0.0.1:9099', { disableWarnings: true })
+  connectFirestoreEmulator(clientDb, '127.0.0.1', 8080)
+
+  process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080'
+  const adminApp = initAdminApp({ projectId: 'demo-idogs-qa' }, 'sale-availability-admin')
+  const adminDb = getAdminFirestore(adminApp)
+
+  function isDenied(err) { return err && (err.code === 'permission-denied' || /permission/i.test(err.message)) }
+
+  const PW = 'tam12345*'
+  const R = Date.now()
+  const email = n => `saleavail.${n}.${R}@emulator.local`
+  async function newUser(name) {
+    const { user } = await createUserWithEmailAndPassword(clientAuth, email(name), PW)
+    await signOut(clientAuth)
+    return user.uid
+  }
+  async function as(name) {
+    await signOut(clientAuth).catch(() => {})
+    await signInWithEmailAndPassword(clientAuth, email(name), PW)
+  }
+
+  const currentOwnerUid = await newUser('currentowner')
+  const strangerUid = await newUser('stranger')
+
+  // ── Test 9a (ALLOWED): the legitimate current owner CAN save Sale &
+  // Availability fields on a normal, active, untransferred dog they own.
+  // Proves the root cause really was UI-only — firestore.rules never
+  // blocked this legitimate case. ──
+  {
+    const dogId = `dog9a_${R}`
+    await adminDb.collection('dogs').doc(dogId).set({
+      tenantId: currentOwnerUid, currentOwnerId: currentOwnerUid, createdByUserId: currentOwnerUid,
+      sourceType: 'BREEDER_ISSUED', name: 'AllowedPup', sex: 'female', status: 'active', dateOfBirth: '2026-01-01',
+    })
+    await as('currentowner')
+    let allowedErr = null
+    try {
+      await updateDoc(doc(clientDb, 'dogs', dogId), {
+        availabilityStatus: 'reserved', reservedForName: 'Jane Buyer', reservedForEmail: 'jane@example.com', depositStatus: 'pending',
+      })
+    } catch (err) { allowedErr = err }
+    check('9a-ALLOWED', 'The legitimate current owner can update Sale & Availability fields on their own dog', allowedErr === null, allowedErr?.message)
+    const after = (await adminDb.collection('dogs').doc(dogId).get()).data()
+    check('9a-ALLOWED', 'The write actually persisted (availabilityStatus)', after.availabilityStatus === 'reserved')
+    check('9a-ALLOWED', 'The write actually persisted (reservedForName)', after.reservedForName === 'Jane Buyer')
+  }
+
+  // ── Test 9b (DENIED — the exact bug scenario): a FORMER owner, after a
+  // genuine transfer+claim (currentOwnerId reassigned, full history fields
+  // set — the exact shape a real claim leaves), is denied. This is the
+  // scenario the misleading error message was actually, correctly,
+  // guarding — the UI fix stops presenting the form, but the underlying
+  // Rules denial must still hold regardless. ──
+  {
+    const dogId = `dog9b_${R}`
+    const buyerUid = await newUser('buyer9b')
+    await adminDb.collection('dogs').doc(dogId).set({
+      tenantId: currentOwnerUid, currentOwnerId: buyerUid, createdByUserId: currentOwnerUid,
+      sourceType: 'BREEDER_ISSUED', name: 'TransferredPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+      buyerEmail: email('buyer9b'), buyerName: 'Buyer Nine B', previousOwnerId: currentOwnerUid,
+      transferredAt: new Date().toISOString(), claimedAt: new Date().toISOString(), claimedBy: buyerUid,
+    })
+    await as('currentowner') // the FORMER owner — currentOwnerId no longer matches them
+    let deniedErr = null
+    try {
+      await updateDoc(doc(clientDb, 'dogs', dogId), { availabilityStatus: 'sold' })
+    } catch (err) { deniedErr = err }
+    check('9b-DENIED', 'A former owner (post-transfer/claim) is denied updating Sale & Availability fields', isDenied(deniedErr))
+    const after = (await adminDb.collection('dogs').doc(dogId).get()).data()
+    check('9b-DENIED', 'The denied write left no trace — availabilityStatus was never set', after.availabilityStatus === undefined)
+  }
+
+  // ── Test 9c (DENIED): a completely unrelated stranger, never involved
+  // with the dog at all, is denied. ──
+  {
+    const dogId = `dog9c_${R}`
+    await adminDb.collection('dogs').doc(dogId).set({
+      tenantId: currentOwnerUid, currentOwnerId: currentOwnerUid, createdByUserId: currentOwnerUid,
+      sourceType: 'BREEDER_ISSUED', name: 'StrangerTargetPup', sex: 'female', status: 'active', dateOfBirth: '2026-01-01',
+    })
+    await as('stranger')
+    let deniedErr = null
+    try {
+      await updateDoc(doc(clientDb, 'dogs', dogId), { availabilityStatus: 'available' })
+    } catch (err) { deniedErr = err }
+    check('9c-DENIED', 'An unrelated stranger (never owned this dog) is denied', isDenied(deniedErr))
+  }
+
+  // ── Test 9d (existing protection PRESERVED, not weakened): even the
+  // legitimate current owner cannot smuggle a protected ownership field
+  // through a Sale & Availability-shaped write. ──
+  {
+    const dogId = `dog9d_${R}`
+    await adminDb.collection('dogs').doc(dogId).set({
+      tenantId: currentOwnerUid, currentOwnerId: currentOwnerUid, createdByUserId: currentOwnerUid,
+      sourceType: 'BREEDER_ISSUED', name: 'ProtectedFieldsPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+    })
+    await as('currentowner')
+    let deniedErr = null
+    try {
+      await updateDoc(doc(clientDb, 'dogs', dogId), { availabilityStatus: 'sold', currentOwnerId: strangerUid })
+    } catch (err) { deniedErr = err }
+    check('9d-PRESERVED', 'The current owner cannot bundle a currentOwnerId change into a Sale & Availability write', isDenied(deniedErr))
+    const after = (await adminDb.collection('dogs').doc(dogId).get()).data()
+    check('9d-PRESERVED', 'currentOwnerId is unchanged after the denied attempt', after.currentOwnerId === currentOwnerUid)
+  }
+
+  // ── Test 9e (existing protection PRESERVED, not weakened): a
+  // 'restricted' dog (over the plan's cap) remains read-only for Sale &
+  // Availability too, even for its legitimate current owner — this fix
+  // must not broaden that already-deliberate business rule. ──
+  {
+    const dogId = `dog9e_${R}`
+    await adminDb.collection('dogs').doc(dogId).set({
+      tenantId: currentOwnerUid, currentOwnerId: currentOwnerUid, createdByUserId: currentOwnerUid,
+      sourceType: 'BREEDER_ISSUED', name: 'RestrictedPup', sex: 'female', status: 'restricted', dateOfBirth: '2026-01-01',
+    })
+    await as('currentowner')
+    let deniedErr = null
+    try {
+      await updateDoc(doc(clientDb, 'dogs', dogId), { availabilityStatus: 'available' })
+    } catch (err) { deniedErr = err }
+    check('9e-PRESERVED', 'A restricted dog stays read-only for Sale & Availability, even for its own current owner (unrelated existing rule, confirmed unweakened)', isDenied(deniedErr))
+  }
+
+  await signOut(clientAuth).catch(() => {})
+} else {
+  skip('Section 9 emulator matrix (Sale & Availability allowed/denied permission cases)', 'set FIRESTORE_EMULATOR_HOST/FIREBASE_AUTH_EMULATOR_HOST and start the emulator to run them')
 }
 
 await summary()

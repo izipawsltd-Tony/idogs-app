@@ -1028,7 +1028,7 @@ export default function DogDetailPage({ toast }: Props) {
         <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} isCurrentEffectiveOwner={isCurrentEffectiveOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} onUpdateSale={async (firestoreUpdates, localUpdates) => {
@@ -1248,10 +1248,26 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, onUpdateBreederId, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, isCurrentEffectiveOwner, onUpdateBreederId, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number | null
   toast: (msg: string, type?: ToastMessage['type']) => void
   isOwner: boolean
+  // Codex fix-round finding (Sale & Availability permission failure): NOT
+  // the same thing as `isOwner` above (that's the account ROLE — 'owner'
+  // = pet-owner-role account vs breeder-role). This is whether the
+  // CALLER is this SPECIFIC dog's current effective owner
+  // (dog.currentOwnerId === user?.uid, computed once in the parent — see
+  // DogDetailPage's own isCurrentEffectiveOwner comment on why: a former
+  // breeder viewing a dog they transferred/that was claimed away has
+  // currentOwnerId pointing at the buyer now, and firestore.rules'
+  // isEffectiveDogOwner() correctly denies them any dogs/{dogId} write —
+  // Sale & Availability included). Threaded down specifically to gate
+  // SaleAvailabilityPanel, which previously rendered based on `isOwner`
+  // (role) alone and had no way to know it was showing an editable form
+  // to someone Rules would always deny — every save attempt failed with
+  // "you don't have permission to update this dog anymore", which is
+  // CORRECT Rules behavior surfaced as a confusing, avoidable UI dead end.
+  isCurrentEffectiveOwner: boolean
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
   onUpdateSale: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
@@ -1428,7 +1444,14 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
           <p style={{ fontSize: 14, color: 'var(--dark)', lineHeight: 1.6 }}>{dog.notes}</p>
         </div>
       )}
-      {!isOwner && <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} />}
+      {/* Codex fix-round finding: gated on isCurrentEffectiveOwner too, not
+          just the account-role `isOwner` check — see this prop's own
+          comment above for the root cause this closes. Mirrors the exact
+          same "hidden outright, not shown disabled — nothing to explain
+          beyond the existing 'Transferred to X' banner above" reasoning
+          already used for the Delete button (see isCurrentEffectiveOwner's
+          own comment near canDeleteDog). */}
+      {!isOwner && isCurrentEffectiveOwner && <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} />}
     </div>
   )
 }

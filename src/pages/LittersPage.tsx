@@ -409,10 +409,20 @@ export default function LittersPage({ toast }: Props) {
     }
   }
 
+  // Codex fix-round finding: the underlying action id (show_available_only —
+  // api/_lib/showcase-schema.js's BULK_ACTIONS enum, unchanged) is an
+  // internal API contract, not user-facing copy — only the BUTTON LABEL
+  // and this toast needed fixing. "Show available only" (and a toast that
+  // dropped the "in the Showcase" qualifier) read like a FILTER on the
+  // breeder's own admin puppy list — it never was; this action only ever
+  // changes each available puppy's `visible` flag in the Showcase, and
+  // the admin panel below always lists every puppy in the litter
+  // regardless (see ShowcaseManager's puppyDogs.map — never filtered by
+  // visible/availability).
   const BULK_ACTION_LABELS: Record<ShowcaseBulkAction, string> = {
     select_all: 'All puppies are now shown in the Showcase',
     clear_all: 'All puppies are now hidden from the Showcase',
-    show_available_only: 'Only available puppies are now shown in the Showcase',
+    show_available_only: 'Available puppies are now selected for the Showcase — other puppies are hidden',
   }
 
   async function handleShowcaseBulkAction(litterId: string, action: ShowcaseBulkAction) {
@@ -1396,8 +1406,18 @@ function ShowcaseManager({
           {showcase.enabled ? 'Showcase enabled' : 'Showcase disabled'}
         </span>
       </label>
-      <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
+      <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 4 }}>
         Puppy selection below is kept whether the Showcase is enabled or disabled.
+      </p>
+      {/* Codex fix-round finding: "enabled/disabled" must never read as
+          "published/public" — Slice 1 has no public Showcase page,
+          link, or viewer of any kind yet (see firestore.rules'
+          litterShowcases rule: read is scoped to the owning tenant
+          only, no anonymous access). This flag currently only controls
+          what THIS breeder workspace panel itself does — nothing is
+          shared outside your account by turning it on. */}
+      <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
+        This does not publish anything publicly yet — no one outside your account can view it. Public sharing is planned for a future update.
       </p>
 
       {/* UI gap fix: every toggle/select/bulk action already saves
@@ -1441,7 +1461,12 @@ function ShowcaseManager({
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onBulkAction('select_all')}>Select all</button>
               <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onBulkAction('clear_all')}>Clear all</button>
-              <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onBulkAction('show_available_only')}>Show available only</button>
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={busy}
+                onClick={() => onBulkAction('show_available_only')}
+                title="Selects every puppy currently marked Available for the Showcase and hides the rest. This list below still always shows every puppy in the litter."
+              >Select available puppies only</button>
             </div>
           </div>
 

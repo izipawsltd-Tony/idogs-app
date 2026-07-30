@@ -47,6 +47,119 @@ const { readFileSync } = await import('node:fs')
 const { makeChecker } = await import('./_lib/test-check.mjs')
 const { check, checkAsync, skip, summary } = makeChecker()
 
+// Codex fix-round finding — Showcase test reliability: extractFunctionSource()
+// replaces regex end-anchors like /\n}\n/ or /\n  \}/ for pulling a single
+// function's body out of a larger source file. Those broke (or were only
+// accidentally safe) on CRLF checkouts: a pattern requiring a literal `\n`
+// to appear DIRECTLY AFTER some content (e.g. `}\n`, "closing brace then a
+// newline") fails on Windows/CRLF line endings, where every line actually
+// ends `\r\n` — the `}` is followed by `\r`, not `\n`, so the match never
+// completes and the extracted source silently comes back empty (an empty
+// string still passes `.length > 0`-style existence checks as false, so a
+// missing match FAILS LOUD via the "was found" check — but every assertion
+// chained after it, testing content within that (empty) string, would then
+// silently and vacuously report FAIL for the wrong reason, or in the worst
+// case a check phrased as a negative — "does NOT contain X" — would
+// silently, incorrectly PASS against empty content it never actually
+// scanned. Either way: brittle, and not merely a local temporary
+// workaround like normalizing this one checkout's line endings).
+//
+// This scans forward from a signature match by BALANCED BRACE DEPTH —
+// counting `{`/`}` while skipping over string/template-literal contents and
+// single-line `//` comments (so a stray brace-like character inside a
+// string or comment can't miscount) — and stops the instant depth returns
+// to zero. Entirely line-ending-agnostic: it never looks for `\n`
+// specifically, only for the literal characters `{`, `}`, quote marks, and
+// `//`, none of which differ between LF and CRLF encodings.
+function extractFunctionSource(src, signaturePattern) {
+  const sigMatch = signaturePattern.exec(src)
+  if (!sigMatch) return ''
+  const startIdx = sigMatch.index
+
+  // The function BODY's opening brace is NOT necessarily the first `{`
+  // after the signature — a destructured-parameter signature like
+  // ShowcaseManager's own `({ a, b, c }: { a: T; b: U; c: V }) {` has TWO
+  // earlier brace pairs (the destructuring pattern, then its TypeScript
+  // type annotation) before the real body starts. What's unambiguous is
+  // that the body brace is the first `{` that comes right after a `)` —
+  // every per-field arrow-function TYPE inside that annotation block
+  // (e.g. `onToggleVisible: (puppyId: string, visible: boolean) => void`)
+  // ends its OWN `)` with `=> ReturnType`, never with `) {` directly, so
+  // the first genuine `)` + whitespace + `{` transition is the real
+  // function body. `\s` (not a literal `\n`) already matches `\r` too, so
+  // this is inherently CRLF-safe with no special-casing needed.
+  const bodyOpenSearch = /\)\s*\{/.exec(src.slice(startIdx))
+  if (!bodyOpenSearch) return ''
+  const openIdx = startIdx + bodyOpenSearch.index + bodyOpenSearch[0].length - 1 // index of the '{' itself
+
+  let depth = 0
+  let inString = null // one of `'`, `"`, '`', or null when not inside one
+  let i = openIdx
+  for (; i < src.length; i++) {
+    const ch = src[i]
+    if (inString) {
+      if (ch === '\\') { i++; continue } // skip escaped char (e.g. \' inside a '...' string)
+      if (ch === inString) inString = null
+      continue
+    }
+    if (ch === '/' && src[i + 1] === '/') {
+      const nextNewline = src.indexOf('\n', i)
+      i = nextNewline === -1 ? src.length : nextNewline
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { inString = ch; continue }
+    if (ch === '{') { depth++; continue }
+    if (ch === '}') {
+      depth--
+      if (depth === 0) { i++; break }
+    }
+  }
+  return src.slice(startIdx, i)
+}
+
+// ── Section 0: extractFunctionSource() self-test (Codex fix-round —
+// Showcase test reliability). A hand-crafted fixture mirroring
+// ShowcaseManager's own tricky shape (destructured params + a
+// per-field TypeScript type annotation containing arrow-function
+// types, none of which end their own `)` with `{`) — run against BOTH
+// a CRLF-encoded and an LF-encoded copy of the SAME fixture, proving
+// the extraction is genuinely line-ending-agnostic rather than merely
+// "happens to work on whatever this checkout currently has". Also
+// covers a brace inside a string literal and a single-line comment
+// containing a stray `}`, proving those don't miscount depth. ──
+{
+  const fixtureLf = [
+    'const unrelatedBefore = 1',
+    'function Example({',
+    '  a, b,',
+    '}: {',
+    '  a: string',
+    '  onClick: (x: string, y: boolean) => void',
+    '}) {',
+    '  const s = \'a brace in a string: { not real }\' // trailing comment with a stray }',
+    '  if (a) {',
+    '    return b',
+    '  }',
+    '  return null',
+    '}',
+    '',
+    'const unrelatedAfter = 2',
+  ].join('\n')
+  const fixtureCrlf = fixtureLf.replace(/\n/g, '\r\n')
+
+  for (const [label, fixture] of [['LF fixture', fixtureLf], ['CRLF fixture', fixtureCrlf]]) {
+    const extracted = extractFunctionSource(fixture, /function Example\(/)
+    check(`extractFunctionSource (${label}): finds a non-empty body`, extracted.length > 0)
+    check(`extractFunctionSource (${label}): body starts at "function Example("`, extracted.startsWith('function Example('))
+    check(`extractFunctionSource (${label}): body ends at the function's OWN closing brace, not a moment earlier or later`, extracted.trimEnd().endsWith('}') && !extracted.includes('unrelatedAfter') && extracted.includes('return null'))
+    check(`extractFunctionSource (${label}): does not stop early at the destructuring/type-annotation braces`, extracted.includes('a: string') && extracted.includes('const s ='))
+    check(`extractFunctionSource (${label}): a brace-like character inside a string literal does not throw off the depth count`, extracted.includes('a brace in a string'))
+    check(`extractFunctionSource (${label}): a stray "}" inside a // comment does not throw off the depth count`, extracted.includes('trailing comment'))
+    check(`extractFunctionSource (${label}): never includes code before the signature`, !extracted.includes('unrelatedBefore'))
+  }
+  check('extractFunctionSource: LF and CRLF fixtures extract the SAME logical content (only newline encoding differs)', extractFunctionSource(fixtureLf, /function Example\(/).replace(/\r\n/g, '\n') === extractFunctionSource(fixtureCrlf, /function Example\(/).replace(/\r\n/g, '\n'))
+}
+
 // ── Section 1: pure-logic coverage of api/_lib/showcase-schema.js ──
 {
   const {
@@ -162,8 +275,7 @@ const { check, checkAsync, skip, summary } = makeChecker()
   // guard itself (only the account-switch effect above may do that).
   const showcaseHandlerNames = ['loadShowcase', 'handleCreateShowcase', 'handleToggleShowcaseEnabled', 'handleTogglePuppyVisible', 'handlePuppyAvailabilityChange', 'handleShowcaseBulkAction']
   for (const name of showcaseHandlerNames) {
-    const fnMatch = littersPageSrc.match(new RegExp(`async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`))
-    const fnBody = fnMatch ? fnMatch[0] : ''
+    const fnBody = extractFunctionSource(littersPageSrc, new RegExp(`async function ${name}\\(`))
     check(`${name} was found`, fnBody.length > 0)
     check(`${name} captures the guard's generation before its first await`, /const gen = showcaseGuard\.currentGeneration\(\)/.test(fnBody))
     const guardCheckCount = (fnBody.match(/if \(!isShowcaseRequestCurrent\(gen\)\) return/g) || []).length
@@ -179,18 +291,33 @@ const { check, checkAsync, skip, summary } = makeChecker()
   // failures only).
   const editHandlerNames = ['handleToggleShowcaseEnabled', 'handleTogglePuppyVisible', 'handlePuppyAvailabilityChange', 'handleShowcaseBulkAction']
   for (const name of editHandlerNames) {
-    const fnMatch = littersPageSrc.match(new RegExp(`async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`))
-    const fnBody = fnMatch ? fnMatch[0] : ''
+    const fnBody = extractFunctionSource(littersPageSrc, new RegExp(`async function ${name}\\(`))
+    check(`${name} was found (edit-handler pass)`, fnBody.length > 0)
     check(`${name} clears showcaseSaveError at the start of every new attempt`, /setShowcaseSaveError\(prev => \(\{ \.\.\.prev, \[litterId\]: '' \}\)\)/.test(fnBody))
     check(`${name} sets showcaseSaveError on failure (guarded by isShowcaseRequestCurrent, same as every other post-await write)`, /setShowcaseSaveError\(prev => \(\{ \.\.\.prev, \[litterId\]: message \}\)\)/.test(fnBody))
     check(`${name} never optimistically writes to showcases before the server confirms (no setShowcases call outside the success branch)`, (fnBody.match(/setShowcases\(/g) || []).length === 1)
   }
 
   // UI gap fix: ShowcaseManager itself — status feedback + disabled wiring.
-  const showcaseManagerMatch = littersPageSrc.match(/function ShowcaseManager\(\{[\s\S]*?\n}\n/)
-  const showcaseManagerSrc = showcaseManagerMatch ? showcaseManagerMatch[0] : ''
+  // Codex fix-round finding: this extraction previously relied on
+  // /function ShowcaseManager\(\{[\s\S]*?\n}\n/ — a line-ending-dependent
+  // end anchor (a literal `\n` required immediately AFTER the closing
+  // `}`, which only holds on LF checkouts; on CRLF it's `}\r\n`, so the
+  // match silently failed and every assertion below ran against an empty
+  // string). extractFunctionSource() replaces this with balanced-brace
+  // counting from the real body-opening brace — see its own comment
+  // above for why "the first `{` after the signature" isn't safe either
+  // for a destructured-parameter signature like this one's.
+  const showcaseManagerSrc = extractFunctionSource(littersPageSrc, /function ShowcaseManager\(/)
   check('ShowcaseManager was found', showcaseManagerSrc.length > 0)
-  check('ShowcaseManager accepts a saveError prop distinct from the Showcase enabled/disabled (publish) status', /saveError: string/.test(showcaseManagerSrc))
+  // Codex fix-round finding: "(publish)" was imprecise wording in this
+  // check's own label (never shown to a real user — this is a test
+  // description — but still worth fixing for the same reason as the
+  // production UI copy below: Slice 1 has no public Showcase viewer at
+  // all yet, so "enabled" must never be described as "publish/public"
+  // anywhere, including in developer-facing test output).
+  check('ShowcaseManager accepts a saveError prop distinct from the Showcase enabled/disabled status', /saveError: string/.test(showcaseManagerSrc))
+  check('ShowcaseManager clarifies that enabling does not publish anything publicly yet (Slice 1 has no public viewer)', /not\s+(?:make it |publish it )?public(?:ly)?/i.test(showcaseManagerSrc) || /no public (?:Showcase )?(?:page|viewer|link)/i.test(showcaseManagerSrc))
   check('ShowcaseManager renders a "Saving…" state while busy', /busy \? \([\s\S]{0,220}Saving…/.test(showcaseManagerSrc))
   check('ShowcaseManager renders the save failure message when saveError is set', /saveError \? \([\s\S]{0,120}Save failed/.test(showcaseManagerSrc))
   check('ShowcaseManager renders an explicit "All changes saved" confirmation as the default/idle state', /All changes saved/.test(showcaseManagerSrc))
@@ -204,6 +331,25 @@ const { check, checkAsync, skip, summary } = makeChecker()
   // as disabled before a second click could ever be dispatched.
   const disabledBusyCount = (showcaseManagerSrc.match(/disabled=\{busy\}/g) || []).length
   check('Every interactive Showcase control (enable toggle, 3 bulk buttons, per-puppy checkbox, per-puppy select) is disabled while busy — at least 6 controls', disabledBusyCount >= 6, `found ${disabledBusyCount}`)
+
+  // Codex fix-round finding: "Show available only" read like a FILTER on
+  // the breeder's own admin puppy list (it never was — see the source's
+  // own comment on BULK_ACTION_LABELS). The button label must no longer
+  // say "Show", and must say "Select" + "puppies" instead, matching
+  // "Select all"'s own naming convention.
+  check('The bulk-action button label no longer reads "Show available only"', !/>Show available only</.test(showcaseManagerSrc))
+  check('The bulk-action button label reads "Select available puppies only"', />Select available puppies only</.test(showcaseManagerSrc))
+  check('The bulk-action button has an explicit help tooltip clarifying it selects puppies for the Showcase, not a filter of this list', /title="Selects every puppy currently marked Available/.test(showcaseManagerSrc))
+  // REQUIRED UX: "Keep all puppies visible in the management panel" —
+  // puppyDogs.map() must never be filtered by visible/availability; the
+  // ONLY conditional in the puppy list is the empty-litter branch above
+  // it (puppyDogs.length === 0), never a per-puppy visibility check.
+  check('The puppy management list always renders EVERY puppy in the litter (puppyDogs.map is never filtered by visible/availability)', /puppyDogs\.map\(puppy => \{/.test(showcaseManagerSrc) && !/puppyDogs\.filter\([^)]*visible/.test(showcaseManagerSrc) && !/puppyDogs\.filter\([^)]*availab/i.test(showcaseManagerSrc))
+
+  const bulkLabelsMatch = littersPageSrc.match(/show_available_only: '[^']*'/)
+  const bulkLabelsText = bulkLabelsMatch ? bulkLabelsMatch[0] : ''
+  check('The bulk-action toast wording exists and is anchored to the "in the Showcase" scope (never implies a filter of the admin view)', bulkLabelsText.includes('for the Showcase'))
+  check('The internal action id (show_available_only) is unchanged — only user-facing copy was fixed, not the API contract', /onBulkAction\('show_available_only'\)/.test(showcaseManagerSrc))
 
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
   check('lib/db.ts Showcase mutations all call trusted server endpoints (never a direct Firestore write to litterShowcases)', /fetch\('\/api\/create-showcase'/.test(dbSrc) && /fetch\('\/api\/set-showcase-enabled'/.test(dbSrc) && /fetch\('\/api\/update-showcase-puppy'/.test(dbSrc) && /fetch\('\/api\/bulk-update-showcase-puppies'/.test(dbSrc))
@@ -867,7 +1013,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('2', 'A puppyId not currently in this litter is rejected (409 PUPPY_NOT_IN_LITTER)', foreignRes.statusCode === 409 && foreignRes.body?.reason === 'PUPPY_NOT_IN_LITTER', JSON.stringify(foreignRes.body))
   }
 
-  // ── Test 3: "Clear all" hides every puppy; "Select all" / "Show available only" ──
+  // ── Test 3: "Clear all" hides every puppy; "Select all" / "Select available puppies only" ──
   {
     const breeder = await newUser('sc3breeder', breederPlusProfile)
     const litterId = `litter3_${R}`
