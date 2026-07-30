@@ -43,6 +43,8 @@ const { check, skip, summary } = makeChecker()
 const apiSrc = readFileSync(new URL('../api/create-litter-puppy.js', import.meta.url), 'utf8')
 const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
 const littersSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
+const toastHookSrc = readFileSync(new URL('../src/hooks/useToast.ts', import.meta.url), 'utf8')
+const appSrc = readFileSync(new URL('../src/components/App.tsx', import.meta.url), 'utf8')
 
 // Codex re-review fix: extracts one function's full source (signature
 // through its matching closing brace) via balanced-brace scanning —
@@ -249,6 +251,84 @@ function hasShortCircuitingRestrictedGuard(fnBody) {
 
   check('LittersPage.tsx: the Save changes button is also disabled for a restricted puppy (defense in depth alongside the fieldset)',
     /onClick=\{\(\) => handleSavePuppy\(puppy, litter\)\} disabled=\{isPuppyRestricted\}/.test(littersSrc))
+}
+
+// =========================================================================
+// SECTION 1B — staging QA follow-up (Red Boy, round 4): opening Edit on a
+// restricted puppy must not itself attempt any write, and must never show
+// a stale toast left over from an earlier, unrelated action. Staging QA
+// observed a "permission-denied"-style message on opening Edit with no
+// Console/Network error at all — consistent with a leftover toast (see
+// useToast.ts's 3.5s auto-dismiss timer) still being visible at that
+// moment, not a genuine request made by opening the editor.
+// =========================================================================
+{
+  check('useToast.ts exports dismissAll(), which clears every toast at once (not dismiss-by-id)',
+    /const dismissAll = useCallback\(\(\) => \{[\s\S]{0,40}setToasts\(\[\]\)/.test(toastHookSrc))
+  check('useToast.ts returns dismissAll alongside toasts/toast/dismiss',
+    /return \{ toasts, toast, dismiss, dismissAll \}/.test(toastHookSrc))
+
+  check('App.tsx destructures dismissAll from useToast()',
+    /const \{ toasts, toast, dismiss, dismissAll \} = useToast\(\)/.test(appSrc))
+  check('App.tsx wires dismissAll through to LittersPage',
+    /<LittersPage toast=\{toast\} dismissAll=\{dismissAll\} \/>/.test(appSrc))
+
+  check('LittersPage.tsx\'s Props declares dismissAll',
+    /dismissAll: \(\) => void/.test(littersSrc))
+  check('LittersPage.tsx\'s component destructures dismissAll from its props',
+    /export default function LittersPage\(\{ toast, dismissAll \}: Props\)/.test(littersSrc))
+
+  const startEditPuppyBody = extractFunctionSource(littersSrc, /function startEditPuppy\(/)
+  check('LittersPage.tsx: startEditPuppy() was found by the balanced-brace extractor (extraction sanity check)',
+    startEditPuppyBody.length > 0)
+
+  check('LittersPage.tsx: opening the editor (startEditPuppy) is synchronous and makes no Firestore write of its own — no updateDog( call anywhere in its body',
+    !startEditPuppyBody.includes('updateDog(') && !/^\s*async function startEditPuppy\(/m.test(littersSrc))
+  check('LittersPage.tsx: opening the editor does not itself display any NEW toast — only dismissAll() (clearing), never toast(',
+    !startEditPuppyBody.includes('toast('))
+
+  // Proves dismissAll() is called, AND that it happens BEFORE the editor
+  // actually opens (setEditingPuppy(puppy.id)) — not just that both
+  // appear somewhere in the function. Mirrors hasShortCircuitingRestrictedGuard's
+  // structure/rigor: a real causal-order predicate, not a bare substring
+  // check, verified further below with the same negative-mutation +
+  // CRLF-immunity proof already established for the Save-guard check.
+  function clearsStaleToastsBeforeOpeningEditor(fnBody) {
+    const dismissIdx = fnBody.indexOf('dismissAll()')
+    if (dismissIdx === -1) return { ok: false, reason: 'dismissAll() is not called' }
+    const openIdx = fnBody.indexOf('setEditingPuppy(puppy.id)')
+    if (openIdx === -1) return { ok: false, reason: 'setEditingPuppy(puppy.id) not found — editor never actually opens' }
+    if (!(dismissIdx < openIdx)) return { ok: false, reason: 'dismissAll() happens AFTER the editor already opened, not before' }
+    return { ok: true, reason: '', dismissIdx, openIdx }
+  }
+
+  const staleClearResult = clearsStaleToastsBeforeOpeningEditor(startEditPuppyBody)
+  check('LittersPage.tsx: startEditPuppy clears any stale toast (dismissAll()) BEFORE the editor opens (setEditingPuppy) — a leftover message from an earlier action can never be mistaken for one this action caused',
+    staleClearResult.ok, staleClearResult.reason)
+
+  if (staleClearResult.ok) {
+    const mutatedBody = startEditPuppyBody.slice(0, staleClearResult.dismissIdx) + startEditPuppyBody.slice(staleClearResult.dismissIdx + 'dismissAll()'.length)
+    const mutatedResult = clearsStaleToastsBeforeOpeningEditor(mutatedBody)
+    check('NEGATIVE SELF-TEST: deleting the dismissAll() call from an in-memory copy makes clearsStaleToastsBeforeOpeningEditor() correctly report failure',
+      mutatedResult.ok === false, `mutated predicate unexpectedly returned ok=${mutatedResult.ok}`)
+  } else {
+    check('NEGATIVE SELF-TEST: skipped because the positive case above did not pass — cannot meaningfully mutate a call that was never found', false,
+      '(this should never happen unless the check above already failed; investigate that first)')
+  }
+
+  {
+    const crlfLittersSrc2 = littersSrc.replace(/\r\n|\n/g, '\r\n')
+    const crlfStartEditBody = extractFunctionSource(crlfLittersSrc2, /function startEditPuppy\(/)
+    const crlfStaleClearResult = clearsStaleToastsBeforeOpeningEditor(crlfStartEditBody)
+    check('CRLF: the stale-toast-clears-before-editor-opens check is still correctly detected against an all-CRLF copy of LittersPage.tsx',
+      crlfStaleClearResult.ok, crlfStaleClearResult.reason)
+    if (crlfStaleClearResult.ok) {
+      const crlfMutatedBody2 = crlfStartEditBody.slice(0, crlfStaleClearResult.dismissIdx) + crlfStartEditBody.slice(crlfStaleClearResult.dismissIdx + 'dismissAll()'.length)
+      const crlfMutatedResult2 = clearsStaleToastsBeforeOpeningEditor(crlfMutatedBody2)
+      check('CRLF: the negative self-test (mutated dismissAll call) still correctly fails against an all-CRLF copy',
+        crlfMutatedResult2.ok === false, `mutated predicate unexpectedly returned ok=${crlfMutatedResult2.ok}`)
+    }
+  }
 }
 
 // =========================================================================

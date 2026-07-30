@@ -16,6 +16,7 @@ import { describeTransferFailure } from '../lib/transferError'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
+  dismissAll: () => void
 }
 
 interface PuppyForm {
@@ -89,7 +90,7 @@ function buildDeleteLitterConfirmText(litterName: string, eligibleCount: number,
   return parts.join(' ')
 }
 
-export default function LittersPage({ toast }: Props) {
+export default function LittersPage({ toast, dismissAll }: Props) {
   const { user, profile, upgradeToBreeder } = useAuth()
   const [upgrading, setUpgrading] = useState(false)
   const [litters, setLitters] = useState<Litter[]>([])
@@ -683,6 +684,15 @@ export default function LittersPage({ toast }: Props) {
   }
 
   function startEditPuppy(puppy: Dog) {
+    // Staging QA finding (Red Boy, item 4): opening the editor makes no
+    // network request of its own (nothing below this line is async, and
+    // this function never shows a NEW message) — but a message from an
+    // EARLIER, unrelated action can still be visible on screen for up to
+    // 3.5s (see useToast's auto-dismiss timer), which reads as if opening
+    // THIS editor caused it. Clearing here guarantees a fresh edit
+    // session never inherits a stale message from whatever happened
+    // right before it.
+    dismissAll()
     // Parse notes to extract collar/weight
     const notes = puppy.notes || ''
     const collarMatch = notes.match(/Collar: (\w+)/)

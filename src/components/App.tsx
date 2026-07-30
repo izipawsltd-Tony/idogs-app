@@ -70,7 +70,7 @@ function DogDetailRoute({ toast }: { toast: (msg: string, type?: ToastMessage['t
   return <DogDetailPage key={dogId} toast={toast} />
 }
 export default function App() {
-  const { toasts, toast, dismiss } = useToast()
+  const { toasts, toast, dismiss, dismissAll } = useToast()
 
   return (
     <>
@@ -97,7 +97,7 @@ export default function App() {
           <Route path="dogs" element={<DogListPage toast={toast} />} />
           <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
           <Route path="dogs/:dogId" element={<DogDetailRoute toast={toast} />} />
-          <Route path="litters" element={<LittersPage toast={toast} />} />
+          <Route path="litters" element={<LittersPage toast={toast} dismissAll={dismissAll} />} />
           <Route path="reminders" element={<RemindersPage toast={toast} />} />
           <Route path="settings" element={<SettingsPage toast={toast} />} />
           <Route path="documents" element={<DocumentsPage toast={toast} />} />
