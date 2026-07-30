@@ -111,7 +111,11 @@ const { check, checkAsync, skip, summary } = makeChecker()
   const showcaseBlock = (rules.match(/match \/litterShowcases\/\{litterId\} \{[\s\S]*?\n    \}/) || [''])[0]
   check('firestore.rules has a litterShowcases match block', showcaseBlock.length > 0)
   check('litterShowcases denies all direct client create/update/delete (Admin SDK endpoints only)', /allow create, update, delete: if false;/.test(showcaseBlock))
-  check('litterShowcases read is scoped to the owning tenant only (no anonymous/public read in Slice 1)', /allow read: if isSignedIn\(\) && resource\.data\.tenantId == request\.auth\.uid;/.test(showcaseBlock))
+  check('litterShowcases read is scoped to the owning tenant only (no anonymous/public read in Slice 1)', /allow read: if isSignedIn\(\) && \(resource == null \|\| resource\.data\.tenantId == request\.auth\.uid\);/.test(showcaseBlock))
+  // Staging QA fix: a read of a litterShowcases doc that doesn't exist
+  // yet (every litter's starting state) must not be denied outright —
+  // see this rule's own comment for the full incident writeup.
+  check('litterShowcases read allows resource == null (a not-yet-created Showcase must resolve to "not found", never permission-denied)', /resource == null \|\|/.test(showcaseBlock))
 
   const littersPageSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
   check('LittersPage.tsx manages Showcase via lib/db.ts server-endpoint wrappers, not direct Firestore writes', /createShowcase\(litterId\)/.test(littersPageSrc) && /setShowcaseEnabled\(litterId, !current\.enabled\)/.test(littersPageSrc) && /updateShowcasePuppy\(litterId, puppyId, \{ visible \}\)/.test(littersPageSrc) && /bulkUpdateShowcasePuppies\(litterId, action\)/.test(littersPageSrc))
@@ -795,6 +799,98 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     let strangerReadDenied = false
     try { await getDoc(doc(clientDb, 'litterShowcases', litterId)) } catch (err) { strangerReadDenied = isDenied(err) }
     check('8', 'A stranger cannot read someone else\'s Showcase directly', strangerReadDenied)
+
+    await signOut(clientAuth).catch(() => {})
+  }
+
+  // ── Test 8b (STAGING QA FIX): firestore.rules must not deny a read of a
+  // litterShowcases document that does not exist yet. This is the exact
+  // production defect: every litter starts with NO Showcase document
+  // (create-showcase.js is the only write path, opt-in) — the ORIGINAL
+  // rule dereferenced `resource.data.tenantId` unconditionally, which
+  // throws a Rules-evaluation error (surfaced to the client as
+  // "Missing or insufficient permissions.") on a nonexistent document,
+  // instead of a clean "not found". lib/db.ts's getShowcaseForLitter()
+  // already correctly treats `!snap.exists()` as "no Showcase yet" — the
+  // bug was purely in Rules denying the read attempt before the SDK could
+  // even report that. Also covers unauthenticated denial and
+  // malformed/missing-ownership-field fail-closed behavior, per the
+  // staging QA fix task's explicit test requirements. ──
+  {
+    const { signInWithEmailAndPassword, signOut } = await import('firebase/auth')
+    async function signInAs(u) {
+      await signOut(clientAuth).catch(() => {})
+      await signInWithEmailAndPassword(clientAuth, u.email, PW)
+    }
+
+    const owner = await newUser('sc8bowner', breederPlusProfile)
+    const stranger = await newUser('sc8bstranger', breederPlusProfile)
+    const petOwner = await newUser('sc8bpetowner', { role: 'owner', plan: 'plus', email: 'petowner@example.com' })
+    const litterId = `litter8b_${R}`
+    await seedLitter(owner.uid, litterId, [])
+    // Deliberately NEVER call createShowcaseHandler here — the whole
+    // point is to test the state every litter starts in.
+
+    await signInAs(owner)
+    let ownerReadThrew = false
+    let ownerSnapExists = 'not-checked'
+    try {
+      const snap = await getDoc(doc(clientDb, 'litterShowcases', litterId))
+      ownerSnapExists = snap.exists()
+    } catch {
+      ownerReadThrew = true
+    }
+    check('8b', 'THE BUG: the owning breeder reading a litterShowcases doc that does not exist yet must NOT throw permission-denied', !ownerReadThrew)
+    check('8b', 'The read correctly resolves to "not found" (exists() === false), matching getShowcaseForLitter()\'s own null-return contract', ownerSnapExists === false)
+
+    // A stranger's read of the SAME nonexistent doc must also not throw —
+    // matching the established dogs/{dogId}-style precedent: a missing
+    // document exposes no data either way, regardless of who's asking.
+    await signInAs(stranger)
+    let strangerReadThrew = false
+    try { await getDoc(doc(clientDb, 'litterShowcases', litterId)) } catch { strangerReadThrew = true }
+    check('8b', 'A stranger reading the same nonexistent doc also does not throw permission-denied (no data to leak either way)', !strangerReadThrew)
+
+    // A pet-owner-role account is denied for someone else's (existing)
+    // Showcase — the rule has no role concept at all, purely tenantId;
+    // confirmed here with a REAL existing document this time, so this
+    // exercises the resource!=null branch specifically.
+    await createShowcaseHandler(mockReq({ litterId }, owner.idToken), mockRes())
+    await signInAs(petOwner)
+    let petOwnerDenied = false
+    try { await getDoc(doc(clientDb, 'litterShowcases', litterId)) } catch (err) { petOwnerDenied = isDenied(err) }
+    check('8b', 'A Pet Owner-role account is denied reading another account\'s EXISTING Showcase (tenantId mismatch, not a role check)', petOwnerDenied)
+
+    // Unauthenticated (signed-out) access must be denied outright — both
+    // for the existing doc and (separately) is covered implicitly since
+    // isSignedIn() is checked before the resource==null branch even runs.
+    await signOut(clientAuth).catch(() => {})
+    let anonDenied = false
+    try { await getDoc(doc(clientDb, 'litterShowcases', litterId)) } catch (err) { anonDenied = isDenied(err) }
+    check('8b', 'An unauthenticated (signed-out) client is denied reading an existing Showcase', anonDenied)
+
+    let anonDeniedNonexistent = false
+    const neverCreatedLitterId = `litter8b-never-created_${R}`
+    try { await getDoc(doc(clientDb, 'litterShowcases', neverCreatedLitterId)) } catch (err) { anonDeniedNonexistent = isDenied(err) }
+    check('8b', 'An unauthenticated client is ALSO denied reading a nonexistent Showcase — isSignedIn() is checked before resource==null, so the null-guard fix does not accidentally open anonymous access', anonDeniedNonexistent)
+
+    // Malformed/missing ownership field: seed a raw doc via the Admin SDK
+    // (bypasses Rules) with NO tenantId field at all, and a second with a
+    // wrong-typed tenantId — both must still deny a signed-in reader who
+    // is not (and structurally cannot be recognized as) the owner.
+    const malformedNoTenantId = `litter8b-malformed-no-tenant_${R}`
+    await seedDb.collection('litterShowcases').doc(malformedNoTenantId).set({ litterId: malformedNoTenantId, enabled: false, puppies: {} })
+    const malformedWrongType = `litter8b-malformed-wrong-type_${R}`
+    await seedDb.collection('litterShowcases').doc(malformedWrongType).set({ litterId: malformedWrongType, tenantId: 12345, enabled: false, puppies: {} })
+
+    await signInAs(owner)
+    let missingTenantIdDenied = false
+    try { await getDoc(doc(clientDb, 'litterShowcases', malformedNoTenantId)) } catch (err) { missingTenantIdDenied = isDenied(err) }
+    check('8b', 'A Showcase document with NO tenantId field at all fails CLOSED (denied), never silently allowed', missingTenantIdDenied)
+
+    let wrongTypeTenantIdDenied = false
+    try { await getDoc(doc(clientDb, 'litterShowcases', malformedWrongType)) } catch (err) { wrongTypeTenantIdDenied = isDenied(err) }
+    check('8b', 'A Showcase document with a wrong-typed (non-string) tenantId also fails CLOSED', wrongTypeTenantIdDenied)
 
     await signOut(clientAuth).catch(() => {})
   }

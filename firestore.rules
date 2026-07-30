@@ -581,8 +581,29 @@ service cloud.firestore {
     // buyer/microchip/vet/ownership data anyway — but the access
     // boundary is enforced here regardless, not by what happens to be in
     // the document today).
+    //
+    // Staging QA fix — `resource == null ||`: every litter starts with NO
+    // Showcase document at all (create-showcase.js is the only write
+    // path, and it's an explicit opt-in action). lib/db.ts's
+    // getShowcaseForLitter() does a plain getDoc() to find out whether
+    // one exists yet, and already correctly treats `!snap.exists()` as
+    // "no Showcase yet" (returns null, not an error) — but the ORIGINAL
+    // version of this rule dereferenced `resource.data.tenantId`
+    // unconditionally, even when `resource` is null (no document). A
+    // Rules-evaluation error on a missing document is NOT the same as a
+    // clean "not found" — Firestore surfaces it to the client as
+    // `permission-denied` ("Missing or insufficient permissions."),
+    // before the SDK ever gets a chance to report "doesn't exist". Every
+    // breeder opening ANY litter's Showcase panel for the first time hit
+    // this. Exactly the same class of bug already fixed (and explicitly
+    // documented) for dogs/{dogId}, vaccineRecords, wormingRecords,
+    // healthTests, activityNotes, heatCycles, documents, and reminders
+    // above — this collection was simply missed when it was first
+    // written. `resource == null` costs nothing to allow: a missing
+    // document exposes no data either way, same reasoning as every one
+    // of those siblings.
     match /litterShowcases/{litterId} {
-      allow read: if isSignedIn() && resource.data.tenantId == request.auth.uid;
+      allow read: if isSignedIn() && (resource == null || resource.data.tenantId == request.auth.uid);
       allow create, update, delete: if false;
     }
 
