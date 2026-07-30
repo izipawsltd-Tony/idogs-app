@@ -510,6 +510,173 @@ const FAKE_DOC_PATH = 'projects/idogs-app-staging/databases/(default)/documents/
     check('10-FAILURE', 'A non-permission failure (network/unavailable) also reverts the badge — "for ANY reason", not just permission-denied', controls.getBadgeStatus() === 'reserved')
     act(() => { renderer.unmount() })
   }
+
+  // ── Restricted-puppy Save button: harness-level proof that a disabled
+  // Save control, when invoked anyway (mirroring "the handler is called
+  // programmatically, bypassing the UI's disabled attribute"), never
+  // reaches the write function at all. Mirrors the exact guard shape
+  // Section 11 below proves exists in the real handleSave(): check
+  // isRestricted FIRST, before anything resembling a write attempt. ──
+  {
+    const controls = {}
+    let renderer
+    const mutationCalls = []
+    function RestrictedSaveHarness({ isRestricted, controls }) {
+      controls.save = async () => {
+        if (isRestricted) { controls.lastMessage = 'PLAN_LIMIT_MESSAGE'; return }
+        mutationCalls.push(1)
+        controls.lastMessage = 'SAVED'
+      }
+      return null
+    }
+    act(() => { renderer = TestRenderer.create(React.createElement(RestrictedSaveHarness, { isRestricted: true, controls })) })
+    await act(async () => { await controls.save() })
+    check('10-RESTRICTED', 'Invoking save() on a restricted puppy never reaches the write function (mutationCalls stays empty)', mutationCalls.length === 0)
+    check('10-RESTRICTED', 'Invoking save() on a restricted puppy surfaces the plan-limit message, not a save-succeeded/permission-denied one', controls.lastMessage === 'PLAN_LIMIT_MESSAGE')
+    act(() => { renderer.unmount() })
+  }
+}
+
+// =========================================================================
+// SECTION 11 (staging QA finding, Red Boy follow-up) — the SAME class of
+// bug Sections 9/10 already fixed once (Black boy: gate on
+// isCurrentEffectiveOwner) had a second gap: NEITHER Section 9's fix NOR
+// the original code ever checked 'restricted' status. A puppy over its
+// plan's dog cap keeps currentOwnerId pointing at the same breeder
+// (isCurrentEffectiveOwner stays true), so SaleAvailabilityPanel kept
+// rendering fully editable, Save stayed clickable, and every attempt was
+// denied by firestore.rules' restricted-dog clause — surfacing the exact
+// same "you don't have permission to update this dog anymore" message
+// Section 9 was supposed to have eliminated. Root cause: correct Rules
+// behavior, avoidable UI dead end — same shape as before, just a
+// different missed condition. No Rules change here either.
+//
+// Also found and fixed in the same commit (Codex audit requirement):
+// two OTHER independently-editable dogs/{dogId} write paths in the same
+// Overview tab with the identical gap — the Breeder ID editor and the
+// Pedigree Register selector. Both covered below too.
+// =========================================================================
+{
+  const detailSrc = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.url), 'utf8')
+
+  // Same balanced-brace extractor already established (and CRLF-proven)
+  // for scripts/test-puppy-edit-authorization.mjs's handleSavePuppy
+  // check — ported here rather than imported, matching this codebase's
+  // existing convention of self-contained test files with no cross-file
+  // imports between test-*.mjs scripts.
+  function findMatchingBraceEnd(src, openBraceIdx) {
+    let depth = 0
+    let inString = null
+    let i = openBraceIdx
+    for (; i < src.length; i++) {
+      const ch = src[i]
+      if (inString) {
+        if (ch === '\\') { i++; continue }
+        if (ch === inString) inString = null
+        continue
+      }
+      if (ch === '/' && src[i + 1] === '/') {
+        const nextNewline = src.indexOf('\n', i)
+        i = nextNewline === -1 ? src.length : nextNewline
+        continue
+      }
+      if (ch === "'" || ch === '"' || ch === '`') { inString = ch; continue }
+      if (ch === '{') { depth++; continue }
+      if (ch === '}') {
+        depth--
+        if (depth === 0) { i++; break }
+      }
+    }
+    return i
+  }
+  function extractFunctionSource(src, signaturePattern) {
+    const sigMatch = signaturePattern.exec(src)
+    if (!sigMatch) return ''
+    const startIdx = sigMatch.index
+    const bodyOpenSearch = /\)\s*\{/.exec(src.slice(startIdx))
+    if (!bodyOpenSearch) return ''
+    const openIdx = startIdx + bodyOpenSearch.index + bodyOpenSearch[0].length - 1
+    return src.slice(startIdx, findMatchingBraceEnd(src, openIdx))
+  }
+  // Proves the causal chain, not just text order: the isRestricted check
+  // exists, opens a block, that block contains a real return, and the
+  // return sits before the actual write attempt (`await onSave(` for
+  // Sale & Availability, `await onUpdateBreederId(` for Breeder ID).
+  function hasShortCircuitingRestrictedGuard(fnBody, writeCallNeedle) {
+    const conditionIdx = fnBody.indexOf('if (isRestricted)')
+    if (conditionIdx === -1) return { ok: false, reason: 'isRestricted guard condition not found' }
+    const guardOpenIdx = fnBody.indexOf('{', conditionIdx)
+    if (guardOpenIdx === -1) return { ok: false, reason: 'no block opens after the condition' }
+    const guardBlockEnd = findMatchingBraceEnd(fnBody, guardOpenIdx)
+    const guardBlock = fnBody.slice(guardOpenIdx, guardBlockEnd)
+    const returnMatch = /\breturn\b/.exec(guardBlock)
+    if (!returnMatch) return { ok: false, reason: 'no return statement inside the guard block' }
+    const returnIdx = guardOpenIdx + returnMatch.index
+    const writeCallIdx = fnBody.indexOf(writeCallNeedle)
+    if (writeCallIdx === -1) return { ok: false, reason: `write call (${writeCallNeedle}) not found` }
+    if (!(conditionIdx < returnIdx)) return { ok: false, reason: 'return is not after the restricted condition' }
+    if (!(returnIdx < writeCallIdx)) return { ok: false, reason: 'return is not before the write call' }
+    return { ok: true, reason: '', returnIdx }
+  }
+  // Runs the positive case, the negative self-test (delete the matched
+  // `return` from an in-memory copy, confirm the predicate correctly
+  // flips to failure), and the same pair again against an in-memory
+  // CRLF-converted copy of the whole file — the exact rigor already
+  // established and required for the equivalent LittersPage.tsx checks.
+  function proveGuardIsMutationAndCrlfProof(label, signaturePattern, writeCallNeedle) {
+    const fnBody = extractFunctionSource(detailSrc, signaturePattern)
+    check(`${label}: function body found by the balanced-brace extractor`, fnBody.length > 0)
+    const real = hasShortCircuitingRestrictedGuard(fnBody, writeCallNeedle)
+    check(`${label}: short-circuits BEFORE attempting the write when the dog is restricted (guard exists, contains a real return, ordered before the write call)`, real.ok, real.reason)
+    if (real.ok) {
+      const mutated = fnBody.slice(0, real.returnIdx) + fnBody.slice(real.returnIdx + 'return'.length)
+      const mutatedResult = hasShortCircuitingRestrictedGuard(mutated, writeCallNeedle)
+      check(`NEGATIVE SELF-TEST (${label}): deleting the guard's return from an in-memory copy correctly flips the predicate to failure`, mutatedResult.ok === false)
+    } else {
+      check(`NEGATIVE SELF-TEST (${label}): skipped — positive case did not pass`, false, '(investigate the check above first)')
+    }
+    const crlfSrc = detailSrc.replace(/\r\n|\n/g, '\r\n')
+    const crlfBody = extractFunctionSource(crlfSrc, signaturePattern)
+    const crlfReal = hasShortCircuitingRestrictedGuard(crlfBody, writeCallNeedle)
+    check(`CRLF (${label}): short-circuit still correctly detected against an all-CRLF copy of DogDetailPage.tsx`, crlfReal.ok, crlfReal.reason)
+    if (crlfReal.ok) {
+      const crlfMutated = crlfBody.slice(0, crlfReal.returnIdx) + crlfBody.slice(crlfReal.returnIdx + 'return'.length)
+      const crlfMutatedResult = hasShortCircuitingRestrictedGuard(crlfMutated, writeCallNeedle)
+      check(`CRLF NEGATIVE SELF-TEST (${label}): mutated return still correctly fails against an all-CRLF copy`, crlfMutatedResult.ok === false)
+    }
+  }
+
+  // ── Sale & availability ──
+  check('OverviewTab computes isRestricted from dog.status (the same field DogDetailPage\'s own top-level restricted banner already uses)',
+    /const isRestricted = \(dog as any\)\.status === 'restricted'/.test(detailSrc))
+  check('SaleAvailabilityPanel declares isRestricted as its own required prop',
+    /function SaleAvailabilityPanel\(\{ dog, onSave, toast, isRestricted \}: \{[\s\S]{0,200}isRestricted: boolean/.test(detailSrc))
+  check('The render call site passes isRestricted into SaleAvailabilityPanel',
+    /<SaleAvailabilityPanel dog=\{dog\} onSave=\{onUpdateSale\} toast=\{toast\} isRestricted=\{isRestricted\} \/>/.test(detailSrc))
+  check('The Availability dropdown and reservation/deposit fields are wrapped in a fieldset disabled for a restricted dog',
+    /<fieldset disabled=\{isRestricted\}/.test(detailSrc))
+  check('The Sale & availability Save button is also disabled for a restricted dog (defense in depth alongside the fieldset)',
+    /disabled=\{!hasChanges \|\| saving \|\| isRestricted\}/.test(detailSrc))
+  proveGuardIsMutationAndCrlfProof('Sale & availability handleSave', /async function handleSave\(\)/, 'await onSave(')
+  check('Sale & availability\'s restricted-guard message is a distinct plan-limit explanation, never the permission-denied/generic save-failure copy',
+    /This dog is over your plan's limit and is read-only[\s\S]{0,120}edit Sale & availability/.test(detailSrc))
+
+  // ── Breeder ID (found during the required audit of the whole editor) ──
+  check('The Breeder ID ✎ trigger button is disabled for a restricted dog',
+    /<button onClick=\{\(\) => setEditingBreederId\(true\)\} disabled=\{isRestricted\} className="btn btn-ghost btn-sm" style=\{\{ padding: '2px 6px'/.test(detailSrc))
+  check('The Breeder ID "+ Add" trigger button is disabled for a restricted dog',
+    /<button onClick=\{\(\) => setEditingBreederId\(true\)\} disabled=\{isRestricted\} className="btn btn-ghost btn-sm" style=\{\{ padding: '2px 8px'/.test(detailSrc))
+  check('The Breeder ID Save button is disabled for a restricted dog',
+    /disabled=\{savingBreederId \|\| isRestricted\}/.test(detailSrc))
+  proveGuardIsMutationAndCrlfProof('Breeder ID handleSaveBreederId', /async function handleSaveBreederId\(\)/, 'await onUpdateBreederId(')
+
+  // ── Pedigree Register (also found during the audit — auto-saves on
+  // change with no separate Save button, so `disabled` on the select
+  // itself IS the primary defense, backed by an inline guard) ──
+  check('The Pedigree Register select is disabled for a restricted dog',
+    /value=\{\(dog as any\)\.pedigreeRegister \|\| 'main'\}\s*\r?\n\s*disabled=\{isRestricted\}/.test(detailSrc))
+  check('The Pedigree Register onChange handler also guards on isRestricted before writing (defense in depth, not just the disabled attribute)',
+    /onChange=\{async e => \{[\s\S]{0,400}if \(isRestricted\) return[\s\S]{0,80}await updateDog\(dog\.id, \{ pedigreeRegister/.test(detailSrc))
 }
 
 if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HOST) {

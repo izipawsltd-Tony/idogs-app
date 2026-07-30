@@ -1299,6 +1299,20 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
 }) {
   const { user, profile } = useAuth()
+  // Staging QA finding (Red Boy, follow-up): SaleAvailabilityPanel was
+  // gated on isCurrentEffectiveOwner (Black boy fix) but never on
+  // 'restricted' status — a puppy over its plan's dog cap keeps
+  // currentOwnerId pointing at the same breeder, so isCurrentEffectiveOwner
+  // stays true even while firestore.rules' restricted-dog clause denies
+  // every ordinary field write. The panel rendered fully editable, Save
+  // was clickable, and the resulting denied write surfaced as a
+  // confusing "you don't have permission to update this dog anymore"
+  // message — correct Rules behavior, avoidable UI dead end, same class
+  // of bug already fixed once for LittersPage's inline puppy editor.
+  // Computed directly from `dog` (already a prop here) rather than
+  // threaded as a new prop from the parent, since it's the exact same
+  // `dog.status` value the parent's own `isRestricted` is computed from.
+  const isRestricted = (dog as any).status === 'restricted'
   const [editingBreederId, setEditingBreederId] = useState(false)
   const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
   const [breederIdValue, setBreederIdValue] = useState(dog.breederIdValue || '')
@@ -1319,6 +1333,15 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
   }
 
   async function handleSaveBreederId() {
+    // Same missed-gating class as Sale & Availability (Red Boy follow-up
+    // audit, item 6): this writes directly to dogs/{dogId} — restricted
+    // status blocks it identically. Defense in depth alongside disabling
+    // the ✎/+ Add trigger below, which already prevents reaching this
+    // form at all for a restricted dog.
+    if (isRestricted) {
+      toast("This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Breeder ID.", 'error')
+      return
+    }
     setSavingBreederId(true)
     try {
       await onUpdateBreederId(breederIdType, breederIdType === 'NONE' ? '' : breederIdValue)
@@ -1380,7 +1403,14 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
             <select
               className="form-select"
               value={(dog as any).pedigreeRegister || 'main'}
+              disabled={isRestricted}
               onChange={async e => {
+                // Same missed-gating class as Sale & Availability (Red Boy
+                // follow-up audit, item 6): auto-saves on change with no
+                // separate Save button, so the guard here IS the whole
+                // defense-in-depth story for this control — `disabled`
+                // above already stops it firing from the UI.
+                if (isRestricted) return
                 await updateDog(dog.id, { pedigreeRegister: e.target.value } as any)
                 toast('Pedigree status updated')
               }}
@@ -1420,7 +1450,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
               </>
             )}
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary btn-sm" onClick={handleSaveBreederId} disabled={savingBreederId}>{savingBreederId ? <span className="spinner" /> : 'Save'}</button>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveBreederId} disabled={savingBreederId || isRestricted}>{savingBreederId ? <span className="spinner" /> : 'Save'}</button>
               <button className="btn btn-secondary btn-sm" onClick={() => { setEditingBreederId(false); setBreederIdType(dog.breederIdType || 'NONE'); setBreederIdValue(dog.breederIdValue || '') }}>Cancel</button>
             </div>
           </div>
@@ -1439,13 +1469,13 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
                   Verify ↗
                 </a>
               )}
-              <button onClick={() => setEditingBreederId(true)} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px', fontSize: 12 }}>✎</button>
+              <button onClick={() => setEditingBreederId(true)} disabled={isRestricted} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px', fontSize: 12 }}>✎</button>
             </span>
           </div>
         ) : (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
             <span style={{ color: 'var(--light)' }}>Breeder ID</span>
-            <button onClick={() => setEditingBreederId(true)} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--brand-600)' }}>+ Add</button>
+            <button onClick={() => setEditingBreederId(true)} disabled={isRestricted} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--brand-600)' }}>+ Add</button>
           </div>
         )}
         <InfoRow label="Passport ID" value={dog.passportId} mono />
@@ -1477,17 +1507,18 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
           beyond the existing 'Transferred to X' banner above" reasoning
           already used for the Delete button (see isCurrentEffectiveOwner's
           own comment near canDeleteDog). */}
-      {!isOwner && isCurrentEffectiveOwner && <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} />}
+      {!isOwner && isCurrentEffectiveOwner && <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} isRestricted={isRestricted} />}
     </div>
   )
 }
 
 // ── SALE & AVAILABILITY PANEL ────────────────────────────────
 
-function SaleAvailabilityPanel({ dog, onSave, toast }: {
+function SaleAvailabilityPanel({ dog, onSave, toast, isRestricted }: {
   dog: Dog
   onSave: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
   toast: (msg: string, type?: ToastMessage['type']) => void
+  isRestricted: boolean
 }) {
   // Staging QA finding (Black boy): also used to REVERT the form after a
   // failed save (see handleSave's catch block below) — a rejected local
@@ -1523,6 +1554,20 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
   }
 
   async function handleSave() {
+    // Defense in depth (Red Boy follow-up): the Save button below is
+    // already disabled when isRestricted, but this guard means the
+    // handler itself refuses to attempt a write even if invoked some
+    // other way (e.g. programmatically, or a future caller that forgets
+    // to check `disabled`) — never relies on disabled UI alone. Mirrors
+    // handleSavePuppy's identical restricted short-circuit in
+    // LittersPage.tsx. Deliberately does NOT reuse
+    // describeSaleAvailabilitySaveFailure's permission-denied copy — this
+    // isn't a denied write at all, since no write is attempted; the
+    // plan-limit explanation is what's true here.
+    if (isRestricted) {
+      toast("This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Sale & availability.", 'error')
+      return
+    }
     setSaving(true)
     try {
       const clean = (v: string) => (v.trim() === '' ? undefined : v.trim())
@@ -1612,66 +1657,74 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
         )}
       </div>
 
-      <div className="form-group" style={{ maxWidth: 260, marginBottom: 16 }}>
-        <label className="form-label">Availability</label>
-        <select
-          className="form-select"
-          value={form.availabilityStatus}
-          onChange={e => handleAvailabilityChange(e.target.value)}
-        >
-          <option value="">Not for sale</option>
-          <option value="available">Available</option>
-          <option value="reserved">Reserved</option>
-          <option value="kept">Kept</option>
-          <option value="sold">Sold</option>
-        </select>
-      </div>
-
-      {showReservationAndDeposit && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-            <div className="form-group">
-              <label className="form-label">Reserved for — name</label>
-              <input className="form-input" value={form.reservedForName} onChange={e => setForm(prev => ({ ...prev, reservedForName: e.target.value }))} placeholder="e.g. Jane Smith" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Reserved for — email</label>
-              <input className="form-input" type="email" value={form.reservedForEmail} onChange={e => setForm(prev => ({ ...prev, reservedForEmail: e.target.value }))} placeholder="e.g. jane@example.com" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Reserved for — phone</label>
-              <input className="form-input" value={form.reservedForPhone} onChange={e => setForm(prev => ({ ...prev, reservedForPhone: e.target.value }))} placeholder="e.g. 0412 345 678" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Reserved on</label>
-              <input className="form-input" type="date" value={form.reservedAt} onChange={e => setForm(prev => ({ ...prev, reservedAt: e.target.value }))} />
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
-            <div className="form-group">
-              <label className="form-label">Deposit status</label>
-              <select className="form-select" value={form.depositStatus} onChange={e => setForm(prev => ({ ...prev, depositStatus: e.target.value as 'none' | 'pending' | 'received' }))}>
-                <option value="none">None</option>
-                <option value="pending">Pending</option>
-                <option value="received">Received</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Deposit amount (AUD)</label>
-              <input className="form-input" type="number" min="0" value={form.depositAmount} onChange={e => setForm(prev => ({ ...prev, depositAmount: e.target.value }))} placeholder="e.g. 500" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Deposit received on</label>
-              <input className="form-input" type="date" value={form.depositReceivedAt} onChange={e => setForm(prev => ({ ...prev, depositReceivedAt: e.target.value }))} />
-            </div>
-          </div>
-        </>
+      {isRestricted && (
+        <div style={{ marginBottom: 14, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10 }}>
+          🔒 This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Sale & availability.
+        </div>
       )}
 
-      <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!hasChanges || saving}>
-        {saving ? <span className="spinner" style={{ borderTopColor: '#fff', width: 14, height: 14 }} /> : 'Save'}
-      </button>
+      <fieldset disabled={isRestricted} style={{ border: 'none', padding: 0, margin: 0 }}>
+        <div className="form-group" style={{ maxWidth: 260, marginBottom: 16 }}>
+          <label className="form-label">Availability</label>
+          <select
+            className="form-select"
+            value={form.availabilityStatus}
+            onChange={e => handleAvailabilityChange(e.target.value)}
+          >
+            <option value="">Not for sale</option>
+            <option value="available">Available</option>
+            <option value="reserved">Reserved</option>
+            <option value="kept">Kept</option>
+            <option value="sold">Sold</option>
+          </select>
+        </div>
+
+        {showReservationAndDeposit && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+              <div className="form-group">
+                <label className="form-label">Reserved for — name</label>
+                <input className="form-input" value={form.reservedForName} onChange={e => setForm(prev => ({ ...prev, reservedForName: e.target.value }))} placeholder="e.g. Jane Smith" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reserved for — email</label>
+                <input className="form-input" type="email" value={form.reservedForEmail} onChange={e => setForm(prev => ({ ...prev, reservedForEmail: e.target.value }))} placeholder="e.g. jane@example.com" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reserved for — phone</label>
+                <input className="form-input" value={form.reservedForPhone} onChange={e => setForm(prev => ({ ...prev, reservedForPhone: e.target.value }))} placeholder="e.g. 0412 345 678" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reserved on</label>
+                <input className="form-input" type="date" value={form.reservedAt} onChange={e => setForm(prev => ({ ...prev, reservedAt: e.target.value }))} />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+              <div className="form-group">
+                <label className="form-label">Deposit status</label>
+                <select className="form-select" value={form.depositStatus} onChange={e => setForm(prev => ({ ...prev, depositStatus: e.target.value as 'none' | 'pending' | 'received' }))}>
+                  <option value="none">None</option>
+                  <option value="pending">Pending</option>
+                  <option value="received">Received</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Deposit amount (AUD)</label>
+                <input className="form-input" type="number" min="0" value={form.depositAmount} onChange={e => setForm(prev => ({ ...prev, depositAmount: e.target.value }))} placeholder="e.g. 500" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Deposit received on</label>
+                <input className="form-input" type="date" value={form.depositReceivedAt} onChange={e => setForm(prev => ({ ...prev, depositReceivedAt: e.target.value }))} />
+              </div>
+            </div>
+          </>
+        )}
+
+        <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!hasChanges || saving || isRestricted}>
+          {saving ? <span className="spinner" style={{ borderTopColor: '#fff', width: 14, height: 14 }} /> : 'Save'}
+        </button>
+      </fieldset>
     </div>
   )
 }
