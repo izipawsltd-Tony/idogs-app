@@ -1,0 +1,35 @@
+rules_version = '2';
+
+// storage.rules — added for LOCAL EMULATOR TESTING ONLY (Slice 2).
+//
+// This project has never had a storage.rules file — every real upload
+// path goes through a trusted server-side Admin SDK endpoint (see
+// CLAUDE.md: "NEVER upload directly from browser to Firebase Storage —
+// CORS error. Always use serverless: /api/upload-document or
+// /api/upload-photo"), which bypasses Storage Rules entirely, same as
+// this codebase's firestore.rules architecture for every collection an
+// Admin SDK endpoint owns. Direct client access was never intended to
+// exist, so this file denies it outright rather than defining an
+// allowlist that would need to be kept in sync with every upload
+// endpoint's own (already-authoritative) authorization checks.
+//
+// Deliberately deny-all rather than permissive: the Firebase CLI
+// requires firebase.json to declare a `storage` config (with a rules
+// file) before `firebase emulators:start --only storage` will run at
+// all — this file exists so scripts/test-showcase-media-pipeline.mjs
+// can exercise api/upload-showcase-media.js / api/update-showcase-media.js
+// against a real local Storage emulator instead of either skipping that
+// coverage or (far worse) letting Admin SDK calls fall through to a
+// real Google Cloud Storage bucket during a test run. Deny-all means
+// that even in the unlikely event this file were ever deployed
+// (`firebase deploy` with no `--only` filter — this session does not
+// deploy anything), the only possible effect is making Storage rules
+// MORE restrictive than today's undefined-by-omission state, never
+// less.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { useAuth } from '../../hooks/useAuth'
+import { isHeicFile } from '../../lib/heic'
 import type { ToastMessage } from '../../types'
 
 interface Props {
@@ -7,17 +8,6 @@ interface Props {
   currentPhoto?: string
   onUpload: (url: string) => void
   toast: (msg: string, type?: ToastMessage['type']) => void
-}
-
-// FIX: iPhone photos saved as .heic/.heif can't be decoded by <img> in
-// Chrome/Firefox/Edge (only Safari supports it natively) — img.onload
-// never fires for these, so the upload silently hung forever with no
-// error and no spinner timeout. Detect HEIC up front and fail fast with
-// a clear, actionable message instead.
-function isHeic(file: File): boolean {
-  const type = file.type.toLowerCase()
-  const name = file.name.toLowerCase()
-  return type === 'image/heic' || type === 'image/heif' || name.endsWith('.heic') || name.endsWith('.heif')
 }
 
 async function resizeImage(file: File | Blob, maxPx = 800): Promise<{ base64: string; mediaType: string }> {
@@ -76,7 +66,7 @@ export default function PhotoUpload({ dogId, currentPhoto, onUpload, toast }: Pr
       let base64: string
       let mediaType: string
 
-      if (isHeic(file)) {
+      if (isHeicFile(file)) {
         // Send raw HEIC to server \u2014 sharp handles conversion server-side
         base64 = await readAsBase64(file)
         mediaType = file.type || 'image/heic'

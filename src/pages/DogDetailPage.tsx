@@ -19,6 +19,7 @@ import {
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
 import { describeTransferFailure } from '../lib/transferError'
+import { isHeicFile } from '../lib/heic'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
@@ -2780,15 +2781,6 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   // anything slightly larger. Resizing down to a max dimension and
   // re-encoding as JPEG at a reasonable quality keeps note photos small
   // without a visible quality loss at the sizes they're displayed.
-  // FIX (same as PhotoUpload.tsx): iPhone .heic/.heif photos can't be
-  // decoded by <img> in Chrome/Firefox/Edge — img.onload never fires, so
-  // without this check the old fallback below would silently send raw
-  // unusable HEIC bytes to the server instead of failing clearly.
-  function isHeic(file: File): boolean {
-    const type = file.type.toLowerCase()
-    const name = file.name.toLowerCase()
-    return type === 'image/heic' || type === 'image/heif' || name.endsWith('.heic') || name.endsWith('.heif')
-  }
 
   function resizeImage(file: File | Blob, maxDimension = 1600, quality = 0.82): Promise<{ base64: string; mediaType: string; preview: string }> {
     return new Promise((resolve, reject) => {
@@ -2827,7 +2819,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (isHeic(file)) {
+    if (isHeicFile(file)) {
       // Send raw HEIC to server \u2014 sharp handles conversion server-side
       const reader = new FileReader()
       reader.onload = () => {

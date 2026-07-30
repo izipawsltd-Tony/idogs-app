@@ -1178,6 +1178,45 @@ export async function updateShowcaseShare(litterId: string, patch: { shareEnable
   return result.showcase
 }
 
+// Slice 2: uploads one photo or video for a puppy's Showcase gallery.
+// `base64` should be the raw file bytes (no client-side resize for
+// photos — api/_lib/image-pipeline.js does the real processing
+// server-side, including HEIC/HEIF decode) so the server's magic-byte
+// sniff sees the genuine original file, never a canvas re-encode.
+export async function uploadShowcaseMedia(dogId: string, base64: string, kind: 'photo' | 'video'): Promise<{ fileUrl: string; photos: string[]; videos: string[] }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/upload-showcase-media', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId, base64, kind }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Upload failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// Slice 2: reorders and/or deletes items in a puppy's photo/video
+// gallery — `order` is the FULL desired array (index 0 = cover). Never
+// a way to add a new item (see api/update-showcase-media.js — it only
+// ever accepts a subset/reorder of what's already there).
+export async function updateShowcaseMediaOrder(dogId: string, kind: 'photo' | 'video', order: string[]): Promise<{ photos: string[]; videos: string[] }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/update-showcase-media', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId, kind, order }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update failed (${res.status})`)
+  }
+  return res.json()
+}
+
 // `patch` may include visible and/or availability — only the field(s)
 // present are changed server-side (Slice 1 requirement 5: availability
 // changes must never alter visibility, and vice versa).

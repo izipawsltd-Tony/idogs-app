@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
   getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, bulkUpdateShowcasePuppies, DEFAULT_SHOWCASE_PUPPY_ENTRY,
-  rotateShowcaseShare, updateShowcaseShare,
+  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder,
 } from '../lib/db'
 import type { ShowcaseBulkAction } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
@@ -1304,10 +1304,11 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                     <fieldset disabled={isPuppyRestricted} style={{ border: 'none', padding: 0, margin: 0 }}>
                                       <PuppyFormFields form={editPuppyForm} onChange={setEditPuppyForm} />
                                     </fieldset>
-                                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                                    <div style={{ display: 'flex', gap: 8, marginTop: 12, marginBottom: 14 }}>
                                       <button className="btn btn-primary btn-sm" onClick={() => handleSavePuppy(puppy, litter)} disabled={isPuppyRestricted}>Save changes</button>
                                       <button className="btn btn-secondary btn-sm" onClick={() => setEditingPuppy(null)}>Cancel</button>
                                     </div>
+                                    <PuppyMediaManager puppy={puppy} disabled={isPuppyRestricted} toast={toast} onUpdated={updated => setDogs(prev => prev.map(d => d.id === puppy.id ? { ...d, ...updated } : d))} />
                                   </div>
                                 )}
                               </div>
@@ -1425,6 +1426,121 @@ export default function LittersPage({ toast, dismissAll }: Props) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── PUPPY SHOWCASE MEDIA (Slice 2) ──────────────────────────────
+// Photo/video gallery for a single puppy — api/upload-showcase-media.js
+// does the actual processing (real magic-byte sniffing, HEIC/HEIF
+// decode via the shared image-pipeline, size/type validation), this
+// component only ever sends raw file bytes and reflects back whatever
+// the server returns. No client-side resize/HEIC-detection branch like
+// PhotoUpload.tsx's avatar flow — deliberately simpler: the server
+// pipeline handles every accepted type uniformly, so there's no
+// "special-case HEIC differently" client logic needed here at all.
+function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
+  puppy: Dog
+  disabled: boolean
+  toast: (msg: string, type?: ToastMessage['type']) => void
+  onUpdated: (patch: { photos?: string[]; videos?: string[] }) => void
+}) {
+  const [uploading, setUploading] = useState<'photo' | 'video' | null>(null)
+  const [busyUrl, setBusyUrl] = useState<string | null>(null)
+  const photoInputRef = useRef<HTMLInputElement>(null)
+  const videoInputRef = useRef<HTMLInputElement>(null)
+  const photos = puppy.photos || []
+  const videos = (puppy as any).videos || []
+
+  function readAsBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve((reader.result as string).split(',')[1])
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async function handleUpload(file: File, kind: 'photo' | 'video') {
+    setUploading(kind)
+    try {
+      const base64 = await readAsBase64(file)
+      const result = await uploadShowcaseMedia(puppy.id, base64, kind)
+      onUpdated({ photos: result.photos, videos: result.videos })
+      toast(`${kind === 'photo' ? 'Photo' : 'Video'} added`)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : `Failed to upload ${kind}`, 'error')
+    } finally {
+      setUploading(null)
+    }
+  }
+
+  async function handleReorder(kind: 'photo' | 'video', current: string[], fromIndex: number, toIndex: number) {
+    if (toIndex < 0 || toIndex >= current.length) return
+    const next = [...current]
+    const [moved] = next.splice(fromIndex, 1)
+    next.splice(toIndex, 0, moved)
+    setBusyUrl(current[fromIndex])
+    try {
+      const result = await updateShowcaseMediaOrder(puppy.id, kind, next)
+      onUpdated(result)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to reorder', 'error')
+    } finally {
+      setBusyUrl(null)
+    }
+  }
+
+  async function handleDelete(kind: 'photo' | 'video', current: string[], url: string) {
+    setBusyUrl(url)
+    try {
+      const result = await updateShowcaseMediaOrder(puppy.id, kind, current.filter(u => u !== url))
+      onUpdated(result)
+      toast(`${kind === 'photo' ? 'Photo' : 'Video'} removed`)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to remove', 'error')
+    } finally {
+      setBusyUrl(null)
+    }
+  }
+
+  function MediaRow({ kind, items }: { kind: 'photo' | 'video'; items: string[] }) {
+    return (
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+        {items.map((url, i) => (
+          <div key={url} style={{ position: 'relative', width: 64, opacity: busyUrl === url ? 0.5 : 1 }}>
+            {kind === 'photo' ? (
+              <img src={url} alt="" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: i === 0 ? '2px solid var(--brand-600)' : '1px solid var(--border)' }} />
+            ) : (
+              <video src={url} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted />
+            )}
+            {i === 0 && <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 9, fontWeight: 700, background: 'var(--brand-600)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>COVER</span>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+              <button type="button" disabled={disabled || i === 0 || busyUrl !== null} onClick={() => handleReorder(kind, items, i, i - 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>◀</button>
+              <button type="button" disabled={disabled || busyUrl !== null} onClick={() => handleDelete(kind, items, url)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>✕</button>
+              <button type="button" disabled={disabled || i === items.length - 1 || busyUrl !== null} onClick={() => handleReorder(kind, items, i, i + 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>▶</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Photos {photos.length > 0 && `(${photos.length})`}</div>
+      <MediaRow kind="photo" items={photos} />
+      <input ref={photoInputRef} type="file" accept="image/*,.heic,.heif" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f, 'photo'); e.target.value = '' }} />
+      <button type="button" className="btn btn-secondary btn-sm" disabled={disabled || uploading !== null} onClick={() => photoInputRef.current?.click()} style={{ marginBottom: 14 }}>
+        {uploading === 'photo' ? <span className="spinner" /> : '+ Add photo'}
+      </button>
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Videos {videos.length > 0 && `(${videos.length})`}</div>
+      <MediaRow kind="video" items={videos} />
+      <input ref={videoInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f, 'video'); e.target.value = '' }} />
+      <button type="button" className="btn btn-secondary btn-sm" disabled={disabled || uploading !== null} onClick={() => videoInputRef.current?.click()}>
+        {uploading === 'video' ? <span className="spinner" /> : '+ Add video'}
+      </button>
     </div>
   )
 }

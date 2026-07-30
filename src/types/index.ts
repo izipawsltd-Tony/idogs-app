@@ -26,7 +26,16 @@ export interface Dog {
   sourceType?: 'BREEDER_ISSUED' | 'OWNER_CREATED' | 'IMPORTED'
   createdByUserId?: string
   profilePhoto?: string
+  // Ordered gallery — index 0 is the "cover" photo. Was previously
+  // declared but never written or read anywhere; wired up by Slice 2
+  // for litter/puppy Showcase media (api/upload-showcase-media.js,
+  // api/update-showcase-media.js). Cover/reorder/delete are all just
+  // array operations — no separate "isCover" flag needed.
   photos: string[]
+  // Same ordered-array convention as `photos` — short video clips
+  // (Slice 2). New field; absent/undefined on any Dog written before
+  // this change, always treated as an empty array by every reader.
+  videos?: string[]
   notes: string
   // State-issued Breeder ID (per the NSW Puppy Farming Act 2024 and
   // equivalent VIC/QLD/SA/ACT laws) — a generic field rather than 8
