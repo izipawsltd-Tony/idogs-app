@@ -27,6 +27,7 @@ import AdminAuditPage from '../pages/AdminAuditPage'
 import TermsPage from '../pages/TermsPage'
 import PrivacyPage from '../pages/PrivacyPage'
 import PassportPublicPage from '../pages/PassportPublicPage'
+import ShowcasePublicPage from '../pages/ShowcasePublicPage'
 import ForgotPasswordPage from '../pages/ForgotPasswordPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import ComingSoonPage from '../pages/ComingSoonPage'
@@ -80,6 +81,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage toast={toast} />} />
         <Route path="/signup" element={<SignupPage toast={toast} />} />
         <Route path="/p/:passportId" element={<PassportPublicPage />} />
+        <Route path="/s/:token" element={<ShowcasePublicPage />} />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/survey" element={<SurveyPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
