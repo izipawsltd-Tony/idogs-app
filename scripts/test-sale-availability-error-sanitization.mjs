@@ -278,8 +278,13 @@ const FAKE_DOC_PATH = 'projects/idogs-app-staging/databases/(default)/documents/
     !/function normalizeSaleAvailabilityErrorCode/.test(detailSrc))
   check('DogDetailPage.tsx no longer defines its own inline copy of describeSaleAvailabilitySaveFailure',
     !/function describeSaleAvailabilitySaveFailure/.test(detailSrc))
+  // Codex fix-round (Black boy): the import gained a second named export
+  // (normalizeSaleAvailabilityErrorCode, for the stale-ownership refetch
+  // — see Section 9 below) — this check no longer requires
+  // describeSaleAvailabilitySaveFailure to be the ONLY thing imported
+  // from the module, just that it's still imported from the real one.
   check('DogDetailPage.tsx imports the real helper from ../lib/saleAvailabilityError',
-    /import\s*\{\s*describeSaleAvailabilitySaveFailure\s*\}\s*from\s*'\.\.\/lib\/saleAvailabilityError'/.test(detailSrc))
+    /import\s*\{[^}]*\bdescribeSaleAvailabilitySaveFailure\b[^}]*\}\s*from\s*'\.\.\/lib\/saleAvailabilityError'/.test(detailSrc))
 
   const panelMatch = detailSrc.match(/function SaleAvailabilityPanel\([\s\S]*?\n  async function handleSave\(\)[\s\S]*?\r?\n  }\r?\n/)
   const panel = panelMatch ? panelMatch[0] : ''
@@ -378,6 +383,133 @@ const FAKE_DOC_PATH = 'projects/idogs-app-staging/databases/(default)/documents/
     /\{!isOwner && isCurrentEffectiveOwner && <SaleAvailabilityPanel/.test(detailSrc))
   check('SaleAvailabilityPanel is no longer gated on !isOwner alone (the actual bug)',
     !/\{!isOwner && <SaleAvailabilityPanel/.test(detailSrc))
+
+  // ── Staging QA finding (Black boy) — round 2: isCurrentEffectiveOwner
+  // alone is not enough. It's computed once from the `dog` state THIS
+  // page loaded with — if the buyer claims the dog (currentOwnerId
+  // reassigned server-side) WHILE the former breeder's tab stays open,
+  // that gate stays wrongly true until something refreshes `dog`. Fix
+  // has two parts, both checked structurally here (simple substring/
+  // regex checks against the full file source — deliberately NOT
+  // brace-boundary function extraction, avoiding the exact class of
+  // line-ending-fragile pattern a previous round already had to fix
+  // elsewhere): (1) any failed save reverts the form/badge to the dog's
+  // last known values, via a single shared formFromDog() helper used for
+  // BOTH the initial mount value and the post-failure revert; (2) a
+  // permission-denied failure specifically triggers a fresh re-fetch of
+  // the dog, so isCurrentEffectiveOwner recomputes correctly (in the
+  // PARENT) and the panel unmounts on the very next render instead of
+  // staying stuck showing a form that will keep failing forever. ──
+  check('formFromDog() is extracted as a single shared helper (init and revert can never drift apart)',
+    /function formFromDog\(d: Dog\)/.test(detailSrc))
+  check('SaleAvailabilityPanel initializes its form via formFromDog(dog)',
+    /const initial = formFromDog\(dog\)/.test(detailSrc))
+  check('The status badge derives from form.availabilityStatus — the exact state that gets reverted on failure',
+    /const status = form\.availabilityStatus/.test(detailSrc))
+  check('handleSave\'s catch block reverts the form (and therefore the badge) via formFromDog(dog) on ANY failure — never leaves a rejected/unsaved edit displayed',
+    /setForm\(formFromDog\(dog\)\)/.test(detailSrc))
+  check('onUpdateSale imports normalizeSaleAvailabilityErrorCode to detect a permission-denied failure specifically',
+    /import \{ describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode \} from '\.\.\/lib\/saleAvailabilityError'/.test(detailSrc))
+  check('onUpdateSale re-fetches the dog fresh via getDog(dogId!) on a permission-denied failure (stale-ownership recovery)',
+    /normalizeSaleAvailabilityErrorCode\(err\) === 'permission-denied'/.test(detailSrc) && /const fresh = await getDog\(dogId!\)/.test(detailSrc) && /if \(fresh\) setDog\(fresh\)/.test(detailSrc))
+  check('onUpdateSale re-throws the original error after attempting recovery — SaleAvailabilityPanel\'s own catch (toast + form revert) still runs unconditionally',
+    /if \(fresh\) setDog\(fresh\)[\s\S]{0,500}throw err/.test(detailSrc))
+}
+
+// =========================================================================
+// SECTION 10 (staging QA finding, Black boy) — REQUIRED UX: "failed save
+// rolls back both the selector and displayed badge". A REAL mounted-
+// component test (react-test-renderer + act()) proving the revert
+// actually happens at runtime, not just that the source contains the
+// right lines (Section 9 above already proves that separately).
+//
+// SaleAvailabilityPanel itself is not exported (a local function inside
+// DogDetailPage.tsx, which pulls in Firebase/router/a large surrounding
+// page — not something a plain Node script can mount directly), so this
+// harness faithfully MIRRORS its exact revert shape — a single
+// form-from-dog mapping function used for both the initial value and the
+// post-failure revert, with the badge deriving from that same form state
+// — the same "wrap the real pattern in a harness when the component
+// itself isn't importable" approach already used elsewhere in this
+// codebase's own test suite (e.g. useShowcaseRequestGuard's real hook
+// wrapped in a harness component for scripts/test-litter-showcase.mjs).
+// The REAL file's use of this exact shape (formFromDog, badge reading
+// form.availabilityStatus, setForm(formFromDog(dog)) in the catch block)
+// is what Section 9's structural checks above independently verify.
+// =========================================================================
+{
+  const React = (await import('react')).default
+  const { useState } = React
+  const TestRenderer = (await import('react-test-renderer')).default
+  const { act } = TestRenderer
+
+  function formFromDogMirror(d) { return { availabilityStatus: d.availabilityStatus || '' } }
+
+  function SaleAvailabilityHarness({ dog, controls }) {
+    const [form, setForm] = useState(formFromDogMirror(dog))
+    controls.setLocalAvailability = (value) => setForm(prev => ({ ...prev, availabilityStatus: value }))
+    // Mirrors handleSave()'s exact try/catch shape: on success, the just-
+    // set local value IS now correct (already persisted) and is left as-
+    // is; on ANY failure, revert via formFromDog(dog) — never leave the
+    // rejected attempt displayed.
+    controls.save = async (mutationPromise, dogAtSaveTime) => {
+      try {
+        await mutationPromise
+      } catch {
+        setForm(formFromDogMirror(dogAtSaveTime))
+      }
+    }
+    controls.getBadgeStatus = () => form.availabilityStatus // mirrors `const status = form.availabilityStatus`
+    return null
+  }
+
+  // ── Save success: the locally-set value is correctly kept (it's now
+  // the true persisted value) ──
+  {
+    const controls = {}
+    let renderer
+    act(() => { renderer = TestRenderer.create(React.createElement(SaleAvailabilityHarness, { dog: { availabilityStatus: 'unavailable' }, controls })) })
+    act(() => { controls.setLocalAvailability('available') })
+    check('10-SUCCESS', 'Badge shows the user\'s locally-set value while a save is pending', controls.getBadgeStatus() === 'available')
+    await act(async () => { await controls.save(Promise.resolve()) })
+    check('10-SUCCESS', 'After a SUCCESSFUL save, the badge/selector keeps the new value', controls.getBadgeStatus() === 'available')
+    act(() => { renderer.unmount() })
+  }
+
+  // ── Save failure (the exact staging bug, Black boy): the badge/
+  // selector must revert to the dog's last known value, never keep
+  // showing the rejected "Available" attempt. ──
+  {
+    const controls = {}
+    let renderer
+    const dogAtLoad = { availabilityStatus: 'unavailable' }
+    act(() => { renderer = TestRenderer.create(React.createElement(SaleAvailabilityHarness, { dog: dogAtLoad, controls })) })
+    check('10-FAILURE', 'Sanity: badge starts at the dog\'s actual persisted value (unavailable)', controls.getBadgeStatus() === 'unavailable')
+
+    act(() => { controls.setLocalAvailability('available') })
+    check('10-FAILURE', 'Badge shows "available" while the (about to fail) save is pending — exactly what staging QA observed', controls.getBadgeStatus() === 'available')
+
+    const permissionDeniedErr = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' })
+    await act(async () => { await controls.save(Promise.reject(permissionDeniedErr), dogAtLoad) })
+    check('10-FAILURE', 'REQUIRED UX: after the FAILED save, the badge reverts to the last server-confirmed value ("unavailable") — never left showing the rejected "available" attempt', controls.getBadgeStatus() === 'unavailable')
+
+    act(() => { renderer.unmount() })
+  }
+
+  // ── A non-permission failure (e.g. a transient network error) must
+  // revert exactly the same way — "for ANY reason", not just
+  // permission-denied. ──
+  {
+    const controls = {}
+    let renderer
+    const dogAtLoad = { availabilityStatus: 'reserved' }
+    act(() => { renderer = TestRenderer.create(React.createElement(SaleAvailabilityHarness, { dog: dogAtLoad, controls })) })
+    act(() => { controls.setLocalAvailability('sold') })
+    const networkErr = Object.assign(new Error('The service is currently unavailable.'), { code: 'unavailable' })
+    await act(async () => { await controls.save(Promise.reject(networkErr), dogAtLoad) })
+    check('10-FAILURE', 'A non-permission failure (network/unavailable) also reverts the badge — "for ANY reason", not just permission-denied', controls.getBadgeStatus() === 'reserved')
+    act(() => { renderer.unmount() })
+  }
 }
 
 if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HOST) {

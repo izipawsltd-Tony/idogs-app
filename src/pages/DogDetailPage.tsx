@@ -17,7 +17,7 @@ import {
   isEligibleSireDog, isDogTransferred, isDogHistoryBearing, isDogDeletableByUser
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
-import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
+import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
 import { describeTransferFailure } from '../lib/transferError'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import AIScan from '../components/ui/AIScan'
@@ -1032,8 +1032,34 @@ export default function DogDetailPage({ toast }: Props) {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} onUpdateSale={async (firestoreUpdates, localUpdates) => {
-        await updateDog(dogId!, firestoreUpdates)
-        setDog(prev => prev ? { ...prev, ...localUpdates } : prev)
+        try {
+          await updateDog(dogId!, firestoreUpdates)
+          setDog(prev => prev ? { ...prev, ...localUpdates } : prev)
+        } catch (err) {
+          // Staging QA finding (Black boy): isCurrentEffectiveOwner gates
+          // SaleAvailabilityPanel using the `dog` state THIS PAGE loaded
+          // with — if the buyer claims this dog (currentOwnerId
+          // reassigned) while the former breeder's tab is still open on
+          // this page, that gate stays wrongly true until something
+          // refreshes `dog`. A permission-denied save failure here IS
+          // that refresh signal — it means the server just told us the
+          // truth changed since load. Re-fetch fresh so
+          // isCurrentEffectiveOwner recomputes correctly and
+          // SaleAvailabilityPanel unmounts (or goes read-only) on the
+          // very next render, instead of staying stuck showing a form
+          // that will keep failing the exact same way forever.
+          if (normalizeSaleAvailabilityErrorCode(err) === 'permission-denied') {
+            try {
+              const fresh = await getDog(dogId!)
+              if (fresh) setDog(fresh)
+            } catch {
+              // Best-effort refresh only — if this ALSO fails, the
+              // original error below is still surfaced to the caller
+              // (SaleAvailabilityPanel's own catch) exactly as before.
+            }
+          }
+          throw err
+        }
       }} />}
       {tab === 'scan' && (
         <div style={{ maxWidth: 480 }}>
@@ -1463,16 +1489,26 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
   onSave: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
   toast: (msg: string, type?: ToastMessage['type']) => void
 }) {
-  const initial = {
-    availabilityStatus: dog.availabilityStatus || '',
-    reservedForName: dog.reservedForName || '',
-    reservedForEmail: dog.reservedForEmail || '',
-    reservedForPhone: dog.reservedForPhone || '',
-    reservedAt: dog.reservedAt || '',
-    depositStatus: dog.depositStatus || 'none',
-    depositAmount: dog.depositAmount != null ? String(dog.depositAmount) : '',
-    depositReceivedAt: dog.depositReceivedAt || '',
+  // Staging QA finding (Black boy): also used to REVERT the form after a
+  // failed save (see handleSave's catch block below) — a rejected local
+  // edit must never stay displayed as if it had been saved. Extracted so
+  // both the initial mount value and the post-failure revert are
+  // guaranteed to compute the exact same shape from the exact same
+  // source (the `dog` prop), never two hand-duplicated field lists that
+  // could quietly drift apart.
+  function formFromDog(d: Dog) {
+    return {
+      availabilityStatus: d.availabilityStatus || '',
+      reservedForName: d.reservedForName || '',
+      reservedForEmail: d.reservedForEmail || '',
+      reservedForPhone: d.reservedForPhone || '',
+      reservedAt: d.reservedAt || '',
+      depositStatus: d.depositStatus || 'none',
+      depositAmount: d.depositAmount != null ? String(d.depositAmount) : '',
+      depositReceivedAt: d.depositReceivedAt || '',
+    }
   }
+  const initial = formFromDog(dog)
   const [form, setForm] = useState(initial)
   const [saving, setSaving] = useState(false)
 
@@ -1535,6 +1571,22 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
       const { userMessage, logCode } = describeSaleAvailabilitySaveFailure(e)
       console.error('sale-availability-save failed', { code: logCode })
       toast(userMessage, 'error')
+      // REQUIRED UX (staging QA finding, Black boy): if Save fails for
+      // ANY reason, restore the last server-confirmed value — never
+      // leave the attempted (rejected, never-persisted) edit displayed.
+      // The badge above reads from `form.availabilityStatus` (the same
+      // state this reverts), so this fixes both the selector AND the
+      // badge in one place. Uses the `dog` prop as-is here (this
+      // specific render's value) — for a permission-denied failure
+      // specifically, the parent's onSave has ALREADY re-fetched and
+      // updated `dog` before this catch block runs (it awaits that
+      // re-fetch before re-throwing), so by the time React re-renders,
+      // isCurrentEffectiveOwner (computed in the parent) will correctly
+      // hide this panel entirely if ownership has genuinely changed —
+      // this revert only needs to cover the brief window until then, and
+      // fully covers every OTHER failure reason (network blip, etc.) on
+      // its own, where `dog` was never stale to begin with.
+      setForm(formFromDog(dog))
     } finally {
       setSaving(false)
     }
