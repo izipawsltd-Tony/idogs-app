@@ -633,7 +633,7 @@ export default function LittersPage({ toast }: Props) {
         }
       }
       const { operationId, dogId } = pendingPuppyOperationRef.current
-      const { alreadyExisted } = await createLitterPuppyAtomic(litterId, dogId, operationId, {
+      const { alreadyExisted, status: createdStatus } = await createLitterPuppyAtomic(litterId, dogId, operationId, {
         name: finalName,
         breed: dam?.breed || '',
         sex: puppyForm.sex,
@@ -654,7 +654,16 @@ export default function LittersPage({ toast }: Props) {
       setDogs(updatedDogs.filter(d => !d.isDeceased))
       setPuppyForm(emptyPuppy)
       setShowAddPuppy(null)
-      toast(alreadyExisted ? `${finalName} was already added — no duplicate created` : `${finalName} added — QR Passport created!`)
+      // Bug 2 fix (Red Boy staging QA): a puppy created while the breeder
+      // is over their plan's dog cap lands 'restricted' (read-only) —
+      // previously this success toast claimed an unqualified win either
+      // way, so the breeder had no idea until their first edit attempt
+      // failed with an unexplained error. Tell them immediately instead.
+      toast(
+        createdStatus === 'restricted'
+          ? `${finalName} added, but is read-only — you're over your plan's dog limit. Upgrade or free up a slot to edit it.`
+          : (alreadyExisted ? `${finalName} was already added — no duplicate created` : `${finalName} added — QR Passport created!`)
+      )
     } catch (err) {
       // Deliberately does NOT clear pendingPuppyOperationRef — if the
       // failure was a transient network error after the transaction
@@ -698,6 +707,20 @@ export default function LittersPage({ toast }: Props) {
   }
 
   async function handleSavePuppy(puppy: Dog, litter: Litter) {
+    // Bug 2 fix (Red Boy staging QA): a 'restricted' puppy (over the
+    // breeder's plan cap — iDogs Pricing v1.1 §3.2/§3.3) is read-only by
+    // design; firestore.rules already denies this write, but letting the
+    // request round-trip just to fail produced the confusing bare
+    // "Failed to update puppy" the QA report flagged. Checked here first
+    // so the breeder gets the same clear, actionable guidance
+    // DogDetailPage already shows for a restricted dog, instead of a
+    // generic denial with no explanation. Ownership/transfer protections
+    // are untouched — this only short-circuits a write Rules would deny
+    // anyway.
+    if ((puppy as any).status === 'restricted') {
+      toast("This puppy is over your plan's dog limit and is read-only — upgrade or free up a slot to edit it.", 'error')
+      return
+    }
     try {
       await updateDog(puppy.id, {
         name: editPuppyForm.name,
@@ -1137,6 +1160,12 @@ export default function LittersPage({ toast }: Props) {
                             const isEditingThisPuppy = editingPuppy === puppy.id
                             const collarMatch = puppy.notes?.match(/Collar: (\w+)/)
                             const weightMatch = puppy.notes?.match(/Birth weight: ([\d.]+)kg/)
+                            // Bug 2 fix (Red Boy staging QA) — same 'restricted'
+                            // signal DogDetailPage already shows via its 🔒
+                            // Restricted badge/banner, mirrored here so a
+                            // breeder sees WHY a puppy is read-only before
+                            // ever attempting an edit that Rules would deny.
+                            const isPuppyRestricted = (puppy as any).status === 'restricted'
 
                             return (
                               <div key={puppy.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--white)' }}>
@@ -1159,6 +1188,9 @@ export default function LittersPage({ toast }: Props) {
                                       {puppy.microchip ? ` · Chip: ${puppy.microchip}` : ''}
                                     </div>
                                   </div>
+                                  {isPuppyRestricted && (
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)', whiteSpace: 'nowrap' }}>🔒 Restricted</span>
+                                  )}
                                   <div style={{ display: 'flex', gap: 6 }}>
                                     <button
                                       className="btn btn-secondary btn-sm"
@@ -1193,9 +1225,16 @@ export default function LittersPage({ toast }: Props) {
                                 {/* Edit puppy form */}
                                 {isEditingThisPuppy && (
                                   <div style={{ padding: '14px 16px', borderTop: '1px solid var(--border)', background: 'var(--sand)' }}>
-                                    <PuppyFormFields form={editPuppyForm} onChange={setEditPuppyForm} />
+                                    {isPuppyRestricted && (
+                                      <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10 }}>
+                                        🔒 This puppy is over your plan's dog limit and is read-only — <Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>upgrade to Plus</Link> or free up a slot to edit it.
+                                      </div>
+                                    )}
+                                    <fieldset disabled={isPuppyRestricted} style={{ border: 'none', padding: 0, margin: 0 }}>
+                                      <PuppyFormFields form={editPuppyForm} onChange={setEditPuppyForm} />
+                                    </fieldset>
                                     <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                                      <button className="btn btn-primary btn-sm" onClick={() => handleSavePuppy(puppy, litter)}>Save changes</button>
+                                      <button className="btn btn-primary btn-sm" onClick={() => handleSavePuppy(puppy, litter)} disabled={isPuppyRestricted}>Save changes</button>
                                       <button className="btn btn-secondary btn-sm" onClick={() => setEditingPuppy(null)}>Cancel</button>
                                     </div>
                                   </div>

@@ -434,7 +434,7 @@ export async function createLitterPuppyAtomic(
   operationId: string,
   data: DogFormData,
   sourceType: 'BREEDER_ISSUED' | 'OWNER_CREATED' = 'BREEDER_ISSUED'
-): Promise<{ dogId: string; passportId: string; alreadyExisted: boolean }> {
+): Promise<{ dogId: string; passportId: string; alreadyExisted: boolean; status?: string }> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
   const res = await fetch('/api/create-litter-puppy', {
@@ -462,7 +462,7 @@ export async function createLitterPuppyAtomic(
     throw new Error(err.error || `Add puppy failed (${res.status})`)
   }
   const result = await res.json()
-  return { dogId: result.dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted }
+  return { dogId: result.dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted, status: result.status }
 }
 
 export async function updateDog(id: string, data: Partial<Dog>): Promise<void> {

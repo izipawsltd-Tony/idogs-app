@@ -256,7 +256,7 @@ async function handler(req, res) {
           if (!(litter.puppyIds || []).includes(dogId)) {
             tx.update(litterRef, { puppyIds: FieldValue.arrayUnion(dogId) })
           }
-          return { ok: true, alreadyExisted: true, dogId, passportId: dog.passportId }
+          return { ok: true, alreadyExisted: true, dogId, passportId: dog.passportId, status: dog.status }
         }
 
         // No persisted operation record yet — this is either a
@@ -328,13 +328,21 @@ async function handler(req, res) {
           createdAt: nowIso,
         })
         tx.update(litterRef, { puppyIds: FieldValue.arrayUnion(dogId) })
-        return { ok: true, alreadyExisted: false, dogId, passportId: candidate }
+        return { ok: true, alreadyExisted: false, dogId, passportId: candidate, status: puppyStatus }
       })
 
       if (!result.ok) {
         return res.status(result.status).json(result.body)
       }
-      return res.status(200).json({ dogId: result.dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted })
+      // Bug 2 fix (Red Boy staging QA): the dog-cap check above silently
+      // lands a puppy 'restricted' (read-only, per iDogs Pricing v1.1
+      // §3.2/§3.3) with no signal in the OLD response shape — a breeder
+      // saw an unconditional "added — QR Passport created!" success toast,
+      // then hit a bare, unexplained denial the first time they tried an
+      // ordinary edit (e.g. coat colour). Returning the actual status lets
+      // the client tell the breeder immediately, at creation time, instead
+      // of at the next confusing edit attempt.
+      return res.status(200).json({ dogId: result.dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted, status: result.status })
     } catch (err) {
       if (err.message !== 'PASSPORT_ID_TAKEN') throw err
       // else: genuine collision on this specific candidate — loop and
