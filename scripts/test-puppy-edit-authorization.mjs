@@ -44,6 +44,49 @@ const apiSrc = readFileSync(new URL('../api/create-litter-puppy.js', import.meta
 const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
 const littersSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
 
+// Codex re-review fix: extracts one function's full source (signature
+// through its matching closing brace) via balanced-brace scanning —
+// ported from the exact, already-proven helper in
+// test-litter-showcase.mjs (see that file's own extractFunctionSource
+// for the full rationale/self-test). Needed here because this repo's
+// git config has core.autocrlf=true, so `git archive`/a fresh checkout
+// can produce CRLF line endings even though the working tree that wrote
+// this file used LF — a regex asserting relative ORDER between two
+// substrings must never depend on a literal `\n` matching a specific
+// byte. `\s` (not literal `\n`) already matches `\r` too, so this
+// extraction is inherently line-ending-agnostic with no special-casing.
+function extractFunctionSource(src, signaturePattern) {
+  const sigMatch = signaturePattern.exec(src)
+  if (!sigMatch) return ''
+  const startIdx = sigMatch.index
+  const bodyOpenSearch = /\)\s*\{/.exec(src.slice(startIdx))
+  if (!bodyOpenSearch) return ''
+  const openIdx = startIdx + bodyOpenSearch.index + bodyOpenSearch[0].length - 1
+  let depth = 0
+  let inString = null
+  let i = openIdx
+  for (; i < src.length; i++) {
+    const ch = src[i]
+    if (inString) {
+      if (ch === '\\') { i++; continue }
+      if (ch === inString) inString = null
+      continue
+    }
+    if (ch === '/' && src[i + 1] === '/') {
+      const nextNewline = src.indexOf('\n', i)
+      i = nextNewline === -1 ? src.length : nextNewline
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { inString = ch; continue }
+    if (ch === '{') { depth++; continue }
+    if (ch === '}') {
+      depth--
+      if (depth === 0) { i++; break }
+    }
+  }
+  return src.slice(startIdx, i)
+}
+
 // =========================================================================
 // SECTION 1 — structural: the actual fix is really in the shipped files
 // =========================================================================
@@ -75,8 +118,28 @@ const littersSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.m
   check('LittersPage.tsx: a restricted puppy shows a 🔒 Restricted badge in its row (mirrors DogDetailPage\'s existing convention)',
     /isPuppyRestricted && \([\s\S]{0,400}🔒 Restricted/.test(littersSrc))
 
+  // Codex re-review fix: the previous version of this check was a single
+  // large-distance regex containing a literal `return\n\s*\}\n\s*try \{`
+  // — that `\n` requires the byte immediately after "return" to be LF.
+  // This repo's git config has core.autocrlf=true, so a fresh checkout
+  // or `git archive` export of the exact same committed content can
+  // legitimately be CRLF, making that literal `\n` fail to match even
+  // though the logic itself is correct — the same class of bug this
+  // codebase already hit and fixed once for test-litter-showcase.mjs.
+  // Replaced with a balanced-brace extraction of handleSavePuppy's real
+  // body (immune to line-ending encoding — see extractFunctionSource
+  // above) plus a plain indexOf ORDER comparison, which asserts the same
+  // fact — the restricted guard textually precedes the write call inside
+  // the function — without depending on any specific byte sequence
+  // between them.
+  const handleSavePuppyBody = extractFunctionSource(littersSrc, /async function handleSavePuppy\(/)
+  check('LittersPage.tsx: handleSavePuppy() was found by the balanced-brace extractor (extraction sanity check)',
+    handleSavePuppyBody.length > 0)
+  const restrictedGuardIdx = handleSavePuppyBody.indexOf("status === 'restricted'")
+  const writeCallIdx = handleSavePuppyBody.indexOf('await updateDog(')
   check('LittersPage.tsx: handleSavePuppy short-circuits BEFORE attempting the write when the puppy is restricted',
-    /async function handleSavePuppy\(puppy: Dog, litter: Litter\) \{[\s\S]{0,700}status === 'restricted'\)[\s\S]{0,300}return\n\s*\}\n\s*try \{/.test(littersSrc))
+    restrictedGuardIdx !== -1 && writeCallIdx !== -1 && restrictedGuardIdx < writeCallIdx,
+    `restrictedGuardIdx=${restrictedGuardIdx}, writeCallIdx=${writeCallIdx}`)
 
   check('LittersPage.tsx: the restricted-puppy short-circuit message is clear and actionable, not the old bare "Failed to update puppy"',
     /over your plan's dog limit and is read-only — upgrade or free up a slot to edit it/.test(littersSrc))
