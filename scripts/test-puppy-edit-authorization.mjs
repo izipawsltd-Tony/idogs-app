@@ -55,16 +55,19 @@ const littersSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.m
 // substrings must never depend on a literal `\n` matching a specific
 // byte. `\s` (not literal `\n`) already matches `\r` too, so this
 // extraction is inherently line-ending-agnostic with no special-casing.
-function extractFunctionSource(src, signaturePattern) {
-  const sigMatch = signaturePattern.exec(src)
-  if (!sigMatch) return ''
-  const startIdx = sigMatch.index
-  const bodyOpenSearch = /\)\s*\{/.exec(src.slice(startIdx))
-  if (!bodyOpenSearch) return ''
-  const openIdx = startIdx + bodyOpenSearch.index + bodyOpenSearch[0].length - 1
+//
+// findMatchingBraceEnd() is the shared core (string/comment-aware depth
+// counter): given the index of an ALREADY-LOCATED opening `{`, returns
+// the index just past its matching `}`. extractFunctionSource() uses it
+// to grab a whole function body from a signature pattern;
+// extractBracedBlock() uses the exact same core to isolate an arbitrary
+// SMALLER block (e.g. just an `if (...) { ... }`) once its opening brace
+// is already known — both stay perfectly in sync with each other because
+// there is only one balanced-brace implementation, not two.
+function findMatchingBraceEnd(src, openBraceIdx) {
   let depth = 0
   let inString = null
-  let i = openIdx
+  let i = openBraceIdx
   for (; i < src.length; i++) {
     const ch = src[i]
     if (inString) {
@@ -84,7 +87,59 @@ function extractFunctionSource(src, signaturePattern) {
       if (depth === 0) { i++; break }
     }
   }
-  return src.slice(startIdx, i)
+  return i
+}
+
+function extractFunctionSource(src, signaturePattern) {
+  const sigMatch = signaturePattern.exec(src)
+  if (!sigMatch) return ''
+  const startIdx = sigMatch.index
+  const bodyOpenSearch = /\)\s*\{/.exec(src.slice(startIdx))
+  if (!bodyOpenSearch) return ''
+  const openIdx = startIdx + bodyOpenSearch.index + bodyOpenSearch[0].length - 1
+  return src.slice(startIdx, findMatchingBraceEnd(src, openIdx))
+}
+
+function extractBracedBlock(src, openBraceIdx) {
+  return src.slice(openBraceIdx, findMatchingBraceEnd(src, openBraceIdx))
+}
+
+// Codex re-review fix #2: an earlier version of this check only proved
+// "the guard condition text appears before the write-call text" —
+// `restrictedGuardIdx < writeCallIdx` — which would keep passing even if
+// someone accidentally DELETED the `return` inside the guard (execution
+// would then fall through into the write regardless of the condition
+// still being present in the source). This predicate instead proves the
+// whole causal chain a real short-circuit needs: the guard condition
+// exists; it opens a block; that block contains an actual `return`
+// statement (not just the word "return" anywhere in the function —
+// isolated to the guard's own balanced-brace block first); and that
+// return sits BEFORE the write call. Returns a small result object
+// (never throws) so both the real source and a deliberately-mutated
+// copy can be run through the exact same logic — see the negative
+// self-test below, which is what actually PROVES this predicate can
+// detect the regression it claims to prevent, not just that it happens
+// to return true once.
+function hasShortCircuitingRestrictedGuard(fnBody) {
+  const conditionIdx = fnBody.indexOf("status === 'restricted'")
+  if (conditionIdx === -1) return { ok: false, reason: 'restricted-status condition not found' }
+
+  const guardOpenIdx = fnBody.indexOf('{', conditionIdx)
+  if (guardOpenIdx === -1) return { ok: false, reason: 'no block opens after the condition' }
+  const guardBlock = extractBracedBlock(fnBody, guardOpenIdx)
+  if (!guardBlock) return { ok: false, reason: 'guard block did not close (unbalanced braces)' }
+
+  const returnMatch = /\breturn\b/.exec(guardBlock)
+  if (!returnMatch) return { ok: false, reason: 'no return statement inside the guard block' }
+  const returnIdx = guardOpenIdx + returnMatch.index
+
+  const writeCallIdx = fnBody.indexOf('await updateDog(')
+  if (writeCallIdx === -1) return { ok: false, reason: 'write call (await updateDog() not found' }
+
+  if (!(conditionIdx < returnIdx)) return { ok: false, reason: 'return is not after the restricted condition' }
+  if (!(returnIdx < writeCallIdx)) return { ok: false, reason: 'return is not before the write call' }
+
+  return { ok: true, reason: '', conditionIdx, returnIdx, writeCallIdx }
 }
 
 // =========================================================================
@@ -118,28 +173,73 @@ function extractFunctionSource(src, signaturePattern) {
   check('LittersPage.tsx: a restricted puppy shows a 🔒 Restricted badge in its row (mirrors DogDetailPage\'s existing convention)',
     /isPuppyRestricted && \([\s\S]{0,400}🔒 Restricted/.test(littersSrc))
 
-  // Codex re-review fix: the previous version of this check was a single
-  // large-distance regex containing a literal `return\n\s*\}\n\s*try \{`
-  // — that `\n` requires the byte immediately after "return" to be LF.
-  // This repo's git config has core.autocrlf=true, so a fresh checkout
-  // or `git archive` export of the exact same committed content can
-  // legitimately be CRLF, making that literal `\n` fail to match even
-  // though the logic itself is correct — the same class of bug this
-  // codebase already hit and fixed once for test-litter-showcase.mjs.
-  // Replaced with a balanced-brace extraction of handleSavePuppy's real
-  // body (immune to line-ending encoding — see extractFunctionSource
-  // above) plus a plain indexOf ORDER comparison, which asserts the same
-  // fact — the restricted guard textually precedes the write call inside
-  // the function — without depending on any specific byte sequence
-  // between them.
+  // Codex re-review fix #1 (CRLF): the original version of this check
+  // was a single large-distance regex containing a literal
+  // `return\n\s*\}\n\s*try \{` — that `\n` requires the byte immediately
+  // after "return" to be LF. This repo's git config has
+  // core.autocrlf=true, so a fresh checkout or `git archive` export of
+  // the exact same committed content can legitimately be CRLF, making
+  // that literal `\n` fail to match even though the logic itself is
+  // correct — the same class of bug this codebase already hit and fixed
+  // once for test-litter-showcase.mjs.
+  //
+  // Codex re-review fix #2 (mutation-proof): the FIRST correction only
+  // proved `restrictedGuardIdx < writeCallIdx` — the condition TEXT
+  // precedes the write-call TEXT — which stays true even if the actual
+  // `return` inside the guard were deleted (the guard would still
+  // "exist" earlier in the source; it just wouldn't short-circuit
+  // anything anymore). hasShortCircuitingRestrictedGuard() (above)
+  // proves the real causal chain instead: the condition exists, opens a
+  // block, that block contains a genuine return statement, and the
+  // return sits between the condition and the write call. The negative
+  // self-test right after this proves the predicate actually CAN catch
+  // that regression, not merely that it happens to return true once.
   const handleSavePuppyBody = extractFunctionSource(littersSrc, /async function handleSavePuppy\(/)
   check('LittersPage.tsx: handleSavePuppy() was found by the balanced-brace extractor (extraction sanity check)',
     handleSavePuppyBody.length > 0)
-  const restrictedGuardIdx = handleSavePuppyBody.indexOf("status === 'restricted'")
-  const writeCallIdx = handleSavePuppyBody.indexOf('await updateDog(')
-  check('LittersPage.tsx: handleSavePuppy short-circuits BEFORE attempting the write when the puppy is restricted',
-    restrictedGuardIdx !== -1 && writeCallIdx !== -1 && restrictedGuardIdx < writeCallIdx,
-    `restrictedGuardIdx=${restrictedGuardIdx}, writeCallIdx=${writeCallIdx}`)
+
+  const realResult = hasShortCircuitingRestrictedGuard(handleSavePuppyBody)
+  check('LittersPage.tsx: handleSavePuppy short-circuits BEFORE attempting the write when the puppy is restricted (guard condition exists, opens a block containing a real return statement, ordered before the write call)',
+    realResult.ok, realResult.reason)
+
+  // NEGATIVE SELF-TEST (mutation check): delete just the matched `return`
+  // keyword from an IN-MEMORY copy of the real extracted function body
+  // and re-run the exact same predicate. If the predicate is doing real
+  // work, removing the one thing it's supposed to require must flip its
+  // verdict from true to false — proving this test would actually catch
+  // someone accidentally deleting the guard's return, not just that it
+  // passes today.
+  if (realResult.ok) {
+    const mutatedBody = handleSavePuppyBody.slice(0, realResult.returnIdx) + handleSavePuppyBody.slice(realResult.returnIdx + 'return'.length)
+    const mutatedResult = hasShortCircuitingRestrictedGuard(mutatedBody)
+    check('NEGATIVE SELF-TEST: deleting the guard\'s return statement from an in-memory copy makes hasShortCircuitingRestrictedGuard() correctly report failure — proves this test can detect the exact regression it claims to prevent',
+      mutatedResult.ok === false, `mutated predicate unexpectedly returned ok=${mutatedResult.ok}`)
+  } else {
+    check('NEGATIVE SELF-TEST: skipped because the positive case above did not pass — cannot meaningfully mutate a guard that was never found', false,
+      '(this should never happen unless the check above already failed; investigate that first)')
+  }
+
+  // Codex re-review fix #2, item 4: prove the SAME predicate — the real
+  // one used above, not a re-implementation — reaches the identical
+  // positive AND negative verdicts on an in-memory CRLF-converted copy
+  // of the whole file, not just on whatever line ending this checkout
+  // happens to have right now. This is what actually verifies the CRLF
+  // immunity claimed above, rather than just asserting it in a comment.
+  {
+    const crlfLittersSrc = littersSrc.replace(/\r\n|\n/g, '\r\n')
+    check('CRLF sanity: the in-memory conversion actually produced CRLF (self-check on the fixture itself)',
+      /\r\n/.test(crlfLittersSrc) && !/[^\r]\n/.test(crlfLittersSrc))
+    const crlfBody = extractFunctionSource(crlfLittersSrc, /async function handleSavePuppy\(/)
+    const crlfRealResult = hasShortCircuitingRestrictedGuard(crlfBody)
+    check('CRLF: handleSavePuppy short-circuit is still correctly detected against an all-CRLF copy of LittersPage.tsx',
+      crlfRealResult.ok, crlfRealResult.reason)
+    if (crlfRealResult.ok) {
+      const crlfMutatedBody = crlfBody.slice(0, crlfRealResult.returnIdx) + crlfBody.slice(crlfRealResult.returnIdx + 'return'.length)
+      const crlfMutatedResult = hasShortCircuitingRestrictedGuard(crlfMutatedBody)
+      check('CRLF: the negative self-test (mutated return) still correctly fails against an all-CRLF copy',
+        crlfMutatedResult.ok === false, `mutated predicate unexpectedly returned ok=${crlfMutatedResult.ok}`)
+    }
+  }
 
   check('LittersPage.tsx: the restricted-puppy short-circuit message is clear and actionable, not the old bare "Failed to update puppy"',
     /over your plan's dog limit and is read-only — upgrade or free up a slot to edit it/.test(littersSrc))
