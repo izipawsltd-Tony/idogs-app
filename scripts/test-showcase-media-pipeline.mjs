@@ -189,7 +189,7 @@ const { check, checkAsync, skip, summary } = makeChecker()
   check('update-showcase-media.js rejects duplicate entries in order[]',
     /must not contain duplicate entries/.test(updateMediaSrc))
   check('update-showcase-media.js\'s Storage cleanup for removed items is wrapped so a cleanup failure can never fail the whole request',
-    /try \{\s*\n\s*await bucket\.file\(path\)\.delete\(\)/.test(updateMediaSrc))
+    /try \{\s*\n\s*await bucket\.file\(item\.path\)\.delete\(\)/.test(updateMediaSrc))
 
   // ── client-side HEIC consolidation ──
   const heicLibSrc = readFileSync(new URL('../src/lib/heic.ts', import.meta.url), 'utf8')
@@ -203,8 +203,51 @@ const { check, checkAsync, skip, summary } = makeChecker()
 
   // ── Dog type additions ──
   const typesSrc = readFileSync(new URL('../src/types/index.ts', import.meta.url), 'utf8')
-  check('Dog.photos remains an ordered string[] (index 0 = cover — no separate isCover flag needed)', /photos: string\[\]/.test(typesSrc))
-  check('Dog declares an optional videos?: string[] field, same ordered-array convention', /videos\?: string\[\]/.test(typesSrc))
+  check('MediaItem is declared as {id, path} — a private Storage path, never a public URL', /export interface MediaItem \{\s*\n\s*id: string\s*\n\s*path: string\s*\n\}/.test(typesSrc))
+  check('Dog.photos is an ordered MediaItem[] (index 0 = cover — no separate isCover flag needed)', /photos: MediaItem\[\]/.test(typesSrc))
+  check('Dog declares an optional videos?: MediaItem[] field, same ordered-array convention', /videos\?: MediaItem\[\]/.test(typesSrc))
+
+  // Several header comments in this fix-round deliberately document the
+  // ABSENCE of makePublic() in prose (e.g. "no file.makePublic() anywhere
+  // in this file") — a plain substring/regex search for "makePublic"
+  // would false-positive on that very documentation. This checks that
+  // every occurrence is confined to a comment line, never a real call.
+  function neverActuallyCalls(src, needle) {
+    return src.split('\n').every(line => !line.includes(needle) || line.trim().startsWith('//'))
+  }
+
+  // ── Codex fix-round ("Revocable media delivery") ──
+  const accessSrc = readFileSync(new URL('../api/_lib/showcase-media-access.js', import.meta.url), 'utf8')
+  check('showcase-media-access.js never calls file.makePublic() anywhere', neverActuallyCalls(accessSrc, 'makePublic'))
+  check('signMediaItems() generates a short-lived signed URL (action: read, expires)', /getSignedUrl\(\{ action: 'read', expires:/.test(accessSrc))
+  check('signMediaItems() silently drops an item whose Storage object no longer exists (never throws for the whole batch)', /if \(!exists\) return null/.test(accessSrc))
+  check('opaquePuppyRef() is a deterministic hash of litterId+dogId (sha256), never a persisted/random id', /createHash\('sha256'\)\.update\(`\$\{litterId\}:\$\{dogId\}`/.test(accessSrc))
+
+  check('upload-showcase-media.js never calls file.makePublic() anywhere', neverActuallyCalls(uploadMediaSrc, 'makePublic'))
+  check('upload-showcase-media.js stores only {id, path} on dog.photos/videos, never a public fileUrl string',
+    /const mediaItem = \{ id: mediaId, path: filePath \}/.test(uploadMediaSrc))
+  check('upload-showcase-media.js returns freshly-signed URLs via signMediaItems(), not a raw Storage path/URL',
+    /signMediaItems\(bucket, updated\.photos/.test(uploadMediaSrc))
+
+  // ── Codex fix-round ("Upload consistency") — orphan cleanup ──
+  check('upload-showcase-media.js deletes the just-uploaded Storage object if the Firestore write that references it fails',
+    /catch \(writeErr\) \{[\s\S]*?await file\.delete\(\)[\s\S]*?throw writeErr/.test(uploadMediaSrc))
+
+  // ── update-showcase-media.js: id-based reorder/delete (Codex fix-round) ──
+  check('update-showcase-media.js validates order[] as an array of media ID strings, never URLs',
+    /order must be an array of media id strings/.test(updateMediaSrc))
+  check('update-showcase-media.js resolves removed items via a Map keyed by id, deletes their Storage object by item.path',
+    /const currentById = new Map\(current\.map\(item => \[item\.id, item\]\)\)/.test(updateMediaSrc) &&
+    /await bucket\.file\(item\.path\)\.delete\(\)/.test(updateMediaSrc))
+  check('update-showcase-media.js returns freshly-signed URLs, never a raw path/URL',
+    /signMediaItems\(bucket, updated\.photos/.test(updateMediaSrc))
+
+  // ── api/get-showcase-media-urls.js — breeder's own authenticated view ──
+  const getUrlsSrc = readFileSync(new URL('../api/get-showcase-media-urls.js', import.meta.url), 'utf8')
+  check('get-showcase-media-urls.js requires a valid Firebase ID token', /verifyIdToken/.test(getUrlsSrc))
+  check('get-showcase-media-urls.js authorizes via tenantId OR currentOwnerId (viewing, not writing — a restricted dog\'s existing photos must still be viewable)',
+    /dog\.tenantId === uid \|\| dog\.currentOwnerId === uid/.test(getUrlsSrc))
+  check('get-showcase-media-urls.js returns signed URLs for both photos and videos', /signMediaItems\(bucket, dog\.photos/.test(getUrlsSrc) && /signMediaItems\(bucket, dog\.videos/.test(getUrlsSrc))
 }
 
 // =========================================================================
@@ -218,6 +261,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   const { getStorage } = await import('firebase-admin/storage')
   const { default: uploadMediaHandler } = await import('../api/upload-showcase-media.js')
   const { default: updateMediaHandler } = await import('../api/update-showcase-media.js')
+  const { default: getMediaUrlsHandler } = await import('../api/get-showcase-media-urls.js')
 
   const seedDb = getFirestore()
   const bucket = getStorage().bucket(process.env.FIREBASE_STORAGE_BUCKET)
@@ -263,9 +307,42 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
       photos: [], videos: [], ...extra,
     })
   }
-  function extractStoragePath(fileUrl, bucketName) {
-    const prefix = `https://storage.googleapis.com/${bucketName}/`
-    return fileUrl.startsWith(prefix) ? fileUrl.slice(prefix.length) : null
+
+  // ── Test 0 (Codex fix-round, "Upload consistency"): if the Firestore
+  // write AFTER a successful Storage write fails, the just-uploaded
+  // object must be deleted, never left orphaned. Real fault injection
+  // (not a mock): the dog document is deleted WHILE the upload is
+  // mid-flight — after the handler's initial existence/ownership read
+  // already passed, but before its later `.update()` call, which is
+  // exactly the "Storage write already succeeded, Firestore write about
+  // to fail" window this finding is about. Admin SDK `.update()` (never
+  // `.set()`) genuinely throws NOT_FOUND against a real Firestore
+  // (emulator) when the target document no longer exists — a real
+  // failure, not a simulated one.
+  //
+  // Deliberately runs FIRST, before Tests 1-10 below generate their own
+  // Storage traffic — during investigation, this exact race was found to
+  // become unreliable (the Storage emulator's own file-listing index
+  // lagging well behind a delete() that had already completed with no
+  // error) specifically when run AFTER substantial prior Storage activity
+  // in the same process; run standalone/first, it reproduces cleanly. ──
+  {
+    const owner = await newUser('m0owner')
+    const dogId = `m0dog_${R}`
+    await seedDog(owner.uid, dogId)
+
+    const res = mockRes()
+    const uploadPromise = uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), res)
+    // Small delay so the handler's own initial dogSnap.get() (existence +
+    // ownership check) has already completed before the doc disappears —
+    // this must race the WRITE, not the initial read.
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await seedDb.collection('dogs').doc(dogId).delete()
+    await uploadPromise
+
+    check('0', 'The request surfaces the genuine Firestore write failure as a 500, not a false 200', res.statusCode === 500, JSON.stringify(res.body))
+    const after = await bucket.getFiles({ prefix: `dogs/${owner.uid}/${dogId}/` })
+    check('0', 'The Storage object that was successfully uploaded moments earlier is deleted, not left orphaned', after[0].length === 0)
   }
 
   // ── Test 1: authorized owner uploads a real JPEG photo ──
@@ -277,17 +354,55 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     const res = mockRes()
     await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), res)
     check('1', 'Upload succeeds (200)', res.statusCode === 200, JSON.stringify(res.body))
-    check('1', 'The response includes the new fileUrl', typeof res.body?.fileUrl === 'string')
-    check('1', 'photos[] now contains exactly one entry', res.body?.photos?.length === 1)
+    check('1', 'The response includes a new mediaId', typeof res.body?.mediaId === 'string' && res.body.mediaId.length > 0)
+    check('1', 'photos[] now contains exactly one signed {id,url} entry', res.body?.photos?.length === 1 && typeof res.body.photos[0].id === 'string' && typeof res.body.photos[0].url === 'string')
+    check('1', 'The returned photo id matches the returned mediaId', res.body.photos[0].id === res.body.mediaId)
     check('1', 'videos[] is untouched (still empty)', res.body?.videos?.length === 0)
-
-    const path = extractStoragePath(res.body.fileUrl, bucket.name)
-    check('1', 'The stored file path is under dogs/{uid}/{dogId}/photos/', path?.startsWith(`dogs/${owner.uid}/${dogId}/photos/`))
-    const [exists] = await bucket.file(path).exists()
-    check('1', 'The file actually exists in Storage (real write, not just a Firestore field)', exists === true)
+    // NOTE: a valid GCS signed URL necessarily embeds the object's path
+    // as part of the URL itself (that's how the signature resolves to a
+    // specific object) — asserting the path is absent from the URL would
+    // be asserting something structurally impossible for a signed URL,
+    // not a real security property. What actually matters (and IS
+    // asserted below): the path is never usable withOUT that signature,
+    // and no separate, standalone/reusable path is ever returned.
 
     const dogAfter = (await seedDb.collection('dogs').doc(dogId).get()).data()
-    check('1', 'dog.photos in Firestore matches the returned array', JSON.stringify(dogAfter.photos) === JSON.stringify(res.body.photos))
+    check('1', 'dog.photos in Firestore stores exactly one {id, path} MediaItem', dogAfter.photos.length === 1 && dogAfter.photos[0].id === res.body.mediaId && typeof dogAfter.photos[0].path === 'string')
+    check('1', 'The stored Storage path is private (under dogs/{uid}/{dogId}/photos/)', dogAfter.photos[0].path.startsWith(`dogs/${owner.uid}/${dogId}/photos/`))
+    const [exists] = await bucket.file(dogAfter.photos[0].path).exists()
+    check('1', 'The file actually exists in Storage (real write, not just a Firestore field)', exists === true)
+
+    // Codex fix-round ("Revocable media delivery") — the file was never
+    // made public; the only way to obtain a usable URL for it is a fresh
+    // call to signMediaItems() (a real, working codepath — confirmed here
+    // by calling it directly against the stored path).
+    const { signMediaItems } = await import('../api/_lib/showcase-media-access.js')
+    const [reSigned] = await signMediaItems(bucket, [{ id: res.body.mediaId, path: dogAfter.photos[0].path }])
+    check('1', 'The stored private path can only be turned into a URL via signMediaItems() — confirmed it actually produces one', typeof reSigned?.url === 'string')
+  }
+
+  // ── Test 1b: get-showcase-media-urls.js — the breeder's own
+  // authenticated view of an already-uploaded gallery ──
+  {
+    const owner = await newUser('m1bowner')
+    const stranger = await newUser('m1bstranger')
+    const dogId = `m1bdog_${R}`
+    await seedDog(owner.uid, dogId)
+    const uploadRes = mockRes()
+    await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), uploadRes)
+
+    const ownerRes = mockRes()
+    await getMediaUrlsHandler(mockReq({ dogId }, owner.idToken), ownerRes)
+    check('1b', 'The owning breeder can fetch signed URLs for their own puppy\'s gallery', ownerRes.statusCode === 200)
+    check('1b', 'The response includes the uploaded photo', ownerRes.body?.photos?.length === 1 && ownerRes.body.photos[0].id === uploadRes.body.mediaId)
+
+    const strangerRes = mockRes()
+    await getMediaUrlsHandler(mockReq({ dogId }, stranger.idToken), strangerRes)
+    check('1b', 'An unrelated stranger is denied (403)', strangerRes.statusCode === 403)
+
+    const noAuthRes = mockRes()
+    await getMediaUrlsHandler(mockReq({ dogId }, undefined), noAuthRes)
+    check('1b', 'An unauthenticated request is denied (401)', noAuthRes.statusCode === 401)
   }
 
   // ── Test 2: a garbage/invalid file is rejected before any Storage write ──
@@ -333,12 +448,12 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     const res = mockRes()
     await uploadMediaHandler(mockReq({ dogId, base64: fakeMp4Base64(), kind: 'video' }, owner.idToken), res)
     check('5', 'A recognized video type uploads successfully', res.statusCode === 200, JSON.stringify(res.body))
-    check('5', 'videos[] now has one entry', res.body?.videos?.length === 1)
-    const path = extractStoragePath(res.body.fileUrl, bucket.name)
-    check('5', 'The stored path is under dogs/{uid}/{dogId}/videos/', path?.startsWith(`dogs/${owner.uid}/${dogId}/videos/`))
+    check('5', 'videos[] now has one signed {id,url} entry', res.body?.videos?.length === 1 && res.body.videos[0].id === res.body.mediaId)
+    const dogAfter = (await seedDb.collection('dogs').doc(dogId).get()).data()
+    check('5', 'The stored path is under dogs/{uid}/{dogId}/videos/', dogAfter.videos[0].path.startsWith(`dogs/${owner.uid}/${dogId}/videos/`))
   }
 
-  // ── Test 6: reorder via update-showcase-media.js ──
+  // ── Test 6: reorder via update-showcase-media.js (id-based, never URL-based) ──
   {
     const owner = await newUser('m6owner')
     const dogId = `m6dog_${R}`
@@ -347,16 +462,18 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), first)
     const second = mockRes()
     await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), second)
-    const [urlA, urlB] = second.body.photos
+    const [idA, idB] = second.body.photos.map(p => p.id)
     check('6', 'Sanity: two photos exist before reordering', second.body.photos.length === 2)
 
     const reorderRes = mockRes()
-    await updateMediaHandler(mockReq({ dogId, kind: 'photo', order: [urlB, urlA] }, owner.idToken), reorderRes)
+    await updateMediaHandler(mockReq({ dogId, kind: 'photo', order: [idB, idA] }, owner.idToken), reorderRes)
     check('6', 'Reorder succeeds', reorderRes.statusCode === 200)
-    check('6', 'The new cover (index 0) is what was previously second', reorderRes.body.photos[0] === urlB)
+    check('6', 'The new cover (index 0) is what was previously second', reorderRes.body.photos[0].id === idB)
+    const dogAfter = (await seedDb.collection('dogs').doc(dogId).get()).data()
+    const pathById = new Map(dogAfter.photos.map(p => [p.id, p.path]))
     check('6', 'Both original files still exist in Storage — a reorder must never delete anything',
-      (await bucket.file(extractStoragePath(urlA, bucket.name)).exists())[0] === true &&
-      (await bucket.file(extractStoragePath(urlB, bucket.name)).exists())[0] === true)
+      (await bucket.file(pathById.get(idA)).exists())[0] === true &&
+      (await bucket.file(pathById.get(idB)).exists())[0] === true)
   }
 
   // ── Test 7: delete via update-showcase-media.js — Firestore array
@@ -370,31 +487,32 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), first)
     const second = mockRes()
     await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), second)
-    const [urlA, urlB] = second.body.photos
-    const pathA = extractStoragePath(urlA, bucket.name)
+    const [idA, idB] = second.body.photos.map(p => p.id)
+    const beforeDelete = (await seedDb.collection('dogs').doc(dogId).get()).data()
+    const pathA = beforeDelete.photos.find(p => p.id === idA).path
 
     const deleteRes = mockRes()
-    await updateMediaHandler(mockReq({ dogId, kind: 'photo', order: [urlB] }, owner.idToken), deleteRes)
+    await updateMediaHandler(mockReq({ dogId, kind: 'photo', order: [idB] }, owner.idToken), deleteRes)
     check('7', 'Delete succeeds', deleteRes.statusCode === 200)
-    check('7', 'photos[] now has exactly the one remaining item', deleteRes.body.photos.length === 1 && deleteRes.body.photos[0] === urlB)
+    check('7', 'photos[] now has exactly the one remaining item', deleteRes.body.photos.length === 1 && deleteRes.body.photos[0].id === idB)
     const [stillExists] = await bucket.file(pathA).exists()
     check('7', 'The deleted photo\'s Storage object is actually gone (no orphaned file)', stillExists === false)
   }
 
-  // ── Test 8: IDOR — order[] cannot contain a URL that was never part
+  // ── Test 8: IDOR — order[] cannot contain an id that was never part
   // of this puppy's own media (proves reorder/delete can never be used
-  // to inject an arbitrary new URL) ──
+  // to inject an arbitrary new item) ──
   {
     const owner = await newUser('m8owner')
     const dogId = `m8dog_${R}`
     await seedDog(owner.uid, dogId)
     const uploadRes = mockRes()
     await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), uploadRes)
-    const legitUrl = uploadRes.body.photos[0]
+    const legitId = uploadRes.body.mediaId
 
     const injectRes = mockRes()
-    await updateMediaHandler(mockReq({ dogId, kind: 'photo', order: [legitUrl, 'https://storage.googleapis.com/attacker-bucket/evil.jpg'] }, owner.idToken), injectRes)
-    check('8', 'An order[] containing an unknown URL is rejected outright (400)', injectRes.statusCode === 400 && injectRes.body?.reason === 'UNKNOWN_MEDIA_ITEM')
+    await updateMediaHandler(mockReq({ dogId, kind: 'photo', order: [legitId, 'attacker-supplied-fake-id'] }, owner.idToken), injectRes)
+    check('8', 'An order[] containing an unknown id is rejected outright (400)', injectRes.statusCode === 400 && injectRes.body?.reason === 'UNKNOWN_MEDIA_ITEM')
     check('8', 'The original photos array is unchanged after the rejected attempt', (await seedDb.collection('dogs').doc(dogId).get()).data().photos.length === 1)
   }
 
@@ -411,6 +529,27 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     await updateMediaHandler(mockReq({ dogId, kind: 'photo', order: [] }, stranger.idToken), res)
     check('9', 'A stranger cannot reorder/delete another breeder\'s puppy media (403)', res.statusCode === 403)
   }
+
+  // ── Test 10 (Codex fix-round, "Upload consistency"): a REJECTED upload
+  // (fails before any Storage write is even attempted) must never leave
+  // an orphaned Storage object behind either — the simpler of the two
+  // "no orphan" guarantees, confirmed here by listing the dog's own
+  // Storage prefix directly (not just trusting the Firestore field). ──
+  {
+    const owner = await newUser('m10owner')
+    const dogId = `m10dog_${R}`
+    await seedDog(owner.uid, dogId)
+    const before = await bucket.getFiles({ prefix: `dogs/${owner.uid}/${dogId}/` })
+    check('10', 'Sanity: no files exist yet for this dog', before[0].length === 0)
+
+    const res = mockRes()
+    await uploadMediaHandler(mockReq({ dogId, base64: Buffer.from('not a real image').toString('base64'), kind: 'photo' }, owner.idToken), res)
+    check('10', 'A rejected (invalid-file) upload attempt is a 400, not a partial success', res.statusCode === 400)
+
+    const after = await bucket.getFiles({ prefix: `dogs/${owner.uid}/${dogId}/` })
+    check('10', 'No Storage object was created for a request that never reached a successful Storage write (no orphan)', after[0].length === 0)
+  }
+
 
   await summary()
 } else {

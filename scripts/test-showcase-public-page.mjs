@@ -57,7 +57,7 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
   const forbiddenFieldRefs = [
     '.microchip', '.tenantId', '.currentOwnerId', '.createdByUserId', '.buyerEmail', '.buyerName',
     '.reservedForName', '.reservedForEmail', '.reservedForPhone', '.depositAmount', '.depositStatus',
-    '.notes', '.breederIdValue', '.passportId',
+    '.notes', '.breederIdValue', '.passportId', '.profilePhoto',
   ]
   for (const ref of forbiddenFieldRefs) {
     check(`ShowcasePublicPage source never references "${ref}"`, !pageSrc.includes(ref))
@@ -135,7 +135,12 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
             React.createElement('span', null, p.name),
             React.createElement('span', null, p.breed),
             React.createElement('span', null, p.availability === 'available' ? 'Available' : p.availability),
-            ...(p.photos && p.photos.length > 1 ? p.photos.map((url, i) => React.createElement('img', { key: i, src: url })) : []),
+            // Codex fix-round: photos/videos are signed {id,url} items,
+            // never raw URL strings and never dog.profilePhoto — mirrors
+            // the real page's own `puppy.photos?.[0]?.url` cover +
+            // `puppy.photos.map(item => item.url)` thumbnail-strip shape.
+            ...(p.photos && p.photos.length > 1 ? p.photos.map(item => React.createElement('img', { key: item.id, src: item.url })) : []),
+            ...(p.videos && p.videos.length > 0 ? p.videos.map(item => React.createElement('video', { key: item.id, src: item.url })) : []),
           )),
     )
   }
@@ -156,10 +161,13 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
     return JSON.stringify(renderer.toJSON())
   }
 
+  // `id` here is a stand-in opaque reference (a real one would be a
+  // sha256-hash-derived string — see opaquePuppyRef() — but any opaque
+  // string proves the harness/page never special-case its shape).
   const samplePayload = {
     litter: { name: 'Bella x Max Litter', damName: 'Bella', sireName: 'Max', actualBirthDate: '2026-01-01' },
     puppies: [
-      { id: 'pup1', name: 'Blue Boy', sex: 'male', breed: 'Labrador', colour: 'Black', dateOfBirth: '2026-01-01', availability: 'available', profilePhoto: null, photos: [] },
+      { id: 'opaque-ref-1', name: 'Blue Boy', sex: 'male', breed: 'Labrador', colour: 'Black', dateOfBirth: '2026-01-01', availability: 'available', photos: [], videos: [] },
     ],
   }
 
@@ -224,12 +232,12 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
     act(() => { renderer.unmount() })
   }
 
-  // ── Test 6: multiple photos render as a thumbnail strip; a single
-  // (or zero) photo does not ──
+  // ── Test 6: multiple photos render as a thumbnail strip (signed
+  // {id,url} items); a single (or zero) photo does not ──
   {
     const multiPhotoPayload = {
       litter: samplePayload.litter,
-      puppies: [{ ...samplePayload.puppies[0], photos: ['https://example.com/a.jpg', 'https://example.com/b.jpg'] }],
+      puppies: [{ ...samplePayload.puppies[0], photos: [{ id: 'm1', url: 'https://example.com/a.jpg' }, { id: 'm2', url: 'https://example.com/b.jpg' }] }],
     }
     mockFetchOnce(async () => ({ ok: true, json: async () => multiPhotoPayload }))
     const { renderer } = mount('multiphototoken')
@@ -242,7 +250,21 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
     mockFetchOnce(async () => ({ ok: true, json: async () => samplePayload })) // photos: []
     const { renderer } = mount('nophototoken')
     await act(async () => { await sleep(10) })
-    check('6', 'No thumbnail strip renders when a puppy has zero extra photos (profilePhoto null, photos empty)', !rendered(renderer).includes('photo 1'))
+    check('6', 'No thumbnail strip renders when a puppy has zero published photos', !rendered(renderer).includes('photo 1'))
+    act(() => { renderer.unmount() })
+  }
+
+  // ── Test 7 (Codex fix-round, "Explicit media publication"): a
+  // published video renders too — not just photos ──
+  {
+    const videoPayload = {
+      litter: samplePayload.litter,
+      puppies: [{ ...samplePayload.puppies[0], videos: [{ id: 'v1', url: 'https://example.com/clip.mp4' }] }],
+    }
+    mockFetchOnce(async () => ({ ok: true, json: async () => videoPayload }))
+    const { renderer } = mount('videotoken')
+    await act(async () => { await sleep(10) })
+    check('7', 'A published video URL is rendered', rendered(renderer).includes('clip.mp4'))
     act(() => { renderer.unmount() })
   }
 

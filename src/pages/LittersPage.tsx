@@ -3,13 +3,13 @@ import { Link } from 'react-router-dom'
 import {
   getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
   getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, bulkUpdateShowcasePuppies, DEFAULT_SHOWCASE_PUPPY_ENTRY,
-  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder, getEnquiriesForLitter,
+  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder, getShowcaseMediaUrls, getEnquiriesForLitter,
 } from '../lib/db'
-import type { ShowcaseBulkAction } from '../lib/db'
+import type { ShowcaseBulkAction, SignedMediaItem } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
-import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability, ShowcaseEnquiry } from '../types'
+import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability, ShowcaseEnquiry, MediaItem } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
 import { sendTransferEmail } from '../lib/email'
@@ -497,6 +497,30 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     } catch (err) {
       if (!isShowcaseRequestCurrent(gen)) return
       const message = err instanceof Error && err.message ? err.message : 'Failed to update puppy'
+      setShowcaseSaveError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  // Codex fix-round ("Explicit media publication"): a puppy being
+  // visible in the Showcase never implies any of its photos/videos are
+  // published — this is the ONLY path that toggles publishedPhotoIds/
+  // publishedVideoIds. Same autosave-per-field pattern as
+  // handleTogglePuppyVisible/handlePuppyAvailabilityChange above.
+  async function handlePublishedMediaChange(litterId: string, puppyId: string, patch: { publishedPhotoIds?: string[]; publishedVideoIds?: string[] }) {
+    const gen = showcaseGuard.currentGeneration()
+    setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    setShowcaseSaveError(prev => ({ ...prev, [litterId]: '' }))
+    try {
+      const showcase = await updateShowcasePuppy(litterId, puppyId, patch)
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
+      const message = err instanceof Error && err.message ? err.message : 'Failed to update published media'
       setShowcaseSaveError(prev => ({ ...prev, [litterId]: message }))
       toast(message, 'error')
     } finally {
@@ -1386,6 +1410,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                           onToggleEnabled={() => handleToggleShowcaseEnabled(litter.id, showcases[litter.id] as LitterShowcase)}
                           onToggleVisible={(puppyId, visible) => handleTogglePuppyVisible(litter.id, puppyId, visible)}
                           onAvailabilityChange={(puppyId, availability) => handlePuppyAvailabilityChange(litter.id, puppyId, availability)}
+                          onPublishedMediaChange={(puppyId, patch) => handlePublishedMediaChange(litter.id, puppyId, patch)}
                           onBulkAction={(action) => handleShowcaseBulkAction(litter.id, action)}
                           shareBusy={!!shareBusy[litter.id]}
                           shareError={shareError[litter.id] || ''}
@@ -1506,18 +1531,57 @@ export default function LittersPage({ toast, dismissAll }: Props) {
 // PhotoUpload.tsx's avatar flow — deliberately simpler: the server
 // pipeline handles every accepted type uniformly, so there's no
 // "special-case HEIC differently" client logic needed here at all.
+// Codex fix-round ("Revocable media delivery"): dog.photos/dog.videos are
+// now PRIVATE Storage paths ({id, path} — see MediaItem in
+// src/types/index.ts), never directly renderable. This component fetches
+// fresh, short-lived SIGNED URLs itself (getShowcaseMediaUrls, on mount
+// and whenever the puppy changes) and every mutation (upload/reorder/
+// delete) works off MediaItem.id — never a URL — since a signed URL is
+// deliberately never stable enough to use as a stored reference.
+// `onUpdated` only ever hands the PARENT id-only MediaItem placeholders
+// (path omitted — never used downstream, only `.id` is, for the
+// publish/unpublish checkboxes in ShowcaseManager below) so the litter
+// page's own `dogs` state stays roughly in sync for that purpose, without
+// this component needing to manage two divergent sources of truth for
+// the same gallery.
 function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
   puppy: Dog
   disabled: boolean
   toast: (msg: string, type?: ToastMessage['type']) => void
-  onUpdated: (patch: { photos?: string[]; videos?: string[] }) => void
+  onUpdated: (patch: { photos?: MediaItem[]; videos?: MediaItem[] }) => void
 }) {
+  const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState<'photo' | 'video' | null>(null)
-  const [busyUrl, setBusyUrl] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [photos, setPhotos] = useState<SignedMediaItem[]>([])
+  const [videos, setVideos] = useState<SignedMediaItem[]>([])
   const photoInputRef = useRef<HTMLInputElement>(null)
   const videoInputRef = useRef<HTMLInputElement>(null)
-  const photos = puppy.photos || []
-  const videos = (puppy as any).videos || []
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    getShowcaseMediaUrls(puppy.id)
+      .then(result => {
+        if (cancelled) return
+        setPhotos(result.photos)
+        setVideos(result.videos)
+      })
+      .catch(err => {
+        if (!cancelled) toast(err instanceof Error && err.message ? err.message : 'Failed to load media', 'error')
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [puppy.id])
+
+  function applyResult(result: { photos: SignedMediaItem[]; videos: SignedMediaItem[] }) {
+    setPhotos(result.photos)
+    setVideos(result.videos)
+    onUpdated({
+      photos: result.photos.map(item => ({ id: item.id, path: '' })),
+      videos: result.videos.map(item => ({ id: item.id, path: '' })),
+    })
+  }
 
   function readAsBase64(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -1533,7 +1597,7 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
     try {
       const base64 = await readAsBase64(file)
       const result = await uploadShowcaseMedia(puppy.id, base64, kind)
-      onUpdated({ photos: result.photos, videos: result.videos })
+      applyResult(result)
       toast(`${kind === 'photo' ? 'Photo' : 'Video'} added`)
     } catch (err) {
       toast(err instanceof Error && err.message ? err.message : `Failed to upload ${kind}`, 'error')
@@ -1542,55 +1606,59 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
     }
   }
 
-  async function handleReorder(kind: 'photo' | 'video', current: string[], fromIndex: number, toIndex: number) {
+  async function handleReorder(kind: 'photo' | 'video', current: SignedMediaItem[], fromIndex: number, toIndex: number) {
     if (toIndex < 0 || toIndex >= current.length) return
     const next = [...current]
     const [moved] = next.splice(fromIndex, 1)
     next.splice(toIndex, 0, moved)
-    setBusyUrl(current[fromIndex])
+    setBusyId(current[fromIndex].id)
     try {
-      const result = await updateShowcaseMediaOrder(puppy.id, kind, next)
-      onUpdated(result)
+      const result = await updateShowcaseMediaOrder(puppy.id, kind, next.map(item => item.id))
+      applyResult(result)
     } catch (err) {
       toast(err instanceof Error && err.message ? err.message : 'Failed to reorder', 'error')
     } finally {
-      setBusyUrl(null)
+      setBusyId(null)
     }
   }
 
-  async function handleDelete(kind: 'photo' | 'video', current: string[], url: string) {
-    setBusyUrl(url)
+  async function handleDelete(kind: 'photo' | 'video', current: SignedMediaItem[], id: string) {
+    setBusyId(id)
     try {
-      const result = await updateShowcaseMediaOrder(puppy.id, kind, current.filter(u => u !== url))
-      onUpdated(result)
+      const result = await updateShowcaseMediaOrder(puppy.id, kind, current.filter(item => item.id !== id).map(item => item.id))
+      applyResult(result)
       toast(`${kind === 'photo' ? 'Photo' : 'Video'} removed`)
     } catch (err) {
       toast(err instanceof Error && err.message ? err.message : 'Failed to remove', 'error')
     } finally {
-      setBusyUrl(null)
+      setBusyId(null)
     }
   }
 
-  function MediaRow({ kind, items }: { kind: 'photo' | 'video'; items: string[] }) {
+  function MediaRow({ kind, items }: { kind: 'photo' | 'video'; items: SignedMediaItem[] }) {
     return (
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-        {items.map((url, i) => (
-          <div key={url} style={{ position: 'relative', width: 64, opacity: busyUrl === url ? 0.5 : 1 }}>
+        {items.map((item, i) => (
+          <div key={item.id} style={{ position: 'relative', width: 64, opacity: busyId === item.id ? 0.5 : 1 }}>
             {kind === 'photo' ? (
-              <img src={url} alt="" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: i === 0 ? '2px solid var(--brand-600)' : '1px solid var(--border)' }} />
+              <img src={item.url} alt="" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: i === 0 ? '2px solid var(--brand-600)' : '1px solid var(--border)' }} />
             ) : (
-              <video src={url} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted />
+              <video src={item.url} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted />
             )}
             {i === 0 && <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 9, fontWeight: 700, background: 'var(--brand-600)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>COVER</span>}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-              <button type="button" disabled={disabled || i === 0 || busyUrl !== null} onClick={() => handleReorder(kind, items, i, i - 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>◀</button>
-              <button type="button" disabled={disabled || busyUrl !== null} onClick={() => handleDelete(kind, items, url)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>✕</button>
-              <button type="button" disabled={disabled || i === items.length - 1 || busyUrl !== null} onClick={() => handleReorder(kind, items, i, i + 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>▶</button>
+              <button type="button" disabled={disabled || i === 0 || busyId !== null} onClick={() => handleReorder(kind, items, i, i - 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>◀</button>
+              <button type="button" disabled={disabled || busyId !== null} onClick={() => handleDelete(kind, items, item.id)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>✕</button>
+              <button type="button" disabled={disabled || i === items.length - 1 || busyId !== null} onClick={() => handleReorder(kind, items, i, i + 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>▶</button>
             </div>
           </div>
         ))}
       </div>
     )
+  }
+
+  if (loading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
   }
 
   return (
@@ -1676,7 +1744,7 @@ const AVAILABILITY_LABELS: Record<ShowcaseAvailability, string> = {
 }
 
 function ShowcaseManager({
-  showcase, puppyDogs, busy, saveError, onToggleEnabled, onToggleVisible, onAvailabilityChange, onBulkAction,
+  showcase, puppyDogs, busy, saveError, onToggleEnabled, onToggleVisible, onAvailabilityChange, onPublishedMediaChange, onBulkAction,
   shareBusy, shareError, shareLastRotatedToken, onRotateShare, onToggleShareEnabled,
 }: {
   showcase: LitterShowcase
@@ -1686,6 +1754,7 @@ function ShowcaseManager({
   onToggleEnabled: () => void
   onToggleVisible: (puppyId: string, visible: boolean) => void
   onAvailabilityChange: (puppyId: string, availability: ShowcaseAvailability) => void
+  onPublishedMediaChange: (puppyId: string, patch: { publishedPhotoIds?: string[]; publishedVideoIds?: string[] }) => void
   onBulkAction: (action: ShowcaseBulkAction) => void
   shareBusy: boolean
   shareError: string
@@ -1834,35 +1903,90 @@ function ShowcaseManager({
             {puppyDogs.map(puppy => {
               const entry = showcase.puppies?.[puppy.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY
               const checkboxId = `showcase-visible-${puppy.id}`
+              const puppyPhotoIds = (puppy.photos || []).map(item => item.id)
+              const puppyVideoIds = (puppy.videos || []).map(item => item.id)
+              function togglePublished(kind: 'photo' | 'video', id: string, checked: boolean) {
+                const field = kind === 'photo' ? 'publishedPhotoIds' : 'publishedVideoIds'
+                const current = kind === 'photo' ? (entry.publishedPhotoIds || []) : (entry.publishedVideoIds || [])
+                const next = checked ? [...current, id] : current.filter(existingId => existingId !== id)
+                onPublishedMediaChange(puppy.id, { [field]: next })
+              }
               return (
                 <div
                   key={puppy.id}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--white)', flexWrap: 'wrap' }}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--white)' }}
                 >
-                  <input
-                    id={checkboxId}
-                    type="checkbox"
-                    checked={entry.visible}
-                    disabled={busy}
-                    onChange={e => onToggleVisible(puppy.id, e.target.checked)}
-                    style={{ width: 16, height: 16, accentColor: 'var(--brand-600)', flexShrink: 0 }}
-                  />
-                  <label htmlFor={checkboxId} style={{ flex: 1, minWidth: 100, fontSize: 13, fontWeight: 500, color: 'var(--dark)', cursor: busy ? 'default' : 'pointer' }}>
-                    {puppy.name}
-                    <span style={{ fontWeight: 400, color: 'var(--light)' }}> · {puppy.sex === 'female' ? '♀' : '♂'}</span>
-                  </label>
-                  <select
-                    className="form-select"
-                    value={entry.availability}
-                    disabled={busy}
-                    onChange={e => onAvailabilityChange(puppy.id, e.target.value as ShowcaseAvailability)}
-                    style={{ fontSize: 12, padding: '4px 8px', minWidth: 120 }}
-                    aria-label={`Availability for ${puppy.name}`}
-                  >
-                    {(Object.keys(AVAILABILITY_LABELS) as ShowcaseAvailability[]).map(value => (
-                      <option key={value} value={value}>{AVAILABILITY_LABELS[value]}</option>
-                    ))}
-                  </select>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <input
+                      id={checkboxId}
+                      type="checkbox"
+                      checked={entry.visible}
+                      disabled={busy}
+                      onChange={e => onToggleVisible(puppy.id, e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: 'var(--brand-600)', flexShrink: 0 }}
+                    />
+                    <label htmlFor={checkboxId} style={{ flex: 1, minWidth: 100, fontSize: 13, fontWeight: 500, color: 'var(--dark)', cursor: busy ? 'default' : 'pointer' }}>
+                      {puppy.name}
+                      <span style={{ fontWeight: 400, color: 'var(--light)' }}> · {puppy.sex === 'female' ? '♀' : '♂'}</span>
+                    </label>
+                    <select
+                      className="form-select"
+                      value={entry.availability}
+                      disabled={busy}
+                      onChange={e => onAvailabilityChange(puppy.id, e.target.value as ShowcaseAvailability)}
+                      style={{ fontSize: 12, padding: '4px 8px', minWidth: 120 }}
+                      aria-label={`Availability for ${puppy.name}`}
+                    >
+                      {(Object.keys(AVAILABILITY_LABELS) as ShowcaseAvailability[]).map(value => (
+                        <option key={value} value={value}>{AVAILABILITY_LABELS[value]}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {/* Codex fix-round ("Explicit media publication"): being
+                      `visible` above never publishes any media by itself —
+                      each photo/video must be individually selected here.
+                      Uses the puppy's own photo/video COUNT+order (from
+                      PuppyMediaManager's edit panel above) since this
+                      compact row deliberately doesn't re-fetch signed
+                      thumbnails just to render a publish checklist. */}
+                  {(puppyPhotoIds.length > 0 || puppyVideoIds.length > 0) && (
+                    <div style={{ paddingLeft: 26, fontSize: 12, color: 'var(--mid)' }}>
+                      {puppyPhotoIds.length > 0 && (
+                        <div style={{ marginBottom: puppyVideoIds.length > 0 ? 6 : 0 }}>
+                          <span style={{ fontWeight: 600 }}>Publish photos: </span>
+                          {puppyPhotoIds.map((id, i) => (
+                            <label key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginRight: 10, cursor: busy ? 'default' : 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={(entry.publishedPhotoIds || []).includes(id)}
+                                disabled={busy}
+                                onChange={e => togglePublished('photo', id, e.target.checked)}
+                                style={{ width: 13, height: 13, accentColor: 'var(--brand-600)' }}
+                              />
+                              {i === 0 ? 'Cover' : `#${i + 1}`}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {puppyVideoIds.length > 0 && (
+                        <div>
+                          <span style={{ fontWeight: 600 }}>Publish videos: </span>
+                          {puppyVideoIds.map((id, i) => (
+                            <label key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginRight: 10, cursor: busy ? 'default' : 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={(entry.publishedVideoIds || []).includes(id)}
+                                disabled={busy}
+                                onChange={e => togglePublished('video', id, e.target.checked)}
+                                style={{ width: 13, height: 13, accentColor: 'var(--brand-600)' }}
+                              />
+                              #{i + 1}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}

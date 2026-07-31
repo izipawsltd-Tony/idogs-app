@@ -190,6 +190,30 @@ function extractFunctionSource(src, signaturePattern) {
   check('validatePuppyPatch accepts visible-only', JSON.stringify(validatePuppyPatch({ visible: true })) === JSON.stringify({ visible: true }))
   check('validatePuppyPatch accepts availability-only', JSON.stringify(validatePuppyPatch({ availability: 'on_hold' })) === JSON.stringify({ availability: 'on_hold' }))
 
+  // Codex fix-round ("Explicit media publication") — publishedPhotoIds/
+  // publishedVideoIds are validated and merged with the exact same
+  // "absent = untouched" independence as visible/availability.
+  {
+    check('validatePuppyPatch accepts publishedPhotoIds-only', JSON.stringify(validatePuppyPatch({ publishedPhotoIds: ['a', 'b'] })) === JSON.stringify({ publishedPhotoIds: ['a', 'b'] }))
+    check('validatePuppyPatch accepts publishedVideoIds-only', JSON.stringify(validatePuppyPatch({ publishedVideoIds: ['v1'] })) === JSON.stringify({ publishedVideoIds: ['v1'] }))
+    check('validatePuppyPatch accepts an empty publishedPhotoIds array (unpublishing everything)', JSON.stringify(validatePuppyPatch({ publishedPhotoIds: [] })) === JSON.stringify({ publishedPhotoIds: [] }))
+    check('validatePuppyPatch rejects a non-array publishedPhotoIds', (() => { try { validatePuppyPatch({ publishedPhotoIds: 'not-an-array' }); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
+    check('validatePuppyPatch rejects a publishedPhotoIds array with a non-string entry', (() => { try { validatePuppyPatch({ publishedPhotoIds: ['ok', 123] }); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
+    check('validatePuppyPatch rejects a publishedPhotoIds array with an empty-string entry', (() => { try { validatePuppyPatch({ publishedPhotoIds: [''] }); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
+    check('validatePuppyPatch rejects duplicate entries in publishedVideoIds', (() => { try { validatePuppyPatch({ publishedVideoIds: ['v1', 'v1'] }); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
+    check('validatePuppyPatch rejects a publishedPhotoIds array over the max size', (() => { try { validatePuppyPatch({ publishedPhotoIds: Array.from({ length: 31 }, (_, i) => `id${i}`) }); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
+
+    const withPublished = mergePuppyEntry(undefined, { visible: true, publishedPhotoIds: ['p1'] })
+    check('mergePuppyEntry: a never-touched puppy defaults publishedVideoIds to an empty array', Array.isArray(withPublished.publishedVideoIds) && withPublished.publishedVideoIds.length === 0)
+    check('mergePuppyEntry: publishedPhotoIds from the patch is applied', JSON.stringify(withPublished.publishedPhotoIds) === JSON.stringify(['p1']))
+
+    const afterAvailabilityChange = mergePuppyEntry(withPublished, { availability: 'reserved' })
+    check('mergePuppyEntry: changing availability leaves publishedPhotoIds untouched (independent dimension)', JSON.stringify(afterAvailabilityChange.publishedPhotoIds) === JSON.stringify(['p1']))
+
+    const afterUnpublish = mergePuppyEntry(afterAvailabilityChange, { publishedPhotoIds: [] })
+    check('mergePuppyEntry: explicitly unpublishing (empty array) clears publishedPhotoIds without touching visible/availability', afterUnpublish.publishedPhotoIds.length === 0 && afterUnpublish.visible === true && afterUnpublish.availability === 'reserved')
+  }
+
   check('validateBulkAction accepts the three defined actions', ['select_all', 'clear_all', 'show_available_only'].every(a => validateBulkAction(a) === a))
   check('validateBulkAction rejects an unknown action', (() => { try { validateBulkAction('show_all_and_sold'); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
 
@@ -224,6 +248,15 @@ function extractFunctionSource(src, signaturePattern) {
     const existing = { p1: { visible: true, availability: 'available' }, removedPup: { visible: true, availability: 'available' } }
     const map = applyBulkAction('select_all', existing, ['p1'])
     check('applyBulkAction drops entries for puppies no longer in litter.puppyIds', !('removedPup' in map) && Object.keys(map).length === 1)
+  }
+  {
+    // Codex fix-round ("Explicit media publication"): a bulk visibility
+    // action must never wipe a puppy's existing media publication
+    // selections — visible/availability/publication are three
+    // independent dimensions.
+    const existing = { p1: { visible: true, availability: 'available', publishedPhotoIds: ['photoA'], publishedVideoIds: ['videoA'] } }
+    const map = applyBulkAction('clear_all', existing, ['p1'])
+    check('applyBulkAction (clear_all) preserves publishedPhotoIds/publishedVideoIds even while hiding the puppy', JSON.stringify(map.p1.publishedPhotoIds) === JSON.stringify(['photoA']) && JSON.stringify(map.p1.publishedVideoIds) === JSON.stringify(['videoA']))
   }
 }
 

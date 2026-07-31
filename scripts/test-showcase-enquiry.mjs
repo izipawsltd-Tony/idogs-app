@@ -92,8 +92,8 @@ const { check, skip, summary } = makeChecker()
     return r.honeypotFilled === true
   })())
   check('sanitizeEnquiryInput: an empty/absent honeypot field is honeypotFilled: false', sanitizeEnquiryInput(validInput).honeypotFilled === false)
-  check('sanitizeEnquiryInput: a valid puppyId string passes through trimmed', sanitizeEnquiryInput({ ...validInput, puppyId: '  pup123  ' }).puppyId === 'pup123')
-  check('sanitizeEnquiryInput: an absent puppyId normalizes to null (general litter enquiry)', sanitizeEnquiryInput(validInput).puppyId === null)
+  check('sanitizeEnquiryInput: a valid puppyRef string passes through trimmed (Codex fix-round: opaque reference, resolved server-side by the caller)', sanitizeEnquiryInput({ ...validInput, puppyRef: '  abc123opaque  ' }).puppyRef === 'abc123opaque')
+  check('sanitizeEnquiryInput: an absent puppyRef normalizes to null (general litter enquiry)', sanitizeEnquiryInput(validInput).puppyRef === null)
 
   // ── firestore.rules ──
   const rulesSrc = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
@@ -113,17 +113,25 @@ const { check, skip, summary } = makeChecker()
   // ── api/create-showcase-enquiry.js ──
   const enquirySrc = readFileSync(new URL('../api/create-showcase-enquiry.js', import.meta.url), 'utf8')
   check('create-showcase-enquiry.js rate-limits BEFORE any token lookup or validation',
-    enquirySrc.indexOf('checkRateLimit') < enquirySrc.indexOf("collection('litterShowcases')"))
+    enquirySrc.indexOf('checkDurableRateLimit') < enquirySrc.indexOf("collection('litterShowcases')"))
+  check('create-showcase-enquiry.js uses the DURABLE (Firestore-transaction-backed) rate limiter, not the in-memory one (Codex fix-round: "Rate limiting")',
+    /from '\.\/_lib\/durable-rate-limit\.js'/.test(enquirySrc) && !/checkRateLimit\(/.test(enquirySrc))
   check('create-showcase-enquiry.js uses a namespaced rate-limit key distinct from both api/passport.js and api/showcase-public.js',
-    /hashClientKey\(`enquiry:\$\{getClientIp\(req\)\}`\)/.test(enquirySrc))
+    /checkDurableRateLimit\(\s*\n\s*db,\s*\n\s*'showcase-enquiry',/.test(enquirySrc))
   check('create-showcase-enquiry.js uses a STRICTER rate limit than the read endpoint (a lower default max)',
     /ENQUIRY_RATE_LIMIT_MAX_REQUESTS.*\|\| 5/.test(enquirySrc))
   check('create-showcase-enquiry.js resolves tenantId from the token-matched Showcase, never from client-supplied input',
     /tenantId: showcase\.tenantId/.test(enquirySrc) && !/req\.body\.tenantId/.test(enquirySrc) && !/body\.tenantId/.test(enquirySrc))
   check('create-showcase-enquiry.js resolves litterId from the Showcase document id, never from client-supplied input',
-    /litterId,\s*\n\s*puppyId: sanitized\.puppyId/.test(enquirySrc) && !/req\.body\.litterId/.test(enquirySrc) && !/body\.litterId/.test(enquirySrc))
-  check('create-showcase-enquiry.js validates a supplied puppyId is a currently-visible member of the resolved Showcase',
-    /showcase\.puppies\?\.\[sanitized\.puppyId\]\?\.visible !== true/.test(enquirySrc))
+    /litterId,\s*\n\s*puppyId: resolvedPuppyId/.test(enquirySrc) && !/req\.body\.litterId/.test(enquirySrc) && !/body\.litterId/.test(enquirySrc))
+  check('create-showcase-enquiry.js verifies the Litter belongs to the same tenant as the Showcase before accepting any enquiry (Codex fix-round: "Tenant-chain validation")',
+    /litterSnap\.data\(\)\.tenantId !== showcase\.tenantId/.test(enquirySrc))
+  check('create-showcase-enquiry.js resolves a submitted puppyRef by recomputing opaquePuppyRef() against every currently-visible puppy, never trusting the client value directly (Codex fix-round: "Public identifiers")',
+    /opaquePuppyRef\(litterId, dogId\) === sanitized\.puppyRef/.test(enquirySrc))
+  check('create-showcase-enquiry.js re-verifies the resolved puppy\'s own tenantId/litterId before attributing the enquiry to it',
+    /puppyData\.tenantId !== showcase\.tenantId \|\| puppyData\.litterId !== litterId/.test(enquirySrc))
+  check('create-showcase-enquiry.js never accepts a raw dogId as puppyRef — sanitizeEnquiryInput() only ever exposes puppyRef, never puppyId',
+    !/sanitized\.puppyId/.test(enquirySrc))
   check('create-showcase-enquiry.js checks isShareLive() before accepting any submission',
     /isShareLive\(showcase\)/.test(enquirySrc))
   check('create-showcase-enquiry.js returns a FAKE success (never a distinguishing error) when the honeypot is tripped',
@@ -141,7 +149,8 @@ const { check, skip, summary } = makeChecker()
 
   // ── ShowcasePublicPage.tsx ──
   const pageSrc = readFileSync(new URL('../src/pages/ShowcasePublicPage.tsx', import.meta.url), 'utf8')
-  check('ShowcasePublicPage posts to api/create-showcase-enquiry with the token', /fetch\('\/api\/create-showcase-enquiry'/.test(pageSrc) && /token,\s*\n?\s*puppyId: puppyId \|\| undefined/.test(pageSrc))
+  check('ShowcasePublicPage posts to api/create-showcase-enquiry with the token and the OPAQUE puppyRef (never a raw dogId field name)',
+    /fetch\('\/api\/create-showcase-enquiry'/.test(pageSrc) && /token,\s*\n?\s*puppyRef: puppyRef \|\| undefined/.test(pageSrc))
   check('The enquiry form includes a honeypot field named "website"', /name="website"/.test(pageSrc))
   check('The honeypot field is visually/semantically hidden (aria-hidden, off-screen, unreachable by tab order)',
     /aria-hidden="true"[\s\S]{0,400}tabIndex=\{-1\}/.test(pageSrc))
@@ -158,7 +167,9 @@ const { check, skip, summary } = makeChecker()
 if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
   await import('./test-helpers/emulator-credentials.mjs')
   const { getFirestore } = await import('firebase-admin/firestore')
-  const { __resetForTests: resetRateLimit } = await import('../api/_lib/rate-limit.js')
+  const { hashClientKey, getClientIp } = await import('../api/_lib/rate-limit.js')
+  const { __resetDurableRateLimitForTests } = await import('../api/_lib/durable-rate-limit.js')
+  const { opaquePuppyRef } = await import('../api/_lib/showcase-media-access.js')
 
   const { default: createShowcaseHandler } = await import('../api/create-showcase.js')
   const { default: updatePuppyHandler } = await import('../api/update-showcase-puppy.js')
@@ -181,6 +192,18 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   function isDenied(err) { return err && (err.code === 'permission-denied' || /permission/i.test(err.message)) }
   function mockReq(body) { return { method: 'POST', headers: {}, body } }
   function mockAuthedReq(body, token) { return { method: 'POST', headers: token ? { authorization: `Bearer ${token}` } : {}, body } }
+
+  // Every mockReq() above carries no IP-identifying header at all, so
+  // getClientIp() falls back to the same 'unknown' value on every call —
+  // meaning every test in this file shares ONE durable rate-limit bucket
+  // ('showcase-enquiry:unknown'). Resetting it (rather than giving each
+  // test its own fake IP) mirrors the ORIGINAL in-memory limiter's own
+  // __resetForTests() semantics (a full clear) closely enough to keep
+  // this file's existing test structure intact.
+  const sharedRateLimitKey = hashClientKey(getClientIp({ headers: {} }))
+  async function resetRateLimit() {
+    await __resetDurableRateLimitForTests(seedDb, 'showcase-enquiry', sharedRateLimitKey)
+  }
   function mockRes() {
     const res = { statusCode: 200, body: null, headers: {} }
     res.status = c => { res.statusCode = c; return res }
@@ -233,7 +256,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   // WRITTEN document's tenantId/litterId come from the token, never from
   // client input (even when the client tries to inject its own) ──
   {
-    resetRateLimit()
+    await resetRateLimit()
     const { breeder, litterId, token } = await setupLiveShowcase('e1')
     const strangerTenantId = 'INJECTED_TENANT_SHOULD_BE_IGNORED'
     const strangerLitterId = 'INJECTED_LITTER_SHOULD_BE_IGNORED'
@@ -253,7 +276,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   // ── Test 2: field validation is enforced server-side (a direct API
   // caller bypassing the public page's own client-side checks) ──
   {
-    resetRateLimit()
+    await resetRateLimit()
     const { token } = await setupLiveShowcase('e2')
     const missingName = mockRes()
     await enquiryHandler(mockReq({ ...validBody, token, name: '' }), missingName)
@@ -275,7 +298,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   // ── Test 3: honeypot — a filled honeypot returns a fake success and
   // writes NOTHING ──
   {
-    resetRateLimit()
+    await resetRateLimit()
     const { litterId, token } = await setupLiveShowcase('e3')
     const res = mockRes()
     await enquiryHandler(mockReq({ ...validBody, token, website: 'http://spam.example' }), res)
@@ -286,7 +309,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   // ── Test 4: an invalid/unknown token is denied with the SAME generic
   // 404 the read endpoint uses ──
   {
-    resetRateLimit()
+    await resetRateLimit()
     const res = mockRes()
     await enquiryHandler(mockReq({ ...validBody, token: 'this-token-was-never-issued' }), res)
     check('4', 'An unknown token returns a generic 404', res.statusCode === 404)
@@ -296,7 +319,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   // ── Test 5: a disabled/paused Showcase denies enquiries too, not just
   // reads ──
   {
-    resetRateLimit()
+    await resetRateLimit()
     const { litterId, token } = await setupLiveShowcase('e5')
     await seedDb.collection('litterShowcases').doc(litterId).update({ enabled: false })
     const res = mockRes()
@@ -304,28 +327,62 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('5', 'A disabled Showcase denies new enquiries (404)', res.statusCode === 404)
   }
 
-  // ── Test 6: puppyId IDOR — a puppyId that is not a currently-visible
-  // member of THIS Showcase is rejected, even if it's a real dog id
-  // belonging to a completely different litter/breeder ──
+  // ── Test 5b (Codex fix-round, "Tenant-chain validation"): a Litter
+  // whose tenantId has drifted from the Showcase's own tenantId denies
+  // ALL enquiries against it, not just reads ──
   {
-    resetRateLimit()
-    const a = await setupLiveShowcase('e6a', [`e6a_pup_${R}`])
-    const b = await setupLiveShowcase('e6b', [`e6b_pup_${R}`])
+    await resetRateLimit()
+    const { litterId, token } = await setupLiveShowcase('e5b')
+    await seedDb.collection('litters').doc(litterId).update({ tenantId: 'some-other-tenant-entirely' })
     const res = mockRes()
-    await enquiryHandler(mockReq({ ...validBody, token: a.token, puppyId: `e6b_pup_${R}` }), res)
-    check('6', 'A puppyId belonging to a DIFFERENT Showcase is rejected (404, IDOR)', res.statusCode === 404)
-    void b
+    await enquiryHandler(mockReq({ ...validBody, token }), res)
+    check('5b', 'A tenant-drifted Litter denies new enquiries (404)', res.statusCode === 404)
+  }
 
+  // ── Test 6 (Codex fix-round, "Public identifiers" / opaque enquiry
+  // attribution): puppyRef is an OPAQUE reference, resolved server-side
+  // by recomputing opaquePuppyRef(litterId, dogId) against every
+  // currently-visible puppy in the TOKEN-RESOLVED Showcase — never a raw
+  // dogId accepted directly, and never a ref that resolves against a
+  // DIFFERENT Showcase's puppies ──
+  {
+    await resetRateLimit()
+    const aPupId = `e6a_pup_${R}`
+    const bPupId = `e6b_pup_${R}`
+    const a = await setupLiveShowcase('e6a', [aPupId])
+    const b = await setupLiveShowcase('e6b', [bPupId])
+
+    // 6a — submitting the RAW real dogId (not its opaque ref) must fail:
+    // a raw id never happens to collide with its own sha256-derived ref.
+    const rawIdRes = mockRes()
+    await enquiryHandler(mockReq({ ...validBody, token: a.token, puppyRef: aPupId }), rawIdRes)
+    check('6', 'Submitting the RAW real dogId as puppyRef is rejected (404) — the ref must be the opaque hash, never the id itself', rawIdRes.statusCode === 404)
+
+    // 6b — a puppyRef correctly computed for a DIFFERENT Showcase's
+    // puppy is rejected when submitted against Showcase A's token (IDOR):
+    // reaching Showcase B's puppy list at all requires Showcase B's own
+    // valid token, which this request never presents.
+    const crossShowcaseRef = opaquePuppyRef(b.litterId, bPupId)
+    const crossRes = mockRes()
+    await enquiryHandler(mockReq({ ...validBody, token: a.token, puppyRef: crossShowcaseRef }), crossRes)
+    check('6', 'A puppyRef belonging to a DIFFERENT Showcase is rejected (404, IDOR)', crossRes.statusCode === 404)
+
+    // 6c — the CORRECT opaque ref for Showcase A's own visible puppy is
+    // accepted, and the enquiry is attributed to the REAL dogId
+    // server-side (the breeder's own dashboard needs the real id — see
+    // LittersPage.tsx's enquiry list, which matches against its own
+    // puppyDogs by real id).
+    const legitRef = opaquePuppyRef(a.litterId, aPupId)
     const legitRes = mockRes()
-    await enquiryHandler(mockReq({ ...validBody, token: a.token, puppyId: `e6a_pup_${R}` }), legitRes)
-    check('6', 'A puppyId that genuinely IS visible in this Showcase is accepted', legitRes.statusCode === 200)
+    await enquiryHandler(mockReq({ ...validBody, token: a.token, puppyRef: legitRef }), legitRes)
+    check('6', 'The correct opaque ref for a genuinely visible puppy is accepted', legitRes.statusCode === 200, JSON.stringify(legitRes.body))
     const written = (await seedDb.collection('showcaseEnquiries').where('litterId', '==', a.litterId).get()).docs
-    check('6', 'The accepted enquiry correctly attributes the puppyId', written.some(d => d.data().puppyId === `e6a_pup_${R}`))
+    check('6', 'The accepted enquiry is attributed to the REAL dogId, resolved server-side from the opaque ref', written.some(d => d.data().puppyId === aPupId))
   }
 
   // ── Test 7: rate limiting — stricter than the read endpoint's default ──
   {
-    resetRateLimit()
+    await resetRateLimit()
     const { token } = await setupLiveShowcase('e7')
     let last
     for (let i = 0; i < 6; i++) {
@@ -334,14 +391,14 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     }
     check('7', 'The 6th enquiry submission from the same client within the window is rate-limited (429)', last.statusCode === 429)
     check('7', 'A 429 response includes a Retry-After header', typeof last.headers['Retry-After'] === 'string' && Number(last.headers['Retry-After']) > 0)
-    resetRateLimit()
+    await resetRateLimit()
   }
 
   // ── Test 8: tenant isolation on READ — the owning breeder can read
   // their own enquiries directly (client SDK); an unrelated breeder
   // cannot ──
   {
-    resetRateLimit()
+    await resetRateLimit()
     const { breeder, litterId, token } = await setupLiveShowcase('e8')
     const stranger = await newUser('e8stranger')
     await enquiryHandler(mockReq({ ...validBody, token }), mockRes())

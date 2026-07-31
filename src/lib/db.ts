@@ -1095,7 +1095,7 @@ export async function removePuppyFromLitter(litterId: string, puppyId: string): 
 // api/_lib/showcase-schema.js exactly. Never written to Firestore by
 // the client; only used to render a sensible default row before the
 // breeder has interacted with a given puppy.
-export const DEFAULT_SHOWCASE_PUPPY_ENTRY: ShowcasePuppyEntry = { visible: false, availability: 'available' }
+export const DEFAULT_SHOWCASE_PUPPY_ENTRY: ShowcasePuppyEntry = { visible: false, availability: 'available', publishedPhotoIds: [], publishedVideoIds: [] }
 
 // Returns null if no Showcase has been created for this litter yet —
 // not an error, just "not created" (Slice 1 requirement 1: a Showcase
@@ -1207,12 +1207,26 @@ export async function updateShowcaseShare(litterId: string, patch: { shareEnable
   return result.showcase
 }
 
+// A signed, short-lived MediaItem — what every Showcase media endpoint
+// returns instead of a raw Storage path (Codex fix-round: "Revocable
+// media delivery"). Never persist `url` anywhere — it expires in minutes
+// (see SIGNED_MEDIA_URL_TTL_MS in api/_lib/showcase-media-access.js);
+// re-fetch via getShowcaseMediaUrls() rather than caching it across a
+// page reload.
+export interface SignedMediaItem {
+  id: string
+  url: string
+}
+
 // Slice 2: uploads one photo or video for a puppy's Showcase gallery.
 // `base64` should be the raw file bytes (no client-side resize for
 // photos — api/_lib/image-pipeline.js does the real processing
 // server-side, including HEIC/HEIF decode) so the server's magic-byte
 // sniff sees the genuine original file, never a canvas re-encode.
-export async function uploadShowcaseMedia(dogId: string, base64: string, kind: 'photo' | 'video'): Promise<{ fileUrl: string; photos: string[]; videos: string[] }> {
+// Codex fix-round ("Revocable media delivery"): the response carries
+// freshly-signed URLs, never a permanent public one — the upload itself
+// is always PRIVATE Storage.
+export async function uploadShowcaseMedia(dogId: string, base64: string, kind: 'photo' | 'video'): Promise<{ mediaId: string; photos: SignedMediaItem[]; videos: SignedMediaItem[] }> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
   const res = await fetch('/api/upload-showcase-media', {
@@ -1228,10 +1242,11 @@ export async function uploadShowcaseMedia(dogId: string, base64: string, kind: '
 }
 
 // Slice 2: reorders and/or deletes items in a puppy's photo/video
-// gallery — `order` is the FULL desired array (index 0 = cover). Never
-// a way to add a new item (see api/update-showcase-media.js — it only
-// ever accepts a subset/reorder of what's already there).
-export async function updateShowcaseMediaOrder(dogId: string, kind: 'photo' | 'video', order: string[]): Promise<{ photos: string[]; videos: string[] }> {
+// gallery — `order` is the FULL desired array of MediaItem ids (index 0
+// = cover), never Storage paths or URLs. Never a way to add a new item
+// (see api/update-showcase-media.js — it only ever accepts a
+// subset/reorder of what's already there).
+export async function updateShowcaseMediaOrder(dogId: string, kind: 'photo' | 'video', order: string[]): Promise<{ photos: SignedMediaItem[]; videos: SignedMediaItem[] }> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
   const res = await fetch('/api/update-showcase-media', {
@@ -1246,13 +1261,35 @@ export async function updateShowcaseMediaOrder(dogId: string, kind: 'photo' | 'v
   return res.json()
 }
 
-// `patch` may include visible and/or availability — only the field(s)
-// present are changed server-side (Slice 1 requirement 5: availability
-// changes must never alter visibility, and vice versa).
+// Fresh, short-lived signed URLs for a puppy's CURRENT private Showcase
+// gallery — needed anywhere the breeder's own workspace renders
+// dog.photos/dog.videos (which are private Storage paths, never directly
+// viewable) outside of the moment right after an upload/reorder call
+// already returned its own signed URLs inline (initial mount, switching
+// to a different puppy, a page reload). See api/get-showcase-media-urls.js.
+export async function getShowcaseMediaUrls(dogId: string): Promise<{ photos: SignedMediaItem[]; videos: SignedMediaItem[] }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/get-showcase-media-urls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Fetch media URLs failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// `patch` may include any subset of visible/availability/
+// publishedPhotoIds/publishedVideoIds — only the field(s) present are
+// changed server-side (Slice 1 requirement 5, extended by the Codex
+// fix-round: none of these four fields ever implicitly changes another).
 export async function updateShowcasePuppy(
   litterId: string,
   puppyId: string,
-  patch: { visible?: boolean; availability?: ShowcaseAvailability }
+  patch: { visible?: boolean; availability?: ShowcaseAvailability; publishedPhotoIds?: string[]; publishedVideoIds?: string[] }
 ): Promise<LitterShowcase> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()

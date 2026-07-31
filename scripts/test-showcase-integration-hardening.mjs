@@ -54,6 +54,9 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
 
   const { getFirestore } = await import('firebase-admin/firestore')
   const { getStorage } = await import('firebase-admin/storage')
+  const { hashClientKey } = await import('../api/_lib/rate-limit.js')
+  const { __resetDurableRateLimitForTests } = await import('../api/_lib/durable-rate-limit.js')
+  const { opaquePuppyRef } = await import('../api/_lib/showcase-media-access.js')
   const { default: createShowcaseHandler } = await import('../api/create-showcase.js')
   const { default: updatePuppyHandler } = await import('../api/update-showcase-puppy.js')
   const { default: setEnabledHandler } = await import('../api/set-showcase-enabled.js')
@@ -64,6 +67,16 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
 
   const seedDb = getFirestore()
   const bucket = getStorage().bucket(process.env.FIREBASE_STORAGE_BUCKET)
+
+  // Both public endpoints' rate limiters are now durable (Firestore-
+  // transaction-backed), meaning state persists ACROSS separate script
+  // invocations sharing the same emulator session — unlike the old
+  // in-memory limiter, this file's own requests could interfere with
+  // (or be interfered with by) another test file's if they ever reused
+  // the same IP. Every mockGetReq()/mockReq() call below passes its own
+  // unique per-test IP, and each test resets its own bucket up front.
+  async function resetPublicRateLimit(ip) { await __resetDurableRateLimitForTests(seedDb, 'showcase-public', hashClientKey(ip)) }
+  async function resetEnquiryRateLimit(ip) { await __resetDurableRateLimitForTests(seedDb, 'showcase-enquiry', hashClientKey(ip)) }
 
   const { initializeApp } = await import('firebase/app')
   const { getAuth: getClientAuth, connectAuthEmulator, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } = await import('firebase/auth')
@@ -78,10 +91,13 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   const sharp = (await import('sharp')).default
   const jpegBase64 = (await sharp({ create: { width: 4, height: 4, channels: 3, background: 'red' } }).jpeg().toBuffer()).toString('base64')
 
-  function mockReq(body, token) {
-    return { method: 'POST', headers: token ? { authorization: `Bearer ${token}` } : {}, body }
+  function mockReq(body, token, xff) {
+    const headers = {}
+    if (token) headers.authorization = `Bearer ${token}`
+    if (xff) headers['x-forwarded-for'] = xff
+    return { method: 'POST', headers, body }
   }
-  function mockGetReq(query) { return { method: 'GET', headers: {}, socket: { remoteAddress: '127.0.0.1' }, query } }
+  function mockGetReq(query, xff) { return { method: 'GET', headers: xff ? { 'x-forwarded-for': xff } : {}, socket: { remoteAddress: '127.0.0.1' }, query } }
   function mockRes() {
     const res = { statusCode: 200, body: null, headers: {} }
     res.status = c => { res.statusCode = c; return res }
@@ -107,11 +123,13 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   // tenant is no longer Plus-eligible, without the Showcase document
   // itself changing at all ──
   {
+    await resetPublicRateLimit('h1-ip')
+    await resetEnquiryRateLimit('h1-enquiry-ip')
     const breeder = await newUser('h1breeder', breederPlusProfile)
     const litterId = `h1litter_${R}`
     const puppyId = `h1pup_${R}`
     await seedDb.collection('litters').doc(litterId).set({ tenantId: breeder.uid, damId: null, name: 'HardeningLitter', notes: '', actualBirthDate: '2026-01-01', puppyIds: [puppyId] })
-    await seedDb.collection('dogs').doc(puppyId).set({ tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED', name: 'HardeningPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01' })
+    await seedDb.collection('dogs').doc(puppyId).set({ tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED', name: 'HardeningPup', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId, photos: [], videos: [] })
     await createShowcaseHandler(mockReq({ litterId }, breeder.idToken), mockRes())
     await setEnabledHandler(mockReq({ litterId, enabled: true }, breeder.idToken), mockRes())
     await updatePuppyHandler(mockReq({ litterId, puppyId, visible: true }, breeder.idToken), mockRes())
@@ -120,18 +138,18 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     const token = rotateRes.body.shareToken
 
     const beforeDowngrade = mockRes()
-    await showcasePublicHandler(mockGetReq({ token }), beforeDowngrade)
+    await showcasePublicHandler(mockGetReq({ token }, 'h1-ip'), beforeDowngrade)
     check('1', 'Sanity: the link works normally while the breeder is still Plus', beforeDowngrade.statusCode === 200)
 
     // Downgrade — the Showcase document itself is completely untouched.
     await seedDb.collection('users').doc(breeder.uid).set({ ...breederPlusProfile, plan: 'free' })
 
     const afterDowngradeRead = mockRes()
-    await showcasePublicHandler(mockGetReq({ token }), afterDowngradeRead)
+    await showcasePublicHandler(mockGetReq({ token }, 'h1-ip'), afterDowngradeRead)
     check('1', 'After downgrading to Free, the SAME link now returns 404 on read', afterDowngradeRead.statusCode === 404)
 
     const afterDowngradeEnquiry = mockRes()
-    await enquiryHandler(mockReq({ token, name: 'Buyer', email: 'buyer@example.com', message: 'hi', consent: true }), afterDowngradeEnquiry)
+    await enquiryHandler(mockReq({ token, name: 'Buyer', email: 'buyer@example.com', message: 'hi', consent: true }, undefined, 'h1-enquiry-ip'), afterDowngradeEnquiry)
     check('1', 'After downgrading to Free, the SAME link also refuses enquiries (404)', afterDowngradeEnquiry.statusCode === 404)
     check('1', 'No enquiry was written for the downgraded tenant\'s litter', (await seedDb.collection('showcaseEnquiries').where('litterId', '==', litterId).get()).empty)
 
@@ -140,20 +158,24 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     // that permanently invalidated the token.
     await seedDb.collection('users').doc(breeder.uid).set(breederPlusProfile)
     const afterReupgrade = mockRes()
-    await showcasePublicHandler(mockGetReq({ token }), afterReupgrade)
+    await showcasePublicHandler(mockGetReq({ token }, 'h1-ip'), afterReupgrade)
     check('1', 'Re-upgrading to Plus restores the ORIGINAL (never-rotated) link immediately', afterReupgrade.statusCode === 200)
   }
 
-  // ── Test 2: full end-to-end flow across every commit in this Slice,
-  // as one continuous story ──
+  // ── Test 2: full end-to-end flow across every commit in this Slice
+  // PLUS this fix-round (tenant-chain validation, opaque refs, explicit
+  // media publication, revocable signed delivery), as one continuous
+  // story ──
   {
+    await resetPublicRateLimit('h2-ip')
+    await resetEnquiryRateLimit('h2-enquiry-ip')
     const breeder = await newUser('h2breeder', breederPlusProfile)
     const litterId = `h2litter_${R}`
     const puppyId = `h2pup_${R}`
 
     // Commit 1/Slice-1 foundation: litter + puppy + showcase.
     await seedDb.collection('litters').doc(litterId).set({ tenantId: breeder.uid, damId: null, sireName: 'Rex', name: 'FullFlowLitter', notes: 'private', actualBirthDate: '2026-01-01', puppyIds: [puppyId] })
-    await seedDb.collection('dogs').doc(puppyId).set({ tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED', name: 'Buddy', sex: 'male', breed: 'Labrador', colour: 'Gold', status: 'active', dateOfBirth: '2026-01-01', photos: [] })
+    await seedDb.collection('dogs').doc(puppyId).set({ tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED', name: 'Buddy', sex: 'male', breed: 'Labrador', colour: 'Gold', status: 'active', dateOfBirth: '2026-01-01', litterId, photos: [], videos: [] })
     const createRes = mockRes()
     await createShowcaseHandler(mockReq({ litterId }, breeder.idToken), createRes)
     check('2', 'Showcase created', createRes.statusCode === 200)
@@ -172,33 +194,55 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     await uploadMediaHandler(mockReq({ dogId: puppyId, base64: jpegBase64, kind: 'photo' }, breeder.idToken), uploadRes)
     check('2', 'Photo uploaded to the puppy\'s gallery', uploadRes.statusCode === 200 && uploadRes.body.photos.length === 1)
 
+    // Fix-round ("Explicit media publication"): uploading never
+    // publishes anything by itself — the public response must show ZERO
+    // photos until the breeder explicitly publishes this exact one.
+    const beforePublishRes = mockRes()
+    await showcasePublicHandler(mockGetReq({ token }, 'h2-ip'), beforePublishRes)
+    check('2', 'Before explicit publication, the just-uploaded photo does NOT appear publicly', beforePublishRes.body?.puppies?.[0]?.photos?.length === 0)
+
+    await updatePuppyHandler(mockReq({ litterId, puppyId, publishedPhotoIds: [uploadRes.body.mediaId] }, breeder.idToken), mockRes())
+
     // Commit 2: the public page's data source shows the litter, the
-    // puppy, AND the just-uploaded photo — proving Commits 1-3 compose
-    // correctly end to end, not just in isolation.
+    // puppy, AND the just-published photo — proving Commits 1-3 PLUS
+    // this fix-round's explicit-publication step compose correctly end
+    // to end, not just in isolation.
     const publicRes = mockRes()
-    await showcasePublicHandler(mockGetReq({ token }), publicRes)
+    await showcasePublicHandler(mockGetReq({ token }, 'h2-ip'), publicRes)
     check('2', 'Public read succeeds', publicRes.statusCode === 200)
     check('2', 'The public response includes the litter name', publicRes.body.litter.name === 'FullFlowLitter')
-    check('2', 'The public response includes the puppy', publicRes.body.puppies.length === 1 && publicRes.body.puppies[0].name === 'Buddy')
-    check('2', 'The public response includes the photo just uploaded via the media pipeline', publicRes.body.puppies[0].photos.length === 1)
+    check('2', 'The public response includes the puppy under its OPAQUE reference, not the raw dogId', publicRes.body.puppies.length === 1 && publicRes.body.puppies[0].id === opaquePuppyRef(litterId, puppyId) && publicRes.body.puppies[0].name === 'Buddy')
+    check('2', 'The public response includes the explicitly-published photo, as a signed URL', publicRes.body.puppies[0].photos.length === 1 && typeof publicRes.body.puppies[0].photos[0].url === 'string')
     check('2', 'The private litter notes never leaked into the public response', !JSON.stringify(publicRes.body).includes('private'))
+    // NOTE: not asserting "the raw dogId never appears anywhere" here —
+    // the published photo's SIGNED URL legitimately embeds the Storage
+    // object path (dogs/{uid}/{dogId}/photos/...), which is how a signed
+    // URL resolves to a specific object; that's expected and unrelated
+    // to the actual security property (the puppy's own `id` FIELD is
+    // opaque), already asserted above.
 
-    // Commit 4: a buyer submits an enquiry about that exact puppy.
+    // Commit 4: a buyer submits an enquiry about that exact puppy, using
+    // the OPAQUE reference the public page itself was given — never the
+    // raw dogId (Codex fix-round: "Public identifiers").
+    const puppyRef = publicRes.body.puppies[0].id
     const enquiryRes = mockRes()
-    await enquiryHandler(mockReq({ token, puppyId, name: 'Interested Buyer', email: 'buyer@example.com', message: 'Is Buddy still available?', consent: true }), enquiryRes)
-    check('2', 'Enquiry submitted successfully', enquiryRes.statusCode === 200)
+    await enquiryHandler(mockReq({ token, puppyRef, name: 'Interested Buyer', email: 'buyer@example.com', message: 'Is Buddy still available?', consent: true }, undefined, 'h2-enquiry-ip'), enquiryRes)
+    check('2', 'Enquiry submitted successfully', enquiryRes.statusCode === 200, JSON.stringify(enquiryRes.body))
 
-    // Commit 4: the breeder reads it back through their own authenticated view.
+    // Commit 4: the breeder reads it back through their own authenticated
+    // view — attributed to the REAL dogId, resolved server-side from the
+    // opaque ref the buyer actually submitted.
     await signInWithEmailAndPassword(clientAuth, breeder.email, PW)
     const enquirySnap = await getDocs(query(collection(clientDb, 'showcaseEnquiries'), where('litterId', '==', litterId), where('tenantId', '==', breeder.uid)))
-    check('2', 'The breeder can read the enquiry back through their own dashboard query', enquirySnap.size === 1 && enquirySnap.docs[0].data().puppyId === puppyId)
+    check('2', 'The breeder can read the enquiry back through their own dashboard query, correctly attributed to the real puppy', enquirySnap.size === 1 && enquirySnap.docs[0].data().puppyId === puppyId)
     await signOut(clientAuth)
 
     // Storage sanity: the uploaded file genuinely exists (Commit 3's own
     // Storage-emulator guarantee, re-confirmed here as part of the whole
-    // flow rather than in isolation).
-    const path = uploadRes.body.fileUrl.replace(`https://storage.googleapis.com/${bucket.name}/`, '')
-    check('2', 'The uploaded photo file genuinely exists in Storage', (await bucket.file(path).exists())[0] === true)
+    // flow rather than in isolation). The path is PRIVATE — read directly
+    // from Firestore, never derived from a (no-longer-existent) public URL.
+    const dogAfter = (await seedDb.collection('dogs').doc(puppyId).get()).data()
+    check('2', 'The uploaded photo file genuinely exists in Storage', (await bucket.file(dogAfter.photos[0].path).exists())[0] === true)
   }
 
   await summary()

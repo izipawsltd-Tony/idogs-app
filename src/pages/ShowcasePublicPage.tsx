@@ -8,6 +8,18 @@ import { getDogAge } from '../lib/utils'
 // public endpoint doesn't actually send (private/internal dog fields
 // simply do not exist on this shape at all — a typo reaching for one
 // would be a compile error, not a silent `undefined`).
+//
+// Codex fix-round: `id` is an OPAQUE reference (opaquePuppyRef()), never
+// the real Firestore dogId — see api/_lib/showcase-media-access.js.
+// `photos`/`videos` are freshly-signed, short-lived URLs for ONLY the
+// media this puppy's Showcase entry explicitly published — never the
+// full private gallery, never the dog's own profile-photo field (removed entirely; a
+// puppy's public "photo" is only ever something the breeder explicitly
+// chose to publish).
+interface PublicMediaItem {
+  id: string
+  url: string
+}
 interface PublicPuppy {
   id: string
   name: string
@@ -16,8 +28,8 @@ interface PublicPuppy {
   colour: string | null
   dateOfBirth: string
   availability: 'available' | 'on_hold' | 'reserved' | 'unavailable'
-  profilePhoto: string | null
-  photos: string[]
+  photos: PublicMediaItem[]
+  videos: PublicMediaItem[]
 }
 interface PublicLitter {
   name: string
@@ -119,7 +131,7 @@ export default function ShowcasePublicPage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {puppies.map(puppy => {
-              const photo = puppy.profilePhoto || puppy.photos?.[0] || null
+              const photo = puppy.photos?.[0]?.url || null
               const color = AVAILABILITY_COLOR[puppy.availability]
               return (
                 <div key={puppy.id} style={{ background: '#fff', borderRadius: 14, overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
@@ -146,8 +158,15 @@ export default function ShowcasePublicPage() {
                   </div>
                   {puppy.photos && puppy.photos.length > 1 && (
                     <div style={{ display: 'flex', gap: 6, padding: '0 14px 14px', overflowX: 'auto' }}>
-                      {puppy.photos.map((url, i) => (
-                        <img key={i} src={url} alt={`${puppy.name} photo ${i + 1}`} style={{ width: 60, height: 60, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+                      {puppy.photos.map((item, i) => (
+                        <img key={item.id} src={item.url} alt={`${puppy.name} photo ${i + 1}`} style={{ width: 60, height: 60, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+                      ))}
+                    </div>
+                  )}
+                  {puppy.videos && puppy.videos.length > 0 && (
+                    <div style={{ display: 'flex', gap: 6, padding: '0 14px 14px', overflowX: 'auto' }}>
+                      {puppy.videos.map((item, i) => (
+                        <video key={item.id} src={item.url} controls style={{ width: 120, height: 80, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} aria-label={`${puppy.name} video ${i + 1}`} />
                       ))}
                     </div>
                   )}
@@ -175,7 +194,11 @@ function EnquiryForm({ token, puppies }: { token: string; puppies: PublicPuppy[]
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [message, setMessage] = useState('')
-  const [puppyId, setPuppyId] = useState('')
+  // Holds the opaque puppy.id from the public API response (see
+  // PublicPuppy above) — never a real Firestore dogId. Sent to the
+  // server as `puppyRef`; api/create-showcase-enquiry.js resolves it
+  // back to a real dogId itself (see that file's own header comment).
+  const [puppyRef, setPuppyRef] = useState('')
   const [consent, setConsent] = useState(false)
   // Honeypot — invisible to a real visitor (off-screen, unreachable by
   // tab order, hidden from screen readers), but present in the DOM for
@@ -196,7 +219,7 @@ function EnquiryForm({ token, puppies }: { token: string; puppies: PublicPuppy[]
       const res = await fetch('/api/create-showcase-enquiry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, puppyId: puppyId || undefined, name, email, phone, message, consent, website }),
+        body: JSON.stringify({ token, puppyRef: puppyRef || undefined, name, email, phone, message, consent, website }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -205,7 +228,7 @@ function EnquiryForm({ token, puppies }: { token: string; puppies: PublicPuppy[]
         return
       }
       setStatus('sent')
-      setName(''); setEmail(''); setPhone(''); setMessage(''); setPuppyId(''); setConsent(false)
+      setName(''); setEmail(''); setPhone(''); setMessage(''); setPuppyRef(''); setConsent(false)
     } catch {
       setErrorMessage('Could not send your enquiry — please check your connection and try again')
       setStatus('error')
@@ -231,7 +254,7 @@ function EnquiryForm({ token, puppies }: { token: string; puppies: PublicPuppy[]
       {puppies.length > 0 && (
         <div className="form-group" style={{ marginBottom: 10 }}>
           <label className="form-label">Which puppy? (optional)</label>
-          <select className="form-select" value={puppyId} onChange={e => setPuppyId(e.target.value)}>
+          <select className="form-select" value={puppyRef} onChange={e => setPuppyRef(e.target.value)}>
             <option value="">General enquiry</option>
             {puppies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
