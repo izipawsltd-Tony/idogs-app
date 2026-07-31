@@ -703,6 +703,9 @@ service cloud.firestore {
     // SDK inside a Firestore transaction; no legitimate client access
     // pattern at all (a client that could read/write its own counter
     // could trivially defeat the limiter it's meant to be bound by).
+    // REQUIRED before production: a Firestore TTL policy on this
+    // collection's `expiresAt` field — see durable-rate-limit.js's own
+    // header comment for the exact gcloud command; not yet configured.
     match /rateLimitCounters/{id} {
       allow read, write: if false;
     }

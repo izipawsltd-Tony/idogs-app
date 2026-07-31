@@ -39,10 +39,19 @@
 // Codex fix-round ("Explicit media publication" + "Revocable media
 // delivery"): only media ids present in that puppy's own
 // publishedPhotoIds/publishedVideoIds (set via
-// api/update-showcase-puppy.js) are ever returned, and only as a
-// freshly-minted, short-lived signed URL (signMediaItems()) — never a
-// raw Storage path, never dog.profilePhoto (which was never an
-// explicit-publication field to begin with).
+// api/update-showcase-puppy.js) are ever listed — never dog.profilePhoto
+// (which was never an explicit-publication field to begin with).
+//
+// Codex re-review ("server-mediated public media delivery"): this
+// endpoint no longer mints a Storage signed URL at all — each listed
+// item's `url` is a link to api/showcase-media.js, which re-validates
+// the ENTIRE authorization chain fresh on every single request before
+// ever minting a (60-second, not 15-minute) signed URL. This is what
+// makes disabling/rotating/expiring the share, unpublishing that exact
+// item, hiding the puppy, or the tenant losing Plus eligibility all
+// immediately stop the NEXT request for that media, regardless of how
+// recently this JSON response was fetched — see api/showcase-media.js's
+// own header comment for the precise guarantee.
 //
 // GET /api/showcase-public?token=XXXX
 // Returns: { litter, puppies: [...] } | 404 | 429
@@ -56,12 +65,10 @@
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
-import { getStorage } from 'firebase-admin/storage'
-import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { getClientIp, hashClientKey } from './_lib/rate-limit.js'
 import { checkDurableRateLimit } from './_lib/durable-rate-limit.js'
 import { hashShareToken, isShareLive, isTenantPlusEligible } from './_lib/showcase-share.js'
-import { opaquePuppyRef, signMediaItems } from './_lib/showcase-media-access.js'
+import { opaquePuppyRef } from './_lib/showcase-media-access.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -89,25 +96,43 @@ const db = getFirestore()
 // internal `availabilityStatus`/Sale & Availability fields, which are a
 // different, breeder-workspace-only concept (see DogDetailPage.tsx's
 // SaleAvailabilityPanel). `id` is an opaque reference, never the raw
-// Firestore dogId; `photos`/`videos` are signed URLs limited to exactly
-// what this puppy's Showcase entry has explicitly published — never
-// dog.profilePhoto, never the full private gallery.
-async function publicPuppyProjection(bucket, litterId, dogId, dog, entry) {
+// Firestore dogId; `photos`/`videos` are links to api/showcase-media.js
+// limited to exactly what this puppy's Showcase entry has explicitly
+// published — never dog.profilePhoto, never the full private gallery.
+// Builds a link to api/showcase-media.js — never a raw Storage path or
+// signed URL. `token` is the SAME raw token the caller already used to
+// reach this page (already effectively public to whoever holds this
+// exact share link — same trust boundary as the /s/:token route itself);
+// `puppyRef` is the opaque reference already computed for this puppy.
+function mediaEndpointUrl(token, puppyRef, mediaId, kind) {
+  const params = new URLSearchParams({ token, puppyRef, mediaId, kind })
+  return `/api/showcase-media?${params.toString()}`
+}
+
+function publicPuppyProjection(token, litterId, dogId, dog, entry) {
+  const puppyRef = opaquePuppyRef(litterId, dogId)
   const publishedPhotos = Array.isArray(entry.publishedPhotoIds) ? entry.publishedPhotoIds : []
   const publishedVideos = Array.isArray(entry.publishedVideoIds) ? entry.publishedVideoIds : []
-  const photoById = new Map((dog.photos || []).map(item => [item.id, item]))
-  const videoById = new Map((dog.videos || []).map(item => [item.id, item]))
+  const photoIds = new Set((dog.photos || []).map(item => item.id))
+  const videoIds = new Set((dog.videos || []).map(item => item.id))
 
-  const selectedPhotos = publishedPhotos.map(id => photoById.get(id)).filter(Boolean)
-  const selectedVideos = publishedVideos.map(id => videoById.get(id)).filter(Boolean)
-
-  const [photos, videos] = await Promise.all([
-    signMediaItems(bucket, selectedPhotos),
-    signMediaItems(bucket, selectedVideos),
-  ])
+  // Only lists ids that genuinely exist in this puppy's CURRENT
+  // Firestore gallery (a stale publishedPhotoIds entry pointing at an
+  // id removed via api/update-showcase-media.js is silently dropped
+  // here, same as before) — whether the underlying Storage OBJECT still
+  // exists is no longer checked here at all; that check now lives
+  // exclusively in api/showcase-media.js, re-run fresh on every actual
+  // fetch rather than once at listing time (see this file's own header
+  // comment on why the check moved).
+  const photos = publishedPhotos
+    .filter(id => photoIds.has(id))
+    .map(id => ({ id, url: mediaEndpointUrl(token, puppyRef, id, 'photo') }))
+  const videos = publishedVideos
+    .filter(id => videoIds.has(id))
+    .map(id => ({ id, url: mediaEndpointUrl(token, puppyRef, id, 'video') }))
 
   return {
-    id: opaquePuppyRef(litterId, dogId),
+    id: puppyRef,
     name: dog.name,
     sex: dog.sex,
     breed: dog.breed,
@@ -122,12 +147,6 @@ async function publicPuppyProjection(bucket, litterId, dogId, dog, entry) {
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
-  }
-
-  const bucketName = requireStorageBucket()
-  if (!bucketName) {
-    logConfigError('showcase-public', 'STORAGE_BUCKET_NOT_CONFIGURED')
-    return res.status(500).json({ error: 'FIREBASE_STORAGE_BUCKET not configured' })
   }
 
   // Rate limit first, before any other validation or lookup — same
@@ -223,8 +242,6 @@ export default async function handler(req, res) {
       ? await Promise.all(visiblePuppyIds.map(id => db.collection('dogs').doc(id).get()))
       : []
 
-    const bucket = getStorage().bucket(bucketName)
-
     // Tenant-chain + litter-chain validation per puppy: a mismatch on
     // ANY single puppy just drops that one puppy — the rest of a
     // legitimately-shared showcase must not break because of one bad
@@ -235,9 +252,7 @@ export default async function handler(req, res) {
       return dog.tenantId === showcase.tenantId && dog.litterId === litterId
     })
 
-    const puppies = await Promise.all(
-      validPuppyDocs.map(snap => publicPuppyProjection(bucket, litterId, snap.id, snap.data(), showcase.puppies[snap.id]))
-    )
+    const puppies = validPuppyDocs.map(snap => publicPuppyProjection(token, litterId, snap.id, snap.data(), showcase.puppies[snap.id]))
 
     const litter = {
       name: litterData.name,

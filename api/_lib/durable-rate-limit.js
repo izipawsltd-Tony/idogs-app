@@ -27,13 +27,35 @@
 // bottom of firestore.rules) — Admin SDK access (this module) bypasses
 // Rules entirely, same trust boundary as litterPuppyOperations/
 // processedStripeEvents/litterQuotaLedger. Documents are small
-// (namespace, windowStart, count) and self-heal every window; no
-// separate cleanup job is required for correctness (a stale document
-// past its window is simply overwritten, never read as still-valid), but
-// a `expiresAt` field is included so a Firestore TTL policy could be
-// attached later purely as a storage-hygiene optimization — not required
-// for this limiter's correctness and not configured by this change (no
-// deploy in this fix-round).
+// (namespace, windowStart, count, expiresAt) and self-heal every window
+// for a RETURNING client (a stale document past its window is simply
+// overwritten on that client's next request, never read as still-valid)
+// — this limiter's own CORRECTNESS never depends on anything being
+// deleted. But a one-time-only visitor (the overwhelmingly common case
+// for an anonymous public Showcase viewer — a distinct hashed IP that
+// never comes back) leaves its single small document behind forever
+// with nothing to ever overwrite or delete it — left unmanaged, this
+// collection grows by roughly one document per distinct visitor-IP
+// (× however many of the 3 namespaces they touched) for the lifetime of
+// the product, unbounded.
+//
+// REQUIRED BEFORE PRODUCTION (not yet done — no deploy has happened in
+// this fix-round): configure a Firestore TTL policy on this exact
+// collection/field pair, via either the Firebase Console
+// (Firestore Database → TTL) or the gcloud CLI:
+//   gcloud firestore fields ttls update expiresAt \
+//     --collection-group=rateLimitCounters \
+//     --enable-ttl --project=<PROJECT_ID>
+// The `expiresAt` field already written on every document (set to
+// `now + windowMs * 2` at creation — i.e. two full rate-limit windows
+// past creation, comfortably after the document could still be "current")
+// is exactly the field this policy should target; no code or schema
+// change is needed to enable it, only the one-time policy configuration
+// itself (Firestore's own TTL deletion is a background process, typically
+// within ~24h of expiry, not instant — acceptable here since it is a
+// storage-hygiene cleanup, not a correctness mechanism). Until this
+// policy is configured, the collection will grow unbounded in production
+// — this is a deployment prerequisite, not an optional optimization.
 //
 // KNOWN LIMITATION (verified directly against the local Firestore
 // emulator, not confirmed against live production Firestore in this

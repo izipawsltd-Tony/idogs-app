@@ -47,7 +47,7 @@ import { getClientIp, hashClientKey } from './_lib/rate-limit.js'
 import { checkDurableRateLimit } from './_lib/durable-rate-limit.js'
 import { hashShareToken, isShareLive, isTenantPlusEligible } from './_lib/showcase-share.js'
 import { sanitizeEnquiryInput, EnquiryValidationError } from './_lib/enquiry-schema.js'
-import { opaquePuppyRef } from './_lib/showcase-media-access.js'
+import { resolveVisiblePuppyByRef } from './_lib/showcase-media-access.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -153,38 +153,19 @@ export default async function handler(req, res) {
     }
 
     // Public identifiers: resolve the client-supplied opaque puppyRef
-    // back to a real dogId by recomputing opaquePuppyRef() for every
-    // candidate puppy already known to be a CURRENTLY VISIBLE member of
-    // this exact, token-resolved Showcase — never trusted merely because
-    // it looks like a plausible value (see opaquePuppyRef()'s own
-    // comment in api/_lib/showcase-media-access.js for why this needs no
-    // separate persisted mapping table). Same fail-closed, generic-404
-    // posture as an invalid token, since a ref that doesn't resolve is a
-    // trust-boundary mismatch, not an ordinary user-correctable form
-    // error.
+    // back to a real dogId. Shared with api/showcase-media.js, which
+    // resolves the exact same way for the exact same reason (see
+    // resolveVisiblePuppyByRef()'s own comment in api/_lib/showcase-
+    // media-access.js) — same fail-closed, generic-404 posture as an
+    // invalid token, since a ref that doesn't resolve is a trust-
+    // boundary mismatch, not an ordinary user-correctable form error.
     let resolvedPuppyId = null
     if (sanitized.puppyRef) {
-      const visibleEntries = Object.entries(showcase.puppies || {}).filter(([, entry]) => entry?.visible === true)
-      const match = visibleEntries.find(([dogId]) => opaquePuppyRef(litterId, dogId) === sanitized.puppyRef)
-      if (!match) {
+      const resolved = await resolveVisiblePuppyByRef(db, showcase, litterId, sanitized.puppyRef)
+      if (!resolved) {
         return res.status(404).json({ error: 'Not found' })
       }
-      const [candidateDogId] = match
-
-      // Tenant-chain validation on the resolved puppy itself — an
-      // enquiry must not attribute itself to a puppy whose underlying
-      // Dog document has drifted to a different tenant/litter than this
-      // Showcase claims, same as the public read endpoint.
-      const puppySnap = await db.collection('dogs').doc(candidateDogId).get()
-      if (!puppySnap.exists) {
-        return res.status(404).json({ error: 'Not found' })
-      }
-      const puppyData = puppySnap.data()
-      if (puppyData.tenantId !== showcase.tenantId || puppyData.litterId !== litterId) {
-        return res.status(404).json({ error: 'Not found' })
-      }
-
-      resolvedPuppyId = candidateDogId
+      resolvedPuppyId = resolved.dogId
     }
 
     await db.collection('showcaseEnquiries').add({

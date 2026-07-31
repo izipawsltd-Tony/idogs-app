@@ -15,23 +15,44 @@
 
 import { randomUUID, createHash } from 'crypto'
 
-// Short enough that a leaked/logged/cached URL stops working quickly;
-// long enough that a single public page load (which may render several
-// images) doesn't race its own fetches against expiry.
+// Used for the breeder's OWN authenticated views (api/get-showcase-
+// media-urls.js, and the immediate response right after
+// api/upload-showcase-media.js / api/update-showcase-media.js) — a
+// signed-in breeder editing their own gallery is a completely different
+// trust boundary from an anonymous public viewer (see
+// SHORT_LIVED_REDIRECT_TTL_MS below for that one). Short enough that a
+// leaked/logged/cached URL stops working quickly; long enough that a
+// single authenticated page load (which may render several images)
+// doesn't race its own fetches against expiry.
 export const SIGNED_MEDIA_URL_TTL_MS = 15 * 60 * 1000
+
+// Codex re-review ("server-mediated public media delivery"): the PUBLIC
+// Showcase page never receives a Storage signed URL directly — it only
+// ever receives a link to api/showcase-media.js, which re-validates the
+// ENTIRE authorization chain (share token, live/enabled/expiry, Plus
+// eligibility, tenant/litter/puppy relationship, visibility, explicit
+// publication) on EVERY request before minting one of these. Deliberately
+// far shorter than SIGNED_MEDIA_URL_TTL_MS above — this is the residual
+// window an already-issued redirect target keeps working for even if the
+// breeder revokes access the instant after it was issued; keeping it
+// short (rather than 15 minutes) is what makes that window negligible
+// rather than the whole remaining fix-round moot. See api/showcase-
+// media.js's own header comment for the precise guarantee this does (and
+// does not) make.
+export const SHORT_LIVED_REDIRECT_TTL_MS = 60 * 1000
 
 export function newMediaId() {
   return randomUUID()
 }
 
 // Generates fresh signed URLs for a list of { id, path } MediaItems.
-// Never persisted — recomputed on every call, both for the breeder's
-// own authenticated view (api/get-showcase-media-urls.js) and the
-// public Showcase page (api/showcase-public.js). An item whose Storage
-// object no longer exists (deleted, or a data-integrity edge case) is
-// silently dropped rather than failing the whole response — a missing
-// file exposes nothing either way.
-export async function signMediaItems(bucket, items) {
+// Never persisted — recomputed on every call. `ttlMs` defaults to the
+// breeder-authenticated TTL above; api/showcase-media.js passes
+// SHORT_LIVED_REDIRECT_TTL_MS explicitly for the public-facing case. An
+// item whose Storage object no longer exists (deleted, or a data-
+// integrity edge case) is silently dropped rather than failing the whole
+// response — a missing file exposes nothing either way.
+export async function signMediaItems(bucket, items, ttlMs = SIGNED_MEDIA_URL_TTL_MS) {
   if (!Array.isArray(items) || items.length === 0) return []
   const results = await Promise.all(items.map(async item => {
     if (!item || typeof item.path !== 'string' || typeof item.id !== 'string') return null
@@ -39,7 +60,7 @@ export async function signMediaItems(bucket, items) {
       const file = bucket.file(item.path)
       const [exists] = await file.exists()
       if (!exists) return null
-      const [url] = await file.getSignedUrl({ action: 'read', expires: Date.now() + SIGNED_MEDIA_URL_TTL_MS })
+      const [url] = await file.getSignedUrl({ action: 'read', expires: Date.now() + ttlMs })
       return { id: item.id, url }
     } catch {
       return null
@@ -64,4 +85,28 @@ export async function signMediaItems(bucket, items) {
 // whether it means anything in a given request's context.
 export function opaquePuppyRef(litterId, dogId) {
   return createHash('sha256').update(`${litterId}:${dogId}`, 'utf8').digest('hex').slice(0, 24)
+}
+
+// Shared by api/create-showcase-enquiry.js and api/showcase-media.js —
+// both need to turn a client-supplied opaque puppyRef back into a real,
+// tenant/litter-verified dogId, using the EXACT same rule: only a
+// CURRENTLY VISIBLE member of the token-resolved Showcase can ever
+// resolve to anything (see opaquePuppyRef()'s own comment for why this
+// needs no separate persisted id-mapping table). Returns
+// { dogId, dog, entry } on success, or null on ANY failure (unknown ref,
+// missing dog, tenant/litter mismatch) — callers should treat null as
+// the same generic 404 every other denial in this trust boundary uses.
+export async function resolveVisiblePuppyByRef(db, showcase, litterId, puppyRef) {
+  if (!puppyRef || typeof puppyRef !== 'string') return null
+  const visibleEntries = Object.entries(showcase.puppies || {}).filter(([, entry]) => entry?.visible === true)
+  const match = visibleEntries.find(([dogId]) => opaquePuppyRef(litterId, dogId) === puppyRef)
+  if (!match) return null
+  const [dogId, entry] = match
+
+  const dogSnap = await db.collection('dogs').doc(dogId).get()
+  if (!dogSnap.exists) return null
+  const dog = dogSnap.data()
+  if (dog.tenantId !== showcase.tenantId || dog.litterId !== litterId) return null
+
+  return { dogId, dog, entry }
 }

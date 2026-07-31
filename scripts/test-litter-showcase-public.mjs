@@ -79,20 +79,29 @@ const { check, skip, summary } = makeChecker()
   // Codex fix-round ("Public identifiers") — the raw Firestore dogId is
   // never returned; every puppy gets an opaque, deterministic reference.
   check('api/showcase-public.js imports opaquePuppyRef from the shared media-access module',
-    /import \{ opaquePuppyRef, signMediaItems \} from '\.\/_lib\/showcase-media-access\.js'/.test(publicSrc))
-  check('publicPuppyProjection() returns id: opaquePuppyRef(...), never the raw dogId',
-    /id: opaquePuppyRef\(litterId, dogId\)/.test(publicSrc))
+    /import \{ opaquePuppyRef \} from '\.\/_lib\/showcase-media-access\.js'/.test(publicSrc))
+  check('publicPuppyProjection() returns id: puppyRef (opaquePuppyRef(litterId, dogId)), never the raw dogId',
+    /const puppyRef = opaquePuppyRef\(litterId, dogId\)/.test(publicSrc) && /id: puppyRef,/.test(publicSrc))
 
-  // Codex fix-round ("Explicit media publication" + "Revocable media
-  // delivery") — only explicitly-published media ids are ever resolved,
-  // and only via freshly-signed URLs.
-  const projectionFnMatch = /async function publicPuppyProjection\([\s\S]*?\n\}/.exec(publicSrc)
+  // Codex re-review ("server-mediated public media delivery") — this
+  // endpoint no longer mints a Storage signed URL itself at all; it only
+  // ever links to api/showcase-media.js, which re-validates everything
+  // fresh on every actual media request.
+  check('api/showcase-public.js no longer imports getStorage or signMediaItems (no Storage access here at all anymore)',
+    !/firebase-admin\/storage/.test(publicSrc) && !/signMediaItems/.test(publicSrc))
+  check('api/showcase-public.js builds media URLs pointing at /api/showcase-media, never a raw Storage/signed URL',
+    /\/api\/showcase-media\?/.test(publicSrc))
+  check('The media endpoint URL includes the share token, opaque puppyRef, mediaId, and kind — everything api/showcase-media.js needs to independently re-validate',
+    /new URLSearchParams\(\{ token, puppyRef, mediaId, kind \}\)/.test(publicSrc))
+
+  // Codex fix-round ("Explicit media publication") — only explicitly-
+  // published media ids are ever listed.
+  const projectionFnMatch = /function publicPuppyProjection\([\s\S]*?\n\}/.exec(publicSrc)
   check('publicPuppyProjection() function was found for inspection', !!projectionFnMatch)
   if (projectionFnMatch) {
     const fnSrc = projectionFnMatch[0]
     check('publicPuppyProjection() only selects photos present in entry.publishedPhotoIds', /publishedPhotoIds/.test(fnSrc))
     check('publicPuppyProjection() only selects videos present in entry.publishedVideoIds', /publishedVideoIds/.test(fnSrc))
-    check('publicPuppyProjection() resolves selected media via signMediaItems() (fresh, short-lived URLs), never a raw path', /signMediaItems\(bucket,/.test(fnSrc))
     check('publicPuppyProjection() never references dog.profilePhoto (removed entirely — never an explicit-publication field)', !fnSrc.includes('dog.profilePhoto'))
 
     // The public puppy projection must never include any of these fields,
@@ -179,6 +188,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   const { default: setEnabledHandler } = await import('../api/set-showcase-enabled.js')
   const { default: rotateShareHandler } = await import('../api/rotate-showcase-share.js')
   const { default: updateShareHandler } = await import('../api/update-showcase-share.js')
+  const { default: updateMediaHandler } = await import('../api/update-showcase-media.js')
   const { default: showcasePublicHandler } = await import('../api/showcase-public.js')
 
   const seedDb = getFirestore()
@@ -635,15 +645,16 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     const publicVideos = afterPublishRes.body?.puppies?.[0]?.videos || []
     check('13', 'Exactly the one published photo is returned', publicPhotos.length === 1 && publicPhotos[0].id === photoA.id)
     check('13', 'The UNpublished photo (photoB) never appears, even though it exists in the same gallery', !JSON.stringify(afterPublishRes.body).includes(photoB.id))
-    check('13', 'The published photo has a real, usable signed URL', typeof publicPhotos[0].url === 'string' && publicPhotos[0].url.length > 0)
+    // Codex re-review ("server-mediated public media delivery"): the
+    // response never carries a Storage URL at all anymore — only an
+    // opaque link to api/showcase-media.js, which independently
+    // re-validates and mints a real signed URL fresh on every actual
+    // fetch. See test-showcase-media-delivery.mjs for the end-to-end
+    // proof that this link actually resolves AND stops resolving
+    // immediately on every revocation trigger.
+    check('13', 'The published photo\'s url is a link to api/showcase-media.js, never a raw Storage/signed URL', publicPhotos[0].url.startsWith('/api/showcase-media?') && !publicPhotos[0].url.includes('storage.googleapis.com'))
+    check('13', 'The media link carries the token/puppyRef/mediaId/kind api/showcase-media.js needs to re-validate', publicPhotos[0].url.includes(`token=${encodeURIComponent(token)}`) && publicPhotos[0].url.includes(`mediaId=${photoA.id}`) && publicPhotos[0].url.includes('kind=photo'))
     check('13', 'The published video is also returned', publicVideos.length === 1 && publicVideos[0].id === videoA.id)
-    // NOTE: a signed GCS URL necessarily embeds the object's path as
-    // part of the URL itself (that's how the signature resolves to a
-    // specific object) — a raw-path-absence assertion would be asserting
-    // something structurally impossible for a signed URL, not a real
-    // security property. What's already confirmed above is what matters:
-    // the URL is real/usable AND only ever produced via signMediaItems()
-    // (never a standalone, non-expiring path or URL).
 
     // Unpublishing takes effect immediately on the NEXT read — no
     // separate "revoke" step needed, since nothing is ever cached.
@@ -654,12 +665,16 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('13', 'The video published earlier and never unpublished is still there (publish lists are independent)', (afterUnpublishRes.body?.puppies?.[0]?.videos || []).length === 1)
   }
 
-  // ── Test 14 (Codex fix-round, "Revocable media delivery"): a
-  // published media id that no longer resolves to a REAL Storage object
-  // (deleted via update-showcase-media.js, or any other data-integrity
-  // drift) is silently dropped from the public response — a stale
-  // publishedPhotoIds entry can never surface a broken/inaccessible
-  // reference, let alone anything unintended ──
+  // ── Test 14 (Codex fix-round, "Explicit media publication" +
+  // "Revocable media delivery"): a publishedPhotoIds entry pointing at
+  // an id that's no longer in the puppy's own Firestore gallery (removed
+  // via api/update-showcase-media.js's real delete path, which shrinks
+  // dog.photos, WITHOUT independently touching publishedPhotoIds) is
+  // silently dropped from the public LISTING — this endpoint no longer
+  // makes any Storage call at all (see this file's own header comment on
+  // why that check moved to api/showcase-media.js, tested end-to-end in
+  // test-showcase-media-delivery.mjs); it only ever needs to know whether
+  // the id still exists in Firestore's own dog.photos/videos array ──
   {
     const breeder = await newUser('t14breeder', breederPlusProfile)
     const litterId = `t14litter_${R}`
@@ -678,14 +693,16 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     await showcasePublicHandler(mockGetReq({ token }, 't14a-ip'), beforeDeleteRes)
     check('14', 'Sanity: the published photo is visible before deletion', beforeDeleteRes.body?.puppies?.[0]?.photos?.length === 1)
 
-    // Delete the underlying Storage object directly (simulates
-    // update-showcase-media.js's own delete path) WITHOUT touching
-    // publishedPhotoIds — a stale reference is exactly the scenario
-    // under test.
-    await bucket.file(photo.path).delete()
+    // Delete via the REAL update-showcase-media.js endpoint (the only
+    // legitimate way a gallery item is ever removed) — this shrinks
+    // dog.photos in Firestore but deliberately does NOT touch
+    // publishedPhotoIds (see that endpoint's own header comment) —
+    // publishedPhotoIds still lists this id, exactly the stale-reference
+    // scenario under test.
+    await updateMediaHandler(mockReq({ dogId: puppyId, kind: 'photo', order: [] }, breeder.idToken), mockRes())
     const afterDeleteRes = mockRes()
     await showcasePublicHandler(mockGetReq({ token }, 't14b-ip'), afterDeleteRes)
-    check('14', 'A deleted-but-still-"published" photo never appears in the public response (revoked, not broken)', (afterDeleteRes.body?.puppies?.[0]?.photos || []).length === 0)
+    check('14', 'A deleted-but-still-"published" photo never appears in the public response (a stale publishedPhotoIds entry can never surface a broken/inaccessible reference)', (afterDeleteRes.body?.puppies?.[0]?.photos || []).length === 0)
     check('14', 'The request itself still succeeds (200) — a stale reference must not error the whole page', afterDeleteRes.statusCode === 200)
   }
 
