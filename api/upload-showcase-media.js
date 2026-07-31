@@ -1,17 +1,27 @@
 // api/upload-showcase-media.js — trusted server-side photo/video upload
 // for a litter puppy's Showcase gallery (Slice 2). Appends the result to
-// the Dog document's `photos` or `videos` array (both previously-unused/
-// new ordered-array fields — see src/types/index.ts) — index 0 is
-// always the "cover" item; api/update-showcase-media.js handles
-// reorder/delete/cover-change on an already-uploaded array.
+// the Dog document's `photos` or `videos` array — index 0 is the
+// private-workspace "cover"; api/update-showcase-media.js handles
+// reorder/delete on an already-uploaded array, and
+// api/update-showcase-puppy.js handles which items (if any) are
+// actually PUBLISHED to a given Showcase (uploading here never publishes
+// anything by itself — see ShowcasePuppyEntry.publishedPhotoIds/
+// publishedVideoIds).
 //
 // Reuses api/_lib/image-pipeline.js — the SAME reusable pipeline
-// api/upload.js's avatar/profile path uses (Slice 2 requirement: "one
-// reusable pipeline for Avatar, Dog Profile, litter and puppy"). Photo
-// and video are otherwise unrelated enough (JPEG/PNG/WebP/HEIC vs.
-// MP4/MOV/WebM, wildly different size limits) that this stays one
-// endpoint with a `kind` switch rather than two near-duplicate files,
-// mirroring api/upload.js's own ?type=profile|note branching.
+// api/upload.js's avatar/profile path uses.
+//
+// Codex fix-round ("Revocable media delivery"): the uploaded file is
+// PRIVATE — no file.makePublic() anywhere in this file. `dog.photos`/
+// `dog.videos` store only { id, path } (see src/types/index.ts's
+// MediaItem), never a public URL; this endpoint returns freshly-signed,
+// short-lived URLs in its response for immediate display, but nothing
+// durable/public is ever persisted.
+//
+// Codex fix-round ("Upload consistency"): if the Firestore update after
+// a successful Storage write fails for any reason, the just-uploaded
+// object is deleted before the error is returned — a failed database
+// write must never leave an orphaned file behind.
 //
 // A puppy is just a Dog document (see create-litter-puppy.js) — the
 // SAME authorization this codebase already uses for every other
@@ -22,7 +32,7 @@
 // POST /api/upload-showcase-media
 // Headers: Authorization: Bearer <Firebase ID token>
 // Body: { dogId, base64, kind: 'photo' | 'video' }
-// Returns: { success: true, fileUrl, photos, videos } | { error, reason? }
+// Returns: { success: true, mediaId, photos: [{id,url}], videos: [{id,url}] } | { error, reason? }
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -33,6 +43,7 @@ import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
 import { canAddDogRecord } from './_lib/dog-access.js'
 import { processImageForStorage, processVideoForStorage, ImagePipelineError } from './_lib/image-pipeline.js'
+import { newMediaId, signMediaItems } from './_lib/showcase-media-access.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -46,9 +57,8 @@ if (!getApps().length) {
 
 // Deliberately generous but bounded — Slice 2 requirement ("Multiple
 // litter/puppy images") without letting a single puppy's document grow
-// unbounded (each entry is a full Storage URL string; Firestore
-// documents have a real 1MB size ceiling, and a gallery this large would
-// be a poor showcase experience regardless).
+// unbounded (Firestore documents have a real 1MB size ceiling, and a
+// gallery this large would be a poor showcase experience regardless).
 const MAX_MEDIA_ITEMS_PER_KIND = 30
 
 async function handler(req, res) {
@@ -78,6 +88,7 @@ async function handler(req, res) {
   if (kind !== 'photo' && kind !== 'video') return res.status(400).json({ error: "kind must be 'photo' or 'video'" })
 
   const db = getFirestore()
+  const bucket = getStorage().bucket(bucketName)
 
   try {
     const dogSnap = await db.collection('dogs').doc(dogId).get()
@@ -105,25 +116,43 @@ async function handler(req, res) {
       throw err
     }
 
-    const bucket = getStorage().bucket(bucketName)
     // Safe, unique, unguessable filename — a real random UUID, never
     // derived from any client-supplied name (which is never even
-    // accepted as input here in the first place).
+    // accepted as input here in the first place). PRIVATE — deliberately
+    // no file.makePublic() call anywhere in this file.
+    const mediaId = newMediaId()
     const filePath = `dogs/${uid}/${dogId}/${kind}s/${randomUUID()}.${processed.extension}`
     const file = bucket.file(filePath)
     await file.save(processed.buffer, { metadata: { contentType: processed.mimeType } })
-    await file.makePublic()
-    const fileUrl = `https://storage.googleapis.com/${bucket.name}/${filePath}`
 
     const arrayField = kind === 'photo' ? 'photos' : 'videos'
-    await db.collection('dogs').doc(dogId).update({
-      [arrayField]: FieldValue.arrayUnion(fileUrl),
-      updatedAt: new Date(),
-    })
+    const mediaItem = { id: mediaId, path: filePath }
+    try {
+      await db.collection('dogs').doc(dogId).update({
+        [arrayField]: FieldValue.arrayUnion(mediaItem),
+        updatedAt: new Date(),
+      })
+    } catch (writeErr) {
+      // Upload consistency fix: the Storage write already succeeded —
+      // if the Firestore write that was supposed to reference it fails,
+      // the object is now unreferenced by anything and must not be left
+      // behind. Best-effort delete, then surface the ORIGINAL failure
+      // (never mask a real error with a cleanup-related one).
+      try {
+        await file.delete()
+      } catch {
+        logSanitizedError('upload-showcase-media (orphan cleanup)', 'ORPHAN_CLEANUP_FAILED')
+      }
+      throw writeErr
+    }
 
     const updatedSnap = await db.collection('dogs').doc(dogId).get()
     const updated = updatedSnap.data()
-    return res.status(200).json({ success: true, fileUrl, photos: updated.photos || [], videos: updated.videos || [] })
+    const [photos, videos] = await Promise.all([
+      signMediaItems(bucket, updated.photos || []),
+      signMediaItems(bucket, updated.videos || []),
+    ])
+    return res.status(200).json({ success: true, mediaId, photos, videos })
   } catch (err) {
     logSanitizedError('upload-showcase-media', 'UPLOAD_FAILED')
     return res.status(500).json({ error: 'Upload failed' })

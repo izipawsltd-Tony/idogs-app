@@ -22,9 +22,21 @@
 // currently, genuinely part of this litter" — no ownership-history
 // gating is relevant here at all.
 //
+// Codex fix-round ("Explicit media publication"): publishedPhotoIds/
+// publishedVideoIds are this puppy's explicit, opt-in list of which
+// MediaItem ids (from its own dog.photos/dog.videos — see
+// src/types/index.ts) are actually shown on the PUBLIC Showcase page.
+// Uploading/reordering a puppy's private gallery (api/upload-showcase-
+// media.js, api/update-showcase-media.js) never publishes anything by
+// itself — this endpoint is the only way a photo/video ever becomes
+// publicly visible. See showcase-schema.js's mergePuppyEntry/
+// validatePuppyPatch for why this endpoint still never needs to read the
+// `dogs` collection to stay safe.
+//
 // POST /api/update-showcase-puppy
 // Headers: Authorization: Bearer <Firebase ID token>
-// Body: { litterId, puppyId, visible?: boolean, availability?: string }
+// Body: { litterId, puppyId, visible?: boolean, availability?: string,
+//         publishedPhotoIds?: string[], publishedVideoIds?: string[] }
 // Returns: { showcase } | { error, reason? }
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'

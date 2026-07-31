@@ -14,20 +14,40 @@
 // "the field exists on the document").
 //
 // A wrong/disabled/expired/revoked token, and an invalid/not-currently-
-// visible puppyId, all return the SAME generic 404 the read endpoint
+// visible puppyRef, all return the SAME generic 404 the read endpoint
 // uses — never a distinguishing signal.
 //
+// Codex fix-round ("Public identifiers"): the client never has, and
+// never sends, a real Firestore dogId — it sends the SAME opaque
+// `puppyRef` api/showcase-public.js's own public projection handed it
+// (see opaquePuppyRef() in api/_lib/showcase-media-access.js). This
+// endpoint resolves it back to a real dogId itself, by recomputing that
+// same hash for every puppy already known to be a currently-visible
+// member of the TOKEN-RESOLVED Showcase, and matching against those —
+// never by looking the ref up in some separate global table. This is
+// exactly why the ref carries no authority of its own: a fabricated or
+// replayed ref still has to collide with one of THIS showcase's own
+// visible puppies to resolve to anything, and reaching "this showcase"
+// at all already required its own valid, live share token. The resolved
+// real dogId is stored on the Firestore showcaseEnquiries document
+// (authenticated, tenant-scoped, breeder-only read — see firestore.rules
+// — exactly what LittersPage.tsx's enquiry list already expects to match
+// against its own puppyDogs) — only the PUBLIC-facing wire format uses
+// the opaque form.
+//
 // POST /api/create-showcase-enquiry
-// Body: { token, puppyId?, name, email?, phone?, message, consent, website? }
+// Body: { token, puppyRef?, name, email?, phone?, message, consent, website? }
 //   (`website` is an intentionally-undocumented honeypot field — see
 //   api/_lib/enquiry-schema.js)
 // Returns: { success: true } | { error } | 404 | 429 | 400
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
-import { checkRateLimit, getClientIp, hashClientKey } from './_lib/rate-limit.js'
+import { getClientIp, hashClientKey } from './_lib/rate-limit.js'
+import { checkDurableRateLimit } from './_lib/durable-rate-limit.js'
 import { hashShareToken, isShareLive, isTenantPlusEligible } from './_lib/showcase-share.js'
 import { sanitizeEnquiryInput, EnquiryValidationError } from './_lib/enquiry-schema.js'
+import { opaquePuppyRef } from './_lib/showcase-media-access.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -57,8 +77,17 @@ export default async function handler(req, res) {
   // posture as every other public endpoint in this codebase. Namespaced
   // so this endpoint's (stricter) budget is never shared with, or
   // exhausted by, api/showcase-public.js's own (looser) read traffic.
-  const clientKey = hashClientKey(`enquiry:${getClientIp(req)}`)
-  const rateLimitResult = checkRateLimit(clientKey, ENQUIRY_RATE_LIMIT_WINDOW_MS, ENQUIRY_RATE_LIMIT_MAX_REQUESTS)
+  // Durable/atomic (Firestore-transaction-backed) — see
+  // api/_lib/durable-rate-limit.js for why this endpoint in particular
+  // needs a shared-across-instances limiter, not the in-memory one.
+  const clientKey = hashClientKey(getClientIp(req))
+  const rateLimitResult = await checkDurableRateLimit(
+    db,
+    'showcase-enquiry',
+    clientKey,
+    ENQUIRY_RATE_LIMIT_WINDOW_MS,
+    ENQUIRY_RATE_LIMIT_MAX_REQUESTS
+  )
   if (!rateLimitResult.allowed) {
     res.setHeader('Retry-After', String(rateLimitResult.retryAfterSeconds))
     return res.status(429).json({ error: 'Too many requests' })
@@ -114,19 +143,54 @@ export default async function handler(req, res) {
 
     const litterId = showcaseDoc.id
 
-    // A supplied puppyId must be a CURRENTLY VISIBLE member of this
-    // exact Showcase — never trusted merely because it looks like a
-    // plausible Dog id. Same fail-closed, generic-404 posture as an
-    // invalid token, since this is a trust-boundary mismatch, not an
-    // ordinary user-correctable form error.
-    if (sanitized.puppyId && showcase.puppies?.[sanitized.puppyId]?.visible !== true) {
+    // Tenant-chain validation (Codex fix-round) — same fail-closed check
+    // api/showcase-public.js applies: a Showcase whose Litter has drifted
+    // to a different tenant (data-integrity edge case, or a forged/stale
+    // relationship) must not accept enquiries attributed to it either.
+    const litterSnap = await db.collection('litters').doc(litterId).get()
+    if (!litterSnap.exists || litterSnap.data().tenantId !== showcase.tenantId) {
       return res.status(404).json({ error: 'Not found' })
+    }
+
+    // Public identifiers: resolve the client-supplied opaque puppyRef
+    // back to a real dogId by recomputing opaquePuppyRef() for every
+    // candidate puppy already known to be a CURRENTLY VISIBLE member of
+    // this exact, token-resolved Showcase — never trusted merely because
+    // it looks like a plausible value (see opaquePuppyRef()'s own
+    // comment in api/_lib/showcase-media-access.js for why this needs no
+    // separate persisted mapping table). Same fail-closed, generic-404
+    // posture as an invalid token, since a ref that doesn't resolve is a
+    // trust-boundary mismatch, not an ordinary user-correctable form
+    // error.
+    let resolvedPuppyId = null
+    if (sanitized.puppyRef) {
+      const visibleEntries = Object.entries(showcase.puppies || {}).filter(([, entry]) => entry?.visible === true)
+      const match = visibleEntries.find(([dogId]) => opaquePuppyRef(litterId, dogId) === sanitized.puppyRef)
+      if (!match) {
+        return res.status(404).json({ error: 'Not found' })
+      }
+      const [candidateDogId] = match
+
+      // Tenant-chain validation on the resolved puppy itself — an
+      // enquiry must not attribute itself to a puppy whose underlying
+      // Dog document has drifted to a different tenant/litter than this
+      // Showcase claims, same as the public read endpoint.
+      const puppySnap = await db.collection('dogs').doc(candidateDogId).get()
+      if (!puppySnap.exists) {
+        return res.status(404).json({ error: 'Not found' })
+      }
+      const puppyData = puppySnap.data()
+      if (puppyData.tenantId !== showcase.tenantId || puppyData.litterId !== litterId) {
+        return res.status(404).json({ error: 'Not found' })
+      }
+
+      resolvedPuppyId = candidateDogId
     }
 
     await db.collection('showcaseEnquiries').add({
       tenantId: showcase.tenantId,
       litterId,
-      puppyId: sanitized.puppyId,
+      puppyId: resolvedPuppyId,
       name: sanitized.name,
       email: sanitized.email,
       phone: sanitized.phone,

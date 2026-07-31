@@ -697,6 +697,16 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
+    // ── rateLimitCounters — durable, atomic rate-limit state for public
+    // Showcase endpoints (Codex fix-round: "Rate limiting" — see
+    // api/_lib/durable-rate-limit.js). Written exclusively by the Admin
+    // SDK inside a Firestore transaction; no legitimate client access
+    // pattern at all (a client that could read/write its own counter
+    // could trivially defeat the limiter it's meant to be bound by).
+    match /rateLimitCounters/{id} {
+      allow read, write: if false;
+    }
+
     // ── Deny everything else by default ──
     match /{document=**} {
       allow read, write: if false;
