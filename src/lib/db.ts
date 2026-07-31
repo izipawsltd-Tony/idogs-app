@@ -1106,6 +1106,35 @@ export async function getShowcaseForLitter(litterId: string): Promise<LitterShow
   return { ...snap.data(), litterId: snap.id } as LitterShowcase
 }
 
+// Slice 2: the breeder's own view of enquiries received through a
+// litter's public Showcase — direct client read, scoped by
+// firestore.rules to tenantId == request.auth.uid (same posture as
+// getShowcaseForLitter above). where() only, per this project's own
+// "NEVER use orderBy()" convention — sorted client-side instead.
+//
+// Filters on BOTH litterId AND tenantId (not litterId alone) —
+// confirmed directly against the local emulator while building this
+// Slice's test suite: firestore.rules' `allow read: if isSignedIn() &&
+// resource.data.tenantId == request.auth.uid` can only be proven safe
+// for a `list` query WITHOUT fetching/evaluating every candidate
+// document first when the query's own filters already guarantee it
+// (i.e. the query filters on the exact same field, tenantId, the rule
+// checks) — a query filtering on litterId alone left Firestore unable
+// to prove that statically and threw a Rules evaluation error
+// ("Property tenantId is undefined on object") instead of the clean
+// per-document check its non-list (get/update) counterparts get. Adding
+// the redundant `tenantId == uid()` filter (redundant in the sense that
+// every one of the caller's own litters already has tenantId == uid on
+// every enquiry doc, so it changes nothing about WHICH documents match)
+// is what makes the query provably safe. No composite index is needed
+// for this — confirmed empirically, two plain equality filters.
+export async function getEnquiriesForLitter(litterId: string): Promise<import('../types').ShowcaseEnquiry[]> {
+  const snap = await getDocs(query(collection(db, 'showcaseEnquiries'), where('litterId', '==', litterId), where('tenantId', '==', uid())))
+  const enquiries = snap.docs.map(d => ({ ...d.data(), id: d.id, createdAt: toDate(d.data().createdAt) })) as import('../types').ShowcaseEnquiry[]
+  enquiries.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  return enquiries
+}
+
 export async function createShowcase(litterId: string): Promise<LitterShowcase> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()

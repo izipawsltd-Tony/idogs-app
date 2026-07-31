@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { getDogAge } from '../lib/utils'
 
@@ -156,7 +156,124 @@ export default function ShowcasePublicPage() {
             })}
           </div>
         )}
+
+        {token && <EnquiryForm token={token} puppies={puppies} />}
       </div>
     </div>
+  )
+}
+
+// ── Customer enquiry form ────────────────────────────────────────
+// Posts directly to api/create-showcase-enquiry.js — every real
+// validation (required fields, email/phone format, consent, rate
+// limiting, resolving WHICH litter/tenant this belongs to from the
+// token) happens server-side; this form's own checks are only ever a
+// same-page UX convenience, never something a direct API caller could
+// rely on skipping.
+function EnquiryForm({ token, puppies }: { token: string; puppies: PublicPuppy[] }) {
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [message, setMessage] = useState('')
+  const [puppyId, setPuppyId] = useState('')
+  const [consent, setConsent] = useState(false)
+  // Honeypot — invisible to a real visitor (off-screen, unreachable by
+  // tab order, hidden from screen readers), but present in the DOM for
+  // a bot that blindly fills every input on the page. See
+  // api/_lib/enquiry-schema.js for how the server treats a non-empty
+  // value here.
+  const [website, setWebsite] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [status, setStatus] = useState<'idle' | 'sent' | 'error'>('idle')
+  const [errorMessage, setErrorMessage] = useState('')
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    setSubmitting(true)
+    setStatus('idle')
+    setErrorMessage('')
+    try {
+      const res = await fetch('/api/create-showcase-enquiry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, puppyId: puppyId || undefined, name, email, phone, message, consent, website }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setErrorMessage(data.error || 'Could not send your enquiry — please try again')
+        setStatus('error')
+        return
+      }
+      setStatus('sent')
+      setName(''); setEmail(''); setPhone(''); setMessage(''); setPuppyId(''); setConsent(false)
+    } catch {
+      setErrorMessage('Could not send your enquiry — please check your connection and try again')
+      setStatus('error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (status === 'sent') {
+    return (
+      <div style={{ background: '#fff', borderRadius: 14, padding: 24, textAlign: 'center', marginTop: 12 }}>
+        <div style={{ fontSize: 28, marginBottom: 8 }}>✓</div>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>Enquiry sent</div>
+        <div style={{ fontSize: 13, color: 'var(--mid)' }}>The breeder will be in touch using the details you provided.</div>
+      </div>
+    )
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ background: '#fff', borderRadius: 14, padding: 18, marginTop: 12 }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, color: 'var(--dark)', marginBottom: 12 }}>Enquire about this litter</div>
+
+      {puppies.length > 0 && (
+        <div className="form-group" style={{ marginBottom: 10 }}>
+          <label className="form-label">Which puppy? (optional)</label>
+          <select className="form-select" value={puppyId} onChange={e => setPuppyId(e.target.value)}>
+            <option value="">General enquiry</option>
+            {puppies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+      )}
+      <div className="form-group" style={{ marginBottom: 10 }}>
+        <label className="form-label">Your name</label>
+        <input className="form-input" value={name} onChange={e => setName(e.target.value)} required maxLength={200} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+        <div className="form-group">
+          <label className="form-label">Email</label>
+          <input className="form-input" type="email" value={email} onChange={e => setEmail(e.target.value)} maxLength={200} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Phone</label>
+          <input className="form-input" type="tel" value={phone} onChange={e => setPhone(e.target.value)} maxLength={200} />
+        </div>
+      </div>
+      <div className="form-group" style={{ marginBottom: 10 }}>
+        <label className="form-label">Message</label>
+        <textarea className="form-input" rows={4} value={message} onChange={e => setMessage(e.target.value)} required maxLength={3000} />
+      </div>
+
+      {/* Honeypot field — visually and semantically hidden from real users */}
+      <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }}>
+        <label htmlFor="website">Leave this field blank</label>
+        <input id="website" name="website" type="text" tabIndex={-1} autoComplete="off" value={website} onChange={e => setWebsite(e.target.value)} />
+      </div>
+
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 12, fontSize: 12, color: 'var(--mid)', cursor: 'pointer' }}>
+        <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} required style={{ marginTop: 2 }} />
+        <span>I consent to the breeder contacting me using the details above.</span>
+      </label>
+
+      {status === 'error' && (
+        <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 10 }}>{errorMessage}</div>
+      )}
+
+      <button type="submit" className="btn btn-primary" disabled={submitting || !consent} style={{ width: '100%' }}>
+        {submitting ? <span className="spinner" /> : 'Send enquiry'}
+      </button>
+    </form>
   )
 }

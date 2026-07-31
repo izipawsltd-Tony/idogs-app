@@ -3,13 +3,13 @@ import { Link } from 'react-router-dom'
 import {
   getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
   getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, bulkUpdateShowcasePuppies, DEFAULT_SHOWCASE_PUPPY_ENTRY,
-  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder,
+  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder, getEnquiriesForLitter,
 } from '../lib/db'
 import type { ShowcaseBulkAction } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
-import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability } from '../types'
+import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability, ShowcaseEnquiry } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
 import { sendTransferEmail } from '../lib/email'
@@ -129,6 +129,11 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   const [shareBusy, setShareBusy] = useState<Record<string, boolean>>({})
   const [shareError, setShareError] = useState<Record<string, string>>({})
   const [shareLastRotatedToken, setShareLastRotatedToken] = useState<Record<string, string>>({})
+
+  // Slice 2: enquiries received through this litter's public Showcase —
+  // undefined means "not loaded yet", [] means "loaded, none yet".
+  const [enquiries, setEnquiries] = useState<Record<string, ShowcaseEnquiry[] | undefined>>({})
+  const [enquiriesLoading, setEnquiriesLoading] = useState<Record<string, boolean>>({})
 
   // Edit litter state
   const [editingLitter, setEditingLitter] = useState<string | null>(null)
@@ -303,6 +308,8 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     setShareBusy({})
     setShareError({})
     setShareLastRotatedToken({})
+    setEnquiries({})
+    setEnquiriesLoading({})
     setExpandedLitter(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
@@ -340,6 +347,33 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   useEffect(() => {
     if (expandedLitter && profile?.role !== 'owner' && showcases[expandedLitter] === undefined) {
       loadShowcase(expandedLitter)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedLitter])
+
+  // Slice 2: the breeder's own read-only view of enquiries received
+  // through this litter's public Showcase — same lazy-load-on-expand
+  // pattern as loadShowcase above, kept as its own simple state (no
+  // busy/save-error tracking needed since this is read-only, unlike the
+  // Showcase management state above).
+  async function loadEnquiries(litterId: string) {
+    const gen = showcaseGuard.currentGeneration()
+    setEnquiriesLoading(prev => ({ ...prev, [litterId]: true }))
+    try {
+      const result = await getEnquiriesForLitter(litterId)
+      if (!isShowcaseRequestCurrent(gen)) return
+      setEnquiries(prev => ({ ...prev, [litterId]: result }))
+    } catch {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setEnquiries(prev => ({ ...prev, [litterId]: [] }))
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setEnquiriesLoading(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+  useEffect(() => {
+    if (expandedLitter && profile?.role !== 'owner' && enquiries[expandedLitter] === undefined) {
+      loadEnquiries(expandedLitter)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedLitter])
@@ -1361,6 +1395,39 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                         />
                       )}
                     </div>
+
+                    {/* ── CUSTOMER ENQUIRIES (Slice 2) ── */}
+                    {getEffectivePlanClient(profile) === 'plus' && (
+                      <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 10 }}>
+                          📩 Enquiries {enquiries[litter.id] && enquiries[litter.id]!.length > 0 && `(${enquiries[litter.id]!.length})`}
+                        </div>
+                        {enquiriesLoading[litter.id] ? (
+                          <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
+                        ) : !enquiries[litter.id] || enquiries[litter.id]!.length === 0 ? (
+                          <div style={{ fontSize: 13, color: 'var(--light)' }}>No enquiries yet from this litter's public Showcase.</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {enquiries[litter.id]!.map(enq => {
+                              const aboutPuppy = enq.puppyId ? puppyDogs.find(p => p.id === enq.puppyId) : null
+                              return (
+                                <div key={enq.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, fontSize: 13 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                    <span style={{ fontWeight: 600, color: 'var(--dark)' }}>{enq.name}</span>
+                                    <span style={{ fontSize: 11, color: 'var(--light)' }}>{formatDate(enq.createdAt)}</span>
+                                  </div>
+                                  <div style={{ color: 'var(--mid)', marginBottom: 4 }}>
+                                    {enq.email && <span>{enq.email}</span>}{enq.email && enq.phone && ' · '}{enq.phone && <span>{enq.phone}</span>}
+                                    {aboutPuppy && <span> · about {aboutPuppy.name}</span>}
+                                  </div>
+                                  <div style={{ color: 'var(--dark)' }}>{enq.message}</div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

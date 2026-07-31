@@ -256,6 +256,24 @@ export interface LitterShowcase {
   shareExpiresAt: string | null
 }
 
+// ── Litter Showcase public enquiry (Slice 2) ────────────────────
+// Written exclusively by api/create-showcase-enquiry.js (Admin SDK) —
+// firestore.rules denies every direct client write outright, same
+// posture as litterShowcases above. tenantId/litterId are resolved
+// SERVER-SIDE from the caller's share token, never accepted as raw
+// client input — see that endpoint's own comment.
+export interface ShowcaseEnquiry {
+  id: string
+  tenantId: string
+  litterId: string
+  puppyId: string | null
+  name: string
+  email: string | null
+  phone: string | null
+  message: string
+  createdAt: string
+}
+
 // ═════════════════════════════════════════════════════════════
 // ⚠ IZIPAWS-TARGET SCHEMA — NOT USED BY iDogs V1 (satellite).
 //
