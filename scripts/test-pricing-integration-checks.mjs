@@ -117,11 +117,24 @@ check(
     createDogSource.includes('getOwnedActiveDogsSorted(tx, db, uid)') &&
     createDogSource.includes("activeDogs.length >= cap ? 'restricted' : 'active'")
 )
+// ── Pricing v1.2: litter puppies never cap-check at creation ──
 check(
-  'api/create-litter-puppy.js (fresh-creation path) computes the same cap-aware status inline, not via a follow-up best-effort call',
-  createLitterPuppySource.includes('computeEffectivePlan(profile)') &&
-    createLitterPuppySource.includes('capForPlan(plan)') &&
-    createLitterPuppySource.includes("activeDogs.length >= cap ? 'restricted' : 'active'")
+  'api/create-litter-puppy.js (fresh-creation path) no longer computes a cap-aware status at all — every new puppy starts \'active\' unconditionally (Pricing v1.2: litter-managed puppies never consume a cap slot until explicitly promoted)',
+  !createLitterPuppySource.includes('getOwnedActiveDogsSorted') &&
+    !createLitterPuppySource.includes('capForPlan') &&
+    /status: 'active',/.test(createLitterPuppySource)
+)
+check(
+  'api/_lib/dog-cap.js defines the ONE central Pricing v1.2 eligibility predicate, isEligibleForCap()',
+  readFileSync(new URL('../api/_lib/dog-cap.js', import.meta.url), 'utf8').includes('export function isEligibleForCap(dog)')
+)
+check(
+  'api/set-dog-status.js is the only place retainedByBreeder is ever written (\'promote\'/\'unpromote\' actions)',
+  setStatusSource.includes("RETENTION_ACTIONS = new Set(['promote', 'unpromote'])")
+)
+check(
+  'firestore.rules protects litterId and retainedByBreeder from any direct client write (dogProtectedFieldsUnchanged)',
+  rulesSource.includes("hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType', 'originBreederId', 'litterId', 'retainedByBreeder'])")
 )
 
 await summary()

@@ -75,8 +75,6 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { parseDobStrictServer, ageInMonths } from './_lib/parent-eligibility.js'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { sanitizePuppyPayload, PuppyPayloadValidationError, PAYLOAD_FIELDS } from './_lib/puppy-payload-schema.js'
-import { capForPlan, getOwnedActiveDogsSorted } from './_lib/dog-cap.js'
-import { computeEffectivePlan } from './_lib/entitlements.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -286,18 +284,14 @@ async function handler(req, res) {
           throw new Error('PASSPORT_ID_TAKEN')
         }
 
-        // Codex H2 — a litter puppy is dog creation too, and must be
-        // just as cap-aware as api/create-dog.js: the status decision is
-        // made from a count taken INSIDE this same transaction. Never
-        // blocks — a puppy created beyond the cap simply lands
-        // 'restricted' instead of 'active'.
-        const userSnap = await tx.get(db.collection('users').doc(uid))
-        const profile = userSnap.exists ? userSnap.data() : {}
-        const plan = computeEffectivePlan(profile)
-        const cap = capForPlan(plan)
-        const activeDogs = await getOwnedActiveDogsSorted(tx, db, uid)
-        const puppyStatus = activeDogs.length >= cap ? 'restricted' : 'active'
-
+        // Pricing v1.2 (was Codex H2 under v1.1 — see api/_lib/dog-cap.js's
+        // own header comment for the full policy history): a litter puppy
+        // no longer needs — or gets — a cap check at creation. Litter-
+        // managed puppies never consume a cap slot until the breeder
+        // explicitly promotes/retains one (api/set-dog-status.js's
+        // 'promote' action, which DOES cap-check, at that later point) —
+        // so every freshly-created puppy simply starts 'active', regardless
+        // of how many adult/breeding dogs this account already has.
         const nowIso = new Date().toISOString()
         // Codex round 5, Blocker 4: bind this reservation to the exact
         // dogId + operationId, not just createdBy.
@@ -314,7 +308,7 @@ async function handler(req, res) {
           lifeStage: initialLifeStage(normalizedPayload.dateOfBirth),
           isDeceased: false,
           photos: [],
-          status: puppyStatus,
+          status: 'active',
           createdAt: nowIso,
           updatedAt: nowIso,
         })
@@ -328,7 +322,7 @@ async function handler(req, res) {
           createdAt: nowIso,
         })
         tx.update(litterRef, { puppyIds: FieldValue.arrayUnion(dogId) })
-        return { ok: true, alreadyExisted: false, dogId, passportId: candidate, status: puppyStatus }
+        return { ok: true, alreadyExisted: false, dogId, passportId: candidate, status: 'active' }
       })
 
       if (!result.ok) {

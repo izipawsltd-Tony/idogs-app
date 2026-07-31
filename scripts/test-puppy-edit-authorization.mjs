@@ -151,8 +151,8 @@ function hasShortCircuitingRestrictedGuard(fnBody) {
   check('api/create-litter-puppy.js: the retry ("alreadyExisted") branch returns the existing dog\'s real status',
     /return \{ ok: true, alreadyExisted: true,[^}]*status: dog\.status \}/.test(apiSrc))
 
-  check('api/create-litter-puppy.js: the fresh-creation branch returns the puppyStatus it just computed',
-    /return \{ ok: true, alreadyExisted: false,[^}]*status: puppyStatus \}/.test(apiSrc))
+  check('api/create-litter-puppy.js: the fresh-creation branch returns the dog\'s status (Pricing v1.2: always the literal \'active\' — puppies never cap-check at creation anymore)',
+    /return \{ ok: true, alreadyExisted: false,[^}]*status: 'active' \}/.test(apiSrc))
 
   check('api/create-litter-puppy.js: the final JSON response includes status (not silently dropped after the tx)',
     /res\.status\(200\)\.json\(\{[^}]*alreadyExisted: result\.alreadyExisted, status: result\.status/.test(apiSrc))
@@ -431,12 +431,13 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('2d-PRESERVED', 'colour is also unchanged — the whole write was denied, not partially applied', after.colour === 'Red')
   }
 
-  // ── 2e: the exact Red Boy condition — a puppy that landed
-  // status:'restricted' (over the breeder's plan cap at creation,
-  // api/create-litter-puppy.js's own puppyStatus logic) stays read-only
-  // for its own legitimate creator/owner. Confirms the UI fix's target
-  // condition is real at the Rules level, and that this fix does NOT
-  // weaken it. ──
+  // ── 2e: the exact Red Boy condition — a puppy with status:'restricted'
+  // (e.g. a legacy record, or a genuine cap-restricted dog reconciled via
+  // reconcile-dog-cap.js — new litter puppies no longer land here at
+  // creation time under Pricing v1.2, see api/create-litter-puppy.js)
+  // stays read-only for its own legitimate creator/owner. Confirms the
+  // UI fix's target condition is real at the Rules level, and that this
+  // fix does NOT weaken it. ──
   {
     const dogId = `dogE_${R}`
     await adminDb.collection('dogs').doc(dogId).set(puppyFixture({ passportId: `RED-2026-E-${R}`, status: 'restricted' }))

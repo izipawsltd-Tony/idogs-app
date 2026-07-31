@@ -288,6 +288,25 @@ export function isDogTransferred(dog: Pick<Dog, 'status'> & { transferStatus?: s
   return dog.status === 'transferred' || dog.transferStatus === 'pendingClaim'
 }
 
+// Pricing v1.2 — hand-synced, field-for-field mirror of
+// api/_lib/dog-cap.js's isEligibleForCap() (the SERVER-authoritative
+// predicate; this repo's established pattern for keeping a Rules/backend-
+// authoritative check and its client-side display twin in sync, same as
+// isDogHistoryBearing below). NEVER authoritative for enforcement — only
+// used so the UI's own dog-usage count (AppLayout.tsx's "X / 5 dogs" bar)
+// agrees with what the backend actually enforces, instead of the
+// pre-v1.2 UI count (every non-transferred dog, including archived and
+// restricted ones) which could show a materially different number than
+// the account's TRUE active-eligible count.
+export function isDogEligibleForCap(dog: Pick<Dog, 'status' | 'isDeceased' | 'litterId' | 'retainedByBreeder' | 'currentOwnerId' | 'tenantId'>): boolean {
+  if ((dog.status || 'active') !== 'active') return false
+  if (dog.isDeceased === true) return false
+  const isUnpromotedLitterPuppy = !!dog.litterId &&
+    dog.retainedByBreeder !== true &&
+    dog.currentOwnerId === dog.tenantId
+  return !isUnpromotedLitterPuppy
+}
+
 // Mirrors firestore.rules' dogs/{dogId} `allow delete` rule and
 // api/_lib/litter-eligibility.js's isDogHistoryBearing field-for-field —
 // this repo's established pattern for a Rules-authoritative check that

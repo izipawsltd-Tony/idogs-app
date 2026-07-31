@@ -74,9 +74,20 @@ service cloud.firestore {
     // three are exactly what must stay denied here, including a legacy
     // dog's missing createdByUserId/sourceType being silently backfilled
     // through what looks like an ordinary client update.
+    //
+    // Pricing v1.2: `litterId` and `retainedByBreeder` added. Both are
+    // load-bearing for api/_lib/dog-cap.js's isEligibleForCap() — a
+    // client that could add/remove `litterId` on a dog it owns could
+    // make a standalone dog masquerade as a cap-exempt litter puppy (or
+    // vice versa), and a client that could set `retainedByBreeder`
+    // directly could self-grant a cap slot with no cap check at all.
+    // `litterId` is written exactly once, by api/create-litter-puppy.js;
+    // `retainedByBreeder` only by api/set-dog-status.js's 'promote'/
+    // 'unpromote' actions (both Admin SDK, bypass Rules entirely — this
+    // only closes the DIRECT client-write path).
     function dogProtectedFieldsUnchanged() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType', 'originBreederId']);
+        .hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType', 'originBreederId', 'litterId', 'retainedByBreeder']);
     }
 
     // Hotfix — allow a legitimate SECOND (or later) transfer. The

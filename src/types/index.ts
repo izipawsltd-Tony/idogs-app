@@ -82,6 +82,16 @@ export interface Dog {
   // added via the litter flow (e.g. DogNewPage) — legacy litters fall
   // back to the forward-reference-only check.
   litterId?: string
+  // Pricing v1.2: true once the breeder has explicitly retained/promoted
+  // this litter puppy into their independent Dog List/breeding stock —
+  // the ONLY thing that makes a litter-managed puppy start counting
+  // toward the plan's active-dog cap (see api/_lib/dog-cap.js's
+  // isEligibleForCap()). Absent/false for every dog that isn't a litter
+  // puppy — irrelevant to their cap eligibility either way. Written
+  // exclusively by api/set-dog-status.js's 'promote'/'unpromote' actions
+  // (never directly by the client — protected in firestore.rules'
+  // dogProtectedFieldsUnchanged()).
+  retainedByBreeder?: boolean
   // ── Ownership (already written by transferDogOwnership) ──
   // 'restricted' / 'archived' added for iDogs Pricing v1.1
   // (Pricing_Decision_Record_v1.1.md §3.2). 'restricted' is system-imposed

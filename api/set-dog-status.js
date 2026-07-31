@@ -1,5 +1,7 @@
 // api/set-dog-status.js — trusted server-side dog status transitions for
-// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §3.2/§3.3, LOCKED).
+// iDogs Pricing v1.1/v1.2 (Pricing_Decision_Record_v1.1.md §3.2/§3.3,
+// LOCKED, plus the v1.2 litter-puppy cap-eligibility change — see
+// api/_lib/dog-cap.js's own header for the full policy history).
 //
 // WHY THIS EXISTS: firestore.rules cannot safely verify "promoting this
 // dog to active would not exceed my plan's cap" — that needs a
@@ -9,17 +11,22 @@
 // same way: move the check to a trusted Admin SDK endpoint). This is that
 // endpoint for the dog-status swap/archive/restore/activate actions
 // described in §3.3 ("Swapping is always available... provided the
-// active count never exceeds the cap").
+// active count never exceeds the cap") — and, since Pricing v1.2, also
+// the ONLY legitimate way a litter puppy's `retainedByBreeder` flag can
+// ever change (see 'promote'/'unpromote' below and dogProtectedFieldsUnchanged()
+// in firestore.rules, which denies any direct client write to that field).
 //
 // restrict/archive always succeed (they only ever REDUCE the active
-// count). activate/restore re-check the cap inside the SAME transaction
-// as the read that established the current active count — Codex-style
-// concurrency safety, not a check-then-write race.
+// count). activate/restore/promote re-check the cap inside the SAME
+// transaction as the read that established the current active count —
+// Codex-style concurrency safety, not a check-then-write race.
+// unpromote always succeeds (it only ever REDUCES the active count, same
+// as restrict/archive).
 //
 // POST /api/set-dog-status
 // Headers: Authorization: Bearer <Firebase ID token>
-// Body: { dogId, action: 'restrict' | 'archive' | 'activate' | 'restore' }
-// Returns: { status } | { error, reason? }
+// Body: { dogId, action: 'restrict' | 'archive' | 'activate' | 'restore' | 'promote' | 'unpromote' }
+// Returns: { status, retainedByBreeder? } | { error, reason? }
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -39,7 +46,13 @@ if (!getApps().length) {
 }
 
 const PROMOTING_ACTIONS = new Set(['activate', 'restore'])
-const VALID_ACTIONS = new Set(['restrict', 'archive', 'activate', 'restore'])
+const STATUS_ACTIONS = new Set(['restrict', 'archive', 'activate', 'restore'])
+// Pricing v1.2 — a litter puppy's ONLY path to (or back from) counting
+// toward the cap. Deliberately separate from STATUS_ACTIONS: promoting/
+// unpromoting never changes `status` at all (a puppy stays 'active'
+// throughout) — only `retainedByBreeder` changes.
+const RETENTION_ACTIONS = new Set(['promote', 'unpromote'])
+const VALID_ACTIONS = new Set([...STATUS_ACTIONS, ...RETENTION_ACTIONS])
 
 // Which starting statuses each action is valid from. A dog mid-transfer
 // (status:'transferred' or transferStatus:'pendingClaim') is excluded
@@ -99,6 +112,61 @@ async function handler(req, res) {
       return { ok: false, status: 409, body: { error: 'This dog has a pending or completed transfer and cannot change status', reason: 'DOG_TRANSFER_IN_PROGRESS' } }
     }
     const currentStatus = dog.status || 'active'
+
+    // ── Pricing v1.2 retention actions — handled entirely separately
+    // from the status-transition logic below, since `status` never
+    // changes here. ──
+    if (RETENTION_ACTIONS.has(action)) {
+      if (!dog.litterId) {
+        return { ok: false, status: 409, body: { error: 'Only a litter puppy can be promoted or unpromoted', reason: 'NOT_A_LITTER_PUPPY' } }
+      }
+      if (currentStatus !== 'active') {
+        return { ok: false, status: 409, body: { error: `Cannot ${action} a dog with status '${currentStatus}'`, reason: 'INVALID_STATUS_TRANSITION' } }
+      }
+      const isRetained = dog.retainedByBreeder === true
+
+      if (action === 'promote') {
+        if (isRetained) {
+          return { ok: false, status: 409, body: { error: 'This puppy is already retained', reason: 'ALREADY_RETAINED' } }
+        }
+        // Same anti-evasion cap check as activate/restore below — a
+        // promotion must never be allowed to push the active-eligible
+        // count past the cap. Never restricts as a fallback (unlike
+        // creation) — promotion is an explicit, deliberate breeder
+        // action, so it is BLOCKED outright when there's no room,
+        // consistent with this file's existing activate/restore
+        // precedent for other explicit reactivation-style actions.
+        const userSnap = await tx.get(userRef)
+        const profile = userSnap.exists ? userSnap.data() : {}
+        const plan = computeEffectivePlan(profile)
+        const cap = capForPlan(plan)
+        const activeDogs = await getOwnedActiveDogsSorted(tx, db, uid)
+        if (activeDogs.length >= cap) {
+          return {
+            ok: false,
+            status: 409,
+            body: {
+              error: `Retaining this puppy would exceed your plan's limit of ${cap} active dogs`,
+              reason: 'DOG_CAP_EXCEEDED',
+              cap,
+              activeCount: activeDogs.length,
+            },
+          }
+        }
+        tx.update(dogRef, { retainedByBreeder: true, updatedAt: new Date().toISOString() })
+        return { ok: true, status: currentStatus, retainedByBreeder: true }
+      }
+
+      // action === 'unpromote' — always succeeds when currently retained;
+      // freeing a slot never needs a cap check, same posture as
+      // restrict/archive below.
+      if (!isRetained) {
+        return { ok: false, status: 409, body: { error: 'This puppy is not currently retained', reason: 'NOT_RETAINED' } }
+      }
+      tx.update(dogRef, { retainedByBreeder: false, updatedAt: new Date().toISOString() })
+      return { ok: true, status: currentStatus, retainedByBreeder: false }
+    }
+
     if (!FROM_STATUS[action].has(currentStatus)) {
       return { ok: false, status: 409, body: { error: `Cannot ${action} a dog with status '${currentStatus}'`, reason: 'INVALID_STATUS_TRANSITION' } }
     }
@@ -135,7 +203,9 @@ async function handler(req, res) {
   if (!result.ok) {
     return res.status(result.status).json(result.body)
   }
-  return res.status(200).json({ status: result.status })
+  return res.status(200).json(
+    'retainedByBreeder' in result ? { status: result.status, retainedByBreeder: result.retainedByBreeder } : { status: result.status }
+  )
 }
 
 export default withApiErrorHandling('set-dog-status', handler)
