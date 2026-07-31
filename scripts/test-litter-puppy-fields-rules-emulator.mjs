@@ -1,19 +1,21 @@
 // scripts/test-litter-puppy-fields-rules-emulator.mjs — REAL Firestore
 // Rules emulator test proving the dogs/{dogId} update rule's
-// dogProtectedFieldsUnchanged() helper makes `litterId` and
-// `retainedByBreeder` fully immutable via any DIRECT client write (add,
-// change, or remove) — Pricing v1.2's core anti-forgery guarantee, since
-// both fields are exactly what api/_lib/dog-cap.js's isEligibleForCap()
-// trusts to distinguish an unpromoted litter puppy from a promoted/
-// retained breeding dog.
+// dogProtectedFieldsUnchanged() helper makes `litterId`,
+// `retainedByBreeder`, and (Codex fix-round, Finding 3) `restrictionReason`
+// fully immutable via any DIRECT client write (add, change, or remove) —
+// Pricing v1.2's core anti-forgery guarantee, since all three fields are
+// exactly what api/_lib/dog-cap.js's isEligibleForCap()/reconciliation
+// trust to distinguish an unpromoted litter puppy from a promoted/
+// retained breeding dog, and a provably cap-driven restriction from any
+// other kind.
 //
 // Companion to scripts/test-litter-puppy-cap-v1.2.mjs, which covers the
 // real HTTP endpoints (server-side, Admin SDK — bypasses these Rules
 // entirely) and the cross-runtime predicate agreement. This file proves
 // the CLIENT-facing half: even a direct devtools/modified-build Firestore
 // write, with no server endpoint involved at all, cannot forge or erase
-// either field. Follows the exact @firebase/rules-unit-testing pattern
-// established in test-dog-delete-rules-emulator.mjs.
+// any of the three fields. Follows the exact @firebase/rules-unit-testing
+// pattern established in test-dog-delete-rules-emulator.mjs.
 //
 // Requires a running Firestore emulator on localhost:8080 (firebase.json).
 // Usage: firebase emulators:exec --project demo-idogs-litter-fields-test \
@@ -103,6 +105,34 @@ await checkAsync('Breeder cannot REMOVE an existing retainedByBreeder field dire
   const db = testEnv.authenticatedContext(BREEDER).firestore()
   await assertFails(updateDoc(doc(db, 'dogs/dog-remove-retained'), { retainedByBreeder: deleteField() }))
   return (await fieldValue('dog-remove-retained', 'retainedByBreeder')) === true
+})
+
+// ── restrictionReason is immutable — Codex fix-round (Finding 3): this
+// is what lets api/_lib/dog-cap.js's automatic reconciliation PROVE a
+// restriction was cap-driven instead of guessing from a restricted dog's
+// shape. A client that could forge/clear this directly could trick
+// automatic reconciliation into reactivating a dog restricted for some
+// other reason (or hide that a restriction was ever manual). ──
+
+await checkAsync('Breeder cannot ADD a restrictionReason directly to fake a cap-driven restriction', async () => {
+  await seedDog('dog-add-reason', { litterId: 'litter-real', status: 'restricted' })
+  const db = testEnv.authenticatedContext(BREEDER).firestore()
+  await assertFails(updateDoc(doc(db, 'dogs/dog-add-reason'), { restrictionReason: 'plan_cap_exceeded' }))
+  return (await fieldValue('dog-add-reason', 'restrictionReason')) === undefined
+})
+
+await checkAsync('Breeder cannot CHANGE an existing restrictionReason (e.g. relabel a manual restriction as cap-driven to make it eligible for auto-reconciliation)', async () => {
+  await seedDog('dog-change-reason', { litterId: 'litter-real', status: 'restricted', restrictionReason: 'manual' })
+  const db = testEnv.authenticatedContext(BREEDER).firestore()
+  await assertFails(updateDoc(doc(db, 'dogs/dog-change-reason'), { restrictionReason: 'plan_cap_exceeded' }))
+  return (await fieldValue('dog-change-reason', 'restrictionReason')) === 'manual'
+})
+
+await checkAsync('Breeder cannot REMOVE an existing restrictionReason directly (e.g. to make a manually-restricted dog look like a legacy/ambiguous record)', async () => {
+  await seedDog('dog-remove-reason', { litterId: 'litter-real', status: 'restricted', restrictionReason: 'manual' })
+  const db = testEnv.authenticatedContext(BREEDER).firestore()
+  await assertFails(updateDoc(doc(db, 'dogs/dog-remove-reason'), { restrictionReason: deleteField() }))
+  return (await fieldValue('dog-remove-reason', 'restrictionReason')) === 'manual'
 })
 
 // ── Sanity: an ordinary, unrelated field on the same puppy document is still editable — proves the denial above is field-specific, not a blanket lockout ──

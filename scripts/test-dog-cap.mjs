@@ -287,15 +287,18 @@ await checkAsync('reconcileDogCapTx (downgrade to Free) demotes excess ADULTS on
     p1.data().status === 'active' // untouched
 })
 
-// ── Task 6 / Green Boy: reconcileDogCapTx reactivates a litter puppy
-// mis-restricted under the OLD rule, WITHOUT reactivating a genuinely
-// cap-restricted adult dog in the same account ──
-await checkAsync('reconcileDogCapTx reactivates a mis-restricted legacy litter puppy but leaves a genuinely-restricted adult dog restricted', async () => {
+// ── Codex fix-round (Finding 3): reconcileDogCapTx now only auto-
+// reactivates a litter puppy whose restriction is PROVEN cap-driven
+// (restrictionReason:'plan_cap_exceeded'), never one inferred from shape
+// alone. reactivates a litter puppy mis-restricted under the OLD rule,
+// WITHOUT reactivating a genuinely cap-restricted adult dog in the same
+// account ──
+await checkAsync('reconcileDogCapTx reactivates a CONFIRMED (restrictionReason:plan_cap_exceeded) cap-restricted litter puppy but leaves a genuinely-restricted adult dog restricted', async () => {
   const db = createFakeFirestore({
     dogs: {
       a1: dog('a1'),
-      a2: dog('a2', { status: 'restricted' }), // genuinely over cap — must stay restricted
-      p1: puppy('p1', { status: 'restricted' }), // Green-Boy shape: restricted only under the old v1.1 rule
+      a2: dog('a2', { status: 'restricted', restrictionReason: 'plan_cap_exceeded' }), // genuinely over cap — must stay restricted
+      p1: puppy('p1', { status: 'restricted', restrictionReason: 'plan_cap_exceeded' }), // confirmed cap-driven restriction
     },
   })
   const result = await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'plus'))
@@ -303,19 +306,20 @@ await checkAsync('reconcileDogCapTx reactivates a mis-restricted legacy litter p
   const p1 = await db.collection('dogs').doc('p1').get()
   return result.misrestrictedPuppiesReactivated.join(',') === 'p1' &&
     p1.data().status === 'active' &&
+    p1.data().restrictionReason === undefined && // cleared on reactivation
     a2.data().status === 'restricted' // never reactivated by this pass — genuinely over cap, needs an explicit activate/upgrade
 })
 
-await checkAsync('reconcileDogCapTx: reactivating a mis-restricted puppy is idempotent — running it twice in a row changes nothing the second time', async () => {
-  const db = createFakeFirestore({ dogs: { p1: puppy('p1', { status: 'restricted' }) } })
-  await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'plus'))
+await checkAsync('reconcileDogCapTx: reactivating a confirmed mis-restricted puppy is idempotent — running it twice in a row changes nothing the second time', async () => {
+  const db = createFakeFirestore({ dogs: { p1: puppy('p1', { status: 'restricted', restrictionReason: 'plan_cap_exceeded' }) } })
+  const first = await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'plus'))
   const second = await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'plus'))
-  return second.misrestrictedPuppiesReactivated.length === 0
+  return first.misrestrictedPuppiesReactivated.join(',') === 'p1' && second.misrestrictedPuppiesReactivated.length === 0
 })
 
 await checkAsync('reconcileDogCapTx never reactivates a PROMOTED puppy that is genuinely restricted (it counts toward the cap exactly like an adult once retained)', async () => {
   const db = createFakeFirestore({
-    dogs: { p1: puppy('p1', { status: 'restricted', retainedByBreeder: true }) },
+    dogs: { p1: puppy('p1', { status: 'restricted', restrictionReason: 'plan_cap_exceeded', retainedByBreeder: true }) },
   })
   const result = await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'plus'))
   const p1 = await db.collection('dogs').doc('p1').get()
@@ -324,35 +328,103 @@ await checkAsync('reconcileDogCapTx never reactivates a PROMOTED puppy that is g
 
 await checkAsync('reconcileDogCapTx never reactivates a litter puppy TRANSFERRED to a new owner, even if restricted (it is that owner\'s ordinary dog now, not a mis-restriction)', async () => {
   const db = createFakeFirestore({
-    dogs: { p1: puppy('p1', { status: 'restricted', tenantId: 'original-breeder', currentOwnerId: 'owner-1' }) },
+    dogs: { p1: puppy('p1', { status: 'restricted', restrictionReason: 'plan_cap_exceeded', tenantId: 'original-breeder', currentOwnerId: 'owner-1' }) },
   })
   const result = await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'plus'))
   const p1 = await db.collection('dogs').doc('p1').get()
   return result.misrestrictedPuppiesReactivated.length === 0 && p1.data().status === 'restricted'
 })
 
+// ── Finding 3's actual point: shape alone is never enough. A restricted
+// litter puppy with NO restrictionReason (a legacy record, from before
+// this field existed — exactly Green Boy's real shape) must NOT be
+// silently auto-reactivated by either automatic path, even though its
+// shape is otherwise identical to a confirmed one. ──
+await checkAsync('reconcileDogCapTx does NOT auto-reactivate a LEGACY restricted litter puppy with no restrictionReason recorded at all — ambiguous, left for the explicit reconcile-litter-puppy action instead', async () => {
+  const db = createFakeFirestore({ dogs: { p1: puppy('p1', { status: 'restricted' }) } })
+  const result = await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'plus'))
+  const p1 = await db.collection('dogs').doc('p1').get()
+  return result.misrestrictedPuppiesReactivated.length === 0 && p1.data().status === 'restricted'
+})
+
+await checkAsync('reconcileDogCapTx does NOT auto-reactivate a litter puppy that was MANUALLY restricted (restrictionReason:manual) — a deliberate, non-cap restriction must never be silently undone', async () => {
+  const db = createFakeFirestore({ dogs: { p1: puppy('p1', { status: 'restricted', restrictionReason: 'manual' }) } })
+  const result = await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'plus'))
+  const p1 = await db.collection('dogs').doc('p1').get()
+  return result.misrestrictedPuppiesReactivated.length === 0 && p1.data().status === 'restricted'
+})
+
+await checkAsync('demoteExcessToRestricted tags every demoted dog with restrictionReason:plan_cap_exceeded — the provable signal later reconciliation depends on', async () => {
+  const db = createFakeFirestore({
+    dogs: {
+      a1: dog('a1', { createdAt: '2026-01-01T00:00:00Z' }),
+      a2: dog('a2', { createdAt: '2026-01-02T00:00:00Z' }),
+      a3: dog('a3', { createdAt: '2026-01-03T00:00:00Z' }), // free cap is 2 — a3 (newest) gets demoted
+    },
+  })
+  await db.runTransaction(tx => reconcileDogCapTx(tx, db, 'owner-1', 'free'))
+  const a3 = await db.collection('dogs').doc('a3').get()
+  return a3.data().status === 'restricted' && a3.data().restrictionReason === 'plan_cap_exceeded'
+})
+
 // ── reactivateUpToCapTx: mis-restricted litter puppies reactivate
 // unconditionally (never gated by room), genuinely-restricted adults
 // still respect the cap exactly as before ──
-await checkAsync('reactivateUpToCapTx (upgrade to Plus): a mis-restricted litter puppy is reactivated WITHOUT consuming any of the 5-slot room genuinely-restricted adults compete for', async () => {
+await checkAsync('reactivateUpToCapTx (upgrade to Plus): a CONFIRMED cap-restricted litter puppy is reactivated WITHOUT consuming any of the 5-slot room genuinely-restricted adults compete for', async () => {
   const db = createFakeFirestore({
     dogs: {
       active1: dog('active1', { createdAt: '2026-01-01T00:00:00Z' }),
       active2: dog('active2', { createdAt: '2026-01-02T00:00:00Z' }),
-      p1: puppy('p1', { status: 'restricted', createdAt: '2026-01-03T00:00:00Z' }),
-      r1: dog('r1', { status: 'restricted', createdAt: '2026-01-04T00:00:00Z' }),
-      r2: dog('r2', { status: 'restricted', createdAt: '2026-01-05T00:00:00Z' }),
-      r3: dog('r3', { status: 'restricted', createdAt: '2026-01-06T00:00:00Z' }),
-      r4: dog('r4', { status: 'restricted', createdAt: '2026-01-07T00:00:00Z' }), // room is only for 3 adults (2 active + 3 = 5) — r4 must stay restricted
+      p1: puppy('p1', { status: 'restricted', restrictionReason: 'plan_cap_exceeded', createdAt: '2026-01-03T00:00:00Z' }),
+      r1: dog('r1', { status: 'restricted', restrictionReason: 'plan_cap_exceeded', createdAt: '2026-01-04T00:00:00Z' }),
+      r2: dog('r2', { status: 'restricted', restrictionReason: 'plan_cap_exceeded', createdAt: '2026-01-05T00:00:00Z' }),
+      r3: dog('r3', { status: 'restricted', restrictionReason: 'plan_cap_exceeded', createdAt: '2026-01-06T00:00:00Z' }),
+      r4: dog('r4', { status: 'restricted', restrictionReason: 'plan_cap_exceeded', createdAt: '2026-01-07T00:00:00Z' }), // room is only for 3 adults (2 active + 3 = 5) — r4 must stay restricted
     },
   })
   const result = await db.runTransaction(tx => reactivateUpToCapTx(tx, db, 'owner-1', 'plus'))
   const p1 = await db.collection('dogs').doc('p1').get()
+  const r1 = await db.collection('dogs').doc('r1').get()
   const r4 = await db.collection('dogs').doc('r4').get()
   return result.misrestrictedPuppiesReactivated.join(',') === 'p1' &&
     result.reactivated.sort().join(',') === 'r1,r2,r3' &&
     p1.data().status === 'active' &&
-    r4.data().status === 'restricted'
+    p1.data().restrictionReason === undefined &&
+    r1.data().restrictionReason === undefined && // cleared on reactivation too
+    r4.data().status === 'restricted' &&
+    r4.data().restrictionReason === 'plan_cap_exceeded' // untouched, still tagged
+})
+
+// Codex fix-round (Finding 3): the actual safety boundary is that a
+// LEGACY litter puppy (no restrictionReason) never gets the special
+// FREE/room-exempt reactivation reserved for a CONFIRMED one — it falls
+// through to the ordinary "restricted dogs compete for whatever room
+// exists" bucket instead (pre-existing §3.3 upgrade behavior, applied
+// uniformly to any restricted dog regardless of reason — not something
+// this fix round changes or needs to prevent). This proves the
+// distinction directly: with zero room, a CONFIRMED puppy still
+// reactivates for free, while a LEGACY one — genuinely indistinguishable
+// by shape alone — does not, because it has no proof it was ever
+// cap-driven and so is never treated as cost-free.
+await checkAsync('reactivateUpToCapTx: with zero room, a CONFIRMED cap-restricted puppy still reactivates for free, but a LEGACY (no-reason) puppy does not — proves the reason gate actually matters, not just the shape', async () => {
+  const db = createFakeFirestore({
+    dogs: {
+      active1: dog('active1', { createdAt: '2026-01-01T00:00:00Z' }),
+      active2: dog('active2', { createdAt: '2026-01-02T00:00:00Z' }),
+      active3: dog('active3', { createdAt: '2026-01-03T00:00:00Z' }),
+      active4: dog('active4', { createdAt: '2026-01-04T00:00:00Z' }),
+      active5: dog('active5', { createdAt: '2026-01-05T00:00:00Z' }), // room is already 0 (5 active adults, cap 5)
+      confirmed: puppy('confirmed', { status: 'restricted', restrictionReason: 'plan_cap_exceeded', createdAt: '2026-01-06T00:00:00Z' }),
+      legacy: puppy('legacy', { status: 'restricted', createdAt: '2026-01-07T00:00:00Z' }), // no restrictionReason at all
+    },
+  })
+  const result = await db.runTransaction(tx => reactivateUpToCapTx(tx, db, 'owner-1', 'plus'))
+  const confirmed = await db.collection('dogs').doc('confirmed').get()
+  const legacy = await db.collection('dogs').doc('legacy').get()
+  return result.misrestrictedPuppiesReactivated.join(',') === 'confirmed' &&
+    result.reactivated.length === 0 && // zero room — nothing from the ordinary bucket gets in, including legacy
+    confirmed.data().status === 'active' &&
+    legacy.data().status === 'restricted'
 })
 
 // ── Task 3: create-dog / set-dog-status forgery-resistance is proven at

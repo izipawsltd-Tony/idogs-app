@@ -504,7 +504,14 @@ export default function DogDetailPage({ toast }: Props) {
   // (api/set-dog-status.js, transactional) before promoting a dog back to
   // 'active'; a 409 here means the account is already at its cap and the
   // server correctly refused, not a bug.
-  async function handleSetDogStatus(action: 'activate' | 'restore' | 'restrict' | 'archive') {
+  //
+  // Codex fix-round (Finding 2): 'promote'/'unpromote' added — the only
+  // UI path that can change a litter puppy's retainedByBreeder flag (see
+  // api/set-dog-status.js). Reuses the exact same statusActionLoading
+  // single-flight lock as the 4 existing actions — a second click while
+  // one of these is in flight is a no-op (the button is disabled), same
+  // guarantee as activate/restore/restrict/archive already have.
+  async function handleSetDogStatus(action: 'activate' | 'restore' | 'restrict' | 'archive' | 'promote' | 'unpromote') {
     if (!dogId || !user) return
     setStatusActionLoading(true)
     try {
@@ -518,16 +525,56 @@ export default function DogDetailPage({ toast }: Props) {
       if (!res.ok) {
         throw new Error(body.error || 'Failed to update dog status')
       }
-      setDog(prev => prev ? { ...prev, status: body.status } as typeof prev : prev)
+      // retainedByBreeder is only present in the response for promote/
+      // unpromote (see set-dog-status.js) — litterId is never touched by
+      // either action, so it's never part of this update.
+      setDog(prev => prev ? {
+        ...prev,
+        status: body.status,
+        ...('retainedByBreeder' in body ? { retainedByBreeder: body.retainedByBreeder } : {}),
+      } as typeof prev : prev)
       toast(
         action === 'activate' || action === 'restore'
           ? `${dog?.name || 'Dog'} is now active`
           : action === 'restrict'
             ? `${dog?.name || 'Dog'} moved to restricted`
-            : `${dog?.name || 'Dog'} archived`
+            : action === 'archive'
+              ? `${dog?.name || 'Dog'} archived`
+              : action === 'promote'
+                ? `${dog?.name || 'Dog'} added to your Dog List — now counts toward your plan's dog limit`
+                : `${dog?.name || 'Dog'} returned to litter-only — no longer counts toward your plan's dog limit`
       )
     } catch (err) {
       toast(err instanceof Error && err.message ? err.message : 'Failed to update dog status', 'error')
+    } finally {
+      setStatusActionLoading(false)
+    }
+  }
+
+  // Codex fix-round (Finding 3): the separate, explicit, per-dog
+  // reconciliation action for a LEGACY restricted litter puppy (no
+  // restrictionReason recorded — see api/reconcile-litter-puppy.js and
+  // api/_lib/dog-cap.js's header comment for why this is deliberately NOT
+  // folded into the generic 'activate' action above). Shares the same
+  // statusActionLoading single-flight lock.
+  async function handleReconcileLitterPuppy() {
+    if (!dogId || !user) return
+    setStatusActionLoading(true)
+    try {
+      const idToken = await user.getIdToken()
+      const res = await fetch('/api/reconcile-litter-puppy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ dogId }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(body.error || 'Failed to reconcile this puppy')
+      }
+      setDog(prev => prev ? { ...prev, status: body.status } as typeof prev : prev)
+      toast(`${dog?.name || 'Dog'} is now active — litter puppies don't count toward your plan's dog limit`)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to reconcile this puppy', 'error')
     } finally {
       setStatusActionLoading(false)
     }
@@ -873,6 +920,34 @@ export default function DogDetailPage({ toast }: Props) {
   // not already archived (that state already has its own Restore banner
   // below).
   const canOfferArchiveInsteadOfDelete = isCurrentEffectiveOwner && dogHasPermanentHistory && !dogIsMidTransfer && !isArchived
+
+  // Codex fix-round (Finding 2/3) — litter puppy retention (promote/
+  // unpromote) and legacy-restriction reconciliation. Gated identically:
+  // breeder-only (Pet Owner accounts don't have litters), the CURRENT
+  // effective owner only (a former breeder who transferred this puppy
+  // away has no management actions here at all — same posture as every
+  // other action on this page), never mid-transfer/pending, and only for
+  // a genuine litter puppy. These are UI-visibility gates only — every
+  // one of these conditions is independently re-validated server-side in
+  // api/set-dog-status.js / api/reconcile-litter-puppy.js, which remain
+  // the sole authority.
+  const isLitterPuppy = !!(dog as any).litterId
+  const isRetainedByBreeder = (dog as any).retainedByBreeder === true
+  const canManageLitterRetention = !isOwner && isCurrentEffectiveOwner && isLitterPuppy &&
+    !isTransferred && !dogIsMidTransfer
+  // promote/unpromote both require status:'active' server-side (a puppy
+  // never changes `status` when retained/unretained — only 'restricted'
+  // needs the separate reconciliation path below).
+  const isLitterPuppyPromotable = canManageLitterRetention && !isRetainedByBreeder && !isRestricted && !isArchived
+  const isRetainedLitterPuppy = canManageLitterRetention && isRetainedByBreeder
+  // A restricted, unretained litter puppy is ambiguous by shape alone
+  // (see api/_lib/dog-cap.js's header comment) — this replaces the
+  // generic "Activate this dog" banner below with the dedicated
+  // reconciliation action instead, since the generic activate flow's cap
+  // check is not even correct for this case (reactivating a still-
+  // unpromoted litter puppy costs no cap room, but activate's check
+  // doesn't know that).
+  const isRestrictedLitterPuppyCandidate = canManageLitterRetention && isRestricted && !isRetainedByBreeder
   const todaysMilestone = getTodaysMilestone(dog.dateOfBirth, dog.createdAt)
 
   // Codex round 16: a tab-label count badge is the very first thing a
@@ -948,7 +1023,7 @@ export default function DogDetailPage({ toast }: Props) {
               Transferred to <strong>{(dog as any).buyerName}</strong> · {(dog as any).buyerEmail}
             </div>
           )}
-          {isRestricted && (
+          {isRestricted && !isRestrictedLitterPuppyCandidate && (
             <div style={{ marginTop: 10, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span>
                 🔒 This dog is over your plan's limit and is read-only — the record, Dog ID, and QR Passport all still work, and it can still be transferred.
@@ -956,6 +1031,34 @@ export default function DogDetailPage({ toast }: Props) {
               </span>
               <button className="btn btn-sm" disabled={statusActionLoading} onClick={() => handleSetDogStatus('activate')} style={{ background: '#fff', border: '1px solid rgba(200,151,31,0.4)', color: 'var(--gold)', flexShrink: 0 }}>
                 {statusActionLoading ? <span className="spinner" /> : 'Activate this dog'}
+              </button>
+            </div>
+          )}
+          {isRestrictedLitterPuppyCandidate && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>
+                🐾 This looks like a litter puppy that was restricted before litter puppies were exempted from your plan's dog limit — puppies don't count toward your limit unless you keep them. This won't use up any of your dog slots.
+              </span>
+              <button className="btn btn-sm" disabled={statusActionLoading} onClick={handleReconcileLitterPuppy} style={{ background: '#fff', border: '1px solid rgba(200,151,31,0.4)', color: 'var(--gold)', flexShrink: 0 }}>
+                {statusActionLoading ? <span className="spinner" /> : 'Reconcile this puppy'}
+              </button>
+            </div>
+          )}
+          {isLitterPuppyPromotable && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--green)', background: 'var(--green-light)', border: '1px solid rgba(8,80,65,.16)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>
+                🐾 Part of a litter — doesn't count toward your plan's dog limit yet. Keeping {dog.name} as a breeding or companion dog adds it to your independent Dog List (and your dog count).
+              </span>
+              <button className="btn btn-sm" disabled={statusActionLoading} onClick={() => handleSetDogStatus('promote')} style={{ flexShrink: 0 }}>
+                {statusActionLoading ? <span className="spinner" /> : '➕ Add to Dog List'}
+              </button>
+            </div>
+          )}
+          {isRetainedLitterPuppy && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', border: '1px solid var(--border)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>✓ Kept as a breeding/companion dog on your Dog List — counts toward your plan's dog limit.</span>
+              <button className="btn btn-sm btn-secondary" disabled={statusActionLoading} onClick={() => handleSetDogStatus('unpromote')} style={{ flexShrink: 0 }}>
+                {statusActionLoading ? <span className="spinner" /> : 'Return to litter-only'}
               </button>
             </div>
           )}

@@ -85,9 +85,18 @@ service cloud.firestore {
     // `retainedByBreeder` only by api/set-dog-status.js's 'promote'/
     // 'unpromote' actions (both Admin SDK, bypass Rules entirely — this
     // only closes the DIRECT client-write path).
+    //
+    // Codex fix-round (Finding 3): `restrictionReason` added. It's what
+    // lets api/_lib/dog-cap.js's automatic reconciliation PROVE a
+    // restriction was cap-driven (restrictionReason:'plan_cap_exceeded')
+    // instead of guessing from a restricted dog's shape — a client that
+    // could forge that value directly could trick automatic reconciliation
+    // into reactivating a dog that was actually restricted for some other
+    // reason (restrictionReason:'manual', via api/set-dog-status.js's
+    // 'restrict' action).
     function dogProtectedFieldsUnchanged() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType', 'originBreederId', 'litterId', 'retainedByBreeder']);
+        .hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType', 'originBreederId', 'litterId', 'retainedByBreeder', 'restrictionReason']);
     }
 
     // Hotfix — allow a legitimate SECOND (or later) transfer. The

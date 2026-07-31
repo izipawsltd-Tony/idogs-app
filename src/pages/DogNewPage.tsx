@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { createDog, addVaccineRecord, addHealthTest, getDogs } from '../lib/db'
-import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType, parseDobStrict } from '../lib/utils'
+import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType, parseDobStrict, isDogEligibleForCap } from '../lib/utils'
 import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
@@ -147,6 +147,15 @@ export default function DogNewPage({ toast }: Props) {
   // (isCurrent() false) rather than applied to whatever account happens
   // to be signed in when it resolves. No authenticated UID at all blocks
   // creation outright, same as a failed check.
+  //
+  // Codex fix-round (Finding 1): previously counted every dog whose
+  // status !== 'transferred' — including litter puppies, archived and
+  // restricted dogs, none of which actually consume a plan slot. Now uses
+  // isDogEligibleForCap(), the exact same client-side mirror AppLayout's
+  // sidebar count uses, which itself mirrors the backend's real
+  // enforcement (api/_lib/dog-cap.js's isEligibleForCap()) — so this
+  // page's block/no-block decision agrees with what the server will
+  // actually allow.
   function checkLimit() {
     if (!user) {
       setLimitCheckError(true)
@@ -158,7 +167,7 @@ export default function DogNewPage({ toast }: Props) {
     setLimitCheckError(false)
     getDogs().then(dogs => {
       if (!req.isCurrent()) return
-      const active = dogs.filter((d: any) => d.status !== 'transferred')
+      const active = dogs.filter(isDogEligibleForCap)
       setActiveDogCount(active.length)
       const isFreePlan = FREE_PLANS.includes(profile?.plan ?? 'free')
       setBlocked(isFreePlan && active.length >= FREE_DOG_LIMIT)

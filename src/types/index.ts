@@ -92,6 +92,16 @@ export interface Dog {
   // (never directly by the client — protected in firestore.rules'
   // dogProtectedFieldsUnchanged()).
   retainedByBreeder?: boolean
+  // Why this dog is currently status:'restricted' — 'plan_cap_exceeded'
+  // (written by every cap-driven path: creation, claim, downgrade) or
+  // 'manual' (api/set-dog-status.js's 'restrict' action). Absent for a
+  // dog that has never been restricted, or a LEGACY restricted dog from
+  // before this field existed. Cleared on every transition out of
+  // 'restricted'. Server-controlled only — protected in firestore.rules'
+  // dogProtectedFieldsUnchanged() — see api/_lib/dog-cap.js's header for
+  // why this exists (proves, rather than guesses, whether a restricted
+  // litter puppy is safe to auto-reactivate).
+  restrictionReason?: 'plan_cap_exceeded' | 'manual'
   // ── Ownership (already written by transferDogOwnership) ──
   // 'restricted' / 'archived' added for iDogs Pricing v1.1
   // (Pricing_Decision_Record_v1.1.md §3.2). 'restricted' is system-imposed

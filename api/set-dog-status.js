@@ -30,7 +30,7 @@
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { capForPlan, getOwnedActiveDogsSorted } from './_lib/dog-cap.js'
 import { computeEffectivePlan } from './_lib/entitlements.js'
@@ -65,6 +65,19 @@ const FROM_STATUS = {
 }
 
 const TO_STATUS = { restrict: 'restricted', archive: 'archived', activate: 'active', restore: 'active' }
+
+// Codex fix-round (Finding 3) — see api/_lib/dog-cap.js's header comment
+// for why this field exists. 'restrict' is the ONLY manual path a dog can
+// take into 'restricted' today (every other path — creation, claim,
+// downgrade — is cap-driven and tags 'plan_cap_exceeded' itself); any
+// transition OUT of 'restricted' (or through it, via archive) clears a
+// stale reason so it never lingers into a future restriction.
+const EXTRA_STATUS_FIELDS = {
+  restrict: { restrictionReason: 'manual' },
+  archive: { restrictionReason: FieldValue.delete() },
+  activate: { restrictionReason: FieldValue.delete() },
+  restore: { restrictionReason: FieldValue.delete() },
+}
 
 async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -196,7 +209,7 @@ async function handler(req, res) {
     }
 
     // ── Writes ──
-    tx.update(dogRef, { status: TO_STATUS[action], updatedAt: new Date().toISOString() })
+    tx.update(dogRef, { status: TO_STATUS[action], ...EXTRA_STATUS_FIELDS[action], updatedAt: new Date().toISOString() })
     return { ok: true, status: TO_STATUS[action] }
   })
 

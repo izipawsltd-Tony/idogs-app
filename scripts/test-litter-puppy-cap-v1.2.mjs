@@ -74,6 +74,7 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   const { default: createLitterPuppyHandler } = await import('../api/create-litter-puppy.js')
   const { default: setDogStatusHandler } = await import('../api/set-dog-status.js')
   const { default: reconcileDogCapHandler } = await import('../api/reconcile-dog-cap.js')
+  const { default: reconcileLitterPuppyHandler } = await import('../api/reconcile-litter-puppy.js')
   const { default: claimTransferredDogsHandler } = await import('../api/claim-transferred-dogs.js')
 
   const seedDb = getFirestore()
@@ -283,34 +284,176 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('8', 'The buyer now has exactly 5 active dogs (4 seeded adults + the claimed puppy) — the claimed puppy genuinely consumed a slot', eligibleSnap.size === 5)
   }
 
-  // ── Task 6 / Green Boy: reconcile-dog-cap.js (the REAL, already-
-  // deployed, auto-triggered-after-dog-creation endpoint) reactivates a
-  // litter puppy that was restricted under the OLD v1.1 rule ──
+  // ── Codex fix-round (Finding 3): reconcile-dog-cap.js (the REAL,
+  // already-deployed, auto-triggered-after-dog-creation endpoint) still
+  // auto-reactivates a litter puppy whose restriction is PROVEN cap-driven
+  // (restrictionReason:'plan_cap_exceeded') — this is the case
+  // demoteExcessToRestricted/create-dog.js/claim-transferred-dogs.js
+  // themselves produce, going forward. ──
   {
     const breeder = await newUser('v12t9breeder', plusProfile)
     const litterId = `v12t9litter_${R}`
     await seedLitter(breeder.uid, litterId)
-    // Simulate a puppy restricted under the OLD rule: litter-managed,
-    // never retained, but status:'restricted' (exactly Green Boy's shape).
-    const legacyPuppyId = `v12t9legacypuppy_${R}`
-    await seedDb.collection('dogs').doc(legacyPuppyId).set({
+    // A CONFIRMED cap-driven restriction — exactly what the current code
+    // now produces (see api/_lib/dog-cap.js's demoteExcessToRestricted).
+    const confirmedPuppyId = `v12t9confirmedpuppy_${R}`
+    await seedDb.collection('dogs').doc(confirmedPuppyId).set({
       tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED',
-      name: 'Legacy Puppy', sex: 'male', status: 'restricted', isDeceased: false, dateOfBirth: '2026-01-01',
+      name: 'Confirmed Puppy', sex: 'male', status: 'restricted', restrictionReason: 'plan_cap_exceeded', isDeceased: false, dateOfBirth: '2026-01-01',
       litterId, breed: 'Labrador', createdAt: new Date().toISOString(),
     })
     // A genuinely over-cap adult dog, unrelated to the bug — must stay restricted.
     for (let i = 0; i < 5; i++) await seedAdultDog(breeder.uid, `v12t9adult${i}_${R}`)
     const genuineOverCapId = `v12t9overcap_${R}`
-    await seedAdultDog(breeder.uid, genuineOverCapId, { status: 'restricted' })
+    await seedAdultDog(breeder.uid, genuineOverCapId, { status: 'restricted', restrictionReason: 'plan_cap_exceeded' })
 
     const res = mockRes()
     await reconcileDogCapHandler(mockReq({}, breeder.idToken), res)
     check('9', 'reconcile-dog-cap.js succeeds', res.statusCode === 200, JSON.stringify(res.body))
 
-    const legacyDoc = await seedDb.collection('dogs').doc(legacyPuppyId).get()
+    const confirmedDoc = await seedDb.collection('dogs').doc(confirmedPuppyId).get()
     const overCapDoc = await seedDb.collection('dogs').doc(genuineOverCapId).get()
-    check('9', 'The Green-Boy-shaped legacy litter puppy is reactivated to active', legacyDoc.data().status === 'active')
+    check('9', 'The CONFIRMED cap-restricted litter puppy is reactivated to active', confirmedDoc.data().status === 'active')
+    check('9', 'restrictionReason is cleared on reactivation', confirmedDoc.data().restrictionReason === undefined)
     check('9', 'The genuinely cap-restricted adult dog is left restricted — never silently reactivated', overCapDoc.data().status === 'restricted')
+  }
+
+  // ── Finding 3's actual fix: a Green-Boy-shaped LEGACY restricted
+  // litter puppy (restricted before restrictionReason existed — no reason
+  // recorded at all) is NOT touched by the automatic reconcile-dog-cap.js
+  // endpoint, but CAN be safely, explicitly reconciled through the new
+  // per-dog api/reconcile-litter-puppy.js action — real application
+  // behavior any breeder can trigger for their own puppy, no hard-coded
+  // ID/email, no broad migration. ──
+  {
+    const breeder = await newUser('v12t10breeder', plusProfile)
+    const litterId = `v12t10litter_${R}`
+    await seedLitter(breeder.uid, litterId)
+    const legacyPuppyId = `v12t10legacypuppy_${R}`
+    await seedDb.collection('dogs').doc(legacyPuppyId).set({
+      tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED',
+      name: 'Legacy Puppy', sex: 'male', status: 'restricted', isDeceased: false, dateOfBirth: '2026-01-01',
+      litterId, breed: 'Labrador', createdAt: new Date().toISOString(),
+      // Deliberately NO restrictionReason field at all — the exact Green
+      // Boy shape: restricted before this field ever existed.
+    })
+
+    // Step 1: the automatic, blanket endpoint must NOT touch it.
+    const autoRes = mockRes()
+    await reconcileDogCapHandler(mockReq({}, breeder.idToken), autoRes)
+    const afterAuto = await seedDb.collection('dogs').doc(legacyPuppyId).get()
+    check('10', 'reconcile-dog-cap.js (automatic, blanket) does NOT reactivate a legacy litter puppy with no restrictionReason', afterAuto.data().status === 'restricted')
+
+    // Step 2: the new, explicit, scoped, per-dog action DOES fix it.
+    const explicitRes = mockRes()
+    await reconcileLitterPuppyHandler(mockReq({ dogId: legacyPuppyId }, breeder.idToken), explicitRes)
+    check('10', 'reconcile-litter-puppy.js (explicit, scoped) succeeds for the legitimate owner', explicitRes.statusCode === 200, JSON.stringify(explicitRes.body))
+    const afterExplicit = await seedDb.collection('dogs').doc(legacyPuppyId).get()
+    check('10', 'The legacy litter puppy is now active', afterExplicit.data().status === 'active')
+    check('10', 'litter provenance (litterId) is preserved — reconciliation never erases it', afterExplicit.data().litterId === litterId)
+
+    // Idempotent — calling it again on an already-active dog is a no-op,
+    // not an error.
+    const idempotentRes = mockRes()
+    await reconcileLitterPuppyHandler(mockReq({ dogId: legacyPuppyId }, breeder.idToken), idempotentRes)
+    check('10', 'reconcile-litter-puppy.js is idempotent — calling it again on an already-active dog succeeds as a no-op', idempotentRes.statusCode === 200 && idempotentRes.body?.alreadyActive === true, JSON.stringify(idempotentRes.body))
+  }
+
+  // ── Safety: reconcile-litter-puppy.js is tenant-scoped and refuses a
+  // manually-restricted puppy, an adult, a promoted puppy, and a
+  // transferred puppy ──
+  {
+    const breeder = await newUser('v12t11breeder', plusProfile)
+    const stranger = await newUser('v12t11stranger', plusProfile)
+    const litterId = `v12t11litter_${R}`
+    await seedLitter(breeder.uid, litterId)
+
+    // Tenant-scoped: a stranger cannot reconcile someone else's puppy.
+    const legacyPuppyId = `v12t11legacypuppy_${R}`
+    await seedDb.collection('dogs').doc(legacyPuppyId).set({
+      tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED',
+      name: 'Legacy Puppy', sex: 'male', status: 'restricted', isDeceased: false, dateOfBirth: '2026-01-01',
+      litterId, breed: 'Labrador', createdAt: new Date().toISOString(),
+    })
+    const strangerRes = mockRes()
+    await reconcileLitterPuppyHandler(mockReq({ dogId: legacyPuppyId }, stranger.idToken), strangerRes)
+    check('11', 'A stranger cannot reconcile another breeder\'s puppy (403)', strangerRes.statusCode === 403, JSON.stringify(strangerRes.body))
+    const untouchedByStranger = await seedDb.collection('dogs').doc(legacyPuppyId).get()
+    check('11', 'The puppy is left untouched by the denied stranger attempt', untouchedByStranger.data().status === 'restricted')
+
+    // Manually restricted — must be refused outright, never silently undone.
+    const manualPuppyId = `v12t11manualpuppy_${R}`
+    await seedDb.collection('dogs').doc(manualPuppyId).set({
+      tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED',
+      name: 'Manual Puppy', sex: 'male', status: 'restricted', restrictionReason: 'manual', isDeceased: false, dateOfBirth: '2026-01-01',
+      litterId, breed: 'Labrador', createdAt: new Date().toISOString(),
+    })
+    const manualRes = mockRes()
+    await reconcileLitterPuppyHandler(mockReq({ dogId: manualPuppyId }, breeder.idToken), manualRes)
+    check('11', 'A manually-restricted puppy is refused (409 MANUALLY_RESTRICTED), never silently reactivated', manualRes.statusCode === 409 && manualRes.body?.reason === 'MANUALLY_RESTRICTED', JSON.stringify(manualRes.body))
+    const untouchedManual = await seedDb.collection('dogs').doc(manualPuppyId).get()
+    check('11', 'The manually-restricted puppy is left untouched', untouchedManual.data().status === 'restricted')
+
+    // A standalone restricted ADULT dog (no litterId) — never a puppy at all.
+    const adultId = `v12t11adult_${R}`
+    await seedAdultDog(breeder.uid, adultId, { status: 'restricted', restrictionReason: 'plan_cap_exceeded' })
+    const adultRes = mockRes()
+    await reconcileLitterPuppyHandler(mockReq({ dogId: adultId }, breeder.idToken), adultRes)
+    check('11', 'A restricted ADULT (no litterId) is refused (409 NOT_A_LITTER_PUPPY)', adultRes.statusCode === 409 && adultRes.body?.reason === 'NOT_A_LITTER_PUPPY', JSON.stringify(adultRes.body))
+
+    // A PROMOTED (retained) puppy — should use Activate, not this action.
+    const promotedPuppyId = `v12t11promotedpuppy_${R}`
+    await seedDb.collection('dogs').doc(promotedPuppyId).set({
+      tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED',
+      name: 'Promoted Puppy', sex: 'male', status: 'restricted', restrictionReason: 'plan_cap_exceeded', retainedByBreeder: true, isDeceased: false, dateOfBirth: '2026-01-01',
+      litterId, breed: 'Labrador', createdAt: new Date().toISOString(),
+    })
+    const promotedRes = mockRes()
+    await reconcileLitterPuppyHandler(mockReq({ dogId: promotedPuppyId }, breeder.idToken), promotedRes)
+    check('11', 'A PROMOTED (retained) puppy is refused (409 ALREADY_RETAINED) — it counts toward the cap like any other dog now', promotedRes.statusCode === 409 && promotedRes.body?.reason === 'ALREADY_RETAINED', JSON.stringify(promotedRes.body))
+
+    // A litter puppy already TRANSFERRED to a different owner — the
+    // caller (original breeder) is no longer currentOwnerId.
+    const transferredPuppyId = `v12t11transferredpuppy_${R}`
+    const otherOwner = await newUser('v12t11otherowner', plusProfile)
+    await seedDb.collection('dogs').doc(transferredPuppyId).set({
+      tenantId: breeder.uid, currentOwnerId: otherOwner.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED',
+      name: 'Transferred Puppy', sex: 'male', status: 'restricted', restrictionReason: 'plan_cap_exceeded', isDeceased: false, dateOfBirth: '2026-01-01',
+      litterId, breed: 'Labrador', createdAt: new Date().toISOString(),
+    })
+    const transferredRes = mockRes()
+    await reconcileLitterPuppyHandler(mockReq({ dogId: transferredPuppyId }, breeder.idToken), transferredRes)
+    check('11', 'The original breeder cannot reconcile a puppy already transferred to a new owner (403)', transferredRes.statusCode === 403, JSON.stringify(transferredRes.body))
+  }
+
+  // ── Litter-ownership validation: a litterId pointing at a real litter
+  // document owned by someone ELSE (or no litter document at all) is
+  // refused, not trusted at face value ──
+  {
+    const breeder = await newUser('v12t12breeder', plusProfile)
+    const otherBreeder = await newUser('v12t12otherbreeder', plusProfile)
+    const foreignLitterId = `v12t12foreignlitter_${R}`
+    await seedLitter(otherBreeder.uid, foreignLitterId) // owned by someone else
+
+    const forgedPuppyId = `v12t12forgedpuppy_${R}`
+    await seedDb.collection('dogs').doc(forgedPuppyId).set({
+      tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED',
+      name: 'Forged Puppy', sex: 'male', status: 'restricted', isDeceased: false, dateOfBirth: '2026-01-01',
+      litterId: foreignLitterId, breed: 'Labrador', createdAt: new Date().toISOString(),
+    })
+    const forgedRes = mockRes()
+    await reconcileLitterPuppyHandler(mockReq({ dogId: forgedPuppyId }, breeder.idToken), forgedRes)
+    check('12', 'A litterId pointing at a litter document owned by someone else is refused (403 LITTER_OWNERSHIP_MISMATCH)', forgedRes.statusCode === 403 && forgedRes.body?.reason === 'LITTER_OWNERSHIP_MISMATCH', JSON.stringify(forgedRes.body))
+
+    const danglingPuppyId = `v12t12danglingpuppy_${R}`
+    await seedDb.collection('dogs').doc(danglingPuppyId).set({
+      tenantId: breeder.uid, currentOwnerId: breeder.uid, createdByUserId: breeder.uid, sourceType: 'BREEDER_ISSUED',
+      name: 'Dangling Puppy', sex: 'male', status: 'restricted', isDeceased: false, dateOfBirth: '2026-01-01',
+      litterId: `nonexistent-litter-${R}`, breed: 'Labrador', createdAt: new Date().toISOString(),
+    })
+    const danglingRes = mockRes()
+    await reconcileLitterPuppyHandler(mockReq({ dogId: danglingPuppyId }, breeder.idToken), danglingRes)
+    check('12', 'A litterId pointing at a non-existent litter document is refused (409 LITTER_NOT_FOUND)', danglingRes.statusCode === 409 && danglingRes.body?.reason === 'LITTER_NOT_FOUND', JSON.stringify(danglingRes.body))
   }
 
   await summary()
