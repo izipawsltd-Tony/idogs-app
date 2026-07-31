@@ -26,7 +26,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { checkRateLimit, getClientIp, hashClientKey } from './_lib/rate-limit.js'
-import { hashShareToken, isShareLive } from './_lib/showcase-share.js'
+import { hashShareToken, isShareLive, isTenantPlusEligible } from './_lib/showcase-share.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -106,6 +106,15 @@ export default async function handler(req, res) {
     const showcase = showcaseDoc.data()
 
     if (!isShareLive(showcase)) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+
+    // Integration-hardening fix (Slice 2, commit 5/5): re-checks the
+    // OWNING TENANT's current plan, not just the Showcase document's own
+    // flags — see isTenantPlusEligible()'s own comment for why. A fresh
+    // read, never a cached/stale profile.
+    const profileSnap = await db.collection('users').doc(showcase.tenantId).get()
+    if (!isTenantPlusEligible(profileSnap.exists ? profileSnap.data() : null)) {
       return res.status(404).json({ error: 'Not found' })
     }
 

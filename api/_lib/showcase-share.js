@@ -11,6 +11,7 @@
 // own; only a correct token does.
 
 import { randomBytes, createHash } from 'crypto'
+import { computeEffectivePlan } from './entitlements.js'
 
 // 32 bytes (256 bits) of CSPRNG entropy, base64url-encoded (URL-safe,
 // no padding) — long enough that guessing/enumerating a valid token is
@@ -55,4 +56,23 @@ export function isValidExpiryIso(value) {
   if (Number.isNaN(d.getTime())) return false
   const maxMs = Date.now() + MAX_SHARE_EXPIRY_DAYS * 24 * 60 * 60 * 1000
   return d.getTime() <= maxMs
+}
+
+// Integration-hardening fix (Slice 2, commit 5/5): Litter Showcase is a
+// Plus-plan feature — api/create-showcase.js/rotate-showcase-share.js
+// etc. all gate on checkBreederPlusAccess() before letting a breeder
+// CREATE or manage one. But neither api/showcase-public.js nor
+// api/create-showcase-enquiry.js re-checked the tenant's CURRENT plan at
+// PUBLIC READ/enquiry time — isShareLive() only ever looked at the
+// Showcase document's own flags. A breeder who downgraded to Free after
+// publishing a link would keep it working indefinitely, which
+// contradicts "Keep plan restrictions authoritative" (this Slice's own
+// SECURITY requirement) — the public-facing benefit of a Plus-only
+// feature must not outlive the subscription that unlocked it. Callers
+// pass a freshly-read users/{uid} profile (never trust a cached/stale
+// one) and treat a non-Plus-eligible tenant exactly like every other
+// "not live" reason: the same generic 404/not-found response, never a
+// distinguishing signal.
+export function isTenantPlusEligible(profile) {
+  return computeEffectivePlan(profile) === 'plus'
 }
