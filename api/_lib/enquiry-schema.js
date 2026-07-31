@@ -75,6 +75,15 @@ export function sanitizeEnquiryInput(raw) {
     message,
     consent: true,
     honeypotFilled,
-    puppyId: typeof raw.puppyId === 'string' && raw.puppyId.trim() !== '' ? raw.puppyId.trim() : null,
+    // Codex fix-round ("Public identifiers"): the public page never has a
+    // real Firestore dogId to send — puppy.id in the public projection is
+    // already an opaque reference (see opaquePuppyRef() in
+    // api/_lib/showcase-media-access.js). This is that raw, unresolved
+    // string exactly as submitted; api/create-showcase-enquiry.js is
+    // responsible for resolving it back to a real dogId (or rejecting it)
+    // within the already-validated token/showcase context — this schema
+    // layer only trims/bounds it as an opaque string, same as any other
+    // field here.
+    puppyRef: typeof raw.puppyRef === 'string' && raw.puppyRef.trim() !== '' ? raw.puppyRef.trim() : null,
   }
 }

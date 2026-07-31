@@ -39,16 +39,34 @@ export function resolveTimestampIso(value) {
 
 export const BULK_ACTIONS = Object.freeze(['select_all', 'clear_all', 'show_available_only'])
 
-// Always returns a COMPLETE two-field entry — never a partial one — so a
-// puppy entry can never exist with only `visible` or only `availability`
-// set. `existing` is the current stored entry for this puppy, if any;
-// `patch` is the caller-requested change (only the keys actually present
-// are applied). A field simply absent from `patch` leaves the existing
-// (or default, if this is the first-ever touch) value untouched — the
-// same "absent = untouched" contract litter-schema.js's
-// sanitizeLitterInput uses — which is what makes requirement 5
-// ("availability changes must never alter visibility", and vice versa)
-// hold structurally rather than by convention.
+// Codex fix-round ("Explicit media publication"): the SAME bound already
+// used by api/upload-showcase-media.js's MAX_MEDIA_ITEMS_PER_KIND — a
+// puppy can never publish more items than it could possibly have.
+export const MAX_PUBLISHED_MEDIA_PER_KIND = 30
+
+// Always returns a COMPLETE four-field entry — never a partial one — so a
+// puppy entry can never exist with only some fields set. `existing` is
+// the current stored entry for this puppy, if any; `patch` is the
+// caller-requested change (only the keys actually present are applied).
+// A field simply absent from `patch` leaves the existing (or default, if
+// this is the first-ever touch) value untouched — the same
+// "absent = untouched" contract litter-schema.js's sanitizeLitterInput
+// uses — which is what makes requirement 5 ("availability changes must
+// never alter visibility", and vice versa) hold structurally rather than
+// by convention, and now extends the same guarantee to
+// publishedPhotoIds/publishedVideoIds (selecting photos must never touch
+// videos, and vice versa).
+//
+// publishedPhotoIds/publishedVideoIds are NOT validated here against the
+// puppy's actual dog.photos/dog.videos — this endpoint deliberately never
+// reads the `dogs` collection (Slice 1 requirement 7). Safety instead
+// comes from the READ side: api/showcase-public.js's own projection only
+// ever resolves a published id that still exists in the puppy's current
+// gallery, silently dropping anything else (see
+// api/update-showcase-media.js's own header comment) — a stale or
+// fabricated id stored here can never cause anything extra to be shown
+// publicly, only cause a real, currently-published item to correctly stop
+// appearing once deleted.
 export function mergePuppyEntry(existing, patch) {
   const visible = Object.prototype.hasOwnProperty.call(patch, 'visible')
     ? patch.visible
@@ -56,8 +74,28 @@ export function mergePuppyEntry(existing, patch) {
   const availability = Object.prototype.hasOwnProperty.call(patch, 'availability')
     ? patch.availability
     : (existing?.availability ?? DEFAULT_AVAILABILITY)
-  return { visible, availability }
+  const publishedPhotoIds = Object.prototype.hasOwnProperty.call(patch, 'publishedPhotoIds')
+    ? patch.publishedPhotoIds
+    : (existing?.publishedPhotoIds ?? [])
+  const publishedVideoIds = Object.prototype.hasOwnProperty.call(patch, 'publishedVideoIds')
+    ? patch.publishedVideoIds
+    : (existing?.publishedVideoIds ?? [])
+  return { visible, availability, publishedPhotoIds, publishedVideoIds }
 }
+
+function validateMediaIdArray(value, fieldName) {
+  if (!Array.isArray(value) || !value.every(id => typeof id === 'string' && id.length > 0)) {
+    throw new ShowcaseValidationError(`${fieldName} must be an array of non-empty id strings`)
+  }
+  if (value.length > MAX_PUBLISHED_MEDIA_PER_KIND) {
+    throw new ShowcaseValidationError(`${fieldName} must not exceed ${MAX_PUBLISHED_MEDIA_PER_KIND} items`)
+  }
+  if (new Set(value).size !== value.length) {
+    throw new ShowcaseValidationError(`${fieldName} must not contain duplicate entries`)
+  }
+}
+
+const KNOWN_PATCH_FIELDS = ['visible', 'availability', 'publishedPhotoIds', 'publishedVideoIds']
 
 export function validatePuppyPatch(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
@@ -65,10 +103,12 @@ export function validatePuppyPatch(patch) {
   }
   const hasVisible = Object.prototype.hasOwnProperty.call(patch, 'visible')
   const hasAvailability = Object.prototype.hasOwnProperty.call(patch, 'availability')
-  if (!hasVisible && !hasAvailability) {
-    throw new ShowcaseValidationError('patch must include visible and/or availability')
+  const hasPublishedPhotoIds = Object.prototype.hasOwnProperty.call(patch, 'publishedPhotoIds')
+  const hasPublishedVideoIds = Object.prototype.hasOwnProperty.call(patch, 'publishedVideoIds')
+  if (!hasVisible && !hasAvailability && !hasPublishedPhotoIds && !hasPublishedVideoIds) {
+    throw new ShowcaseValidationError('patch must include at least one of: visible, availability, publishedPhotoIds, publishedVideoIds')
   }
-  const unknown = Object.keys(patch).filter(k => k !== 'visible' && k !== 'availability')
+  const unknown = Object.keys(patch).filter(k => !KNOWN_PATCH_FIELDS.includes(k))
   if (unknown.length > 0) {
     throw new ShowcaseValidationError(`Unknown field(s): ${unknown.join(', ')}`)
   }
@@ -78,9 +118,14 @@ export function validatePuppyPatch(patch) {
   if (hasAvailability && !AVAILABILITY_VALUES.includes(patch.availability)) {
     throw new ShowcaseValidationError(`availability must be one of: ${AVAILABILITY_VALUES.join(', ')}`)
   }
+  if (hasPublishedPhotoIds) validateMediaIdArray(patch.publishedPhotoIds, 'publishedPhotoIds')
+  if (hasPublishedVideoIds) validateMediaIdArray(patch.publishedVideoIds, 'publishedVideoIds')
+
   const clean = {}
   if (hasVisible) clean.visible = patch.visible
   if (hasAvailability) clean.availability = patch.availability
+  if (hasPublishedPhotoIds) clean.publishedPhotoIds = patch.publishedPhotoIds
+  if (hasPublishedVideoIds) clean.publishedVideoIds = patch.publishedVideoIds
   return clean
 }
 
@@ -94,19 +139,23 @@ export function validateBulkAction(action) {
 // Applies a bulk action across every CURRENT litter puppyId, returning a
 // brand-new, fully-reconciled puppies map — entries for puppies no
 // longer in `puppyIds` (e.g. removed via api/remove-litter-puppy.js) are
-// dropped rather than carried forward forever. Availability is never
-// touched by a bulk action — only visible.
+// dropped rather than carried forward forever. Availability and
+// publishedPhotoIds/publishedVideoIds are never touched by a bulk action
+// — only visible; a breeder toggling visibility off/on must never lose
+// their per-puppy media publication selections.
 export function applyBulkAction(action, existingPuppies, puppyIds) {
   const map = {}
   for (const id of puppyIds) {
     const existing = existingPuppies?.[id]
     const availability = existing?.availability ?? DEFAULT_AVAILABILITY
+    const publishedPhotoIds = existing?.publishedPhotoIds ?? []
+    const publishedVideoIds = existing?.publishedVideoIds ?? []
     let visible
     if (action === 'select_all') visible = true
     else if (action === 'clear_all') visible = false
     else if (action === 'show_available_only') visible = availability === 'available'
     else throw new ShowcaseValidationError(`Unknown bulk action: ${action}`)
-    map[id] = { visible, availability }
+    map[id] = { visible, availability, publishedPhotoIds, publishedVideoIds }
   }
   return map
 }

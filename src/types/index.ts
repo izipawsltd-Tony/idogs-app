@@ -4,6 +4,20 @@ export type LifeStage = 'whelp' | 'puppy' | 'young_adult' | 'adult' | 'senior' |
 
 export type Sex = 'male' | 'female'
 
+// Codex fix-round ("Revocable media delivery" / "Explicit media
+// publication"): `path` is a Storage object path, deliberately never a
+// public URL — Storage access for these paths is private (no
+// file.makePublic() anywhere in this codebase's Showcase media
+// endpoints). `id` is a random, unguessable identifier distinct from
+// the path itself, used both as the reorder/delete/publish reference
+// (api/update-showcase-media.js, ShowcasePuppyEntry.publishedPhotoIds/
+// publishedVideoIds) and to avoid ever exposing a raw Storage path to
+// any client, public or authenticated.
+export interface MediaItem {
+  id: string
+  path: string
+}
+
 export interface Dog {
   id: string
   tenantId: string
@@ -26,16 +40,20 @@ export interface Dog {
   sourceType?: 'BREEDER_ISSUED' | 'OWNER_CREATED' | 'IMPORTED'
   createdByUserId?: string
   profilePhoto?: string
-  // Ordered gallery — index 0 is the "cover" photo. Was previously
-  // declared but never written or read anywhere; wired up by Slice 2
-  // for litter/puppy Showcase media (api/upload-showcase-media.js,
-  // api/update-showcase-media.js). Cover/reorder/delete are all just
-  // array operations — no separate "isCover" flag needed.
-  photos: string[]
-  // Same ordered-array convention as `photos` — short video clips
-  // (Slice 2). New field; absent/undefined on any Dog written before
-  // this change, always treated as an empty array by every reader.
-  videos?: string[]
+  // Ordered gallery — index 0 is the private-workspace "cover" (distinct
+  // from a Showcase's own public cover — see ShowcasePuppyEntry.
+  // publishedPhotoIds above). Codex fix-round ("Revocable media
+  // delivery"): `path` is a PRIVATE Storage object path — this array
+  // never carries a public URL. Nothing here is directly fetchable by
+  // any client; the breeder's own view gets short-lived signed URLs via
+  // api/get-showcase-media-urls.js, and the public Showcase page gets
+  // them via api/showcase-public.js — both generated fresh per request,
+  // never persisted, and only ever for media the relevant
+  // ShowcasePuppyEntry has explicitly published (for the public case).
+  photos: MediaItem[]
+  // Same ordered-array/private-path convention as `photos` — short
+  // video clips (Slice 2).
+  videos?: MediaItem[]
   notes: string
   // State-issued Breeder ID (per the NSW Puppy Farming Act 2024 and
   // equivalent VIC/QLD/SA/ACT laws) — a generic field rather than 8
@@ -210,6 +228,18 @@ export interface ShowcasePuppyEntry {
   // (requirement 4/5).
   visible: boolean
   availability: ShowcaseAvailability
+  // Codex fix-round ("Explicit media publication"): a puppy being
+  // `visible` in the Showcase does NOT automatically publish any of its
+  // photos/videos — these are the explicit, breeder-chosen subset of
+  // Dog.photos/Dog.videos (by MediaItem.id, see below) that the public
+  // page may show. Absent/empty means nothing is published yet, even
+  // for a fully visible, fully available puppy. Order here IS the
+  // public display order (index 0 = the public "cover") — deliberately
+  // independent of the private gallery's own order in
+  // PuppyMediaManager, so a breeder can curate a different public
+  // presentation without reordering their own working set.
+  publishedPhotoIds: string[]
+  publishedVideoIds: string[]
 }
 
 export interface LitterShowcase {
