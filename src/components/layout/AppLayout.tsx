@@ -4,6 +4,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useRequestGuard } from '../../hooks/useRequestGuard'
 import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '../../lib/db'
 import { getInitials, AU_STATES, isDogEligibleForCap } from '../../lib/utils'
+import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
 
@@ -227,6 +228,17 @@ export default function AppLayout({ toast }: Props) {
     loadLitterCount()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, isOwner])
+
+  useEffect(() => {
+    const uid = user?.uid
+    if (!uid) return
+    return subscribeToDogUsageChanged(changedUid => {
+      if (changedUid === uid) loadDogAndClaimCounts()
+    })
+    // loadDogAndClaimCounts uses the current render's uid/generation guard.
+    // Re-subscribe whenever the authenticated account changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid])
 
   useEffect(() => {
     if (profile && !profile.state) setShowStateModal(true)

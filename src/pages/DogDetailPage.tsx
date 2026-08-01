@@ -25,6 +25,7 @@ import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
 import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
 import { db, auth } from '../lib/firebase'
+import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -533,6 +534,7 @@ export default function DogDetailPage({ toast }: Props) {
         status: body.status,
         ...('retainedByBreeder' in body ? { retainedByBreeder: body.retainedByBreeder } : {}),
       } as typeof prev : prev)
+      emitDogUsageChanged(user.uid)
       toast(
         action === 'activate' || action === 'restore'
           ? `${dog?.name || 'Dog'} is now active`
