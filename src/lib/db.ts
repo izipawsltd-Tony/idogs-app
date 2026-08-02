@@ -1068,7 +1068,19 @@ export async function deleteLitterServer(id: string): Promise<{ deletedCount: nu
 // updateLitter(litter.id, {puppyIds: filtered}) call (a raw client
 // puppyIds mutation, exactly the bypass this blocker calls out by name)
 // with a server endpoint that verifies confirmed litter membership
-// before unlinking. Unlinks only — never deletes the Dog document.
+// before acting.
+//
+// Fix round (promoted-puppy delete bug): this now permanently DELETES
+// the Dog document for an eligible litter-only puppy — see
+// api/remove-litter-puppy.js's own header comment for why unlink-only
+// was itself the bug. A promoted puppy (retainedByBreeder === true) is
+// rejected server-side with reason PROMOTED_ACTIVE_IN_MY_DOGS. The
+// thrown Error carries `.reason` (the server's machine-readable code, if
+// present) alongside `.message` — LittersPage.tsx's handleDeletePuppy
+// reads `.reason` through a small fixed allowlist (never the server's
+// raw text blindly) to decide what to show, matching this codebase's
+// established error-sanitization convention (see transferError.ts /
+// saleAvailabilityError.ts).
 export async function removePuppyFromLitter(litterId: string, puppyId: string): Promise<void> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
@@ -1079,7 +1091,9 @@ export async function removePuppyFromLitter(litterId: string, puppyId: string): 
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.error || `Remove puppy failed (${res.status})`)
+    const thrown = new Error(err.error || `Delete puppy failed (${res.status})`) as Error & { reason?: string }
+    if (typeof err.reason === 'string') thrown.reason = err.reason
+    throw thrown
   }
 }
 

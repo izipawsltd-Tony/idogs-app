@@ -14,6 +14,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
 import { sendTransferEmail } from '../lib/email'
 import { describeTransferFailure } from '../lib/transferError'
+import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -72,6 +73,30 @@ function partitionLitterCandidates(litterId: string, fetched: Dog[], requesterUi
   )
   const preserved = confirmedMembers.length - eligible.length
   return { confirmedMembers, ambiguousCount, eligible, preserved }
+}
+
+// Fix round (promoted-puppy delete bug) — same allowlist-by-code
+// convention as transferError.ts / saleAvailabilityError.ts: never show
+// an arbitrary thrown error's raw text, only pre-written copy for a
+// small set of known-safe reason codes api/remove-litter-puppy.js
+// actually returns. Anything else (network failure, unexpected
+// exception, no reason code at all) falls back to one fixed generic
+// message.
+const PUPPY_DELETE_KNOWN_MESSAGES: Record<string, string> = {
+  PROMOTED_ACTIVE_IN_MY_DOGS: 'This puppy is currently in My Dogs. Return it to litter-only before deleting, or archive it from My Dogs to retain its history.',
+  DOG_PROTECTED: "This dog can't be deleted — it's transferred, pending claim, claimed, or otherwise no longer exclusively yours.",
+  NOT_CONFIRMED_MEMBER: "This puppy's litter membership couldn't be confirmed — please refresh and try again.",
+  LITTER_ARCHIVED: 'This litter has been deleted and can no longer be edited.',
+}
+const PUPPY_DELETE_GENERIC_MESSAGE = 'Failed to delete puppy. Please try again.'
+function describePuppyDeleteFailure(err: unknown): string {
+  if (err && typeof err === 'object' && 'reason' in err) {
+    const reason = (err as { reason?: unknown }).reason
+    if (typeof reason === 'string' && PUPPY_DELETE_KNOWN_MESSAGES[reason]) {
+      return PUPPY_DELETE_KNOWN_MESSAGES[reason]
+    }
+  }
+  return PUPPY_DELETE_GENERIC_MESSAGE
 }
 
 function buildDeleteLitterConfirmText(litterName: string, eligibleCount: number, preservedCount: number, ambiguousCount: number): string {
@@ -873,19 +898,34 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   }
 
   async function handleDeletePuppy(puppyId: string, litter: Litter) {
-    if (!confirm('Remove this puppy from the litter?')) return
+    // Fix round (promoted-puppy delete bug): client-side pre-check so a
+    // promoted puppy is blocked BEFORE the confirm dialog even appears —
+    // this is a UX convenience only, never authoritative. The server
+    // enforces the same rule fresh on every request (see
+    // api/remove-litter-puppy.js's PROMOTED_ACTIVE_IN_MY_DOGS check) so a
+    // direct API call, or a puppy promoted in another tab after this
+    // page loaded, still can't bypass it.
+    const puppy = dogs.find(d => d.id === puppyId)
+    if (puppy?.retainedByBreeder === true) {
+      toast(PUPPY_DELETE_KNOWN_MESSAGES.PROMOTED_ACTIVE_IN_MY_DOGS, 'error')
+      return
+    }
+    if (!confirm('Permanently delete this puppy record? This cannot be undone.')) return
     try {
       // Codex round 4, Blocker 3: replaces the old direct
       // updateLitter(litter.id, {puppyIds: filtered}) call — a raw
       // client puppyIds mutation — with the trusted server endpoint,
-      // which also verifies confirmed litter membership before unlinking.
+      // which also verifies confirmed litter membership before deleting.
       await removePuppyFromLitter(litter.id, puppyId)
       const [updatedLitters, updatedDogs] = await Promise.all([getLitters(), getDogs()])
       setLitters(updatedLitters)
       setDogs(updatedDogs.filter(d => !d.isDeceased))
-      toast('Puppy removed from litter')
-    } catch {
-      toast('Failed to remove puppy', 'error')
+      // Success-only refresh, matching AppLayout's sidebar-count fix —
+      // never fired on a rejected/failed deletion.
+      if (user?.uid) emitDogUsageChanged(user.uid)
+      toast('Puppy deleted')
+    } catch (err) {
+      toast(describePuppyDeleteFailure(err), 'error')
     }
   }
 
@@ -1295,6 +1335,12 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                             // breeder sees WHY a puppy is read-only before
                             // ever attempting an edit that Rules would deny.
                             const isPuppyRestricted = (puppy as any).status === 'restricted'
+                            // Fix round (promoted-puppy delete bug): a
+                            // promoted puppy is a deliberately-kept My
+                            // Dogs record — shown here so a breeder sees
+                            // WHY delete is blocked before ever clicking
+                            // it, same pattern as isPuppyRestricted above.
+                            const isPuppyPromoted = puppy.retainedByBreeder === true
 
                             return (
                               <div key={puppy.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--white)' }}>
@@ -1319,6 +1365,9 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                   </div>
                                   {isPuppyRestricted && (
                                     <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)', whiteSpace: 'nowrap' }}>🔒 Restricted</span>
+                                  )}
+                                  {isPuppyPromoted && (
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', border: '1px solid rgba(8,80,65,.16)', whiteSpace: 'nowrap' }}>✓ In My Dogs</span>
                                   )}
                                   <div style={{ display: 'flex', gap: 6 }}>
                                     <button
@@ -1345,7 +1394,9 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                     )}
                                     <button
                                       className="btn btn-sm"
-                                      style={{ background: '#FDEDED', color: 'var(--danger)', border: '1px solid #F3B0B0' }}
+                                      style={{ background: isPuppyPromoted ? 'var(--sand)' : '#FDEDED', color: isPuppyPromoted ? 'var(--light)' : 'var(--danger)', border: isPuppyPromoted ? '1px solid var(--border)' : '1px solid #F3B0B0', cursor: isPuppyPromoted ? 'not-allowed' : 'pointer' }}
+                                      disabled={isPuppyPromoted}
+                                      title={isPuppyPromoted ? PUPPY_DELETE_KNOWN_MESSAGES.PROMOTED_ACTIVE_IN_MY_DOGS : undefined}
                                       onClick={() => handleDeletePuppy(puppy.id, litter)}
                                     >✕</button>
                                   </div>
