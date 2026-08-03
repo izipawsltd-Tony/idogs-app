@@ -203,7 +203,15 @@ const { check, checkAsync, skip, summary } = makeChecker()
 
   // ── Dog type additions ──
   const typesSrc = readFileSync(new URL('../src/types/index.ts', import.meta.url), 'utf8')
-  check('MediaItem is declared as {id, path} — a private Storage path, never a public URL', /export interface MediaItem \{\s*\n\s*id: string\s*\n\s*path: string\s*\n\}/.test(typesSrc))
+  // Tony live-staging fix round ("duplicate upload"): MediaItem gained
+  // an optional `hash` field (content dedup) — the check now allows that
+  // addition while still failing if a `url`/`fileUrl` field ever sneaks
+  // in, which is the actual invariant this test protects.
+  {
+    const mediaItemMatch = /export interface MediaItem \{\s*\n\s*id: string\s*\n\s*path: string\s*\n([\s\S]{0,600}?)\n\}/.exec(typesSrc)
+    check('MediaItem is declared as {id, path[, hash]} — a private Storage path, never a public URL',
+      !!mediaItemMatch && !/\b(url|fileUrl)\b/.test(mediaItemMatch[1]))
+  }
   check('Dog.photos is an ordered MediaItem[] (index 0 = cover — no separate isCover flag needed)', /photos: MediaItem\[\]/.test(typesSrc))
   check('Dog declares an optional videos?: MediaItem[] field, same ordered-array convention', /videos\?: MediaItem\[\]/.test(typesSrc))
 
@@ -224,8 +232,8 @@ const { check, checkAsync, skip, summary } = makeChecker()
   check('opaquePuppyRef() is a deterministic hash of litterId+dogId (sha256), never a persisted/random id', /createHash\('sha256'\)\.update\(`\$\{litterId\}:\$\{dogId\}`/.test(accessSrc))
 
   check('upload-showcase-media.js never calls file.makePublic() anywhere', neverActuallyCalls(uploadMediaSrc, 'makePublic'))
-  check('upload-showcase-media.js stores only {id, path} on dog.photos/videos, never a public fileUrl string',
-    /const mediaItem = \{ id: mediaId, path: filePath \}/.test(uploadMediaSrc))
+  check('upload-showcase-media.js stores only {id, path, hash} on dog.photos/videos, never a public fileUrl string',
+    /const mediaItem = \{ id: mediaId, path: filePath, hash: contentHash \}/.test(uploadMediaSrc))
   check('upload-showcase-media.js returns freshly-signed URLs via signMediaItems(), not a raw Storage path/URL',
     /signMediaItems\(bucket, updated\.photos/.test(uploadMediaSrc))
 
@@ -454,14 +462,19 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
   }
 
   // ── Test 6: reorder via update-showcase-media.js (id-based, never URL-based) ──
+  // Uses two DIFFERENT images (not the same fixture twice) — Test 11
+  // below adds duplicate-content rejection, so this setup must reflect a
+  // realistic two-distinct-photos gallery, which is what reordering is
+  // actually for anyway.
   {
     const owner = await newUser('m6owner')
     const dogId = `m6dog_${R}`
     await seedDog(owner.uid, dogId)
+    const secondJpegBuffer = await sharp({ create: { width: 4, height: 4, channels: 3, background: 'green' } }).jpeg().toBuffer()
     const first = mockRes()
     await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), first)
     const second = mockRes()
-    await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), second)
+    await uploadMediaHandler(mockReq({ dogId, base64: secondJpegBuffer.toString('base64'), kind: 'photo' }, owner.idToken), second)
     const [idA, idB] = second.body.photos.map(p => p.id)
     check('6', 'Sanity: two photos exist before reordering', second.body.photos.length === 2)
 
@@ -483,10 +496,11 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     const owner = await newUser('m7owner')
     const dogId = `m7dog_${R}`
     await seedDog(owner.uid, dogId)
+    const m7SecondJpegBuffer = await sharp({ create: { width: 4, height: 4, channels: 3, background: 'yellow' } }).jpeg().toBuffer()
     const first = mockRes()
     await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), first)
     const second = mockRes()
-    await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), second)
+    await uploadMediaHandler(mockReq({ dogId, base64: m7SecondJpegBuffer.toString('base64'), kind: 'photo' }, owner.idToken), second)
     const [idA, idB] = second.body.photos.map(p => p.id)
     const beforeDelete = (await seedDb.collection('dogs').doc(dogId).get()).data()
     const pathA = beforeDelete.photos.find(p => p.id === idA).path
@@ -550,6 +564,30 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     check('10', 'No Storage object was created for a request that never reached a successful Storage write (no orphan)', after[0].length === 0)
   }
 
+  // ── Test 11 (Tony live-staging fix round, "Prevent duplicate
+  // upload"): re-uploading the exact same file content for the same
+  // puppy is rejected — content is hashed AFTER processing, so it
+  // survives an identical re-upload rather than needing byte-identical
+  // input. A DIFFERENT file must still upload fine. ──
+  {
+    const owner = await newUser('m11owner')
+    const dogId = `m11dog_${R}`
+    await seedDog(owner.uid, dogId)
+
+    const first = mockRes()
+    await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), first)
+    check('11', 'Sanity: the first upload succeeds', first.statusCode === 200)
+
+    const dupe = mockRes()
+    await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), dupe)
+    check('11', 'Re-uploading the exact same photo content for the same puppy is rejected (409)', dupe.statusCode === 409 && dupe.body?.reason === 'DUPLICATE_MEDIA')
+    check('11', 'The duplicate rejection left the gallery unchanged (still exactly 1 photo)', (await seedDb.collection('dogs').doc(dogId).get()).data().photos.length === 1)
+
+    const differentJpegBuffer = await sharp({ create: { width: 4, height: 4, channels: 3, background: 'blue' } }).jpeg().toBuffer()
+    const different = mockRes()
+    await uploadMediaHandler(mockReq({ dogId, base64: differentJpegBuffer.toString('base64'), kind: 'photo' }, owner.idToken), different)
+    check('11', 'A genuinely different photo still uploads fine for the same puppy', different.statusCode === 200 && different.body.photos.length === 2)
+  }
 
   await summary()
 } else {

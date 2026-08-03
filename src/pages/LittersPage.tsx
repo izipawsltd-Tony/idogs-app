@@ -1515,6 +1515,8 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                           shareLastRotatedToken={shareLastRotatedToken[litter.id]}
                           onRotateShare={() => handleRotateShare(litter.id)}
                           onToggleShareEnabled={() => handleToggleShareEnabled(litter.id, showcases[litter.id] as LitterShowcase)}
+                          toast={toast}
+                          onPuppyMediaUpdated={(puppyId, patch) => setDogs(prev => prev.map(d => d.id === puppyId ? { ...d, ...patch } : d))}
                         />
                       )}
                     </div>
@@ -1721,6 +1723,7 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
   }
 
   async function handleDelete(kind: 'photo' | 'video', current: SignedMediaItem[], id: string) {
+    if (!window.confirm(`Remove this ${kind}? This cannot be undone.`)) return
     setBusyId(id)
     try {
       const result = await updateShowcaseMediaOrder(puppy.id, kind, current.filter(item => item.id !== id).map(item => item.id))
@@ -1749,6 +1752,9 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
               <button type="button" disabled={disabled || busyId !== null} onClick={() => handleDelete(kind, items, item.id)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>✕</button>
               <button type="button" disabled={disabled || i === items.length - 1 || busyId !== null} onClick={() => handleReorder(kind, items, i, i + 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>▶</button>
             </div>
+            {kind === 'photo' && i > 0 && (
+              <button type="button" disabled={disabled || busyId !== null} onClick={() => handleReorder(kind, items, i, 0)} title="Set as cover photo" style={{ width: '100%', marginTop: 2, fontSize: 9, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--mid)', padding: '1px 0' }}>★ Set cover</button>
+            )}
           </div>
         ))}
       </div>
@@ -1845,7 +1851,7 @@ const PUBLIC_AVAILABILITY_OPTIONS: ShowcaseAvailability[] = ['available', 'reser
 
 function ShowcaseManager({
   showcase, puppyDogs, busy, saveError, onToggleEnabled, onToggleVisible, onAvailabilityChange, onPublishedMediaChange, onDetailsChange, onBulkAction,
-  shareBusy, shareError, shareLastRotatedToken, onRotateShare, onToggleShareEnabled,
+  shareBusy, shareError, shareLastRotatedToken, onRotateShare, onToggleShareEnabled, toast, onPuppyMediaUpdated,
 }: {
   showcase: LitterShowcase
   puppyDogs: Dog[]
@@ -1864,7 +1870,17 @@ function ShowcaseManager({
   shareLastRotatedToken: string | undefined
   onRotateShare: () => void
   onToggleShareEnabled: () => void
+  toast: (msg: string, type?: ToastMessage['type']) => void
+  // Tony live-staging finding: uploading media was only reachable from
+  // the separate "Puppies" list's own Edit-puppy form, with no path to
+  // it from this panel at all — a breeder curating a Showcase had no way
+  // to add a first photo/video without already knowing to look
+  // elsewhere. Reuses the SAME PuppyMediaManager component (and the SAME
+  // onUpdated -> setDogs sync pattern) inline per-puppy below so upload
+  // is reachable from wherever a breeder is actually trying to use it.
+  onPuppyMediaUpdated: (puppyId: string, patch: { photos?: MediaItem[]; videos?: MediaItem[] }) => void
 }) {
+  const [mediaOpenFor, setMediaOpenFor] = useState<string | null>(null)
   const visibleCount = puppyDogs.filter(p => (showcase.puppies?.[p.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY).visible).length
 
   return (
@@ -2075,13 +2091,40 @@ function ShowcaseManager({
                       <span style={{ fontSize: 11 }}><input type="checkbox" checked={entry.showDeposit === true} disabled={busy || entry.depositCents == null} onChange={e => onDetailsChange(puppy.id, { showDeposit: e.target.checked })} /> Show publicly</span>
                     </label>
                   </div>
+                  {/* Tony live-staging finding: this row previously had no
+                      way to add a puppy's first photo/video at all — the
+                      upload UI only existed in the separate Edit-puppy
+                      form. This toggle opens the SAME PuppyMediaManager
+                      right here, so adding media is reachable from
+                      wherever a breeder is actually setting up the
+                      Showcase. */}
+                  <div style={{ paddingLeft: 26 }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setMediaOpenFor(mediaOpenFor === puppy.id ? null : puppy.id)}
+                      style={{ fontSize: 12 }}
+                    >
+                      📷 Photos &amp; videos {(puppyPhotoIds.length + puppyVideoIds.length) > 0 && `(${puppyPhotoIds.length + puppyVideoIds.length})`} {mediaOpenFor === puppy.id ? '▲' : '▼'}
+                    </button>
+                    {mediaOpenFor === puppy.id && (
+                      <div style={{ marginTop: 8, padding: 10, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--sand)' }}>
+                        <PuppyMediaManager
+                          puppy={puppy}
+                          disabled={busy}
+                          toast={toast}
+                          onUpdated={patch => onPuppyMediaUpdated(puppy.id, patch)}
+                        />
+                      </div>
+                    )}
+                  </div>
                   {/* Codex fix-round ("Explicit media publication"): being
                       `visible` above never publishes any media by itself —
                       each photo/video must be individually selected here.
                       Uses the puppy's own photo/video COUNT+order (from
-                      PuppyMediaManager's edit panel above) since this
-                      compact row deliberately doesn't re-fetch signed
-                      thumbnails just to render a publish checklist. */}
+                      PuppyMediaManager above) since this compact row
+                      deliberately doesn't re-fetch signed thumbnails just
+                      to render a publish checklist. */}
                   {(puppyPhotoIds.length > 0 || puppyVideoIds.length > 0) && (
                     <div style={{ paddingLeft: 26, fontSize: 12, color: 'var(--mid)' }}>
                       {puppyPhotoIds.length > 0 && (

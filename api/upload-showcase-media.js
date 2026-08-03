@@ -38,7 +38,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getStorage } from 'firebase-admin/storage'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
 import { canAddDogRecord } from './_lib/dog-access.js'
@@ -116,6 +116,18 @@ async function handler(req, res) {
       throw err
     }
 
+    // Duplicate-upload guard: hash the PROCESSED bytes (post-resize/
+    // re-encode), so two uploads of visually-identical content land on
+    // the same hash even if the original files differed in container/
+    // metadata. Checked against this puppy's existing gallery for this
+    // kind only — a photo and a video can never collide with each
+    // other. Pre-existing items with no stored hash simply never match.
+    const contentHash = createHash('sha256').update(processed.buffer).digest('hex')
+    const existingItems = (kind === 'photo' ? dog.photos : dog.videos) || []
+    if (existingItems.some(item => item?.hash === contentHash)) {
+      return res.status(409).json({ error: `This ${kind} has already been uploaded for this puppy`, reason: 'DUPLICATE_MEDIA' })
+    }
+
     // Safe, unique, unguessable filename — a real random UUID, never
     // derived from any client-supplied name (which is never even
     // accepted as input here in the first place). PRIVATE — deliberately
@@ -126,7 +138,7 @@ async function handler(req, res) {
     await file.save(processed.buffer, { metadata: { contentType: processed.mimeType } })
 
     const arrayField = kind === 'photo' ? 'photos' : 'videos'
-    const mediaItem = { id: mediaId, path: filePath }
+    const mediaItem = { id: mediaId, path: filePath, hash: contentHash }
     try {
       await db.collection('dogs').doc(dogId).update({
         [arrayField]: FieldValue.arrayUnion(mediaItem),

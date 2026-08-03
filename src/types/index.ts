@@ -16,6 +16,11 @@ export type Sex = 'male' | 'female'
 export interface MediaItem {
   id: string
   path: string
+  // sha256 of the processed file's bytes — server-set only, used purely
+  // to reject a re-upload of content already in this puppy's gallery.
+  // Optional so pre-existing items (uploaded before this field existed)
+  // never need a migration; they simply never match as a duplicate.
+  hash?: string
 }
 
 export interface Dog {

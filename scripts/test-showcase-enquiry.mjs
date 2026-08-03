@@ -157,6 +157,25 @@ const { check, skip, summary } = makeChecker()
     /aria-hidden="true"[\s\S]{0,400}tabIndex=\{-1\}/.test(pageSrc))
   check('The consent checkbox is required before the form can be submitted', /required checked=\{form\.consent\}/.test(pageSrc) && /disabled=\{state === 'sending' \|\| !form\.consent\}/.test(pageSrc))
 
+  // Tony live-staging finding: the confirmation copy read as claiming an
+  // email notification was sent, with no indication of where. This
+  // endpoint only ever persists a Firestore document (see the
+  // create-showcase-enquiry.js checks above/below) — no email is sent —
+  // so the UI must never claim otherwise, and the visitor's own "Email"
+  // field must be clearly labeled as THEIR contact info, not a
+  // notification destination.
+  check('The success message never claims an email was sent (no real email notification exists)',
+    !/\bemail (was|has been) sent\b/i.test(pageSrc) && !/\ban email\b/i.test(pageSrc.slice(pageSrc.indexOf("state === 'sent'"), pageSrc.indexOf("state === 'sent'") + 300)))
+  check('The success message honestly describes persistence, not a notification claim',
+    pageSrc.includes('Enquiry sent successfully') && pageSrc.includes('The breeder has received your enquiry and can contact you using the details you provided.'))
+  check('The visitor email field is labeled as their own contact info, not the enquiry destination',
+    /Your email <span[^>]*>\(so the breeder can contact you back\)<\/span>/.test(pageSrc))
+
+  // ── create-showcase-enquiry.js sends no email — confirms the above
+  // copy fix matches actual behavior, not just intent ──
+  check('create-showcase-enquiry.js does not send any email (only persists the Firestore document) — matches the honest success copy above',
+    !enquirySrc.includes('send-email') && !/resend/i.test(enquirySrc))
+
   // ── ShowcaseEnquiry type ──
   const typesSrc = readFileSync(new URL('../src/types/index.ts', import.meta.url), 'utf8')
   check('ShowcaseEnquiry type declares tenantId/litterId/puppyId', /interface ShowcaseEnquiry \{[\s\S]{0,200}tenantId: string[\s\S]{0,100}litterId: string[\s\S]{0,100}puppyId: string \| null/.test(typesSrc))

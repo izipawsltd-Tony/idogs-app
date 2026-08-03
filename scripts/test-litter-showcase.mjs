@@ -365,6 +365,31 @@ function extractFunctionSource(src, signaturePattern) {
   const disabledBusyCount = (showcaseManagerSrc.match(/disabled=\{busy\}/g) || []).length
   check('Every interactive Showcase control (enable toggle, 3 bulk buttons, per-puppy checkbox, per-puppy select) is disabled while busy — at least 6 controls', disabledBusyCount >= 6, `found ${disabledBusyCount}`)
 
+  // Tony live-staging finding ("cannot add puppy images or videos"): the
+  // upload UI existed only in the separate Edit-puppy form, unreachable
+  // from this panel. Fix: ShowcaseManager now renders PuppyMediaManager
+  // inline per puppy, reachable regardless of whether the puppy has any
+  // media yet (never gated behind an existing photo/video count).
+  check('ShowcaseManager accepts onPuppyMediaUpdated and toast props (needed to host PuppyMediaManager inline)',
+    /onPuppyMediaUpdated: \(puppyId: string, patch: \{ photos\?: MediaItem\[\]; videos\?: MediaItem\[\] \}\) => void/.test(showcaseManagerSrc) &&
+    /toast: \(msg: string, type\?: ToastMessage\['type'\]\) => void/.test(showcaseManagerSrc))
+  check('ShowcaseManager renders PuppyMediaManager inline per puppy, wired to onPuppyMediaUpdated',
+    /<PuppyMediaManager[\s\S]{0,200}onUpdated=\{patch => onPuppyMediaUpdated\(puppy\.id, patch\)\}/.test(showcaseManagerSrc))
+  check('The "Photos & videos" toggle button is NOT gated behind the puppy already having media (it must be the way to add the FIRST one)',
+    (() => {
+      const idx = showcaseManagerSrc.indexOf('setMediaOpenFor(mediaOpenFor === puppy.id')
+      if (idx === -1) return false
+      const before = showcaseManagerSrc.slice(Math.max(0, idx - 400), idx)
+      return !/puppyPhotoIds\.length > 0 \|\| puppyVideoIds\.length > 0\) && \(\s*<div[^>]*>\s*<button[\s\S]*setMediaOpenFor/.test(before)
+    })())
+
+  const puppyMediaManagerSrc = extractFunctionSource(littersPageSrc, /function PuppyMediaManager\(/)
+  check('PuppyMediaManager was found', puppyMediaManagerSrc.length > 0)
+  check('Removing a photo/video requires an explicit confirmation before deleting',
+    /function handleDelete[\s\S]{0,150}window\.confirm\(/.test(puppyMediaManagerSrc))
+  check('An explicit "Set as cover" action exists for photos beyond the first (not just implicit via reordering)',
+    /Set as cover photo/.test(puppyMediaManagerSrc) && /handleReorder\(kind, items, i, 0\)/.test(puppyMediaManagerSrc))
+
   // Codex fix-round finding: "Show available only" read like a FILTER on
   // the breeder's own admin puppy list (it never was — see the source's
   // own comment on BULK_ACTION_LABELS). The button label must no longer
