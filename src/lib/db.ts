@@ -1109,7 +1109,7 @@ export async function removePuppyFromLitter(litterId: string, puppyId: string): 
 // api/_lib/showcase-schema.js exactly. Never written to Firestore by
 // the client; only used to render a sensible default row before the
 // breeder has interacted with a given puppy.
-export const DEFAULT_SHOWCASE_PUPPY_ENTRY: ShowcasePuppyEntry = { visible: false, availability: 'available', publishedPhotoIds: [], publishedVideoIds: [] }
+export const DEFAULT_SHOWCASE_PUPPY_ENTRY: ShowcasePuppyEntry = { visible: false, availability: 'available', publishedPhotoIds: [], publishedVideoIds: [], colour: null, personality: null, readyToGoHomeDate: null, priceCents: null, depositCents: null, showPrice: false, showDeposit: false }
 
 // Returns null if no Showcase has been created for this litter yet —
 // not an error, just "not created" (Slice 1 requirement 1: a Showcase
@@ -1303,7 +1303,7 @@ export async function getShowcaseMediaUrls(dogId: string): Promise<{ photos: Sig
 export async function updateShowcasePuppy(
   litterId: string,
   puppyId: string,
-  patch: { visible?: boolean; availability?: ShowcaseAvailability; publishedPhotoIds?: string[]; publishedVideoIds?: string[] }
+  patch: { visible?: boolean; availability?: ShowcaseAvailability; publishedPhotoIds?: string[]; publishedVideoIds?: string[]; colour?: string | null; personality?: string | null; readyToGoHomeDate?: string | null; priceCents?: number | null; depositCents?: number | null; showPrice?: boolean; showDeposit?: boolean }
 ): Promise<LitterShowcase> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()

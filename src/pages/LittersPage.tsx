@@ -155,6 +155,32 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   const [shareError, setShareError] = useState<Record<string, string>>({})
   const [shareLastRotatedToken, setShareLastRotatedToken] = useState<Record<string, string>>({})
 
+  // Keep the reusable public URL available after a reload/sign-in on this
+  // browser without weakening the server-side hash-only token model. Stored
+  // tokens are verified against the current Firestore hash before use, so a
+  // token rotated on another device is removed instead of being shown stale.
+  useEffect(() => {
+    let cancelled = false
+    async function restoreShareTokens() {
+      for (const [litterId, showcase] of Object.entries(showcases)) {
+        if (!showcase?.shareTokenHash || shareLastRotatedToken[litterId]) continue
+        const storageKey = `idogs.showcaseShareToken.${litterId}`
+        const token = window.localStorage.getItem(storageKey)
+        if (!token) continue
+        const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+        const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+        if (cancelled) return
+        if (hash === showcase.shareTokenHash) {
+          setShareLastRotatedToken(prev => ({ ...prev, [litterId]: token }))
+        } else {
+          window.localStorage.removeItem(storageKey)
+        }
+      }
+    }
+    void restoreShareTokens()
+    return () => { cancelled = true }
+  }, [showcases, shareLastRotatedToken])
+
   // Slice 2: enquiries received through this litter's public Showcase —
   // undefined means "not loaded yet", [] means "loaded, none yet".
   const [enquiries, setEnquiries] = useState<Record<string, ShowcaseEnquiry[] | undefined>>({})
@@ -452,6 +478,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   // shared before this. Stores the raw (one-time) token in local state
   // only — never anywhere persisted — so the UI can show/copy it once.
   async function handleRotateShare(litterId: string) {
+    if (showcases[litterId]?.shareTokenHash && !window.confirm('Create a new link? The previous link will stop working immediately.')) return
     const gen = showcaseGuard.currentGeneration()
     setShareBusy(prev => ({ ...prev, [litterId]: true }))
     setShareError(prev => ({ ...prev, [litterId]: '' }))
@@ -460,7 +487,8 @@ export default function LittersPage({ toast, dismissAll }: Props) {
       if (!isShowcaseRequestCurrent(gen)) return
       setShowcases(prev => ({ ...prev, [litterId]: showcase }))
       setShareLastRotatedToken(prev => ({ ...prev, [litterId]: shareToken }))
-      toast('New share link created — copy it now, it will not be shown again')
+      window.localStorage.setItem(`idogs.showcaseShareToken.${litterId}`, shareToken)
+      toast('New share link created')
     } catch (err) {
       if (!isShowcaseRequestCurrent(gen)) return
       const message = err instanceof Error && err.message ? err.message : 'Failed to create share link'
@@ -551,6 +579,24 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     } finally {
       if (!isShowcaseRequestCurrent(gen)) return
       setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  async function handleShowcaseDetailsChange(litterId: string, puppyId: string, patch: Parameters<typeof updateShowcasePuppy>[2]) {
+    const gen = showcaseGuard.currentGeneration()
+    setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    setShowcaseSaveError(prev => ({ ...prev, [litterId]: '' }))
+    try {
+      const showcase = await updateShowcasePuppy(litterId, puppyId, patch)
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
+      const message = err instanceof Error && err.message ? err.message : 'Failed to update public puppy details'
+      setShowcaseSaveError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
+    } finally {
+      if (isShowcaseRequestCurrent(gen)) setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
     }
   }
 
@@ -1462,6 +1508,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                           onToggleVisible={(puppyId, visible) => handleTogglePuppyVisible(litter.id, puppyId, visible)}
                           onAvailabilityChange={(puppyId, availability) => handlePuppyAvailabilityChange(litter.id, puppyId, availability)}
                           onPublishedMediaChange={(puppyId, patch) => handlePublishedMediaChange(litter.id, puppyId, patch)}
+                          onDetailsChange={(puppyId, patch) => handleShowcaseDetailsChange(litter.id, puppyId, patch)}
                           onBulkAction={(action) => handleShowcaseBulkAction(litter.id, action)}
                           shareBusy={!!shareBusy[litter.id]}
                           shareError={shareError[litter.id] || ''}
@@ -1792,10 +1839,12 @@ const AVAILABILITY_LABELS: Record<ShowcaseAvailability, string> = {
   on_hold: 'On hold',
   reserved: 'Reserved',
   unavailable: 'Unavailable',
+  sold: 'Sold',
 }
+const PUBLIC_AVAILABILITY_OPTIONS: ShowcaseAvailability[] = ['available', 'reserved', 'sold']
 
 function ShowcaseManager({
-  showcase, puppyDogs, busy, saveError, onToggleEnabled, onToggleVisible, onAvailabilityChange, onPublishedMediaChange, onBulkAction,
+  showcase, puppyDogs, busy, saveError, onToggleEnabled, onToggleVisible, onAvailabilityChange, onPublishedMediaChange, onDetailsChange, onBulkAction,
   shareBusy, shareError, shareLastRotatedToken, onRotateShare, onToggleShareEnabled,
 }: {
   showcase: LitterShowcase
@@ -1806,6 +1855,7 @@ function ShowcaseManager({
   onToggleVisible: (puppyId: string, visible: boolean) => void
   onAvailabilityChange: (puppyId: string, availability: ShowcaseAvailability) => void
   onPublishedMediaChange: (puppyId: string, patch: { publishedPhotoIds?: string[]; publishedVideoIds?: string[] }) => void
+  onDetailsChange: (puppyId: string, patch: Parameters<typeof updateShowcasePuppy>[2]) => void
   onBulkAction: (action: ShowcaseBulkAction) => void
   shareBusy: boolean
   shareError: string
@@ -1851,7 +1901,7 @@ function ShowcaseManager({
         {!showcase.shareTokenHash ? (
           <>
             <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
-              No link yet — nothing outside your account can view this Showcase.
+              No public share link has been created
             </p>
             <button className="btn btn-secondary btn-sm" disabled={shareBusy} onClick={onRotateShare}>
               {shareBusy ? <span className="spinner" /> : 'Get share link'}
@@ -1868,11 +1918,12 @@ function ShowcaseManager({
                 aria-label={showcase.shareEnabled ? 'Pause public link' : 'Resume public link'}
                 style={{ width: 16, height: 16, accentColor: 'var(--brand-600)' }}
               />
-              <span style={{ fontSize: 13 }}>{showcase.shareEnabled ? 'Public link is live' : 'Public link is paused'}</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: showcase.enabled && showcase.shareEnabled ? 'var(--brand-600)' : 'var(--mid)' }}>
+                {showcase.enabled && showcase.shareEnabled ? 'Showcase is live and publicly accessible' : 'Share link created — Showcase is currently disabled'}
+              </span>
             </label>
             {shareLastRotatedToken ? (
               <div style={{ marginBottom: 8 }}>
-                <p style={{ fontSize: 11, color: 'var(--danger)', marginBottom: 4 }}>Copy this now — it won&apos;t be shown again after you leave this page.</p>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <input
                     className="form-input"
@@ -1884,17 +1935,19 @@ function ShowcaseManager({
                   <button
                     className="btn btn-secondary btn-sm"
                     onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/s/${shareLastRotatedToken}`) }}
-                  >Copy</button>
+                  >Copy link</button>
                 </div>
+                <p style={{ fontSize: 11, color: 'var(--mid)', marginTop: 5 }}>Use the same link for all interested buyers.</p>
               </div>
             ) : (
               <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
-                A link exists but is only ever shown once, right after it&apos;s created — generate a new one below if you no longer have it saved.
+                This link was created on another device or before reusable links were supported. Generate a new link only if you no longer have the original.
               </p>
             )}
             <button className="btn btn-secondary btn-sm" disabled={shareBusy} onClick={onRotateShare}>
               {shareBusy ? <span className="spinner" /> : 'Generate new link (invalidates the current one)'}
             </button>
+            <p style={{ fontSize: 11, color: 'var(--mid)', marginTop: 5 }}>Creates a new link and disables the previous one.</p>
           </>
         )}
         {shareError && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>⚠️ {shareError}</p>}
@@ -1923,7 +1976,7 @@ function ShowcaseManager({
           </span>
         ) : saveError ? (
           <span style={{ color: 'var(--danger)' }}>
-            ⚠️ Save failed — {saveError} — showing your last saved version.
+            Changes couldn’t be saved — try again
           </span>
         ) : (
           <span style={{ color: 'var(--brand-600)' }}>✓ All changes saved</span>
@@ -1982,16 +2035,45 @@ function ShowcaseManager({
                     </label>
                     <select
                       className="form-select"
-                      value={entry.availability}
+                      value={entry.availability === 'on_hold' ? 'reserved' : entry.availability === 'unavailable' ? 'sold' : entry.availability}
                       disabled={busy}
                       onChange={e => onAvailabilityChange(puppy.id, e.target.value as ShowcaseAvailability)}
                       style={{ fontSize: 12, padding: '4px 8px', minWidth: 120 }}
                       aria-label={`Availability for ${puppy.name}`}
                     >
-                      {(Object.keys(AVAILABILITY_LABELS) as ShowcaseAvailability[]).map(value => (
+                      {PUBLIC_AVAILABILITY_OPTIONS.map(value => (
                         <option key={value} value={value}>{AVAILABILITY_LABELS[value]}</option>
                       ))}
                     </select>
+                  </div>
+                  <div style={{ paddingLeft: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span className="form-label">Public colour</span>
+                      <input className="form-input" defaultValue={entry.colour ?? puppy.colour ?? ''} maxLength={80} disabled={busy}
+                        onBlur={e => onDetailsChange(puppy.id, { colour: e.target.value || null })} />
+                    </label>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span className="form-label">Ready for new home</span>
+                      <input className="form-input" type="date" defaultValue={entry.readyToGoHomeDate ?? ''} disabled={busy}
+                        onBlur={e => onDetailsChange(puppy.id, { readyToGoHomeDate: e.target.value || null })} />
+                    </label>
+                    <label className="form-group" style={{ margin: 0, gridColumn: '1/-1' }}>
+                      <span className="form-label">Personality <span style={{ color: 'var(--light)', fontWeight: 400 }}>(max 500 characters)</span></span>
+                      <textarea className="form-input" rows={2} defaultValue={entry.personality ?? ''} maxLength={500} disabled={busy}
+                        onBlur={e => onDetailsChange(puppy.id, { personality: e.target.value || null })} />
+                    </label>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span className="form-label">Price (AUD)</span>
+                      <input className="form-input" type="number" min="0" step="0.01" defaultValue={entry.priceCents == null ? '' : (entry.priceCents / 100).toFixed(2)} disabled={busy}
+                        onBlur={e => onDetailsChange(puppy.id, { priceCents: e.target.value === '' ? null : Math.round(Number(e.target.value) * 100) })} />
+                      <span style={{ fontSize: 11 }}><input type="checkbox" checked={entry.showPrice === true} disabled={busy || entry.priceCents == null} onChange={e => onDetailsChange(puppy.id, { showPrice: e.target.checked })} /> Show publicly</span>
+                    </label>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span className="form-label">Deposit (AUD)</span>
+                      <input className="form-input" type="number" min="0" step="0.01" defaultValue={entry.depositCents == null ? '' : (entry.depositCents / 100).toFixed(2)} disabled={busy}
+                        onBlur={e => onDetailsChange(puppy.id, { depositCents: e.target.value === '' ? null : Math.round(Number(e.target.value) * 100) })} />
+                      <span style={{ fontSize: 11 }}><input type="checkbox" checked={entry.showDeposit === true} disabled={busy || entry.depositCents == null} onChange={e => onDetailsChange(puppy.id, { showDeposit: e.target.checked })} /> Show publicly</span>
+                    </label>
                   </div>
                   {/* Codex fix-round ("Explicit media publication"): being
                       `visible` above never publishes any media by itself —

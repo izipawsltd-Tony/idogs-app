@@ -15,7 +15,10 @@ export class ShowcaseValidationError extends Error {}
 
 // Slice 1 requirement 4: visibility and availability are two
 // independent dimensions per puppy — never derived from one another.
-export const AVAILABILITY_VALUES = Object.freeze(['available', 'on_hold', 'reserved', 'unavailable'])
+// Keep legacy values readable while all new UI writes the three public
+// sales states. The public DTO maps on_hold -> reserved and unavailable
+// -> sold, so old Showcase documents need no migration.
+export const AVAILABILITY_VALUES = Object.freeze(['available', 'reserved', 'sold', 'on_hold', 'unavailable'])
 export const DEFAULT_AVAILABILITY = 'available'
 export const DEFAULT_VISIBLE = false
 
@@ -43,6 +46,21 @@ export const BULK_ACTIONS = Object.freeze(['select_all', 'clear_all', 'show_avai
 // used by api/upload-showcase-media.js's MAX_MEDIA_ITEMS_PER_KIND — a
 // puppy can never publish more items than it could possibly have.
 export const MAX_PUBLISHED_MEDIA_PER_KIND = 30
+export const MAX_PUBLIC_DESCRIPTION_LENGTH = 500
+
+function cleanPublicText(value, fieldName, maxLength) {
+  if (value === null || value === '') return null
+  if (typeof value !== 'string') throw new ShowcaseValidationError(`${fieldName} must be a string`)
+  const clean = value.replace(/<[^>]*>/g, '').replace(/[<>]/g, '').trim()
+  if (clean.length > maxLength) throw new ShowcaseValidationError(`${fieldName} must not exceed ${maxLength} characters`)
+  return clean || null
+}
+
+function cleanMoney(value, fieldName) {
+  if (value === null) return null
+  if (!Number.isSafeInteger(value) || value < 0) throw new ShowcaseValidationError(`${fieldName} must be a non-negative integer number of cents`)
+  return value
+}
 
 // Always returns a COMPLETE four-field entry — never a partial one — so a
 // puppy entry can never exist with only some fields set. `existing` is
@@ -80,7 +98,11 @@ export function mergePuppyEntry(existing, patch) {
   const publishedVideoIds = Object.prototype.hasOwnProperty.call(patch, 'publishedVideoIds')
     ? patch.publishedVideoIds
     : (existing?.publishedVideoIds ?? [])
-  return { visible, availability, publishedPhotoIds, publishedVideoIds }
+  const optionalFields = ['colour', 'personality', 'readyToGoHomeDate', 'priceCents', 'depositCents', 'showPrice', 'showDeposit']
+  const details = Object.fromEntries(optionalFields.map(field => [field,
+    Object.prototype.hasOwnProperty.call(patch, field) ? patch[field] : (existing?.[field] ?? (field.startsWith('show') ? false : null))
+  ]))
+  return { visible, availability, publishedPhotoIds, publishedVideoIds, ...details }
 }
 
 function validateMediaIdArray(value, fieldName) {
@@ -95,7 +117,7 @@ function validateMediaIdArray(value, fieldName) {
   }
 }
 
-const KNOWN_PATCH_FIELDS = ['visible', 'availability', 'publishedPhotoIds', 'publishedVideoIds']
+const KNOWN_PATCH_FIELDS = ['visible', 'availability', 'publishedPhotoIds', 'publishedVideoIds', 'colour', 'personality', 'readyToGoHomeDate', 'priceCents', 'depositCents', 'showPrice', 'showDeposit']
 
 export function validatePuppyPatch(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
@@ -105,8 +127,8 @@ export function validatePuppyPatch(patch) {
   const hasAvailability = Object.prototype.hasOwnProperty.call(patch, 'availability')
   const hasPublishedPhotoIds = Object.prototype.hasOwnProperty.call(patch, 'publishedPhotoIds')
   const hasPublishedVideoIds = Object.prototype.hasOwnProperty.call(patch, 'publishedVideoIds')
-  if (!hasVisible && !hasAvailability && !hasPublishedPhotoIds && !hasPublishedVideoIds) {
-    throw new ShowcaseValidationError('patch must include at least one of: visible, availability, publishedPhotoIds, publishedVideoIds')
+  if (!Object.keys(patch).some(k => KNOWN_PATCH_FIELDS.includes(k))) {
+    throw new ShowcaseValidationError('patch must include at least one supported field')
   }
   const unknown = Object.keys(patch).filter(k => !KNOWN_PATCH_FIELDS.includes(k))
   if (unknown.length > 0) {
@@ -121,11 +143,23 @@ export function validatePuppyPatch(patch) {
   if (hasPublishedPhotoIds) validateMediaIdArray(patch.publishedPhotoIds, 'publishedPhotoIds')
   if (hasPublishedVideoIds) validateMediaIdArray(patch.publishedVideoIds, 'publishedVideoIds')
 
+  if (Object.prototype.hasOwnProperty.call(patch, 'colour')) patch.colour = cleanPublicText(patch.colour, 'colour', 80)
+  if (Object.prototype.hasOwnProperty.call(patch, 'personality')) patch.personality = cleanPublicText(patch.personality, 'personality', MAX_PUBLIC_DESCRIPTION_LENGTH)
+  if (Object.prototype.hasOwnProperty.call(patch, 'readyToGoHomeDate')) {
+    if (patch.readyToGoHomeDate !== null && (typeof patch.readyToGoHomeDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(patch.readyToGoHomeDate))) throw new ShowcaseValidationError('readyToGoHomeDate must be YYYY-MM-DD or null')
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'priceCents')) patch.priceCents = cleanMoney(patch.priceCents, 'priceCents')
+  if (Object.prototype.hasOwnProperty.call(patch, 'depositCents')) patch.depositCents = cleanMoney(patch.depositCents, 'depositCents')
+  for (const field of ['showPrice', 'showDeposit']) {
+    if (Object.prototype.hasOwnProperty.call(patch, field) && typeof patch[field] !== 'boolean') throw new ShowcaseValidationError(`${field} must be a boolean`)
+  }
+
   const clean = {}
   if (hasVisible) clean.visible = patch.visible
   if (hasAvailability) clean.availability = patch.availability
   if (hasPublishedPhotoIds) clean.publishedPhotoIds = patch.publishedPhotoIds
   if (hasPublishedVideoIds) clean.publishedVideoIds = patch.publishedVideoIds
+  for (const field of KNOWN_PATCH_FIELDS.slice(4)) if (Object.prototype.hasOwnProperty.call(patch, field)) clean[field] = patch[field]
   return clean
 }
 
@@ -155,7 +189,7 @@ export function applyBulkAction(action, existingPuppies, puppyIds) {
     else if (action === 'clear_all') visible = false
     else if (action === 'show_available_only') visible = availability === 'available'
     else throw new ShowcaseValidationError(`Unknown bulk action: ${action}`)
-    map[id] = { visible, availability, publishedPhotoIds, publishedVideoIds }
+    map[id] = mergePuppyEntry(existing, { visible, availability, publishedPhotoIds, publishedVideoIds })
   }
   return map
 }

@@ -151,11 +151,11 @@ const { check, skip, summary } = makeChecker()
   // ── ShowcasePublicPage.tsx ──
   const pageSrc = readFileSync(new URL('../src/pages/ShowcasePublicPage.tsx', import.meta.url), 'utf8')
   check('ShowcasePublicPage posts to api/create-showcase-enquiry with the token and the OPAQUE puppyRef (never a raw dogId field name)',
-    /fetch\('\/api\/create-showcase-enquiry'/.test(pageSrc) && /token,\s*\n?\s*puppyRef: puppyRef \|\| undefined/.test(pageSrc))
+    /fetch\('\/api\/create-showcase-enquiry'/.test(pageSrc) && /token, puppyRef: selectedPuppy \|\| undefined/.test(pageSrc))
   check('The enquiry form includes a honeypot field named "website"', /name="website"/.test(pageSrc))
   check('The honeypot field is visually/semantically hidden (aria-hidden, off-screen, unreachable by tab order)',
     /aria-hidden="true"[\s\S]{0,400}tabIndex=\{-1\}/.test(pageSrc))
-  check('The consent checkbox is required before the form can be submitted', /disabled=\{submitting \|\| !consent\}/.test(pageSrc))
+  check('The consent checkbox is required before the form can be submitted', /required checked=\{form\.consent\}/.test(pageSrc) && /disabled=\{state === 'sending' \|\| !form\.consent\}/.test(pageSrc))
 
   // ── ShowcaseEnquiry type ──
   const typesSrc = readFileSync(new URL('../src/types/index.ts', import.meta.url), 'utf8')

@@ -167,7 +167,7 @@ function extractFunctionSource(src, signaturePattern) {
     AVAILABILITY_VALUES, DEFAULT_AVAILABILITY, DEFAULT_VISIBLE, ShowcaseValidationError,
   } = await import('../api/_lib/showcase-schema.js')
 
-  check('AVAILABILITY_VALUES is exactly the four Slice-1 states', JSON.stringify(AVAILABILITY_VALUES) === JSON.stringify(['available', 'on_hold', 'reserved', 'unavailable']))
+  check('AVAILABILITY_VALUES supports V2 sales states and legacy documents', JSON.stringify(AVAILABILITY_VALUES) === JSON.stringify(['available', 'reserved', 'sold', 'on_hold', 'unavailable']))
   check('A puppy defaults to hidden', DEFAULT_VISIBLE === false)
   check('A puppy defaults to available', DEFAULT_AVAILABILITY === 'available')
 
@@ -186,7 +186,7 @@ function extractFunctionSource(src, signaturePattern) {
   check('validatePuppyPatch rejects an empty patch', (() => { try { validatePuppyPatch({}); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
   check('validatePuppyPatch rejects an unknown field', (() => { try { validatePuppyPatch({ visible: true, foo: 1 }); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
   check('validatePuppyPatch rejects a non-boolean visible', (() => { try { validatePuppyPatch({ visible: 'yes' }); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
-  check('validatePuppyPatch rejects an out-of-enum availability', (() => { try { validatePuppyPatch({ availability: 'sold' }); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
+  check('validatePuppyPatch rejects an out-of-enum availability', (() => { try { validatePuppyPatch({ availability: 'unknown' }); return false } catch (e) { return e instanceof ShowcaseValidationError } })())
   check('validatePuppyPatch accepts visible-only', JSON.stringify(validatePuppyPatch({ visible: true })) === JSON.stringify({ visible: true }))
   check('validatePuppyPatch accepts availability-only', JSON.stringify(validatePuppyPatch({ availability: 'on_hold' })) === JSON.stringify({ availability: 'on_hold' }))
 
@@ -352,7 +352,7 @@ function extractFunctionSource(src, signaturePattern) {
   check('ShowcaseManager accepts a saveError prop distinct from the Showcase enabled/disabled status', /saveError: string/.test(showcaseManagerSrc))
   check('ShowcaseManager clarifies that enabling does not publish anything publicly yet (Slice 1 has no public viewer)', /not\s+(?:make it |publish it )?public(?:ly)?/i.test(showcaseManagerSrc) || /no public (?:Showcase )?(?:page|viewer|link)/i.test(showcaseManagerSrc))
   check('ShowcaseManager renders a "Saving…" state while busy', /busy \? \([\s\S]{0,220}Saving…/.test(showcaseManagerSrc))
-  check('ShowcaseManager renders the save failure message when saveError is set', /saveError \? \([\s\S]{0,120}Save failed/.test(showcaseManagerSrc))
+  check('ShowcaseManager renders the exact save failure message when saveError is set', /saveError \? \([\s\S]{0,180}Changes couldn.t be saved — try again/.test(showcaseManagerSrc))
   check('ShowcaseManager renders an explicit "All changes saved" confirmation as the default/idle state', /All changes saved/.test(showcaseManagerSrc))
   check('The save-status region uses role="status" + aria-live="polite" so screen readers announce it', /role="status" aria-live="polite"/.test(showcaseManagerSrc))
   // Double-submit prevention: every interactive control must be disabled

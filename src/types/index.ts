@@ -240,7 +240,7 @@ export interface Litter {
 // Dog at all), and keeps the schema ready for a later public page to
 // consume as an allowlisted projection without ever needing direct
 // client access to the full Litter/Dog documents.
-export type ShowcaseAvailability = 'available' | 'on_hold' | 'reserved' | 'unavailable'
+export type ShowcaseAvailability = 'available' | 'reserved' | 'sold' | 'on_hold' | 'unavailable'
 
 export interface ShowcasePuppyEntry {
   // Slice 1 requirement 3: a puppy is hidden from the Showcase unless
@@ -260,6 +260,13 @@ export interface ShowcasePuppyEntry {
   // presentation without reordering their own working set.
   publishedPhotoIds: string[]
   publishedVideoIds: string[]
+  colour?: string | null
+  personality?: string | null
+  readyToGoHomeDate?: string | null
+  priceCents?: number | null
+  depositCents?: number | null
+  showPrice?: boolean
+  showDeposit?: boolean
 }
 
 export interface LitterShowcase {

@@ -131,14 +131,23 @@ function publicPuppyProjection(token, litterId, dogId, dog, entry) {
     .filter(id => videoIds.has(id))
     .map(id => ({ id, url: mediaEndpointUrl(token, puppyRef, id, 'video') }))
 
+  const publicAvailability = entry.availability === 'available' ? 'available'
+    : entry.availability === 'sold' || entry.availability === 'unavailable' ? 'sold'
+      : entry.availability === 'reserved' || entry.availability === 'on_hold' ? 'reserved' : null
+  if (!publicAvailability) return null
+  const safeText = (value, max) => typeof value === 'string' ? value.replace(/<[^>]*>/g, '').replace(/[<>]/g, '').trim().slice(0, max) || null : null
   return {
     id: puppyRef,
     name: dog.name,
     sex: dog.sex,
     breed: dog.breed,
-    colour: dog.colour || null,
+    colour: safeText(entry.colour, 80) || safeText(dog.colour, 80),
     dateOfBirth: dog.dateOfBirth,
-    availability: entry.availability,
+    availability: publicAvailability,
+    personality: safeText(entry.personality, 500),
+    readyToGoHomeDate: /^\d{4}-\d{2}-\d{2}$/.test(entry.readyToGoHomeDate || '') ? entry.readyToGoHomeDate : null,
+    ...(entry.showPrice === true && Number.isSafeInteger(entry.priceCents) && entry.priceCents >= 0 ? { priceCents: entry.priceCents } : {}),
+    ...(entry.showDeposit === true && Number.isSafeInteger(entry.depositCents) && entry.depositCents >= 0 ? { depositCents: entry.depositCents } : {}),
     photos,
     videos,
   }
@@ -252,13 +261,14 @@ export default async function handler(req, res) {
       return dog.tenantId === showcase.tenantId && dog.litterId === litterId
     })
 
-    const puppies = validPuppyDocs.map(snap => publicPuppyProjection(token, litterId, snap.id, snap.data(), showcase.puppies[snap.id]))
+    const puppies = validPuppyDocs.map(snap => publicPuppyProjection(token, litterId, snap.id, snap.data(), showcase.puppies[snap.id])).filter(Boolean)
 
     const litter = {
       name: litterData.name,
       damName,
       sireName: litterData.sireName || null,
       actualBirthDate: litterData.actualBirthDate || null,
+      readyToGoHomeDate: litterData.readyToGoHomeDate || null,
     }
 
     return res.status(200).json({ litter, puppies })

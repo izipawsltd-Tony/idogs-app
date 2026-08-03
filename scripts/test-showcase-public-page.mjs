@@ -41,13 +41,13 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
     publicRouteIdx !== -1 && appRouteIdx !== -1 && publicRouteIdx < appRouteIdx)
 
   check('ShowcasePublicPage fetches api/showcase-public with the URL token param',
-    /fetch\(`\/api\/showcase-public\?token=\$\{encodeURIComponent\(token!\)\}`\)/.test(pageSrc))
+    /fetch\(`\/api\/showcase-public\?token=\$\{encodeURIComponent\(token\)\}`\)/.test(pageSrc))
   check('ShowcasePublicPage never imports useAuth — genuinely public, not gated behind a signed-out fallback',
     !/useAuth/.test(pageSrc))
   check('ShowcasePublicPage never imports the authenticated Firebase client (lib/firebase) — no client SDK reads/writes at all, fetch() to the public API is the only data path',
     !pageSrc.includes("from '../lib/firebase'") && !pageSrc.includes('firebase/firestore'))
   check('A non-OK fetch response (any status, not just 404) is treated as not-found — never differentiates by status code client-side either',
-    /if \(!response\.ok\) \{ setNotFound\(true\); return \}/.test(pageSrc))
+    /if \(!response\.ok\) throw new Error\('not-found'\)/.test(pageSrc))
 
   // Defense in depth: even though api/showcase-public.js's own allowlist
   // is what actually prevents these fields from ever being SENT (see
