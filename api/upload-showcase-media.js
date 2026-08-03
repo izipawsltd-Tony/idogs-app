@@ -41,7 +41,7 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { randomUUID, createHash } from 'crypto'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
-import { canAddDogRecord } from './_lib/dog-access.js'
+import { canAddDogRecord, hasDogWriteAccess } from './_lib/dog-access.js'
 import { processImageForStorage, processVideoForStorage, ImagePipelineError } from './_lib/image-pipeline.js'
 import { newMediaId, signMediaItems } from './_lib/showcase-media-access.js'
 
@@ -96,7 +96,17 @@ async function handler(req, res) {
     const dog = dogSnap.data()
 
     if (!canAddDogRecord(dog, uid)) {
-      return res.status(403).json({ error: 'Not authorized to upload media for this dog' })
+      // Tony live-staging finding: this generic message was returned for
+      // two very different reasons — a genuine stranger/wrong-tenant
+      // request, and a legitimately-owned puppy that happens to be
+      // 'restricted' (very commonly a LEGACY litter puppy restricted
+      // before the Pricing v1.2 cap exemption — see
+      // api/_lib/dog-cap.js's header comment). Distinguishing the reason
+      // costs no security (the write is still denied either way) and
+      // lets the client point a breeder at the actual fix
+      // (api/reconcile-litter-puppy.js) instead of a dead end.
+      const reason = hasDogWriteAccess(dog, uid) && dog?.status === 'restricted' ? 'DOG_RESTRICTED' : 'NOT_OWNER'
+      return res.status(403).json({ error: 'Not authorized to upload media for this dog', reason })
     }
 
     const existingCount = (kind === 'photo' ? dog.photos : dog.videos)?.length || 0

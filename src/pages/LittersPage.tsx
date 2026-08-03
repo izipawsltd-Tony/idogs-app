@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
   getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, bulkUpdateShowcasePuppies, DEFAULT_SHOWCASE_PUPPY_ENTRY,
-  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder, getShowcaseMediaUrls, getEnquiriesForLitter,
+  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder, getShowcaseMediaUrls, getEnquiriesForLitter, reconcileLitterPuppy,
 } from '../lib/db'
 import type { ShowcaseBulkAction, SignedMediaItem } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
@@ -1517,6 +1517,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                           onToggleShareEnabled={() => handleToggleShareEnabled(litter.id, showcases[litter.id] as LitterShowcase)}
                           toast={toast}
                           onPuppyMediaUpdated={(puppyId, patch) => setDogs(prev => prev.map(d => d.id === puppyId ? { ...d, ...patch } : d))}
+                          onPuppyReconciled={puppyId => setDogs(prev => prev.map(d => d.id === puppyId ? { ...d, status: 'active', restrictionReason: undefined } : d))}
                         />
                       )}
                     </div>
@@ -1851,7 +1852,7 @@ const PUBLIC_AVAILABILITY_OPTIONS: ShowcaseAvailability[] = ['available', 'reser
 
 function ShowcaseManager({
   showcase, puppyDogs, busy, saveError, onToggleEnabled, onToggleVisible, onAvailabilityChange, onPublishedMediaChange, onDetailsChange, onBulkAction,
-  shareBusy, shareError, shareLastRotatedToken, onRotateShare, onToggleShareEnabled, toast, onPuppyMediaUpdated,
+  shareBusy, shareError, shareLastRotatedToken, onRotateShare, onToggleShareEnabled, toast, onPuppyMediaUpdated, onPuppyReconciled,
 }: {
   showcase: LitterShowcase
   puppyDogs: Dog[]
@@ -1879,9 +1880,27 @@ function ShowcaseManager({
   // onUpdated -> setDogs sync pattern) inline per-puppy below so upload
   // is reachable from wherever a breeder is actually trying to use it.
   onPuppyMediaUpdated: (puppyId: string, patch: { photos?: MediaItem[]; videos?: MediaItem[] }) => void
+  // Called after a successful api/reconcile-litter-puppy.js call so the
+  // parent's `dogs` state (the source of `puppyDogs` above) reflects the
+  // now-active status immediately, without a full page reload.
+  onPuppyReconciled: (puppyId: string) => void
 }) {
   const [mediaOpenFor, setMediaOpenFor] = useState<string | null>(null)
+  const [reconcilingFor, setReconcilingFor] = useState<string | null>(null)
   const visibleCount = puppyDogs.filter(p => (showcase.puppies?.[p.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY).visible).length
+
+  async function onReconcilePuppy(puppyId: string, puppyName: string) {
+    setReconcilingFor(puppyId)
+    try {
+      await reconcileLitterPuppy(puppyId)
+      onPuppyReconciled(puppyId)
+      toast(`${puppyName} is now active — litter puppies don't count toward your plan's dog limit`)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to reconcile this puppy', 'error')
+    } finally {
+      setReconcilingFor(null)
+    }
+  }
 
   return (
     <div>
@@ -2025,6 +2044,22 @@ function ShowcaseManager({
               const checkboxId = `showcase-visible-${puppy.id}`
               const puppyPhotoIds = (puppy.photos || []).map(item => item.id)
               const puppyVideoIds = (puppy.videos || []).map(item => item.id)
+              // Tony live-staging finding ("Not authorized to upload media
+              // for this dog" on the second puppy): NOT an ownership bug —
+              // canAddDogRecord() correctly, consistently blocks writes to
+              // ANY 'restricted' dog, and Pink Girl/Red Boy were genuinely
+              // restricted (over the plan's dog limit before litter puppies
+              // became cap-exempt — see api/_lib/dog-cap.js). The real gap
+              // was UX: this panel let a breeder attempt (and fail) an
+              // upload it should have explained/prevented up front, exactly
+              // like the separate Edit-puppy form already does via
+              // isPuppyRestricted above. Mirrors that same gate here, plus
+              // the same isRestrictedLitterPuppyCandidate predicate
+              // DogDetailPage uses to offer the one-click fix inline,
+              // instead of sending the breeder to each dog's own page.
+              const isPuppyRestricted = puppy.status === 'restricted'
+              const isRestrictedLitterPuppyCandidate = isPuppyRestricted && !!puppy.litterId &&
+                puppy.retainedByBreeder !== true && puppy.restrictionReason !== 'manual'
               function togglePublished(kind: 'photo' | 'video', id: string, checked: boolean) {
                 const field = kind === 'photo' ? 'publishedPhotoIds' : 'publishedVideoIds'
                 const current = kind === 'photo' ? (entry.publishedPhotoIds || []) : (entry.publishedVideoIds || [])
@@ -2099,15 +2134,36 @@ function ShowcaseManager({
                       wherever a breeder is actually setting up the
                       Showcase. */}
                   <div style={{ paddingLeft: 26 }}>
+                    {isPuppyRestricted && (
+                      <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        {isRestrictedLitterPuppyCandidate ? (
+                          <>
+                            <span>🐾 {puppy.name} was restricted before litter puppies were exempted from your plan's dog limit — reconciling won't use up any of your dog slots, and lets you manage its media again.</span>
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              disabled={reconcilingFor === puppy.id}
+                              onClick={() => onReconcilePuppy(puppy.id, puppy.name)}
+                              style={{ background: '#fff', border: '1px solid rgba(200,151,31,0.4)', color: 'var(--gold)', flexShrink: 0 }}
+                            >
+                              {reconcilingFor === puppy.id ? <span className="spinner" /> : 'Reconcile this puppy'}
+                            </button>
+                          </>
+                        ) : (
+                          <span>🔒 {puppy.name} is over your plan's dog limit and is read-only — media can't be added until it's activated or you upgrade.</span>
+                        )}
+                      </div>
+                    )}
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm"
+                      disabled={isPuppyRestricted}
                       onClick={() => setMediaOpenFor(mediaOpenFor === puppy.id ? null : puppy.id)}
                       style={{ fontSize: 12 }}
                     >
                       📷 Photos &amp; videos {(puppyPhotoIds.length + puppyVideoIds.length) > 0 && `(${puppyPhotoIds.length + puppyVideoIds.length})`} {mediaOpenFor === puppy.id ? '▲' : '▼'}
                     </button>
-                    {mediaOpenFor === puppy.id && (
+                    {mediaOpenFor === puppy.id && !isPuppyRestricted && (
                       <div style={{ marginTop: 8, padding: 10, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--sand)' }}>
                         <PuppyMediaManager
                           puppy={puppy}

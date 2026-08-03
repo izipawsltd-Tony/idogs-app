@@ -40,7 +40,7 @@ import { getStorage } from 'firebase-admin/storage'
 import { getFirestore } from 'firebase-admin/firestore'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
-import { canAddDogRecord } from './_lib/dog-access.js'
+import { canAddDogRecord, hasDogWriteAccess } from './_lib/dog-access.js'
 import { signMediaItems } from './_lib/showcase-media-access.js'
 
 if (!getApps().length) {
@@ -90,7 +90,12 @@ async function handler(req, res) {
     const dog = dogSnap.data()
 
     if (!canAddDogRecord(dog, uid)) {
-      return res.status(403).json({ error: 'Not authorized to update media for this dog' })
+      // See api/upload-showcase-media.js's identical check for why this
+      // distinguishes a restricted-but-owned dog (very often a legacy
+      // litter puppy needing api/reconcile-litter-puppy.js) from a
+      // genuine stranger/wrong-tenant denial.
+      const reason = hasDogWriteAccess(dog, uid) && dog?.status === 'restricted' ? 'DOG_RESTRICTED' : 'NOT_OWNER'
+      return res.status(403).json({ error: 'Not authorized to update media for this dog', reason })
     }
 
     const arrayField = kind === 'photo' ? 'photos' : 'videos'

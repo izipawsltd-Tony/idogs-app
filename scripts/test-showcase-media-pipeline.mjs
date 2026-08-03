@@ -446,6 +446,24 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     const res = mockRes()
     await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, owner.idToken), res)
     check('4', 'A restricted puppy denies new media uploads (403)', res.statusCode === 403)
+    // Tony live-staging fix round: the 403 now distinguishes WHY, so a
+    // client can point the breeder at the actual fix
+    // (api/reconcile-litter-puppy.js) instead of a dead end — without
+    // changing who is authorized.
+    check('4', 'The 403 is tagged reason: DOG_RESTRICTED (owned, but restricted) — not the generic NOT_OWNER', res.body?.reason === 'DOG_RESTRICTED')
+
+    const updateRes = mockRes()
+    await updateMediaHandler(mockReq({ dogId, kind: 'photo', order: [] }, owner.idToken), updateRes)
+    check('4', 'update-showcase-media.js denies the same restricted dog (403) with the same reason', updateRes.statusCode === 403 && updateRes.body?.reason === 'DOG_RESTRICTED')
+  }
+  {
+    const stranger = await newUser('m4bstranger')
+    const owner = await newUser('m4bowner')
+    const dogId = `m4bdog_${R}`
+    await seedDog(owner.uid, dogId)
+    const res = mockRes()
+    await uploadMediaHandler(mockReq({ dogId, base64: jpegBase64, kind: 'photo' }, stranger.idToken), res)
+    check('4b', 'A genuine stranger (owned, active, but not theirs) is tagged reason: NOT_OWNER — never DOG_RESTRICTED', res.statusCode === 403 && res.body?.reason === 'NOT_OWNER')
   }
 
   // ── Test 5: video upload ──
@@ -587,6 +605,59 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
     const different = mockRes()
     await uploadMediaHandler(mockReq({ dogId, base64: differentJpegBuffer.toString('base64'), kind: 'photo' }, owner.idToken), different)
     check('11', 'A genuinely different photo still uploads fine for the same puppy', different.statusCode === 200 && different.body.photos.length === 2)
+  }
+
+  // ── Test 12 (Tony live-staging fix round — the actual reported bug:
+  // "uploaded media for the first puppy... uploading for the second
+  // puppy returns 'Not authorized'"): TWO active, unrestricted puppies
+  // in the SAME litter, owned by the SAME breeder — upload, cover,
+  // reorder, and delete must all succeed independently for BOTH, with no
+  // cross-puppy leakage. Proves the root cause was never "puppyId vs
+  // dogId", "second puppy in an array", or any litter-scoped logic — it
+  // was per-dog `status`, and two ordinary active puppies never collide. ──
+  {
+    const owner = await newUser('m12owner')
+    const litterId = `m12litter_${R}`
+    await seedDb.collection('litters').doc(litterId).set({
+      tenantId: owner.uid, damId: `dam_${litterId}`, name: 'MediaTestLitter', notes: '', actualBirthDate: '2026-01-01', puppyIds: [],
+    })
+    const puppyA = `m12pupA_${R}`
+    const puppyB = `m12pupB_${R}`
+    await seedDog(owner.uid, puppyA, { litterId })
+    await seedDog(owner.uid, puppyB, { litterId })
+
+    const uploadA = mockRes()
+    await uploadMediaHandler(mockReq({ dogId: puppyA, base64: jpegBase64, kind: 'photo' }, owner.idToken), uploadA)
+    check('12', 'Upload succeeds for the FIRST puppy in the litter', uploadA.statusCode === 200 && uploadA.body.photos.length === 1)
+
+    const bJpegBuffer = await sharp({ create: { width: 4, height: 4, channels: 3, background: 'cyan' } }).jpeg().toBuffer()
+    const uploadB = mockRes()
+    await uploadMediaHandler(mockReq({ dogId: puppyB, base64: bJpegBuffer.toString('base64'), kind: 'photo' }, owner.idToken), uploadB)
+    check('12', 'Upload ALSO succeeds for the SECOND puppy in the same litter (the exact reported failure)', uploadB.statusCode === 200 && uploadB.body.photos.length === 1)
+
+    const bJpegBuffer2 = await sharp({ create: { width: 4, height: 4, channels: 3, background: 'magenta' } }).jpeg().toBuffer()
+    const uploadB2 = mockRes()
+    await uploadMediaHandler(mockReq({ dogId: puppyB, base64: bJpegBuffer2.toString('base64'), kind: 'photo' }, owner.idToken), uploadB2)
+    check('12', 'A second photo also uploads fine for puppy B (2 photos)', uploadB2.statusCode === 200 && uploadB2.body.photos.length === 2)
+    const puppyBIds = uploadB2.body.photos.map(p => p.id)
+
+    // Cover/reorder on puppy B must never touch puppy A's gallery.
+    const reorderB = mockRes()
+    await updateMediaHandler(mockReq({ dogId: puppyB, kind: 'photo', order: [puppyBIds[1], puppyBIds[0]] }, owner.idToken), reorderB)
+    check('12', 'Reorder (set cover) succeeds for puppy B', reorderB.statusCode === 200 && reorderB.body.photos[0].id === puppyBIds[1])
+    const puppyAAfter = (await seedDb.collection('dogs').doc(puppyA).get()).data()
+    check('12', 'Puppy A\'s own single photo is completely untouched by puppy B\'s reorder', puppyAAfter.photos.length === 1)
+
+    // Delete on puppy B must never touch puppy A.
+    const deleteB = mockRes()
+    await updateMediaHandler(mockReq({ dogId: puppyB, kind: 'photo', order: [puppyBIds[1]] }, owner.idToken), deleteB)
+    check('12', 'Delete succeeds for puppy B (down to 1 photo)', deleteB.statusCode === 200 && deleteB.body.photos.length === 1)
+    const puppyAAfter2 = (await seedDb.collection('dogs').doc(puppyA).get()).data()
+    check('12', 'Puppy A is STILL untouched after puppy B\'s delete', puppyAAfter2.photos.length === 1 && puppyAAfter2.photos[0].id === uploadA.body.mediaId)
+
+    const getA = mockRes()
+    await getMediaUrlsHandler(mockReq({ dogId: puppyA }, owner.idToken), getA)
+    check('12', 'Fetching puppy A\'s media independently still returns exactly its own 1 photo', getA.statusCode === 200 && getA.body.photos.length === 1)
   }
 
   await summary()

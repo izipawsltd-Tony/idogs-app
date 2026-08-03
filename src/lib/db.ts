@@ -1275,6 +1275,31 @@ export async function updateShowcaseMediaOrder(dogId: string, kind: 'photo' | 'v
   return res.json()
 }
 
+// Tony live-staging finding: a legacy litter puppy restricted BEFORE
+// litter puppies became cap-exempt (no restrictionReason recorded — see
+// api/_lib/dog-cap.js's header comment) is never auto-reactivated, by
+// design — only this explicit, scoped, per-dog action
+// (api/reconcile-litter-puppy.js) can un-restrict it. Previously only
+// reachable from DogDetailPage's own inline fetch; wrapped here in the
+// SAME db.ts pattern as every other Showcase call so LittersPage's
+// ShowcaseManager (where a breeder actually discovers the "can't upload
+// media" problem) can offer the same fix inline, without duplicating the
+// fetch/error-handling boilerplate.
+export async function reconcileLitterPuppy(dogId: string): Promise<{ status: 'active'; alreadyActive?: boolean }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/reconcile-litter-puppy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `Reconcile failed (${res.status})`)
+  }
+  return body
+}
+
 // Fresh, short-lived signed URLs for a puppy's CURRENT private Showcase
 // gallery — needed anywhere the breeder's own workspace renders
 // dog.photos/dog.videos (which are private Storage paths, never directly
