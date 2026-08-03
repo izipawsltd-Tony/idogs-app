@@ -62,7 +62,7 @@ export default function ShowcasePublicPage() {
       <div style={{ maxWidth: 1100, margin: 'auto' }}>
         <Link to="/" aria-label="iDogs home"><img src="/logo.png" alt="iDogs" style={{ width: 132, filter: 'brightness(0) invert(1)', marginBottom: 30 }} /></Link>
         <div style={{ color: '#BCE7DC', textTransform: 'uppercase', letterSpacing: 2, fontSize: 12, fontWeight: 700 }}>Litter Showcase</div>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(30px,6vw,52px)', margin: '8px 0 14px' }}>{litter.name}</h1>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(30px,6vw,52px)', margin: '8px 0 14px', overflowWrap: 'break-word' }}>{litter.name}</h1>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px', color: 'rgba(255,255,255,.82)', fontSize: 14 }}>
           {litter.damName && <span>Dam: {litter.damName}</span>}{litter.sireName && <span>Sire: {litter.sireName}</span>}
           {litter.actualBirthDate && <span>Born: {formatDate(litter.actualBirthDate)}</span>}

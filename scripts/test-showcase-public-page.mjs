@@ -67,6 +67,19 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
   // for the one shape that would actually leak the dog's internal
   // status field.
   check('ShowcasePublicPage never references puppy.status / dog.status', !/\bpuppy\.status\b|\bdog\.status\b/.test(pageSrc))
+
+  // Regression: the hero litter-name heading uses a large, responsive
+  // clamp() font size (up to 52px). A breeder-chosen litter name with no
+  // spaces to wrap on (e.g. an underscore-joined name) previously forced
+  // the whole public page to overflow horizontally on narrow (mobile)
+  // viewports — verified live at a 390px viewport (document.scrollWidth
+  // 724 vs window.innerWidth 390), traced to this exact <h1>, which had
+  // no word-break safeguard. overflowWrap: 'break-word' lets the browser
+  // break the name itself rather than expanding the page.
+  check('The litter-name <h1> guards against horizontal overflow from a long unbroken name (overflowWrap: break-word)',
+    /<h1 style=\{\{[^}]*overflowWrap: 'break-word'[^}]*\}\}>\{litter\.name\}<\/h1>/.test(pageSrc))
+  check('The litter-name <h1> keeps its existing responsive clamp() font size (the fix must not remove it)',
+    /<h1 style=\{\{[^}]*fontSize: 'clamp\(30px,6vw,52px\)'[^}]*\}\}>\{litter\.name\}<\/h1>/.test(pageSrc))
 }
 
 // =========================================================================
