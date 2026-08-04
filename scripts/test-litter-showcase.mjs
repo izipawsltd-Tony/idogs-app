@@ -273,7 +273,16 @@ function extractFunctionSource(src, signaturePattern) {
   check('litterShowcases read allows resource == null (a not-yet-created Showcase must resolve to "not found", never permission-denied)', /resource == null \|\|/.test(showcaseBlock))
 
   const littersPageSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
-  check('LittersPage.tsx manages Showcase via lib/db.ts server-endpoint wrappers, not direct Firestore writes', /createShowcase\(litterId\)/.test(littersPageSrc) && /setShowcaseEnabled\(litterId, !current\.enabled\)/.test(littersPageSrc) && /updateShowcasePuppy\(litterId, puppyId, \{ visible \}\)/.test(littersPageSrc) && /bulkUpdateShowcasePuppies\(litterId, action\)/.test(littersPageSrc))
+  // Tony live-staging fix round ("Draft → Save"): bulkUpdateShowcasePuppies
+  // and the old per-field updateShowcasePuppy(litterId, puppyId, { visible })
+  // shape are both gone — bulk actions are now a local draft mutation (see
+  // ShowcaseManager's own tests below), and updateShowcasePuppy is called
+  // exactly once per dirty puppy on Save, with the FULL resolved field set.
+  check('LittersPage.tsx manages Showcase via lib/db.ts server-endpoint wrappers, not direct Firestore writes',
+    /createShowcase\(litterId\)/.test(littersPageSrc) &&
+    /setShowcaseEnabled\(litterId, !current\.enabled\)/.test(littersPageSrc) &&
+    /updateShowcasePuppy\(litterId, puppyId, resolvedFields\)/.test(littersPageSrc) &&
+    !/bulkUpdateShowcasePuppies/.test(littersPageSrc))
   // Codex fix-round finding 2: the raw `profile?.plan !== 'plus'` check is
   // gone — gating must go through the shared client mirror of
   // computeEffectivePlan (getEffectivePlanClient), not a bare plan-field
@@ -302,98 +311,114 @@ function extractFunctionSource(src, signaturePattern) {
   check('LittersPage.tsx imports the REAL useShowcaseRequestGuard hook (not a reimplemented/inline guard)', /import \{ useShowcaseRequestGuard \} from '\.\.\/hooks\/useShowcaseRequestGuard'/.test(littersPageSrc))
   check('LittersPage.tsx defines isShowcaseRequestCurrent combining mountedRef AND the guard\'s isCurrent()', /function isShowcaseRequestCurrent\(gen: number\): boolean \{\s*return mountedRef\.current && showcaseGuard\.isCurrent\(gen\)/.test(littersPageSrc))
 
-  // Every one of the six Showcase async functions must (1) capture the
+  // Every one of these Showcase async functions must (1) capture the
   // generation via the guard BEFORE its own first await, and (2) check
   // isShowcaseRequestCurrent after ONLY awaiting — never bump/mutate the
   // guard itself (only the account-switch effect above may do that).
-  const showcaseHandlerNames = ['loadShowcase', 'handleCreateShowcase', 'handleToggleShowcaseEnabled', 'handleTogglePuppyVisible', 'handlePuppyAvailabilityChange', 'handleShowcaseBulkAction']
+  // Tony live-staging fix round ("Draft → Save"): handleTogglePuppyVisible/
+  // handlePuppyAvailabilityChange/handlePublishedMediaChange/
+  // handleShowcaseDetailsChange/handleShowcaseBulkAction (one server call
+  // per field/toggle) no longer exist — replaced by ONE function,
+  // handleSaveShowcaseDraft, called once per DIRTY puppy when the breeder
+  // clicks "Save changes" in ShowcaseManager (see that component's own
+  // tests below). It must uphold the exact same guard discipline as
+  // every handler it replaced.
+  const showcaseHandlerNames = ['loadShowcase', 'handleCreateShowcase', 'handleToggleShowcaseEnabled', 'handleSaveShowcaseDraft']
   for (const name of showcaseHandlerNames) {
     const fnBody = extractFunctionSource(littersPageSrc, new RegExp(`async function ${name}\\(`))
     check(`${name} was found`, fnBody.length > 0)
     check(`${name} captures the guard's generation before its first await`, /const gen = showcaseGuard\.currentGeneration\(\)/.test(fnBody))
     const guardCheckCount = (fnBody.match(/if \(!isShowcaseRequestCurrent\(gen\)\) return/g) || []).length
-    check(`${name} checks isShowcaseRequestCurrent after every await (in the success path, catch, AND finally — at least 3 checks)`, guardCheckCount >= 3, `found ${guardCheckCount}`)
+    check(`${name} checks isShowcaseRequestCurrent after every await (at least 3 checks)`, guardCheckCount >= 3, `found ${guardCheckCount}`)
   }
 
-  // UI gap fix: the four "editing surface" handlers (not loadShowcase,
-  // not handleCreateShowcase — see ShowcaseManager's own comment for why
-  // those two are out of scope) must clear any stale showcaseSaveError
-  // at the start of a new attempt and set it on failure, so a failed
-  // save shows reliable inline status without ever hiding the puppy list
-  // (that's what showcaseError, a DIFFERENT state, does for LOAD
-  // failures only).
-  const editHandlerNames = ['handleToggleShowcaseEnabled', 'handleTogglePuppyVisible', 'handlePuppyAvailabilityChange', 'handleShowcaseBulkAction']
-  for (const name of editHandlerNames) {
-    const fnBody = extractFunctionSource(littersPageSrc, new RegExp(`async function ${name}\\(`))
-    check(`${name} was found (edit-handler pass)`, fnBody.length > 0)
-    check(`${name} clears showcaseSaveError at the start of every new attempt`, /setShowcaseSaveError\(prev => \(\{ \.\.\.prev, \[litterId\]: '' \}\)\)/.test(fnBody))
-    check(`${name} sets showcaseSaveError on failure (guarded by isShowcaseRequestCurrent, same as every other post-await write)`, /setShowcaseSaveError\(prev => \(\{ \.\.\.prev, \[litterId\]: message \}\)\)/.test(fnBody))
-    check(`${name} never optimistically writes to showcases before the server confirms (no setShowcases call outside the success branch)`, (fnBody.match(/setShowcases\(/g) || []).length === 1)
+  // handleToggleShowcaseEnabled remains the only per-field autosave
+  // handler left in the parent (the litter-level toggle is intentionally
+  // NOT part of the Draft → Save redesign — see ShowcaseManager's own
+  // header comment) — it must still clear any stale showcaseSaveError at
+  // the start of a new attempt, set it on failure, and never optimistically
+  // write to showcases before the server confirms.
+  {
+    const fnBody = extractFunctionSource(littersPageSrc, /async function handleToggleShowcaseEnabled\(/)
+    check('handleToggleShowcaseEnabled was found (edit-handler pass)', fnBody.length > 0)
+    check('handleToggleShowcaseEnabled clears showcaseSaveError at the start of every new attempt', /setShowcaseSaveError\(prev => \(\{ \.\.\.prev, \[litterId\]: '' \}\)\)/.test(fnBody))
+    check('handleToggleShowcaseEnabled sets showcaseSaveError on failure (guarded by isShowcaseRequestCurrent, same as every other post-await write)', /setShowcaseSaveError\(prev => \(\{ \.\.\.prev, \[litterId\]: message \}\)\)/.test(fnBody))
+    check('handleToggleShowcaseEnabled never optimistically writes to showcases before the server confirms (no setShowcases call outside the success branch)', (fnBody.match(/setShowcases\(/g) || []).length === 1)
   }
 
-  // UI gap fix: ShowcaseManager itself — status feedback + disabled wiring.
-  // Codex fix-round finding: this extraction previously relied on
-  // /function ShowcaseManager\(\{[\s\S]*?\n}\n/ — a line-ending-dependent
-  // end anchor (a literal `\n` required immediately AFTER the closing
-  // `}`, which only holds on LF checkouts; on CRLF it's `}\r\n`, so the
-  // match silently failed and every assertion below ran against an empty
-  // string). extractFunctionSource() replaces this with balanced-brace
-  // counting from the real body-opening brace — see its own comment
-  // above for why "the first `{` after the signature" isn't safe either
-  // for a destructured-parameter signature like this one's.
+  // handleSaveShowcaseDraft's own partial-failure contract: resolvedIds
+  // must be returned on BOTH the success and every failure branch (never
+  // silently dropped), and it must update dogs/showcases state itself so
+  // ShowcaseManager doesn't need a full page reload to see a persisted
+  // media reorder.
+  {
+    const fnBody = extractFunctionSource(littersPageSrc, /async function handleSaveShowcaseDraft\(/)
+    const resolvedIdsReturnCount = (fnBody.match(/resolvedIds \}/g) || []).length
+    check('handleSaveShowcaseDraft returns resolvedIds on every return path (success AND every failure branch)', resolvedIdsReturnCount >= 5, `found ${resolvedIdsReturnCount}`)
+    check('handleSaveShowcaseDraft updates dogs state when media actually changed (photo and/or video)', /setDogs\(prev => prev\.map\(d => d\.id === puppyId/.test(fnBody))
+    check('handleSaveShowcaseDraft updates showcases state on a successful save', /setShowcases\(prev => \(\{ \.\.\.prev, \[litterId\]: showcase \}\)\)/.test(fnBody))
+    check('handleSaveShowcaseDraft only reorders media when the final order actually differs from what is currently persisted (skips a needless call otherwise)',
+      /JSON\.stringify\(currentPhotoIds\) !== JSON\.stringify\(finalPhotoOrder\)/.test(fnBody) && /JSON\.stringify\(currentVideoIds\) !== JSON\.stringify\(finalVideoOrder\)/.test(fnBody))
+  }
+
+  // UI gap fix: ShowcaseManager itself — status feedback + Draft → Save
+  // wiring. extractFunctionSource() uses balanced-brace counting from the
+  // real body-opening brace (see its own comment above) — line-ending
+  // independent, unlike a literal end-anchor regex would be.
   const showcaseManagerSrc = extractFunctionSource(littersPageSrc, /function ShowcaseManager\(/)
   check('ShowcaseManager was found', showcaseManagerSrc.length > 0)
-  // Codex fix-round finding: "(publish)" was imprecise wording in this
-  // check's own label (never shown to a real user — this is a test
-  // description — but still worth fixing for the same reason as the
-  // production UI copy below: Slice 1 has no public Showcase viewer at
-  // all yet, so "enabled" must never be described as "publish/public"
-  // anywhere, including in developer-facing test output).
   check('ShowcaseManager accepts a saveError prop distinct from the Showcase enabled/disabled status', /saveError: string/.test(showcaseManagerSrc))
-  check('ShowcaseManager clarifies that enabling does not publish anything publicly yet (Slice 1 has no public viewer)', /not\s+(?:make it |publish it )?public(?:ly)?/i.test(showcaseManagerSrc) || /no public (?:Showcase )?(?:page|viewer|link)/i.test(showcaseManagerSrc))
-  check('ShowcaseManager renders a "Saving…" state while busy', /busy \? \([\s\S]{0,220}Saving…/.test(showcaseManagerSrc))
-  check('ShowcaseManager renders the exact save failure message when saveError is set', /saveError \? \([\s\S]{0,180}Changes couldn.t be saved — try again/.test(showcaseManagerSrc))
-  check('ShowcaseManager renders an explicit "All changes saved" confirmation as the default/idle state', /All changes saved/.test(showcaseManagerSrc))
+  check('ShowcaseManager clarifies that enabling does not publish anything publicly yet',
+    /not\s+(?:make it |publish it )?public(?:ly)?/i.test(showcaseManagerSrc) ||
+    /no public (?:Showcase )?(?:page|viewer|link)/i.test(showcaseManagerSrc) ||
+    /nothing is shared publicly until/i.test(showcaseManagerSrc))
+  // Tony live-staging fix round ("Draft → Save"): status is now keyed off
+  // a genuinely local `saveState`/`saveProgress`, not a `busy` prop tied to
+  // the LITTER-level toggle — it must show the exact UX states specified:
+  // a per-file progress line while saving, an unsaved-changes state before
+  // the FIRST save, a Retry-labeled error state after a failed save, and
+  // "All changes saved" only once nothing is dirty.
+  check('ShowcaseManager shows per-file save progress ("Saving file X of Y…")', /Saving file \$\{/.test(showcaseManagerSrc))
+  check('ShowcaseManager shows the exact "Some changes could not be saved — Retry" state on failure', /Some changes could not be saved — Retry/.test(showcaseManagerSrc))
+  check('ShowcaseManager shows an explicit "You have unsaved changes" state before the first save', /You have unsaved changes/.test(showcaseManagerSrc))
+  check('ShowcaseManager renders an explicit "All changes saved" confirmation once nothing is dirty', /All changes saved/.test(showcaseManagerSrc))
   check('The save-status region uses role="status" + aria-live="polite" so screen readers announce it', /role="status" aria-live="polite"/.test(showcaseManagerSrc))
-  // Double-submit prevention: every interactive control must be disabled
-  // while busy — this (not the account/generation guard, which only
-  // protects against a STALE response committing, not against a second
-  // click being dispatched at all) is what actually stops a double
-  // submission: `busy` flips true synchronously before any await in
-  // every handler above, so React re-renders every one of these controls
-  // as disabled before a second click could ever be dispatched.
-  const disabledBusyCount = (showcaseManagerSrc.match(/disabled=\{busy\}/g) || []).length
-  check('Every interactive Showcase control (enable toggle, 3 bulk buttons, per-puppy checkbox, per-puppy select) is disabled while busy — at least 6 controls', disabledBusyCount >= 6, `found ${disabledBusyCount}`)
+  check('The Save button is labeled "Save changes" normally and "Retry" after a failure, and disabled while saving or with nothing dirty',
+    /disabled=\{!anyDirty \|\| saveState === 'saving'\}/.test(showcaseManagerSrc) && /'Retry' : 'Save changes'/.test(showcaseManagerSrc))
 
-  // Tony live-staging finding ("cannot add puppy images or videos"): the
-  // upload UI existed only in the separate Edit-puppy form, unreachable
-  // from this panel. Fix: ShowcaseManager now renders PuppyMediaManager
-  // inline per puppy, reachable regardless of whether the puppy has any
-  // media yet (never gated behind an existing photo/video count).
-  check('ShowcaseManager accepts onPuppyMediaUpdated and toast props (needed to host PuppyMediaManager inline)',
-    /onPuppyMediaUpdated: \(puppyId: string, patch: \{ photos\?: MediaItem\[\]; videos\?: MediaItem\[\] \}\) => void/.test(showcaseManagerSrc) &&
-    /toast: \(msg: string, type\?: ToastMessage\['type'\]\) => void/.test(showcaseManagerSrc))
-  check('ShowcaseManager renders PuppyMediaManager inline per puppy, wired to onPuppyMediaUpdated',
-    /<PuppyMediaManager[\s\S]{0,200}onUpdated=\{patch => onPuppyMediaUpdated\(puppy\.id, patch\)\}/.test(showcaseManagerSrc))
+  // Requirement: "Uploaded media remains private until published" must
+  // be explained in the UI, not just true in the data model.
+  check('ShowcaseManager explains that uploaded media stays private until published', /remains private until you publish it/i.test(showcaseManagerSrc))
+
+  // Requirement: warn before reload/close with unsaved changes.
+  check('ShowcaseManager registers a beforeunload warning while any puppy draft is dirty', /window\.addEventListener\('beforeunload', handleBeforeUnload\)/.test(showcaseManagerSrc) && /if \(!anyDirty\) return/.test(showcaseManagerSrc))
+
+  // Tony live-staging finding ("cannot add puppy images or videos", and
+  // later "media missing from public page"): media upload/publish is now
+  // entirely local-draft + queued, reachable regardless of whether the
+  // puppy has any media yet, with an explicit Private/Published badge
+  // per item so "uploaded but never published" can't happen silently.
+  check('ShowcaseManager queues a new file locally (handleAddFiles) rather than uploading it immediately',
+    /function handleAddFiles/.test(showcaseManagerSrc) && !/handleAddFiles[\s\S]{0,400}await uploadShowcaseMedia/.test(showcaseManagerSrc))
+  check('Large-image fix: HEIC/HEIF and oversized video are rejected up front with an actionable message (compression cannot help either)',
+    /isHeicFile\(file\) && file\.size > MAX_HEIC_UPLOAD_BYTES/.test(showcaseManagerSrc) && /kind === 'video' && file\.size > MAX_VIDEO_UPLOAD_BYTES/.test(showcaseManagerSrc))
+  check('Each media thumbnail shows an explicit Private/Published/Queued badge',
+    /isQueued \? 'Queued' : isPublished \? 'Published' : 'Private'/.test(showcaseManagerSrc))
+  check('Removing an already-persisted media item requires confirmation; a queued (not-yet-uploaded) one does not',
+    /const isQueued = ref\.startsWith\('local:'\)/.test(showcaseManagerSrc) && /if \(!isQueued && !window\.confirm/.test(showcaseManagerSrc))
+  check('An explicit "Set as cover" action exists for photos beyond the first (not just implicit via reordering)',
+    /Set as cover photo/.test(showcaseManagerSrc) && /handleSetCover/.test(showcaseManagerSrc))
   check('The "Photos & videos" toggle button is NOT gated behind the puppy already having media (it must be the way to add the FIRST one)',
     (() => {
-      const idx = showcaseManagerSrc.indexOf('setMediaOpenFor(mediaOpenFor === puppy.id')
+      const idx = showcaseManagerSrc.indexOf("setMediaOpenFor(opening ? puppy.id : null)")
       if (idx === -1) return false
       const before = showcaseManagerSrc.slice(Math.max(0, idx - 400), idx)
-      return !/puppyPhotoIds\.length > 0 \|\| puppyVideoIds\.length > 0\) && \(\s*<div[^>]*>\s*<button[\s\S]*setMediaOpenFor/.test(before)
+      return !/photoOrder\.length > 0 \|\| videoOrder\.length > 0\) && \(\s*<div[^>]*>\s*<button[\s\S]*setMediaOpenFor/.test(before)
     })())
 
-  const puppyMediaManagerSrc = extractFunctionSource(littersPageSrc, /function PuppyMediaManager\(/)
-  check('PuppyMediaManager was found', puppyMediaManagerSrc.length > 0)
-  check('Removing a photo/video requires an explicit confirmation before deleting',
-    /function handleDelete[\s\S]{0,150}window\.confirm\(/.test(puppyMediaManagerSrc))
-  check('An explicit "Set as cover" action exists for photos beyond the first (not just implicit via reordering)',
-    /Set as cover photo/.test(puppyMediaManagerSrc) && /handleReorder\(kind, items, i, 0\)/.test(puppyMediaManagerSrc))
-
-  // Codex fix-round finding: "Show available only" read like a FILTER on
-  // the breeder's own admin puppy list (it never was — see the source's
-  // own comment on BULK_ACTION_LABELS). The button label must no longer
-  // say "Show", and must say "Select" + "puppies" instead, matching
+  // Codex fix-round finding (kept, still true): "Show available only"
+  // read like a FILTER on the breeder's own admin puppy list — it never
+  // was. The button label must still say "Select" + "puppies", matching
   // "Select all"'s own naming convention.
   check('The bulk-action button label no longer reads "Show available only"', !/>Show available only</.test(showcaseManagerSrc))
   check('The bulk-action button label reads "Select available puppies only"', />Select available puppies only</.test(showcaseManagerSrc))
@@ -402,12 +427,18 @@ function extractFunctionSource(src, signaturePattern) {
   // puppyDogs.map() must never be filtered by visible/availability; the
   // ONLY conditional in the puppy list is the empty-litter branch above
   // it (puppyDogs.length === 0), never a per-puppy visibility check.
-  check('The puppy management list always renders EVERY puppy in the litter (puppyDogs.map is never filtered by visible/availability)', /puppyDogs\.map\(puppy => \{/.test(showcaseManagerSrc) && !/puppyDogs\.filter\([^)]*visible/.test(showcaseManagerSrc) && !/puppyDogs\.filter\([^)]*availab/i.test(showcaseManagerSrc))
-
-  const bulkLabelsMatch = littersPageSrc.match(/show_available_only: '[^']*'/)
-  const bulkLabelsText = bulkLabelsMatch ? bulkLabelsMatch[0] : ''
-  check('The bulk-action toast wording exists and is anchored to the "in the Showcase" scope (never implies a filter of the admin view)', bulkLabelsText.includes('for the Showcase'))
-  check('The internal action id (show_available_only) is unchanged — only user-facing copy was fixed, not the API contract', /onBulkAction\('show_available_only'\)/.test(showcaseManagerSrc))
+  // Checks the RENDER call specifically (`puppyDogs.map(puppy => {`, never
+  // `puppyDogs.filter(...).map(puppy => {`) — a separate, legitimate stat
+  // like `visibleCount` elsewhere in the component computing off
+  // `puppyDogs.filter(...visible...)` is not a violation of this
+  // requirement, only filtering the actual RENDERED list would be.
+  check('The puppy management list always renders EVERY puppy in the litter (the render call itself is puppyDogs.map, never puppyDogs.filter(...).map)',
+    /puppyDogs\.map\(puppy => \{/.test(showcaseManagerSrc) && !/puppyDogs\.filter\([^)]*\)\.map\(puppy/.test(showcaseManagerSrc))
+  // Tony live-staging fix round ("Draft → Save"): bulk actions are now a
+  // LOCAL draft mutation (no server call, no toast) — the internal action
+  // id string is kept only as a readable literal in handleBulkAction's own
+  // branches, not as a server-call argument any more.
+  check('Bulk actions mutate the draft locally (select_all/clear_all/show_available_only branches) without an immediate server call', /function handleBulkAction\(action: 'select_all' \| 'clear_all' \| 'show_available_only'\)/.test(showcaseManagerSrc) && !/bulkUpdateShowcasePuppies/.test(showcaseManagerSrc))
 
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
   check('lib/db.ts Showcase mutations all call trusted server endpoints (never a direct Firestore write to litterShowcases)', /fetch\('\/api\/create-showcase'/.test(dbSrc) && /fetch\('\/api\/set-showcase-enabled'/.test(dbSrc) && /fetch\('\/api\/update-showcase-puppy'/.test(dbSrc) && /fetch\('\/api\/bulk-update-showcase-puppies'/.test(dbSrc))
