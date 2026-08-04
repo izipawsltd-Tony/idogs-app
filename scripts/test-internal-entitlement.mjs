@@ -317,16 +317,38 @@ const FUTURE_ISO = new Date(NOW.getTime() + 30 * 24 * 60 * 60 * 1000).toISOStrin
 const PAST_ISO = new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString() // NOW - 30 days
 
 check('parseAndValidateExpiry: omitted --expires means no expiry (null), the documented permanent-grant shape', parseAndValidateExpiry(undefined, { now: NOW }) === null)
-check('parseAndValidateExpiry: a valid FUTURE ISO string is accepted and normalized via new Date().toISOString()', parseAndValidateExpiry('2027-01-01T00:00:00+09:30', { now: NOW }) === new Date('2027-01-01T00:00:00+09:30').toISOString())
-check('parseAndValidateExpiry: a date-only string (no time) is accepted and normalized to a full ISO instant', parseAndValidateExpiry('2027-06-15', { now: NOW }) === new Date('2027-06-15').toISOString())
+
+// ── Strict ISO 8601 only — new Date(x) alone is not a safe validator
+// (it also accepts locale-dependent/ambiguous formats). See
+// ISO_8601_STRICT_REGEX's own comment in grant-internal-entitlement.mjs
+// for the exact two shapes accepted and why a no-timezone datetime is
+// rejected as ambiguous rather than silently parsed as local time. ──
+
+check('parseAndValidateExpiry: a valid UTC ISO datetime (Z) is accepted and normalized', parseAndValidateExpiry('2027-01-01T00:00:00Z', { now: NOW }) === new Date('2027-01-01T00:00:00Z').toISOString())
+check('parseAndValidateExpiry: a valid ISO datetime with an explicit offset (+09:30) is accepted and normalized', parseAndValidateExpiry('2027-01-01T00:00:00+09:30', { now: NOW }) === new Date('2027-01-01T00:00:00+09:30').toISOString())
+check('parseAndValidateExpiry: a date-only string (no time) is accepted and normalized to a full ISO instant (documented: midnight UTC)', parseAndValidateExpiry('2027-06-15', { now: NOW }) === new Date('2027-06-15').toISOString())
+check('parseAndValidateExpiry: date-only really does resolve to midnight UTC, not local time', parseAndValidateExpiry('2027-06-15', { now: NOW }) === '2027-06-15T00:00:00.000Z')
+
+check('parseAndValidateExpiry REJECTS "01/02/2027" — locale-dependent (is it Jan 2 or Feb 1?), not strict ISO 8601', (() => {
+  try { parseAndValidateExpiry('01/02/2027', { now: NOW }); return false } catch (err) { return /ISO 8601/.test(err.message) }
+})())
+check('parseAndValidateExpiry REJECTS "January 2, 2027" — an informal/locale-dependent format, not strict ISO 8601', (() => {
+  try { parseAndValidateExpiry('January 2, 2027', { now: NOW }); return false } catch (err) { return /ISO 8601/.test(err.message) }
+})())
+check('parseAndValidateExpiry REJECTS "2027-01-01 12:00:00" — a space instead of "T", and no timezone marker at all', (() => {
+  try { parseAndValidateExpiry('2027-01-01 12:00:00', { now: NOW }); return false } catch (err) { return /ISO 8601/.test(err.message) }
+})())
+check('parseAndValidateExpiry REJECTS "2027-01-01T12:00:00" — a well-formed datetime but with NO timezone marker, which the JS Date spec would otherwise silently parse as the OPERATOR\'S LOCAL time (exactly the ambiguity being closed)', (() => {
+  try { parseAndValidateExpiry('2027-01-01T12:00:00', { now: NOW }); return false } catch (err) { return /ISO 8601/.test(err.message) }
+})())
 
 // Only an OMITTED flag (undefined — parseArgs() never produces anything
 // else for a flag that wasn't passed) means "no expiry". Every other
 // non-valid-date value — including an explicit null, which argv can never
 // actually produce but a future programmatic caller could pass — throws
 // rather than silently falling back to "no expiry".
-for (const garbage of ['not-a-real-date', '', '   ', 123456789, true, { _seconds: 1 }, null]) {
-  check(`parseAndValidateExpiry rejects malformed --expires (${JSON.stringify(garbage)}) with a throw, never a silent fallback`, (() => {
+for (const garbage of ['not-a-real-date', '', '   ', 123456789, true, { _seconds: 1 }, null, '01/02/2027', 'January 2, 2027', '2027-01-01 12:00:00', '2027-01-01T12:00:00', '2027-13-01T00:00:00Z']) {
+  check(`parseAndValidateExpiry rejects malformed/ambiguous --expires (${JSON.stringify(garbage)}) with a throw, never a silent fallback`, (() => {
     try { parseAndValidateExpiry(garbage, { now: NOW }); return false } catch { return true }
   })())
 }

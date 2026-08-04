@@ -95,14 +95,33 @@ export function parseArgs(argv) {
 // BEFORE any Firebase initialization or file read (see main() below), so
 // an invalid --expires stops the script before it ever touches a real
 // credential or reads any user profile.
+//
+// STRICT ISO 8601 ONLY — `new Date(x)` alone is not a safe validator: it
+// also accepts locale-dependent/ambiguous formats (`01/02/2027` — is that
+// Jan 2 or Feb 1?, `January 2, 2027`, `2027-01-01 12:00:00` with a space
+// instead of `T` and no timezone at all) and, for a bare
+// `2027-01-01T00:00:00` with no `Z`/offset, silently parses it as the
+// OPERATOR'S LOCAL TIMEZONE per the JS Date spec — exactly the kind of
+// ambiguity an entitlement expiry must never depend on. This regex
+// requires one of exactly two shapes before `new Date()` is even called:
+//   - YYYY-MM-DDTHH:mm:ss(.sss)?(Z|±HH:MM)  — a full datetime with an
+//     explicit UTC ('Z') or numeric offset marker, unambiguous regardless
+//     of the operator's local timezone.
+//   - YYYY-MM-DD  — date-only. Per the JS Date spec (and ISO 8601 itself)
+//     this is NOT locale-dependent and is always interpreted as midnight
+//     UTC — deliberately kept as a supported, documented convenience
+//     (typing just a date), unlike the datetime-with-no-timezone case
+//     above, which IS ambiguous and is rejected.
+const ISO_8601_STRICT_REGEX = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2}))?$/
+
 export function parseAndValidateExpiry(rawExpires, { requireFuture = true, now = new Date() } = {}) {
   if (rawExpires === undefined) return null
-  if (typeof rawExpires !== 'string' || rawExpires.trim() === '') {
-    throw new Error(`--expires must be a valid ISO date/time string, got '${rawExpires}'`)
+  if (typeof rawExpires !== 'string' || !ISO_8601_STRICT_REGEX.test(rawExpires)) {
+    throw new Error(`--expires must be a strict ISO 8601 date/time — YYYY-MM-DDTHH:mm:ssZ, or with an explicit offset like +09:30, or a date-only YYYY-MM-DD (midnight UTC). Locale-dependent formats (01/02/2027, "January 2, 2027") and a datetime with no timezone marker are rejected as ambiguous. Got '${rawExpires}'`)
   }
   const parsedMs = new Date(rawExpires).getTime()
   if (Number.isNaN(parsedMs)) {
-    throw new Error(`--expires must be a valid ISO date/time string, got '${rawExpires}'`)
+    throw new Error(`--expires is not a valid calendar date/time, got '${rawExpires}'`)
   }
   if (requireFuture && parsedMs <= now.getTime()) {
     throw new Error(`--expires must be in the future for a new grant, got '${rawExpires}' (resolves to ${new Date(parsedMs).toISOString()})`)
