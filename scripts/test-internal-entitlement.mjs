@@ -65,6 +65,51 @@ check(
   'a real paid Plus subscription is never weakened by the internal-entitlement code path (no entitlement present at all)',
   computeEffectivePlan({ plan: 'plus', subscriptionStatus: 'active' }, NOW) === 'plus'
 )
+
+// ── Precedence: a valid paid subscription always wins outright — the
+// internal-entitlement branch is only ever CONSULTED when there is no
+// active paid plan (see computeEffectivePlan: `if (paidPlanActive) return
+// 'plus'` returns BEFORE hasValidInternalEntitlement() is even called).
+// This is what makes "an internal revoke must never override a valid
+// paid Stripe entitlement" true — revoking/expiring the internal field
+// on a genuinely paying account is a structural no-op for their access,
+// exactly as it should be. ──
+
+check(
+  'valid paid Plus + internalEntitlement.granted:false (revoked) => MUST remain Plus (revoke never touches paid access)',
+  computeEffectivePlan({
+    plan: 'plus', subscriptionStatus: 'active',
+    internalEntitlement: { granted: false, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: null, revokedAt: '2026-08-02T00:00:00Z', revokedBy: 'x' },
+  }, NOW) === 'plus'
+)
+check(
+  'valid paid Plus + EXPIRED internal entitlement => MUST remain Plus (expiry of the override never touches paid access)',
+  computeEffectivePlan({
+    plan: 'plus', subscriptionStatus: 'active',
+    internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: '2026-07-01T00:00:00Z' },
+  }, NOW) === 'plus'
+)
+check(
+  'free user + granted valid internal entitlement => Plus',
+  computeEffectivePlan({
+    plan: 'free',
+    internalEntitlement: { granted: true, grantedAt: '2026-08-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: null },
+  }, NOW) === 'plus'
+)
+check(
+  'free user + revoked internal entitlement => Free',
+  computeEffectivePlan({
+    plan: 'free',
+    internalEntitlement: { granted: false, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: null, revokedAt: '2026-08-02T00:00:00Z', revokedBy: 'x' },
+  }, NOW) === 'free'
+)
+check(
+  'free user + expired internal entitlement => Free',
+  computeEffectivePlan({
+    plan: 'free',
+    internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: '2026-07-01T00:00:00Z' },
+  }, NOW) === 'free'
+)
 check(
   'past_due grace expiry still falls through to a genuine internal entitlement instead of hard-denying',
   computeEffectivePlan({
@@ -92,7 +137,20 @@ check(
 
 // ── Stripe webhook cannot accidentally remove the internal entitlement ─
 
-await checkAsync('a real Stripe downgrade event never touches internalEntitlement, and effective plan stays Plus via the override', async () => {
+// Byte-for-byte: every field (not just `granted`) must survive identical,
+// since a partial merge bug could leave the flag true while silently
+// corrupting grantedAt/grantedBy/reason — proving equality of the whole
+// object (via JSON, since the fake Firestore returns plain objects) is a
+// strictly stronger guarantee than checking one field.
+const ORIGINAL_ENTITLEMENT = Object.freeze({
+  granted: true,
+  grantedAt: '2026-01-01T00:00:00Z',
+  grantedBy: 'izipawsltd@gmail.com',
+  reason: 'Internal Super Admin — full breeder/Plus access without Stripe',
+  expiresAt: null,
+})
+
+await checkAsync('a real Stripe DOWNGRADE event (customer.subscription.deleted) preserves internalEntitlement byte-for-byte, and effective plan stays Plus via the override', async () => {
   const db = createFakeFirestore({
     users: {
       'admin-user': {
@@ -100,7 +158,7 @@ await checkAsync('a real Stripe downgrade event never touches internalEntitlemen
         subscriptionStatus: 'active',
         stripeSubscriptionId: 'sub_admin',
         lastKnownSubscriptionId: 'sub_admin',
-        internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'izipawsltd@gmail.com', reason: 'Super Admin', expiresAt: null },
+        internalEntitlement: { ...ORIGINAL_ENTITLEMENT },
       },
     },
   })
@@ -120,15 +178,15 @@ await checkAsync('a real Stripe downgrade event never touches internalEntitlemen
   const user = (await db.collection('users').doc('admin-user').get()).data()
   return res.status === 200 &&
     user.plan === 'free' && // the webhook DID do its normal job on the real subscription
-    user.internalEntitlement?.granted === true && // ...but never touched the internal override
+    JSON.stringify(user.internalEntitlement) === JSON.stringify(ORIGINAL_ENTITLEMENT) && // byte-for-byte untouched
     computeEffectivePlan(user, NOW) === 'plus' // effective access survives the downgrade via the override
 })
 
-await checkAsync('checkout.session.completed (a genuine upgrade) also leaves an existing internalEntitlement untouched', async () => {
+await checkAsync('a real Stripe UPGRADE event (checkout.session.completed) preserves an existing internalEntitlement byte-for-byte', async () => {
   const db = createFakeFirestore({
     users: {
       'admin-user': {
-        internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'izipawsltd@gmail.com', reason: 'Super Admin', expiresAt: null },
+        internalEntitlement: { ...ORIGINAL_ENTITLEMENT },
       },
     },
   })
@@ -149,7 +207,33 @@ await checkAsync('checkout.session.completed (a genuine upgrade) also leaves an 
   }
   await process(Buffer.from(JSON.stringify(event)), 'good-signature')
   const user = (await db.collection('users').doc('admin-user').get()).data()
-  return user.plan === 'plus' && user.internalEntitlement?.granted === true
+  return user.plan === 'plus' && JSON.stringify(user.internalEntitlement) === JSON.stringify(ORIGINAL_ENTITLEMENT)
+})
+
+await checkAsync('a real Stripe subscription.updated(active) event ALSO preserves internalEntitlement byte-for-byte (third distinct webhook branch that writes to the user doc)', async () => {
+  const db = createFakeFirestore({
+    users: {
+      'admin-user': {
+        plan: 'free',
+        internalEntitlement: { ...ORIGINAL_ENTITLEMENT },
+      },
+    },
+  })
+  const process = createWebhookHandler({
+    constructEvent: (rawBody) => JSON.parse(rawBody.toString()),
+    getSubscription: async () => { throw new Error('should not be called for subscription.updated') },
+    db,
+    now: () => NOW,
+  })
+  const event = {
+    id: 'evt_updated_1',
+    type: 'customer.subscription.updated',
+    created: 1000,
+    data: { object: { id: 'sub_new', customer: 'cus_admin', status: 'active', start_date: 1753315200, metadata: { userId: 'admin-user' }, items: { data: [{ price: { id: CHECKOUT_PRICE_IDS.plus_monthly } }] } } },
+  }
+  await process(Buffer.from(JSON.stringify(event)), 'good-signature')
+  const user = (await db.collection('users').doc('admin-user').get()).data()
+  return user.plan === 'plus' && JSON.stringify(user.internalEntitlement) === JSON.stringify(ORIGINAL_ENTITLEMENT)
 })
 
 // ── Structural: webhook-handler.js can never reference internalEntitlement ─
