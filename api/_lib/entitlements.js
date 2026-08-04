@@ -35,18 +35,35 @@ const GRACE_MS = 7 * 24 * 60 * 60 * 1000 // §4.2 — 7-day past_due grace
 //
 // Shape: { granted: boolean, grantedAt: ISOstring, grantedBy: string,
 //          reason: string, expiresAt: ISOstring | null }
-// `granted: false` (an explicit revoke) always denies, regardless of any
-// other field — this is what lets a revoke be recorded as an auditable
-// state transition (who revoked it, when) rather than deleting the field
-// outright and losing that history.
+// `granted: false` (an explicit revoke) always denies THIS INTERNAL
+// OVERRIDE specifically, regardless of any other field on the entitlement
+// object itself (expiresAt, reason, etc.) — it does NOT mean "denies
+// overall Plus access": computeEffectivePlan() below checks a real paid
+// subscription FIRST and returns 'plus' immediately if one is active,
+// before this function is ever called. A revoke (or expiry) of the
+// internal override is therefore always a structural no-op for a
+// genuinely paying account — it can only ever affect access that was
+// coming from this override in the first place. Recording granted:false
+// (rather than deleting the field) is what makes a revoke an auditable
+// state transition (who revoked it, when).
+//
+// expiresAt handling is fail-closed, not fail-open: null/undefined means
+// "no expiry" (a permanent grant); anything else MUST be a real, parseable
+// ISO date/time string, or the entitlement is treated as invalid and
+// denied. A malformed value here (a corrupted string, a raw Firestore
+// Timestamp-like object accidentally stored instead of a string, a
+// number) must never be silently treated as "no expiry" — `new
+// Date(garbage).getTime()` returns NaN, and the ONLY safe reading of "we
+// can't prove this hasn't expired" is deny, not grant.
 function hasValidInternalEntitlement(profile, now) {
   const entitlement = profile?.internalEntitlement
   if (!entitlement || entitlement.granted !== true) return false
-  if (entitlement.expiresAt) {
-    const expiresAtMs = new Date(entitlement.expiresAt).getTime()
-    if (!Number.isNaN(expiresAtMs) && now.getTime() >= expiresAtMs) return false
-  }
-  return true
+  const expiresAt = entitlement.expiresAt
+  if (expiresAt === null || expiresAt === undefined) return true
+  if (typeof expiresAt !== 'string') return false
+  const expiresAtMs = new Date(expiresAt).getTime()
+  if (Number.isNaN(expiresAtMs)) return false
+  return now.getTime() < expiresAtMs
 }
 
 export function computeEffectivePlan(profile, now = new Date()) {

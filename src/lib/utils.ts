@@ -398,8 +398,11 @@ export function isEligibleDamDog(dog: Dog): boolean {
 const PLAN_GRACE_MS = 7 * 24 * 60 * 60 * 1000
 
 // Mirrors computeEffectivePlan()'s internal-entitlement fallback (see that
-// function's own comment in api/_lib/entitlements.js) — display-only, same
-// as the rest of this function; the server re-derives this fresh from a
+// function's own comment in api/_lib/entitlements.js, including the
+// fail-closed expiresAt handling — a malformed/non-string expiresAt must
+// never be silently treated as "no expiry" the way a naive `new
+// Date(garbage).getTime()` -> NaN check would) — display-only, same as
+// the rest of this function; the server re-derives this fresh from a
 // trusted users/{uid} read on every gated request regardless of what this
 // says.
 function hasValidInternalEntitlementClient(
@@ -407,11 +410,12 @@ function hasValidInternalEntitlementClient(
   now: Date
 ): boolean {
   if (!entitlement || entitlement.granted !== true) return false
-  if (entitlement.expiresAt) {
-    const expiresAtMs = new Date(entitlement.expiresAt).getTime()
-    if (!Number.isNaN(expiresAtMs) && now.getTime() >= expiresAtMs) return false
-  }
-  return true
+  const expiresAt = entitlement.expiresAt
+  if (expiresAt === null || expiresAt === undefined) return true
+  if (typeof expiresAt !== 'string') return false
+  const expiresAtMs = new Date(expiresAt).getTime()
+  if (Number.isNaN(expiresAtMs)) return false
+  return now.getTime() < expiresAtMs
 }
 
 export function getEffectivePlanClient(

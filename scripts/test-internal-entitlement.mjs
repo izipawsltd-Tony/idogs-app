@@ -20,6 +20,7 @@ import { checkBreederPlusAccess } from '../api/_lib/showcase-access.js'
 import { capForPlan, DOG_CAP } from '../api/_lib/dog-cap.js'
 import { createWebhookHandler } from '../api/_lib/webhook-handler.js'
 import { CHECKOUT_PRICE_IDS } from '../api/_lib/checkout-handler.js'
+import { parseArgs, parseAndValidateExpiry, validateArgs, buildEntitlementPayload } from './grant-internal-entitlement.mjs'
 
 const { check, checkAsync, summary } = makeChecker()
 
@@ -60,6 +61,37 @@ check(
   computeEffectivePlan({ internalEntitlement: { grantedAt: '2026-01-01T00:00:00Z' } }, NOW) === 'free' &&
   computeEffectivePlan({ internalEntitlement: {} }, NOW) === 'free' &&
   computeEffectivePlan({ internalEntitlement: null }, NOW) === 'free'
+)
+
+// ── Malformed expiresAt MUST fail closed (deny), never be silently
+// treated as "no expiry" — this is the exact bug being fixed: a naive
+// `new Date(garbage).getTime()` is NaN, and NaN comparisons are always
+// false, so an unguarded "expired if now >= expiresAtMs" check would
+// never fire for garbage input, granting permanent access by accident. ──
+
+check(
+  'a non-parseable garbage string expiresAt is denied by the server, never treated as permanent',
+  computeEffectivePlan({ internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: 'not-a-real-date' } }, NOW) === 'free'
+)
+check(
+  'a Firestore Timestamp-LIKE object expiresAt ({_seconds,_nanoseconds}) is denied by the server, never treated as permanent',
+  computeEffectivePlan({ internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: { _seconds: 1234567890, _nanoseconds: 0 } } }, NOW) === 'free'
+)
+check(
+  'a numeric expiresAt (e.g. a raw epoch-ms value, not a string) is denied by the server, never treated as permanent',
+  computeEffectivePlan({ internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: 1234567890000 } }, NOW) === 'free'
+)
+check(
+  'a boolean expiresAt is denied by the server, never treated as permanent',
+  computeEffectivePlan({ internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: true } }, NOW) === 'free'
+)
+check(
+  'expiresAt: null (explicit, the normal "no expiry" shape) is still valid — the fail-closed fix only affects malformed values, not the documented null case',
+  computeEffectivePlan({ internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: null } }, NOW) === 'plus'
+)
+check(
+  'expiresAt: undefined (field simply absent) is still valid — same as explicit null',
+  computeEffectivePlan({ internalEntitlement: { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y' } }, NOW) === 'plus'
 )
 check(
   'a real paid Plus subscription is never weakened by the internal-entitlement code path (no entitlement present at all)',
@@ -269,21 +301,86 @@ await checkAsync('a real Stripe subscription.updated(active) event ALSO preserve
 {
   const utilsSrc = readFileSync(new URL('../src/lib/utils.ts', import.meta.url), 'utf8')
   check('getEffectivePlanClient checks internalEntitlement.granted', /entitlement\?\.granted !== true/.test(utilsSrc) || /entitlement\.granted !== true/.test(utilsSrc))
-  check('getEffectivePlanClient enforces expiresAt the same way the server does (>=, fails closed)', /now\.getTime\(\) >= expiresAtMs/.test(utilsSrc))
+  check('getEffectivePlanClient rejects a non-string expiresAt outright (fails closed on a Timestamp-like object/number/boolean, not just NaN dates)', /typeof expiresAt !== 'string'\)\s*return false/.test(utilsSrc))
+  check('getEffectivePlanClient rejects an unparsable expiresAt string (NaN) rather than falling through to "no expiry"', /Number\.isNaN\(expiresAtMs\)\)\s*return false/.test(utilsSrc))
+  check('getEffectivePlanClient treats null/undefined expiresAt as "no expiry" (the one documented permanent-grant shape)', /expiresAt === null \|\| expiresAt === undefined\)\s*return true/.test(utilsSrc))
+  check('getEffectivePlanClient enforces expiry with a strict "now < expiresAtMs" check, matching the server', /return now\.getTime\(\) < expiresAtMs/.test(utilsSrc))
   check('getEffectivePlanClient signature accepts internalEntitlement so LittersPage.tsx can pass it through', /Pick<UserProfile, 'plan' \| 'subscriptionStatus' \| 'pastDueSince' \| 'internalEntitlement'>/.test(utilsSrc))
 }
 
-// ── grant-internal-entitlement.mjs: trusted-path structural guarantees ─
+// ── grant-internal-entitlement.mjs: pure functions, unit-tested directly ─
+// (no filesystem/Firebase access — parseArgs/parseAndValidateExpiry/
+// validateArgs/buildEntitlementPayload are all pure; only main(), which
+// these tests never call, touches a real file or Firebase.) ────────────
+
+const FUTURE_ISO = new Date(NOW.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString() // NOW + 30 days
+const PAST_ISO = new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString() // NOW - 30 days
+
+check('parseAndValidateExpiry: omitted --expires means no expiry (null), the documented permanent-grant shape', parseAndValidateExpiry(undefined, { now: NOW }) === null)
+check('parseAndValidateExpiry: a valid FUTURE ISO string is accepted and normalized via new Date().toISOString()', parseAndValidateExpiry('2027-01-01T00:00:00+09:30', { now: NOW }) === new Date('2027-01-01T00:00:00+09:30').toISOString())
+check('parseAndValidateExpiry: a date-only string (no time) is accepted and normalized to a full ISO instant', parseAndValidateExpiry('2027-06-15', { now: NOW }) === new Date('2027-06-15').toISOString())
+
+// Only an OMITTED flag (undefined — parseArgs() never produces anything
+// else for a flag that wasn't passed) means "no expiry". Every other
+// non-valid-date value — including an explicit null, which argv can never
+// actually produce but a future programmatic caller could pass — throws
+// rather than silently falling back to "no expiry".
+for (const garbage of ['not-a-real-date', '', '   ', 123456789, true, { _seconds: 1 }, null]) {
+  check(`parseAndValidateExpiry rejects malformed --expires (${JSON.stringify(garbage)}) with a throw, never a silent fallback`, (() => {
+    try { parseAndValidateExpiry(garbage, { now: NOW }); return false } catch { return true }
+  })())
+}
+check('parseAndValidateExpiry rejects a PAST expiry for a new grant (requireFuture, the default)', (() => {
+  try { parseAndValidateExpiry(PAST_ISO, { now: NOW }); return false } catch (err) { return /future/.test(err.message) }
+})())
+check('parseAndValidateExpiry accepts a past expiry ONLY when requireFuture is explicitly disabled (not exposed by the CLI itself — defense-in-depth for future callers, e.g. a bulk-audit script)', parseAndValidateExpiry(PAST_ISO, { now: NOW, requireFuture: false }) === new Date(PAST_ISO).toISOString())
+
+check('validateArgs rejects an invalid --expires BEFORE returning (would throw before main() ever reads the service-account file)', (() => {
+  const args = { project: 'idogs-app-staging', saPath: '/fake/path.json', email: 'x@example.com', grantedBy: 'y', reason: 'z', expires: 'garbage' }
+  try { validateArgs(args, { now: NOW }); return false } catch (err) { return /--expires/.test(err.message) }
+})())
+check('validateArgs rejects a PAST --expires for a new grant', (() => {
+  const args = { project: 'idogs-app-staging', saPath: '/fake/path.json', email: 'x@example.com', grantedBy: 'y', reason: 'z', expires: PAST_ISO }
+  try { validateArgs(args, { now: NOW }); return false } catch (err) { return /future/.test(err.message) }
+})())
+check('validateArgs accepts a valid FUTURE --expires and returns it normalized as normalizedExpiresAt', (() => {
+  const args = { project: 'idogs-app-staging', saPath: '/fake/path.json', email: 'x@example.com', grantedBy: 'y', reason: 'z', expires: FUTURE_ISO }
+  return validateArgs(args, { now: NOW }).normalizedExpiresAt === new Date(FUTURE_ISO).toISOString()
+})())
+check('validateArgs never validates/requires --expires for a --revoke (revoke does not take an expiry at all)', (() => {
+  const args = { project: 'idogs-app-staging', saPath: '/fake/path.json', email: 'x@example.com', grantedBy: 'y', revoke: true }
+  return validateArgs(args, { now: NOW }).normalizedExpiresAt === null
+})())
+
+check('buildEntitlementPayload (grant) records grantedAt/grantedBy/reason/expiresAt for audit', (() => {
+  const payload = buildEntitlementPayload(
+    { revoke: false, grantedBy: 'izipawsltd@gmail.com', reason: 'Super Admin', normalizedExpiresAt: FUTURE_ISO },
+    { nowIso: NOW.toISOString(), existingEntitlement: null }
+  )
+  return payload.granted === true && payload.grantedAt === NOW.toISOString() && payload.grantedBy === 'izipawsltd@gmail.com' &&
+    payload.reason === 'Super Admin' && payload.expiresAt === FUTURE_ISO
+})())
+check('buildEntitlementPayload (revoke) sets granted:false and records revokedAt/revokedBy, never deletes the field outright', (() => {
+  const existing = { granted: true, grantedAt: '2026-01-01T00:00:00Z', grantedBy: 'x', reason: 'y', expiresAt: null }
+  const payload = buildEntitlementPayload(
+    { revoke: true, grantedBy: 'izipawsltd@gmail.com' },
+    { nowIso: NOW.toISOString(), existingEntitlement: existing }
+  )
+  return payload.granted === false && payload.revokedAt === NOW.toISOString() && payload.revokedBy === 'izipawsltd@gmail.com' &&
+    payload.grantedAt === existing.grantedAt && payload.reason === existing.reason // prior audit fields preserved, not erased
+})())
 
 {
   const scriptSrc = readFileSync(new URL('../scripts/grant-internal-entitlement.mjs', import.meta.url), 'utf8')
   check('the grant script is not an HTTP endpoint (lives in scripts/, not api/)', true)
   check('the grant script resolves the target account via Firebase Auth email lookup, never a client-supplied UID', scriptSrc.includes('auth.getUserByEmail(args.email)') && !/--uid/.test(scriptSrc))
   check('the grant script has a hard project_id guard tying the service-account credential to --project', /saJson\.project_id !== args\.project/.test(scriptSrc))
-  check('the grant script defaults to dry-run and requires --execute to write', /DRY_RUN = !args\.execute/.test(scriptSrc) && /if \(DRY_RUN\)/.test(scriptSrc))
-  check('a revoke sets granted:false and records revokedAt/revokedBy for audit, never deletes the field outright', /granted: false,\s*\n\s*revokedAt: nowIso,\s*\n\s*revokedBy: args\.grantedBy,/.test(scriptSrc))
-  check('a grant records grantedAt/grantedBy/reason/expiresAt for audit', ['grantedAt: nowIso', 'grantedBy: args.grantedBy', 'reason: args.reason', 'expiresAt: args.expires'].every(s => scriptSrc.includes(s)))
+  check('the grant script defaults to dry-run and requires --execute to write', /const DRY_RUN = !args\.execute/.test(scriptSrc) && /if \(DRY_RUN\)/.test(scriptSrc))
   check('the script refuses to create a brand-new profile document (must already exist)', scriptSrc.includes('!existingSnap.exists'))
+  check('validateArgs (and therefore --expires validation) runs before the service-account file is ever read', scriptSrc.indexOf('validateArgs(rawArgs)') < scriptSrc.indexOf('readFileSync(args.saPath'))
+  check('validateArgs (and therefore --expires validation) runs before any Firebase module is imported/initialized', scriptSrc.indexOf('validateArgs(rawArgs)') < scriptSrc.indexOf('initializeApp('))
+  check('the pure validation functions (parseArgs/parseAndValidateExpiry/validateArgs/buildEntitlementPayload) are exported for direct unit testing, never merely regex-inspected', ['export function parseArgs', 'export function parseAndValidateExpiry', 'export function validateArgs', 'export function buildEntitlementPayload'].every(s => scriptSrc.includes(s)))
+  check('main() only runs when the file is executed directly, never merely on import (isMainModule guard)', /const isMainModule = process\.argv\[1\] && import\.meta\.url === pathToFileURL\(process\.argv\[1\]\)\.href/.test(scriptSrc) && /if \(isMainModule\) \{/.test(scriptSrc))
 }
 
 await summary()
