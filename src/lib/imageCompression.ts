@@ -37,9 +37,9 @@
 // under Vercel's ~4.5MB body ceiling after base64 inflation — but a real
 // iPhone HEIC photo routinely runs 3-8MB, so that ceiling silently
 // rejected most ordinary photos. This is fixed properly now: HEIC/HEIF is
-// decoded IN THE BROWSER via libheif-js's WASM build (an already-declared
-// transitive dependency of this project's `heic-convert` package — no new
-// npm dependency added), painted onto a canvas, and run through the exact
+// decoded IN THE BROWSER via libheif-js's WASM build (declared directly
+// because application code imports it; LGPL-3.0), painted onto a canvas,
+// and run through the exact
 // same resize/re-encode pipeline every other photo uses — so a HEIC photo
 // of any realistic size ends up as a small compressed JPEG before it's
 // ever sent, exactly like JPEG/PNG/WebP already are. Dynamically imported
@@ -59,6 +59,7 @@
 // upload, which does not go through this module).
 
 import { isHeicFile } from './heic'
+import { validateHeicDecodeDimensions } from './heicDecodeLimits'
 
 const MAX_GALLERY_DIMENSION = 1600
 const JPEG_QUALITY = 0.85
@@ -203,8 +204,10 @@ async function decodeHeicToCanvas(file: File): Promise<{ canvas: HTMLCanvasEleme
   const image = images[0]
   const width = typeof image?.get_width === 'function' ? image.get_width() : NaN
   const height = typeof image?.get_height === 'function' ? image.get_height() : NaN
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    throw new ImageCompressionError('HEIC_DECODE_FAILED', 'This HEIC/HEIF file has invalid image dimensions')
+  const dimensions = validateHeicDecodeDimensions(width, height)
+  if (!dimensions.ok) {
+    const detail = dimensions.reason === 'oversized' ? 'is too large to process safely' : 'has invalid image dimensions'
+    throw new ImageCompressionError('HEIC_DECODE_FAILED', `This HEIC/HEIF file ${detail}`)
   }
 
   // Same 10s safety-net pattern as compressImageFile's img.onload/onerror
@@ -215,7 +218,7 @@ async function decodeHeicToCanvas(file: File): Promise<{ canvas: HTMLCanvasEleme
       reject(new ImageCompressionError('HEIC_DECODE_FAILED', 'This HEIC/HEIF file took too long to decode'))
     }, 15000)
     try {
-      image.display({ data: new Uint8ClampedArray(width * height * 4), width, height }, (displayData: { data: Uint8ClampedArray } | null) => {
+      image.display({ data: new Uint8ClampedArray(dimensions.rgbaBytes), width, height }, (displayData: { data: Uint8ClampedArray } | null) => {
         clearTimeout(timeout)
         if (!displayData) {
           reject(new ImageCompressionError('HEIC_DECODE_FAILED', 'This HEIC/HEIF file could not be decoded into an image'))

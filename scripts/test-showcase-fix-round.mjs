@@ -9,6 +9,7 @@
 import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
 import { isValidShowcasePuppyDoc } from '../api/_lib/showcase-schema.js'
+import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../src/lib/showcaseMoney.js'
 
 const { check, summary } = makeChecker()
 
@@ -28,33 +29,12 @@ const littersSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.m
 // separate, never-reformatted-mid-typing raw text state, only normalizing
 // to a clean "X.YY" string on blur.
 //
-// parseMoneyLive/parseMoneyCommit/centsToMoneyText are pure functions
-// defined inline in LittersPage.tsx (a .tsx file, not importable into
-// plain Node — no ts-node/tsx dependency exists in this repo, matching
-// this project's established convention for client-only logic). A
-// hand-synced plain-JS duplicate is used here to run REAL assertions
-// against the exact required cases, paired with structural checks below
-// proving the actual source contains the same logic — the same
-// established pattern already used for src/lib/utils.ts's
-// getEffectivePlanClient (a hand-synced mirror of a server function).
-
-function parseMoneyLive(text, previousCents) {
-  const trimmed = text.trim()
-  if (trimmed === '') return null
-  if (!/^\d*\.?\d*$/.test(trimmed) || trimmed === '.') return previousCents
-  const dollars = Number(trimmed)
-  if (!Number.isFinite(dollars) || dollars < 0) return previousCents
-  return Math.round(dollars * 100)
-}
-function parseMoneyCommit(text) {
-  const trimmed = text.trim()
-  if (trimmed === '') return { cents: null, error: null }
-  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return { cents: null, error: 'Enter a valid amount like 2500 or 2500.00' }
-  const dollars = Number(trimmed)
-  if (!Number.isFinite(dollars) || dollars < 0) return { cents: null, error: 'Enter a valid amount like 2500 or 2500.00' }
-  return { cents: Math.round(dollars * 100), error: null }
-}
-function centsToMoneyText(cents) { return cents == null ? '' : (cents / 100).toFixed(2) }
+// parseMoneyLive/parseMoneyCommit/centsToMoneyText now live in
+// src/lib/showcaseMoney.js — a plain, directly-importable JS module (not
+// trapped inside LittersPage.tsx anymore) — imported above and used
+// directly for REAL assertions against the exact required cases, paired
+// with structural checks below proving LittersPage.tsx actually wires
+// this module in (not a reimplementation).
 
 for (const [input, expectedCents] of [['10', 1000], ['10.01', 1001], ['500', 50000], ['2490', 249000], ['2500', 250000]]) {
   const { cents, error } = parseMoneyCommit(input)
@@ -90,7 +70,11 @@ check('Price/Deposit inputs are type="text" inputMode="decimal" — NOT type="nu
 check('priceText/depositText raw-text state exists, separate from priceCents/depositCents', /const \[priceText, setPriceText\]/.test(littersSrc) && /const \[depositText, setDepositText\]/.test(littersSrc))
 check('the price input\'s onChange never reformats the visible text — it sets priceText to the raw event value verbatim', /setPriceText\(prev => \(\{ \.\.\.prev, \[puppy\.id\]: raw \}\)\)/.test(littersSrc))
 check('reformatting to a clean "X.YY" string only happens onBlur (parseMoneyCommit), never on every keystroke', /onBlur=\{\(\) => \{[\s\S]{0,120}parseMoneyCommit\(priceText\[puppy\.id\] \?\? ''\)/.test(littersSrc))
-check('a blur-time validation error is surfaced via the existing puppyErrors mechanism', /if \(error\) setPuppyErrors\(prev => \(\{ \.\.\.prev, \[puppy\.id\]: error \}\)\)/.test(littersSrc))
+check('blur-time money validation retains the raw text, records a field-specific error, and only commits/reformats when valid',
+  /setMoneyErrors\(prev => \(\{ \.\.\.prev, \[puppy\.id\]: \{ \.\.\.prev\[puppy\.id\], price: error \|\| undefined \} \}\)\)/.test(littersSrc) &&
+  /if \(!error\) \{[\s\S]{0,180}setPriceText/.test(littersSrc))
+check('Save is blocked both in the handler and button while any money field is invalid',
+  /if \(hasMoneyErrors\) return/.test(littersSrc) && /disabled=\{!anyDirty \|\| saveState === 'saving' \|\| hasMoneyErrors\}/.test(littersSrc))
 check('deposit gets the exact same parseMoneyLive/parseMoneyCommit treatment as price ("keep deposit validation sensible")',
   (littersSrc.match(/parseMoneyLive\(raw, puppyFields\.(priceCents|depositCents)\)/g) || []).length === 2 &&
   (littersSrc.match(/parseMoneyCommit\((priceText|depositText)\[puppy\.id\] \?\? ''\)/g) || []).length === 2)

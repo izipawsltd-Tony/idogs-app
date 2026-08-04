@@ -16,6 +16,7 @@ import { sendTransferEmail } from '../lib/email'
 import { describeTransferFailure } from '../lib/transferError'
 import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 import { prepareImageForUpload, readFileAsBase64, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } from '../lib/imageCompression'
+import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showcaseMoney'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -1933,40 +1934,8 @@ function buildDraftFields(entry: LitterShowcase['puppies'][string], fallbackColo
 // authoritative validation — this only fixes the client's OWN ability to
 // produce a correct value to send it in the first place.
 
-function centsToMoneyText(cents: number | null): string {
-  return cents == null ? '' : (cents / 100).toFixed(2)
-}
-
-// Lenient, used on every keystroke: only ever updates the committed cents
-// value when the CURRENT text is unambiguously a valid non-negative
-// number so far (digits, at most one decimal point) — anything else
-// (a bare "-", a stray letter, a lone ".", an in-progress "10.") simply
-// leaves priceCents at its last good value rather than erroring on every
-// partial keystroke. The visible text itself (priceText/depositText) is
-// never touched here — see the two callers below.
-function parseMoneyLive(text: string, previousCents: number | null): number | null {
-  const trimmed = text.trim()
-  if (trimmed === '') return null
-  if (!/^\d*\.?\d*$/.test(trimmed) || trimmed === '.') return previousCents
-  const dollars = Number(trimmed)
-  if (!Number.isFinite(dollars) || dollars < 0) return previousCents
-  return Math.round(dollars * 100)
-}
-
-// Strict, used only on blur (a "completed" value): a non-empty value that
-// isn't a valid non-negative amount (malformed, negative, NaN, Infinity —
-// none of which Number.isFinite/the regex below let through) is REJECTED
-// outright (returns null, i.e. "no price set") rather than silently
-// persisting whatever partially-parsed number it happens to produce.
-function parseMoneyCommit(text: string): { cents: number | null; error: string | null } {
-  const trimmed = text.trim()
-  if (trimmed === '') return { cents: null, error: null }
-  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return { cents: null, error: 'Enter a valid amount like 2500 or 2500.00' }
-  const dollars = Number(trimmed)
-  if (!Number.isFinite(dollars) || dollars < 0) return { cents: null, error: 'Enter a valid amount like 2500 or 2500.00' }
-  return { cents: Math.round(dollars * 100), error: null }
-}
-
+// Strict validation runs on blur. Invalid raw text remains visible and
+// the last valid cents remain committed; Save is blocked until corrected.
 let localMediaRefCounter = 0
 function newLocalMediaRef() {
   localMediaRefCounter += 1
@@ -2036,6 +2005,7 @@ function ShowcaseManager({
     Object.fromEntries(puppyDogs.map(p => [p.id, new Map<string, QueuedFile>()])))
   const [dirty, setDirty] = useState<Record<string, boolean>>({})
   const [puppyErrors, setPuppyErrors] = useState<Record<string, string>>({})
+  const [moneyErrors, setMoneyErrors] = useState<Record<string, { price?: string; deposit?: string }>>({})
   const [existingMedia, setExistingMedia] = useState<Record<string, { photos: SignedMediaItem[]; videos: SignedMediaItem[] }>>({})
   const [mediaLoading, setMediaLoading] = useState<Record<string, boolean>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
@@ -2043,6 +2013,7 @@ function ShowcaseManager({
 
   const visibleCount = puppyDogs.filter(p => fields[p.id]?.visible).length
   const anyDirty = Object.values(dirty).some(Boolean)
+  const hasMoneyErrors = Object.values(moneyErrors).some(errors => Boolean(errors.price || errors.deposit))
 
   // Warn before a full page reload/close/URL-bar navigation while any
   // puppy's draft has unsaved changes — the standard, dependency-free
@@ -2239,6 +2210,7 @@ function ShowcaseManager({
   // again, and never silently drops or re-sends something that already
   // succeeded.
   async function handleSaveAll() {
+    if (hasMoneyErrors) return
     const dirtyPuppyIds = puppyDogs.map(p => p.id).filter(id => dirty[id])
     if (dirtyPuppyIds.length === 0) return
     setSaveState('saving')
@@ -2473,7 +2445,7 @@ function ShowcaseManager({
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={!anyDirty || saveState === 'saving'}
+          disabled={!anyDirty || saveState === 'saving' || hasMoneyErrors}
           onClick={handleSaveAll}
         >
           {saveState === 'saving' ? <span className="spinner" /> : saveState === 'error' ? 'Retry' : 'Save changes'}
@@ -2589,13 +2561,19 @@ function ShowcaseManager({
                           const raw = e.target.value
                           setPriceText(prev => ({ ...prev, [puppy.id]: raw }))
                           updateField(puppy.id, 'priceCents', parseMoneyLive(raw, puppyFields.priceCents))
+                          if (moneyErrors[puppy.id]?.price && !parseMoneyCommit(raw).error) {
+                            setMoneyErrors(prev => ({ ...prev, [puppy.id]: { ...prev[puppy.id], price: undefined } }))
+                          }
                         }}
                         onBlur={() => {
                           const { cents, error } = parseMoneyCommit(priceText[puppy.id] ?? '')
-                          updateField(puppy.id, 'priceCents', cents)
-                          setPriceText(prev => ({ ...prev, [puppy.id]: centsToMoneyText(cents) }))
-                          if (error) setPuppyErrors(prev => ({ ...prev, [puppy.id]: error }))
+                          setMoneyErrors(prev => ({ ...prev, [puppy.id]: { ...prev[puppy.id], price: error || undefined } }))
+                          if (!error) {
+                            updateField(puppy.id, 'priceCents', cents)
+                            setPriceText(prev => ({ ...prev, [puppy.id]: centsToMoneyText(cents) }))
+                          }
                         }} />
+                      {moneyErrors[puppy.id]?.price && <span role="alert" style={{ fontSize: 11, color: 'var(--danger)' }}>{moneyErrors[puppy.id].price}</span>}
                       <span style={{ fontSize: 11 }} title="Independent of the puppy's own 'Show this puppy publicly' checkbox above — this only controls whether the PRICE amount is shown, on a puppy that is already public."><input type="checkbox" checked={puppyFields.showPrice} disabled={puppyFields.priceCents == null} onChange={e => updateField(puppy.id, 'showPrice', e.target.checked)} /> Show price publicly</span>
                     </label>
                     <label className="form-group" style={{ margin: 0 }}>
@@ -2606,13 +2584,19 @@ function ShowcaseManager({
                           const raw = e.target.value
                           setDepositText(prev => ({ ...prev, [puppy.id]: raw }))
                           updateField(puppy.id, 'depositCents', parseMoneyLive(raw, puppyFields.depositCents))
+                          if (moneyErrors[puppy.id]?.deposit && !parseMoneyCommit(raw).error) {
+                            setMoneyErrors(prev => ({ ...prev, [puppy.id]: { ...prev[puppy.id], deposit: undefined } }))
+                          }
                         }}
                         onBlur={() => {
                           const { cents, error } = parseMoneyCommit(depositText[puppy.id] ?? '')
-                          updateField(puppy.id, 'depositCents', cents)
-                          setDepositText(prev => ({ ...prev, [puppy.id]: centsToMoneyText(cents) }))
-                          if (error) setPuppyErrors(prev => ({ ...prev, [puppy.id]: error }))
+                          setMoneyErrors(prev => ({ ...prev, [puppy.id]: { ...prev[puppy.id], deposit: error || undefined } }))
+                          if (!error) {
+                            updateField(puppy.id, 'depositCents', cents)
+                            setDepositText(prev => ({ ...prev, [puppy.id]: centsToMoneyText(cents) }))
+                          }
                         }} />
+                      {moneyErrors[puppy.id]?.deposit && <span role="alert" style={{ fontSize: 11, color: 'var(--danger)' }}>{moneyErrors[puppy.id].deposit}</span>}
                       <span style={{ fontSize: 11 }} title="Independent of the puppy's own 'Show this puppy publicly' checkbox above — this only controls whether the DEPOSIT amount is shown, on a puppy that is already public."><input type="checkbox" checked={puppyFields.showDeposit} disabled={puppyFields.depositCents == null} onChange={e => updateField(puppy.id, 'showDeposit', e.target.checked)} /> Show deposit publicly</span>
                     </label>
                   </div>

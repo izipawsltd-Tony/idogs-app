@@ -383,8 +383,8 @@ function extractFunctionSource(src, signaturePattern) {
   check('ShowcaseManager shows an explicit "You have unsaved changes" state before the first save', /You have unsaved changes/.test(showcaseManagerSrc))
   check('ShowcaseManager renders an explicit "All changes saved" confirmation once nothing is dirty', /All changes saved/.test(showcaseManagerSrc))
   check('The save-status region uses role="status" + aria-live="polite" so screen readers announce it', /role="status" aria-live="polite"/.test(showcaseManagerSrc))
-  check('The Save button is labeled "Save changes" normally and "Retry" after a failure, and disabled while saving or with nothing dirty',
-    /disabled=\{!anyDirty \|\| saveState === 'saving'\}/.test(showcaseManagerSrc) && /'Retry' : 'Save changes'/.test(showcaseManagerSrc))
+  check('The Save button is labeled "Save changes" normally and "Retry" after a failure, and disabled while saving, with nothing dirty, or with invalid money',
+    /disabled=\{!anyDirty \|\| saveState === 'saving' \|\| hasMoneyErrors\}/.test(showcaseManagerSrc) && /'Retry' : 'Save changes'/.test(showcaseManagerSrc))
 
   // Requirement: "Uploaded media remains private until published" must
   // be explained in the UI, not just true in the data model.

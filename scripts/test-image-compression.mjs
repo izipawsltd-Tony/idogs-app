@@ -16,9 +16,8 @@
 // at a small 3MB pre-flight ceiling to stay under the same ~4.5MB body
 // limit after base64 inflation — but a real iPhone HEIC photo routinely
 // runs 3-8MB, so that ceiling silently rejected most ordinary photos.
-// Fixed by decoding HEIC/HEIF client-side via libheif-js's WASM build (an
-// already-declared transitive dependency of this project's own
-// heic-convert package — no new npm dependency added) and running it
+// Fixed by decoding HEIC/HEIF client-side via libheif-js's WASM build,
+// declared directly because application code imports it, and running it
 // through the SAME resize/compress pipeline every other photo uses, so
 // there is no longer any reason to cap HEIC specially at all.
 //
@@ -102,7 +101,9 @@ check('a WASM-load failure surfaces a clear, actionable ImageCompressionError, n
 check('decodeHeicToCanvas validates the DECODED CONTENT (real images returned), not just the file extension/MIME type',
   /if \(!Array\.isArray\(images\) \|\| images\.length === 0\)/.test(src))
 check('decodeHeicToCanvas rejects invalid/non-finite/non-positive decoded dimensions rather than trusting them blindly',
-  /!Number\.isFinite\(width\)/.test(src) && /width <= 0/.test(src))
+  /validateHeicDecodeDimensions\(width, height\)/.test(src))
+check('decoded dimensions and pixel count are validated before the RGBA buffer is allocated',
+  src.indexOf('validateHeicDecodeDimensions(width, height)') < src.indexOf('new Uint8ClampedArray(dimensions.rgbaBytes)'))
 check('decodeHeicToCanvas has its own timeout safety net around image.display() (a malformed decode is not guaranteed to invoke its callback)',
   /setTimeout\(\(\) => \{[\s\S]{0,150}reject\(new ImageCompressionError\('HEIC_DECODE_FAILED', 'This HEIC\/HEIF file took too long to decode'/.test(src))
 check('every HEIC decode failure path throws ImageCompressionError with code HEIC_DECODE_FAILED and a clear message, never a raw decoder exception',
@@ -139,13 +140,11 @@ check('decodeHeicToCanvas documents that HEIF rotation/mirror properties are man
     /declare module 'libheif-js\/wasm-bundle'/.test(viteEnvSrc))
 }
 
-// ── package.json: confirms no NEW dependency was actually added — the
-// WASM decoder is already present as heic-convert's own transitive
-// dependency (heic-convert -> heic-decode -> libheif-js). ──
+// ── package.json: direct imports require a direct dependency. ──
 {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const allDeps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) }
-  check('libheif-js is NOT a new direct package.json dependency — it is used purely as heic-convert\'s existing transitive dependency, zero new install/licensing surface added', !('libheif-js' in allDeps))
+  check('libheif-js is declared directly and pinned to the reviewed LGPL-3.0 build', allDeps['libheif-js'] === '1.19.8')
   check('heic-convert (the existing dependency libheif-js comes in through) is still declared', 'heic-convert' in allDeps)
 }
 
