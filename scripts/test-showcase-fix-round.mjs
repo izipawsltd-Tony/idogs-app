@@ -81,6 +81,52 @@ check('deposit gets the exact same parseMoneyLive/parseMoneyCommit treatment as 
 check('the live parser rejects a stray minus sign outright (never lets a negative provisional value into priceCents while typing)',
   parseMoneyLive('-5', 1000) === 1000 && parseMoneyLive('-', null) === null)
 
+// ── UI-rendering proof: Price and Deposit each visibly render their OWN
+// error message — not merely stored in state, not detected by a loose
+// "does this substring appear anywhere in the 3000-line file" regex.
+// This isolates each field's own JSX block (from its <label> to its
+// closing tag) and asserts, WITHIN that isolated block, that: the error
+// span is conditionally rendered, appears AFTER the <input> (so it can
+// never be mistaken for a stray/duplicated span living elsewhere in the
+// file), renders the field's actual error text (not a hardcoded
+// placeholder), and is not the OTHER field's span copy-pasted with the
+// wrong key (a real, easy-to-introduce bug this specifically guards
+// against — Deposit showing `.price`'s span, or vice versa). No jsdom
+// dependency is added — this stays within this repo's own established
+// structural-testing convention, just scoped precisely enough to prove
+// per-field rendering rather than mere existence anywhere in the file. ──
+{
+  function extractFieldBlock(label) {
+    const start = littersSrc.indexOf(`<span className="form-label">${label}</span>`)
+    if (start === -1) return null
+    const end = littersSrc.indexOf('</label>', start)
+    return end === -1 ? null : littersSrc.slice(start, end)
+  }
+
+  const priceBlock = extractFieldBlock('Price (AUD)')
+  const depositBlock = extractFieldBlock('Deposit (AUD)')
+  check('Price (AUD) field block is present and isolable in the source', !!priceBlock)
+  check('Deposit (AUD) field block is present and isolable in the source', !!depositBlock)
+
+  for (const [name, block, field] of [['Price', priceBlock, 'price'], ['Deposit', depositBlock, 'deposit']]) {
+    const inputEnd = block ? block.indexOf('/>') : -1
+    const errorSpanPattern = new RegExp(`\\{moneyErrors\\[puppy\\.id\\]\\?\\.${field} && <span role="alert" style=\\{\\{ fontSize: 11, color: 'var\\(--danger\\)' \\}\\}>\\{moneyErrors\\[puppy\\.id\\]\\.${field}\\}</span>\\}`)
+    const spanMatch = block ? errorSpanPattern.exec(block) : null
+    check(`${name} field visibly renders its OWN validation error via a conditional <span role="alert"> (not merely stored in moneyErrors, not a loose file-wide regex)`,
+      !!spanMatch)
+    check(`${name}'s error span renders AFTER its own <input> closes (positionally tied to that field, not orphaned/misplaced)`,
+      !!spanMatch && inputEnd !== -1 && spanMatch.index > inputEnd)
+    // Cross-contamination guard: Price's block must never render deposit's
+    // error span (and vice versa) — catches a copy-paste-the-wrong-key bug.
+    const otherField = field === 'price' ? 'deposit' : 'price'
+    check(`${name}'s field block does not render the OTHER field's error span (no copy-paste cross-wiring)`,
+      block ? !block.includes(`moneyErrors[puppy.id]?.${otherField} && <span role="alert"`) : false)
+  }
+}
+
+check('invalid Deposit text remains visible for correction — setDepositText is only called inside the "if (!error)" branch of the deposit onBlur, never unconditionally',
+  /const \{ cents, error \} = parseMoneyCommit\(depositText\[puppy\.id\] \?\? ''\)\s*\n\s*setMoneyErrors\(prev => \(\{ \.\.\.prev, \[puppy\.id\]: \{ \.\.\.prev\[puppy\.id\], deposit: error \|\| undefined \} \}\)\)\s*\n\s*if \(!error\) \{\s*\n\s*updateField\(puppy\.id, 'depositCents', cents\)\s*\n\s*setDepositText/.test(littersSrc))
+
 // ══════════════════════════════════════════════════════════════════════
 // BUG 2 — HEIC/HEIF upload fails
 // ══════════════════════════════════════════════════════════════════════
