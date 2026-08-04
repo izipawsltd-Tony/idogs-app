@@ -141,6 +141,10 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
     lastKnownSubscriptionId: _lastKnownSubscriptionId,
     subscriptionEventTimestamps: _subscriptionEventTimestamps,
     plusScansSubscriptionId: _plusScansSubscriptionId,
+    // Internal Super Admin entitlement (firestore.rules userBillingFields())
+    // — same server-owned-only contract; a signup request can never grant
+    // itself internal access.
+    internalEntitlement: _internalEntitlement,
     ...profileData
   } = data
   await setDoc(doc(db, 'users', userId), {

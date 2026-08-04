@@ -275,7 +275,14 @@ service cloud.firestore {
         // a "genuine new activation" and re-zeroing plusScansUsed on
         // demand — this field must be exactly as protected as
         // plusScansUsed itself.
-        'plusScansSubscriptionId'
+        'plusScansSubscriptionId',
+        // Internal Super Admin entitlement (api/_lib/entitlements.js
+        // computeEffectivePlan()) — an admin-granted Plus override,
+        // completely independent of Stripe. A client that could set this
+        // directly could self-grant full Plus access with no payment and
+        // no admin action at all; only a trusted Admin SDK path
+        // (scripts/grant-internal-entitlement.mjs) may ever write it.
+        'internalEntitlement'
       ];
     }
 

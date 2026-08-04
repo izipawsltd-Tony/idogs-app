@@ -22,14 +22,43 @@ const GRACE_MS = 7 * 24 * 60 * 60 * 1000 // §4.2 — 7-day past_due grace
 // transaction (which is what actually moves excess dogs to `restricted`
 // and persists plan:'free' — this function only affects in-the-moment
 // quota decisions, e.g. "how many scans do I have left right now").
+// Internal/admin-granted entitlement override — completely independent of
+// Stripe. Exists for verified internal accounts (e.g. the founder's own
+// account) that need full Plus/breeder feature access without a real
+// subscription, without ever faking one. `profile.internalEntitlement` is
+// a server-owned field (see firestore.rules' userBillingFields() — added
+// to that same protected-field allowlist, so a client can never write,
+// modify, or clear it directly; only a trusted Admin SDK path can). Never
+// written by api/stripe-webhook.js/api/enforce-billing-grace.js — those
+// only ever touch `plan`/`subscriptionStatus`/etc., so a real Stripe event
+// (or its absence) can never grant, revoke, or otherwise affect this field.
+//
+// Shape: { granted: boolean, grantedAt: ISOstring, grantedBy: string,
+//          reason: string, expiresAt: ISOstring | null }
+// `granted: false` (an explicit revoke) always denies, regardless of any
+// other field — this is what lets a revoke be recorded as an auditable
+// state transition (who revoked it, when) rather than deleting the field
+// outright and losing that history.
+function hasValidInternalEntitlement(profile, now) {
+  const entitlement = profile?.internalEntitlement
+  if (!entitlement || entitlement.granted !== true) return false
+  if (entitlement.expiresAt) {
+    const expiresAtMs = new Date(entitlement.expiresAt).getTime()
+    if (!Number.isNaN(expiresAtMs) && now.getTime() >= expiresAtMs) return false
+  }
+  return true
+}
+
 export function computeEffectivePlan(profile, now = new Date()) {
   const rawPlan = profile?.plan === 'plus' ? 'plus' : 'free'
-  if (rawPlan !== 'plus') return 'free'
-  if (profile?.subscriptionStatus === 'past_due' && profile?.pastDueSince) {
+  let paidPlanActive = rawPlan === 'plus'
+  if (paidPlanActive && profile?.subscriptionStatus === 'past_due' && profile?.pastDueSince) {
     const since = new Date(profile.pastDueSince).getTime()
-    if (!Number.isNaN(since) && now.getTime() - since > GRACE_MS) return 'free'
+    if (!Number.isNaN(since) && now.getTime() - since > GRACE_MS) paidPlanActive = false
   }
-  return 'plus'
+  if (paidPlanActive) return 'plus'
+  if (hasValidInternalEntitlement(profile, now)) return 'plus'
+  return 'free'
 }
 
 export function isPastDueGraceExpired(profile, now = new Date()) {

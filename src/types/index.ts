@@ -472,6 +472,20 @@ export interface UserProfile {
   // plusScansPeriodStart/planActivatedAt currently belong to; see
   // api/_lib/webhook-handler.js's quotaInitFields().
   plusScansSubscriptionId?: string
+  // Internal/admin-granted Plus entitlement, independent of Stripe — see
+  // api/_lib/entitlements.js's computeEffectivePlan() and
+  // scripts/grant-internal-entitlement.mjs. Server-owned (protected by
+  // firestore.rules' userBillingFields()); never written by the Stripe
+  // webhook. `granted: false` is an explicit, auditable revoke.
+  internalEntitlement?: {
+    granted: boolean
+    grantedAt: string
+    grantedBy: string
+    reason: string
+    expiresAt: string | null
+    revokedAt?: string
+    revokedBy?: string
+  } | null
   // Account-level Breeder ID (e.g. DACO number for SA breeders). Mandatory
   // for active breeders in most states, but some breeders genuinely don't
   // have one yet (e.g. dogs too young to be bred from yet) — so this is
