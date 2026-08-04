@@ -163,6 +163,41 @@ export function validatePuppyPatch(patch) {
   return clean
 }
 
+// Tenant-chain + litter-chain validation for a single puppy on the
+// PUBLIC read path (api/showcase-public.js) — a mismatch here just drops
+// that ONE puppy from the public response; the rest of a legitimately-
+// shared showcase must not break because of one bad relationship
+// elsewhere. Lives here (not in showcase-public.js itself) so it has no
+// Firebase Admin import and can be unit-tested directly with plain
+// objects — see scripts/test-showcase-fix-round.mjs.
+//
+// Fix ("selected puppy missing publicly" — confirmed via staging
+// read-only diagnostics against a real litter): a dog document created
+// before api/create-litter-puppy.js started writing `litterId` (or
+// otherwise never touched by that field) has dog.litterId === undefined
+// forever — dogProtectedFieldsUnchanged() in firestore.rules makes
+// litterId permanently immutable once a dog exists, so there is no
+// client-reachable way for a breeder to ever fix this themselves, and a
+// strict `dog.litterId === litterId` check silently dropped the puppy
+// from every public response no matter what `visible` was set to.
+// `litterPuppyIds` (the actual litter document's own puppyIds array) is
+// the SAME membership signal Pricing v1.2's own legacy-record handling
+// elsewhere in this codebase falls back to (see api/_lib/dog-cap.js's
+// header comment on legacy litter puppies) — used here ONLY when
+// litterId is completely absent, never when it's present but points
+// elsewhere. A dog with a litterId naming some OTHER litter is never
+// matched by this fallback (the `if (dog.litterId)` branch returns false
+// for it directly), so this cannot be used to resurface a puppy under
+// the wrong litter's page the way a stale/forged litterId could — it
+// only recovers a puppy that has NO litterId opinion at all, and even
+// then only within a litter whose tenantId the caller has already
+// validated matches the Showcase's own tenantId.
+export function isValidShowcasePuppyDoc(dogId, dog, showcaseTenantId, litterId, litterPuppyIds) {
+  if (dog.tenantId !== showcaseTenantId) return false
+  if (dog.litterId) return dog.litterId === litterId
+  return litterPuppyIds.has(dogId)
+}
+
 export function validateBulkAction(action) {
   if (!BULK_ACTIONS.includes(action)) {
     throw new ShowcaseValidationError(`action must be one of: ${BULK_ACTIONS.join(', ')}`)

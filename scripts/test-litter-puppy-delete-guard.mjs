@@ -25,6 +25,7 @@ const littersSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.m
 const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
 const serverSrc = readFileSync(new URL('../api/remove-litter-puppy.js', import.meta.url), 'utf8')
 const showcasePublicSrc = readFileSync(new URL('../api/showcase-public.js', import.meta.url), 'utf8')
+const showcaseSchemaSrc = readFileSync(new URL('../api/_lib/showcase-schema.js', import.meta.url), 'utf8')
 
 // ── Server: retainedByBreeder guard exists, checked before isDogSafeToDetach,
 // and the eligible path hard-deletes rather than unlinking. ──
@@ -131,11 +132,12 @@ check(
 // no explicit cleanup write was added or needed. ──
 check(
   'api/showcase-public.js still filters out any puppy whose dog document no longer exists (snap.exists) — a deleted puppy silently drops out, no separate Showcase cleanup required',
-  /validPuppyDocs = puppyDocs\.filter\(snap => \{\s*if \(!snap\.exists\) return false/.test(showcasePublicSrc)
+  /validPuppyDocs = puppyDocs\.filter\(snap =>\s*snap\.exists && isValidShowcasePuppyDoc/.test(showcasePublicSrc)
 )
 check(
-  'that filter also re-validates tenant + litter chain, not just existence — a deleted-then-recreated id under a different tenant/litter still can\'t leak through',
-  /dog\.tenantId === showcase\.tenantId && dog\.litterId === litterId/.test(showcasePublicSrc)
+  'that filter also re-validates tenant + litter chain via isValidShowcasePuppyDoc() (api/_lib/showcase-schema.js), not just existence — a deleted-then-recreated id under a different tenant/litter still can\'t leak through',
+  /if \(dog\.tenantId !== showcaseTenantId\) return false/.test(showcaseSchemaSrc) &&
+  /if \(dog\.litterId\) return dog\.litterId === litterId/.test(showcaseSchemaSrc)
 )
 
 summary()

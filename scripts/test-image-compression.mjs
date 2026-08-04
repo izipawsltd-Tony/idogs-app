@@ -1,21 +1,32 @@
 // scripts/test-image-compression.mjs — regression coverage for
-// src/lib/imageCompression.ts (Tony live-staging fix round: "large-image
-// upload 413").
+// src/lib/imageCompression.ts (Tony live-staging fix rounds: "large-image
+// upload 413", then "HEIC upload fails").
 //
-// Root cause recap (see imageCompression.ts's own header comment for the
-// full story): this project's api/*.js are plain Vercel Serverless
-// Functions ("Other" framework preset), which reject any request body
-// over ~4.5MB with a platform-level 413 before the function code ever
-// runs — no vercel.json override exists anywhere in this repo. A real
-// phone photo, base64-encoded, routinely exceeds that on its own, long
-// before api/_lib/image-pipeline.js's own much more generous
+// Root cause recap #1 (413, see imageCompression.ts's own header comment
+// for the full story): this project's api/*.js are plain Vercel
+// Serverless Functions ("Other" framework preset), which reject any
+// request body over ~4.5MB with a platform-level 413 before the function
+// code ever runs — no vercel.json override exists anywhere in this repo.
+// A real phone photo, base64-encoded, routinely exceeds that on its own,
+// long before api/_lib/image-pipeline.js's own much more generous
 // MAX_IMAGE_INPUT_BYTES (30MB) check ever gets a chance to run.
+//
+// Root cause recap #2 (HEIC upload fails): the PREVIOUS version of this
+// module sent a HEIC/HEIF file RAW (uncompressed) to the server, capped
+// at a small 3MB pre-flight ceiling to stay under the same ~4.5MB body
+// limit after base64 inflation — but a real iPhone HEIC photo routinely
+// runs 3-8MB, so that ceiling silently rejected most ordinary photos.
+// Fixed by decoding HEIC/HEIF client-side via libheif-js's WASM build (an
+// already-declared transitive dependency of this project's own
+// heic-convert package — no new npm dependency added) and running it
+// through the SAME resize/compress pipeline every other photo uses, so
+// there is no longer any reason to cap HEIC specially at all.
 //
 // Structural/source-inspection only, deliberately, matching this
 // project's established pattern for client-only code that touches real
-// DOM/Canvas/Image/FileReader APIs unavailable in plain Node (no jsdom
-// dependency exists in this repo) — see test-litter-showcase.mjs's own
-// ShowcaseManager checks for the same convention. The actual upload
+// DOM/Canvas/Image/FileReader/WASM APIs unavailable in plain Node (no
+// jsdom dependency exists in this repo) — see test-litter-showcase.mjs's
+// own ShowcaseManager checks for the same convention. The actual upload
 // success/failure PATH (compressed base64 reaching api/upload-showcase-
 // media.js and surviving image-pipeline.js's own magic-byte/size checks)
 // is covered end-to-end by test-showcase-media-pipeline.mjs against the
@@ -29,77 +40,113 @@ const { check, summary } = makeChecker()
 
 const src = readFileSync(new URL('../src/lib/imageCompression.ts', import.meta.url), 'utf8')
 
-check('exports MAX_HEIC_UPLOAD_BYTES', /export const MAX_HEIC_UPLOAD_BYTES = /.test(src))
 check('exports MAX_VIDEO_UPLOAD_BYTES', /export const MAX_VIDEO_UPLOAD_BYTES = /.test(src))
+check('MAX_HEIC_UPLOAD_BYTES is no longer EXPORTED (a historical mention in the header comment explaining why is fine) — HEIC is decoded+compressed client-side now, never sent raw, so it no longer needs its own special pre-flight byte ceiling', !/export const MAX_HEIC_UPLOAD_BYTES/.test(src))
 check('exports readFileAsBase64', /export function readFileAsBase64/.test(src))
 check('exports compressImageFile', /export function compressImageFile/.test(src))
 check('exports prepareImageForUpload', /export async function prepareImageForUpload/.test(src))
 check('exports ImageCompressionError', /export class ImageCompressionError extends Error/.test(src))
+check("ImageCompressionError's code union includes HEIC_DECODE_FAILED", /'UNREADABLE' \| 'TIMEOUT' \| 'HEIC_DECODE_FAILED'/.test(src))
 
-// The actual numeric ceilings must stay comfortably under Vercel's
-// ~4.5MB body limit even after base64 encoding (~33% larger) — verified
-// directly here (not just "a constant exists") since a regression that
-// silently raised these back toward/above the real platform ceiling
-// would reintroduce the exact bug this fix round exists for.
+// MAX_VIDEO_UPLOAD_BYTES must stay comfortably under Vercel's ~4.5MB body
+// limit even after base64 encoding (~33% larger) — verified directly
+// here (not just "a constant exists") since a regression that silently
+// raised this back toward/above the real platform ceiling would
+// reintroduce the exact 413 bug this fix round exists for. Videos are
+// still never compressed client-side, so this ceiling remains load-
+// bearing (unlike the now-removed HEIC one).
 {
-  // Parses only a strict `<number> (\* <number>)*` expression — never a
-  // generic eval() of source text — into its numeric product.
   function parseByteExpression(text) {
     const parts = text.trim().split('*').map(part => part.trim())
     if (!parts.every(part => /^\d+(\.\d+)?$/.test(part))) return null
     return parts.reduce((product, part) => product * Number(part), 1)
   }
-  const heicMatch = /export const MAX_HEIC_UPLOAD_BYTES = ([\d.*\s]+)$/m.exec(src)
   const videoMatch = /export const MAX_VIDEO_UPLOAD_BYTES = ([\d.*\s]+)$/m.exec(src)
-  const heicBytes = heicMatch ? parseByteExpression(heicMatch[1]) : null
   const videoBytes = videoMatch ? parseByteExpression(videoMatch[1]) : null
-  // A small buffer below the full ~4.5MB ceiling accounts for the rest
-  // of the JSON request body (token, kind, other fields) around the
-  // base64 payload itself — the point is "comfortably under", not
-  // "exactly at", the platform limit.
   const VERCEL_BODY_CEILING_WITH_BUFFER_BYTES = 4.3 * 1024 * 1024
-  check('MAX_HEIC_UPLOAD_BYTES parses as a genuine numeric byte expression', heicBytes !== null)
   check('MAX_VIDEO_UPLOAD_BYTES parses as a genuine numeric byte expression', videoBytes !== null)
-  check('MAX_HEIC_UPLOAD_BYTES, base64-inflated (~1.37x), stays comfortably under the ~4.5MB Vercel body ceiling', !!heicBytes && heicBytes * 1.37 < VERCEL_BODY_CEILING_WITH_BUFFER_BYTES, `${heicBytes} bytes`)
   check('MAX_VIDEO_UPLOAD_BYTES, base64-inflated (~1.37x), stays comfortably under the ~4.5MB Vercel body ceiling', !!videoBytes && videoBytes * 1.37 < VERCEL_BODY_CEILING_WITH_BUFFER_BYTES, `${videoBytes} bytes`)
 }
 
 // compressImageFile: same proven technique as the already-approved
 // PhotoUpload.tsx resizeImage() (canvas draw + toDataURL), generalized
 // with a configurable max dimension/quality instead of a second inline
-// copy of the same logic.
-check('compressImageFile caps the LARGER dimension, preserving aspect ratio (never stretches/crops)',
+// copy of the same logic. Now shared with the HEIC path via
+// resizeAndEncodeJpeg() rather than duplicated.
+check('a shared resizeAndEncodeJpeg() helper exists (used by both the <img>-based path and the new HEIC-decoded-canvas path)', /function resizeAndEncodeJpeg/.test(src))
+check('resizeAndEncodeJpeg caps the LARGER dimension, preserving aspect ratio (never stretches/crops)',
   /if \(width > maxDimension \|\| height > maxDimension\)/.test(src) && /width > height/.test(src))
-check('compressImageFile re-encodes as JPEG via canvas.toDataURL', /canvas\.toDataURL\('image\/jpeg', quality\)/.test(src))
-check('compressImageFile uses a Showcase-appropriate default dimension (1600px) — larger than PhotoUpload.tsx\'s 800px avatar cap, since gallery photos display much bigger', /MAX_GALLERY_DIMENSION = 1600/.test(src))
+check('resizeAndEncodeJpeg re-encodes as JPEG via canvas.toDataURL', /canvas\.toDataURL\('image\/jpeg', quality\)/.test(src))
+check('the Showcase-appropriate default dimension (1600px) is unchanged — larger than PhotoUpload.tsx\'s 800px avatar cap, since gallery photos display much bigger', /MAX_GALLERY_DIMENSION = 1600/.test(src))
 check('compressImageFile has a timeout safety net (an unsupported/corrupt format must fail, never hang forever with no feedback)',
   /setTimeout\(\(\) => \{[\s\S]{0,200}reject\(new ImageCompressionError\('TIMEOUT'/.test(src))
 check('compressImageFile rejects with a clear, actionable message on both onerror and timeout (never a bare/generic Error)',
   /reject\(new ImageCompressionError\('UNREADABLE'/.test(src) && /reject\(new ImageCompressionError\('TIMEOUT'/.test(src))
-check('compressImageFile always revokes its own object URL (on success AND on every failure path) — no blob URL leak', (src.match(/URL\.revokeObjectURL\(url\)/g) || []).length >= 3)
+check('compressImageFile always revokes its own object URL (on success AND on every failure path) — no blob URL leak', (src.match(/URL\.revokeObjectURL\(url\)/g) || []).length >= 2)
 
-// prepareImageForUpload: HEIC/HEIF cannot be decoded into a canvas by
-// any browser except Safari (see lib/heic.ts's own header comment) — the
-// only safe behavior is to skip compression entirely and let the
-// server's own heic-convert-based pipeline (api/_lib/image-pipeline.js)
-// handle it, exactly like the already-approved PhotoUpload.tsx does.
-check('prepareImageForUpload sends a HEIC/HEIF file raw (uncompressed) to the server, never attempts to compress it',
-  /if \(isHeicFile\(file\)\) \{[\s\S]{0,150}return \{ base64, mediaType/.test(src))
-check('prepareImageForUpload compresses every non-HEIC file before returning it', /return compressImageFile\(file\)/.test(src))
+// ── HEIC/HEIF: now genuinely decoded and compressed, never sent raw ────
+
+check('prepareImageForUpload decodes HEIC/HEIF via decodeHeicToCanvas() and runs it through the SAME resize/compress pipeline as every other format — never sends it raw anymore',
+  /if \(isHeicFile\(file\)\) \{[\s\S]{0,150}decodeHeicToCanvas\(file\)/.test(src) && /return resizeAndEncodeJpeg\(canvas, width, height/.test(src))
+check('prepareImageForUpload compresses every non-HEIC file exactly as before', /return compressImageFile\(file\)/.test(src))
+
+check('the WASM decoder is loaded via a DYNAMIC import (lazy-loaded chunk — zero bundle cost for every upload that is not HEIC)',
+  /import\('libheif-js\/wasm-bundle'\)/.test(src))
+check('the loaded WASM module is cached across calls (loadLibheif does not re-fetch/re-instantiate per HEIC file in the same session)',
+  /let libheifModulePromise/.test(src) && /if \(!libheifModulePromise\)/.test(src))
+check('a failure loading the WASM module clears the cache so the NEXT HEIC file can retry, rather than permanently caching a failure',
+  /libheifModulePromise = null/.test(src))
+check('a WASM-load failure surfaces a clear, actionable ImageCompressionError, never a raw/cryptic error',
+  /Could not load the HEIC image decoder/.test(src))
+
+check('decodeHeicToCanvas validates the DECODED CONTENT (real images returned), not just the file extension/MIME type',
+  /if \(!Array\.isArray\(images\) \|\| images\.length === 0\)/.test(src))
+check('decodeHeicToCanvas rejects invalid/non-finite/non-positive decoded dimensions rather than trusting them blindly',
+  /!Number\.isFinite\(width\)/.test(src) && /width <= 0/.test(src))
+check('decodeHeicToCanvas has its own timeout safety net around image.display() (a malformed decode is not guaranteed to invoke its callback)',
+  /setTimeout\(\(\) => \{[\s\S]{0,150}reject\(new ImageCompressionError\('HEIC_DECODE_FAILED', 'This HEIC\/HEIF file took too long to decode'/.test(src))
+check('every HEIC decode failure path throws ImageCompressionError with code HEIC_DECODE_FAILED and a clear message, never a raw decoder exception',
+  (src.match(/new ImageCompressionError\('HEIC_DECODE_FAILED'/g) || []).length >= 5)
+check('decodeHeicToCanvas documents that HEIF rotation/mirror properties are mandatorily-applied by the decoder (orientation preserved with no extra EXIF-handling code needed)',
+  /HEIF's rotation\/mirror transformative properties/.test(src))
 
 // ── LittersPage.tsx wiring — confirms the module is actually USED, not
-// just defined. The Draft → Save behavioral checks (queuing, size-limit
-// rejection messages, etc.) live in test-litter-showcase.mjs alongside
-// the rest of ShowcaseManager's own tests; these are narrowly scoped to
-// "is the right function from the right module actually being called". ──
+// just defined, and that the obsolete small-HEIC-size gate is gone. The
+// Draft → Save behavioral checks (queuing, size-limit rejection
+// messages, etc.) live in test-litter-showcase.mjs alongside the rest of
+// ShowcaseManager's own tests; these are narrowly scoped to "is the
+// right function from the right module actually being called". ──
 {
   const littersPageSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
-  check('LittersPage.tsx imports prepareImageForUpload/readFileAsBase64/the byte-limit constants/ImageCompressionError from lib/imageCompression',
-    /import \{ prepareImageForUpload, readFileAsBase64, MAX_HEIC_UPLOAD_BYTES, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError \} from '\.\.\/lib\/imageCompression'/.test(littersPageSrc))
-  check('handleSaveShowcaseDraft calls prepareImageForUpload for photo uploads (never sends a raw, uncompressed non-HEIC file)',
+  check('LittersPage.tsx imports prepareImageForUpload/readFileAsBase64/MAX_VIDEO_UPLOAD_BYTES/ImageCompressionError from lib/imageCompression (MAX_HEIC_UPLOAD_BYTES no longer imported — it was removed)',
+    /import \{ prepareImageForUpload, readFileAsBase64, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError \} from '\.\.\/lib\/imageCompression'/.test(littersPageSrc))
+  check('LittersPage.tsx no longer imports isHeicFile — the special HEIC pre-flight size gate that used it was removed along with MAX_HEIC_UPLOAD_BYTES',
+    !littersPageSrc.includes("import { isHeicFile } from '../lib/heic'"))
+  check('handleAddFiles no longer has a separate, stricter size ceiling for HEIC — it is gated by the same generic 30MB photo sanity check as every other format',
+    !/isHeicFile\(file\) && file\.size > MAX_HEIC_UPLOAD_BYTES/.test(littersPageSrc) &&
+    /kind === 'photo' && file\.size > 30 \* 1024 \* 1024/.test(littersPageSrc))
+  check('handleSaveShowcaseDraft calls prepareImageForUpload for photo uploads (never sends a raw, uncompressed file of any format)',
     /kind === 'photo'\s*\n\s*\? await prepareImageForUpload\(file\)/.test(littersPageSrc))
-  check('A failed compression (ImageCompressionError) surfaces its own specific, actionable message rather than a generic "Upload failed"',
+  check('A failed compression/decode (ImageCompressionError) surfaces its own specific, actionable message rather than a generic "Upload failed"',
     /reason instanceof ImageCompressionError \? reason\.message/.test(littersPageSrc))
+}
+
+// ── vite-env.d.ts: the ambient module declaration this TS build needs
+// for the untyped libheif-js/wasm-bundle import ──
+{
+  const viteEnvSrc = readFileSync(new URL('../src/vite-env.d.ts', import.meta.url), 'utf8')
+  check("vite-env.d.ts declares the 'libheif-js/wasm-bundle' ambient module (no @types package exists for it)",
+    /declare module 'libheif-js\/wasm-bundle'/.test(viteEnvSrc))
+}
+
+// ── package.json: confirms no NEW dependency was actually added — the
+// WASM decoder is already present as heic-convert's own transitive
+// dependency (heic-convert -> heic-decode -> libheif-js). ──
+{
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const allDeps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) }
+  check('libheif-js is NOT a new direct package.json dependency — it is used purely as heic-convert\'s existing transitive dependency, zero new install/licensing surface added', !('libheif-js' in allDeps))
+  check('heic-convert (the existing dependency libheif-js comes in through) is still declared', 'heic-convert' in allDeps)
 }
 
 summary()

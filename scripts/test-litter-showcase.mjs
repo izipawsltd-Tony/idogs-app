@@ -400,8 +400,8 @@ function extractFunctionSource(src, signaturePattern) {
   // per item so "uploaded but never published" can't happen silently.
   check('ShowcaseManager queues a new file locally (handleAddFiles) rather than uploading it immediately',
     /function handleAddFiles/.test(showcaseManagerSrc) && !/handleAddFiles[\s\S]{0,400}await uploadShowcaseMedia/.test(showcaseManagerSrc))
-  check('Large-image fix: HEIC/HEIF and oversized video are rejected up front with an actionable message (compression cannot help either)',
-    /isHeicFile\(file\) && file\.size > MAX_HEIC_UPLOAD_BYTES/.test(showcaseManagerSrc) && /kind === 'video' && file\.size > MAX_VIDEO_UPLOAD_BYTES/.test(showcaseManagerSrc))
+  check('Large-image fix: oversized video is rejected up front with an actionable message (video cannot be compressed client-side); HEIC/HEIF now shares the same generic 30MB photo ceiling as every other format, since it is decoded+compressed like any other photo rather than sent raw',
+    /kind === 'photo' && file\.size > 30 \* 1024 \* 1024/.test(showcaseManagerSrc) && /kind === 'video' && file\.size > MAX_VIDEO_UPLOAD_BYTES/.test(showcaseManagerSrc))
   check('Each media thumbnail shows an explicit Private/Published/Queued badge',
     /isQueued \? 'Queued' : isPublished \? 'Published' : 'Private'/.test(showcaseManagerSrc))
   check('Removing an already-persisted media item requires confirmation; a queued (not-yet-uploaded) one does not',

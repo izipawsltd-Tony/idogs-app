@@ -69,6 +69,7 @@ import { getClientIp, hashClientKey } from './_lib/rate-limit.js'
 import { checkDurableRateLimit } from './_lib/durable-rate-limit.js'
 import { hashShareToken, isShareLive, isTenantPlusEligible } from './_lib/showcase-share.js'
 import { opaquePuppyRef } from './_lib/showcase-media-access.js'
+import { isValidShowcasePuppyDoc } from './_lib/showcase-schema.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -251,15 +252,15 @@ export default async function handler(req, res) {
       ? await Promise.all(visiblePuppyIds.map(id => db.collection('dogs').doc(id).get()))
       : []
 
-    // Tenant-chain + litter-chain validation per puppy: a mismatch on
-    // ANY single puppy just drops that one puppy — the rest of a
-    // legitimately-shared showcase must not break because of one bad
-    // relationship elsewhere.
-    const validPuppyDocs = puppyDocs.filter(snap => {
-      if (!snap.exists) return false
-      const dog = snap.data()
-      return dog.tenantId === showcase.tenantId && dog.litterId === litterId
-    })
+    // Tenant-chain + litter-chain validation per puppy — see
+    // isValidShowcasePuppyDoc()'s own header comment above for why a
+    // dog missing litterId entirely still needs a fallback membership
+    // check. A mismatch on ANY single puppy just drops that one puppy —
+    // the rest of a legitimately-shared showcase must not break because
+    // of one bad relationship elsewhere.
+    const litterPuppyIds = new Set(litterData.puppyIds || [])
+    const validPuppyDocs = puppyDocs.filter(snap =>
+      snap.exists && isValidShowcasePuppyDoc(snap.id, snap.data(), showcase.tenantId, litterId, litterPuppyIds))
 
     const puppies = validPuppyDocs.map(snap => publicPuppyProjection(token, litterId, snap.id, snap.data(), showcase.puppies[snap.id])).filter(Boolean)
 
