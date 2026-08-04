@@ -23,6 +23,10 @@ const updateLitterSource = readFileSync(new URL('../api/update-litter.js', impor
 const dbSource = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
 const createDogSource = readFileSync(new URL('../api/create-dog.js', import.meta.url), 'utf8')
 const createLitterPuppySource = readFileSync(new URL('../api/create-litter-puppy.js', import.meta.url), 'utf8')
+const dogCapSource = readFileSync(new URL('../api/_lib/dog-cap.js', import.meta.url), 'utf8')
+const reconcileLitterPuppySource = readFileSync(new URL('../api/reconcile-litter-puppy.js', import.meta.url), 'utf8')
+const dogNewPageSource = readFileSync(new URL('../src/pages/DogNewPage.tsx', import.meta.url), 'utf8')
+const dogDetailPageSource = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.url), 'utf8')
 
 // ── §4.4 Transfer/claim is never blocked by quota ─────────────────────
 
@@ -117,11 +121,118 @@ check(
     createDogSource.includes('getOwnedActiveDogsSorted(tx, db, uid)') &&
     createDogSource.includes("activeDogs.length >= cap ? 'restricted' : 'active'")
 )
+// ── Pricing v1.2: litter puppies never cap-check at creation ──
 check(
-  'api/create-litter-puppy.js (fresh-creation path) computes the same cap-aware status inline, not via a follow-up best-effort call',
-  createLitterPuppySource.includes('computeEffectivePlan(profile)') &&
-    createLitterPuppySource.includes('capForPlan(plan)') &&
-    createLitterPuppySource.includes("activeDogs.length >= cap ? 'restricted' : 'active'")
+  'api/create-litter-puppy.js (fresh-creation path) no longer computes a cap-aware status at all — every new puppy starts \'active\' unconditionally (Pricing v1.2: litter-managed puppies never consume a cap slot until explicitly promoted)',
+  !createLitterPuppySource.includes('getOwnedActiveDogsSorted') &&
+    !createLitterPuppySource.includes('capForPlan') &&
+    /status: 'active',/.test(createLitterPuppySource)
+)
+check(
+  'api/_lib/dog-cap.js defines the ONE central Pricing v1.2 eligibility predicate, isEligibleForCap()',
+  readFileSync(new URL('../api/_lib/dog-cap.js', import.meta.url), 'utf8').includes('export function isEligibleForCap(dog)')
+)
+check(
+  'api/set-dog-status.js is the only place retainedByBreeder is ever written (\'promote\'/\'unpromote\' actions)',
+  setStatusSource.includes("RETENTION_ACTIONS = new Set(['promote', 'unpromote'])")
+)
+check(
+  'firestore.rules protects litterId, retainedByBreeder, and restrictionReason from any direct client write (dogProtectedFieldsUnchanged)',
+  rulesSource.includes("hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType', 'originBreederId', 'litterId', 'retainedByBreeder', 'restrictionReason'])")
+)
+
+// ── Codex fix-round — Finding 1 (HIGH): DogNewPage.tsx's checkLimit()
+// must use the same eligibility mirror as backend enforcement, not the
+// stale status !== 'transferred' check ──
+check(
+  'DogNewPage.tsx imports and uses isDogEligibleForCap in checkLimit(), not the old status !== \'transferred\' check',
+  /import\s*\{[^}]*isDogEligibleForCap[^}]*\}\s*from\s*'\.\.\/lib\/utils'/.test(dogNewPageSource) &&
+    dogNewPageSource.includes('const active = dogs.filter(isDogEligibleForCap)') &&
+    !dogNewPageSource.includes("dogs.filter((d: any) => d.status !== 'transferred')")
+)
+
+// ── Codex fix-round — Finding 2 (HIGH): DogDetailPage.tsx must expose a
+// real UI workflow for promote/unpromote, gated to breeder/effective-
+// owner/non-transferred/litter-puppy-only ──
+check(
+  'DogDetailPage.tsx wires a promote action ("Add to Dog List") and an unpromote reversal ("Return to litter-only")',
+  dogDetailPageSource.includes("handleSetDogStatus('promote')") &&
+    dogDetailPageSource.includes("handleSetDogStatus('unpromote')")
+)
+check(
+  'DogDetailPage.tsx gates litter-retention actions to breeder-only, current effective owner, non-transferred, litter-puppy-only (never Pet Owner role, former owners, or transferred/pending dogs)',
+  /const canManageLitterRetention = !isOwner && isCurrentEffectiveOwner && isLitterPuppy &&\s*\n\s*!isTransferred && !dogIsMidTransfer/.test(dogDetailPageSource)
+)
+check(
+  'DogDetailPage.tsx reuses the single-flight statusActionLoading lock for promote/unpromote/reconcile (prevents duplicate/concurrent requests, same as the existing 4 actions)',
+  /disabled=\{statusActionLoading\}[^}]*onClick=\{\(\) => handleSetDogStatus\('promote'\)\}/.test(dogDetailPageSource) &&
+    /disabled=\{statusActionLoading\}[^}]*onClick=\{\(\) => handleSetDogStatus\('unpromote'\)\}/.test(dogDetailPageSource) &&
+    /disabled=\{statusActionLoading\}[^}]*onClick=\{handleReconcileLitterPuppy\}/.test(dogDetailPageSource)
+)
+check(
+  'DogDetailPage.tsx updates local dog state (status + retainedByBreeder) from the server response after a successful promote/unpromote — usage display reflects success immediately',
+  /setDog\(prev => prev \? \{[\s\S]{0,120}\.\.\.\('retainedByBreeder' in body \? \{ retainedByBreeder: body\.retainedByBreeder \} : \{\}\)/.test(dogDetailPageSource)
+)
+check(
+  'api/set-dog-status.js never touches litterId in the promote/unpromote branch — provenance is preserved',
+  (() => {
+    const start = setStatusSource.indexOf('if (RETENTION_ACTIONS.has(action))')
+    const end = setStatusSource.indexOf('if (!FROM_STATUS[action]')
+    const retentionBlock = setStatusSource.slice(start, end)
+    return start !== -1 && end !== -1 && !retentionBlock.includes('litterId:')
+  })()
+)
+
+// ── Codex fix-round — Finding 3 (HIGH): reconciliation must be provable,
+// not inferred from shape; legacy litter puppies get an explicit, scoped,
+// authenticated action instead of automatic reactivation ──
+check(
+  'api/_lib/dog-cap.js only auto-reactivates a litter puppy when restrictionReason is EXPLICITLY \'plan_cap_exceeded\' — never from shape alone',
+  dogCapSource.includes("dog.restrictionReason === 'plan_cap_exceeded'") &&
+    !dogCapSource.includes('isMisrestrictedLitterPuppy') // old, shape-only predicate fully removed, not just supplemented
+)
+check(
+  'api/_lib/dog-cap.js\'s demoteExcessToRestricted() tags every cap-driven restriction with restrictionReason:\'plan_cap_exceeded\' — the provable signal reconciliation depends on',
+  dogCapSource.includes("restrictionReason: 'plan_cap_exceeded'")
+)
+check(
+  'api/create-dog.js tags an over-cap creation with restrictionReason:\'plan_cap_exceeded\'',
+  createDogSource.includes("restrictionReason: 'plan_cap_exceeded'")
+)
+check(
+  'api/claim-transferred-dogs.js tags an over-cap claim with restrictionReason:\'plan_cap_exceeded\'',
+  claimSource.includes("restrictionReason: grantActive ? FieldValue.delete() : 'plan_cap_exceeded'")
+)
+check(
+  'api/set-dog-status.js tags a manual restriction with restrictionReason:\'manual\', distinct from cap-driven restrictions',
+  setStatusSource.includes("restrict: { restrictionReason: 'manual' }")
+)
+check(
+  'api/reconcile-litter-puppy.js exists as a SEPARATE, per-dog, explicit action — never a blanket/automatic sweep',
+  reconcileLitterPuppySource.includes("const { dogId } = body") &&
+    !reconcileLitterPuppySource.includes("db.collection('dogs').where(")
+)
+check(
+  'api/reconcile-litter-puppy.js refuses a manually-restricted puppy outright (never silently reactivates it)',
+  reconcileLitterPuppySource.includes("dog.restrictionReason === 'manual'") &&
+    reconcileLitterPuppySource.includes('MANUALLY_RESTRICTED')
+)
+check(
+  'api/reconcile-litter-puppy.js validates REAL litter ownership (reads the referenced litters/{litterId} document and checks its tenantId) — not just the stored litterId string',
+  reconcileLitterPuppySource.includes("db.collection('litters').doc(dog.litterId)") &&
+    reconcileLitterPuppySource.includes('litter.tenantId !== uid')
+)
+check(
+  'api/reconcile-litter-puppy.js is tenant-scoped (requires currentOwnerId AND tenantId to match the caller)',
+  reconcileLitterPuppySource.includes('dog.currentOwnerId !== uid || dog.tenantId !== uid')
+)
+check(
+  'api/reconcile-litter-puppy.js is idempotent (an already-active dog is a no-op success, not an error)',
+  reconcileLitterPuppySource.includes("alreadyActive: true")
+)
+check(
+  'api/reconcile-litter-puppy.js clears restrictionReason on reactivation (no stale reason lingers)',
+  /tx\.update\(dogRef, \{ status: 'active', restrictionReason: FieldValue\.delete\(\)/.test(reconcileLitterPuppySource)
 )
 
 await summary()

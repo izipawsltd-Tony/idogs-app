@@ -3,7 +3,7 @@ import {
   query, where, serverTimestamp, setDoc, Timestamp
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
-import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage } from '../types'
+import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage, LitterShowcase, ShowcaseAvailability, ShowcasePuppyEntry } from '../types'
 import { calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
 
 function uid(): string {
@@ -434,7 +434,7 @@ export async function createLitterPuppyAtomic(
   operationId: string,
   data: DogFormData,
   sourceType: 'BREEDER_ISSUED' | 'OWNER_CREATED' = 'BREEDER_ISSUED'
-): Promise<{ dogId: string; passportId: string; alreadyExisted: boolean }> {
+): Promise<{ dogId: string; passportId: string; alreadyExisted: boolean; status?: string }> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
   const res = await fetch('/api/create-litter-puppy', {
@@ -462,7 +462,7 @@ export async function createLitterPuppyAtomic(
     throw new Error(err.error || `Add puppy failed (${res.status})`)
   }
   const result = await res.json()
-  return { dogId: result.dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted }
+  return { dogId: result.dogId, passportId: result.passportId, alreadyExisted: result.alreadyExisted, status: result.status }
 }
 
 export async function updateDog(id: string, data: Partial<Dog>): Promise<void> {
@@ -1068,7 +1068,19 @@ export async function deleteLitterServer(id: string): Promise<{ deletedCount: nu
 // updateLitter(litter.id, {puppyIds: filtered}) call (a raw client
 // puppyIds mutation, exactly the bypass this blocker calls out by name)
 // with a server endpoint that verifies confirmed litter membership
-// before unlinking. Unlinks only — never deletes the Dog document.
+// before acting.
+//
+// Fix round (promoted-puppy delete bug): this now permanently DELETES
+// the Dog document for an eligible litter-only puppy — see
+// api/remove-litter-puppy.js's own header comment for why unlink-only
+// was itself the bug. A promoted puppy (retainedByBreeder === true) is
+// rejected server-side with reason PROMOTED_ACTIVE_IN_MY_DOGS. The
+// thrown Error carries `.reason` (the server's machine-readable code, if
+// present) alongside `.message` — LittersPage.tsx's handleDeletePuppy
+// reads `.reason` through a small fixed allowlist (never the server's
+// raw text blindly) to decide what to show, matching this codebase's
+// established error-sanitization convention (see transferError.ts /
+// saleAvailabilityError.ts).
 export async function removePuppyFromLitter(litterId: string, puppyId: string): Promise<void> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
@@ -1079,8 +1091,276 @@ export async function removePuppyFromLitter(litterId: string, puppyId: string): 
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.error || `Remove puppy failed (${res.status})`)
+    const thrown = new Error(err.error || `Delete puppy failed (${res.status})`) as Error & { reason?: string }
+    if (typeof err.reason === 'string') thrown.reason = err.reason
+    throw thrown
   }
+}
+
+// ── LITTER SHOWCASE (Slice 1) ───────────────────────────────────
+// Mutations all go through trusted server endpoints (Admin SDK,
+// firestore.rules denies direct client writes to litterShowcases/{id}
+// outright — see that rule's own comment) — same shape as every litter
+// mutation above. Reads stay client-side: firestore.rules scopes
+// litterShowcases/{id} read to the owning tenant only, same as litters.
+
+// Display-only default for a puppy that has never been individually
+// touched — mirrors DEFAULT_VISIBLE/DEFAULT_AVAILABILITY in
+// api/_lib/showcase-schema.js exactly. Never written to Firestore by
+// the client; only used to render a sensible default row before the
+// breeder has interacted with a given puppy.
+export const DEFAULT_SHOWCASE_PUPPY_ENTRY: ShowcasePuppyEntry = { visible: false, availability: 'available', publishedPhotoIds: [], publishedVideoIds: [], colour: null, personality: null, readyToGoHomeDate: null, priceCents: null, depositCents: null, showPrice: false, showDeposit: false }
+
+// Returns null if no Showcase has been created for this litter yet —
+// not an error, just "not created" (Slice 1 requirement 1: a Showcase
+// is opt-in, created explicitly by the breeder).
+export async function getShowcaseForLitter(litterId: string): Promise<LitterShowcase | null> {
+  const snap = await getDoc(doc(db, 'litterShowcases', litterId))
+  if (!snap.exists()) return null
+  return { ...snap.data(), litterId: snap.id } as LitterShowcase
+}
+
+// Slice 2: the breeder's own view of enquiries received through a
+// litter's public Showcase — direct client read, scoped by
+// firestore.rules to tenantId == request.auth.uid (same posture as
+// getShowcaseForLitter above). where() only, per this project's own
+// "NEVER use orderBy()" convention — sorted client-side instead.
+//
+// Filters on BOTH litterId AND tenantId (not litterId alone) —
+// confirmed directly against the local emulator while building this
+// Slice's test suite: firestore.rules' `allow read: if isSignedIn() &&
+// resource.data.tenantId == request.auth.uid` can only be proven safe
+// for a `list` query WITHOUT fetching/evaluating every candidate
+// document first when the query's own filters already guarantee it
+// (i.e. the query filters on the exact same field, tenantId, the rule
+// checks) — a query filtering on litterId alone left Firestore unable
+// to prove that statically and threw a Rules evaluation error
+// ("Property tenantId is undefined on object") instead of the clean
+// per-document check its non-list (get/update) counterparts get. Adding
+// the redundant `tenantId == uid()` filter (redundant in the sense that
+// every one of the caller's own litters already has tenantId == uid on
+// every enquiry doc, so it changes nothing about WHICH documents match)
+// is what makes the query provably safe. No composite index is needed
+// for this — confirmed empirically, two plain equality filters.
+export async function getEnquiriesForLitter(litterId: string): Promise<import('../types').ShowcaseEnquiry[]> {
+  const snap = await getDocs(query(collection(db, 'showcaseEnquiries'), where('litterId', '==', litterId), where('tenantId', '==', uid())))
+  const enquiries = snap.docs.map(d => ({ ...d.data(), id: d.id, createdAt: toDate(d.data().createdAt) })) as import('../types').ShowcaseEnquiry[]
+  enquiries.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  return enquiries
+}
+
+export async function createShowcase(litterId: string): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/create-showcase', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Create showcase failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
+}
+
+export async function setShowcaseEnabled(litterId: string, enabled: boolean): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/set-showcase-enabled', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, enabled }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update showcase failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
+}
+
+// Slice 2: mints a brand-new public share token, immediately
+// invalidating any previously-shared link. Returns the RAW token
+// exactly once — it is never persisted server-side (only its hash is),
+// so the caller must copy/display it now; there is no way to retrieve
+// the same link again later, only to rotate a new one.
+export async function rotateShowcaseShare(litterId: string, shareExpiresAt?: string | null): Promise<{ showcase: LitterShowcase; shareToken: string }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/rotate-showcase-share', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, shareExpiresAt: shareExpiresAt ?? null }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Get share link failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// Slice 2: pauses/resumes the CURRENT share link, and/or changes its
+// expiry, without generating a new token — the previously-shared URL
+// keeps working once re-enabled. Requires rotateShowcaseShare() to have
+// been called at least once already.
+export async function updateShowcaseShare(litterId: string, patch: { shareEnabled?: boolean; shareExpiresAt?: string | null }): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/update-showcase-share', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, ...patch }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update share link failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
+}
+
+// A signed, short-lived MediaItem — what every Showcase media endpoint
+// returns instead of a raw Storage path (Codex fix-round: "Revocable
+// media delivery"). Never persist `url` anywhere — it expires in minutes
+// (see SIGNED_MEDIA_URL_TTL_MS in api/_lib/showcase-media-access.js);
+// re-fetch via getShowcaseMediaUrls() rather than caching it across a
+// page reload.
+export interface SignedMediaItem {
+  id: string
+  url: string
+}
+
+// Slice 2: uploads one photo or video for a puppy's Showcase gallery.
+// `base64` should be the raw file bytes (no client-side resize for
+// photos — api/_lib/image-pipeline.js does the real processing
+// server-side, including HEIC/HEIF decode) so the server's magic-byte
+// sniff sees the genuine original file, never a canvas re-encode.
+// Codex fix-round ("Revocable media delivery"): the response carries
+// freshly-signed URLs, never a permanent public one — the upload itself
+// is always PRIVATE Storage.
+export async function uploadShowcaseMedia(dogId: string, base64: string, kind: 'photo' | 'video'): Promise<{ mediaId: string; photos: SignedMediaItem[]; videos: SignedMediaItem[] }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/upload-showcase-media', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId, base64, kind }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Upload failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// Slice 2: reorders and/or deletes items in a puppy's photo/video
+// gallery — `order` is the FULL desired array of MediaItem ids (index 0
+// = cover), never Storage paths or URLs. Never a way to add a new item
+// (see api/update-showcase-media.js — it only ever accepts a
+// subset/reorder of what's already there).
+export async function updateShowcaseMediaOrder(dogId: string, kind: 'photo' | 'video', order: string[]): Promise<{ photos: SignedMediaItem[]; videos: SignedMediaItem[] }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/update-showcase-media', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId, kind, order }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// Tony live-staging finding: a legacy litter puppy restricted BEFORE
+// litter puppies became cap-exempt (no restrictionReason recorded — see
+// api/_lib/dog-cap.js's header comment) is never auto-reactivated, by
+// design — only this explicit, scoped, per-dog action
+// (api/reconcile-litter-puppy.js) can un-restrict it. Previously only
+// reachable from DogDetailPage's own inline fetch; wrapped here in the
+// SAME db.ts pattern as every other Showcase call so LittersPage's
+// ShowcaseManager (where a breeder actually discovers the "can't upload
+// media" problem) can offer the same fix inline, without duplicating the
+// fetch/error-handling boilerplate.
+export async function reconcileLitterPuppy(dogId: string): Promise<{ status: 'active'; alreadyActive?: boolean }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/reconcile-litter-puppy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `Reconcile failed (${res.status})`)
+  }
+  return body
+}
+
+// Fresh, short-lived signed URLs for a puppy's CURRENT private Showcase
+// gallery — needed anywhere the breeder's own workspace renders
+// dog.photos/dog.videos (which are private Storage paths, never directly
+// viewable) outside of the moment right after an upload/reorder call
+// already returned its own signed URLs inline (initial mount, switching
+// to a different puppy, a page reload). See api/get-showcase-media-urls.js.
+export async function getShowcaseMediaUrls(dogId: string): Promise<{ photos: SignedMediaItem[]; videos: SignedMediaItem[] }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/get-showcase-media-urls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Fetch media URLs failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// `patch` may include any subset of visible/availability/
+// publishedPhotoIds/publishedVideoIds — only the field(s) present are
+// changed server-side (Slice 1 requirement 5, extended by the Codex
+// fix-round: none of these four fields ever implicitly changes another).
+export async function updateShowcasePuppy(
+  litterId: string,
+  puppyId: string,
+  patch: { visible?: boolean; availability?: ShowcaseAvailability; publishedPhotoIds?: string[]; publishedVideoIds?: string[]; colour?: string | null; personality?: string | null; readyToGoHomeDate?: string | null; priceCents?: number | null; depositCents?: number | null; showPrice?: boolean; showDeposit?: boolean }
+): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/update-showcase-puppy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, puppyId, ...patch }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update showcase puppy failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
+}
+
+export type ShowcaseBulkAction = 'select_all' | 'clear_all' | 'show_available_only'
+
+export async function bulkUpdateShowcasePuppies(litterId: string, action: ShowcaseBulkAction): Promise<LitterShowcase> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/bulk-update-showcase-puppies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ litterId, action }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Bulk update showcase failed (${res.status})`)
+  }
+  const result = await res.json()
+  return result.showcase
 }
 
 // ── AUDIT TRAIL ──────────────────────────────────────────────

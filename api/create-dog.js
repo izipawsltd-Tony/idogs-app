@@ -116,6 +116,9 @@ async function handler(req, res) {
     // block, just restrict") — a dog created beyond the cap simply
     // lands 'restricted' instead of 'active'.
     const status = activeDogs.length >= cap ? 'restricted' : 'active'
+    // Codex fix-round (Finding 3): tag WHY this dog landed 'restricted' —
+    // see api/_lib/dog-cap.js's header comment. Lets future reconciliation
+    // prove this was cap-driven instead of guessing from shape alone.
     return {
       name: data.name,
       breed: data.breed,
@@ -138,6 +141,7 @@ async function handler(req, res) {
       isDeceased: false,
       photos: [],
       status,
+      ...(status === 'restricted' ? { restrictionReason: 'plan_cap_exceeded' } : {}),
       createdAt: nowIso,
       updatedAt: nowIso,
     }

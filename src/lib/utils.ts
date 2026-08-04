@@ -1,5 +1,5 @@
 import { format, formatDistance, isAfter, isBefore, addDays, differenceInYears, differenceInMonths } from 'date-fns'
-import type { Dog, LifeStage } from '../types'
+import type { Dog, LifeStage, UserProfile } from '../types'
 
 // ── ID GENERATION ─────────────────────────────────────────────
 
@@ -288,6 +288,25 @@ export function isDogTransferred(dog: Pick<Dog, 'status'> & { transferStatus?: s
   return dog.status === 'transferred' || dog.transferStatus === 'pendingClaim'
 }
 
+// Pricing v1.2 — hand-synced, field-for-field mirror of
+// api/_lib/dog-cap.js's isEligibleForCap() (the SERVER-authoritative
+// predicate; this repo's established pattern for keeping a Rules/backend-
+// authoritative check and its client-side display twin in sync, same as
+// isDogHistoryBearing below). NEVER authoritative for enforcement — only
+// used so the UI's own dog-usage count (AppLayout.tsx's "X / 5 dogs" bar)
+// agrees with what the backend actually enforces, instead of the
+// pre-v1.2 UI count (every non-transferred dog, including archived and
+// restricted ones) which could show a materially different number than
+// the account's TRUE active-eligible count.
+export function isDogEligibleForCap(dog: Pick<Dog, 'status' | 'isDeceased' | 'litterId' | 'retainedByBreeder' | 'currentOwnerId' | 'tenantId'>): boolean {
+  if ((dog.status || 'active') !== 'active') return false
+  if (dog.isDeceased === true) return false
+  const isUnpromotedLitterPuppy = !!dog.litterId &&
+    dog.retainedByBreeder !== true &&
+    dog.currentOwnerId === dog.tenantId
+  return !isUnpromotedLitterPuppy
+}
+
 // Mirrors firestore.rules' dogs/{dogId} `allow delete` rule and
 // api/_lib/litter-eligibility.js's isDogHistoryBearing field-for-field —
 // this repo's established pattern for a Rules-authoritative check that
@@ -357,6 +376,38 @@ export function isEligibleSireDog(dog: Dog): boolean {
 // current-breeder-dog eligibility as isEligibleSireDog, plus female.
 export function isEligibleDamDog(dog: Dog): boolean {
   return dog.sex === 'female' && isCurrentBreederDog(dog)
+}
+
+// ── BILLING / ENTITLEMENTS (client-side UI preview) ─────────────
+
+// Mirrors api/_lib/entitlements.js's computeEffectivePlan() field-for-
+// field, including the 7-day past_due grace window (iDogs Pricing v1.1,
+// Pricing_Decision_Record_v1.1.md §4.2) — this repo's established
+// pattern for a server-authoritative check that also needs a client-side
+// UI preview (see isDogHistoryBearing above / litter-eligibility.js's
+// own header comment on why these stay hand-synced duplicates rather
+// than a shared cross-runtime import). NEVER authoritative on its own —
+// every server endpoint that gates on plan (litters, Showcase, scans,
+// exports) re-derives this fresh from a trusted users/{uid} read; this
+// only decides what the UI shows (active controls vs. an
+// upgrade/unavailable state) for an account whose grace period has
+// already lapsed, so a stale/optimistic client profile read here is
+// harmless — a request against a truly expired-grace account still gets
+// a 403 from the server regardless of what this function said a moment
+// earlier.
+const PLAN_GRACE_MS = 7 * 24 * 60 * 60 * 1000
+
+export function getEffectivePlanClient(
+  profile: Pick<UserProfile, 'plan' | 'subscriptionStatus' | 'pastDueSince'> | null | undefined,
+  now: Date = new Date()
+): 'free' | 'plus' {
+  const rawPlan = profile?.plan === 'plus' ? 'plus' : 'free'
+  if (rawPlan !== 'plus') return 'free'
+  if (profile?.subscriptionStatus === 'past_due' && profile?.pastDueSince) {
+    const since = new Date(profile.pastDueSince).getTime()
+    if (!Number.isNaN(since) && now.getTime() - since > PLAN_GRACE_MS) return 'free'
+  }
+  return 'plus'
 }
 
 export const LIFE_STAGE_LABELS: Record<LifeStage, string> = {

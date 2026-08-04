@@ -13,6 +13,30 @@
 // concurrency simulator). Mirrors firebase-admin's `snap.exists` as a
 // boolean property (not a function, unlike some client SDKs) since every
 // module under test relies on that exact shape.
+//
+// Codex fix-round: api/_lib/dog-cap.js's reconciliation functions now
+// write FieldValue.delete() sentinels (clearing restrictionReason on
+// reactivation) — a plain object spread would store the sentinel object
+// itself as the field's value instead of actually deleting the key. This
+// resolves any such sentinel via FieldValue's own isEqual() (the
+// documented, SDK-supported way to identify one), same as real Firestore.
+
+import { FieldValue } from 'firebase-admin/firestore'
+
+const DELETE_SENTINEL = FieldValue.delete()
+
+function isDeleteSentinel(value) {
+  return !!value && typeof value.isEqual === 'function' && value.isEqual(DELETE_SENTINEL)
+}
+
+function applyFieldValues(existing, data) {
+  const result = { ...existing }
+  for (const [key, value] of Object.entries(data)) {
+    if (isDeleteSentinel(value)) delete result[key]
+    else result[key] = value
+  }
+  return result
+}
 
 let autoId = 0
 
@@ -39,11 +63,11 @@ export function createFakeFirestore(seedByCollection = {}) {
       },
       async set(data, opts) {
         const existing = colMap(collectionName).get(id) || {}
-        colMap(collectionName).set(id, opts?.merge ? { ...existing, ...data } : { ...data })
+        colMap(collectionName).set(id, opts?.merge ? applyFieldValues(existing, data) : { ...data })
       },
       async update(data) {
         const existing = colMap(collectionName).get(id) || {}
-        colMap(collectionName).set(id, { ...existing, ...data })
+        colMap(collectionName).set(id, applyFieldValues(existing, data))
       },
     }
   }
@@ -93,11 +117,11 @@ export function createFakeFirestore(seedByCollection = {}) {
         },
         set(ref, data, opts) {
           const existing = colMap(ref.collectionName).get(ref.id) || {}
-          colMap(ref.collectionName).set(ref.id, opts?.merge ? { ...existing, ...data } : { ...data })
+          colMap(ref.collectionName).set(ref.id, opts?.merge ? applyFieldValues(existing, data) : { ...data })
         },
         update(ref, data) {
           const existing = colMap(ref.collectionName).get(ref.id) || {}
-          colMap(ref.collectionName).set(ref.id, { ...existing, ...data })
+          colMap(ref.collectionName).set(ref.id, applyFieldValues(existing, data))
         },
       }
       return fn(tx)

@@ -4,6 +4,25 @@ export type LifeStage = 'whelp' | 'puppy' | 'young_adult' | 'adult' | 'senior' |
 
 export type Sex = 'male' | 'female'
 
+// Codex fix-round ("Revocable media delivery" / "Explicit media
+// publication"): `path` is a Storage object path, deliberately never a
+// public URL — Storage access for these paths is private (no
+// file.makePublic() anywhere in this codebase's Showcase media
+// endpoints). `id` is a random, unguessable identifier distinct from
+// the path itself, used both as the reorder/delete/publish reference
+// (api/update-showcase-media.js, ShowcasePuppyEntry.publishedPhotoIds/
+// publishedVideoIds) and to avoid ever exposing a raw Storage path to
+// any client, public or authenticated.
+export interface MediaItem {
+  id: string
+  path: string
+  // sha256 of the processed file's bytes — server-set only, used purely
+  // to reject a re-upload of content already in this puppy's gallery.
+  // Optional so pre-existing items (uploaded before this field existed)
+  // never need a migration; they simply never match as a duplicate.
+  hash?: string
+}
+
 export interface Dog {
   id: string
   tenantId: string
@@ -26,7 +45,20 @@ export interface Dog {
   sourceType?: 'BREEDER_ISSUED' | 'OWNER_CREATED' | 'IMPORTED'
   createdByUserId?: string
   profilePhoto?: string
-  photos: string[]
+  // Ordered gallery — index 0 is the private-workspace "cover" (distinct
+  // from a Showcase's own public cover — see ShowcasePuppyEntry.
+  // publishedPhotoIds above). Codex fix-round ("Revocable media
+  // delivery"): `path` is a PRIVATE Storage object path — this array
+  // never carries a public URL. Nothing here is directly fetchable by
+  // any client; the breeder's own view gets short-lived signed URLs via
+  // api/get-showcase-media-urls.js, and the public Showcase page gets
+  // them via api/showcase-public.js — both generated fresh per request,
+  // never persisted, and only ever for media the relevant
+  // ShowcasePuppyEntry has explicitly published (for the public case).
+  photos: MediaItem[]
+  // Same ordered-array/private-path convention as `photos` — short
+  // video clips (Slice 2).
+  videos?: MediaItem[]
   notes: string
   // State-issued Breeder ID (per the NSW Puppy Farming Act 2024 and
   // equivalent VIC/QLD/SA/ACT laws) — a generic field rather than 8
@@ -55,6 +87,26 @@ export interface Dog {
   // added via the litter flow (e.g. DogNewPage) — legacy litters fall
   // back to the forward-reference-only check.
   litterId?: string
+  // Pricing v1.2: true once the breeder has explicitly retained/promoted
+  // this litter puppy into their independent Dog List/breeding stock —
+  // the ONLY thing that makes a litter-managed puppy start counting
+  // toward the plan's active-dog cap (see api/_lib/dog-cap.js's
+  // isEligibleForCap()). Absent/false for every dog that isn't a litter
+  // puppy — irrelevant to their cap eligibility either way. Written
+  // exclusively by api/set-dog-status.js's 'promote'/'unpromote' actions
+  // (never directly by the client — protected in firestore.rules'
+  // dogProtectedFieldsUnchanged()).
+  retainedByBreeder?: boolean
+  // Why this dog is currently status:'restricted' — 'plan_cap_exceeded'
+  // (written by every cap-driven path: creation, claim, downgrade) or
+  // 'manual' (api/set-dog-status.js's 'restrict' action). Absent for a
+  // dog that has never been restricted, or a LEGACY restricted dog from
+  // before this field existed. Cleared on every transition out of
+  // 'restricted'. Server-controlled only — protected in firestore.rules'
+  // dogProtectedFieldsUnchanged() — see api/_lib/dog-cap.js's header for
+  // why this exists (proves, rather than guesses, whether a restricted
+  // litter puppy is safe to auto-reactivate).
+  restrictionReason?: 'plan_cap_exceeded' | 'manual'
   // ── Ownership (already written by transferDogOwnership) ──
   // 'restricted' / 'archived' added for iDogs Pricing v1.1
   // (Pricing_Decision_Record_v1.1.md §3.2). 'restricted' is system-imposed
@@ -183,6 +235,105 @@ export interface Litter {
   // breeder's normal Litters list (see getLitters() in lib/db.ts).
   archived?: boolean
   archivedAt?: string
+}
+
+// ── Litter Showcase (Slice 1) ──────────────────────────────────
+// One per litter (document id == litterId). Deliberately its own
+// collection, never fields on Litter/Dog — see api/create-showcase.js's
+// own comment: this keeps "hiding a puppy must not modify or delete its
+// underlying [Dog] record" true structurally (this type never touches
+// Dog at all), and keeps the schema ready for a later public page to
+// consume as an allowlisted projection without ever needing direct
+// client access to the full Litter/Dog documents.
+export type ShowcaseAvailability = 'available' | 'reserved' | 'sold' | 'on_hold' | 'unavailable'
+
+export interface ShowcasePuppyEntry {
+  // Slice 1 requirement 3: a puppy is hidden from the Showcase unless
+  // explicitly enabled — this is that flag, independent of availability
+  // (requirement 4/5).
+  visible: boolean
+  availability: ShowcaseAvailability
+  // Codex fix-round ("Explicit media publication"): a puppy being
+  // `visible` in the Showcase does NOT automatically publish any of its
+  // photos/videos — these are the explicit, breeder-chosen subset of
+  // Dog.photos/Dog.videos (by MediaItem.id, see below) that the public
+  // page may show. Absent/empty means nothing is published yet, even
+  // for a fully visible, fully available puppy. Order here IS the
+  // public display order (index 0 = the public "cover") — deliberately
+  // independent of the private gallery's own order in
+  // PuppyMediaManager, so a breeder can curate a different public
+  // presentation without reordering their own working set.
+  publishedPhotoIds: string[]
+  publishedVideoIds: string[]
+  colour?: string | null
+  personality?: string | null
+  readyToGoHomeDate?: string | null
+  priceCents?: number | null
+  depositCents?: number | null
+  showPrice?: boolean
+  showDeposit?: boolean
+}
+
+export interface LitterShowcase {
+  litterId: string
+  tenantId: string
+  enabled: boolean
+  // Keyed by puppyId (Dog document id). A puppy simply absent from this
+  // map has never been individually touched — treat it as
+  // { visible: false, availability: 'available' } for display purposes
+  // (see DEFAULT_SHOWCASE_PUPPY_ENTRY in lib/db.ts), matching the exact
+  // defaults api/_lib/showcase-schema.js applies server-side on first
+  // write.
+  puppies: Record<string, ShowcasePuppyEntry>
+  // Written server-side with FieldValue.serverTimestamp() (never a
+  // client- or app-server-clock value) — every API response converts the
+  // resolved Admin SDK Timestamp to an ISO string before it's ever sent
+  // (see readShowcaseForResponse in api/_lib/showcase-access.js), so this
+  // field is always a plain string by the time it reaches the client,
+  // same as every other *createdAt/*updatedAt field in this file.
+  createdAt: string
+  updatedAt: string
+  // ── Slice 2: public share link ──────────────────────────────
+  // `shareTokenHash` is sha256(rawToken) — the RAW token is never
+  // persisted anywhere (generated in api/rotate-showcase-share.js,
+  // returned to the caller exactly once, then discarded server-side).
+  // Firestore doc IDs (litterId) never appear in the public URL and
+  // never authorize access on their own — api/showcase-public.js looks
+  // a Showcase up ONLY by matching shareTokenHash, so guessing/enumer-
+  // ating a litterId grants nothing without the actual token.
+  //
+  // `shareEnabled` is deliberately a SEPARATE flag from `enabled`
+  // above — `enabled` (Slice 1) governs the breeder's own curation
+  // state and has never gated any public exposure; `shareEnabled`
+  // is the dedicated on/off switch for the public link itself, so a
+  // breeder can pause sharing without losing their curated puppy
+  // selection AND without needing a new link once they turn it back on
+  // (see api/update-showcase-share.js). The public endpoint requires
+  // BOTH `enabled` and `shareEnabled` to be true, plus a matching,
+  // unexpired token — see isShareLive() in api/_lib/showcase-share.js.
+  shareTokenHash: string | null
+  shareEnabled: boolean
+  shareRotatedAt: string | null
+  // ISO date string; null means "no expiry".
+  shareExpiresAt: string | null
+}
+
+// ── Litter Showcase public enquiry (Slice 2) ────────────────────
+// Written exclusively by api/create-showcase-enquiry.js (Admin SDK) —
+// firestore.rules denies every direct client write outright, same
+// posture as litterShowcases above. tenantId/litterId are resolved
+// SERVER-SIDE from the caller's share token, never accepted as raw
+// client input — see that endpoint's own comment.
+export interface ShowcaseEnquiry {
+  id: string
+  tenantId: string
+  litterId: string
+  puppyId: string | null
+  name: string
+  email: string | null
+  phone: string | null
+  message: string
+  createdAt: string
 }
 
 // ═════════════════════════════════════════════════════════════

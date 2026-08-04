@@ -135,13 +135,16 @@ async function updateLitterServer(litterId, patch, requesterUid) {
 
 // Mirrors api/remove-litter-puppy.js's transaction exactly (Admin SDK).
 // Codex round 5, Blocker 1: rejects any Dog that isn't isDogSafeToDetach
-// (transferred/pending-claim/claimed/history-bearing/not-controlled),
-// and clears the Dog's own litterId in the SAME transaction as unlinking
-// it from the litter (two-sided membership, never left one-sided).
+// (transferred/pending-claim/claimed/history-bearing/not-controlled).
 // Codex round 6, Blocker 2: confirmed membership now requires BOTH
 // dog.litterId === litterId (reverse) AND litter.puppyIds actually
 // contains puppyId (forward) — reverse-only/forward-only/contradictory
 // membership is rejected outright with zero writes.
+// Fix round (promoted-puppy delete bug): no longer unlink-only — an
+// eligible litter-only puppy is now HARD-DELETED (tx.delete, not
+// tx.update .litterId: delete()); a promoted puppy (retainedByBreeder
+// === true) is rejected outright (PROMOTED_ACTIVE_IN_MY_DOGS), checked
+// before isDogSafeToDetach.
 async function removeLitterPuppyServer(litterId, puppyId, requesterUid) {
   const litterRef = adminDb.collection('litters').doc(litterId)
   const dogRef = adminDb.collection('dogs').doc(puppyId)
@@ -154,16 +157,17 @@ async function removeLitterPuppyServer(litterId, puppyId, requesterUid) {
     if (litter.archived) return { ok: false, reason: 'LITTER_ARCHIVED' }
     if (!dogSnap.exists) {
       tx.update(litterRef, { puppyIds: AdminFieldValue.arrayRemove(puppyId) })
-      return { ok: true }
+      return { ok: true, deleted: false }
     }
     const dog = dogSnap.data()
     const reverseConfirmed = dog.litterId === litterId
     const forwardConfirmed = (litter.puppyIds || []).includes(puppyId)
     if (!reverseConfirmed || !forwardConfirmed) return { ok: false, reason: 'NOT_CONFIRMED_MEMBER' }
+    if (dog.retainedByBreeder === true) return { ok: false, reason: 'PROMOTED_ACTIVE_IN_MY_DOGS' }
     if (!isDogSafeToDetach(dog, requesterUid)) return { ok: false, reason: 'DOG_PROTECTED' }
     tx.update(litterRef, { puppyIds: AdminFieldValue.arrayRemove(puppyId) })
-    tx.update(dogRef, { litterId: AdminFieldValue.delete() })
-    return { ok: true }
+    tx.delete(dogRef)
+    return { ok: true, deleted: true }
   })
 }
 
@@ -512,19 +516,80 @@ const breederUid = await newUser('breeder')
   check('5-RemovePuppy', 'Removing a dog whose own litterId disagrees fails closed (NOT_CONFIRMED_MEMBER)', nonMemberAttempt.ok === false && nonMemberAttempt.reason === 'NOT_CONFIRMED_MEMBER')
 
   const memberAttempt = await removeLitterPuppyServer(litterId, memberPupId, breederUid)
-  check('5-RemovePuppy', 'Removing a confirmed member succeeds', memberAttempt.ok === true)
+  check('5-RemovePuppy', 'Deleting a confirmed litter-only member succeeds', memberAttempt.ok === true && memberAttempt.deleted === true)
   const litterAfter = await getDoc(doc(db, 'litters', litterId))
-  check('5-RemovePuppy', 'The confirmed member is unlinked from puppyIds', !(litterAfter.data().puppyIds || []).includes(memberPupId))
+  check('5-RemovePuppy', 'The deleted member is removed from puppyIds', !(litterAfter.data().puppyIds || []).includes(memberPupId))
+  // Fix round (promoted-puppy delete bug): this endpoint now HARD
+  // DELETES an eligible litter-only puppy — no unlinked-but-alive state
+  // is ever left behind (that state was the bug: an active, editable,
+  // cap-counted "orphaned" My Dogs record with no explicit promotion).
   const memberDogAfter = await getDoc(doc(db, 'dogs', memberPupId))
-  check('5-RemovePuppy', 'The unlinked puppy Dog document itself still exists (unlink, not delete)', memberDogAfter.exists())
-  // Codex round 5, Blocker 1: "never leave one-sided membership" — the
-  // Dog's own litterId back-reference must also be cleared, not just
-  // the litter's forward puppyIds entry.
-  check('5-RemovePuppy', 'Two-sided membership: the Dog\'s own litterId back-reference was ALSO cleared (not just puppyIds)', memberDogAfter.data().litterId === undefined)
+  check('5-RemovePuppy', 'The deleted puppy Dog document no longer exists at all (hard delete, not unlink) — no active orphan is left behind', !memberDogAfter.exists())
 
   let clientMutationDenied = false
   try { await updateDoc(doc(db, 'litters', litterId), { puppyIds: [] }) } catch (err) { clientMutationDenied = isDenied(err) }
   check('5-RemovePuppy', 'A direct client puppyIds mutation is denied outright', clientMutationDenied)
+}
+
+// =========================================================================
+// SECTION 5b — remove-litter-puppy.js: fix round (promoted-puppy delete
+// bug). A promoted puppy (retainedByBreeder === true — the breeder
+// explicitly kept it on their independent Dog List, see
+// api/set-dog-status.js's 'promote' action) is a deliberate, active My
+// Dogs record. Deleting it via the litter view must be rejected outright,
+// server-side, with zero writes — both the litter puppy AND the My Dogs
+// record are the SAME dogs/{id} document, so "reject" here really means
+// "never touch this document at all". Also confirms the documented
+// recovery path (unpromote, i.e. Return to litter-only) makes the exact
+// same puppy immediately deletable afterward, with no other state change.
+// =========================================================================
+{
+  await as('breeder')
+  const damId = `dam5b_${R}`
+  await adminDb.collection('dogs').doc(damId).set({
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Dam5b', sex: 'female', status: 'active', dateOfBirth: '2020-01-01',
+  })
+  const litterId = `litter5b_${R}`
+  const promotedPupId = `pup5bpromoted_${R}`
+  await adminDb.collection('dogs').doc(promotedPupId).set({
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'PromotedPup5b', sex: 'male', status: 'active', dateOfBirth: '2026-01-01',
+    litterId, retainedByBreeder: true,
+  })
+  await adminDb.collection('litters').doc(litterId).set({
+    tenantId: breederUid, damId, name: 'Litter5b', notes: '', actualBirthDate: '2026-01-01', puppyIds: [promotedPupId],
+  })
+
+  const promotedAttempt = await removeLitterPuppyServer(litterId, promotedPupId, breederUid)
+  check('5b-PromotedGuard', 'Deleting a promoted puppy (retainedByBreeder: true) is rejected (PROMOTED_ACTIVE_IN_MY_DOGS)', promotedAttempt.ok === false && promotedAttempt.reason === 'PROMOTED_ACTIVE_IN_MY_DOGS')
+
+  // Cross-tenant: a different, unrelated authenticated user attempting
+  // this SAME litter/puppy must fail closed on tenant ownership — before
+  // ever reaching the promoted-puppy check — and leave everything
+  // unchanged, exactly like every other rejection path here.
+  const strangerUid5b = await newUser('stranger5b')
+  await as('breeder')
+  const crossTenantAttempt = await removeLitterPuppyServer(litterId, promotedPupId, strangerUid5b)
+  check('5b-PromotedGuard', 'A cross-tenant delete attempt (different authenticated uid, not the litter owner) fails closed (NOT_YOURS)', crossTenantAttempt.ok === false && crossTenantAttempt.reason === 'NOT_YOURS')
+  const dogAfterCrossTenant = await getDoc(doc(db, 'dogs', promotedPupId))
+  check('5b-PromotedGuard', 'The dog document is unchanged after the cross-tenant attempt', dogAfterCrossTenant.exists() && dogAfterCrossTenant.data().litterId === litterId)
+
+  const promotedDogAfterReject = await getDoc(doc(db, 'dogs', promotedPupId))
+  check('5b-PromotedGuard', 'The promoted puppy Dog document is completely unchanged after the rejected attempt', promotedDogAfterReject.exists() &&
+    promotedDogAfterReject.data().retainedByBreeder === true &&
+    promotedDogAfterReject.data().litterId === litterId &&
+    promotedDogAfterReject.data().status === 'active')
+  const litterAfterReject = await getDoc(doc(db, 'litters', litterId))
+  check('5b-PromotedGuard', 'The litter puppyIds is completely unchanged after the rejected attempt (no orphan, no partial write)', (litterAfterReject.data().puppyIds || []).includes(promotedPupId))
+
+  // Return to litter-only (unpromote) — the exact recovery path the
+  // rejection message points to — then delete must now succeed.
+  await adminDb.collection('dogs').doc(promotedPupId).update({ retainedByBreeder: AdminFieldValue.delete() })
+  const afterUnpromoteAttempt = await removeLitterPuppyServer(litterId, promotedPupId, breederUid)
+  check('5b-PromotedGuard', 'Return to litter-only, then delete: succeeds once retainedByBreeder is cleared', afterUnpromoteAttempt.ok === true && afterUnpromoteAttempt.deleted === true)
+  const promotedDogAfterUnpromoteDelete = await getDoc(doc(db, 'dogs', promotedPupId))
+  check('5b-PromotedGuard', 'After Return-to-litter-only then delete, the Dog document no longer exists', !promotedDogAfterUnpromoteDelete.exists())
 }
 
 // =========================================================================
@@ -702,9 +767,22 @@ const breederUid = await newUser('breeder')
     tenantId: breederUid, currentOwnerId: strangerUid9, createdByUserId: breederUid,
     sourceType: 'BREEDER_ISSUED', name: 'NotControlled9', sex: 'male', status: 'active', dateOfBirth: '2026-01-01', litterId,
   })
+  // Fix round: "archived behaviour is explicit" — a dog reaches
+  // status:'archived' via DogDetailPage's canOfferArchiveInsteadOfDelete
+  // flow, which itself REQUIRES history-bearing fields to be present, so
+  // a realistic archived dog is always also history-bearing (isDogSafe
+  // ToDetach has no separate status:'archived' branch — protection is
+  // via the history check, unchanged by this fix; still worth an
+  // explicit regression case for the litter-delete path specifically).
+  const archivedId = `pup9archived_status_${R}`
+  await adminDb.collection('dogs').doc(archivedId).set({
+    tenantId: breederUid, currentOwnerId: breederUid, createdByUserId: breederUid,
+    sourceType: 'BREEDER_ISSUED', name: 'Archived9', sex: 'female', status: 'archived',
+    buyerEmail: 'archived-history@example.com', dateOfBirth: '2026-01-01', litterId,
+  })
   await adminDb.collection('litters').doc(litterId).set({
     tenantId: breederUid, damId, name: 'Litter9', notes: '', actualBirthDate: '2026-01-01',
-    puppyIds: [transferredId, pendingClaimId, claimedByOnlyId, emptyBuyerEmailId, notControlledId],
+    puppyIds: [transferredId, pendingClaimId, claimedByOnlyId, emptyBuyerEmailId, notControlledId, archivedId],
   })
 
   const cases = [
@@ -713,6 +791,7 @@ const breederUid = await newUser('breeder')
     [claimedByOnlyId, 'claimed (claimedBy alone)'],
     [emptyBuyerEmailId, 'history-bearing (buyerEmail present as empty string)'],
     [notControlledId, 'not currently controlled by requester'],
+    [archivedId, 'archived (with history)'],
   ]
   for (const [puppyId, label] of cases) {
     const attempt = await removeLitterPuppyServer(litterId, puppyId, breederUid)

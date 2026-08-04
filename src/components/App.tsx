@@ -27,6 +27,7 @@ import AdminAuditPage from '../pages/AdminAuditPage'
 import TermsPage from '../pages/TermsPage'
 import PrivacyPage from '../pages/PrivacyPage'
 import PassportPublicPage from '../pages/PassportPublicPage'
+import ShowcasePublicPage from '../pages/ShowcasePublicPage'
 import ForgotPasswordPage from '../pages/ForgotPasswordPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import ComingSoonPage from '../pages/ComingSoonPage'
@@ -70,7 +71,7 @@ function DogDetailRoute({ toast }: { toast: (msg: string, type?: ToastMessage['t
   return <DogDetailPage key={dogId} toast={toast} />
 }
 export default function App() {
-  const { toasts, toast, dismiss } = useToast()
+  const { toasts, toast, dismiss, dismissAll } = useToast()
 
   return (
     <>
@@ -80,6 +81,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage toast={toast} />} />
         <Route path="/signup" element={<SignupPage toast={toast} />} />
         <Route path="/p/:passportId" element={<PassportPublicPage />} />
+        <Route path="/s/:token" element={<ShowcasePublicPage />} />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/survey" element={<SurveyPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
@@ -97,7 +99,7 @@ export default function App() {
           <Route path="dogs" element={<DogListPage toast={toast} />} />
           <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
           <Route path="dogs/:dogId" element={<DogDetailRoute toast={toast} />} />
-          <Route path="litters" element={<LittersPage toast={toast} />} />
+          <Route path="litters" element={<LittersPage toast={toast} dismissAll={dismissAll} />} />
           <Route path="reminders" element={<RemindersPage toast={toast} />} />
           <Route path="settings" element={<SettingsPage toast={toast} />} />
           <Route path="documents" element={<DocumentsPage toast={toast} />} />

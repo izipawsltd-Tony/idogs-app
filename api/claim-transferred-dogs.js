@@ -133,6 +133,9 @@ export default async function handler(req, res) {
           // original breeder's uid forever so their getDogs() still works.
           currentOwnerId: uid,
           status: grantActive ? 'active' : 'restricted',
+          // Codex fix-round (Finding 3): tag WHY a claimed dog landed
+          // 'restricted' — see api/_lib/dog-cap.js's header comment.
+          restrictionReason: grantActive ? FieldValue.delete() : 'plan_cap_exceeded',
           transferStatus: FieldValue.delete(),
           claimedAt: nowIso,
           claimedBy: uid,

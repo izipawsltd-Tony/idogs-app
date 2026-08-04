@@ -16,5 +16,15 @@ export function useToast() {
     setToasts(prev => prev.filter(t => t.id !== id))
   }, [])
 
-  return { toasts, toast, dismiss }
+  // Staging QA finding (Red Boy, item 4): a lingering toast from an
+  // earlier action can still be on screen (within its 3.5s auto-dismiss
+  // window) at the moment a user opens something new — e.g. an editor —
+  // making it read as if THAT action produced the message, when it
+  // didn't. Callers that open a fresh, deliberate UI session (an editor,
+  // a modal) can use this to guarantee nothing stale is still showing.
+  const dismissAll = useCallback(() => {
+    setToasts([])
+  }, [])
+
+  return { toasts, toast, dismiss, dismissAll }
 }

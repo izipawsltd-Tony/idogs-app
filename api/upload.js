@@ -24,7 +24,6 @@
 // could overwrite another breeder's dog's profile photo. Now requires a
 // valid Firebase ID token and verifies the caller owns/breeds the dog.
 
-import sharp from 'sharp'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getStorage } from 'firebase-admin/storage'
@@ -32,6 +31,7 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
 import { canAddDogRecord } from './_lib/dog-access.js'
+import { processImageForStorage, ImagePipelineError } from './_lib/image-pipeline.js'
 
 // Bounded staging-isolation safety patch: storageBucket is intentionally
 // NOT passed here anymore — it used to fall back to
@@ -79,7 +79,10 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
 
-  const { base64, mediaType, dogId } = req.body
+  // mediaType is deliberately no longer read from the body at all — see
+  // api/_lib/image-pipeline.js: the actual file type is always sniffed
+  // from the real bytes, never trusted from a client-supplied claim.
+  const { base64, dogId } = req.body
   if (!base64 || !dogId) {
     return res.status(400).json({ error: 'Missing required fields' })
   }
@@ -107,15 +110,27 @@ export default async function handler(req, res) {
     }
 
     const bucket = getStorage().bucket(bucketName)
-    let buffer = Buffer.from(base64, 'base64')
-    let finalMediaType = mediaType || 'image/jpeg'
+    const rawBuffer = Buffer.from(base64, 'base64')
 
-    if (finalMediaType === 'image/heic' || finalMediaType === 'image/heif') {
-      buffer = await sharp(buffer).jpeg({ quality: 85 }).toBuffer()
-      finalMediaType = 'image/jpeg'
+    // The one reusable pipeline (Slice 2) — sniffs the real file type
+    // from its bytes (JPEG/PNG/WebP pass through unchanged; HEIC/HEIF is
+    // actually decoded via heic-convert + sharp, fixing what was
+    // previously a broken HEIC path — see image-pipeline.js's own header
+    // comment) and rejects anything else (including a mislabeled or
+    // corrupt file, or a file exceeding the size limit) before any
+    // Storage write is attempted.
+    let buffer, finalMediaType, ext
+    try {
+      const processed = await processImageForStorage(rawBuffer)
+      buffer = processed.buffer
+      finalMediaType = processed.mimeType
+      ext = processed.extension
+    } catch (err) {
+      if (err instanceof ImagePipelineError) {
+        return res.status(400).json({ error: err.message, reason: err.code })
+      }
+      throw err
     }
-
-    const ext = finalMediaType === 'image/png' ? 'png' : finalMediaType === 'image/webp' ? 'webp' : 'jpg'
 
     if (uploadType === 'note') {
       // ── Note photo: unique filename, no Firestore writes here ──

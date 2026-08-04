@@ -1,16 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership } from '../lib/db'
+import {
+  getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
+  getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, DEFAULT_SHOWCASE_PUPPY_ENTRY,
+  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder, getShowcaseMediaUrls, getEnquiriesForLitter, reconcileLitterPuppy,
+} from '../lib/db'
+import type { SignedMediaItem } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict } from '../lib/utils'
-import type { Litter, Dog, ToastMessage } from '../types'
+import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
+import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability, ShowcaseEnquiry, MediaItem } from '../types'
 import { useAuth } from '../hooks/useAuth'
+import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
 import { sendTransferEmail } from '../lib/email'
 import { describeTransferFailure } from '../lib/transferError'
+import { emitDogUsageChanged } from '../lib/dogUsageEvents'
+import { isHeicFile } from '../lib/heic'
+import { prepareImageForUpload, readFileAsBase64, MAX_HEIC_UPLOAD_BYTES, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } from '../lib/imageCompression'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
+  dismissAll: () => void
 }
 
 interface PuppyForm {
@@ -67,6 +77,30 @@ function partitionLitterCandidates(litterId: string, fetched: Dog[], requesterUi
   return { confirmedMembers, ambiguousCount, eligible, preserved }
 }
 
+// Fix round (promoted-puppy delete bug) — same allowlist-by-code
+// convention as transferError.ts / saleAvailabilityError.ts: never show
+// an arbitrary thrown error's raw text, only pre-written copy for a
+// small set of known-safe reason codes api/remove-litter-puppy.js
+// actually returns. Anything else (network failure, unexpected
+// exception, no reason code at all) falls back to one fixed generic
+// message.
+const PUPPY_DELETE_KNOWN_MESSAGES: Record<string, string> = {
+  PROMOTED_ACTIVE_IN_MY_DOGS: 'This puppy is currently in My Dogs. Return it to litter-only before deleting, or archive it from My Dogs to retain its history.',
+  DOG_PROTECTED: "This dog can't be deleted — it's transferred, pending claim, claimed, or otherwise no longer exclusively yours.",
+  NOT_CONFIRMED_MEMBER: "This puppy's litter membership couldn't be confirmed — please refresh and try again.",
+  LITTER_ARCHIVED: 'This litter has been deleted and can no longer be edited.',
+}
+const PUPPY_DELETE_GENERIC_MESSAGE = 'Failed to delete puppy. Please try again.'
+function describePuppyDeleteFailure(err: unknown): string {
+  if (err && typeof err === 'object' && 'reason' in err) {
+    const reason = (err as { reason?: unknown }).reason
+    if (typeof reason === 'string' && PUPPY_DELETE_KNOWN_MESSAGES[reason]) {
+      return PUPPY_DELETE_KNOWN_MESSAGES[reason]
+    }
+  }
+  return PUPPY_DELETE_GENERIC_MESSAGE
+}
+
 function buildDeleteLitterConfirmText(litterName: string, eligibleCount: number, preservedCount: number, ambiguousCount: number): string {
   const parts = [`Delete litter "${litterName}"?`]
   if (eligibleCount > 0) {
@@ -84,7 +118,7 @@ function buildDeleteLitterConfirmText(litterName: string, eligibleCount: number,
   return parts.join(' ')
 }
 
-export default function LittersPage({ toast }: Props) {
+export default function LittersPage({ toast, dismissAll }: Props) {
   const { user, profile, upgradeToBreeder } = useAuth()
   const [upgrading, setUpgrading] = useState(false)
   const [litters, setLitters] = useState<Litter[]>([])
@@ -92,6 +126,67 @@ export default function LittersPage({ toast }: Props) {
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [expandedLitter, setExpandedLitter] = useState<string | null>(null)
+
+  // ── Litter Showcase (Slice 1) ──
+  // Keyed by litterId. `undefined` = not yet loaded, `null` = loaded and
+  // confirmed no Showcase exists yet for that litter. Loaded lazily (on
+  // expand), not up front for every litter — a breeder typically expands
+  // one litter at a time.
+  const [showcases, setShowcases] = useState<Record<string, LitterShowcase | null | undefined>>({})
+  const [showcaseLoading, setShowcaseLoading] = useState<Record<string, boolean>>({})
+  const [showcaseBusy, setShowcaseBusy] = useState<Record<string, boolean>>({})
+  const [showcaseError, setShowcaseError] = useState<Record<string, string>>({})
+  // UI gap fix: distinct from showcaseError (which is only ever the LOAD
+  // failure — it drives the whole-panel "Couldn't load Showcase — Retry"
+  // empty state, replacing ShowcaseManager entirely) — this is the most
+  // recent EDIT/save failure for a litter whose Showcase already loaded
+  // successfully. Kept separate so a failed toggle/availability/bulk
+  // action shows an inline status message WITHIN the still-visible
+  // ShowcaseManager panel, never hides the puppy list the breeder was
+  // just looking at. Non-empty = the last save attempt for this litter
+  // failed; cleared at the start of every new attempt (so a retry
+  // doesn't keep showing a stale failure) and never set on success.
+  const [showcaseSaveError, setShowcaseSaveError] = useState<Record<string, string>>({})
+
+  // Slice 2: public share link state, keyed by litterId like the
+  // showcase state above. `shareLastRotatedToken` is IN-MEMORY ONLY —
+  // the raw token is never persisted anywhere (server or client) once
+  // this component unmounts/reloads; api/rotate-showcase-share.js
+  // returns it exactly once, at generation time.
+  const [shareBusy, setShareBusy] = useState<Record<string, boolean>>({})
+  const [shareError, setShareError] = useState<Record<string, string>>({})
+  const [shareLastRotatedToken, setShareLastRotatedToken] = useState<Record<string, string>>({})
+
+  // Keep the reusable public URL available after a reload/sign-in on this
+  // browser without weakening the server-side hash-only token model. Stored
+  // tokens are verified against the current Firestore hash before use, so a
+  // token rotated on another device is removed instead of being shown stale.
+  useEffect(() => {
+    let cancelled = false
+    async function restoreShareTokens() {
+      for (const [litterId, showcase] of Object.entries(showcases)) {
+        if (!showcase?.shareTokenHash || shareLastRotatedToken[litterId]) continue
+        const storageKey = `idogs.showcaseShareToken.${litterId}`
+        const token = window.localStorage.getItem(storageKey)
+        if (!token) continue
+        const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+        const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+        if (cancelled) return
+        if (hash === showcase.shareTokenHash) {
+          setShareLastRotatedToken(prev => ({ ...prev, [litterId]: token }))
+        } else {
+          window.localStorage.removeItem(storageKey)
+        }
+      }
+    }
+    void restoreShareTokens()
+    return () => { cancelled = true }
+  }, [showcases, shareLastRotatedToken])
+
+  // Slice 2: enquiries received through this litter's public Showcase —
+  // undefined means "not loaded yet", [] means "loaded, none yet".
+  const [enquiries, setEnquiries] = useState<Record<string, ShowcaseEnquiry[] | undefined>>({})
+  const [enquiriesLoading, setEnquiriesLoading] = useState<Record<string, boolean>>({})
 
   // Edit litter state
   const [editingLitter, setEditingLitter] = useState<string | null>(null)
@@ -160,6 +255,29 @@ export default function LittersPage({ toast }: Props) {
   const loadTokenRef = useRef(0)
   const [loadError, setLoadError] = useState(false)
 
+  // Codex fix-round finding (Showcase account-switch race): an in-flight
+  // Showcase read or mutation started under account A can resolve AFTER
+  // the account-switch effect below has already reset all Showcase state
+  // for account B — without a guard, that late resolution would call
+  // setShowcases/setShowcaseError/setShowcaseLoading/setShowcaseBusy with
+  // account A's data and silently resurrect it under account B. See
+  // useShowcaseRequestGuard.ts (src/hooks) for the full design rationale
+  // — extracted as a plain, no-React-dependency class specifically so a
+  // Node test can exercise the exact production guard logic directly,
+  // mirroring useRequestGuard.ts's own RequestGuardState split.
+  const showcaseGuard = useShowcaseRequestGuard()
+
+  // Only true immediately after `gen` was captured (before its await) —
+  // false once the account has switched (or the component has unmounted)
+  // in the meantime. Every Showcase async function must check this
+  // before EVERY state write that happens after an `await`, including in
+  // catch/finally blocks — a stale continuation that fails this check
+  // must silently no-op, never toast, never touch showcases/
+  // showcaseLoading/showcaseBusy/showcaseError for any litterId.
+  function isShowcaseRequestCurrent(gen: number): boolean {
+    return mountedRef.current && showcaseGuard.isCurrent(gen)
+  }
+
   useEffect(() => {
     mountedRef.current = true
     return () => { mountedRef.current = false }
@@ -211,8 +329,308 @@ export default function LittersPage({ toast }: Props) {
     setLitters([])
     setDogs([])
     startLoad()
+    // Codex fix-round findings, item 3: Showcase state is keyed by
+    // litterId, and litterIds are not guaranteed unique ACROSS accounts —
+    // without this reset, switching accounts (or logging out and into a
+    // different one in the same tab) could render a stale previous
+    // account's cached Showcase (puppies map, enabled flag, in-flight
+    // busy/error state) against a same-named litterId that happens to
+    // belong to the NEW account, or simply leave an expandedLitter panel
+    // open with data that was never re-fetched for the new user. All five
+    // pieces of Showcase UI state are reset together, exactly like
+    // litters/dogs above.
+    //
+    // Codex fix-round finding (Showcase account-switch race): bumping the
+    // Showcase guard's account generation here, in the SAME synchronous
+    // effect body as the resets above, is what actually closes the race
+    // — any Showcase request already in flight for the OLD account
+    // captured the OLD generation number before its own first `await`,
+    // so isShowcaseRequestCurrent() will find it stale the instant its
+    // continuation resumes, no matter how long after this effect runs
+    // that turns out to be.
+    showcaseGuard.bumpAccountGeneration()
+    setShowcases({})
+    setShowcaseLoading({})
+    setShowcaseBusy({})
+    setShowcaseError({})
+    setShowcaseSaveError({})
+    // Slice 2: a rotated-but-unsaved share token must never survive an
+    // account switch — it belongs to the OLD account's litter, and this
+    // component has no legitimate reason to keep displaying it once a
+    // different account is signed in.
+    setShareBusy({})
+    setShareError({})
+    setShareLastRotatedToken({})
+    setEnquiries({})
+    setEnquiriesLoading({})
+    setExpandedLitter(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
+
+  // ── Litter Showcase (Slice 1) ──────────────────────────────────
+
+  async function loadShowcase(litterId: string) {
+    // Captured BEFORE the first await — see useShowcaseRequestGuard.ts
+    // for why this must read the guard's live generation counter, not
+    // the `user`/`profile` values closed over by this call (a closure
+    // over a stale render never observes a LATER account switch), and
+    // why a per-account (not per-request) generation is what lets a
+    // DIFFERENT litter's concurrent Showcase call proceed unaffected by
+    // this one.
+    const gen = showcaseGuard.currentGeneration()
+    setShowcaseLoading(prev => ({ ...prev, [litterId]: true }))
+    setShowcaseError(prev => ({ ...prev, [litterId]: '' }))
+    try {
+      const result = await getShowcaseForLitter(litterId)
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcases(prev => ({ ...prev, [litterId]: result }))
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcaseError(prev => ({ ...prev, [litterId]: err instanceof Error && err.message ? err.message : 'Failed to load Showcase' }))
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcaseLoading(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  // Lazily loads a litter's Showcase the first time it's expanded — not
+  // for every litter up front. `profile?.role === 'owner'` never expands
+  // into the breeder controls branch at all (see the render below), so
+  // this only ever fires for a breeder/admin viewing their own litters.
+  useEffect(() => {
+    if (expandedLitter && profile?.role !== 'owner' && showcases[expandedLitter] === undefined) {
+      loadShowcase(expandedLitter)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedLitter])
+
+  // Slice 2: the breeder's own read-only view of enquiries received
+  // through this litter's public Showcase — same lazy-load-on-expand
+  // pattern as loadShowcase above, kept as its own simple state (no
+  // busy/save-error tracking needed since this is read-only, unlike the
+  // Showcase management state above).
+  async function loadEnquiries(litterId: string) {
+    const gen = showcaseGuard.currentGeneration()
+    setEnquiriesLoading(prev => ({ ...prev, [litterId]: true }))
+    try {
+      const result = await getEnquiriesForLitter(litterId)
+      if (!isShowcaseRequestCurrent(gen)) return
+      setEnquiries(prev => ({ ...prev, [litterId]: result }))
+    } catch {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setEnquiries(prev => ({ ...prev, [litterId]: [] }))
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setEnquiriesLoading(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+  useEffect(() => {
+    if (expandedLitter && profile?.role !== 'owner' && enquiries[expandedLitter] === undefined) {
+      loadEnquiries(expandedLitter)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedLitter])
+
+  async function handleCreateShowcase(litterId: string) {
+    const gen = showcaseGuard.currentGeneration()
+    setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    try {
+      const showcase = await createShowcase(litterId)
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      toast('Showcase created — no puppies are shown until you select them')
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
+      toast(err instanceof Error && err.message ? err.message : 'Failed to create Showcase', 'error')
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  async function handleToggleShowcaseEnabled(litterId: string, current: LitterShowcase) {
+    const gen = showcaseGuard.currentGeneration()
+    setShowcaseBusy(prev => ({ ...prev, [litterId]: true }))
+    // UI gap fix: clear any stale failure from a PREVIOUS attempt the
+    // moment a new one starts — otherwise a successful retry would still
+    // show the old "Save failed" message for the instant before this
+    // request itself resolves.
+    setShowcaseSaveError(prev => ({ ...prev, [litterId]: '' }))
+    try {
+      const showcase = await setShowcaseEnabled(litterId, !current.enabled)
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      toast(showcase.enabled ? 'Showcase enabled' : 'Showcase disabled — puppy selection kept')
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
+      const message = err instanceof Error && err.message ? err.message : 'Failed to update Showcase'
+      // Deliberately does NOT touch `showcases` here — no optimistic
+      // update was ever applied (the checkbox is bound to the last
+      // server-CONFIRMED value), so the UI already shows the last
+      // successfully saved state automatically; this only surfaces WHY.
+      setShowcaseSaveError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcaseBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  // Slice 2: mints a new public share token, invalidating any link
+  // shared before this. Stores the raw (one-time) token in local state
+  // only — never anywhere persisted — so the UI can show/copy it once.
+  async function handleRotateShare(litterId: string) {
+    if (showcases[litterId]?.shareTokenHash && !window.confirm('Create a new link? The previous link will stop working immediately.')) return
+    const gen = showcaseGuard.currentGeneration()
+    setShareBusy(prev => ({ ...prev, [litterId]: true }))
+    setShareError(prev => ({ ...prev, [litterId]: '' }))
+    try {
+      const { showcase, shareToken } = await rotateShowcaseShare(litterId)
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      setShareLastRotatedToken(prev => ({ ...prev, [litterId]: shareToken }))
+      window.localStorage.setItem(`idogs.showcaseShareToken.${litterId}`, shareToken)
+      toast('New share link created')
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
+      const message = err instanceof Error && err.message ? err.message : 'Failed to create share link'
+      setShareError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShareBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  async function handleToggleShareEnabled(litterId: string, current: LitterShowcase) {
+    const gen = showcaseGuard.currentGeneration()
+    setShareBusy(prev => ({ ...prev, [litterId]: true }))
+    setShareError(prev => ({ ...prev, [litterId]: '' }))
+    try {
+      const showcase = await updateShowcaseShare(litterId, { shareEnabled: !current.shareEnabled })
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      toast(showcase.shareEnabled ? 'Share link enabled' : 'Share link paused')
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return
+      const message = err instanceof Error && err.message ? err.message : 'Failed to update share link'
+      setShareError(prev => ({ ...prev, [litterId]: message }))
+      toast(message, 'error')
+    } finally {
+      if (!isShowcaseRequestCurrent(gen)) return
+      setShareBusy(prev => ({ ...prev, [litterId]: false }))
+    }
+  }
+
+  // Tony live-staging fix round ("Draft → Save"): visibility, availability,
+  // colour/personality/date/price/deposit, publish state, cover/order, and
+  // media itself all used to autosave individually (one network call per
+  // keystroke/toggle/upload) — see the removed handleTogglePuppyVisible/
+  // handlePuppyAvailabilityChange/handlePublishedMediaChange/
+  // handleShowcaseDetailsChange/handleShowcaseBulkAction this replaces.
+  // That made "All changes saved" only ever true for the ONE field that
+  // just fired, never a reliable statement about the whole panel, and
+  // gave a large-image upload no natural place to compress/retry without
+  // either blocking every other field or silently losing the file.
+  //
+  // ShowcaseManager now owns an entirely local draft (including a queue of
+  // not-yet-uploaded File objects) and calls this ONE function when the
+  // breeder clicks "Save changes". It uploads any queued files first
+  // (compressed client-side where possible — see lib/imageCompression.ts —
+  // limited to 2 concurrent requests, one file per request, never combined),
+  // then finalizes media order/deletions, then persists every other field
+  // in a single updateShowcasePuppy call. `photoOrder`/`videoOrder` are the
+  // FINAL desired arrays of refs — either a real, already-persisted
+  // MediaItem.id, or a `local:<id>` placeholder present as a key in
+  // `queuedFiles` for anything not uploaded yet.
+  //
+  // Partial-failure contract: `resolvedIds` (local ref -> real mediaId) is
+  // returned on BOTH success and failure. On failure, ShowcaseManager uses
+  // it to mark every already-uploaded file as done (so a retry never
+  // re-uploads it) while leaving the rest of the draft — and every field
+  // that was never reached — exactly as the breeder left it, ready to
+  // retry with nothing lost and nothing falsely reported as saved.
+  async function handleSaveShowcaseDraft(
+    litterId: string,
+    puppyId: string,
+    fields: Parameters<typeof updateShowcasePuppy>[2],
+    photoOrder: string[],
+    videoOrder: string[],
+    queuedFiles: Map<string, { file: File; kind: 'photo' | 'video' }>,
+    onFileUploaded: () => void
+  ) {
+    const gen = showcaseGuard.currentGeneration()
+    const resolvedIds: Record<string, string> = {}
+
+    // Upload queued files 2 at a time, in stable order (photos then
+    // videos) so "Saving file X of Y" is a single, monotonic count for
+    // the whole save, not a per-kind one that could look like it restarted.
+    const toUpload = [...photoOrder, ...videoOrder].filter(ref => queuedFiles.has(ref))
+    for (let i = 0; i < toUpload.length; i += 2) {
+      const batch = toUpload.slice(i, i + 2)
+      const settled = await Promise.allSettled(batch.map(async ref => {
+        const { file, kind } = queuedFiles.get(ref)!
+        const prepared = kind === 'photo'
+          ? await prepareImageForUpload(file)
+          : { base64: await readFileAsBase64(file), mediaType: file.type || 'video/mp4' }
+        const result = await uploadShowcaseMedia(puppyId, prepared.base64, kind)
+        return { ref, mediaId: result.mediaId }
+      }))
+      for (const outcome of settled) {
+        if (outcome.status === 'fulfilled') {
+          resolvedIds[outcome.value.ref] = outcome.value.mediaId
+          onFileUploaded()
+        } else {
+          if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
+          const reason = outcome.reason
+          const message = reason instanceof ImageCompressionError ? reason.message
+            : reason instanceof Error && reason.message ? reason.message : 'Upload failed'
+          return { ok: false as const, error: message, resolvedIds }
+        }
+      }
+    }
+
+    if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
+
+    const finalPhotoOrder = photoOrder.map(ref => resolvedIds[ref] ?? ref)
+    const finalVideoOrder = videoOrder.map(ref => resolvedIds[ref] ?? ref)
+
+    try {
+      const currentPuppy = dogs.find(d => d.id === puppyId)
+      const currentPhotoIds = (currentPuppy?.photos || []).map(p => p.id)
+      const currentVideoIds = (currentPuppy?.videos || []).map(p => p.id)
+      let latestPhotos: MediaItem[] | undefined
+      let latestVideos: MediaItem[] | undefined
+
+      if (JSON.stringify(currentPhotoIds) !== JSON.stringify(finalPhotoOrder)) {
+        const result = await updateShowcaseMediaOrder(puppyId, 'photo', finalPhotoOrder)
+        if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
+        latestPhotos = result.photos.map(p => ({ id: p.id, path: '' }))
+      }
+      if (JSON.stringify(currentVideoIds) !== JSON.stringify(finalVideoOrder)) {
+        const result = await updateShowcaseMediaOrder(puppyId, 'video', finalVideoOrder)
+        if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
+        latestVideos = result.videos.map(v => ({ id: v.id, path: '' }))
+      }
+      if (latestPhotos || latestVideos) {
+        setDogs(prev => prev.map(d => d.id === puppyId ? { ...d, ...(latestPhotos ? { photos: latestPhotos } : {}), ...(latestVideos ? { videos: latestVideos } : {}) } : d))
+      }
+
+      const resolvedFields = {
+        ...fields,
+        publishedPhotoIds: (fields.publishedPhotoIds || []).map(ref => resolvedIds[ref] ?? ref),
+        publishedVideoIds: (fields.publishedVideoIds || []).map(ref => resolvedIds[ref] ?? ref),
+      }
+      const showcase = await updateShowcasePuppy(litterId, puppyId, resolvedFields)
+      if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
+      setShowcases(prev => ({ ...prev, [litterId]: showcase }))
+      return { ok: true as const, resolvedIds }
+    } catch (err) {
+      if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
+      const message = err instanceof Error && err.message ? err.message : 'Failed to save changes'
+      return { ok: false as const, error: message, resolvedIds }
+    }
+  }
 
   function handleDamChange(damId: string) {
     const dam = dogs.find(d => d.id === damId)
@@ -402,7 +820,7 @@ export default function LittersPage({ toast }: Props) {
         }
       }
       const { operationId, dogId } = pendingPuppyOperationRef.current
-      const { alreadyExisted } = await createLitterPuppyAtomic(litterId, dogId, operationId, {
+      const { alreadyExisted, status: createdStatus } = await createLitterPuppyAtomic(litterId, dogId, operationId, {
         name: finalName,
         breed: dam?.breed || '',
         sex: puppyForm.sex,
@@ -423,7 +841,16 @@ export default function LittersPage({ toast }: Props) {
       setDogs(updatedDogs.filter(d => !d.isDeceased))
       setPuppyForm(emptyPuppy)
       setShowAddPuppy(null)
-      toast(alreadyExisted ? `${finalName} was already added — no duplicate created` : `${finalName} added — QR Passport created!`)
+      // Bug 2 fix (Red Boy staging QA): a puppy created while the breeder
+      // is over their plan's dog cap lands 'restricted' (read-only) —
+      // previously this success toast claimed an unqualified win either
+      // way, so the breeder had no idea until their first edit attempt
+      // failed with an unexplained error. Tell them immediately instead.
+      toast(
+        createdStatus === 'restricted'
+          ? `${finalName} added, but is read-only — you're over your plan's dog limit. Upgrade or free up a slot to edit it.`
+          : (alreadyExisted ? `${finalName} was already added — no duplicate created` : `${finalName} added — QR Passport created!`)
+      )
     } catch (err) {
       // Deliberately does NOT clear pendingPuppyOperationRef — if the
       // failure was a transient network error after the transaction
@@ -443,6 +870,15 @@ export default function LittersPage({ toast }: Props) {
   }
 
   function startEditPuppy(puppy: Dog) {
+    // Staging QA finding (Red Boy, item 4): opening the editor makes no
+    // network request of its own (nothing below this line is async, and
+    // this function never shows a NEW message) — but a message from an
+    // EARLIER, unrelated action can still be visible on screen for up to
+    // 3.5s (see useToast's auto-dismiss timer), which reads as if opening
+    // THIS editor caused it. Clearing here guarantees a fresh edit
+    // session never inherits a stale message from whatever happened
+    // right before it.
+    dismissAll()
     // Parse notes to extract collar/weight
     const notes = puppy.notes || ''
     const collarMatch = notes.match(/Collar: (\w+)/)
@@ -467,6 +903,20 @@ export default function LittersPage({ toast }: Props) {
   }
 
   async function handleSavePuppy(puppy: Dog, litter: Litter) {
+    // Bug 2 fix (Red Boy staging QA): a 'restricted' puppy (over the
+    // breeder's plan cap — iDogs Pricing v1.1 §3.2/§3.3) is read-only by
+    // design; firestore.rules already denies this write, but letting the
+    // request round-trip just to fail produced the confusing bare
+    // "Failed to update puppy" the QA report flagged. Checked here first
+    // so the breeder gets the same clear, actionable guidance
+    // DogDetailPage already shows for a restricted dog, instead of a
+    // generic denial with no explanation. Ownership/transfer protections
+    // are untouched — this only short-circuits a write Rules would deny
+    // anyway.
+    if ((puppy as any).status === 'restricted') {
+      toast("This puppy is over your plan's dog limit and is read-only — upgrade or free up a slot to edit it.", 'error')
+      return
+    }
     try {
       await updateDog(puppy.id, {
         name: editPuppyForm.name,
@@ -490,19 +940,34 @@ export default function LittersPage({ toast }: Props) {
   }
 
   async function handleDeletePuppy(puppyId: string, litter: Litter) {
-    if (!confirm('Remove this puppy from the litter?')) return
+    // Fix round (promoted-puppy delete bug): client-side pre-check so a
+    // promoted puppy is blocked BEFORE the confirm dialog even appears —
+    // this is a UX convenience only, never authoritative. The server
+    // enforces the same rule fresh on every request (see
+    // api/remove-litter-puppy.js's PROMOTED_ACTIVE_IN_MY_DOGS check) so a
+    // direct API call, or a puppy promoted in another tab after this
+    // page loaded, still can't bypass it.
+    const puppy = dogs.find(d => d.id === puppyId)
+    if (puppy?.retainedByBreeder === true) {
+      toast(PUPPY_DELETE_KNOWN_MESSAGES.PROMOTED_ACTIVE_IN_MY_DOGS, 'error')
+      return
+    }
+    if (!confirm('Permanently delete this puppy record? This cannot be undone.')) return
     try {
       // Codex round 4, Blocker 3: replaces the old direct
       // updateLitter(litter.id, {puppyIds: filtered}) call — a raw
       // client puppyIds mutation — with the trusted server endpoint,
-      // which also verifies confirmed litter membership before unlinking.
+      // which also verifies confirmed litter membership before deleting.
       await removePuppyFromLitter(litter.id, puppyId)
       const [updatedLitters, updatedDogs] = await Promise.all([getLitters(), getDogs()])
       setLitters(updatedLitters)
       setDogs(updatedDogs.filter(d => !d.isDeceased))
-      toast('Puppy removed from litter')
-    } catch {
-      toast('Failed to remove puppy', 'error')
+      // Success-only refresh, matching AppLayout's sidebar-count fix —
+      // never fired on a rejected/failed deletion.
+      if (user?.uid) emitDogUsageChanged(user.uid)
+      toast('Puppy deleted')
+    } catch (err) {
+      toast(describePuppyDeleteFailure(err), 'error')
     }
   }
 
@@ -906,6 +1371,18 @@ export default function LittersPage({ toast }: Props) {
                             const isEditingThisPuppy = editingPuppy === puppy.id
                             const collarMatch = puppy.notes?.match(/Collar: (\w+)/)
                             const weightMatch = puppy.notes?.match(/Birth weight: ([\d.]+)kg/)
+                            // Bug 2 fix (Red Boy staging QA) — same 'restricted'
+                            // signal DogDetailPage already shows via its 🔒
+                            // Restricted badge/banner, mirrored here so a
+                            // breeder sees WHY a puppy is read-only before
+                            // ever attempting an edit that Rules would deny.
+                            const isPuppyRestricted = (puppy as any).status === 'restricted'
+                            // Fix round (promoted-puppy delete bug): a
+                            // promoted puppy is a deliberately-kept My
+                            // Dogs record — shown here so a breeder sees
+                            // WHY delete is blocked before ever clicking
+                            // it, same pattern as isPuppyRestricted above.
+                            const isPuppyPromoted = puppy.retainedByBreeder === true
 
                             return (
                               <div key={puppy.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--white)' }}>
@@ -928,6 +1405,12 @@ export default function LittersPage({ toast }: Props) {
                                       {puppy.microchip ? ` · Chip: ${puppy.microchip}` : ''}
                                     </div>
                                   </div>
+                                  {isPuppyRestricted && (
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)', whiteSpace: 'nowrap' }}>🔒 Restricted</span>
+                                  )}
+                                  {isPuppyPromoted && (
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', border: '1px solid rgba(8,80,65,.16)', whiteSpace: 'nowrap' }}>✓ In My Dogs</span>
+                                  )}
                                   <div style={{ display: 'flex', gap: 6 }}>
                                     <button
                                       className="btn btn-secondary btn-sm"
@@ -953,7 +1436,9 @@ export default function LittersPage({ toast }: Props) {
                                     )}
                                     <button
                                       className="btn btn-sm"
-                                      style={{ background: '#FDEDED', color: 'var(--danger)', border: '1px solid #F3B0B0' }}
+                                      style={{ background: isPuppyPromoted ? 'var(--sand)' : '#FDEDED', color: isPuppyPromoted ? 'var(--light)' : 'var(--danger)', border: isPuppyPromoted ? '1px solid var(--border)' : '1px solid #F3B0B0', cursor: isPuppyPromoted ? 'not-allowed' : 'pointer' }}
+                                      disabled={isPuppyPromoted}
+                                      title={isPuppyPromoted ? PUPPY_DELETE_KNOWN_MESSAGES.PROMOTED_ACTIVE_IN_MY_DOGS : undefined}
                                       onClick={() => handleDeletePuppy(puppy.id, litter)}
                                     >✕</button>
                                   </div>
@@ -962,11 +1447,19 @@ export default function LittersPage({ toast }: Props) {
                                 {/* Edit puppy form */}
                                 {isEditingThisPuppy && (
                                   <div style={{ padding: '14px 16px', borderTop: '1px solid var(--border)', background: 'var(--sand)' }}>
-                                    <PuppyFormFields form={editPuppyForm} onChange={setEditPuppyForm} />
-                                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                                      <button className="btn btn-primary btn-sm" onClick={() => handleSavePuppy(puppy, litter)}>Save changes</button>
+                                    {isPuppyRestricted && (
+                                      <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10 }}>
+                                        🔒 This puppy is over your plan's dog limit and is read-only — <Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>upgrade to Plus</Link> or free up a slot to edit it.
+                                      </div>
+                                    )}
+                                    <fieldset disabled={isPuppyRestricted} style={{ border: 'none', padding: 0, margin: 0 }}>
+                                      <PuppyFormFields form={editPuppyForm} onChange={setEditPuppyForm} />
+                                    </fieldset>
+                                    <div style={{ display: 'flex', gap: 8, marginTop: 12, marginBottom: 14 }}>
+                                      <button className="btn btn-primary btn-sm" onClick={() => handleSavePuppy(puppy, litter)} disabled={isPuppyRestricted}>Save changes</button>
                                       <button className="btn btn-secondary btn-sm" onClick={() => setEditingPuppy(null)}>Cancel</button>
                                     </div>
+                                    <PuppyMediaManager puppy={puppy} disabled={isPuppyRestricted} toast={toast} onUpdated={updated => setDogs(prev => prev.map(d => d.id === puppy.id ? { ...d, ...updated } : d))} />
                                   </div>
                                 )}
                               </div>
@@ -975,6 +1468,85 @@ export default function LittersPage({ toast }: Props) {
                         </div>
                       )}
                     </div>
+
+                    {/* ── LITTER SHOWCASE (Slice 1) ── */}
+                    <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 10 }}>🎪 Litter Showcase</div>
+                      {getEffectivePlanClient(profile) !== 'plus' ? (
+                        <div style={{ fontSize: 13, color: 'var(--light)' }}>
+                          Litter Showcase is a Plus-plan feature — upgrade to curate which puppies from this litter can be showcased.
+                        </div>
+                      ) : showcaseLoading[litter.id] ? (
+                        <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
+                      ) : showcaseError[litter.id] ? (
+                        <div style={{ fontSize: 13, color: 'var(--mid)' }}>
+                          <p style={{ marginBottom: 8 }}>Couldn't load Showcase — {showcaseError[litter.id]}</p>
+                          <button className="btn btn-secondary btn-sm" onClick={() => loadShowcase(litter.id)}>Retry</button>
+                        </div>
+                      ) : !showcases[litter.id] ? (
+                        <div style={{ fontSize: 13, color: 'var(--mid)' }}>
+                          <p style={{ marginBottom: 10 }}>No Showcase yet for this litter. Creating one shows zero puppies until you explicitly select them.</p>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => handleCreateShowcase(litter.id)}
+                            disabled={!!showcaseBusy[litter.id]}
+                          >
+                            {showcaseBusy[litter.id] ? <span className="spinner" /> : '+ Create Showcase'}
+                          </button>
+                        </div>
+                      ) : (
+                        <ShowcaseManager
+                          litterId={litter.id}
+                          showcase={showcases[litter.id] as LitterShowcase}
+                          puppyDogs={puppyDogs}
+                          busy={!!showcaseBusy[litter.id]}
+                          saveError={showcaseSaveError[litter.id] || ''}
+                          onToggleEnabled={() => handleToggleShowcaseEnabled(litter.id, showcases[litter.id] as LitterShowcase)}
+                          onSaveDraft={(puppyId, fields, photoOrder, videoOrder, queuedFiles, onFileUploaded) =>
+                            handleSaveShowcaseDraft(litter.id, puppyId, fields, photoOrder, videoOrder, queuedFiles, onFileUploaded)}
+                          shareBusy={!!shareBusy[litter.id]}
+                          shareError={shareError[litter.id] || ''}
+                          shareLastRotatedToken={shareLastRotatedToken[litter.id]}
+                          onRotateShare={() => handleRotateShare(litter.id)}
+                          onToggleShareEnabled={() => handleToggleShareEnabled(litter.id, showcases[litter.id] as LitterShowcase)}
+                          toast={toast}
+                          onPuppyReconciled={puppyId => setDogs(prev => prev.map(d => d.id === puppyId ? { ...d, status: 'active', restrictionReason: undefined } : d))}
+                        />
+                      )}
+                    </div>
+
+                    {/* ── CUSTOMER ENQUIRIES (Slice 2) ── */}
+                    {getEffectivePlanClient(profile) === 'plus' && (
+                      <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 10 }}>
+                          📩 Enquiries {enquiries[litter.id] && enquiries[litter.id]!.length > 0 && `(${enquiries[litter.id]!.length})`}
+                        </div>
+                        {enquiriesLoading[litter.id] ? (
+                          <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
+                        ) : !enquiries[litter.id] || enquiries[litter.id]!.length === 0 ? (
+                          <div style={{ fontSize: 13, color: 'var(--light)' }}>No enquiries yet from this litter's public Showcase.</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {enquiries[litter.id]!.map(enq => {
+                              const aboutPuppy = enq.puppyId ? puppyDogs.find(p => p.id === enq.puppyId) : null
+                              return (
+                                <div key={enq.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, fontSize: 13 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                    <span style={{ fontWeight: 600, color: 'var(--dark)' }}>{enq.name}</span>
+                                    <span style={{ fontSize: 11, color: 'var(--light)' }}>{formatDate(enq.createdAt)}</span>
+                                  </div>
+                                  <div style={{ color: 'var(--mid)', marginBottom: 4 }}>
+                                    {enq.email && <span>{enq.email}</span>}{enq.email && enq.phone && ' · '}{enq.phone && <span>{enq.phone}</span>}
+                                    {aboutPuppy && <span> · about {aboutPuppy.name}</span>}
+                                  </div>
+                                  <div style={{ color: 'var(--dark)' }}>{enq.message}</div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1044,6 +1616,168 @@ export default function LittersPage({ toast }: Props) {
   )
 }
 
+// ── PUPPY SHOWCASE MEDIA (Slice 2) ──────────────────────────────
+// Photo/video gallery for a single puppy — api/upload-showcase-media.js
+// does the actual processing (real magic-byte sniffing, HEIC/HEIF
+// decode via the shared image-pipeline, size/type validation), this
+// component only ever sends raw file bytes and reflects back whatever
+// the server returns. No client-side resize/HEIC-detection branch like
+// PhotoUpload.tsx's avatar flow — deliberately simpler: the server
+// pipeline handles every accepted type uniformly, so there's no
+// "special-case HEIC differently" client logic needed here at all.
+// Codex fix-round ("Revocable media delivery"): dog.photos/dog.videos are
+// now PRIVATE Storage paths ({id, path} — see MediaItem in
+// src/types/index.ts), never directly renderable. This component fetches
+// fresh, short-lived SIGNED URLs itself (getShowcaseMediaUrls, on mount
+// and whenever the puppy changes) and every mutation (upload/reorder/
+// delete) works off MediaItem.id — never a URL — since a signed URL is
+// deliberately never stable enough to use as a stored reference.
+// `onUpdated` only ever hands the PARENT id-only MediaItem placeholders
+// (path omitted — never used downstream, only `.id` is, for the
+// publish/unpublish checkboxes in ShowcaseManager below) so the litter
+// page's own `dogs` state stays roughly in sync for that purpose, without
+// this component needing to manage two divergent sources of truth for
+// the same gallery.
+function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
+  puppy: Dog
+  disabled: boolean
+  toast: (msg: string, type?: ToastMessage['type']) => void
+  onUpdated: (patch: { photos?: MediaItem[]; videos?: MediaItem[] }) => void
+}) {
+  const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState<'photo' | 'video' | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [photos, setPhotos] = useState<SignedMediaItem[]>([])
+  const [videos, setVideos] = useState<SignedMediaItem[]>([])
+  const photoInputRef = useRef<HTMLInputElement>(null)
+  const videoInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    getShowcaseMediaUrls(puppy.id)
+      .then(result => {
+        if (cancelled) return
+        setPhotos(result.photos)
+        setVideos(result.videos)
+      })
+      .catch(err => {
+        if (!cancelled) toast(err instanceof Error && err.message ? err.message : 'Failed to load media', 'error')
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [puppy.id])
+
+  function applyResult(result: { photos: SignedMediaItem[]; videos: SignedMediaItem[] }) {
+    setPhotos(result.photos)
+    setVideos(result.videos)
+    onUpdated({
+      photos: result.photos.map(item => ({ id: item.id, path: '' })),
+      videos: result.videos.map(item => ({ id: item.id, path: '' })),
+    })
+  }
+
+  function readAsBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve((reader.result as string).split(',')[1])
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async function handleUpload(file: File, kind: 'photo' | 'video') {
+    setUploading(kind)
+    try {
+      const base64 = await readAsBase64(file)
+      const result = await uploadShowcaseMedia(puppy.id, base64, kind)
+      applyResult(result)
+      toast(`${kind === 'photo' ? 'Photo' : 'Video'} added`)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : `Failed to upload ${kind}`, 'error')
+    } finally {
+      setUploading(null)
+    }
+  }
+
+  async function handleReorder(kind: 'photo' | 'video', current: SignedMediaItem[], fromIndex: number, toIndex: number) {
+    if (toIndex < 0 || toIndex >= current.length) return
+    const next = [...current]
+    const [moved] = next.splice(fromIndex, 1)
+    next.splice(toIndex, 0, moved)
+    setBusyId(current[fromIndex].id)
+    try {
+      const result = await updateShowcaseMediaOrder(puppy.id, kind, next.map(item => item.id))
+      applyResult(result)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to reorder', 'error')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function handleDelete(kind: 'photo' | 'video', current: SignedMediaItem[], id: string) {
+    if (!window.confirm(`Remove this ${kind}? This cannot be undone.`)) return
+    setBusyId(id)
+    try {
+      const result = await updateShowcaseMediaOrder(puppy.id, kind, current.filter(item => item.id !== id).map(item => item.id))
+      applyResult(result)
+      toast(`${kind === 'photo' ? 'Photo' : 'Video'} removed`)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to remove', 'error')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  function MediaRow({ kind, items }: { kind: 'photo' | 'video'; items: SignedMediaItem[] }) {
+    return (
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+        {items.map((item, i) => (
+          <div key={item.id} style={{ position: 'relative', width: 64, opacity: busyId === item.id ? 0.5 : 1 }}>
+            {kind === 'photo' ? (
+              <img src={item.url} alt="" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: i === 0 ? '2px solid var(--brand-600)' : '1px solid var(--border)' }} />
+            ) : (
+              <video src={item.url} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted />
+            )}
+            {i === 0 && <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 9, fontWeight: 700, background: 'var(--brand-600)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>COVER</span>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+              <button type="button" disabled={disabled || i === 0 || busyId !== null} onClick={() => handleReorder(kind, items, i, i - 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>◀</button>
+              <button type="button" disabled={disabled || busyId !== null} onClick={() => handleDelete(kind, items, item.id)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>✕</button>
+              <button type="button" disabled={disabled || i === items.length - 1 || busyId !== null} onClick={() => handleReorder(kind, items, i, i + 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>▶</button>
+            </div>
+            {kind === 'photo' && i > 0 && (
+              <button type="button" disabled={disabled || busyId !== null} onClick={() => handleReorder(kind, items, i, 0)} title="Set as cover photo" style={{ width: '100%', marginTop: 2, fontSize: 9, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--mid)', padding: '1px 0' }}>★ Set cover</button>
+            )}
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (loading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Photos {photos.length > 0 && `(${photos.length})`}</div>
+      <MediaRow kind="photo" items={photos} />
+      <input ref={photoInputRef} type="file" accept="image/*,.heic,.heif" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f, 'photo'); e.target.value = '' }} />
+      <button type="button" className="btn btn-secondary btn-sm" disabled={disabled || uploading !== null} onClick={() => photoInputRef.current?.click()} style={{ marginBottom: 14 }}>
+        {uploading === 'photo' ? <span className="spinner" /> : '+ Add photo'}
+      </button>
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Videos {videos.length > 0 && `(${videos.length})`}</div>
+      <MediaRow kind="video" items={videos} />
+      <input ref={videoInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f, 'video'); e.target.value = '' }} />
+      <button type="button" className="btn btn-secondary btn-sm" disabled={disabled || uploading !== null} onClick={() => videoInputRef.current?.click()}>
+        {uploading === 'video' ? <span className="spinner" /> : '+ Add video'}
+      </button>
+    </div>
+  )
+}
+
 // ── REUSABLE PUPPY FORM FIELDS ──────────────────────────────────
 
 function PuppyFormFields({ form, onChange }: { form: PuppyForm; onChange: (f: PuppyForm) => void }) {
@@ -1086,6 +1820,766 @@ function PuppyFormFields({ form, onChange }: { form: PuppyForm; onChange: (f: Pu
         <label className="form-label">Notes</label>
         <input className="form-input" placeholder="Any distinguishing features…" value={form.notes} onChange={e => set('notes', e.target.value)} />
       </div>
+    </div>
+  )
+}
+
+// ── LITTER SHOWCASE MANAGER (Slice 1) ───────────────────────────
+// Renders per-litter, only for a breeder/admin on a Plus plan viewing an
+// already-created Showcase (see the empty/upgrade/loading/error states
+// handled by the caller in the main component above). Every mutation
+// here goes through lib/db.ts's showcase functions, which call the
+// trusted server endpoints — this component never writes to Firestore
+// directly, and never touches the `dogs` collection at all (Slice 1
+// requirement 7: hiding a puppy must not modify or delete its
+// underlying record).
+
+const AVAILABILITY_LABELS: Record<ShowcaseAvailability, string> = {
+  available: 'Available',
+  on_hold: 'On hold',
+  reserved: 'Reserved',
+  unavailable: 'Unavailable',
+  sold: 'Sold',
+}
+const PUBLIC_AVAILABILITY_OPTIONS: ShowcaseAvailability[] = ['available', 'reserved', 'sold']
+
+// ── LITTER SHOWCASE MANAGER — Draft → Save (Tony live-staging fix
+// round) ─────────────────────────────────────────────────────────────
+// Every puppy-level field (visibility, availability, colour,
+// personality, ready date, price/deposit + show-publicly, publish
+// state, cover/order) and all media (new uploads, reorder, deletion)
+// now live in a LOCAL draft per puppy until the breeder clicks "Save
+// changes" — nothing here calls the server on every keystroke/toggle
+// any more (see the removed handleTogglePuppyVisible/
+// handlePuppyAvailabilityChange/handlePublishedMediaChange/
+// handleShowcaseDetailsChange/handleShowcaseBulkAction this replaced,
+// and handleSaveShowcaseDraft in the parent, called exactly once per
+// dirty puppy on Save). The litter-level "Showcase enabled" toggle and
+// the public-share-link panel below remain their own already-good,
+// single-boolean autosave actions — unrelated to the "many small edits"
+// problem this redesign targets.
+//
+// A queued (not-yet-uploaded) file exists ONLY as a `local:<ref>` key in
+// `queuedFiles` and a matching entry in `photoOrders`/`videoOrders` (and
+// optionally `publishedPhotos`/`publishedVideos`) — the SAME ref is used
+// everywhere until Save resolves it to a real MediaItem.id (see
+// handleSaveAll below and handleSaveShowcaseDraft in the parent).
+
+interface PuppyDraftFields {
+  visible: boolean
+  availability: ShowcaseAvailability
+  colour: string | null
+  personality: string | null
+  readyToGoHomeDate: string | null
+  priceCents: number | null
+  depositCents: number | null
+  showPrice: boolean
+  showDeposit: boolean
+}
+
+interface QueuedFile {
+  file: File
+  kind: 'photo' | 'video'
+  previewUrl: string
+}
+
+function buildDraftFields(entry: LitterShowcase['puppies'][string], fallbackColour: string | null | undefined): PuppyDraftFields {
+  const resolved = entry ?? DEFAULT_SHOWCASE_PUPPY_ENTRY
+  return {
+    visible: resolved.visible,
+    availability: resolved.availability,
+    colour: resolved.colour ?? fallbackColour ?? null,
+    personality: resolved.personality ?? null,
+    readyToGoHomeDate: resolved.readyToGoHomeDate ?? null,
+    priceCents: resolved.priceCents ?? null,
+    depositCents: resolved.depositCents ?? null,
+    showPrice: resolved.showPrice === true,
+    showDeposit: resolved.showDeposit === true,
+  }
+}
+
+let localMediaRefCounter = 0
+function newLocalMediaRef() {
+  localMediaRefCounter += 1
+  return `local:${Date.now()}-${localMediaRefCounter}`
+}
+
+function ShowcaseManager({
+  litterId, showcase, puppyDogs, busy, saveError, onToggleEnabled, onSaveDraft,
+  shareBusy, shareError, shareLastRotatedToken, onRotateShare, onToggleShareEnabled, toast, onPuppyReconciled,
+}: {
+  litterId: string
+  showcase: LitterShowcase
+  puppyDogs: Dog[]
+  busy: boolean
+  saveError: string
+  onToggleEnabled: () => void
+  onSaveDraft: (
+    puppyId: string,
+    fields: Parameters<typeof updateShowcasePuppy>[2],
+    photoOrder: string[],
+    videoOrder: string[],
+    queuedFiles: Map<string, { file: File; kind: 'photo' | 'video' }>,
+    onFileUploaded: () => void
+  ) => Promise<{ ok: true; resolvedIds: Record<string, string> } | { ok: false; error: string; resolvedIds: Record<string, string> }>
+  shareBusy: boolean
+  shareError: string
+  // Only ever set immediately after THIS session rotated a link — never
+  // reconstructed from `showcase` (which only ever carries the hash).
+  shareLastRotatedToken: string | undefined
+  onRotateShare: () => void
+  onToggleShareEnabled: () => void
+  toast: (msg: string, type?: ToastMessage['type']) => void
+  // Called after a successful api/reconcile-litter-puppy.js call so the
+  // parent's `dogs` state (the source of `puppyDogs` above) reflects the
+  // now-active status immediately, without a full page reload.
+  onPuppyReconciled: (puppyId: string) => void
+}) {
+  const [mediaOpenFor, setMediaOpenFor] = useState<string | null>(null)
+  const [reconcilingFor, setReconcilingFor] = useState<string | null>(null)
+
+  // ── Draft state, one entry per puppy — built once when this litter's
+  // panel mounts. ShowcaseManager only renders while its litter row is
+  // expanded (see the call site below), so this is a genuinely fresh
+  // mount every time the panel opens; there is no stale-closure risk
+  // from a parent prop changing while it stays open, since a successful
+  // Save updates these SAME local structures directly (see handleSaveAll)
+  // rather than re-deriving from parent props. ──
+  const [fields, setFields] = useState<Record<string, PuppyDraftFields>>(() =>
+    Object.fromEntries(puppyDogs.map(p => [p.id, buildDraftFields(showcase.puppies?.[p.id], p.colour)])))
+  const [photoOrders, setPhotoOrders] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(puppyDogs.map(p => [p.id, (p.photos || []).map(item => item.id)])))
+  const [videoOrders, setVideoOrders] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(puppyDogs.map(p => [p.id, (p.videos || []).map(item => item.id)])))
+  const [publishedPhotos, setPublishedPhotos] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(puppyDogs.map(p => [p.id, [...((showcase.puppies?.[p.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY).publishedPhotoIds || [])]])))
+  const [publishedVideos, setPublishedVideos] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(puppyDogs.map(p => [p.id, [...((showcase.puppies?.[p.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY).publishedVideoIds || [])]])))
+  const [queuedFiles, setQueuedFiles] = useState<Record<string, Map<string, QueuedFile>>>(() =>
+    Object.fromEntries(puppyDogs.map(p => [p.id, new Map<string, QueuedFile>()])))
+  const [dirty, setDirty] = useState<Record<string, boolean>>({})
+  const [puppyErrors, setPuppyErrors] = useState<Record<string, string>>({})
+  const [existingMedia, setExistingMedia] = useState<Record<string, { photos: SignedMediaItem[]; videos: SignedMediaItem[] }>>({})
+  const [mediaLoading, setMediaLoading] = useState<Record<string, boolean>>({})
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
+  const [saveProgress, setSaveProgress] = useState<{ done: number; total: number } | null>(null)
+
+  const visibleCount = puppyDogs.filter(p => fields[p.id]?.visible).length
+  const anyDirty = Object.values(dirty).some(Boolean)
+
+  // Warn before a full page reload/close/URL-bar navigation while any
+  // puppy's draft has unsaved changes — the standard, dependency-free
+  // mechanism for this in a plain React app. Modern browsers show their
+  // own fixed system message regardless of the string set on
+  // `returnValue`; a listener (with preventDefault) is still required to
+  // trigger that prompt at all. In-app navigation (e.g. clicking a
+  // sidebar link) is intentionally out of scope here — that needs a
+  // router-level navigation blocker, a materially larger change for a
+  // case reload/close (the far more common and more damaging way to
+  // silently lose a draft) already covers.
+  useEffect(() => {
+    if (!anyDirty) return
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [anyDirty])
+
+  function markDirty(puppyId: string) {
+    setDirty(prev => ({ ...prev, [puppyId]: true }))
+  }
+
+  async function ensureMediaLoaded(puppyId: string) {
+    if (existingMedia[puppyId] || mediaLoading[puppyId]) return
+    setMediaLoading(prev => ({ ...prev, [puppyId]: true }))
+    try {
+      const result = await getShowcaseMediaUrls(puppyId)
+      setExistingMedia(prev => ({ ...prev, [puppyId]: result }))
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to load media', 'error')
+    } finally {
+      setMediaLoading(prev => ({ ...prev, [puppyId]: false }))
+    }
+  }
+
+  function mediaUrlForRef(puppyId: string, ref: string, kind: 'photo' | 'video'): string | undefined {
+    if (ref.startsWith('local:')) return queuedFiles[puppyId]?.get(ref)?.previewUrl
+    const list = kind === 'photo' ? existingMedia[puppyId]?.photos : existingMedia[puppyId]?.videos
+    return list?.find(item => item.id === ref)?.url
+  }
+
+  function handleAddFiles(puppyId: string, fileList: FileList | null, kind: 'photo' | 'video') {
+    if (!fileList || fileList.length === 0) return
+    const file = fileList[0]
+    // Tony live-staging fix round ("large-image 413"): reject up front,
+    // with an actionable message, anything this component either cannot
+    // shrink (HEIC/HEIF — no browser but Safari can decode it into a
+    // canvas; video — no safe client-side transcode) or has no business
+    // even trying to load into an <img> (an absurd raw upload). Ordinary
+    // JPEG/PNG/WebP photos are NOT gated here regardless of size — see
+    // lib/imageCompression.ts's prepareImageForUpload(), which shrinks
+    // them well under Vercel's body-size ceiling at Save time.
+    if (kind === 'photo' && isHeicFile(file) && file.size > MAX_HEIC_UPLOAD_BYTES) {
+      toast(`This HEIC photo is over ${Math.floor(MAX_HEIC_UPLOAD_BYTES / (1024 * 1024))}MB — please choose a smaller file or convert it to JPEG first`, 'error')
+      return
+    }
+    if (kind === 'photo' && !isHeicFile(file) && file.size > 30 * 1024 * 1024) {
+      toast('This photo is over 30MB — please choose a smaller file', 'error')
+      return
+    }
+    if (kind === 'video' && file.size > MAX_VIDEO_UPLOAD_BYTES) {
+      toast(`This video is over ${Math.floor(MAX_VIDEO_UPLOAD_BYTES / (1024 * 1024))}MB — please trim or compress it before uploading`, 'error')
+      return
+    }
+    const ref = newLocalMediaRef()
+    const previewUrl = URL.createObjectURL(file)
+    setQueuedFiles(prev => {
+      const next = new Map(prev[puppyId])
+      next.set(ref, { file, kind, previewUrl })
+      return { ...prev, [puppyId]: next }
+    })
+    if (kind === 'photo') setPhotoOrders(prev => ({ ...prev, [puppyId]: [...(prev[puppyId] || []), ref] }))
+    else setVideoOrders(prev => ({ ...prev, [puppyId]: [...(prev[puppyId] || []), ref] }))
+    markDirty(puppyId)
+  }
+
+  function handleSetCover(puppyId: string, ref: string) {
+    setPhotoOrders(prev => {
+      const current = prev[puppyId] || []
+      const idx = current.indexOf(ref)
+      if (idx <= 0) return prev
+      const next = [...current]
+      next.splice(idx, 1)
+      next.unshift(ref)
+      return { ...prev, [puppyId]: next }
+    })
+    markDirty(puppyId)
+  }
+
+  function handleReorder(puppyId: string, kind: 'photo' | 'video', ref: string, direction: -1 | 1) {
+    const setter = kind === 'photo' ? setPhotoOrders : setVideoOrders
+    setter(prev => {
+      const current = prev[puppyId] || []
+      const idx = current.indexOf(ref)
+      const target = idx + direction
+      if (idx === -1 || target < 0 || target >= current.length) return prev
+      const next = [...current]
+      const tmp = next[idx]
+      next[idx] = next[target]
+      next[target] = tmp
+      return { ...prev, [puppyId]: next }
+    })
+    markDirty(puppyId)
+  }
+
+  function handleRemoveMedia(puppyId: string, kind: 'photo' | 'video', ref: string) {
+    // A not-yet-uploaded file needs no confirmation — nothing is
+    // persisted yet, so removing it from the queue is a pure, harmless
+    // undo. An already-persisted item DOES require confirmation (task
+    // requirement) even though the actual server delete is only QUEUED,
+    // not sent immediately — deferred to Save like everything else here
+    // — since a breeder who confirms and then reloads before saving
+    // would otherwise lose that intent silently with no record of it.
+    const isQueued = ref.startsWith('local:')
+    if (!isQueued && !window.confirm(`Remove this ${kind}? This cannot be undone once you save.`)) return
+    const orderSetter = kind === 'photo' ? setPhotoOrders : setVideoOrders
+    orderSetter(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).filter(r => r !== ref) }))
+    const publishedSetter = kind === 'photo' ? setPublishedPhotos : setPublishedVideos
+    publishedSetter(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).filter(r => r !== ref) }))
+    if (isQueued) {
+      setQueuedFiles(prev => {
+        const next = new Map(prev[puppyId])
+        const queuedEntry = next.get(ref)
+        if (queuedEntry) URL.revokeObjectURL(queuedEntry.previewUrl)
+        next.delete(ref)
+        return { ...prev, [puppyId]: next }
+      })
+    }
+    markDirty(puppyId)
+  }
+
+  function handleTogglePublished(puppyId: string, kind: 'photo' | 'video', ref: string, checked: boolean) {
+    const setter = kind === 'photo' ? setPublishedPhotos : setPublishedVideos
+    setter(prev => {
+      const current = prev[puppyId] || []
+      return { ...prev, [puppyId]: checked ? [...current, ref] : current.filter(r => r !== ref) }
+    })
+    markDirty(puppyId)
+  }
+
+  function updateField<K extends keyof PuppyDraftFields>(puppyId: string, key: K, value: PuppyDraftFields[K]) {
+    setFields(prev => ({ ...prev, [puppyId]: { ...prev[puppyId], [key]: value } }))
+    markDirty(puppyId)
+  }
+
+  // "Select all / Clear all / Select available only" are draft-only now
+  // too — they set `visible` locally for every puppy, exactly like any
+  // other field edit, and only reach the server on the next Save.
+  function handleBulkAction(action: 'select_all' | 'clear_all' | 'show_available_only') {
+    setFields(prev => {
+      const next = { ...prev }
+      for (const puppy of puppyDogs) {
+        const current = next[puppy.id]
+        const visible = action === 'select_all' ? true : action === 'clear_all' ? false : current.availability === 'available'
+        next[puppy.id] = { ...current, visible }
+      }
+      return next
+    })
+    setDirty(prev => {
+      const next = { ...prev }
+      for (const puppy of puppyDogs) next[puppy.id] = true
+      return next
+    })
+  }
+
+  async function onReconcilePuppy(puppyId: string, puppyName: string) {
+    setReconcilingFor(puppyId)
+    try {
+      await reconcileLitterPuppy(puppyId)
+      onPuppyReconciled(puppyId)
+      toast(`${puppyName} is now active — litter puppies don't count toward your plan's dog limit`)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to reconcile this puppy', 'error')
+    } finally {
+      setReconcilingFor(null)
+    }
+  }
+
+  // The one "Save changes" (and, on a retry, effectively "Retry") action
+  // for the whole panel — iterates every DIRTY puppy sequentially
+  // (bounded, predictable server load; each puppy's own upload step is
+  // already internally capped at 2 concurrent requests — see
+  // handleSaveShowcaseDraft in the parent), reports a single running
+  // "Saving file X of Y" count across all of them, and never marks the
+  // overall save "All changes saved" unless EVERY dirty puppy genuinely
+  // persisted. A puppy that fails keeps its `dirty` flag, its specific
+  // error, and whatever files hadn't uploaded yet — a second click only
+  // ever retries what's still outstanding, never the whole panel over
+  // again, and never silently drops or re-sends something that already
+  // succeeded.
+  async function handleSaveAll() {
+    const dirtyPuppyIds = puppyDogs.map(p => p.id).filter(id => dirty[id])
+    if (dirtyPuppyIds.length === 0) return
+    setSaveState('saving')
+    const totalFiles = dirtyPuppyIds.reduce((sum, id) => sum + (queuedFiles[id]?.size || 0), 0)
+    let uploadedSoFar = 0
+    setSaveProgress(totalFiles > 0 ? { done: 0, total: totalFiles } : null)
+
+    let anyFailed = false
+    for (const puppyId of dirtyPuppyIds) {
+      const puppyFields = fields[puppyId]
+      const patch: Parameters<typeof updateShowcasePuppy>[2] = {
+        visible: puppyFields.visible,
+        availability: puppyFields.availability,
+        colour: puppyFields.colour,
+        personality: puppyFields.personality,
+        readyToGoHomeDate: puppyFields.readyToGoHomeDate,
+        priceCents: puppyFields.priceCents,
+        depositCents: puppyFields.depositCents,
+        showPrice: puppyFields.showPrice,
+        showDeposit: puppyFields.showDeposit,
+        publishedPhotoIds: publishedPhotos[puppyId] || [],
+        publishedVideoIds: publishedVideos[puppyId] || [],
+      }
+      const filesForPuppy = new Map(
+        Array.from((queuedFiles[puppyId] || new Map<string, QueuedFile>()).entries())
+          .map(([ref, q]) => [ref, { file: q.file, kind: q.kind }] as const)
+      )
+      const result = await onSaveDraft(
+        puppyId,
+        patch,
+        photoOrders[puppyId] || [],
+        videoOrders[puppyId] || [],
+        filesForPuppy,
+        () => { uploadedSoFar += 1; setSaveProgress(prev => (prev ? { ...prev, done: uploadedSoFar } : prev)) }
+      )
+
+      // Whether this puppy fully succeeded or not, resolve every local
+      // ref that DID finish uploading to its real id — those files are
+      // genuinely persisted now, so a retry must never re-upload them.
+      if (Object.keys(result.resolvedIds).length > 0) {
+        const resolve = (ref: string) => result.resolvedIds[ref] ?? ref
+        setPhotoOrders(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).map(resolve) }))
+        setVideoOrders(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).map(resolve) }))
+        setPublishedPhotos(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).map(resolve) }))
+        setPublishedVideos(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).map(resolve) }))
+        setQueuedFiles(prev => {
+          const next = new Map(prev[puppyId])
+          for (const ref of Object.keys(result.resolvedIds)) {
+            const queuedEntry = next.get(ref)
+            if (queuedEntry) URL.revokeObjectURL(queuedEntry.previewUrl)
+            next.delete(ref)
+          }
+          return { ...prev, [puppyId]: next }
+        })
+      }
+
+      if (result.ok) {
+        setDirty(prev => ({ ...prev, [puppyId]: false }))
+        setPuppyErrors(prev => { const next = { ...prev }; delete next[puppyId]; return next })
+      } else {
+        anyFailed = true
+        // A "stale" result means an account switch invalidated this
+        // whole in-flight save — never surface it as a per-puppy error
+        // (the account/page it belonged to no longer exists from the
+        // user's point of view).
+        if (result.error !== 'stale') setPuppyErrors(prev => ({ ...prev, [puppyId]: result.error }))
+      }
+    }
+
+    setSaveProgress(null)
+    setSaveState(anyFailed ? 'error' : 'idle')
+  }
+
+  function renderMediaGrid(puppy: Dog, kind: 'photo' | 'video') {
+    const order = (kind === 'photo' ? photoOrders[puppy.id] : videoOrders[puppy.id]) || []
+    const published = kind === 'photo' ? publishedPhotos[puppy.id] || [] : publishedVideos[puppy.id] || []
+    return (
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+        {order.map((ref, i) => {
+          const url = mediaUrlForRef(puppy.id, ref, kind)
+          const isQueued = ref.startsWith('local:')
+          const isPublished = published.includes(ref)
+          return (
+            <div key={ref} style={{ position: 'relative', width: 72 }}>
+              {kind === 'photo'
+                ? (url ? <img src={url} alt="" style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: i === 0 ? '2px solid var(--brand-600)' : '1px solid var(--border)' }} /> : <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--sand)' }} />)
+                : (url ? <video src={url} style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted /> : <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--sand)' }} />)}
+              {kind === 'photo' && i === 0 && <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 8, fontWeight: 700, background: 'var(--brand-600)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>COVER</span>}
+              {/* Tony live-staging finding ("media missing from public
+                  page"): uploaded media only ever appears publicly once
+                  EXPLICITLY published — a completely separate action from
+                  uploading. The badge below is the fix: always visible,
+                  never requires expanding anything else to check, so
+                  "uploaded but forgot to publish" is no longer possible
+                  to miss. */}
+              <span style={{ position: 'absolute', top: 2, right: 2, fontSize: 8, fontWeight: 700, background: isPublished ? 'var(--brand-600)' : 'var(--gold)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>
+                {isQueued ? 'Queued' : isPublished ? 'Published' : 'Private'}
+              </span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                <button type="button" disabled={i === 0} onClick={() => handleReorder(puppy.id, kind, ref, -1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>◀</button>
+                <button type="button" onClick={() => handleRemoveMedia(puppy.id, kind, ref)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>✕</button>
+                <button type="button" disabled={i === order.length - 1} onClick={() => handleReorder(puppy.id, kind, ref, 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>▶</button>
+              </div>
+              {kind === 'photo' && i > 0 && (
+                <button type="button" onClick={() => handleSetCover(puppy.id, ref)} title="Set as cover photo" style={{ width: '100%', marginTop: 2, fontSize: 9, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--mid)', padding: '1px 0' }}>★ Set cover</button>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 2, fontSize: 9, cursor: 'pointer' }}>
+                <input type="checkbox" checked={isPublished} onChange={e => handleTogglePublished(puppy.id, kind, ref, e.target.checked)} style={{ width: 11, height: 11, accentColor: 'var(--brand-600)' }} />
+                Publish
+              </label>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: busy ? 'default' : 'pointer', marginBottom: 4 }}>
+        <input
+          type="checkbox"
+          checked={showcase.enabled}
+          disabled={busy}
+          onChange={onToggleEnabled}
+          aria-label={showcase.enabled ? 'Disable Showcase' : 'Enable Showcase'}
+          style={{ width: 16, height: 16, accentColor: 'var(--brand-600)' }}
+        />
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>
+          {showcase.enabled ? 'Showcase enabled' : 'Showcase disabled'}
+        </span>
+      </label>
+      <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 4 }}>
+        Puppy selection below is kept whether the Showcase is enabled or disabled.
+      </p>
+      {/* Codex fix-round finding (kept, still true): "enabled/disabled"
+          above must never read as "published/public" on its own — it
+          only controls this breeder workspace panel's own curation
+          state. Slice 2 adds the ACTUAL public link below, as an
+          explicit, separate, opt-in action — turning the Showcase
+          "enabled" above never by itself shares anything; a link must
+          be generated AND turned on. */}
+      <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
+        Turning the Showcase on above only affects this panel — nothing is shared publicly until you generate a link below.
+      </p>
+
+      <div style={{ marginBottom: 14, padding: 10, background: 'var(--sand)', borderRadius: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)', marginBottom: 6 }}>Public share link</div>
+        {!showcase.shareTokenHash ? (
+          <>
+            <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
+              No public share link has been created
+            </p>
+            <button className="btn btn-secondary btn-sm" disabled={shareBusy} onClick={onRotateShare}>
+              {shareBusy ? <span className="spinner" /> : 'Get share link'}
+            </button>
+          </>
+        ) : (
+          <>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: shareBusy ? 'default' : 'pointer', marginBottom: 8 }}>
+              <input
+                type="checkbox"
+                checked={showcase.shareEnabled}
+                disabled={shareBusy}
+                onChange={onToggleShareEnabled}
+                aria-label={showcase.shareEnabled ? 'Pause public link' : 'Resume public link'}
+                style={{ width: 16, height: 16, accentColor: 'var(--brand-600)' }}
+              />
+              <span style={{ fontSize: 13, fontWeight: 600, color: showcase.enabled && showcase.shareEnabled ? 'var(--brand-600)' : 'var(--mid)' }}>
+                {showcase.enabled && showcase.shareEnabled ? 'Showcase is live and publicly accessible' : 'Share link created — Showcase is currently disabled'}
+              </span>
+            </label>
+            {shareLastRotatedToken ? (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    className="form-input"
+                    readOnly
+                    value={`${window.location.origin}/s/${shareLastRotatedToken}`}
+                    style={{ fontSize: 12 }}
+                    onFocus={e => e.target.select()}
+                  />
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/s/${shareLastRotatedToken}`) }}
+                  >Copy link</button>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--mid)', marginTop: 5 }}>Use the same link for all interested buyers.</p>
+              </div>
+            ) : (
+              <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>
+                This link was created on another device or before reusable links were supported. Generate a new link only if you no longer have the original.
+              </p>
+            )}
+            <button className="btn btn-secondary btn-sm" disabled={shareBusy} onClick={onRotateShare}>
+              {shareBusy ? <span className="spinner" /> : 'Generate new link (invalidates the current one)'}
+            </button>
+            <p style={{ fontSize: 11, color: 'var(--mid)', marginTop: 5 }}>Creates a new link and disables the previous one.</p>
+          </>
+        )}
+        {shareError && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>⚠️ {shareError}</p>}
+      </div>
+
+      {/* Uploaded-vs-published clarity (task requirement, and the fix for
+          "media missing from the public page" — see renderMediaGrid's
+          Private/Published badge for the per-item version of this same
+          point). */}
+      <p style={{ fontSize: 11, color: 'var(--light)', marginBottom: 10, fontStyle: 'italic' }}>
+        Uploaded media remains private until you publish it and click Save changes.
+      </p>
+
+      {/* Draft/save status — role="status"/aria-live so screen readers
+          announce a state change without needing focus to move here.
+          Deliberately NOT the same visual line as "Showcase
+          enabled/disabled" above — that is PUBLISH status; this is
+          DRAFT-PERSISTENCE status, and it now genuinely reflects every
+          field/media edit in this panel, not just the last one that
+          happened to fire. */}
+      <div role="status" aria-live="polite" style={{ fontSize: 12, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        {saveState === 'saving' ? (
+          <span style={{ color: 'var(--mid)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="spinner" style={{ width: 12, height: 12 }} />
+            {saveProgress ? `Saving file ${saveProgress.done + 1 > saveProgress.total ? saveProgress.total : saveProgress.done + 1} of ${saveProgress.total}…` : 'Saving…'}
+          </span>
+        ) : saveState === 'error' ? (
+          <span style={{ color: 'var(--danger)' }}>Some changes could not be saved — Retry</span>
+        ) : anyDirty ? (
+          <span style={{ color: 'var(--gold)' }}>You have unsaved changes</span>
+        ) : (
+          <span style={{ color: 'var(--brand-600)' }}>✓ All changes saved</span>
+        )}
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={!anyDirty || saveState === 'saving'}
+          onClick={handleSaveAll}
+        >
+          {saveState === 'saving' ? <span className="spinner" /> : saveState === 'error' ? 'Retry' : 'Save changes'}
+        </button>
+      </div>
+      {/* Litter-level toggle (Showcase enabled/disabled) save failure —
+          same fixed, non-technical reassurance string this codebase has
+          always shown for this class of failure (never the raw error
+          message), distinct from the per-puppy draft status above. */}
+      {saveError && <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 10 }}>Changes couldn’t be saved — try again</p>}
+
+      {puppyDogs.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '16px', color: 'var(--light)', fontSize: 13 }}>
+          No puppies in this litter yet — add puppies above to include them here.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 12, color: 'var(--mid)' }}>{visibleCount} of {puppyDogs.length} puppies shown</span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => handleBulkAction('select_all')}>Select all</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => handleBulkAction('clear_all')}>Clear all</button>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => handleBulkAction('show_available_only')}
+                title="Selects every puppy currently marked Available for the Showcase and hides the rest. This list below still always shows every puppy in the litter."
+              >Select available puppies only</button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {puppyDogs.map(puppy => {
+              const puppyFields = fields[puppy.id]
+              const checkboxId = `showcase-visible-${puppy.id}`
+              const photoOrder = photoOrders[puppy.id] || []
+              const videoOrder = videoOrders[puppy.id] || []
+              // Tony live-staging finding ("Not authorized to upload media
+              // for this dog" on the second puppy): NOT an ownership bug —
+              // canAddDogRecord() correctly, consistently blocks writes to
+              // ANY 'restricted' dog, and Pink Girl/Red Boy were genuinely
+              // restricted (over the plan's dog limit before litter puppies
+              // became cap-exempt — see api/_lib/dog-cap.js). The real gap
+              // was UX: this panel let a breeder attempt (and fail) an
+              // upload it should have explained/prevented up front, exactly
+              // like the separate Edit-puppy form already does via
+              // isPuppyRestricted above. Mirrors that same gate here, plus
+              // the same isRestrictedLitterPuppyCandidate predicate
+              // DogDetailPage uses to offer the one-click fix inline,
+              // instead of sending the breeder to each dog's own page.
+              const isPuppyRestricted = puppy.status === 'restricted'
+              const isRestrictedLitterPuppyCandidate = isPuppyRestricted && !!puppy.litterId &&
+                puppy.retainedByBreeder !== true && puppy.restrictionReason !== 'manual'
+              return (
+                <div
+                  key={puppy.id}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', border: puppyErrors[puppy.id] ? '1px solid var(--danger)' : '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--white)' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <input
+                      id={checkboxId}
+                      type="checkbox"
+                      checked={puppyFields.visible}
+                      onChange={e => updateField(puppy.id, 'visible', e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: 'var(--brand-600)', flexShrink: 0 }}
+                    />
+                    <label htmlFor={checkboxId} style={{ flex: 1, minWidth: 100, fontSize: 13, fontWeight: 500, color: 'var(--dark)', cursor: 'pointer' }}>
+                      {puppy.name}
+                      <span style={{ fontWeight: 400, color: 'var(--light)' }}> · {puppy.sex === 'female' ? '♀' : '♂'}</span>
+                    </label>
+                    <select
+                      className="form-select"
+                      value={puppyFields.availability === 'on_hold' ? 'reserved' : puppyFields.availability === 'unavailable' ? 'sold' : puppyFields.availability}
+                      onChange={e => updateField(puppy.id, 'availability', e.target.value as ShowcaseAvailability)}
+                      style={{ fontSize: 12, padding: '4px 8px', minWidth: 120 }}
+                      aria-label={`Availability for ${puppy.name}`}
+                    >
+                      {PUBLIC_AVAILABILITY_OPTIONS.map(value => (
+                        <option key={value} value={value}>{AVAILABILITY_LABELS[value]}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ paddingLeft: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span className="form-label">Public colour</span>
+                      <input className="form-input" value={puppyFields.colour ?? ''} maxLength={80}
+                        onChange={e => updateField(puppy.id, 'colour', e.target.value || null)} />
+                    </label>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span className="form-label">Ready for new home</span>
+                      <input className="form-input" type="date" value={puppyFields.readyToGoHomeDate ?? ''}
+                        onChange={e => updateField(puppy.id, 'readyToGoHomeDate', e.target.value || null)} />
+                    </label>
+                    <label className="form-group" style={{ margin: 0, gridColumn: '1/-1' }}>
+                      <span className="form-label">Personality <span style={{ color: 'var(--light)', fontWeight: 400 }}>(max 500 characters)</span></span>
+                      <textarea className="form-input" rows={2} value={puppyFields.personality ?? ''} maxLength={500}
+                        onChange={e => updateField(puppy.id, 'personality', e.target.value || null)} />
+                    </label>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span className="form-label">Price (AUD)</span>
+                      <input className="form-input" type="number" min="0" step="0.01" value={puppyFields.priceCents == null ? '' : (puppyFields.priceCents / 100).toFixed(2)}
+                        onChange={e => updateField(puppy.id, 'priceCents', e.target.value === '' ? null : Math.round(Number(e.target.value) * 100))} />
+                      <span style={{ fontSize: 11 }}><input type="checkbox" checked={puppyFields.showPrice} disabled={puppyFields.priceCents == null} onChange={e => updateField(puppy.id, 'showPrice', e.target.checked)} /> Show publicly</span>
+                    </label>
+                    <label className="form-group" style={{ margin: 0 }}>
+                      <span className="form-label">Deposit (AUD)</span>
+                      <input className="form-input" type="number" min="0" step="0.01" value={puppyFields.depositCents == null ? '' : (puppyFields.depositCents / 100).toFixed(2)}
+                        onChange={e => updateField(puppy.id, 'depositCents', e.target.value === '' ? null : Math.round(Number(e.target.value) * 100))} />
+                      <span style={{ fontSize: 11 }}><input type="checkbox" checked={puppyFields.showDeposit} disabled={puppyFields.depositCents == null} onChange={e => updateField(puppy.id, 'showDeposit', e.target.checked)} /> Show publicly</span>
+                    </label>
+                  </div>
+                  <div style={{ paddingLeft: 26 }}>
+                    {isPuppyRestricted && (
+                      <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        {isRestrictedLitterPuppyCandidate ? (
+                          <>
+                            <span>🐾 {puppy.name} was restricted before litter puppies were exempted from your plan's dog limit — reconciling won't use up any of your dog slots, and lets you manage its media again.</span>
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              disabled={reconcilingFor === puppy.id}
+                              onClick={() => onReconcilePuppy(puppy.id, puppy.name)}
+                              style={{ background: '#fff', border: '1px solid rgba(200,151,31,0.4)', color: 'var(--gold)', flexShrink: 0 }}
+                            >
+                              {reconcilingFor === puppy.id ? <span className="spinner" /> : 'Reconcile this puppy'}
+                            </button>
+                          </>
+                        ) : (
+                          <span>🔒 {puppy.name} is over your plan's dog limit and is read-only — media can't be added until it's activated or you upgrade.</span>
+                        )}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={isPuppyRestricted}
+                      onClick={() => {
+                        const opening = mediaOpenFor !== puppy.id
+                        setMediaOpenFor(opening ? puppy.id : null)
+                        if (opening) void ensureMediaLoaded(puppy.id)
+                      }}
+                      style={{ fontSize: 12 }}
+                    >
+                      📷 Photos &amp; videos {(photoOrder.length + videoOrder.length) > 0 && `(${photoOrder.length + videoOrder.length})`} {mediaOpenFor === puppy.id ? '▲' : '▼'}
+                    </button>
+                    {mediaOpenFor === puppy.id && !isPuppyRestricted && (
+                      <div style={{ marginTop: 8, padding: 10, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--sand)' }}>
+                        {mediaLoading[puppy.id] ? (
+                          <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Photos {photoOrder.length > 0 && `(${photoOrder.length})`}</div>
+                            {renderMediaGrid(puppy, 'photo')}
+                            <input
+                              type="file"
+                              accept="image/*,.heic,.heif"
+                              style={{ display: 'none' }}
+                              id={`add-photo-${puppy.id}`}
+                              onChange={e => { handleAddFiles(puppy.id, e.target.files, 'photo'); e.target.value = '' }}
+                            />
+                            <label htmlFor={`add-photo-${puppy.id}`} className="btn btn-secondary btn-sm" style={{ marginBottom: 14, cursor: 'pointer', display: 'inline-block' }}>+ Add photo</label>
+
+                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Videos {videoOrder.length > 0 && `(${videoOrder.length})`}</div>
+                            {renderMediaGrid(puppy, 'video')}
+                            <input
+                              type="file"
+                              accept="video/mp4,video/quicktime,video/webm"
+                              style={{ display: 'none' }}
+                              id={`add-video-${puppy.id}`}
+                              onChange={e => { handleAddFiles(puppy.id, e.target.files, 'video'); e.target.value = '' }}
+                            />
+                            <label htmlFor={`add-video-${puppy.id}`} className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', display: 'inline-block' }}>+ Add video</label>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {puppyErrors[puppy.id] && (
+                    <p style={{ paddingLeft: 26, fontSize: 12, color: 'var(--danger)', margin: 0 }}>⚠️ {puppyErrors[puppy.id]}</p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
     </div>
   )
 }

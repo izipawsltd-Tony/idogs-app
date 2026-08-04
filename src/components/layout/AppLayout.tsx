@@ -3,7 +3,8 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useRequestGuard } from '../../hooks/useRequestGuard'
 import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '../../lib/db'
-import { getInitials, AU_STATES } from '../../lib/utils'
+import { getInitials, AU_STATES, isDogEligibleForCap } from '../../lib/utils'
+import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
 
@@ -187,7 +188,12 @@ export default function AppLayout({ toast }: Props) {
     getDogs()
       .then(dogs => {
         if (!req.isCurrent()) return
-        setDogCount(dogs.filter((d: any) => d.status !== 'transferred' && d.transferStatus !== 'pendingClaim').length)
+        // Pricing v1.2: matches api/_lib/dog-cap.js's isEligibleForCap()
+        // exactly (via its client-side mirror) — previously this counted
+        // every non-transferred dog, INCLUDING archived and restricted
+        // ones and every litter puppy, which could show a materially
+        // different number than what the backend actually enforces.
+        setDogCount(dogs.filter(isDogEligibleForCap).length)
       })
       .catch(() => { if (req.isCurrent()) { setDogCount(null); setDogCountError(true) } })
     if (user.email) {
@@ -222,6 +228,17 @@ export default function AppLayout({ toast }: Props) {
     loadLitterCount()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, isOwner])
+
+  useEffect(() => {
+    const uid = user?.uid
+    if (!uid) return
+    return subscribeToDogUsageChanged(changedUid => {
+      if (changedUid === uid) loadDogAndClaimCounts()
+    })
+    // loadDogAndClaimCounts uses the current render's uid/generation guard.
+    // Re-subscribe whenever the authenticated account changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid])
 
   useEffect(() => {
     if (profile && !profile.state) setShowStateModal(true)

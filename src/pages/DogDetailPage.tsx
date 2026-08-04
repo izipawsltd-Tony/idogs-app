@@ -17,13 +17,15 @@ import {
   isEligibleSireDog, isDogTransferred, isDogHistoryBearing, isDogDeletableByUser
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
-import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
+import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
 import { describeTransferFailure } from '../lib/transferError'
+import { isHeicFile } from '../lib/heic'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
 import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
 import { db, auth } from '../lib/firebase'
+import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -503,7 +505,14 @@ export default function DogDetailPage({ toast }: Props) {
   // (api/set-dog-status.js, transactional) before promoting a dog back to
   // 'active'; a 409 here means the account is already at its cap and the
   // server correctly refused, not a bug.
-  async function handleSetDogStatus(action: 'activate' | 'restore' | 'restrict' | 'archive') {
+  //
+  // Codex fix-round (Finding 2): 'promote'/'unpromote' added — the only
+  // UI path that can change a litter puppy's retainedByBreeder flag (see
+  // api/set-dog-status.js). Reuses the exact same statusActionLoading
+  // single-flight lock as the 4 existing actions — a second click while
+  // one of these is in flight is a no-op (the button is disabled), same
+  // guarantee as activate/restore/restrict/archive already have.
+  async function handleSetDogStatus(action: 'activate' | 'restore' | 'restrict' | 'archive' | 'promote' | 'unpromote') {
     if (!dogId || !user) return
     setStatusActionLoading(true)
     try {
@@ -517,16 +526,57 @@ export default function DogDetailPage({ toast }: Props) {
       if (!res.ok) {
         throw new Error(body.error || 'Failed to update dog status')
       }
-      setDog(prev => prev ? { ...prev, status: body.status } as typeof prev : prev)
+      // retainedByBreeder is only present in the response for promote/
+      // unpromote (see set-dog-status.js) — litterId is never touched by
+      // either action, so it's never part of this update.
+      setDog(prev => prev ? {
+        ...prev,
+        status: body.status,
+        ...('retainedByBreeder' in body ? { retainedByBreeder: body.retainedByBreeder } : {}),
+      } as typeof prev : prev)
+      emitDogUsageChanged(user.uid)
       toast(
         action === 'activate' || action === 'restore'
           ? `${dog?.name || 'Dog'} is now active`
           : action === 'restrict'
             ? `${dog?.name || 'Dog'} moved to restricted`
-            : `${dog?.name || 'Dog'} archived`
+            : action === 'archive'
+              ? `${dog?.name || 'Dog'} archived`
+              : action === 'promote'
+                ? `${dog?.name || 'Dog'} added to your Dog List — now counts toward your plan's dog limit`
+                : `${dog?.name || 'Dog'} returned to litter-only — no longer counts toward your plan's dog limit`
       )
     } catch (err) {
       toast(err instanceof Error && err.message ? err.message : 'Failed to update dog status', 'error')
+    } finally {
+      setStatusActionLoading(false)
+    }
+  }
+
+  // Codex fix-round (Finding 3): the separate, explicit, per-dog
+  // reconciliation action for a LEGACY restricted litter puppy (no
+  // restrictionReason recorded — see api/reconcile-litter-puppy.js and
+  // api/_lib/dog-cap.js's header comment for why this is deliberately NOT
+  // folded into the generic 'activate' action above). Shares the same
+  // statusActionLoading single-flight lock.
+  async function handleReconcileLitterPuppy() {
+    if (!dogId || !user) return
+    setStatusActionLoading(true)
+    try {
+      const idToken = await user.getIdToken()
+      const res = await fetch('/api/reconcile-litter-puppy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ dogId }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(body.error || 'Failed to reconcile this puppy')
+      }
+      setDog(prev => prev ? { ...prev, status: body.status } as typeof prev : prev)
+      toast(`${dog?.name || 'Dog'} is now active — litter puppies don't count toward your plan's dog limit`)
+    } catch (err) {
+      toast(err instanceof Error && err.message ? err.message : 'Failed to reconcile this puppy', 'error')
     } finally {
       setStatusActionLoading(false)
     }
@@ -872,6 +922,34 @@ export default function DogDetailPage({ toast }: Props) {
   // not already archived (that state already has its own Restore banner
   // below).
   const canOfferArchiveInsteadOfDelete = isCurrentEffectiveOwner && dogHasPermanentHistory && !dogIsMidTransfer && !isArchived
+
+  // Codex fix-round (Finding 2/3) — litter puppy retention (promote/
+  // unpromote) and legacy-restriction reconciliation. Gated identically:
+  // breeder-only (Pet Owner accounts don't have litters), the CURRENT
+  // effective owner only (a former breeder who transferred this puppy
+  // away has no management actions here at all — same posture as every
+  // other action on this page), never mid-transfer/pending, and only for
+  // a genuine litter puppy. These are UI-visibility gates only — every
+  // one of these conditions is independently re-validated server-side in
+  // api/set-dog-status.js / api/reconcile-litter-puppy.js, which remain
+  // the sole authority.
+  const isLitterPuppy = !!(dog as any).litterId
+  const isRetainedByBreeder = (dog as any).retainedByBreeder === true
+  const canManageLitterRetention = !isOwner && isCurrentEffectiveOwner && isLitterPuppy &&
+    !isTransferred && !dogIsMidTransfer
+  // promote/unpromote both require status:'active' server-side (a puppy
+  // never changes `status` when retained/unretained — only 'restricted'
+  // needs the separate reconciliation path below).
+  const isLitterPuppyPromotable = canManageLitterRetention && !isRetainedByBreeder && !isRestricted && !isArchived
+  const isRetainedLitterPuppy = canManageLitterRetention && isRetainedByBreeder
+  // A restricted, unretained litter puppy is ambiguous by shape alone
+  // (see api/_lib/dog-cap.js's header comment) — this replaces the
+  // generic "Activate this dog" banner below with the dedicated
+  // reconciliation action instead, since the generic activate flow's cap
+  // check is not even correct for this case (reactivating a still-
+  // unpromoted litter puppy costs no cap room, but activate's check
+  // doesn't know that).
+  const isRestrictedLitterPuppyCandidate = canManageLitterRetention && isRestricted && !isRetainedByBreeder
   const todaysMilestone = getTodaysMilestone(dog.dateOfBirth, dog.createdAt)
 
   // Codex round 16: a tab-label count badge is the very first thing a
@@ -947,7 +1025,7 @@ export default function DogDetailPage({ toast }: Props) {
               Transferred to <strong>{(dog as any).buyerName}</strong> · {(dog as any).buyerEmail}
             </div>
           )}
-          {isRestricted && (
+          {isRestricted && !isRestrictedLitterPuppyCandidate && (
             <div style={{ marginTop: 10, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span>
                 🔒 This dog is over your plan's limit and is read-only — the record, Dog ID, and QR Passport all still work, and it can still be transferred.
@@ -955,6 +1033,34 @@ export default function DogDetailPage({ toast }: Props) {
               </span>
               <button className="btn btn-sm" disabled={statusActionLoading} onClick={() => handleSetDogStatus('activate')} style={{ background: '#fff', border: '1px solid rgba(200,151,31,0.4)', color: 'var(--gold)', flexShrink: 0 }}>
                 {statusActionLoading ? <span className="spinner" /> : 'Activate this dog'}
+              </button>
+            </div>
+          )}
+          {isRestrictedLitterPuppyCandidate && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>
+                🐾 This looks like a litter puppy that was restricted before litter puppies were exempted from your plan's dog limit — puppies don't count toward your limit unless you keep them. This won't use up any of your dog slots.
+              </span>
+              <button className="btn btn-sm" disabled={statusActionLoading} onClick={handleReconcileLitterPuppy} style={{ background: '#fff', border: '1px solid rgba(200,151,31,0.4)', color: 'var(--gold)', flexShrink: 0 }}>
+                {statusActionLoading ? <span className="spinner" /> : 'Reconcile this puppy'}
+              </button>
+            </div>
+          )}
+          {isLitterPuppyPromotable && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--green)', background: 'var(--green-light)', border: '1px solid rgba(8,80,65,.16)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>
+                🐾 Part of a litter — doesn't count toward your plan's dog limit yet. Keeping {dog.name} as a breeding or companion dog adds it to your independent Dog List (and your dog count).
+              </span>
+              <button className="btn btn-sm" disabled={statusActionLoading} onClick={() => handleSetDogStatus('promote')} style={{ flexShrink: 0 }}>
+                {statusActionLoading ? <span className="spinner" /> : '➕ Add to Dog List'}
+              </button>
+            </div>
+          )}
+          {isRetainedLitterPuppy && (
+            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', border: '1px solid var(--border)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>✓ Kept as a breeding/companion dog on your Dog List — counts toward your plan's dog limit.</span>
+              <button className="btn btn-sm btn-secondary" disabled={statusActionLoading} onClick={() => handleSetDogStatus('unpromote')} style={{ flexShrink: 0 }}>
+                {statusActionLoading ? <span className="spinner" /> : 'Return to litter-only'}
               </button>
             </div>
           )}
@@ -1028,12 +1134,38 @@ export default function DogDetailPage({ toast }: Props) {
         <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} isCurrentEffectiveOwner={isCurrentEffectiveOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} onUpdateSale={async (firestoreUpdates, localUpdates) => {
-        await updateDog(dogId!, firestoreUpdates)
-        setDog(prev => prev ? { ...prev, ...localUpdates } : prev)
+        try {
+          await updateDog(dogId!, firestoreUpdates)
+          setDog(prev => prev ? { ...prev, ...localUpdates } : prev)
+        } catch (err) {
+          // Staging QA finding (Black boy): isCurrentEffectiveOwner gates
+          // SaleAvailabilityPanel using the `dog` state THIS PAGE loaded
+          // with — if the buyer claims this dog (currentOwnerId
+          // reassigned) while the former breeder's tab is still open on
+          // this page, that gate stays wrongly true until something
+          // refreshes `dog`. A permission-denied save failure here IS
+          // that refresh signal — it means the server just told us the
+          // truth changed since load. Re-fetch fresh so
+          // isCurrentEffectiveOwner recomputes correctly and
+          // SaleAvailabilityPanel unmounts (or goes read-only) on the
+          // very next render, instead of staying stuck showing a form
+          // that will keep failing the exact same way forever.
+          if (normalizeSaleAvailabilityErrorCode(err) === 'permission-denied') {
+            try {
+              const fresh = await getDog(dogId!)
+              if (fresh) setDog(fresh)
+            } catch {
+              // Best-effort refresh only — if this ALSO fails, the
+              // original error below is still surfaced to the caller
+              // (SaleAvailabilityPanel's own catch) exactly as before.
+            }
+          }
+          throw err
+        }
       }} />}
       {tab === 'scan' && (
         <div style={{ maxWidth: 480 }}>
@@ -1248,15 +1380,45 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, onUpdateBreederId, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, isCurrentEffectiveOwner, onUpdateBreederId, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number | null
   toast: (msg: string, type?: ToastMessage['type']) => void
   isOwner: boolean
+  // Codex fix-round finding (Sale & Availability permission failure): NOT
+  // the same thing as `isOwner` above (that's the account ROLE — 'owner'
+  // = pet-owner-role account vs breeder-role). This is whether the
+  // CALLER is this SPECIFIC dog's current effective owner
+  // (dog.currentOwnerId === user?.uid, computed once in the parent — see
+  // DogDetailPage's own isCurrentEffectiveOwner comment on why: a former
+  // breeder viewing a dog they transferred/that was claimed away has
+  // currentOwnerId pointing at the buyer now, and firestore.rules'
+  // isEffectiveDogOwner() correctly denies them any dogs/{dogId} write —
+  // Sale & Availability included). Threaded down specifically to gate
+  // SaleAvailabilityPanel, which previously rendered based on `isOwner`
+  // (role) alone and had no way to know it was showing an editable form
+  // to someone Rules would always deny — every save attempt failed with
+  // "you don't have permission to update this dog anymore", which is
+  // CORRECT Rules behavior surfaced as a confusing, avoidable UI dead end.
+  isCurrentEffectiveOwner: boolean
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
   onUpdateSale: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
 }) {
   const { user, profile } = useAuth()
+  // Staging QA finding (Red Boy, follow-up): SaleAvailabilityPanel was
+  // gated on isCurrentEffectiveOwner (Black boy fix) but never on
+  // 'restricted' status — a puppy over its plan's dog cap keeps
+  // currentOwnerId pointing at the same breeder, so isCurrentEffectiveOwner
+  // stays true even while firestore.rules' restricted-dog clause denies
+  // every ordinary field write. The panel rendered fully editable, Save
+  // was clickable, and the resulting denied write surfaced as a
+  // confusing "you don't have permission to update this dog anymore"
+  // message — correct Rules behavior, avoidable UI dead end, same class
+  // of bug already fixed once for LittersPage's inline puppy editor.
+  // Computed directly from `dog` (already a prop here) rather than
+  // threaded as a new prop from the parent, since it's the exact same
+  // `dog.status` value the parent's own `isRestricted` is computed from.
+  const isRestricted = (dog as any).status === 'restricted'
   const [editingBreederId, setEditingBreederId] = useState(false)
   const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
   const [breederIdValue, setBreederIdValue] = useState(dog.breederIdValue || '')
@@ -1277,6 +1439,15 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
   }
 
   async function handleSaveBreederId() {
+    // Same missed-gating class as Sale & Availability (Red Boy follow-up
+    // audit, item 6): this writes directly to dogs/{dogId} — restricted
+    // status blocks it identically. Defense in depth alongside disabling
+    // the ✎/+ Add trigger below, which already prevents reaching this
+    // form at all for a restricted dog.
+    if (isRestricted) {
+      toast("This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Breeder ID.", 'error')
+      return
+    }
     setSavingBreederId(true)
     try {
       await onUpdateBreederId(breederIdType, breederIdType === 'NONE' ? '' : breederIdValue)
@@ -1338,7 +1509,14 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
             <select
               className="form-select"
               value={(dog as any).pedigreeRegister || 'main'}
+              disabled={isRestricted}
               onChange={async e => {
+                // Same missed-gating class as Sale & Availability (Red Boy
+                // follow-up audit, item 6): auto-saves on change with no
+                // separate Save button, so the guard here IS the whole
+                // defense-in-depth story for this control — `disabled`
+                // above already stops it firing from the UI.
+                if (isRestricted) return
                 await updateDog(dog.id, { pedigreeRegister: e.target.value } as any)
                 toast('Pedigree status updated')
               }}
@@ -1378,7 +1556,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
               </>
             )}
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary btn-sm" onClick={handleSaveBreederId} disabled={savingBreederId}>{savingBreederId ? <span className="spinner" /> : 'Save'}</button>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveBreederId} disabled={savingBreederId || isRestricted}>{savingBreederId ? <span className="spinner" /> : 'Save'}</button>
               <button className="btn btn-secondary btn-sm" onClick={() => { setEditingBreederId(false); setBreederIdType(dog.breederIdType || 'NONE'); setBreederIdValue(dog.breederIdValue || '') }}>Cancel</button>
             </div>
           </div>
@@ -1397,13 +1575,13 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
                   Verify ↗
                 </a>
               )}
-              <button onClick={() => setEditingBreederId(true)} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px', fontSize: 12 }}>✎</button>
+              <button onClick={() => setEditingBreederId(true)} disabled={isRestricted} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px', fontSize: 12 }}>✎</button>
             </span>
           </div>
         ) : (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
             <span style={{ color: 'var(--light)' }}>Breeder ID</span>
-            <button onClick={() => setEditingBreederId(true)} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--brand-600)' }}>+ Add</button>
+            <button onClick={() => setEditingBreederId(true)} disabled={isRestricted} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--brand-600)' }}>+ Add</button>
           </div>
         )}
         <InfoRow label="Passport ID" value={dog.passportId} mono />
@@ -1428,28 +1606,46 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
           <p style={{ fontSize: 14, color: 'var(--dark)', lineHeight: 1.6 }}>{dog.notes}</p>
         </div>
       )}
-      {!isOwner && <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} />}
+      {/* Codex fix-round finding: gated on isCurrentEffectiveOwner too, not
+          just the account-role `isOwner` check — see this prop's own
+          comment above for the root cause this closes. Mirrors the exact
+          same "hidden outright, not shown disabled — nothing to explain
+          beyond the existing 'Transferred to X' banner above" reasoning
+          already used for the Delete button (see isCurrentEffectiveOwner's
+          own comment near canDeleteDog). */}
+      {!isOwner && isCurrentEffectiveOwner && <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} isRestricted={isRestricted} />}
     </div>
   )
 }
 
 // ── SALE & AVAILABILITY PANEL ────────────────────────────────
 
-function SaleAvailabilityPanel({ dog, onSave, toast }: {
+function SaleAvailabilityPanel({ dog, onSave, toast, isRestricted }: {
   dog: Dog
   onSave: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
   toast: (msg: string, type?: ToastMessage['type']) => void
+  isRestricted: boolean
 }) {
-  const initial = {
-    availabilityStatus: dog.availabilityStatus || '',
-    reservedForName: dog.reservedForName || '',
-    reservedForEmail: dog.reservedForEmail || '',
-    reservedForPhone: dog.reservedForPhone || '',
-    reservedAt: dog.reservedAt || '',
-    depositStatus: dog.depositStatus || 'none',
-    depositAmount: dog.depositAmount != null ? String(dog.depositAmount) : '',
-    depositReceivedAt: dog.depositReceivedAt || '',
+  // Staging QA finding (Black boy): also used to REVERT the form after a
+  // failed save (see handleSave's catch block below) — a rejected local
+  // edit must never stay displayed as if it had been saved. Extracted so
+  // both the initial mount value and the post-failure revert are
+  // guaranteed to compute the exact same shape from the exact same
+  // source (the `dog` prop), never two hand-duplicated field lists that
+  // could quietly drift apart.
+  function formFromDog(d: Dog) {
+    return {
+      availabilityStatus: d.availabilityStatus || '',
+      reservedForName: d.reservedForName || '',
+      reservedForEmail: d.reservedForEmail || '',
+      reservedForPhone: d.reservedForPhone || '',
+      reservedAt: d.reservedAt || '',
+      depositStatus: d.depositStatus || 'none',
+      depositAmount: d.depositAmount != null ? String(d.depositAmount) : '',
+      depositReceivedAt: d.depositReceivedAt || '',
+    }
   }
+  const initial = formFromDog(dog)
   const [form, setForm] = useState(initial)
   const [saving, setSaving] = useState(false)
 
@@ -1464,6 +1660,20 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
   }
 
   async function handleSave() {
+    // Defense in depth (Red Boy follow-up): the Save button below is
+    // already disabled when isRestricted, but this guard means the
+    // handler itself refuses to attempt a write even if invoked some
+    // other way (e.g. programmatically, or a future caller that forgets
+    // to check `disabled`) — never relies on disabled UI alone. Mirrors
+    // handleSavePuppy's identical restricted short-circuit in
+    // LittersPage.tsx. Deliberately does NOT reuse
+    // describeSaleAvailabilitySaveFailure's permission-denied copy — this
+    // isn't a denied write at all, since no write is attempted; the
+    // plan-limit explanation is what's true here.
+    if (isRestricted) {
+      toast("This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Sale & availability.", 'error')
+      return
+    }
     setSaving(true)
     try {
       const clean = (v: string) => (v.trim() === '' ? undefined : v.trim())
@@ -1512,6 +1722,22 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
       const { userMessage, logCode } = describeSaleAvailabilitySaveFailure(e)
       console.error('sale-availability-save failed', { code: logCode })
       toast(userMessage, 'error')
+      // REQUIRED UX (staging QA finding, Black boy): if Save fails for
+      // ANY reason, restore the last server-confirmed value — never
+      // leave the attempted (rejected, never-persisted) edit displayed.
+      // The badge above reads from `form.availabilityStatus` (the same
+      // state this reverts), so this fixes both the selector AND the
+      // badge in one place. Uses the `dog` prop as-is here (this
+      // specific render's value) — for a permission-denied failure
+      // specifically, the parent's onSave has ALREADY re-fetched and
+      // updated `dog` before this catch block runs (it awaits that
+      // re-fetch before re-throwing), so by the time React re-renders,
+      // isCurrentEffectiveOwner (computed in the parent) will correctly
+      // hide this panel entirely if ownership has genuinely changed —
+      // this revert only needs to cover the brief window until then, and
+      // fully covers every OTHER failure reason (network blip, etc.) on
+      // its own, where `dog` was never stale to begin with.
+      setForm(formFromDog(dog))
     } finally {
       setSaving(false)
     }
@@ -1537,66 +1763,74 @@ function SaleAvailabilityPanel({ dog, onSave, toast }: {
         )}
       </div>
 
-      <div className="form-group" style={{ maxWidth: 260, marginBottom: 16 }}>
-        <label className="form-label">Availability</label>
-        <select
-          className="form-select"
-          value={form.availabilityStatus}
-          onChange={e => handleAvailabilityChange(e.target.value)}
-        >
-          <option value="">Not for sale</option>
-          <option value="available">Available</option>
-          <option value="reserved">Reserved</option>
-          <option value="kept">Kept</option>
-          <option value="sold">Sold</option>
-        </select>
-      </div>
-
-      {showReservationAndDeposit && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-            <div className="form-group">
-              <label className="form-label">Reserved for — name</label>
-              <input className="form-input" value={form.reservedForName} onChange={e => setForm(prev => ({ ...prev, reservedForName: e.target.value }))} placeholder="e.g. Jane Smith" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Reserved for — email</label>
-              <input className="form-input" type="email" value={form.reservedForEmail} onChange={e => setForm(prev => ({ ...prev, reservedForEmail: e.target.value }))} placeholder="e.g. jane@example.com" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Reserved for — phone</label>
-              <input className="form-input" value={form.reservedForPhone} onChange={e => setForm(prev => ({ ...prev, reservedForPhone: e.target.value }))} placeholder="e.g. 0412 345 678" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Reserved on</label>
-              <input className="form-input" type="date" value={form.reservedAt} onChange={e => setForm(prev => ({ ...prev, reservedAt: e.target.value }))} />
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
-            <div className="form-group">
-              <label className="form-label">Deposit status</label>
-              <select className="form-select" value={form.depositStatus} onChange={e => setForm(prev => ({ ...prev, depositStatus: e.target.value as 'none' | 'pending' | 'received' }))}>
-                <option value="none">None</option>
-                <option value="pending">Pending</option>
-                <option value="received">Received</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Deposit amount (AUD)</label>
-              <input className="form-input" type="number" min="0" value={form.depositAmount} onChange={e => setForm(prev => ({ ...prev, depositAmount: e.target.value }))} placeholder="e.g. 500" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Deposit received on</label>
-              <input className="form-input" type="date" value={form.depositReceivedAt} onChange={e => setForm(prev => ({ ...prev, depositReceivedAt: e.target.value }))} />
-            </div>
-          </div>
-        </>
+      {isRestricted && (
+        <div style={{ marginBottom: 14, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10 }}>
+          🔒 This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Sale & availability.
+        </div>
       )}
 
-      <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!hasChanges || saving}>
-        {saving ? <span className="spinner" style={{ borderTopColor: '#fff', width: 14, height: 14 }} /> : 'Save'}
-      </button>
+      <fieldset disabled={isRestricted} style={{ border: 'none', padding: 0, margin: 0 }}>
+        <div className="form-group" style={{ maxWidth: 260, marginBottom: 16 }}>
+          <label className="form-label">Availability</label>
+          <select
+            className="form-select"
+            value={form.availabilityStatus}
+            onChange={e => handleAvailabilityChange(e.target.value)}
+          >
+            <option value="">Not for sale</option>
+            <option value="available">Available</option>
+            <option value="reserved">Reserved</option>
+            <option value="kept">Kept</option>
+            <option value="sold">Sold</option>
+          </select>
+        </div>
+
+        {showReservationAndDeposit && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+              <div className="form-group">
+                <label className="form-label">Reserved for — name</label>
+                <input className="form-input" value={form.reservedForName} onChange={e => setForm(prev => ({ ...prev, reservedForName: e.target.value }))} placeholder="e.g. Jane Smith" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reserved for — email</label>
+                <input className="form-input" type="email" value={form.reservedForEmail} onChange={e => setForm(prev => ({ ...prev, reservedForEmail: e.target.value }))} placeholder="e.g. jane@example.com" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reserved for — phone</label>
+                <input className="form-input" value={form.reservedForPhone} onChange={e => setForm(prev => ({ ...prev, reservedForPhone: e.target.value }))} placeholder="e.g. 0412 345 678" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Reserved on</label>
+                <input className="form-input" type="date" value={form.reservedAt} onChange={e => setForm(prev => ({ ...prev, reservedAt: e.target.value }))} />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+              <div className="form-group">
+                <label className="form-label">Deposit status</label>
+                <select className="form-select" value={form.depositStatus} onChange={e => setForm(prev => ({ ...prev, depositStatus: e.target.value as 'none' | 'pending' | 'received' }))}>
+                  <option value="none">None</option>
+                  <option value="pending">Pending</option>
+                  <option value="received">Received</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Deposit amount (AUD)</label>
+                <input className="form-input" type="number" min="0" value={form.depositAmount} onChange={e => setForm(prev => ({ ...prev, depositAmount: e.target.value }))} placeholder="e.g. 500" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Deposit received on</label>
+                <input className="form-input" type="date" value={form.depositReceivedAt} onChange={e => setForm(prev => ({ ...prev, depositReceivedAt: e.target.value }))} />
+              </div>
+            </div>
+          </>
+        )}
+
+        <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!hasChanges || saving || isRestricted}>
+          {saving ? <span className="spinner" style={{ borderTopColor: '#fff', width: 14, height: 14 }} /> : 'Save'}
+        </button>
+      </fieldset>
     </div>
   )
 }
@@ -2652,15 +2886,6 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   // anything slightly larger. Resizing down to a max dimension and
   // re-encoding as JPEG at a reasonable quality keeps note photos small
   // without a visible quality loss at the sizes they're displayed.
-  // FIX (same as PhotoUpload.tsx): iPhone .heic/.heif photos can't be
-  // decoded by <img> in Chrome/Firefox/Edge — img.onload never fires, so
-  // without this check the old fallback below would silently send raw
-  // unusable HEIC bytes to the server instead of failing clearly.
-  function isHeic(file: File): boolean {
-    const type = file.type.toLowerCase()
-    const name = file.name.toLowerCase()
-    return type === 'image/heic' || type === 'image/heif' || name.endsWith('.heic') || name.endsWith('.heif')
-  }
 
   function resizeImage(file: File | Blob, maxDimension = 1600, quality = 0.82): Promise<{ base64: string; mediaType: string; preview: string }> {
     return new Promise((resolve, reject) => {
@@ -2699,7 +2924,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (isHeic(file)) {
+    if (isHeicFile(file)) {
       // Send raw HEIC to server \u2014 sharp handles conversion server-side
       const reader = new FileReader()
       reader.onload = () => {

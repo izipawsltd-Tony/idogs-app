@@ -74,9 +74,29 @@ service cloud.firestore {
     // three are exactly what must stay denied here, including a legacy
     // dog's missing createdByUserId/sourceType being silently backfilled
     // through what looks like an ordinary client update.
+    //
+    // Pricing v1.2: `litterId` and `retainedByBreeder` added. Both are
+    // load-bearing for api/_lib/dog-cap.js's isEligibleForCap() — a
+    // client that could add/remove `litterId` on a dog it owns could
+    // make a standalone dog masquerade as a cap-exempt litter puppy (or
+    // vice versa), and a client that could set `retainedByBreeder`
+    // directly could self-grant a cap slot with no cap check at all.
+    // `litterId` is written exactly once, by api/create-litter-puppy.js;
+    // `retainedByBreeder` only by api/set-dog-status.js's 'promote'/
+    // 'unpromote' actions (both Admin SDK, bypass Rules entirely — this
+    // only closes the DIRECT client-write path).
+    //
+    // Codex fix-round (Finding 3): `restrictionReason` added. It's what
+    // lets api/_lib/dog-cap.js's automatic reconciliation PROVE a
+    // restriction was cap-driven (restrictionReason:'plan_cap_exceeded')
+    // instead of guessing from a restricted dog's shape — a client that
+    // could forge that value directly could trick automatic reconciliation
+    // into reactivating a dog that was actually restricted for some other
+    // reason (restrictionReason:'manual', via api/set-dog-status.js's
+    // 'restrict' action).
     function dogProtectedFieldsUnchanged() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType', 'originBreederId']);
+        .hasAny(['tenantId', 'currentOwnerId', 'createdByUserId', 'sourceType', 'originBreederId', 'litterId', 'retainedByBreeder', 'restrictionReason']);
     }
 
     // Hotfix — allow a legitimate SECOND (or later) transfer. The
@@ -557,6 +577,95 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // ── litterShowcases/{litterId} — iDogs Litter Showcase MVP (Slice 1).
+    // Document id == litterId (one Showcase per litter, enforced
+    // structurally by api/create-showcase.js refusing to overwrite an
+    // existing doc). Same posture as litters above and for the same
+    // reason: "does litterId belong to this caller", "is puppyId a
+    // current member of this litter", and "one Showcase per litter" all
+    // need cross-document reads/validation Firestore Rules cannot safely
+    // express (no loops over a dynamic puppies map, no way to compare
+    // against another document's array from inside a single rule
+    // predicate at scale) — so every write goes exclusively through the
+    // trusted Admin SDK endpoints: api/create-showcase.js,
+    // api/set-showcase-enabled.js, api/update-showcase-puppy.js,
+    // api/bulk-update-showcase-puppies.js. Read stays client-side (the
+    // breeder's own Litters page reads its own Showcase directly) —
+    // scoped to the owning tenant only, same as litters' own read rule.
+    // Deliberately does NOT allow anonymous/public read — Slice 1 has no
+    // public Showcase page yet (SECURITY: "Do not allow anonymous access
+    // yet"); a future public page must go through its own trusted Admin
+    // SDK endpoint returning an allowlisted projection, never a direct
+    // client read of this document (which is breeder-only and, being
+    // keyed purely by puppyId → {visible, availability}, carries no
+    // buyer/microchip/vet/ownership data anyway — but the access
+    // boundary is enforced here regardless, not by what happens to be in
+    // the document today).
+    //
+    // Staging QA fix — `resource == null ||`: every litter starts with NO
+    // Showcase document at all (create-showcase.js is the only write
+    // path, and it's an explicit opt-in action). lib/db.ts's
+    // getShowcaseForLitter() does a plain getDoc() to find out whether
+    // one exists yet, and already correctly treats `!snap.exists()` as
+    // "no Showcase yet" (returns null, not an error) — but the ORIGINAL
+    // version of this rule dereferenced `resource.data.tenantId`
+    // unconditionally, even when `resource` is null (no document). A
+    // Rules-evaluation error on a missing document is NOT the same as a
+    // clean "not found" — Firestore surfaces it to the client as
+    // `permission-denied` ("Missing or insufficient permissions."),
+    // before the SDK ever gets a chance to report "doesn't exist". Every
+    // breeder opening ANY litter's Showcase panel for the first time hit
+    // this. Exactly the same class of bug already fixed (and explicitly
+    // documented) for dogs/{dogId}, vaccineRecords, wormingRecords,
+    // healthTests, activityNotes, heatCycles, documents, and reminders
+    // above — this collection was simply missed when it was first
+    // written. `resource == null` costs nothing to allow: a missing
+    // document exposes no data either way, same reasoning as every one
+    // of those siblings.
+    match /litterShowcases/{litterId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.tenantId == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    // ── showcaseEnquiries — Litter Showcase MVP Slice 2 ("Customer
+    // enquiries"). A potential buyer submits one from the PUBLIC
+    // Showcase page (no account at all), so creation can never require
+    // isSignedIn() — but exactly like litterPuppyOperations below and
+    // litterShowcases above, the actual write moves to a trusted Admin
+    // SDK endpoint (api/create-showcase-enquiry.js) rather than being
+    // allowed directly here, because the write needs validation
+    // firestore.rules cannot safely express on its own: resolving the
+    // caller-supplied share TOKEN to a tenantId/litterId (a
+    // cross-document hash lookup), confirming the Showcase is actually
+    // live (not disabled/expired/revoked), confirming an optional
+    // puppyId is really a currently-visible member of that Showcase, and
+    // rate-limiting/spam-filtering the request — none of which a Rules
+    // predicate can do. So, same posture as every other
+    // Admin-SDK-owned collection in this file: allow read only for the
+    // OWNING breeder (an enquiry is theirs to see once it exists), deny
+    // every direct client write outright.
+    //
+    // Deliberately NO `resource == null ||` guard here (unlike
+    // litterShowcases above) — that guard exists specifically for a
+    // single-document `getDoc()` lookup by a KNOWN id, where "the
+    // document doesn't exist yet" is a real, expected outcome
+    // (getShowcaseForLitter checks "does this litter even have a
+    // Showcase yet"). Enquiries are never looked up by id — the client
+    // only ever lists them via a `where('litterId', '==', ...)` query
+    // (getEnquiriesForLitter), the same query-only access pattern the
+    // `litters` collection's own (also guard-free) rule above uses. A
+    // `resource == null` comparison is meaningless for a `list`
+    // operation (there is no single candidate resource to be null) and
+    // was confirmed, while writing this Slice's own test suite, to
+    // throw a Rules evaluation error ("Property tenantId is undefined
+    // on object") for a `list` query rather than a clean allow/deny —
+    // simply omitting it, matching `litters`' own precedent, is the
+    // correct fix, not a narrower version of the guard.
+    match /showcaseEnquiries/{enquiryId} {
+      allow read: if isSignedIn() && resource.data.tenantId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
     // ── litterPuppyOperations — internal idempotency ledger for
     // api/create-litter-puppy.js (Codex round 4, Blocker 4). Written
     // exclusively by that endpoint (Admin SDK) atomically with the Dog
@@ -606,6 +715,19 @@ service cloud.firestore {
     match /scanLogs/{id} {
       allow create: if true;
       allow read, update, delete: if false;
+    }
+
+    // ── rateLimitCounters — durable, atomic rate-limit state for public
+    // Showcase endpoints (Codex fix-round: "Rate limiting" — see
+    // api/_lib/durable-rate-limit.js). Written exclusively by the Admin
+    // SDK inside a Firestore transaction; no legitimate client access
+    // pattern at all (a client that could read/write its own counter
+    // could trivially defeat the limiter it's meant to be bound by).
+    // REQUIRED before production: a Firestore TTL policy on this
+    // collection's `expiresAt` field — see durable-rate-limit.js's own
+    // header comment for the exact gcloud command; not yet configured.
+    match /rateLimitCounters/{id} {
+      allow read, write: if false;
     }
 
     // ── Deny everything else by default ──
