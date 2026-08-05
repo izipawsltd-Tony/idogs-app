@@ -34,7 +34,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { capForPlan, getOwnedActiveDogsSorted } from './_lib/dog-cap.js'
-import { computeEffectivePlan } from './_lib/entitlements.js'
+import { computeEffectivePlan, hasValidInternalEntitlement } from './_lib/entitlements.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -115,7 +115,7 @@ export default async function handler(req, res) {
       const userSnap = await tx.get(userRef)
       const profile = userSnap.exists ? userSnap.data() : {}
       const plan = computeEffectivePlan(profile)
-      const cap = capForPlan(plan)
+      const cap = capForPlan(plan, hasValidInternalEntitlement(profile))
       const currentActive = await getOwnedActiveDogsSorted(tx, db, uid)
       let room = Math.max(0, cap - currentActive.length)
 

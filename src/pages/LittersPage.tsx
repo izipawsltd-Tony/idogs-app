@@ -8,15 +8,15 @@ import {
 import type { SignedMediaItem } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
+import { formatDate, formatDateTime, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
 import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability, ShowcaseEnquiry, MediaItem } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
 import { sendTransferEmail } from '../lib/email'
 import { describeTransferFailure } from '../lib/transferError'
 import { emitDogUsageChanged } from '../lib/dogUsageEvents'
-import { isHeicFile } from '../lib/heic'
-import { prepareImageForUpload, readFileAsBase64, MAX_HEIC_UPLOAD_BYTES, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } from '../lib/imageCompression'
+import { prepareImageForUpload, readFileAsBase64, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } from '../lib/imageCompression'
+import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showcaseMoney'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -1533,13 +1533,21 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                 <div key={enq.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, fontSize: 13 }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                                     <span style={{ fontWeight: 600, color: 'var(--dark)' }}>{enq.name}</span>
-                                    <span style={{ fontSize: 11, color: 'var(--light)' }}>{formatDate(enq.createdAt)}</span>
+                                    <span style={{ fontSize: 11, color: 'var(--light)' }}>{formatDateTime(enq.createdAt)}</span>
                                   </div>
                                   <div style={{ color: 'var(--mid)', marginBottom: 4 }}>
                                     {enq.email && <span>{enq.email}</span>}{enq.email && enq.phone && ' · '}{enq.phone && <span>{enq.phone}</span>}
                                     {aboutPuppy && <span> · about {aboutPuppy.name}</span>}
                                   </div>
                                   <div style={{ color: 'var(--dark)' }}>{enq.message}</div>
+                                  {/* Tony live-staging finding ("enquiry destination unclear"): a
+                                      breeder must be able to tell, per enquiry, whether an email
+                                      notification actually went out — not just assume it did. */}
+                                  {!enq.notified && (
+                                    <div style={{ marginTop: 6, fontSize: 11, color: 'var(--gold)' }}>
+                                      📧 Not emailed — reply directly using the contact details above
+                                    </div>
+                                  )}
                                 </div>
                               )
                             })}
@@ -1898,6 +1906,44 @@ function buildDraftFields(entry: LitterShowcase['puppies'][string], fallbackColo
   }
 }
 
+// ── Price/Deposit money-input handling (Tony live-staging fix round:
+// "price limited to $10") ──────────────────────────────────────────────
+//
+// ROOT CAUSE: the price/deposit <input>s used to derive their `value`
+// directly from `(priceCents / 100).toFixed(2)` on EVERY render, with
+// onChange writing the parsed result straight back into priceCents. That
+// makes each keystroke re-format the field to a rounded "X.00" string
+// before the next keystroke lands — e.g. typing "2500" digit by digit:
+// "2" -> field reformats to "2.00" (cursor jumps to the end) -> next
+// keystroke "5" lands AFTER the reformatted text, producing "2.005" ->
+// parses back to $2.01 or, depending on exact rounding, collapses toward
+// $2.00 -> reformats to "2.00" again -> every further digit typed keeps
+// landing in the fractional part and never reaches the integer/dollars
+// part at all. This is why $2,500 could only ever end up as ~$2.00/$2.50
+// — the field was never able to accept a second significant digit typed
+// normally, regardless of the number of keystrokes.
+//
+// FIX: the input's displayed value is now driven by its OWN separate raw
+// text state (priceText/depositText below — the literal, un-reformatted
+// characters the breeder is typing), completely decoupled from the
+// committed priceCents/depositCents used for save/dirty-tracking/the
+// "Show publicly" checkbox. Reformatting to a clean "X.YY" string only
+// ever happens on blur (once the breeder has finished typing), never on
+// every keystroke — so a re-render mid-typing can never corrupt what's
+// currently in the box. Inputs are also `type="text" inputMode="decimal"`
+// rather than `type="number"`: a native number input's `.value` getter
+// returns an empty string for a currently-incomplete value (e.g. a
+// trailing decimal point while typing "10."), which would have silently
+// defeated the raw-text approach — a plain text input always reports
+// exactly what's on screen.
+//
+// cleanMoney() in api/_lib/showcase-schema.js (server-side,
+// Number.isSafeInteger + >=0) is untouched by this fix and remains the
+// authoritative validation — this only fixes the client's OWN ability to
+// produce a correct value to send it in the first place.
+
+// Strict validation runs on blur. Invalid raw text remains visible and
+// the last valid cents remain committed; Save is blocked until corrected.
 let localMediaRefCounter = 0
 function newLocalMediaRef() {
   localMediaRefCounter += 1
@@ -1947,6 +1993,14 @@ function ShowcaseManager({
   // rather than re-deriving from parent props. ──
   const [fields, setFields] = useState<Record<string, PuppyDraftFields>>(() =>
     Object.fromEntries(puppyDogs.map(p => [p.id, buildDraftFields(showcase.puppies?.[p.id], p.colour)])))
+  // Raw, un-reformatted text the breeder is currently typing into the
+  // Price/Deposit inputs — see parseMoneyLive/parseMoneyCommit's own
+  // header comment for why this must be separate from priceCents/
+  // depositCents (fixes "price limited to $10").
+  const [priceText, setPriceText] = useState<Record<string, string>>(() =>
+    Object.fromEntries(puppyDogs.map(p => [p.id, centsToMoneyText(buildDraftFields(showcase.puppies?.[p.id], p.colour).priceCents)])))
+  const [depositText, setDepositText] = useState<Record<string, string>>(() =>
+    Object.fromEntries(puppyDogs.map(p => [p.id, centsToMoneyText(buildDraftFields(showcase.puppies?.[p.id], p.colour).depositCents)])))
   const [photoOrders, setPhotoOrders] = useState<Record<string, string[]>>(() =>
     Object.fromEntries(puppyDogs.map(p => [p.id, (p.photos || []).map(item => item.id)])))
   const [videoOrders, setVideoOrders] = useState<Record<string, string[]>>(() =>
@@ -1959,6 +2013,7 @@ function ShowcaseManager({
     Object.fromEntries(puppyDogs.map(p => [p.id, new Map<string, QueuedFile>()])))
   const [dirty, setDirty] = useState<Record<string, boolean>>({})
   const [puppyErrors, setPuppyErrors] = useState<Record<string, string>>({})
+  const [moneyErrors, setMoneyErrors] = useState<Record<string, { price?: string; deposit?: string }>>({})
   const [existingMedia, setExistingMedia] = useState<Record<string, { photos: SignedMediaItem[]; videos: SignedMediaItem[] }>>({})
   const [mediaLoading, setMediaLoading] = useState<Record<string, boolean>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
@@ -1966,6 +2021,7 @@ function ShowcaseManager({
 
   const visibleCount = puppyDogs.filter(p => fields[p.id]?.visible).length
   const anyDirty = Object.values(dirty).some(Boolean)
+  const hasMoneyErrors = Object.values(moneyErrors).some(errors => Boolean(errors.price || errors.deposit))
 
   // Warn before a full page reload/close/URL-bar navigation while any
   // puppy's draft has unsaved changes — the standard, dependency-free
@@ -2013,19 +2069,21 @@ function ShowcaseManager({
   function handleAddFiles(puppyId: string, fileList: FileList | null, kind: 'photo' | 'video') {
     if (!fileList || fileList.length === 0) return
     const file = fileList[0]
-    // Tony live-staging fix round ("large-image 413"): reject up front,
-    // with an actionable message, anything this component either cannot
-    // shrink (HEIC/HEIF — no browser but Safari can decode it into a
-    // canvas; video — no safe client-side transcode) or has no business
-    // even trying to load into an <img> (an absurd raw upload). Ordinary
-    // JPEG/PNG/WebP photos are NOT gated here regardless of size — see
-    // lib/imageCompression.ts's prepareImageForUpload(), which shrinks
-    // them well under Vercel's body-size ceiling at Save time.
-    if (kind === 'photo' && isHeicFile(file) && file.size > MAX_HEIC_UPLOAD_BYTES) {
-      toast(`This HEIC photo is over ${Math.floor(MAX_HEIC_UPLOAD_BYTES / (1024 * 1024))}MB — please choose a smaller file or convert it to JPEG first`, 'error')
-      return
-    }
-    if (kind === 'photo' && !isHeicFile(file) && file.size > 30 * 1024 * 1024) {
+    // Tony live-staging fix round ("large-image 413" / "HEIC upload
+    // fails"): reject up front, with an actionable message, anything this
+    // component has no business even trying to load (an absurd raw
+    // upload) or cannot safely transcode client-side (video — no safe
+    // dependency-free client-side transcode). Photos — including HEIC/
+    // HEIF — are NOT gated here on size beyond this one generic sanity
+    // ceiling: lib/imageCompression.ts's prepareImageForUpload() decodes
+    // (HEIC/HEIF via libheif-js's WASM build) and compresses every photo
+    // format identically at Save time, well under Vercel's body-size
+    // ceiling regardless of the original file's size. HEIC previously had
+    // its own much stricter 3MB pre-flight ceiling here because it used
+    // to be sent RAW (uncompressed) — that is exactly what made ordinary
+    // iPhone photos (routinely 3-8MB) fail; it is gone now that HEIC is
+    // decoded and compressed like every other format.
+    if (kind === 'photo' && file.size > 30 * 1024 * 1024) {
       toast('This photo is over 30MB — please choose a smaller file', 'error')
       return
     }
@@ -2160,6 +2218,7 @@ function ShowcaseManager({
   // again, and never silently drops or re-sends something that already
   // succeeded.
   async function handleSaveAll() {
+    if (hasMoneyErrors) return
     const dirtyPuppyIds = puppyDogs.map(p => p.id).filter(id => dirty[id])
     if (dirtyPuppyIds.length === 0) return
     setSaveState('saving')
@@ -2394,7 +2453,7 @@ function ShowcaseManager({
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={!anyDirty || saveState === 'saving'}
+          disabled={!anyDirty || saveState === 'saving' || hasMoneyErrors}
           onClick={handleSaveAll}
         >
           {saveState === 'saving' ? <span className="spinner" /> : saveState === 'error' ? 'Retry' : 'Save changes'}
@@ -2412,8 +2471,14 @@ function ShowcaseManager({
         </div>
       ) : (
         <>
+          <div style={{ fontSize: 12, color: 'var(--mid)', marginBottom: 8 }}>
+            Uploading and publishing a photo does not, by itself, make a puppy public — a puppy only appears on your public Showcase page once its own <strong>&quot;Show this puppy publicly&quot;</strong> checkbox below is selected and changes are saved.
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            <span style={{ fontSize: 12, color: 'var(--mid)' }}>{visibleCount} of {puppyDogs.length} puppies shown</span>
+            <span style={{ fontSize: 12, color: 'var(--mid)' }}>
+              {visibleCount} of {puppyDogs.length} puppies shown
+              {visibleCount === 0 && <> — select &quot;Show this puppy publicly&quot; on at least one puppy below to show it</>}
+            </span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button className="btn btn-secondary btn-sm" onClick={() => handleBulkAction('select_all')}>Select all</button>
               <button className="btn btn-secondary btn-sm" onClick={() => handleBulkAction('clear_all')}>Clear all</button>
@@ -2458,11 +2523,15 @@ function ShowcaseManager({
                       type="checkbox"
                       checked={puppyFields.visible}
                       onChange={e => updateField(puppy.id, 'visible', e.target.checked)}
+                      aria-label={`Show ${puppy.name} publicly`}
                       style={{ width: 16, height: 16, accentColor: 'var(--brand-600)', flexShrink: 0 }}
                     />
-                    <label htmlFor={checkboxId} style={{ flex: 1, minWidth: 100, fontSize: 13, fontWeight: 500, color: 'var(--dark)', cursor: 'pointer' }}>
-                      {puppy.name}
-                      <span style={{ fontWeight: 400, color: 'var(--light)' }}> · {puppy.sex === 'female' ? '♀' : '♂'}</span>
+                    <label htmlFor={checkboxId} style={{ flex: 1, minWidth: 100, cursor: 'pointer' }}>
+                      <span style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--dark)' }}>
+                        {puppy.name}
+                        <span style={{ fontWeight: 400, color: 'var(--light)' }}> · {puppy.sex === 'female' ? '♀' : '♂'}</span>
+                      </span>
+                      <span style={{ display: 'block', fontSize: 11, fontWeight: 400, color: 'var(--light)' }}>Show this puppy publicly</span>
                     </label>
                     <select
                       className="form-select"
@@ -2476,6 +2545,19 @@ function ShowcaseManager({
                       ))}
                     </select>
                   </div>
+                  {/* Tony live-staging finding ("media missing from public page"),
+                      round 2: the per-item "Published"/"Private" badge (inside the
+                      collapsed Photos & videos panel below) already exists, but a
+                      breeder can still publish a puppy without ever opening that
+                      panel and notice nothing. This is the same warning surfaced
+                      at the row level, unmissable without expanding anything —
+                      exactly the puppy state that shipped to production live and
+                      showed only the placeholder. */}
+                  {puppyFields.visible && (publishedPhotos[puppy.id] || []).length === 0 && (publishedVideos[puppy.id] || []).length === 0 && (
+                    <div style={{ marginLeft: 26, fontSize: 11, color: 'var(--gold)', fontWeight: 500 }}>
+                      ⚠ This puppy is public but has no published photo or video — it will show the iDogs placeholder. Publish at least one item below.
+                    </div>
+                  )}
                   <div style={{ paddingLeft: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
                     <label className="form-group" style={{ margin: 0 }}>
                       <span className="form-label">Public colour</span>
@@ -2494,15 +2576,49 @@ function ShowcaseManager({
                     </label>
                     <label className="form-group" style={{ margin: 0 }}>
                       <span className="form-label">Price (AUD)</span>
-                      <input className="form-input" type="number" min="0" step="0.01" value={puppyFields.priceCents == null ? '' : (puppyFields.priceCents / 100).toFixed(2)}
-                        onChange={e => updateField(puppy.id, 'priceCents', e.target.value === '' ? null : Math.round(Number(e.target.value) * 100))} />
-                      <span style={{ fontSize: 11 }}><input type="checkbox" checked={puppyFields.showPrice} disabled={puppyFields.priceCents == null} onChange={e => updateField(puppy.id, 'showPrice', e.target.checked)} /> Show publicly</span>
+                      <input className="form-input" type="text" inputMode="decimal" placeholder="0.00"
+                        value={priceText[puppy.id] ?? ''}
+                        onChange={e => {
+                          const raw = e.target.value
+                          setPriceText(prev => ({ ...prev, [puppy.id]: raw }))
+                          updateField(puppy.id, 'priceCents', parseMoneyLive(raw, puppyFields.priceCents))
+                          if (moneyErrors[puppy.id]?.price && !parseMoneyCommit(raw).error) {
+                            setMoneyErrors(prev => ({ ...prev, [puppy.id]: { ...prev[puppy.id], price: undefined } }))
+                          }
+                        }}
+                        onBlur={() => {
+                          const { cents, error } = parseMoneyCommit(priceText[puppy.id] ?? '')
+                          setMoneyErrors(prev => ({ ...prev, [puppy.id]: { ...prev[puppy.id], price: error || undefined } }))
+                          if (!error) {
+                            updateField(puppy.id, 'priceCents', cents)
+                            setPriceText(prev => ({ ...prev, [puppy.id]: centsToMoneyText(cents) }))
+                          }
+                        }} />
+                      {moneyErrors[puppy.id]?.price && <span role="alert" style={{ fontSize: 11, color: 'var(--danger)' }}>{moneyErrors[puppy.id].price}</span>}
+                      <span style={{ fontSize: 11 }} title="Independent of the puppy's own 'Show this puppy publicly' checkbox above — this only controls whether the PRICE amount is shown, on a puppy that is already public."><input type="checkbox" checked={puppyFields.showPrice} disabled={puppyFields.priceCents == null} onChange={e => updateField(puppy.id, 'showPrice', e.target.checked)} /> Show price publicly</span>
                     </label>
                     <label className="form-group" style={{ margin: 0 }}>
                       <span className="form-label">Deposit (AUD)</span>
-                      <input className="form-input" type="number" min="0" step="0.01" value={puppyFields.depositCents == null ? '' : (puppyFields.depositCents / 100).toFixed(2)}
-                        onChange={e => updateField(puppy.id, 'depositCents', e.target.value === '' ? null : Math.round(Number(e.target.value) * 100))} />
-                      <span style={{ fontSize: 11 }}><input type="checkbox" checked={puppyFields.showDeposit} disabled={puppyFields.depositCents == null} onChange={e => updateField(puppy.id, 'showDeposit', e.target.checked)} /> Show publicly</span>
+                      <input className="form-input" type="text" inputMode="decimal" placeholder="0.00"
+                        value={depositText[puppy.id] ?? ''}
+                        onChange={e => {
+                          const raw = e.target.value
+                          setDepositText(prev => ({ ...prev, [puppy.id]: raw }))
+                          updateField(puppy.id, 'depositCents', parseMoneyLive(raw, puppyFields.depositCents))
+                          if (moneyErrors[puppy.id]?.deposit && !parseMoneyCommit(raw).error) {
+                            setMoneyErrors(prev => ({ ...prev, [puppy.id]: { ...prev[puppy.id], deposit: undefined } }))
+                          }
+                        }}
+                        onBlur={() => {
+                          const { cents, error } = parseMoneyCommit(depositText[puppy.id] ?? '')
+                          setMoneyErrors(prev => ({ ...prev, [puppy.id]: { ...prev[puppy.id], deposit: error || undefined } }))
+                          if (!error) {
+                            updateField(puppy.id, 'depositCents', cents)
+                            setDepositText(prev => ({ ...prev, [puppy.id]: centsToMoneyText(cents) }))
+                          }
+                        }} />
+                      {moneyErrors[puppy.id]?.deposit && <span role="alert" style={{ fontSize: 11, color: 'var(--danger)' }}>{moneyErrors[puppy.id].deposit}</span>}
+                      <span style={{ fontSize: 11 }} title="Independent of the puppy's own 'Show this puppy publicly' checkbox above — this only controls whether the DEPOSIT amount is shown, on a puppy that is already public."><input type="checkbox" checked={puppyFields.showDeposit} disabled={puppyFields.depositCents == null} onChange={e => updateField(puppy.id, 'showDeposit', e.target.checked)} /> Show deposit publicly</span>
                     </label>
                   </div>
                   <div style={{ paddingLeft: 26 }}>

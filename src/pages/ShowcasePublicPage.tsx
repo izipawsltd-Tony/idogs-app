@@ -143,15 +143,28 @@ function EnquiryForm({ token, puppies, selectedPuppy, onSelectedPuppy }: { token
   const [form, setForm] = useState({ name: '', email: '', phone: '', message: '', consent: false, website: '' })
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
   const [error, setError] = useState('')
+  // Set from the server's own `notified` field (api/create-showcase-
+  // enquiry.js) — never assumed. false covers both "no email attempt was
+  // made" (e.g. RESEND_API_KEY not configured for this deployment) and
+  // "an attempt was made but failed" — from this visitor's point of
+  // view both are the same accurate statement: their enquiry IS saved,
+  // but whether the breeder has actually seen an email about it is not
+  // something this page can promise.
+  const [notified, setNotified] = useState(false)
   async function submit(e: FormEvent) {
     e.preventDefault(); if (state === 'sending') return; setState('sending'); setError('')
     try {
       const response = await fetch('/api/create-showcase-enquiry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, puppyRef: selectedPuppy || undefined, ...form }) })
       const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Could not send your enquiry')
+      setNotified(data.notified === true)
       setState('sent')
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not send your enquiry'); setState('error') }
   }
-  if (state === 'sent') return <div style={{ ...panel, marginTop: 30 }} role="status"><h2>Enquiry sent successfully</h2><p>The breeder has received your enquiry and can contact you using the details you provided.</p></div>
+  if (state === 'sent') return <div style={{ ...panel, marginTop: 30 }} role="status">
+    {notified
+      ? <><h2>Enquiry sent successfully</h2><p>The breeder has been notified.</p></>
+      : <><h2>Enquiry submitted successfully</h2><p>The breeder can view it in iDogs.</p></>}
+  </div>
   return <form onSubmit={submit} style={{ ...panel, marginTop: 30, maxWidth: 720, marginLeft: 'auto', marginRight: 'auto', textAlign: 'left' }}><h2>Enquire about this litter</h2>
     <label className="form-group"><span className="form-label">Interested puppy</span><select className="form-select" value={selectedPuppy} onChange={e => onSelectedPuppy(e.target.value)}><option value="">General enquiry</option>{puppies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     <label className="form-group"><span className="form-label">Name</span><input className="form-input" required maxLength={200} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>

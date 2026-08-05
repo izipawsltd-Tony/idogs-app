@@ -39,15 +39,39 @@
 // Body: { token, puppyRef?, name, email?, phone?, message, consent, website? }
 //   (`website` is an intentionally-undocumented honeypot field — see
 //   api/_lib/enquiry-schema.js)
-// Returns: { success: true } | { error } | 404 | 429 | 400
+// Returns: { success: true, notified: boolean } | { error } | 404 | 429 | 400
+//
+// Tony live-staging finding (round 2 — "enquiry destination unclear"):
+// a PREVIOUS round already reworded the public success copy once, to
+// stop literally claiming "an email was sent" — but the enquiry was
+// (and still is, structurally) ONLY EVER PERSISTED here; nothing was
+// ever sent to the breeder, so even the reworded "has received your
+// enquiry" copy overstated what actually happened. This round adds a
+// REAL best-effort email notification to the breeder — via the SAME
+// Resend provider/domain/sender this codebase already uses everywhere
+// else (api/send-email.js, api/survey.js) — and reports the true
+// outcome back to the caller as `notified`, so the frontend can show one
+// of three honest states instead of one optimistic one. See
+// api/_lib/showcase-notification.js's sendShowcaseEnquiryNotification()
+// for the graceful-degradation contract this depends on.
+//
+// SECURITY: the recipient is ALWAYS resolved server-side from the
+// token-matched Showcase's own tenantId, via Firebase Auth (the
+// authoritative source of an account's real login email — this app
+// never duplicates email into the Firestore user profile). The request
+// body has no field this endpoint ever reads as a recipient — only the
+// ENQUIRER's own contact email (`sanitized.email`), which is stored for
+// the breeder to reply to and is never used as a send-to address.
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
+import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { getClientIp, hashClientKey } from './_lib/rate-limit.js'
 import { checkDurableRateLimit } from './_lib/durable-rate-limit.js'
 import { hashShareToken, isShareLive, isTenantPlusEligible } from './_lib/showcase-share.js'
 import { sanitizeEnquiryInput, EnquiryValidationError } from './_lib/enquiry-schema.js'
 import { resolveVisiblePuppyByRef } from './_lib/showcase-media-access.js'
+import { sendShowcaseEnquiryNotification } from './_lib/showcase-notification.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -160,15 +184,46 @@ export default async function handler(req, res) {
     // invalid token, since a ref that doesn't resolve is a trust-
     // boundary mismatch, not an ordinary user-correctable form error.
     let resolvedPuppyId = null
+    let resolvedPuppyName = null
     if (sanitized.puppyRef) {
       const resolved = await resolveVisiblePuppyByRef(db, showcase, litterId, sanitized.puppyRef)
       if (!resolved) {
         return res.status(404).json({ error: 'Not found' })
       }
       resolvedPuppyId = resolved.dogId
+      resolvedPuppyName = resolved.dog.name || null
     }
 
-    await db.collection('showcaseEnquiries').add({
+    // Recipient resolution — ALWAYS from showcase.tenantId (already
+    // proven single-sourced from the token match + tenant-chain
+    // validation above), NEVER from anything in the request body. A
+    // deleted/malformed Auth record must not crash the request — it
+    // just means no notification can be attempted.
+    let breederEmail = null
+    try {
+      const breederUser = await getAuth().getUser(showcase.tenantId)
+      breederEmail = breederUser.email || null
+    } catch {
+      breederEmail = null
+    }
+
+    // ── Durability-first ordering (Codex fix-round: "email delivery and
+    // Firestore persistence are not one atomic operation") ─────────────
+    //
+    // Email delivery through Resend and the Firestore write are two
+    // INDEPENDENT operations with no shared transaction — a naive
+    // "attempt the email, then write" ordering has a real data-loss
+    // window: if the Resend call hangs or this function's execution is
+    // cut off (a Vercel timeout, a cold-start eviction) anywhere during
+    // that network call, the enquiry is NEVER written at all — a buyer's
+    // message vanishes with no trace and no error either party can act
+    // on. The required invariant is the reverse: the enquiry's existence
+    // must never depend on the email succeeding, completing, or even
+    // being attempted.
+    //
+    // 1. Create the enquiry FIRST, with notified:false — durable before
+    //    any external network call is made at all.
+    const enquiryRef = await db.collection('showcaseEnquiries').add({
       tenantId: showcase.tenantId,
       litterId,
       puppyId: resolvedPuppyId,
@@ -177,9 +232,55 @@ export default async function handler(req, res) {
       phone: sanitized.phone,
       message: sanitized.message,
       createdAt: FieldValue.serverTimestamp(),
+      notified: false,
+    })
+    // If the write above throws, execution jumps straight to this
+    // function's own outer catch (below) — sendShowcaseEnquiryNotification
+    // is never reached, so a Firestore write failure can never trigger an
+    // email attempt for an enquiry that was never actually saved.
+
+    // 2. ONLY THEN attempt the notification — a pure side effect from
+    // this point on; its outcome updates the ALREADY-DURABLE document,
+    // it never determines whether that document exists.
+    const { notified, errorCode: notificationErrorCode } = await sendShowcaseEnquiryNotification({
+      breederEmail,
+      litterName: litterSnap.data().name,
+      puppyName: resolvedPuppyName,
+      enquirerName: sanitized.name,
+      enquirerEmail: sanitized.email,
+      enquirerPhone: sanitized.phone,
+      message: sanitized.message,
     })
 
-    return res.status(200).json({ success: true })
+    // 3. Record the true outcome on the SAME document — never a second
+    // enquiry, never a delete+recreate. If this update itself fails, the
+    // enquiry (from step 1) is already safely preserved regardless; we
+    // deliberately do NOT retry the email here (sendShowcaseEnquiryNotification
+    // already ran exactly once above — retrying now risks a real double
+    // send if Resend already accepted the original attempt) and we
+    // deliberately do NOT retry the update in a loop (a stuck/failing
+    // Firestore write must not turn into an unbounded retry storm on a
+    // public, unauthenticated endpoint). The HTTP response below still
+    // reports the CORRECT `notified` value either way — it's read from
+    // this request's own in-memory result, never re-derived from a
+    // document read that could itself now be stale.
+    try {
+      await enquiryRef.update({
+        notified,
+        ...(notificationErrorCode ? { notificationErrorCode } : {}),
+      })
+    } catch {
+      console.error('create-showcase-enquiry status update:', { code: 'NOTIFICATION_STATUS_UPDATE_FAILED' })
+    }
+
+    // Fixed reason code only, for retry/admin review — never the raw
+    // provider error (which can echo back the recipient address) and
+    // never breederEmail/sanitized.email/sanitized.phone.
+    if (notificationErrorCode) {
+      console.error('create-showcase-enquiry notification:', { code: notificationErrorCode })
+    }
+
+    return res.status(200).json({ success: true, notified })
   } catch (err) {
     console.error('create-showcase-enquiry error:', { code: 'ENQUIRY_SUBMIT_FAILED' })
     return res.status(500).json({ error: 'Internal error' })

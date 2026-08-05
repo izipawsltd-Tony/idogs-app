@@ -32,6 +32,19 @@ export function formatDateShort(date: string | undefined): string {
   }
 }
 
+// Date + time — used where a submission's exact moment matters (e.g. a
+// breeder's own Showcase enquiry list), unlike formatDate()'s day-only
+// precision which is ambiguous for anything a breeder might need to
+// triage in arrival order within the same day.
+export function formatDateTime(date: string | Date | undefined): string {
+  if (!date) return '—'
+  try {
+    return format(new Date(date), 'dd MMM yyyy, h:mm a')
+  } catch {
+    return '—'
+  }
+}
+
 export function timeAgo(date: string | undefined): string {
   if (!date) return ''
   try {
@@ -397,17 +410,45 @@ export function isEligibleDamDog(dog: Dog): boolean {
 // earlier.
 const PLAN_GRACE_MS = 7 * 24 * 60 * 60 * 1000
 
+// Mirrors computeEffectivePlan()'s internal-entitlement fallback (see that
+// function's own comment in api/_lib/entitlements.js, including the
+// fail-closed expiresAt handling — a malformed/non-string expiresAt must
+// never be silently treated as "no expiry" the way a naive `new
+// Date(garbage).getTime()` -> NaN check would) — display-only, same as
+// the rest of this function; the server re-derives this fresh from a
+// trusted users/{uid} read on every gated request regardless of what this
+// says.
+// Super Admin fix round: exported so AppLayout.tsx can render an
+// "Unlimited" dog-cap treatment for a verified internal admin — mirrors
+// the server-side decision to export hasValidInternalEntitlement in
+// api/_lib/entitlements.js for the same reason (the numeric DOG_CAP.plus
+// ceiling isn't enough on its own; a Super Admin genuinely bypasses it).
+export function hasValidInternalEntitlementClient(
+  entitlement: UserProfile['internalEntitlement'],
+  now: Date
+): boolean {
+  if (!entitlement || entitlement.granted !== true) return false
+  const expiresAt = entitlement.expiresAt
+  if (expiresAt === null || expiresAt === undefined) return true
+  if (typeof expiresAt !== 'string') return false
+  const expiresAtMs = new Date(expiresAt).getTime()
+  if (Number.isNaN(expiresAtMs)) return false
+  return now.getTime() < expiresAtMs
+}
+
 export function getEffectivePlanClient(
-  profile: Pick<UserProfile, 'plan' | 'subscriptionStatus' | 'pastDueSince'> | null | undefined,
+  profile: Pick<UserProfile, 'plan' | 'subscriptionStatus' | 'pastDueSince' | 'internalEntitlement'> | null | undefined,
   now: Date = new Date()
 ): 'free' | 'plus' {
   const rawPlan = profile?.plan === 'plus' ? 'plus' : 'free'
-  if (rawPlan !== 'plus') return 'free'
-  if (profile?.subscriptionStatus === 'past_due' && profile?.pastDueSince) {
+  let paidPlanActive = rawPlan === 'plus'
+  if (paidPlanActive && profile?.subscriptionStatus === 'past_due' && profile?.pastDueSince) {
     const since = new Date(profile.pastDueSince).getTime()
-    if (!Number.isNaN(since) && now.getTime() - since > PLAN_GRACE_MS) return 'free'
+    if (!Number.isNaN(since) && now.getTime() - since > PLAN_GRACE_MS) paidPlanActive = false
   }
-  return 'plus'
+  if (paidPlanActive) return 'plus'
+  if (hasValidInternalEntitlementClient(profile?.internalEntitlement, now)) return 'plus'
+  return 'free'
 }
 
 export const LIFE_STAGE_LABELS: Record<LifeStage, string> = {

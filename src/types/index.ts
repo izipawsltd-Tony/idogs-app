@@ -334,6 +334,26 @@ export interface ShowcaseEnquiry {
   phone: string | null
   message: string
   createdAt: string
+  // Set server-side only (api/create-showcase-enquiry.js) — whether an
+  // email notification to the breeder was accepted by the provider.
+  // false covers "never attempted" (no RESEND_API_KEY configured, the
+  // breeder's Auth record has no resolvable email, or an attempt was
+  // made but rejected/failed) — from the breeder's own point of view all
+  // of these are the same actionable state: "check this enquiry in
+  // iDogs, don't rely on an email having arrived." The enquiry itself is
+  // always persisted regardless of this value.
+  //
+  // OPTIONAL, not required: a legacy enquiry document created before
+  // this field existed genuinely has no `notified` key in Firestore at
+  // all (Firestore never retroactively backfills fields) — every reader
+  // must treat absence the same as `false` (see LittersPage.tsx's
+  // `!enq.notified` check, which already does this correctly via plain
+  // JS falsy semantics) rather than assuming the field is always present.
+  notified?: boolean
+  // Fixed, non-PII reason code only (never a raw provider error, which
+  // could echo back the recipient address or other sensitive detail) —
+  // present only when notified is false AND an attempt was actually made.
+  notificationErrorCode?: string
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -472,6 +492,20 @@ export interface UserProfile {
   // plusScansPeriodStart/planActivatedAt currently belong to; see
   // api/_lib/webhook-handler.js's quotaInitFields().
   plusScansSubscriptionId?: string
+  // Internal/admin-granted Plus entitlement, independent of Stripe — see
+  // api/_lib/entitlements.js's computeEffectivePlan() and
+  // scripts/grant-internal-entitlement.mjs. Server-owned (protected by
+  // firestore.rules' userBillingFields()); never written by the Stripe
+  // webhook. `granted: false` is an explicit, auditable revoke.
+  internalEntitlement?: {
+    granted: boolean
+    grantedAt: string
+    grantedBy: string
+    reason: string
+    expiresAt: string | null
+    revokedAt?: string
+    revokedBy?: string
+  } | null
   // Account-level Breeder ID (e.g. DACO number for SA breeders). Mandatory
   // for active breeders in most states, but some breeders genuinely don't
   // have one yet (e.g. dogs too young to be bred from yet) — so this is

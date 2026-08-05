@@ -33,7 +33,11 @@ const dogDetailPageSource = readFileSync(new URL('../src/pages/DogDetailPage.tsx
 check(
   'claim-transferred-dogs.js computes room against the buyer\'s OWN cap before assigning status — never rejects the claim itself',
   claimSource.includes('computeEffectivePlan(profile)') &&
-    claimSource.includes('capForPlan(plan)') &&
+    // Super Admin fix round: capForPlan now also takes an `unlimited`
+    // second argument (hasValidInternalEntitlement(profile)) — this
+    // check intentionally only pins the first argument (`plan`), not
+    // the exact call shape, so it stays valid across that addition.
+    /capForPlan\(plan,/.test(claimSource) &&
     claimSource.includes('getOwnedActiveDogsSorted(tx, db, uid)') &&
     !/return res\.status\(4\d\d\).*claim/i.test(claimSource) // no 4xx rejection path for the claim action itself
 )
@@ -117,7 +121,10 @@ check(
 check(
   'api/create-dog.js computes the cap-aware active/restricted status from a live count taken INSIDE the same reservation+write transaction — never blocks creation',
   createDogSource.includes('computeEffectivePlan(profile)') &&
-    createDogSource.includes('capForPlan(plan)') &&
+    // Super Admin fix round: see the matching comment above (claim-
+    // transferred-dogs.js check) — capForPlan gained a second `unlimited`
+    // argument, so this only pins the first argument.
+    /capForPlan\(plan,/.test(createDogSource) &&
     createDogSource.includes('getOwnedActiveDogsSorted(tx, db, uid)') &&
     createDogSource.includes("activeDogs.length >= cap ? 'restricted' : 'active'")
 )

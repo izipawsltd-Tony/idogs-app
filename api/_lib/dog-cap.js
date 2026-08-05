@@ -56,7 +56,19 @@ import { FieldValue } from 'firebase-admin/firestore'
 
 export const DOG_CAP = Object.freeze({ free: 2, plus: 5 })
 
-export function capForPlan(plan) {
+// Super Admin fix round: `unlimited` is a SEPARATE signal from `plan` —
+// callers derive it from api/_lib/entitlements.js's
+// hasValidInternalEntitlement(profile), never from plan itself (a valid
+// internal entitlement already makes computeEffectivePlan(profile)
+// resolve to 'plus', but Plus's own cap is a finite 5 — a genuine
+// Super Admin bypass needs a real "no ceiling", not "inherit Plus's
+// number"). Defaults to false so every EXISTING caller that doesn't pass
+// it (the entire Stripe webhook/grace-cron path, which only ever passes
+// a literal 'plus'/'free' string derived from the Stripe event itself,
+// never a live profile) is completely unaffected — a real subscription
+// event can never accidentally grant or imply unlimited.
+export function capForPlan(plan, unlimited = false) {
+  if (unlimited) return Infinity
   return plan === 'plus' ? DOG_CAP.plus : DOG_CAP.free
 }
 
@@ -230,7 +242,7 @@ export function demoteExcessToRestricted(tx, activeDogsSorted, cap) {
 // for every signed-in user right after they create a dog — the next time
 // THEY trigger it. Safe no-op, repeatable, for every account with nothing
 // to fix.
-export async function reconcileDogCapTx(tx, db, uid, plan) {
+export async function reconcileDogCapTx(tx, db, uid, plan, unlimited = false) {
   const snap = await tx.get(db.collection('dogs').where('currentOwnerId', '==', uid))
   const all = snap.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
 
@@ -244,7 +256,7 @@ export async function reconcileDogCapTx(tx, db, uid, plan) {
   }
   const misrestrictedPuppiesReactivated = misrestrictedPuppies.map(d => d.id)
 
-  const cap = capForPlan(plan)
+  const cap = capForPlan(plan, unlimited)
   if (active.length <= cap) return { demoted: [], cap, activeCount: active.length, misrestrictedPuppiesReactivated }
   const demoted = demoteExcessToRestricted(tx, active, cap)
   return { demoted, cap, activeCount: cap, misrestrictedPuppiesReactivated }
@@ -266,8 +278,8 @@ export async function reconcileDogCapTx(tx, db, uid, plan) {
 // legacy litter puppy with no restrictionReason recorded is NOT touched
 // here — see api/reconcile-litter-puppy.js. Only genuinely cap-restricted
 // dogs draw from the remaining room, exactly as before this change.
-export async function reactivateUpToCapTx(tx, db, uid, plan) {
-  const cap = capForPlan(plan)
+export async function reactivateUpToCapTx(tx, db, uid, plan, unlimited = false) {
+  const cap = capForPlan(plan, unlimited)
   const activeSnap = await tx.get(db.collection('dogs').where('currentOwnerId', '==', uid))
   const all = activeSnap.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }))
   const currentlyActive = all.filter(isEligibleForCap)

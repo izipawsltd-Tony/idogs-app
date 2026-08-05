@@ -39,7 +39,7 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { validateBreedingParent } from './_lib/parent-eligibility.js'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { sanitizeLitterInput, LitterValidationError, CREATE_FIELDS } from './_lib/litter-schema.js'
-import { computeEffectivePlan } from './_lib/entitlements.js'
+import { computeEffectivePlan, hasValidInternalEntitlement } from './_lib/entitlements.js'
 import {
   hasLitterWithinRollingWindow,
   hasOtherUndatedPlannedLitter,
@@ -133,18 +133,31 @@ async function handler(req, res) {
     // planned litter at a time. All reads happen here, before the single
     // write below, per transaction rules.
     const userSnap = await tx.get(db.collection('users').doc(uid))
-    const plan = computeEffectivePlan(userSnap.exists ? userSnap.data() : {})
+    const profile = userSnap.exists ? userSnap.data() : {}
+    const plan = computeEffectivePlan(profile)
     if (plan !== 'plus') {
       return { ok: false, status: 403, body: { error: LITTER_PLAN_GATE_MESSAGE, reason: 'LITTER_PLAN_GATE' } }
     }
 
+    // Super Admin fix round: a verified internal entitlement bypasses the
+    // rolling-window/one-planned-litter limits entirely (QA needs to
+    // create more than one test litter without waiting a year) — it does
+    // NOT bypass the plan gate above, which internalEntitlement already
+    // satisfies via computeEffectivePlan() resolving to 'plus'. The
+    // ledger entry is still written below for a dated litter either way,
+    // so historical quota accounting stays accurate even if the override
+    // is later revoked.
+    const isUnlimited = hasValidInternalEntitlement(profile)
+
     const whelpingDate = safeFields.actualBirthDate || ''
     if (whelpingDate) {
-      const withinWindow = await hasLitterWithinRollingWindow(tx, db, uid, whelpingDate)
-      if (withinWindow) {
-        return { ok: false, status: 409, body: { error: LITTER_QUOTA_BLOCK_MESSAGE, reason: 'LITTER_QUOTA_EXCEEDED' } }
+      if (!isUnlimited) {
+        const withinWindow = await hasLitterWithinRollingWindow(tx, db, uid, whelpingDate)
+        if (withinWindow) {
+          return { ok: false, status: 409, body: { error: LITTER_QUOTA_BLOCK_MESSAGE, reason: 'LITTER_QUOTA_EXCEEDED' } }
+        }
       }
-    } else {
+    } else if (!isUnlimited) {
       const hasPlanned = await hasOtherUndatedPlannedLitter(tx, db, uid)
       if (hasPlanned) {
         return { ok: false, status: 409, body: { error: LITTER_PLANNED_DUPLICATE_MESSAGE, reason: 'LITTER_PLANNED_DUPLICATE' } }

@@ -33,7 +33,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { capForPlan, getOwnedActiveDogsSorted } from './_lib/dog-cap.js'
-import { computeEffectivePlan } from './_lib/entitlements.js'
+import { computeEffectivePlan, hasValidInternalEntitlement } from './_lib/entitlements.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -152,7 +152,7 @@ async function handler(req, res) {
         const userSnap = await tx.get(userRef)
         const profile = userSnap.exists ? userSnap.data() : {}
         const plan = computeEffectivePlan(profile)
-        const cap = capForPlan(plan)
+        const cap = capForPlan(plan, hasValidInternalEntitlement(profile))
         const activeDogs = await getOwnedActiveDogsSorted(tx, db, uid)
         if (activeDogs.length >= cap) {
           return {
@@ -189,7 +189,7 @@ async function handler(req, res) {
       const userSnap = await tx.get(userRef)
       const profile = userSnap.exists ? userSnap.data() : {}
       const plan = computeEffectivePlan(profile)
-      const cap = capForPlan(plan)
+      const cap = capForPlan(plan, hasValidInternalEntitlement(profile))
       activeDogs = await getOwnedActiveDogsSorted(tx, db, uid)
       // Anti-evasion (§3.2/§3.3): archive→restore or restricted→activate
       // must never be allowed to push the active count past the cap —

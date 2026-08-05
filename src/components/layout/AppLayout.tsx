@@ -3,7 +3,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useRequestGuard } from '../../hooks/useRequestGuard'
 import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '../../lib/db'
-import { getInitials, AU_STATES, isDogEligibleForCap } from '../../lib/utils'
+import { getInitials, AU_STATES, isDogEligibleForCap, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../../lib/utils'
 import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
@@ -292,9 +292,28 @@ export default function AppLayout({ toast }: Props) {
     })
   }
 
-  const planCfg = getPlanCfg(profile?.plan)
+  // Super Admin fix round: must read the EFFECTIVE plan (real Stripe
+  // plan OR a valid internalEntitlement fallback), never the raw
+  // profile.plan field — otherwise a Super Admin whose underlying
+  // profile.plan is still 'free' gets shown (and, previously, enforced
+  // client-side against) the Free plan's 2-dog config despite the
+  // server already treating them as unlimited. Mirrors
+  // getEffectivePlanClient's server-side counterpart, computeEffectivePlan,
+  // used by every api/*.js cap check this widget must stay consistent with.
+  const effectivePlan = getEffectivePlanClient(profile)
+  // Deliberately NOT named isSuperAdmin — that name is already taken above
+  // by the unrelated SUPER_ADMIN_EMAILS allowlist, which gates only the
+  // internal admin console link (/app/admin/*) and has nothing to do with
+  // billing/quota. This is the OTHER admin authority: a server-issued,
+  // Firestore-Rules-protected internalEntitlement grant, the sole source
+  // of truth for quota/Showcase bypass (see api/_lib/entitlements.js).
+  const hasAdminEntitlement = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())
+  const planCfg = getPlanCfg(effectivePlan)
   const planLabel = profile?.plan === 'trial' ? 'Free Trial' : planCfg.label
-  const dogLimit  = planCfg.dogLimit
+  // A verified internal admin bypasses even Plus's own finite dogLimit
+  // (5) — reuses this widget's existing dogLimit>=9999 "Unlimited"
+  // convention rather than inventing a new display path.
+  const dogLimit  = hasAdminEntitlement ? Infinity : planCfg.dogLimit
   // dogCount === null (load failed) intentionally shows an EMPTY bar, not
   // a full one — a load failure shouldn't visually read as "at your
   // limit" when the real count is simply unknown right now.

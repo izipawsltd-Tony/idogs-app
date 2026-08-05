@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { createDog, addVaccineRecord, addHealthTest, getDogs } from '../lib/db'
-import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType, parseDobStrict, isDogEligibleForCap } from '../lib/utils'
+import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType, parseDobStrict, isDogEligibleForCap, getEffectivePlanClient } from '../lib/utils'
 import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
@@ -14,7 +14,6 @@ interface Props {
 type Step = 'scan' | 'form'
 
 const FREE_DOG_LIMIT = 2
-const FREE_PLANS = ['free', 'trial']
 
 export default function DogNewPage({ toast }: Props) {
   const navigate = useNavigate()
@@ -169,7 +168,13 @@ export default function DogNewPage({ toast }: Props) {
       if (!req.isCurrent()) return
       const active = dogs.filter(isDogEligibleForCap)
       setActiveDogCount(active.length)
-      const isFreePlan = FREE_PLANS.includes(profile?.plan ?? 'free')
+      // Super Admin fix round: must use the EFFECTIVE plan (real Stripe
+      // plan OR a valid internalEntitlement fallback), not the raw
+      // profile.plan field — otherwise a Super Admin whose underlying
+      // profile.plan is still 'free' gets client-blocked here even though
+      // api/create-dog.js would never restrict them. Mirrors AppLayout.tsx's
+      // identical fix for the same root cause.
+      const isFreePlan = getEffectivePlanClient(profile) === 'free'
       setBlocked(isFreePlan && active.length >= FREE_DOG_LIMIT)
     }).catch(() => {
       if (req.isCurrent()) setLimitCheckError(true)

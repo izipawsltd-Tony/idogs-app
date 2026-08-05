@@ -163,6 +163,12 @@ const protectedFields = [
   'subscriptionEventTimestamps',
   // Codex H1 (round 4) — quota-initialization ownership marker.
   'plusScansSubscriptionId',
+  // Internal Super Admin entitlement (api/_lib/entitlements.js) — an
+  // admin-granted Plus override independent of Stripe. See
+  // scripts/test-internal-entitlement.mjs for the full behavioral suite;
+  // this file only needs the same protected-field/strip checks every
+  // other billing field already gets below.
+  'internalEntitlement',
 ]
 
 for (const field of protectedFields) {

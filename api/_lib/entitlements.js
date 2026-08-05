@@ -22,14 +22,74 @@ const GRACE_MS = 7 * 24 * 60 * 60 * 1000 // §4.2 — 7-day past_due grace
 // transaction (which is what actually moves excess dogs to `restricted`
 // and persists plan:'free' — this function only affects in-the-moment
 // quota decisions, e.g. "how many scans do I have left right now").
+// Internal/admin-granted entitlement override — completely independent of
+// Stripe. Exists for verified internal accounts (e.g. the founder's own
+// account) that need full Plus/breeder feature access without a real
+// subscription, without ever faking one. `profile.internalEntitlement` is
+// a server-owned field (see firestore.rules' userBillingFields() — added
+// to that same protected-field allowlist, so a client can never write,
+// modify, or clear it directly; only a trusted Admin SDK path can). Never
+// written by api/stripe-webhook.js/api/enforce-billing-grace.js — those
+// only ever touch `plan`/`subscriptionStatus`/etc., so a real Stripe event
+// (or its absence) can never grant, revoke, or otherwise affect this field.
+//
+// Shape: { granted: boolean, grantedAt: ISOstring, grantedBy: string,
+//          reason: string, expiresAt: ISOstring | null }
+// `granted: false` (an explicit revoke) always denies THIS INTERNAL
+// OVERRIDE specifically, regardless of any other field on the entitlement
+// object itself (expiresAt, reason, etc.) — it does NOT mean "denies
+// overall Plus access": computeEffectivePlan() below checks a real paid
+// subscription FIRST and returns 'plus' immediately if one is active,
+// before this function is ever called. A revoke (or expiry) of the
+// internal override is therefore always a structural no-op for a
+// genuinely paying account — it can only ever affect access that was
+// coming from this override in the first place. Recording granted:false
+// (rather than deleting the field) is what makes a revoke an auditable
+// state transition (who revoked it, when).
+//
+// expiresAt handling is fail-closed, not fail-open: null/undefined means
+// "no expiry" (a permanent grant); anything else MUST be a real, parseable
+// ISO date/time string, or the entitlement is treated as invalid and
+// denied. A malformed value here (a corrupted string, a raw Firestore
+// Timestamp-like object accidentally stored instead of a string, a
+// number) must never be silently treated as "no expiry" — `new
+// Date(garbage).getTime()` returns NaN, and the ONLY safe reading of "we
+// can't prove this hasn't expired" is deny, not grant.
+//
+// Exported (not just used internally by computeEffectivePlan below) —
+// Super Admin fix round: computeEffectivePlan() maps a valid internal
+// entitlement to 'plus', which is correct for every BOOLEAN plan gate
+// (Showcase, litter creation, scan quota) but is NOT enough on its own
+// for the numeric ceilings that even Plus itself has (DOG_CAP.plus = 5,
+// the 1-litter-per-365-days rolling window) — a Super Admin genuinely
+// BYPASSES those, rather than merely inheriting Plus's own finite
+// number. api/_lib/dog-cap.js's capForPlan()/reconcileDogCapTx()/
+// reactivateUpToCapTx() and api/create-litter.js's rolling-window check
+// call this directly (alongside computeEffectivePlan(), never instead of
+// it) to decide "unlimited", using the SAME fail-closed entitlement
+// check — there is exactly one authority for "is this account a
+// verified internal admin", never a second, parallel one.
+export function hasValidInternalEntitlement(profile, now = new Date()) {
+  const entitlement = profile?.internalEntitlement
+  if (!entitlement || entitlement.granted !== true) return false
+  const expiresAt = entitlement.expiresAt
+  if (expiresAt === null || expiresAt === undefined) return true
+  if (typeof expiresAt !== 'string') return false
+  const expiresAtMs = new Date(expiresAt).getTime()
+  if (Number.isNaN(expiresAtMs)) return false
+  return now.getTime() < expiresAtMs
+}
+
 export function computeEffectivePlan(profile, now = new Date()) {
   const rawPlan = profile?.plan === 'plus' ? 'plus' : 'free'
-  if (rawPlan !== 'plus') return 'free'
-  if (profile?.subscriptionStatus === 'past_due' && profile?.pastDueSince) {
+  let paidPlanActive = rawPlan === 'plus'
+  if (paidPlanActive && profile?.subscriptionStatus === 'past_due' && profile?.pastDueSince) {
     const since = new Date(profile.pastDueSince).getTime()
-    if (!Number.isNaN(since) && now.getTime() - since > GRACE_MS) return 'free'
+    if (!Number.isNaN(since) && now.getTime() - since > GRACE_MS) paidPlanActive = false
   }
-  return 'plus'
+  if (paidPlanActive) return 'plus'
+  if (hasValidInternalEntitlement(profile, now)) return 'plus'
+  return 'free'
 }
 
 export function isPastDueGraceExpired(profile, now = new Date()) {
