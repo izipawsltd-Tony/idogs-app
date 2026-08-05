@@ -157,24 +157,67 @@ const { check, skip, summary } = makeChecker()
     /aria-hidden="true"[\s\S]{0,400}tabIndex=\{-1\}/.test(pageSrc))
   check('The consent checkbox is required before the form can be submitted', /required checked=\{form\.consent\}/.test(pageSrc) && /disabled=\{state === 'sending' \|\| !form\.consent\}/.test(pageSrc))
 
-  // Tony live-staging finding: the confirmation copy read as claiming an
-  // email notification was sent, with no indication of where. This
-  // endpoint only ever persists a Firestore document (see the
-  // create-showcase-enquiry.js checks above/below) — no email is sent —
-  // so the UI must never claim otherwise, and the visitor's own "Email"
-  // field must be clearly labeled as THEIR contact info, not a
-  // notification destination.
-  check('The success message never claims an email was sent (no real email notification exists)',
-    !/\bemail (was|has been) sent\b/i.test(pageSrc) && !/\ban email\b/i.test(pageSrc.slice(pageSrc.indexOf("state === 'sent'"), pageSrc.indexOf("state === 'sent'") + 300)))
-  check('The success message honestly describes persistence, not a notification claim',
-    pageSrc.includes('Enquiry sent successfully') && pageSrc.includes('The breeder has received your enquiry and can contact you using the details you provided.'))
+  // Tony live-staging finding, round 1: the confirmation copy read as
+  // claiming an email notification was sent, with no indication of
+  // where. At the time, this endpoint only ever persisted a Firestore
+  // document — no email was ever sent — so that round's fix reworded
+  // the copy to stop over-claiming.
+  //
+  // Tony live-staging finding, round 2 ("enquiry destination unclear"):
+  // even the reworded copy still didn't say WHERE the enquiry went or
+  // whether the breeder would ever actually see it. This round adds a
+  // REAL best-effort email notification (see the create-showcase-
+  // enquiry.js checks below) and makes the frontend copy depend on the
+  // server's own `notified` result — never optimistic, never assumed.
+  check('The success copy branches on the server-reported `notified` flag, never a hardcoded optimistic claim',
+    /notified\s*\?[\s\S]{0,80}Enquiry sent successfully[\s\S]{0,80}The breeder has been notified/.test(pageSrc))
+  check('The "not notified" branch accurately describes persistence only, matching this round\'s required UX copy exactly',
+    /Enquiry submitted successfully/.test(pageSrc) && /The breeder can view it in iDogs\./.test(pageSrc))
+  check('`notified` is read from the server JSON response, never assumed true on a bare 200',
+    /setNotified\(data\.notified === true\)/.test(pageSrc))
   check('The visitor email field is labeled as their own contact info, not the enquiry destination',
     /Your email <span[^>]*>\(so the breeder can contact you back\)<\/span>/.test(pageSrc))
+  check('The success UI never displays the breeder\'s own destination email address anywhere in this component',
+    !/breederEmail/.test(pageSrc))
 
-  // ── create-showcase-enquiry.js sends no email — confirms the above
-  // copy fix matches actual behavior, not just intent ──
-  check('create-showcase-enquiry.js does not send any email (only persists the Firestore document) — matches the honest success copy above',
-    !enquirySrc.includes('send-email') && !/resend/i.test(enquirySrc))
+  // ── create-showcase-enquiry.js DOES now send a real best-effort email
+  // notification — via the SAME existing Resend provider/domain/sender
+  // this codebase already uses (api/send-email.js, api/survey.js), never
+  // a new one — confirms the copy above matches actual behavior. The
+  // actual send logic lives in api/_lib/showcase-notification.js (a
+  // Firebase-free pure module, so it can be unit-tested directly without
+  // real credentials — see scripts/test-showcase-fix-round2.mjs); this
+  // file only checks create-showcase-enquiry.js correctly imports and
+  // calls it. ──
+  check('create-showcase-enquiry.js imports sendShowcaseEnquiryNotification from the shared _lib module, never redefining it inline',
+    /import \{ sendShowcaseEnquiryNotification \} from '\.\/_lib\/showcase-notification\.js'/.test(enquirySrc))
+  check('create-showcase-enquiry.js actually calls sendShowcaseEnquiryNotification (imported, not just referenced)',
+    /await sendShowcaseEnquiryNotification\(\{/.test(enquirySrc))
+  {
+    const notificationLibSrc = readFileSync(new URL('../api/_lib/showcase-notification.js', import.meta.url), 'utf8')
+    check('api/_lib/showcase-notification.js sends via Resend, the SAME provider api/send-email.js and api/survey.js already use — not a new one',
+      /api\.resend\.com\/emails/.test(notificationLibSrc))
+    check('api/_lib/showcase-notification.js uses the SAME verified sender domain (noreply@idogs.com.au) — no new domain/credential introduced',
+      /noreply@idogs\.com\.au/.test(notificationLibSrc))
+    check('api/_lib/showcase-notification.js gracefully no-ops (does not throw or block) when RESEND_API_KEY is unset — the current real state on idogs-app-staging',
+      /if \(!RESEND_API_KEY\) return \{ notified: false, errorCode: null \}/.test(notificationLibSrc))
+    check('api/_lib/showcase-notification.js has NO Firebase Admin SDK import at all — stays independently unit-testable without real credentials',
+      !/firebase-admin/.test(notificationLibSrc))
+  }
+  check('create-showcase-enquiry.js resolves the recipient EXCLUSIVELY via Firebase Auth getUser(showcase.tenantId) — never from req.body/sanitized input',
+    /getAuth\(\)\.getUser\(showcase\.tenantId\)/.test(enquirySrc) &&
+    !/getUser\(\s*(req\.body|body|sanitized)/.test(enquirySrc))
+  check('create-showcase-enquiry.js never reads any client-supplied recipient/to/breederEmail field from the request body',
+    !/body\.(to|toEmail|to_email|recipient|breederEmail)\b/.test(enquirySrc))
+  check('a failed/unresolved recipient (getUser throws) is caught, never left to crash the whole request',
+    /try \{\s*\n\s*const breederUser = await getAuth\(\)\.getUser\(showcase\.tenantId\)/.test(enquirySrc) && /catch \{\s*\n\s*breederEmail = null\s*\n\s*\}/.test(enquirySrc))
+  check('the Firestore enquiry write always includes `notified`, regardless of the email outcome — storage is never conditioned on notification success',
+    /notified,\s*\n\s*\.\.\.\(notificationErrorCode \? \{ notificationErrorCode \} : \{\}\)/.test(enquirySrc))
+  check('a notification failure is logged with a fixed reason code only — never a raw provider error, email address, or credential',
+    /console\.error\('create-showcase-enquiry notification:', \{ code: notificationErrorCode \}\)/.test(enquirySrc) &&
+    !/console\.error\([^)]*breederEmail/.test(enquirySrc))
+  check('the API response never echoes back the resolved breederEmail (only the boolean `notified`)',
+    /res\.status\(200\)\.json\(\{ success: true, notified \}\)/.test(enquirySrc) && !/notified, breederEmail/.test(enquirySrc))
 
   // ── ShowcaseEnquiry type ──
   const typesSrc = readFileSync(new URL('../src/types/index.ts', import.meta.url), 'utf8')

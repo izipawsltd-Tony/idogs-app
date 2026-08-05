@@ -8,7 +8,7 @@ import {
 import type { SignedMediaItem } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import { formatDate, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
+import { formatDate, formatDateTime, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
 import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability, ShowcaseEnquiry, MediaItem } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
@@ -1533,13 +1533,21 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                 <div key={enq.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, fontSize: 13 }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                                     <span style={{ fontWeight: 600, color: 'var(--dark)' }}>{enq.name}</span>
-                                    <span style={{ fontSize: 11, color: 'var(--light)' }}>{formatDate(enq.createdAt)}</span>
+                                    <span style={{ fontSize: 11, color: 'var(--light)' }}>{formatDateTime(enq.createdAt)}</span>
                                   </div>
                                   <div style={{ color: 'var(--mid)', marginBottom: 4 }}>
                                     {enq.email && <span>{enq.email}</span>}{enq.email && enq.phone && ' · '}{enq.phone && <span>{enq.phone}</span>}
                                     {aboutPuppy && <span> · about {aboutPuppy.name}</span>}
                                   </div>
                                   <div style={{ color: 'var(--dark)' }}>{enq.message}</div>
+                                  {/* Tony live-staging finding ("enquiry destination unclear"): a
+                                      breeder must be able to tell, per enquiry, whether an email
+                                      notification actually went out — not just assume it did. */}
+                                  {!enq.notified && (
+                                    <div style={{ marginTop: 6, fontSize: 11, color: 'var(--gold)' }}>
+                                      📧 Not emailed — reply directly using the contact details above
+                                    </div>
+                                  )}
                                 </div>
                               )
                             })}
@@ -2537,6 +2545,19 @@ function ShowcaseManager({
                       ))}
                     </select>
                   </div>
+                  {/* Tony live-staging finding ("media missing from public page"),
+                      round 2: the per-item "Published"/"Private" badge (inside the
+                      collapsed Photos & videos panel below) already exists, but a
+                      breeder can still publish a puppy without ever opening that
+                      panel and notice nothing. This is the same warning surfaced
+                      at the row level, unmissable without expanding anything —
+                      exactly the puppy state that shipped to production live and
+                      showed only the placeholder. */}
+                  {puppyFields.visible && (publishedPhotos[puppy.id] || []).length === 0 && (publishedVideos[puppy.id] || []).length === 0 && (
+                    <div style={{ marginLeft: 26, fontSize: 11, color: 'var(--gold)', fontWeight: 500 }}>
+                      ⚠ This puppy is public but has no published photo or video — it will show the iDogs placeholder. Publish at least one item below.
+                    </div>
+                  )}
                   <div style={{ paddingLeft: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
                     <label className="form-group" style={{ margin: 0 }}>
                       <span className="form-label">Public colour</span>

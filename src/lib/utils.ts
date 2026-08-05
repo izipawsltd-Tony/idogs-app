@@ -32,6 +32,19 @@ export function formatDateShort(date: string | undefined): string {
   }
 }
 
+// Date + time — used where a submission's exact moment matters (e.g. a
+// breeder's own Showcase enquiry list), unlike formatDate()'s day-only
+// precision which is ambiguous for anything a breeder might need to
+// triage in arrival order within the same day.
+export function formatDateTime(date: string | Date | undefined): string {
+  if (!date) return '—'
+  try {
+    return format(new Date(date), 'dd MMM yyyy, h:mm a')
+  } catch {
+    return '—'
+  }
+}
+
 export function timeAgo(date: string | undefined): string {
   if (!date) return ''
   try {
