@@ -405,7 +405,12 @@ const PLAN_GRACE_MS = 7 * 24 * 60 * 60 * 1000
 // the rest of this function; the server re-derives this fresh from a
 // trusted users/{uid} read on every gated request regardless of what this
 // says.
-function hasValidInternalEntitlementClient(
+// Super Admin fix round: exported so AppLayout.tsx can render an
+// "Unlimited" dog-cap treatment for a verified internal admin — mirrors
+// the server-side decision to export hasValidInternalEntitlement in
+// api/_lib/entitlements.js for the same reason (the numeric DOG_CAP.plus
+// ceiling isn't enough on its own; a Super Admin genuinely bypasses it).
+export function hasValidInternalEntitlementClient(
   entitlement: UserProfile['internalEntitlement'],
   now: Date
 ): boolean {

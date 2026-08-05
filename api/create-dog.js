@@ -36,7 +36,7 @@ import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpe
 import { isValidCalendarDateString } from './_lib/date-utils.js'
 import { parseDobStrictServer, ageInMonths } from './_lib/parent-eligibility.js'
 import { capForPlan, getOwnedActiveDogsSorted } from './_lib/dog-cap.js'
-import { computeEffectivePlan } from './_lib/entitlements.js'
+import { computeEffectivePlan, hasValidInternalEntitlement } from './_lib/entitlements.js'
 import { createDogWithRetry } from './_lib/create-dog-core.js'
 
 if (!getApps().length) {
@@ -108,7 +108,7 @@ async function handler(req, res) {
     const userSnap = await tx.get(userRef)
     const profile = userSnap.exists ? userSnap.data() : {}
     const plan = computeEffectivePlan(profile)
-    const cap = capForPlan(plan)
+    const cap = capForPlan(plan, hasValidInternalEntitlement(profile))
     const activeDogs = await getOwnedActiveDogsSorted(tx, db, uid)
     // Codex H2 — the cap decision is made from a count taken INSIDE
     // this same transaction, atomically with the reservation check

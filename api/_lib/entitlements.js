@@ -55,7 +55,21 @@ const GRACE_MS = 7 * 24 * 60 * 60 * 1000 // §4.2 — 7-day past_due grace
 // number) must never be silently treated as "no expiry" — `new
 // Date(garbage).getTime()` returns NaN, and the ONLY safe reading of "we
 // can't prove this hasn't expired" is deny, not grant.
-function hasValidInternalEntitlement(profile, now) {
+//
+// Exported (not just used internally by computeEffectivePlan below) —
+// Super Admin fix round: computeEffectivePlan() maps a valid internal
+// entitlement to 'plus', which is correct for every BOOLEAN plan gate
+// (Showcase, litter creation, scan quota) but is NOT enough on its own
+// for the numeric ceilings that even Plus itself has (DOG_CAP.plus = 5,
+// the 1-litter-per-365-days rolling window) — a Super Admin genuinely
+// BYPASSES those, rather than merely inheriting Plus's own finite
+// number. api/_lib/dog-cap.js's capForPlan()/reconcileDogCapTx()/
+// reactivateUpToCapTx() and api/create-litter.js's rolling-window check
+// call this directly (alongside computeEffectivePlan(), never instead of
+// it) to decide "unlimited", using the SAME fail-closed entitlement
+// check — there is exactly one authority for "is this account a
+// verified internal admin", never a second, parallel one.
+export function hasValidInternalEntitlement(profile, now = new Date()) {
   const entitlement = profile?.internalEntitlement
   if (!entitlement || entitlement.granted !== true) return false
   const expiresAt = entitlement.expiresAt

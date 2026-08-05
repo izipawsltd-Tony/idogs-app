@@ -28,7 +28,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { ApiError, withApiErrorHandling } from './_lib/http-helpers.js'
 import { reconcileDogCapTx } from './_lib/dog-cap.js'
-import { computeEffectivePlan } from './_lib/entitlements.js'
+import { computeEffectivePlan, hasValidInternalEntitlement } from './_lib/entitlements.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -66,7 +66,7 @@ async function handler(req, res) {
     const userSnap = await tx.get(userRef)
     const profile = userSnap.exists ? userSnap.data() : {}
     const plan = computeEffectivePlan(profile)
-    return reconcileDogCapTx(tx, db, uid, plan)
+    return reconcileDogCapTx(tx, db, uid, plan, hasValidInternalEntitlement(profile))
   })
 
   return res.status(200).json({ demoted: result.demoted })
