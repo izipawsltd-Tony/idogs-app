@@ -128,9 +128,11 @@ const { check, skip, summary } = makeChecker()
     /litterSnap\.data\(\)\.tenantId !== showcase\.tenantId/.test(enquirySrc))
   check('create-showcase-enquiry.js resolves a submitted puppyRef via the SHARED resolveVisiblePuppyByRef() helper (Codex re-review: single source of truth, also used by api/showcase-media.js)',
     /import \{ resolveVisiblePuppyByRef \} from '\.\/_lib\/showcase-media-access\.js'/.test(enquirySrc) &&
-    /resolveVisiblePuppyByRef\(db, showcase, litterId, sanitized\.puppyRef\)/.test(enquirySrc))
-  check('resolveVisiblePuppyByRef() (shared helper) re-verifies the resolved puppy\'s own tenantId/litterId before returning it',
-    /dog\.tenantId !== showcase\.tenantId \|\| dog\.litterId !== litterId/.test(readFileSync(new URL('../api/_lib/showcase-media-access.js', import.meta.url), 'utf8')))
+    /resolveVisiblePuppyByRef\(db, showcase, litterId, sanitized\.puppyRef, litterPuppyIds\)/.test(enquirySrc))
+  check('create-showcase-enquiry.js builds litterPuppyIds from the ALREADY-fetched litterSnap — no extra Firestore read for the legacy-litterId fallback',
+    /const litterPuppyIds = new Set\(litterSnap\.data\(\)\.puppyIds \|\| \[\]\)/.test(enquirySrc))
+  check('resolveVisiblePuppyByRef() (shared helper) delegates tenant/litterId verification to the single-source-of-truth isValidShowcasePuppyDoc() — never a separately-maintained duplicate check',
+    /isValidShowcasePuppyDoc\(dogId, dog, showcase\.tenantId, litterId, litterPuppyIds\)/.test(readFileSync(new URL('../api/_lib/showcase-media-access.js', import.meta.url), 'utf8')))
   check('create-showcase-enquiry.js never accepts a raw dogId as puppyRef — sanitizeEnquiryInput() only ever exposes puppyRef, never puppyId',
     !/sanitized\.puppyId/.test(enquirySrc))
   check('create-showcase-enquiry.js checks isShareLive() before accepting any submission',
