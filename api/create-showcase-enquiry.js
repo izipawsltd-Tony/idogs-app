@@ -55,13 +55,29 @@
 // api/_lib/showcase-notification.js's sendShowcaseEnquiryNotification()
 // for the graceful-degradation contract this depends on.
 //
+// Buyer/breeder email workflow round: once the breeder notification
+// above is ACCEPTED (never before, never independently), a separate
+// confirmation email goes to the buyer's own submitted address, telling
+// them their enquiry reached the breeder and the breeder will contact
+// them directly. Each direction's Reply-To is the OTHER party's
+// resolved address (buyer's on the breeder email, breeder's on the
+// buyer email) — noreply@idogs.com.au is never a reply target on either
+// email. See api/_lib/showcase-notification.js's
+// sendShowcaseEnquiryConfirmation() and its own header comment.
+//
 // SECURITY: the recipient is ALWAYS resolved server-side from the
 // token-matched Showcase's own tenantId, via Firebase Auth (the
 // authoritative source of an account's real login email — this app
-// never duplicates email into the Firestore user profile). The request
-// body has no field this endpoint ever reads as a recipient — only the
-// ENQUIRER's own contact email (`sanitized.email`), which is stored for
-// the breeder to reply to and is never used as a send-to address.
+// never duplicates email into the Firestore user profile). The breeder/
+// kennel display name used in the buyer's confirmation email is
+// likewise resolved server-side, from the SAME already-fetched
+// users/{tenantId} profile document the Plus-eligibility check above
+// already reads (`kennelName`) — never from the request body. The
+// request body has no field this endpoint ever reads as a recipient or
+// display name — only the ENQUIRER's own contact email
+// (`sanitized.email`), which is stored for the breeder to reply to and
+// is never used as a send-to address for anything other than the
+// buyer's own confirmation copy.
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -71,7 +87,7 @@ import { checkDurableRateLimit } from './_lib/durable-rate-limit.js'
 import { hashShareToken, isShareLive, isTenantPlusEligible } from './_lib/showcase-share.js'
 import { sanitizeEnquiryInput, EnquiryValidationError } from './_lib/enquiry-schema.js'
 import { resolveVisiblePuppyByRef } from './_lib/showcase-media-access.js'
-import { sendShowcaseEnquiryNotification } from './_lib/showcase-notification.js'
+import { sendShowcaseEnquiryNotification, sendShowcaseEnquiryConfirmation } from './_lib/showcase-notification.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -161,9 +177,15 @@ export default async function handler(req, res) {
     // own comment. A breeder who downgraded after publishing a link must
     // not keep receiving enquiries through it either.
     const profileSnap = await db.collection('users').doc(showcase.tenantId).get()
-    if (!isTenantPlusEligible(profileSnap.exists ? profileSnap.data() : null)) {
+    const breederProfile = profileSnap.exists ? profileSnap.data() : null
+    if (!isTenantPlusEligible(breederProfile)) {
       return res.status(404).json({ error: 'Not found' })
     }
+    // Reused for the buyer confirmation email below (server-owned
+    // Firestore field, never client-supplied) — no extra Firestore read
+    // beyond the profileSnap already fetched for the Plus-eligibility
+    // check above.
+    const kennelName = breederProfile?.kennelName || null
 
     const litterId = showcaseDoc.id
 
@@ -256,32 +278,63 @@ export default async function handler(req, res) {
       message: sanitized.message,
     })
 
+    // 2b. The buyer's own confirmation email — ONLY attempted once the
+    // breeder notification above was itself ACCEPTED (`notified ===
+    // true`). This is what makes "never tell the customer their enquiry
+    // was sent unless the breeder notification was accepted" hold: the
+    // customer-facing HTTP response below already only ever says so when
+    // `notified` is true, and this confirmation EMAIL is gated on the
+    // exact same condition, never sent independently or optimistically.
+    // A single best-effort attempt, same posture as step 2 — no retry
+    // loop, and its own failure never affects `notified`/the HTTP
+    // response (a buyer who doesn't get this courtesy copy still has a
+    // fully-delivered enquiry either way).
+    let buyerConfirmationSent = false
+    let buyerConfirmationErrorCode = null
+    if (notified) {
+      const confirmation = await sendShowcaseEnquiryConfirmation({
+        buyerEmail: sanitized.email,
+        buyerName: sanitized.name,
+        litterName: litterSnap.data().name,
+        puppyName: resolvedPuppyName,
+        kennelName,
+        breederEmail,
+      })
+      buyerConfirmationSent = confirmation.sent
+      buyerConfirmationErrorCode = confirmation.errorCode
+    }
+
     // 3. Record the true outcome on the SAME document — never a second
     // enquiry, never a delete+recreate. If this update itself fails, the
     // enquiry (from step 1) is already safely preserved regardless; we
-    // deliberately do NOT retry the email here (sendShowcaseEnquiryNotification
-    // already ran exactly once above — retrying now risks a real double
-    // send if Resend already accepted the original attempt) and we
-    // deliberately do NOT retry the update in a loop (a stuck/failing
-    // Firestore write must not turn into an unbounded retry storm on a
-    // public, unauthenticated endpoint). The HTTP response below still
-    // reports the CORRECT `notified` value either way — it's read from
-    // this request's own in-memory result, never re-derived from a
-    // document read that could itself now be stale.
+    // deliberately do NOT retry either email here (both already ran
+    // exactly once above — retrying now risks a real double send if
+    // Resend already accepted the original attempt) and we deliberately
+    // do NOT retry the update in a loop (a stuck/failing Firestore write
+    // must not turn into an unbounded retry storm on a public,
+    // unauthenticated endpoint). The HTTP response below still reports
+    // the CORRECT `notified` value either way — it's read from this
+    // request's own in-memory result, never re-derived from a document
+    // read that could itself now be stale.
     try {
       await enquiryRef.update({
         notified,
         ...(notificationErrorCode ? { notificationErrorCode } : {}),
+        buyerConfirmationSent,
+        ...(buyerConfirmationErrorCode ? { buyerConfirmationErrorCode } : {}),
       })
     } catch {
       console.error('create-showcase-enquiry status update:', { code: 'NOTIFICATION_STATUS_UPDATE_FAILED' })
     }
 
-    // Fixed reason code only, for retry/admin review — never the raw
+    // Fixed reason codes only, for retry/admin review — never the raw
     // provider error (which can echo back the recipient address) and
     // never breederEmail/sanitized.email/sanitized.phone.
     if (notificationErrorCode) {
       console.error('create-showcase-enquiry notification:', { code: notificationErrorCode })
+    }
+    if (buyerConfirmationErrorCode) {
+      console.error('create-showcase-enquiry buyer confirmation:', { code: buyerConfirmationErrorCode })
     }
 
     return res.status(200).json({ success: true, notified })
