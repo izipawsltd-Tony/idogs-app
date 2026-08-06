@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
+import { safeAppReturnTo } from '../lib/returnTo'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -11,19 +12,21 @@ interface Props {
 export default function VerifyEmailPage({ toast }: Props) {
   const { user, loading, logout, resendVerificationEmail, checkEmailVerified } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const returnTo = safeAppReturnTo(searchParams.get('next'))
   const [checking, setChecking] = useState(false)
   const [resending, setResending] = useState(false)
   const [cooldown, setCooldown] = useState(0)
 
   // If not logged in at all, send to login
   useEffect(() => {
-    if (!loading && !user) navigate('/login', { replace: true })
-  }, [loading, user, navigate])
+    if (!loading && !user) navigate(`/login?next=${encodeURIComponent(returnTo)}`, { replace: true })
+  }, [loading, user, navigate, returnTo])
 
   // If already verified, go straight to dashboard
   useEffect(() => {
-    if (!loading && user?.emailVerified) navigate('/app/dashboard', { replace: true })
-  }, [loading, user, navigate])
+    if (!loading && user?.emailVerified) navigate(returnTo, { replace: true })
+  }, [loading, user, navigate, returnTo])
 
   // Cooldown timer for resend button
   useEffect(() => {
@@ -38,7 +41,7 @@ export default function VerifyEmailPage({ toast }: Props) {
       const verified = await checkEmailVerified()
       if (verified) {
         toast('Email verified! Welcome to iDogs.')
-        navigate('/app/dashboard', { replace: true })
+        navigate(returnTo, { replace: true })
       } else {
         toast('Not verified yet. Please click the link in your email first.', 'error')
       }
@@ -64,7 +67,7 @@ export default function VerifyEmailPage({ toast }: Props) {
 
   async function handleLogout() {
     await logout()
-    navigate('/login')
+    navigate(`/login?next=${encodeURIComponent(returnTo)}`)
   }
 
   if (loading) {

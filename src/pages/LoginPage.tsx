@@ -1,8 +1,9 @@
 import { useState, useEffect, FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
+import { safeAppReturnTo } from '../lib/returnTo'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -11,6 +12,8 @@ interface Props {
 export default function LoginPage({ toast }: Props) {
   const { user, login } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const returnTo = safeAppReturnTo(searchParams.get('next'))
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -18,9 +21,9 @@ export default function LoginPage({ toast }: Props) {
 
   useEffect(() => {
     if (user) {
-      navigate('/app/dashboard', { replace: true })
+      navigate(returnTo, { replace: true })
     }
-  }, [user, navigate])
+  }, [user, navigate, returnTo])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -117,7 +120,7 @@ export default function LoginPage({ toast }: Props) {
 
         <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--mid)' }}>
           Don't have an account?{' '}
-          <Link to="/signup" style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none' }}>
+          <Link to={`/signup?next=${encodeURIComponent(returnTo)}`} style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none' }}>
             Create free account
           </Link>
         </p>

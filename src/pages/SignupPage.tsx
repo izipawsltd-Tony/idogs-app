@@ -1,8 +1,9 @@
 import { useState, FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { AU_STATES } from '../lib/utils'
 import type { ToastMessage } from '../types'
+import { safeAppReturnTo } from '../lib/returnTo'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -11,6 +12,8 @@ interface Props {
 export default function SignupPage({ toast }: Props) {
   const { signup } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const returnTo = safeAppReturnTo(searchParams.get('next'))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [accountType, setAccountType] = useState<'breeder' | 'owner'>('breeder')
@@ -53,7 +56,7 @@ export default function SignupPage({ toast }: Props) {
         breederNumber: form.breederNumber || undefined,
       })
       toast('Account created! Please check your email to verify your address.')
-      navigate('/verify-email')
+      navigate(`/verify-email?next=${encodeURIComponent(returnTo)}`)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : ''
       if (msg.includes('email-already-in-use')) {
@@ -231,7 +234,7 @@ export default function SignupPage({ toast }: Props) {
 
         <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--mid)' }}>
           Already have an account?{' '}
-          <Link to="/login" style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none' }}>Sign in</Link>
+          <Link to={`/login?next=${encodeURIComponent(returnTo)}`} style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none' }}>Sign in</Link>
         </p>
       </div>
     </div>

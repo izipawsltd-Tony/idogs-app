@@ -1349,6 +1349,57 @@ export async function updateShowcasePuppy(
   return result.showcase
 }
 
+export interface PrivateDogAccessGrant {
+  buyerEmail: string
+  status: 'active'
+  grantedAt: string | null
+}
+
+export async function managePrivateDogAccess(
+  dogId: string,
+  action: 'get' | 'grant' | 'revoke',
+  buyerEmail?: string,
+): Promise<PrivateDogAccessGrant | null> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/manage-private-dog-access', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId, action, ...(buyerEmail ? { buyerEmail } : {}) }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `Private access update failed (${res.status})`)
+  return body.grant || null
+}
+
+export interface PrivateDogView {
+  ownedByCaller: boolean
+  dog: {
+    id: string
+    name: string
+    breed?: string
+    sex?: string
+    colour?: string | null
+    dateOfBirth?: string | null
+    photos?: SignedMediaItem[]
+    videos?: SignedMediaItem[]
+    documents?: Array<{ id: string; title: string | null; documentType: string; fileType: string | null; uploadedAt: string | null; url: string }>
+  }
+}
+
+export async function getPrivateDogView(dogId: string): Promise<PrivateDogView> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/private-dog-view', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `Private puppy view failed (${res.status})`)
+  return body as PrivateDogView
+}
+
 export type ShowcaseBulkAction = 'select_all' | 'clear_all' | 'show_available_only'
 
 export async function bulkUpdateShowcasePuppies(litterId: string, action: ShowcaseBulkAction): Promise<LitterShowcase> {

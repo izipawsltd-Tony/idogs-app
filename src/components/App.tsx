@@ -1,5 +1,5 @@
 import React from 'react'
-import { Routes, Route, Navigate, useParams } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import ToastContainer from './ui/Toast'
@@ -34,15 +34,18 @@ import ComingSoonPage from '../pages/ComingSoonPage'
 import ReportsPage from '../pages/ReportsPage'
 import BuyersPage from '../pages/BuyersPage'
 import ClaimDogPage from '../pages/ClaimDogPage'
+import PrivateDogPage from '../pages/PrivateDogPage'
 
 import AppLayout from './layout/AppLayout'
 import LoadingScreen from './ui/LoadingScreen'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
+  const location = useLocation()
+  const returnTo = `${location.pathname}${location.search}`
   if (loading) return <LoadingScreen />
-  if (!user) return <Navigate to="/login" replace />
-  if (!user.emailVerified) return <Navigate to="/verify-email" replace />
+  if (!user) return <Navigate to={`/login?next=${encodeURIComponent(returnTo)}`} replace />
+  if (!user.emailVerified) return <Navigate to={`/verify-email?next=${encodeURIComponent(returnTo)}`} replace />
   return <>{children}</>
 }
 
@@ -112,6 +115,7 @@ export default function App() {
           <Route path="buyers"  element={<BreederOnlyRoute><BuyersPage /></BreederOnlyRoute>} />
           <Route path="reports" element={<BreederOnlyRoute><ReportsPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="claim-dogs" element={<ClaimDogPage toast={toast} />} />
+          <Route path="shared-dogs/:dogId" element={<PrivateDogPage />} />
         </Route>
 
         <Route path="*" element={<NotFoundPage />} />

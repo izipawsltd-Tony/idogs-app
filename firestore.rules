@@ -673,6 +673,15 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Pre-transfer buyer access grants are deliberately server-only. They
+    // contain the buyer email used as an authorization factor and must never
+    // be enumerable or mutable from the browser. Both breeder management and
+    // buyer reads go through authenticated Admin SDK endpoints which return
+    // only allowlisted projections.
+    match /dogPrivateAccess/{dogId} {
+      allow read, write: if false;
+    }
+
     // ── litterPuppyOperations — internal idempotency ledger for
     // api/create-litter-puppy.js (Codex round 4, Blocker 4). Written
     // exclusively by that endpoint (Admin SDK) atomically with the Dog
