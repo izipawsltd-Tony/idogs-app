@@ -80,6 +80,27 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
     /<h1 style=\{\{[^}]*overflowWrap: 'break-word'[^}]*\}\}>\{litter\.name\}<\/h1>/.test(pageSrc))
   check('The litter-name <h1> keeps its existing responsive clamp() font size (the fix must not remove it)',
     /<h1 style=\{\{[^}]*fontSize: 'clamp\(30px,6vw,52px\)'[^}]*\}\}>\{litter\.name\}<\/h1>/.test(pageSrc))
+
+  // ── Multi-puppy enquiry fix: EnquiryForm's terminal 'sent' state used
+  // to freeze the WHOLE form for every puppy in the litter once ANY one
+  // submission succeeded (EnquiryForm is mounted once for the whole page,
+  // never remounted per puppy) — a buyer who successfully enquired about
+  // Puppy A could never see a usable form for Puppy B afterward, only the
+  // frozen "Enquiry sent" panel from A. `sentFor` scopes that success
+  // panel to the specific puppy (or general enquiry) it was actually
+  // submitted for; selecting a DIFFERENT puppy resets the form back to a
+  // genuinely fresh one instead of reusing A's frozen success state OR
+  // A's stale form values. ──
+  check('EnquiryForm tracks which puppy the last successful submission belongs to (sentFor)',
+    /const \[sentFor, setSentFor\] = useState<string \| null>\(null\)/.test(pageSrc))
+  check('Selecting a puppy different from the one that just succeeded resets state back to idle — a fresh, usable form for the new puppy',
+    /if \(state === 'sent' && selectedPuppy !== sentFor\) \{\s*\n\s*setState\('idle'\); setError\(''\); setNotified\(false\)/.test(pageSrc))
+  check('That same reset also clears the form fields — Puppy B never sees Puppy A\'s stale name/email/phone/message pre-filled',
+    /if \(state === 'sent' && selectedPuppy !== sentFor\) \{[\s\S]{0,120}setForm\(\{ name: '', email: '', phone: '', message: '', consent: false, website: '' \}\)/.test(pageSrc))
+  check('submit() records which puppy just succeeded (setSentFor(selectedPuppy)) before entering the sent state',
+    /setSentFor\(selectedPuppy\)\s*\n\s*setState\('sent'\)/.test(pageSrc))
+  check('The success panel is now scoped to the puppy it was submitted for (state === \'sent\' && sentFor === selectedPuppy), never a bare state === \'sent\' check alone',
+    /if \(state === 'sent' && sentFor === selectedPuppy\) return/.test(pageSrc))
 }
 
 // =========================================================================
@@ -281,6 +302,151 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
     act(() => { renderer.unmount() })
   }
 
+  globalThis.fetch = realFetch
+}
+
+// =========================================================================
+// SECTION 3 — EnquiryForm's per-puppy success-state fix: a harness that
+// faithfully mirrors EnquiryForm's exact state machine (idle -> sending ->
+// sent | error, plus sentFor), built with plain React.createElement calls
+// for the same reason Section 2's harness is (ShowcasePublicPage.tsx is
+// JSX, unimportable by plain Node ESM). Section 1 above independently
+// verifies the REAL source has this exact shape; this section proves that
+// shape behaves correctly at runtime, via a mocked global.fetch — no real
+// network/Firestore call, no emulator needed.
+// =========================================================================
+{
+  const React = (await import('react')).default
+  const TestRenderer = (await import('react-test-renderer')).default
+  const { act } = TestRenderer
+  const { useState, useEffect } = React
+
+  function EnquiryFormHarness({ token, puppies, controls }) {
+    const [selectedPuppy, setSelectedPuppy] = useState('')
+    const [form, setForm] = useState({ name: '', email: '', phone: '', message: '', consent: false, website: '' })
+    const [state, setState] = useState('idle')
+    const [error, setError] = useState('')
+    const [notified, setNotified] = useState(false)
+    const [sentFor, setSentFor] = useState(null)
+
+    useEffect(() => {
+      if (state === 'sent' && selectedPuppy !== sentFor) {
+        setState('idle'); setError(''); setNotified(false)
+        setForm({ name: '', email: '', phone: '', message: '', consent: false, website: '' })
+      }
+    }, [selectedPuppy, state, sentFor])
+
+    controls.getState = () => ({ selectedPuppy, form, state, error, notified, sentFor })
+    controls.selectPuppy = id => act(() => { setSelectedPuppy(id) })
+    controls.setField = (key, value) => act(() => { setForm(f => ({ ...f, [key]: value })) })
+    controls.submit = () => act(async () => {
+      setState('sending'); setError('')
+      try {
+        const response = await fetch('/api/create-showcase-enquiry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, puppyRef: selectedPuppy || undefined, ...form }) })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.error || 'Could not send your enquiry')
+        setNotified(data.notified === true)
+        setSentFor(selectedPuppy)
+        setState('sent')
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not send your enquiry')
+        setState('error')
+      }
+    })
+
+    if (state === 'sent' && sentFor === selectedPuppy) {
+      return React.createElement('div', { role: 'status' }, notified ? 'Enquiry sent successfully' : 'Enquiry submitted successfully')
+    }
+    return React.createElement('form', null,
+      React.createElement('select', { value: selectedPuppy, readOnly: true },
+        React.createElement('option', { value: '' }, 'General enquiry'),
+        puppies.map(p => React.createElement('option', { key: p.id, value: p.id }, p.name))),
+      React.createElement('span', { 'data-testid': 'enquiry-form-visible' }, `Enquire about ${selectedPuppy ? puppies.find(p => p.id === selectedPuppy)?.name : 'this litter'}`),
+      state === 'error' && React.createElement('p', { role: 'alert' }, error),
+    )
+  }
+
+  const realFetch = globalThis.fetch
+  const puppies = [{ id: 'puppyA', name: 'Puppy A' }, { id: 'puppyB', name: 'Puppy B' }]
+  const validForm = { name: 'Jane Buyer', email: 'jane@example.com', phone: '', message: 'Interested!', consent: true, website: '' }
+
+  function mount() {
+    let renderer
+    const controls = {}
+    act(() => { renderer = TestRenderer.create(React.createElement(EnquiryFormHarness, { token: 'tok', puppies, controls })) })
+    return { renderer, controls }
+  }
+  function rendered(renderer) { return JSON.stringify(renderer.toJSON()) }
+
+  const capturedRequests = []
+  function mockAcceptingFetch() {
+    globalThis.fetch = async (_url, opts) => {
+      capturedRequests.push(JSON.parse(opts.body))
+      return { ok: true, json: async () => ({ success: true, notified: true }) }
+    }
+  }
+
+  // ── [A] Puppy A enquiry succeeds → success shown for A ──
+  const { renderer, controls } = mount()
+  controls.selectPuppy('puppyA')
+  for (const [k, v] of Object.entries(validForm)) controls.setField(k, v)
+  mockAcceptingFetch()
+  await controls.submit()
+  check('[A] after a successful submission for Puppy A, state is "sent" and sentFor is Puppy A', controls.getState().state === 'sent' && controls.getState().sentFor === 'puppyA')
+  check('[A] the success panel is shown for Puppy A', rendered(renderer).includes('Enquiry sent successfully'))
+
+  // ── [B] Select Puppy B → form becomes usable again (not the frozen
+  // Puppy A success panel) ──
+  controls.selectPuppy('puppyB')
+  check('[B] selecting Puppy B resets state back to idle — no longer frozen on Puppy A\'s success', controls.getState().state === 'idle')
+  check('[B] the live form is shown again for Puppy B, not the success panel', rendered(renderer).includes('enquiry-form-visible') && !rendered(renderer).includes('Enquiry sent successfully'))
+  check('[B]/[5] switching to Puppy B does not carry over Puppy A\'s stale form values (name/message cleared)', controls.getState().form.name === '' && controls.getState().form.message === '')
+
+  // ── [C] Puppy B enquiry can be submitted successfully, independently
+  // of Puppy A's earlier submission ──
+  for (const [k, v] of Object.entries(validForm)) controls.setField(k, v)
+  await controls.submit()
+  check('[C] Puppy B\'s submission succeeds independently — state "sent", sentFor Puppy B', controls.getState().state === 'sent' && controls.getState().sentFor === 'puppyB')
+  check('[C] the success panel is shown for Puppy B', rendered(renderer).includes('Enquiry sent successfully'))
+
+  // ── [D] the correct puppyId (opaque puppyRef) was sent for EACH of the
+  // two submissions above — never both attributed to the same puppy ──
+  check('[D] exactly two requests were sent', capturedRequests.length === 2)
+  check('[D] the FIRST request carried puppyRef "puppyA"', capturedRequests[0]?.puppyRef === 'puppyA')
+  check('[D] the SECOND request carried puppyRef "puppyB", not a stale/repeated "puppyA"', capturedRequests[1]?.puppyRef === 'puppyB')
+
+  // ── [E] existing success/error behavior remains correct ──
+  // E1: sentFor tracks only the MOST RECENT success (a single value, not
+  // a per-puppy history) — by design, the smallest fix that satisfies the
+  // actual requirement ("Puppy A does not block Puppy B"), not "remember
+  // every puppy's success forever". So re-selecting Puppy A after Puppy
+  // B has since succeeded is correctly treated as "a different puppy than
+  // the one that just succeeded" and given a fresh form — the SAME single
+  // rule applied consistently both times, never a special case for
+  // whichever puppy happened to be first.
+  controls.selectPuppy('puppyA')
+  check('[E1] sentFor tracks only the most recent success — re-selecting Puppy A after Puppy B\'s later success resets to a fresh form rather than resurrecting a stale success panel',
+    controls.getState().state === 'idle')
+  check('[E1] the live form (not a success panel) is what\'s actually shown in that case', rendered(renderer).includes('enquiry-form-visible'))
+
+  // E2: a submission that FAILS shows the error state with the form still
+  // visible (unchanged pre-existing behavior — only the 'sent' branch was
+  // ever touched by this fix).
+  for (const [k, v] of Object.entries(validForm)) controls.setField(k, v)
+  globalThis.fetch = async () => ({ ok: false, json: async () => ({ error: 'Too many requests' }) })
+  await controls.submit()
+  check('[E2] a rejected submission sets state to "error", never "sent"', controls.getState().state === 'error')
+  check('[E2] the form remains visible (with the error message) after a failure — unchanged from before this fix', rendered(renderer).includes('enquiry-form-visible') && rendered(renderer).includes('Too many requests'))
+
+  // E3: notified:false still renders the honest "submitted" (not "sent")
+  // copy — the fix must not have disturbed this existing distinction.
+  controls.selectPuppy('puppyB') // a puppy with no prior 'sent' state pinned to it in this fresh error context
+  for (const [k, v] of Object.entries(validForm)) controls.setField(k, v)
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: true, notified: false }) })
+  await controls.submit()
+  check('[E3] notified:false still renders the honest "submitted" (not "sent") copy, unaffected by this fix', rendered(renderer).includes('Enquiry submitted successfully') && !rendered(renderer).includes('Enquiry sent successfully'))
+
+  act(() => { renderer.unmount() })
   globalThis.fetch = realFetch
 }
 

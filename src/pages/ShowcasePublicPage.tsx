@@ -151,16 +151,24 @@ function EnquiryForm({ token, puppies, selectedPuppy, onSelectedPuppy }: { token
   // but whether the breeder has actually seen an email about it is not
   // something this page can promise.
   const [notified, setNotified] = useState(false)
+  const [sentFor, setSentFor] = useState<string | null>(null)
+  useEffect(() => {
+    if (state === 'sent' && selectedPuppy !== sentFor) {
+      setState('idle'); setError(''); setNotified(false)
+      setForm({ name: '', email: '', phone: '', message: '', consent: false, website: '' })
+    }
+  }, [selectedPuppy, state, sentFor])
   async function submit(e: FormEvent) {
     e.preventDefault(); if (state === 'sending') return; setState('sending'); setError('')
     try {
       const response = await fetch('/api/create-showcase-enquiry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, puppyRef: selectedPuppy || undefined, ...form }) })
       const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Could not send your enquiry')
       setNotified(data.notified === true)
+      setSentFor(selectedPuppy)
       setState('sent')
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not send your enquiry'); setState('error') }
   }
-  if (state === 'sent') return <div style={{ ...panel, marginTop: 30 }} role="status">
+  if (state === 'sent' && sentFor === selectedPuppy) return <div style={{ ...panel, marginTop: 30 }} role="status">
     {notified
       ? <><h2>Enquiry sent successfully</h2><p>The breeder has been notified.</p></>
       : <><h2>Enquiry submitted successfully</h2><p>The breeder can view it in iDogs.</p></>}
