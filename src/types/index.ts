@@ -354,6 +354,14 @@ export interface ShowcaseEnquiry {
   // could echo back the recipient address or other sensitive detail) —
   // present only when notified is false AND an attempt was actually made.
   notificationErrorCode?: string
+  // Whether the BUYER's own confirmation email ("Your enquiry has been
+  // sent") was accepted by the provider — a courtesy copy attempted only
+  // once `notified` is true, never independently. Optional for the same
+  // reason `notified` is: absent entirely on any enquiry document
+  // written before this field existed.
+  buyerConfirmationSent?: boolean
+  // Fixed, non-PII reason code only, same posture as notificationErrorCode.
+  buyerConfirmationErrorCode?: string
 }
 
 // ═════════════════════════════════════════════════════════════

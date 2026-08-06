@@ -19,13 +19,21 @@
 //   breeder-UI copy and security-property checks not already covered by
 //   scripts/test-showcase-enquiry.mjs (updated in this same round).
 //
+// IMPLEMENT NOW round (buyer/breeder enquiry email workflow) added
+// Section 1b/1c below: the breeder notification's Reply-To (buyer's own
+// address) and the new sendShowcaseEnquiryConfirmation() sent to the
+// buyer once that notification is accepted, with Reply-To the breeder's
+// own resolved address. Same pure-function-plus-mocked-fetch approach as
+// Section 1 — no emulator, no real Resend credential needed.
+//
 // Usage: node scripts/test-showcase-fix-round2.mjs (no emulator needed —
-// sendShowcaseEnquiryNotification is a pure function w.r.t. its inputs
-// plus the injectable global.fetch, never touches Firestore/Auth itself)
+// sendShowcaseEnquiryNotification/sendShowcaseEnquiryConfirmation are
+// pure functions w.r.t. their inputs plus the injectable global.fetch,
+// never touch Firestore/Auth themselves)
 
 import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
-import { sendShowcaseEnquiryNotification } from '../api/_lib/showcase-notification.js'
+import { sendShowcaseEnquiryNotification, sendShowcaseEnquiryConfirmation } from '../api/_lib/showcase-notification.js'
 
 const { check, checkAsync, summary } = makeChecker()
 
@@ -175,6 +183,262 @@ await checkAsync('the enquirer\'s own contact details (name/email/phone/message)
 })
 
 // =========================================================================
+// SECTION 1b — buyer/breeder email workflow: breeder notification's
+// Reply-To (test B), sender display name, and header-injection safety.
+// =========================================================================
+
+await checkAsync('[B] the breeder notification\'s Reply-To is the BUYER\'s own submitted email — never noreply@idogs.com.au', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        await sendShowcaseEnquiryNotification(BASE_ARGS)
+        return capturedBody.reply_to === 'jane@example.com' && capturedBody.reply_to !== 'noreply@idogs.com.au'
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('the breeder notification is sent from the exact display name "iDogs <noreply@idogs.com.au>"', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        await sendShowcaseEnquiryNotification(BASE_ARGS)
+        return capturedBody.from === 'iDogs <noreply@idogs.com.au>'
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('a phone-only enquiry (no enquirerEmail) omits Reply-To entirely on the breeder notification — never falls back to noreply@idogs.com.au', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        await sendShowcaseEnquiryNotification({ ...BASE_ARGS, enquirerEmail: null, enquirerPhone: '0412 345 678' })
+        return !('reply_to' in capturedBody)
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('[header injection] an enquirerEmail carrying a smuggled CRLF/second-header payload is rejected by the header-safety guard — Reply-To is omitted, never set to the malicious value', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        await sendShowcaseEnquiryNotification({ ...BASE_ARGS, enquirerEmail: 'jane@example.com\r\nBcc: attacker@evil.com' })
+        return !('reply_to' in capturedBody)
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+// =========================================================================
+// SECTION 1c — sendShowcaseEnquiryConfirmation(): the buyer's own
+// confirmation email (tests C, D, G).
+// =========================================================================
+
+const CONFIRMATION_ARGS = {
+  buyerEmail: 'jane@example.com',
+  buyerName: 'Jane Buyer',
+  litterName: 'Test Litter 2026',
+  puppyName: 'Test Puppy',
+  kennelName: 'Happy Tails Kennel',
+  breederEmail: 'breeder@example.com',
+}
+
+check('sendShowcaseEnquiryConfirmation: RESEND_API_KEY unset — treated as "not attempted" (sent:false, errorCode:null), never a crash', await (async () => {
+  const original = process.env.RESEND_API_KEY
+  delete process.env.RESEND_API_KEY
+  try {
+    const result = await sendShowcaseEnquiryConfirmation(CONFIRMATION_ARGS)
+    return result.sent === false && result.errorCode === null
+  } finally {
+    if (original !== undefined) process.env.RESEND_API_KEY = original
+  }
+})())
+
+check('sendShowcaseEnquiryConfirmation: no buyerEmail at all (phone-only enquiry) => sent:false, errorCode:BUYER_EMAIL_UNAVAILABLE, no network call attempted', await (async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let fetchCalled = false
+  try {
+    return await withMockedFetch(
+      async () => { fetchCalled = true; return { ok: true, json: async () => ({}) } },
+      async () => {
+        const result = await sendShowcaseEnquiryConfirmation({ ...CONFIRMATION_ARGS, buyerEmail: null })
+        return result.sent === false && result.errorCode === 'BUYER_EMAIL_UNAVAILABLE' && !fetchCalled
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})())
+
+await checkAsync('[C] a resolved buyerEmail + configured key + Resend accepting (200) => sent:true, errorCode:null, sent TO the buyer only', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        const result = await sendShowcaseEnquiryConfirmation(CONFIRMATION_ARGS)
+        return result.sent === true && result.errorCode === null &&
+          JSON.stringify(capturedBody.to) === JSON.stringify(['jane@example.com'])
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('[D] the confirmation email\'s Reply-To is the BREEDER\'s own resolved email — never noreply@idogs.com.au', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        await sendShowcaseEnquiryConfirmation(CONFIRMATION_ARGS)
+        return capturedBody.reply_to === 'breeder@example.com' && capturedBody.reply_to !== 'noreply@idogs.com.au'
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('the confirmation email is sent from "iDogs <noreply@idogs.com.au>" with the exact required subject "Your enquiry has been sent"', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        await sendShowcaseEnquiryConfirmation(CONFIRMATION_ARGS)
+        return capturedBody.from === 'iDogs <noreply@idogs.com.au>' && capturedBody.subject === 'Your enquiry has been sent'
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('the confirmation email body includes the buyer name, puppy name, and kennel name, and states the breeder will contact them directly', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        await sendShowcaseEnquiryConfirmation(CONFIRMATION_ARGS)
+        return capturedBody.html.includes('Jane Buyer') &&
+          capturedBody.html.includes('Test Puppy') &&
+          capturedBody.html.includes('Happy Tails Kennel') &&
+          /will contact you directly/.test(capturedBody.html)
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('a missing kennelName falls back to a generic "the breeder" phrase rather than showing "undefined" or "null"', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        await sendShowcaseEnquiryConfirmation({ ...CONFIRMATION_ARGS, kennelName: null })
+        return capturedBody.html.includes('the breeder') && !capturedBody.html.includes('undefined') && !capturedBody.html.includes('null')
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('[G] Resend rejecting the confirmation (non-2xx) => sent:false, errorCode:EMAIL_PROVIDER_REJECTED — never throws, caller-level guarantee that this can never surface as a false success', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  try {
+    return await withMockedFetch(
+      async () => ({ ok: false, json: async () => ({ message: 'invalid domain' }) }),
+      async () => {
+        const result = await sendShowcaseEnquiryConfirmation(CONFIRMATION_ARGS)
+        return result.sent === false && result.errorCode === 'EMAIL_PROVIDER_REJECTED'
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('the confirmation provider call throwing (network failure) => sent:false, errorCode:NOTIFICATION_SEND_FAILED — never propagates/crashes the caller', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  try {
+    return await withMockedFetch(
+      async () => { throw new Error('ECONNRESET') },
+      async () => {
+        const result = await sendShowcaseEnquiryConfirmation(CONFIRMATION_ARGS)
+        return result.sent === false && result.errorCode === 'NOTIFICATION_SEND_FAILED'
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('[header injection] a breederEmail carrying a smuggled CRLF payload is rejected by the header-safety guard — Reply-To is omitted, never set to the malicious value', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let capturedBody = null
+  try {
+    return await withMockedFetch(
+      async (_url, opts) => { capturedBody = JSON.parse(opts.body); return { ok: true, json: async () => ({}) } },
+      async () => {
+        await sendShowcaseEnquiryConfirmation({ ...CONFIRMATION_ARGS, breederEmail: 'breeder@example.com\r\nBcc: attacker@evil.com' })
+        return !('reply_to' in capturedBody)
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+await checkAsync('[header injection] a buyerEmail carrying a smuggled CRLF payload is rejected outright — no send attempted at all (unsafe To address)', async () => {
+  process.env.RESEND_API_KEY = 'test-key-not-real'
+  let fetchCalled = false
+  try {
+    return await withMockedFetch(
+      async () => { fetchCalled = true; return { ok: true, json: async () => ({}) } },
+      async () => {
+        const result = await sendShowcaseEnquiryConfirmation({ ...CONFIRMATION_ARGS, buyerEmail: 'jane@example.com\r\nBcc: attacker@evil.com' })
+        return result.sent === false && result.errorCode === 'BUYER_EMAIL_UNAVAILABLE' && !fetchCalled
+      }
+    )
+  } finally {
+    delete process.env.RESEND_API_KEY
+  }
+})
+
+// =========================================================================
 // SECTION 2 — api/create-showcase-enquiry.js: additional security-
 // property source checks not already covered by scripts/test-showcase-
 // enquiry.mjs's own (updated, in this same round) assertions.
@@ -189,6 +453,16 @@ await checkAsync('the enquirer\'s own contact details (name/email/phone/message)
     /resolvedPuppyName = resolved\.dog\.name \|\| null/.test(enquirySrc))
   check('the honeypot branch returns before any notification/write logic is ever reached — a bot never triggers an outbound email or a Firestore write',
     enquirySrc.indexOf('if (sanitized.honeypotFilled)') < enquirySrc.indexOf('sendShowcaseEnquiryNotification({'))
+
+  // ── [E] kennelName (buyer/breeder email workflow round) is resolved
+  // server-side from the SAME already-fetched, tenant-authoritative
+  // profile document the Plus-eligibility check reads — never from the
+  // request body. ──
+  check('[E] kennelName is resolved from the already-fetched breederProfile (users/{tenantId}), never from req.body/body/sanitized input',
+    /const kennelName = breederProfile\?\.kennelName \|\| null/.test(enquirySrc) &&
+    !/kennelName:\s*(req\.body|body|sanitized)/.test(enquirySrc))
+  check('[E] breederProfile itself comes from the SAME profileSnap already fetched for the Plus-eligibility check — no separate/duplicated read, and never client input',
+    /const breederProfile = profileSnap\.exists \? profileSnap\.data\(\) : null/.test(enquirySrc))
 }
 
 // =========================================================================
@@ -228,6 +502,10 @@ await checkAsync('the enquirer\'s own contact details (name/email/phone/message)
     /interface ShowcaseEnquiry \{[\s\S]*?notified\?: boolean/.test(typesSrc))
   check('ShowcaseEnquiry type declares notificationErrorCode as optional (only present on a failed/unattempted notification)',
     /notificationErrorCode\?: string/.test(typesSrc))
+  check('ShowcaseEnquiry type declares buyerConfirmationSent as optional, mirroring notified\'s own optionality contract',
+    /buyerConfirmationSent\?: boolean/.test(typesSrc))
+  check('ShowcaseEnquiry type declares buyerConfirmationErrorCode as optional',
+    /buyerConfirmationErrorCode\?: string/.test(typesSrc))
 }
 
 // =========================================================================
@@ -254,10 +532,11 @@ await checkAsync('the enquirer\'s own contact details (name/email/phone/message)
 
   const addIndex = enquirySrc.indexOf("db.collection('showcaseEnquiries').add(")
   const notifyIndex = enquirySrc.indexOf('await sendShowcaseEnquiryNotification({')
+  const confirmIndex = enquirySrc.indexOf('await sendShowcaseEnquiryConfirmation({')
   const updateIndex = enquirySrc.indexOf('await enquiryRef.update({')
   const responseIndex = enquirySrc.indexOf('res.status(200).json({ success: true, notified })')
 
-  check('Section 5 setup: all four key statements (create, notify, update, response) were located in source', addIndex > -1 && notifyIndex > -1 && updateIndex > -1 && responseIndex > -1)
+  check('Section 5 setup: all five key statements (create, notify, confirm, update, response) were located in source', addIndex > -1 && notifyIndex > -1 && confirmIndex > -1 && updateIndex > -1 && responseIndex > -1)
 
   // ── Requirement 1 & 2: Firestore initial write happens FIRST, with
   // notified:false, before any Resend attempt — "no email attempted"
@@ -280,12 +559,28 @@ await checkAsync('the enquirer\'s own contact details (name/email/phone/message)
   check('the update writes the REAL `notified` result (from the notification attempt) — true on acceptance, false otherwise, never hardcoded',
     /await enquiryRef\.update\(\{\s*\n\s*notified,/.test(enquirySrc))
 
+  // ── [G] the buyer confirmation is attempted strictly between the
+  // breeder notification and the status update, and ONLY when the
+  // breeder notification was accepted — never before it, never
+  // unconditionally, never after the update has already recorded the
+  // outcome. ──
+  check('[G] the buyer confirmation attempt happens strictly between the breeder notification and the status update',
+    notifyIndex < confirmIndex && confirmIndex < updateIndex)
+  check('[G] the buyer confirmation call is gated on `if (notified)` — never attempted when the breeder notification was not accepted',
+    /if \(notified\) \{\s*\n\s*const confirmation = await sendShowcaseEnquiryConfirmation\(\{/.test(enquirySrc))
+  check('[G] the update writes the REAL buyerConfirmationSent result — defaults to false when never attempted, never hardcoded true',
+    /let buyerConfirmationSent = false/.test(enquirySrc) && /buyerConfirmationSent,/.test(enquirySrc))
+  check('sendShowcaseEnquiryConfirmation is CALLED (await ...(...)) exactly once in this file — no loop, no retry wrapper',
+    (enquirySrc.match(/await sendShowcaseEnquiryConfirmation\(/g) || []).length === 1)
+
   // ── Requirement 5: failure/unavailable => preserve the enquiry, store
   // only the approved fixed notificationErrorCode. ──
   check('there is NO delete/rollback of the enquiry document anywhere in this file, under any outcome — the enquiry is unconditionally preserved once created',
     !/enquiryRef\.delete\(/.test(enquirySrc) && !enquirySrc.includes(".collection('showcaseEnquiries').doc(") ) // no ad-hoc doc(id).delete() path either
   check('only the fixed, non-PII notificationErrorCode (never a raw provider error/message) is ever written to the document',
     /\.\.\.\(notificationErrorCode \? \{ notificationErrorCode \} : \{\}\)/.test(enquirySrc))
+  check('only the fixed, non-PII buyerConfirmationErrorCode (never a raw provider error/message) is ever written to the document',
+    /\.\.\.\(buyerConfirmationErrorCode \? \{ buyerConfirmationErrorCode \} : \{\}\)/.test(enquirySrc))
 
   // ── Requirement 6: if the post-send status update itself fails, do
   // NOT delete/recreate the enquiry and do NOT send a second email. ──
@@ -297,6 +592,13 @@ await checkAsync('the enquirer\'s own contact details (name/email/phone/message)
       const catchEnd = enquirySrc.indexOf('}', catchStart + 10)
       const catchBody = enquirySrc.slice(catchStart, catchEnd)
       return !catchBody.includes('sendShowcaseEnquiryNotification')
+    })())
+  check('the status-update catch block does NOT re-invoke sendShowcaseEnquiryConfirmation either — same duplicate-send guarantee for the buyer\'s copy',
+    (() => {
+      const catchStart = enquirySrc.indexOf('} catch {', updateIndex)
+      const catchEnd = enquirySrc.indexOf('}', catchStart + 10)
+      const catchBody = enquirySrc.slice(catchStart, catchEnd)
+      return !catchBody.includes('sendShowcaseEnquiryConfirmation')
     })())
   check('the status-update catch block does NOT delete or re-create the enquiry document',
     (() => {
@@ -318,14 +620,37 @@ await checkAsync('the enquirer\'s own contact details (name/email/phone/message)
 
   // ── Anti-spam / rate-limit / duplicate-submission posture unchanged ──
   const rateLimitIndex = enquirySrc.indexOf('checkDurableRateLimit(')
-  check('the existing durable rate limiter still runs BEFORE any of this round\'s new create/notify/update logic (position unchanged by this round\'s edits)',
+  check('the existing durable rate limiter still runs BEFORE any of this round\'s new create/notify/confirm/update logic (position unchanged by this round\'s edits)',
     rateLimitIndex > -1 && rateLimitIndex < addIndex)
-  check('the honeypot short-circuit still returns before the create/notify/update sequence — a bot never creates an enquiry or triggers an email',
+  check('the honeypot short-circuit still returns before the create/notify/confirm/update sequence — a bot never creates an enquiry or triggers either email',
     enquirySrc.indexOf('if (sanitized.honeypotFilled)') < addIndex)
 
+  // ── [F] every early-return (invalid token, disabled/expired share,
+  // downgraded tenant, tenant-chain drift, unresolved puppyRef) happens
+  // strictly before the Firestore create — and therefore strictly before
+  // BOTH email attempts, which only ever run after it. A forged/invalid
+  // request can only ever reach the point of returning a generic 404,
+  // never trigger any outbound email. ──
+  check('[F] every pre-create validation gate (token/share-live/tenant-plan/tenant-chain/puppyRef) returns before the Firestore create — and therefore before either email attempt, which both run strictly after it',
+    (() => {
+      const gates = [
+        "if (showcaseSnap.empty) {",
+        "if (!isShareLive(showcase)) {",
+        "if (!isTenantPlusEligible(breederProfile)) {",
+        "if (!litterSnap.exists || litterSnap.data().tenantId !== showcase.tenantId) {",
+        "if (!resolved) {",
+      ]
+      return gates.every(g => {
+        const idx = enquirySrc.indexOf(g)
+        return idx > -1 && idx < addIndex
+      })
+    })())
+
   // ── The public response never exposes the breeder's destination email ──
-  check('the success response body is exactly { success: true, notified } — breederEmail (or any other recipient detail) is never included',
-    /res\.status\(200\)\.json\(\{ success: true, notified \}\)/.test(enquirySrc) && !/notified, breederEmail/.test(enquirySrc) && !/breederEmail,\s*notified/.test(enquirySrc))
+  check('the success response body is exactly { success: true, notified } — breederEmail, kennelName, and buyerConfirmationSent are never included',
+    /res\.status\(200\)\.json\(\{ success: true, notified \}\)/.test(enquirySrc) &&
+    !/notified, breederEmail/.test(enquirySrc) && !/breederEmail,\s*notified/.test(enquirySrc) &&
+    !/notified, kennelName/.test(enquirySrc) && !/notified, buyerConfirmationSent/.test(enquirySrc))
 }
 
 // =========================================================================

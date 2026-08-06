@@ -191,10 +191,12 @@ const { check, skip, summary } = makeChecker()
   // real credentials — see scripts/test-showcase-fix-round2.mjs); this
   // file only checks create-showcase-enquiry.js correctly imports and
   // calls it. ──
-  check('create-showcase-enquiry.js imports sendShowcaseEnquiryNotification from the shared _lib module, never redefining it inline',
-    /import \{ sendShowcaseEnquiryNotification \} from '\.\/_lib\/showcase-notification\.js'/.test(enquirySrc))
+  check('create-showcase-enquiry.js imports sendShowcaseEnquiryNotification (and sendShowcaseEnquiryConfirmation) from the shared _lib module, never redefining either inline',
+    /import \{ sendShowcaseEnquiryNotification, sendShowcaseEnquiryConfirmation \} from '\.\/_lib\/showcase-notification\.js'/.test(enquirySrc))
   check('create-showcase-enquiry.js actually calls sendShowcaseEnquiryNotification (imported, not just referenced)',
     /await sendShowcaseEnquiryNotification\(\{/.test(enquirySrc))
+  check('create-showcase-enquiry.js actually calls sendShowcaseEnquiryConfirmation (imported, not just referenced)',
+    /await sendShowcaseEnquiryConfirmation\(\{/.test(enquirySrc))
   {
     const notificationLibSrc = readFileSync(new URL('../api/_lib/showcase-notification.js', import.meta.url), 'utf8')
     check('api/_lib/showcase-notification.js sends via Resend, the SAME provider api/send-email.js and api/survey.js already use — not a new one',
