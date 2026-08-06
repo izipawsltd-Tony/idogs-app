@@ -148,11 +148,15 @@ export default async function handler(req, res) {
     if (!litterSnap.exists || litterSnap.data().tenantId !== showcase.tenantId) {
       return res.status(404).json({ error: 'Not found' })
     }
+    // Reused for the legacy-litterId fallback below — no extra Firestore
+    // read (litterSnap was already fetched for the tenant-chain check
+    // above).
+    const litterPuppyIds = new Set(litterSnap.data().puppyIds || [])
 
     // Hide (visible:false) + tenant/litter-chain drift — both collapse
     // into resolveVisiblePuppyByRef() returning null (see that
     // function's own comment, shared with api/create-showcase-enquiry.js).
-    const resolved = await resolveVisiblePuppyByRef(db, showcase, litterId, puppyRef)
+    const resolved = await resolveVisiblePuppyByRef(db, showcase, litterId, puppyRef, litterPuppyIds)
     if (!resolved) {
       return res.status(404).json({ error: 'Not found' })
     }

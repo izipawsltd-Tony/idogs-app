@@ -14,6 +14,7 @@
 // chain (see api/showcase-public.js).
 
 import { randomUUID, createHash } from 'crypto'
+import { isValidShowcasePuppyDoc } from './showcase-schema.js'
 
 // Used for the breeder's OWN authenticated views (api/get-showcase-
 // media-urls.js, and the immediate response right after
@@ -96,7 +97,19 @@ export function opaquePuppyRef(litterId, dogId) {
 // { dogId, dog, entry } on success, or null on ANY failure (unknown ref,
 // missing dog, tenant/litter mismatch) — callers should treat null as
 // the same generic 404 every other denial in this trust boundary uses.
-export async function resolveVisiblePuppyByRef(db, showcase, litterId, puppyRef) {
+//
+// `litterPuppyIds` (a Set of the litter document's own puppyIds — the
+// caller already has this litter document in hand for its own tenant-
+// chain check, so this never costs an extra Firestore read) is required
+// so a LEGACY puppy whose dog document has no litterId at all (see
+// isValidShowcasePuppyDoc()'s own header comment in showcase-schema.js)
+// resolves the exact same way here as it already does in
+// api/showcase-public.js's own listing — a dog missing litterId used to
+// silently fail EVERY media fetch and puppy-specific enquiry even after
+// it correctly started appearing on the public page, because this
+// function still ran its own, separately-maintained (and, it turned
+// out, stale) strict-equality check instead of the shared helper.
+export async function resolveVisiblePuppyByRef(db, showcase, litterId, puppyRef, litterPuppyIds) {
   if (!puppyRef || typeof puppyRef !== 'string') return null
   const visibleEntries = Object.entries(showcase.puppies || {}).filter(([, entry]) => entry?.visible === true)
   const match = visibleEntries.find(([dogId]) => opaquePuppyRef(litterId, dogId) === puppyRef)
@@ -106,7 +119,7 @@ export async function resolveVisiblePuppyByRef(db, showcase, litterId, puppyRef)
   const dogSnap = await db.collection('dogs').doc(dogId).get()
   if (!dogSnap.exists) return null
   const dog = dogSnap.data()
-  if (dog.tenantId !== showcase.tenantId || dog.litterId !== litterId) return null
+  if (!isValidShowcasePuppyDoc(dogId, dog, showcase.tenantId, litterId, litterPuppyIds)) return null
 
   return { dogId, dog, entry }
 }
