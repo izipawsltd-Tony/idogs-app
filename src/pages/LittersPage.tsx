@@ -1697,13 +1697,25 @@ export default function LittersPage({ toast, dismissAll }: Props) {
 
 // ── PUPPY SHOWCASE MEDIA (Slice 2) ──────────────────────────────
 // Photo/video gallery for a single puppy — api/upload-showcase-media.js
-// does the actual processing (real magic-byte sniffing, HEIC/HEIF
-// decode via the shared image-pipeline, size/type validation), this
-// component only ever sends raw file bytes and reflects back whatever
-// the server returns. No client-side resize/HEIC-detection branch like
-// PhotoUpload.tsx's avatar flow — deliberately simpler: the server
-// pipeline handles every accepted type uniformly, so there's no
-// "special-case HEIC differently" client logic needed here at all.
+// does the actual persistence (real magic-byte sniffing, size/type
+// validation, HEIC/HEIF re-decode as a defense-in-depth backstop).
+// Staging fix ("mobile upload 413"): this component used to send the
+// RAW file straight to the server as base64 JSON with no client-side
+// resize — unlike ShowcaseManager's queued draft flow (handleAddFiles /
+// handleSaveShowcaseDraft below), which already went through
+// lib/imageCompression.ts's prepareImageForUpload() for exactly this
+// reason. A real phone JPEG (routinely 3-8MB) base64-inflates by ~33%,
+// landing well past Vercel's Serverless Function request-body ceiling
+// (4.5MB) before api/upload-showcase-media.js's handler ever runs —
+// api/_lib/image-pipeline.js's own much more generous server-side
+// limits never got a chance to matter. Photos here now go through the
+// SAME prepareImageForUpload() ShowcaseManager already uses (HEIC/HEIF
+// decode + 1600px/quality-0.85 resize, applied uniformly, before any
+// base64/network work) — no separate copy of that logic. Video is never
+// compressed client-side anywhere in this codebase (no safe
+// dependency-free in-browser transcode); the only lever is rejecting an
+// oversized video up front with a clear message, mirroring
+// handleAddFiles's own MAX_VIDEO_UPLOAD_BYTES guard.
 // Codex fix-round ("Revocable media delivery"): dog.photos/dog.videos are
 // now PRIVATE Storage paths ({id, path} — see MediaItem in
 // src/types/index.ts), never directly renderable. This component fetches
@@ -1756,6 +1768,8 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
     })
   }
 
+  // Video only — never compressed client-side (see this component's own
+  // header comment above), so this is still a raw read for that case.
   function readAsBase64(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
@@ -1766,9 +1780,16 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
   }
 
   async function handleUpload(file: File, kind: 'photo' | 'video') {
+    // Same pre-flight guard handleAddFiles already uses below — reject
+    // an oversized video before any base64/network work, with the same
+    // user-facing wording, rather than letting it fail as a bare 413.
+    if (kind === 'video' && file.size > MAX_VIDEO_UPLOAD_BYTES) {
+      toast(`This video is over ${Math.floor(MAX_VIDEO_UPLOAD_BYTES / (1024 * 1024))}MB — please trim or compress it before uploading`, 'error')
+      return
+    }
     setUploading(kind)
     try {
-      const base64 = await readAsBase64(file)
+      const base64 = kind === 'photo' ? (await prepareImageForUpload(file)).base64 : await readAsBase64(file)
       const result = await uploadShowcaseMedia(puppy.id, base64, kind)
       applyResult(result)
       toast(`${kind === 'photo' ? 'Photo' : 'Video'} added`)
