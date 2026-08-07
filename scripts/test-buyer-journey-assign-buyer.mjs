@@ -21,7 +21,15 @@
 
 import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
-import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage } from '../src/lib/assignBuyer.ts'
+import { deleteField } from 'firebase/firestore'
+import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage, toFirestoreAssignBuyerUpdate } from '../src/lib/assignBuyer.ts'
+
+// Firestore's deleteField() returns a FieldValue sentinel, not a plain
+// value — this is the correct, documented way to detect one (FieldValue
+// exposes isEqual()), rather than relying on internal shape/instanceof.
+function isDeleteFieldSentinel(v) {
+  return !!v && typeof v.isEqual === 'function' && deleteField().isEqual(v)
+}
 
 const { check, summary } = makeChecker()
 
@@ -51,16 +59,65 @@ function puppy(overrides = {}) {
     updates.reservedForEmail === 'jane@example.com' && !/[[\]()<>]/.test(updates.reservedForEmail) && !updates.reservedForEmail.includes('mailto:'))
 }
 
-// null/absent email or phone must be OMITTED, never sent as undefined
-// (updateDoc() rejects undefined field values outright).
+// buildAssignBuyerUpdate() is the LOCAL (React state) shape — a null/
+// absent email or phone must be an explicit `undefined` value, always
+// present as a key (never omitted), so a reassignment away from a buyer
+// WITH contact info to one WITHOUT it actually overwrites the local state
+// too, not just leaves the old value looking still-valid until reload.
 {
   const updates = buildAssignBuyerUpdate(enq({ email: null, phone: null }))
-  check('a null enquiry email is omitted from the update object (never sent as undefined)', !('reservedForEmail' in updates))
-  check('a null enquiry phone is omitted from the update object (never sent as undefined)', !('reservedForPhone' in updates))
+  check('a null enquiry email is present as an explicit `undefined` key (never omitted) in the LOCAL update object',
+    ('reservedForEmail' in updates) && updates.reservedForEmail === undefined)
+  check('a null enquiry phone is present as an explicit `undefined` key (never omitted) in the LOCAL update object',
+    ('reservedForPhone' in updates) && updates.reservedForPhone === undefined)
   check('reservedForName and availabilityStatus/reservedAt are still present with a phone/email-less enquiry',
     updates.reservedForName === 'Jane Buyer' && updates.availabilityStatus === 'reserved' && typeof updates.reservedAt === 'string')
-  check('no value anywhere in the update object is literally undefined (would crash updateDoc())',
-    Object.values(updates).every(v => v !== undefined))
+}
+
+// =========================================================================
+// SECTION 1b (data-integrity fast-follow #2) — toFirestoreAssignBuyerUpdate():
+// the Firestore-write counterpart. Every `undefined` from the local shape
+// must become an explicit deleteField() sentinel — never a literal
+// `undefined` (updateDoc() rejects that outright) and never simply omitted
+// (which is exactly the bug staging QA found: a reassignment to a buyer
+// with no phone left the PREVIOUS buyer's phone number stale in Firestore,
+// silently misattributed to the new buyer).
+// =========================================================================
+{
+  const withBoth = buildAssignBuyerUpdate(enq({ email: 'new@example.com', phone: '0499999999' }))
+  const fsWithBoth = toFirestoreAssignBuyerUpdate(withBoth)
+  check('REQUIRED 1: new buyer WITH a phone → reservedForPhone is the new plain phone string (replaces old)',
+    fsWithBoth.reservedForPhone === '0499999999')
+  check('new buyer WITH an email → reservedForEmail is the new plain email string', fsWithBoth.reservedForEmail === 'new@example.com')
+  check('availabilityStatus/reservedForName/reservedAt pass through unchanged (never deleteField())',
+    fsWithBoth.availabilityStatus === 'reserved' && fsWithBoth.reservedForName === 'Jane Buyer' && typeof fsWithBoth.reservedAt === 'string')
+
+  const noPhone = buildAssignBuyerUpdate(enq({ email: 'new@example.com', phone: null }))
+  const fsNoPhone = toFirestoreAssignBuyerUpdate(noPhone)
+  check('REQUIRED 2: new buyer with NO phone → reservedForPhone is an explicit deleteField() sentinel (clears the old value), not omitted',
+    isDeleteFieldSentinel(fsNoPhone.reservedForPhone))
+  check('REQUIRED 2: the deleteField() sentinel is never a literal `undefined` (would crash updateDoc())',
+    fsNoPhone.reservedForPhone !== undefined)
+
+  const blankPhone = buildAssignBuyerUpdate(enq({ email: 'new@example.com', phone: '   ' }))
+  const fsBlankPhone = toFirestoreAssignBuyerUpdate(blankPhone)
+  check('REQUIRED 3: a whitespace-only phone also clears via deleteField() (not stored as blank/whitespace)',
+    isDeleteFieldSentinel(fsBlankPhone.reservedForPhone))
+
+  const noEmail = buildAssignBuyerUpdate(enq({ email: null, phone: '0412345678' }))
+  const fsNoEmail = toFirestoreAssignBuyerUpdate(noEmail)
+  check('REQUIRED 4: new buyer with NO email → reservedForEmail is also an explicit deleteField() sentinel (same stale-data problem, same fix)',
+    isDeleteFieldSentinel(fsNoEmail.reservedForEmail))
+  check('a missing email does not affect the phone field independently (phone still writes as a plain string)',
+    fsNoEmail.reservedForPhone === '0412345678')
+
+  const blankEmail = buildAssignBuyerUpdate(enq({ email: '  ', phone: '0412345678' }))
+  check('a whitespace-only email also clears via deleteField()', isDeleteFieldSentinel(toFirestoreAssignBuyerUpdate(blankEmail).reservedForEmail))
+
+  const neitherContact = buildAssignBuyerUpdate(enq({ email: null, phone: null }))
+  const fsNeither = toFirestoreAssignBuyerUpdate(neitherContact)
+  check('an enquiry with neither email nor phone clears BOTH via deleteField()',
+    isDeleteFieldSentinel(fsNeither.reservedForEmail) && isDeleteFieldSentinel(fsNeither.reservedForPhone))
 }
 
 // =========================================================================
@@ -141,12 +198,19 @@ function createAssignBuyerHarness(initialDogs) {
   const errors = {}
   const toasts = []
   const confirmCalls = []
+  const firestoreCalls = []
   let confirmReturn = true
   let updateDogShouldFail = false
 
-  async function updateDogFake(id, updates) {
+  // Mirrors the REAL two-step write exactly: updateDog() only ever
+  // receives the Firestore-write shape (deleteField() sentinels included)
+  // and does NOT itself mutate local state — LittersPage.tsx's setDogs()
+  // does that separately from the LOCAL shape. Records what was actually
+  // "sent" so tests can assert deleteField() sentinels reached the write,
+  // not just that local state looks right.
+  async function updateDogFake(id, firestoreUpdates) {
     if (updateDogShouldFail) throw Object.assign(new Error('permission denied'), { code: 'permission-denied' })
-    dogs = dogs.map(d => (d.id === id ? { ...d, ...updates } : d))
+    firestoreCalls.push({ id, updates: firestoreUpdates })
   }
 
   async function handleAssignBuyer(enquiry, targetPuppy) {
@@ -168,7 +232,8 @@ function createAssignBuyerHarness(initialDogs) {
     errors[enquiry.id] = ''
     try {
       const updates = buildAssignBuyerUpdate(enquiry)
-      await updateDogFake(targetPuppy.id, updates)
+      await updateDogFake(targetPuppy.id, toFirestoreAssignBuyerUpdate(updates))
+      dogs = dogs.map(d => (d.id === targetPuppy.id ? { ...d, ...updates } : d))
       toasts.push({ msg: 'ASSIGNED', type: undefined })
     } catch {
       errors[enquiry.id] = 'ERR'
@@ -185,6 +250,7 @@ function createAssignBuyerHarness(initialDogs) {
     getErrors: () => errors,
     getToasts: () => toasts,
     getConfirmCalls: () => confirmCalls,
+    getFirestoreCalls: () => firestoreCalls,
     setConfirmReturn: v => { confirmReturn = v },
     setUpdateDogShouldFail: v => { updateDogShouldFail = v },
   }
@@ -206,6 +272,36 @@ function createAssignBuyerHarness(initialDogs) {
     h.getDogs().find(d => d.id === 'puppyB').availabilityStatus === 'available')
   check('a success toast was shown', h.getToasts().some(t => t.msg === 'ASSIGNED'))
   check('busy flag is cleared after completion (no stuck spinner)', h.getBusy()[enq().id] === false)
+}
+
+// =========================================================================
+// Data-integrity fast-follow #2, end-to-end reproduction of the exact
+// staging bug: reassigning from a buyer WITH a phone to a buyer WITHOUT
+// one must not leave the previous buyer's number attached to the new one.
+// =========================================================================
+{
+  const target = puppy({ id: 'puppyA', availabilityStatus: 'available' })
+  const h = createAssignBuyerHarness([target])
+  // Step 1: assign to a buyer WITH a phone (mirrors "Hieu Trung NGO").
+  await h.handleAssignBuyer(enq({ id: 'enq-with-phone', name: 'Hieu Trung NGO', email: 'trunghieungo@gmail.com', phone: '0470545393' }), target)
+  const afterFirst = h.getDogs().find(d => d.id === 'puppyA')
+  check('WITH-PHONE buyer: phone saved as a plain string', afterFirst.reservedForPhone === '0470545393')
+  const firestoreCallAfterFirst = h.getFirestoreCalls().at(-1)
+  check('WITH-PHONE buyer: the Firestore write itself carried the plain phone string (not a sentinel)',
+    firestoreCallAfterFirst.updates.reservedForPhone === '0470545393')
+
+  // Step 2: reassign the SAME puppy to a DIFFERENT buyer with NO phone
+  // (mirrors "QA Staging Test Enquirer") — the conflict path, accepted.
+  const afterFirstDog = h.getDogs().find(d => d.id === 'puppyA')
+  h.setConfirmReturn(true)
+  await h.handleAssignBuyer(enq({ id: 'enq-no-phone', name: 'QA Staging Test Enquirer', email: 'qa-staging-test@example.com', phone: null }), afterFirstDog)
+  const afterSecond = h.getDogs().find(d => d.id === 'puppyA')
+  check('REQUIRED 2 (E2E): reassigning to a buyer with NO phone clears the PREVIOUS buyer\'s stale phone in local state (was the exact staging bug)',
+    afterSecond.reservedForPhone === undefined)
+  check('the new buyer\'s name/email are correct after the reassignment', afterSecond.reservedForName === 'QA Staging Test Enquirer' && afterSecond.reservedForEmail === 'qa-staging-test@example.com')
+  const firestoreCallAfterSecond = h.getFirestoreCalls().at(-1)
+  check('REQUIRED 2 (E2E): the actual Firestore write for the reassignment carried a deleteField() sentinel for reservedForPhone — not an omitted key, not undefined',
+    isDeleteFieldSentinel(firestoreCallAfterSecond.updates.reservedForPhone))
 }
 
 // 5/6 — existing reservation not silently overwritten; same-buyer idempotent
@@ -334,10 +430,13 @@ function createAssignBuyerHarness(initialDogs) {
   const littersSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
 
   check('LittersPage.tsx imports the real pure decision functions from ../lib/assignBuyer (not an inline reimplementation)',
-    /import\s*\{\s*enquiryMatchesReservation,\s*hasConflictingReservation,\s*buildAssignBuyerUpdate,\s*buildAssignBuyerConfirmMessage\s*\}\s*from\s*'\.\.\/lib\/assignBuyer'/.test(littersSrc))
+    /import\s*\{\s*enquiryMatchesReservation,\s*hasConflictingReservation,\s*buildAssignBuyerUpdate,\s*buildAssignBuyerConfirmMessage,\s*toFirestoreAssignBuyerUpdate\s*\}\s*from\s*'\.\.\/lib\/assignBuyer'/.test(littersSrc))
   check('LittersPage.tsx defines handleAssignBuyer', /async function handleAssignBuyer\(enq: ShowcaseEnquiry, puppy: Dog\)/.test(littersSrc))
-  check('handleAssignBuyer calls the real updateDog() (reused, not a new write function)', /await updateDog\(puppy\.id, updates\)/.test(littersSrc))
+  check('handleAssignBuyer calls the real updateDog() with the Firestore-safe shape (reused, not a new write function)',
+    /await updateDog\(puppy\.id, toFirestoreAssignBuyerUpdate\(updates\)\)/.test(littersSrc))
   check('handleAssignBuyer derives updates via the real buildAssignBuyerUpdate(enq)', /const updates = buildAssignBuyerUpdate\(enq\)/.test(littersSrc))
+  check('LittersPage.tsx imports the real toFirestoreAssignBuyerUpdate from ../lib/assignBuyer (deleteField()-safe write, not a hand-rolled clearing shape)',
+    /import\s*\{[^}]*\btoFirestoreAssignBuyerUpdate\b[^}]*\}\s*from\s*'\.\.\/lib\/assignBuyer'/.test(littersSrc))
   check('handleAssignBuyer mirrors handleSavePuppy/SaleAvailabilityPanel\'s restricted short-circuit',
     /if \(\(puppy as any\)\.status === 'restricted'\)/.test(littersSrc))
   check('a conflicting reservation is gated behind an explicit window.confirm (matches this file\'s existing confirm() convention)',

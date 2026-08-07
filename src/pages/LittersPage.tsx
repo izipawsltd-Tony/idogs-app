@@ -19,7 +19,7 @@ import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 import { prepareImageForUpload, readFileAsBase64, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } from '../lib/imageCompression'
 import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showcaseMoney'
 import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
-import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage } from '../lib/assignBuyer'
+import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage, toFirestoreAssignBuyerUpdate } from '../lib/assignBuyer'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -464,7 +464,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     setAssignBuyerErrors(prev => ({ ...prev, [enq.id]: '' }))
     try {
       const updates = buildAssignBuyerUpdate(enq)
-      await updateDog(puppy.id, updates)
+      await updateDog(puppy.id, toFirestoreAssignBuyerUpdate(updates))
       setDogs(prev => prev.map(d => (d.id === puppy.id ? { ...d, ...updates } : d)))
       toast(`${puppy.name} assigned to ${enq.name}`)
     } catch (e) {
