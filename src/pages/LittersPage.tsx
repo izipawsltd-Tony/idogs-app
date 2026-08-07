@@ -4,6 +4,7 @@ import {
   getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
   getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, DEFAULT_SHOWCASE_PUPPY_ENTRY,
   rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder, getShowcaseMediaUrls, getEnquiriesForLitter, reconcileLitterPuppy,
+  managePrivateDogAccess, type PrivateDogAccessGrant,
 } from '../lib/db'
 import type { SignedMediaItem } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
@@ -2018,6 +2019,11 @@ function ShowcaseManager({
   const [mediaLoading, setMediaLoading] = useState<Record<string, boolean>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
   const [saveProgress, setSaveProgress] = useState<{ done: number; total: number } | null>(null)
+  const [privateAccessOpenFor, setPrivateAccessOpenFor] = useState<string | null>(null)
+  const [privateAccessGrants, setPrivateAccessGrants] = useState<Record<string, PrivateDogAccessGrant | null | undefined>>({})
+  const [privateAccessEmails, setPrivateAccessEmails] = useState<Record<string, string>>({})
+  const [privateAccessBusy, setPrivateAccessBusy] = useState<Record<string, boolean>>({})
+  const [privateAccessErrors, setPrivateAccessErrors] = useState<Record<string, string>>({})
 
   const visibleCount = puppyDogs.filter(p => fields[p.id]?.visible).length
   const anyDirty = Object.values(dirty).some(Boolean)
@@ -2202,6 +2208,63 @@ function ShowcaseManager({
       toast(err instanceof Error && err.message ? err.message : 'Failed to reconcile this puppy', 'error')
     } finally {
       setReconcilingFor(null)
+    }
+  }
+
+  async function openPrivateAccess(puppy: Dog) {
+    const opening = privateAccessOpenFor !== puppy.id
+    setPrivateAccessOpenFor(opening ? puppy.id : null)
+    if (!opening || privateAccessGrants[puppy.id] !== undefined || privateAccessBusy[puppy.id]) return
+    setPrivateAccessEmails(prev => ({ ...prev, [puppy.id]: prev[puppy.id] ?? puppy.reservedForEmail ?? '' }))
+    setPrivateAccessBusy(prev => ({ ...prev, [puppy.id]: true }))
+    setPrivateAccessErrors(prev => ({ ...prev, [puppy.id]: '' }))
+    try {
+      const grant = await managePrivateDogAccess(puppy.id, 'get')
+      setPrivateAccessGrants(prev => ({ ...prev, [puppy.id]: grant }))
+      if (grant?.buyerEmail) setPrivateAccessEmails(prev => ({ ...prev, [puppy.id]: grant.buyerEmail }))
+    } catch (err) {
+      setPrivateAccessErrors(prev => ({ ...prev, [puppy.id]: err instanceof Error ? err.message : 'Failed to load private access' }))
+    } finally {
+      setPrivateAccessBusy(prev => ({ ...prev, [puppy.id]: false }))
+    }
+  }
+
+  async function grantPrivateAccess(puppy: Dog) {
+    const email = (privateAccessEmails[puppy.id] || '').trim()
+    setPrivateAccessBusy(prev => ({ ...prev, [puppy.id]: true }))
+    setPrivateAccessErrors(prev => ({ ...prev, [puppy.id]: '' }))
+    try {
+      const grant = await managePrivateDogAccess(puppy.id, 'grant', email)
+      setPrivateAccessGrants(prev => ({ ...prev, [puppy.id]: grant }))
+      toast(`Private access granted to ${grant?.buyerEmail || email}`)
+    } catch (err) {
+      setPrivateAccessErrors(prev => ({ ...prev, [puppy.id]: err instanceof Error ? err.message : 'Failed to grant private access' }))
+    } finally {
+      setPrivateAccessBusy(prev => ({ ...prev, [puppy.id]: false }))
+    }
+  }
+
+  async function revokePrivateAccess(puppy: Dog) {
+    setPrivateAccessBusy(prev => ({ ...prev, [puppy.id]: true }))
+    setPrivateAccessErrors(prev => ({ ...prev, [puppy.id]: '' }))
+    try {
+      await managePrivateDogAccess(puppy.id, 'revoke')
+      setPrivateAccessGrants(prev => ({ ...prev, [puppy.id]: null }))
+      toast(`Private access revoked for ${puppy.name}`)
+    } catch (err) {
+      setPrivateAccessErrors(prev => ({ ...prev, [puppy.id]: err instanceof Error ? err.message : 'Failed to revoke private access' }))
+    } finally {
+      setPrivateAccessBusy(prev => ({ ...prev, [puppy.id]: false }))
+    }
+  }
+
+  async function copyPrivateAccessLink(puppy: Dog) {
+    const url = `${window.location.origin}/app/shared-dogs/${puppy.id}`
+    try {
+      await navigator.clipboard.writeText(url)
+      toast(`Private link copied for ${puppy.name}`)
+    } catch {
+      window.prompt('Copy this private puppy link:', url)
     }
   }
 
@@ -2620,6 +2683,54 @@ function ShowcaseManager({
                       {moneyErrors[puppy.id]?.deposit && <span role="alert" style={{ fontSize: 11, color: 'var(--danger)' }}>{moneyErrors[puppy.id].deposit}</span>}
                       <span style={{ fontSize: 11 }} title="Independent of the puppy's own 'Show this puppy publicly' checkbox above — this only controls whether the DEPOSIT amount is shown, on a puppy that is already public."><input type="checkbox" checked={puppyFields.showDeposit} disabled={puppyFields.depositCents == null} onChange={e => updateField(puppy.id, 'showDeposit', e.target.checked)} /> Show deposit publicly</span>
                     </label>
+                  </div>
+                  <div style={{ paddingLeft: 26 }}>
+                    {puppy.depositStatus === 'received' ? (
+                      <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '9px 10px', background: 'var(--brand-50)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--dark)' }}>🔒 Buyer private access</div>
+                            <div style={{ fontSize: 11, color: 'var(--light)', marginTop: 2 }}>Deposit received — share this puppy's photos and documents with one buyer before transfer.</div>
+                          </div>
+                          <button type="button" className="btn btn-secondary btn-sm" onClick={() => void openPrivateAccess(puppy)}>
+                            {privateAccessOpenFor === puppy.id ? 'Close' : 'Manage access'}
+                          </button>
+                        </div>
+                        {privateAccessOpenFor === puppy.id && (
+                          <div style={{ marginTop: 9, borderTop: '1px solid var(--border)', paddingTop: 9 }}>
+                            {privateAccessBusy[puppy.id] && privateAccessGrants[puppy.id] === undefined ? <div className="spinner" /> : (
+                              <>
+                                <label className="form-group" style={{ margin: 0, maxWidth: 420 }}>
+                                  <span className="form-label">Buyer email</span>
+                                  <input
+                                    className="form-input"
+                                    type="email"
+                                    value={privateAccessEmails[puppy.id] ?? puppy.reservedForEmail ?? ''}
+                                    onChange={e => setPrivateAccessEmails(prev => ({ ...prev, [puppy.id]: e.target.value }))}
+                                    placeholder="buyer@example.com"
+                                    disabled={privateAccessBusy[puppy.id]}
+                                  />
+                                </label>
+                                {privateAccessErrors[puppy.id] && <div role="alert" style={{ fontSize: 11, color: 'var(--danger)', marginTop: 5 }}>{privateAccessErrors[puppy.id]}</div>}
+                                {privateAccessGrants[puppy.id] ? (
+                                  <div style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: 11, color: 'var(--brand-700)', fontWeight: 600 }}>✓ Access active for {privateAccessGrants[puppy.id]?.buyerEmail}</span>
+                                    <button type="button" className="btn btn-primary btn-sm" disabled={privateAccessBusy[puppy.id]} onClick={() => void copyPrivateAccessLink(puppy)}>Copy private link</button>
+                                    <button type="button" className="btn btn-ghost btn-sm" disabled={privateAccessBusy[puppy.id]} onClick={() => void revokePrivateAccess(puppy)} style={{ color: 'var(--danger)' }}>Revoke</button>
+                                  </div>
+                                ) : (
+                                  <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 8 }} disabled={privateAccessBusy[puppy.id] || !(privateAccessEmails[puppy.id] ?? puppy.reservedForEmail ?? '').trim()} onClick={() => void grantPrivateAccess(puppy)}>
+                                    {privateAccessBusy[puppy.id] ? 'Granting…' : 'Grant private access'}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      puppy.depositStatus === 'pending' && <div style={{ fontSize: 11, color: 'var(--light)' }}>🔒 Buyer private access becomes available after the deposit is marked Received.</div>
+                    )}
                   </div>
                   <div style={{ paddingLeft: 26 }}>
                     {isPuppyRestricted && (
