@@ -86,19 +86,26 @@ export default function ShowcasePublicPage() {
 function PuppyCard({ puppy, onOpen, onEnquire }: { puppy: PublicPuppy; onOpen: () => void; onEnquire: () => void }) {
   const status = STATUS[puppy.availability]
   return <article style={{ ...panel, padding: 0, overflow: 'hidden', textAlign: 'left' }}>
-    <button onClick={onOpen} aria-label={`View ${puppy.name}'s profile`} style={{ width: '100%', border: 0, padding: 0, background: 'transparent', cursor: 'pointer', textAlign: 'left' }}>
+    <button onClick={onOpen} aria-label={`View ${puppy.name}'s profile`} style={{ width: '100%', border: 0, padding: 0, background: 'transparent', cursor: 'pointer', textAlign: 'left', display: 'block' }}>
       <div style={{ aspectRatio: '4/3', overflow: 'hidden' }}>{puppy.photos[0] ? <img src={puppy.photos[0].url} alt={`${puppy.name} cover photo`} loading="lazy" style={cover} /> : <Placeholder name={puppy.name} />}</div>
-      <div style={{ padding: 18 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><h2 style={{ margin: 0, fontSize: 21 }}>{puppy.name}</h2><span style={{ ...badge, background: status.bg, color: status.fg }}>{status.label}</span></div>
-        <p style={{ color: 'var(--mid)', fontSize: 14, margin: '8px 0' }}>{puppy.sex === 'female' ? 'Female' : 'Male'} · {puppy.colour || puppy.breed} · {getDogAge(puppy.dateOfBirth)}</p>
-        {puppy.personality && <p style={{ fontSize: 14, lineHeight: 1.55, marginBottom: 0 }}>{puppy.personality}</p>}
-        {(puppy.priceCents !== undefined || puppy.depositCents !== undefined) && <p style={{ fontWeight: 700, color: '#085041' }}>{puppy.priceCents !== undefined && `Price ${money(puppy.priceCents)}`}{puppy.priceCents !== undefined && puppy.depositCents !== undefined && ' · '}{puppy.depositCents !== undefined && `Deposit ${money(puppy.depositCents)}`}</p>}
+      <div style={{ padding: '12px 14px 6px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}><h2 style={{ margin: 0, fontSize: 18 }}>{puppy.name}</h2><span style={{ ...badge, background: status.bg, color: status.fg }}>{status.label}</span></div>
+        <p style={{ color: 'var(--mid)', fontSize: 13, margin: '4px 0 0' }}>{puppy.sex === 'female' ? 'Female' : 'Male'} · {getDogAge(puppy.dateOfBirth)}</p>
+        {(puppy.priceCents !== undefined || puppy.depositCents !== undefined) && <p style={{ fontWeight: 700, color: '#085041', fontSize: 14, margin: '6px 0 0' }}>{puppy.priceCents !== undefined && `Price ${money(puppy.priceCents)}`}{puppy.priceCents !== undefined && puppy.depositCents !== undefined && ' · '}{puppy.depositCents !== undefined && `Deposit ${money(puppy.depositCents)}`}</p>}
       </div>
     </button>
-    <div style={{ padding: '0 18px 18px' }}><button className="btn btn-primary" onClick={onEnquire} style={{ width: '100%' }}>Enquire about {puppy.name}</button></div>
+    <div style={{ padding: '8px 14px 14px' }}><button className="btn btn-primary" onClick={onEnquire} style={{ width: '100%' }}>Enquire about {puppy.name}</button></div>
   </article>
 }
 
+// Image-first gallery (staging fix: "current cards/modal waste too much
+// white space, and enlarged photos are cropped"). Layout is CSS-driven
+// (.showcase-gallery* rules in index.css, row on desktop/column on
+// mobile via @media) — only the enlarged-image containment itself
+// (`contain`, defined alongside `cover` below) is inline, since it must
+// hold regardless of breakpoint. Focus trap / Escape-to-close logic is
+// UNCHANGED from the previous implementation, just extended with
+// ArrowLeft/ArrowRight for photo navigation in the same listener.
 function PuppyDialog({ puppy, onClose, onEnquire }: { puppy: PublicPuppy; onClose: () => void; onEnquire: () => void }) {
   const media = [...puppy.photos.map(x => ({ ...x, kind: 'photo' as const })), ...puppy.videos.map(x => ({ ...x, kind: 'video' as const }))]
   const [active, setActive] = useState(0)
@@ -107,11 +114,26 @@ function PuppyDialog({ puppy, onClose, onEnquire }: { puppy: PublicPuppy; onClos
   const closeRef = useRef<HTMLButtonElement>(null)
   const openerRef = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null)
 
+  function goTo(index: number) { setActive(((index % media.length) + media.length) % media.length) }
+  function goPrev() { goTo(active - 1) }
+  function goNext() { goTo(active + 1) }
+
+  // Background must not scroll while the gallery is open — restores
+  // whatever the page's own overflow value was (rather than assuming
+  // 'visible') so this never fights another component's own setting.
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [])
+
   useEffect(() => {
     closeRef.current?.focus()
     const dialog = dialogRef.current
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+      if (media.length > 1 && event.key === 'ArrowLeft') { event.preventDefault(); goPrev(); return }
+      if (media.length > 1 && event.key === 'ArrowRight') { event.preventDefault(); goNext(); return }
       if (event.key !== 'Tab' || !dialog) return
       const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls], [tabindex]:not([tabindex="-1"])'))
       if (!focusable.length) { event.preventDefault(); dialog.focus(); return }
@@ -122,18 +144,33 @@ function PuppyDialog({ puppy, onClose, onEnquire }: { puppy: PublicPuppy; onClos
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => { document.removeEventListener('keydown', handleKeyDown); openerRef.current?.focus() }
-  }, [onClose])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onClose, active, media.length])
 
-  return <div role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.64)', zIndex: 1000, display: 'grid', placeItems: 'center', padding: 16 }}>
-    <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="puppy-title" style={{ background: 'white', borderRadius: 18, width: 'min(760px,100%)', maxHeight: '92vh', overflowY: 'auto', position: 'relative' }}>
-      <button ref={closeRef} onClick={onClose} aria-label="Close puppy profile" style={{ position: 'absolute', right: 12, top: 12, zIndex: 2, border: 0, borderRadius: 99, width: 38, height: 38, fontSize: 22, cursor: 'pointer' }}>×</button>
-      <div style={{ aspectRatio: '16/9', background: '#E1F5EE', overflow: 'hidden' }}>{!item ? <Placeholder name={puppy.name} /> : item.kind === 'photo' ? <img src={item.url} alt={`${puppy.name} photo ${active + 1}`} style={cover} /> : <video src={item.url} controls aria-label={`${puppy.name} video ${active + 1}`} style={cover} />}</div>
-      {media.length > 1 && <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: 10 }}>{media.map((m, i) => <button key={`${m.kind}-${m.id}`} onClick={() => setActive(i)} aria-label={`Show ${m.kind} ${i + 1}`} style={{ border: i === active ? '3px solid #085041' : '1px solid #ddd', borderRadius: 8, padding: 0, minWidth: 68, height: 54, overflow: 'hidden' }}>{m.kind === 'photo' ? <img src={m.url} alt="" loading="lazy" style={cover} /> : <video src={m.url} style={cover} />}</button>)}</div>}
-      <div style={{ padding: 22 }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><h2 id="puppy-title" style={{ margin: 0 }}>{puppy.name}</h2><span style={{ ...badge, background: STATUS[puppy.availability].bg, color: STATUS[puppy.availability].fg }}>{STATUS[puppy.availability].label}</span></div>
-        <p style={{ color: 'var(--mid)' }}>{puppy.sex === 'female' ? 'Female' : 'Male'} · {puppy.colour || puppy.breed} · Born {formatDate(puppy.dateOfBirth)}</p>
-        {puppy.readyToGoHomeDate && <p><strong>Ready for new home:</strong> {formatDate(puppy.readyToGoHomeDate)}</p>}{puppy.personality && <p style={{ lineHeight: 1.65 }}>{puppy.personality}</p>}
-        {(puppy.priceCents !== undefined || puppy.depositCents !== undefined) && <p style={{ color: '#085041', fontWeight: 700 }}>{puppy.priceCents !== undefined && `Price ${money(puppy.priceCents)}`}{puppy.priceCents !== undefined && puppy.depositCents !== undefined && ' · '}{puppy.depositCents !== undefined && `Deposit ${money(puppy.depositCents)}`}</p>}
-        <button className="btn btn-primary" onClick={onEnquire}>Enquire about {puppy.name}</button>
+  const status = STATUS[puppy.availability]
+
+  return <div role="presentation" className="showcase-gallery-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+    <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="puppy-title" className="showcase-gallery">
+      <div className="showcase-gallery-image-area">
+        <button ref={closeRef} onClick={onClose} aria-label="Close puppy profile" style={{ position: 'absolute', right: 12, top: 12, zIndex: 3, border: 0, borderRadius: 99, width: 38, height: 38, fontSize: 20, cursor: 'pointer', background: 'rgba(255,255,255,.92)', color: '#1A1917', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        <div className="showcase-gallery-main">
+          {!item ? <Placeholder name={puppy.name} /> : item.kind === 'photo'
+            ? <img src={item.url} alt={`${puppy.name} photo ${active + 1} of ${media.length}`} style={contain} />
+            : <video src={item.url} controls aria-label={`${puppy.name} video ${active + 1} of ${media.length}`} style={contain} />}
+          {media.length > 1 && <>
+            <button onClick={goPrev} aria-label="Previous photo" style={navArrow('left')}>‹</button>
+            <button onClick={goNext} aria-label="Next photo" style={navArrow('right')}>›</button>
+          </>}
+        </div>
+        {media.length > 1 && <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: 10, background: '#0b0b0b', flex: '0 0 auto' }}>{media.map((m, i) => <button key={`${m.kind}-${m.id}`} onClick={() => goTo(i)} aria-label={`Show ${m.kind} ${i + 1}`} aria-current={i === active} style={{ border: i === active ? '2px solid #fff' : '1px solid rgba(255,255,255,.35)', borderRadius: 6, padding: 0, minWidth: 56, height: 44, overflow: 'hidden', flexShrink: 0, opacity: i === active ? 1 : .65 }}>{m.kind === 'photo' ? <img src={m.url} alt="" loading="lazy" style={cover} /> : <video src={m.url} style={cover} />}</button>)}</div>}
+      </div>
+      <div className="showcase-gallery-sidebar">
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}><h2 id="puppy-title" style={{ margin: 0, fontSize: 20 }}>{puppy.name}</h2><span style={{ ...badge, background: status.bg, color: status.fg }}>{status.label}</span></div>
+        <p style={{ color: 'var(--mid)', fontSize: 14, margin: '8px 0 0' }}>{puppy.sex === 'female' ? 'Female' : 'Male'} · {puppy.colour || puppy.breed} · Born {formatDate(puppy.dateOfBirth)}</p>
+        {puppy.readyToGoHomeDate && <p style={{ fontSize: 14, margin: '8px 0 0' }}><strong>Ready for new home:</strong> {formatDate(puppy.readyToGoHomeDate)}</p>}
+        {puppy.personality && <p style={{ fontSize: 14, lineHeight: 1.6, margin: '8px 0 0' }}>{puppy.personality}</p>}
+        {(puppy.priceCents !== undefined || puppy.depositCents !== undefined) && <p style={{ color: '#085041', fontWeight: 700, margin: '10px 0 0' }}>{puppy.priceCents !== undefined && `Price ${money(puppy.priceCents)}`}{puppy.priceCents !== undefined && puppy.depositCents !== undefined && ' · '}{puppy.depositCents !== undefined && `Deposit ${money(puppy.depositCents)}`}</p>}
+        <button className="btn btn-primary" onClick={onEnquire} style={{ width: '100%', marginTop: 16 }}>Enquire about {puppy.name}</button>
       </div>
     </section>
   </div>
@@ -187,4 +224,19 @@ function EnquiryForm({ token, puppies, selectedPuppy, onSelectedPuppy }: { token
 const center = { minHeight: '100vh', background: '#F5F0E8', display: 'grid', placeItems: 'center', padding: 24 }
 const panel = { background: '#fff', borderRadius: 16, padding: 24, boxShadow: '0 8px 28px rgba(28,45,38,.09)', textAlign: 'center' as const }
 const cover = { width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' }
+// Gallery-viewer sizing: width/height 'auto' with only a max-* ceiling
+// means the browser scales the image DOWN to fit when it's larger than
+// the available box, but never scales a small image UP past its own
+// natural size — objectFit is kept explicitly ('contain') as a
+// belt-and-braces guarantee against cropping even if this element's box
+// model ever changes, without conflicting with that no-upscale behavior.
+const contain = { maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' as const, display: 'block', margin: 'auto' }
 const badge = { fontSize: 12, fontWeight: 700, padding: '5px 10px', borderRadius: 99, whiteSpace: 'nowrap' as const, alignSelf: 'flex-start' }
+function navArrow(side: 'left' | 'right') {
+  return {
+    position: 'absolute' as const, [side]: 10, top: '50%', transform: 'translateY(-50%)',
+    width: 44, height: 44, borderRadius: 99, border: 0, cursor: 'pointer',
+    background: 'rgba(255,255,255,.18)', color: '#fff', fontSize: 26, lineHeight: 1,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2,
+  }
+}
