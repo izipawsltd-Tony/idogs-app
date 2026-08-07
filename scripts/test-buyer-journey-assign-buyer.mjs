@@ -21,7 +21,7 @@
 
 import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
-import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate } from '../src/lib/assignBuyer.ts'
+import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage } from '../src/lib/assignBuyer.ts'
 
 const { check, summary } = makeChecker()
 
@@ -47,6 +47,8 @@ function puppy(overrides = {}) {
   check('reservedAt is a plain YYYY-MM-DD string, not an ISO timestamp with time', /^\d{4}-\d{2}-\d{2}$/.test(updates.reservedAt))
   check('no extra/unexpected keys beyond the documented reservation fields',
     Object.keys(updates).sort().join(',') === ['availabilityStatus', 'reservedAt', 'reservedForEmail', 'reservedForName', 'reservedForPhone'].sort().join(','))
+  check('reservedForEmail is a plain email string — never Markdown/mailto-wrapped ([text](mailto:...), <mailto:...>, etc.)',
+    updates.reservedForEmail === 'jane@example.com' && !/[[\]()<>]/.test(updates.reservedForEmail) && !updates.reservedForEmail.includes('mailto:'))
 }
 
 // null/absent email or phone must be OMITTED, never sent as undefined
@@ -101,6 +103,35 @@ function puppy(overrides = {}) {
 }
 
 // =========================================================================
+// SECTION 2b (staging QA fast-follow) — buildAssignBuyerConfirmMessage():
+// the sold-state confirmation must never say "reserved" for a puppy that's
+// actually sold, and must explicitly disclose the sold -> reserved status
+// change that accepting will cause.
+// =========================================================================
+{
+  const reservedPuppy = puppy({ name: 'Green Boy', availabilityStatus: 'reserved', reservedForName: 'Hieu Trung NGO', reservedForEmail: 'trunghieungo@gmail.com' })
+  const newEnq = enq({ name: 'QA New Buyer' })
+  const reservedMessage = buildAssignBuyerConfirmMessage(newEnq, reservedPuppy)
+  check('REQUIRED 1: a merely-reserved puppy still gets the original "is already reserved for" wording', reservedMessage.includes('is already reserved for'))
+  check('a reserved (not sold) puppy\'s message does not say SOLD', !reservedMessage.includes('SOLD'))
+  check('a reserved (not sold) puppy\'s message does not claim a status change (nothing to disclose)', !reservedMessage.includes('RESERVED and replace'))
+
+  const soldPuppy = puppy({ name: 'Green Boy', availabilityStatus: 'sold', reservedForName: 'Hieu Trung NGO', reservedForEmail: 'trunghieungo@gmail.com' })
+  const soldMessage = buildAssignBuyerConfirmMessage(newEnq, soldPuppy)
+  check('REQUIRED 2: a SOLD puppy\'s message explicitly says SOLD (never "is already reserved for")', soldMessage.includes('SOLD') && !soldMessage.includes('is already reserved for'))
+  check('REQUIRED 3: the sold-state message explicitly discloses the SOLD -> RESERVED status change', /SOLD to RESERVED/i.test(soldMessage) || /SOLD.*RESERVED/i.test(soldMessage))
+  check('REQUIRED 4: the sold-state message identifies the current buyer (Hieu Trung NGO)', soldMessage.includes('Hieu Trung NGO'))
+  check('REQUIRED 5: the sold-state message identifies the proposed new buyer (QA New Buyer)', soldMessage.includes('QA New Buyer'))
+  check('the sold-state message identifies the puppy by name (Green Boy)', soldMessage.includes('Green Boy'))
+
+  // Falls back to reservedForEmail when reservedForName is unset — same
+  // "identify the current buyer" requirement, different source field.
+  const soldPuppyEmailOnly = puppy({ name: 'Green Boy', availabilityStatus: 'sold', reservedForName: undefined, reservedForEmail: 'other@example.com' })
+  const soldMessageEmailOnly = buildAssignBuyerConfirmMessage(newEnq, soldPuppyEmailOnly)
+  check('sold-state message falls back to reservedForEmail for the current buyer when reservedForName is unset', soldMessageEmailOnly.includes('other@example.com'))
+}
+
+// =========================================================================
 // SECTION 3 — behavioral harness: handleAssignBuyer's orchestration,
 // wired to the REAL imported decision functions + buildAssignBuyerUpdate
 // =========================================================================
@@ -130,7 +161,7 @@ function createAssignBuyerHarness(initialDogs) {
       return
     }
     if (hasConflictingReservation(enquiry, targetPuppy)) {
-      confirmCalls.push(enquiry.id)
+      confirmCalls.push({ enquiryId: enquiry.id, message: buildAssignBuyerConfirmMessage(enquiry, targetPuppy) })
       if (!confirmReturn) return
     }
     busy[enquiry.id] = true
@@ -200,6 +231,33 @@ function createAssignBuyerHarness(initialDogs) {
   await h.handleAssignBuyer(enq(), target)
   check('SCENARIO 5: confirming the overwrite reassigns to the new buyer', h.getDogs().find(d => d.id === 'puppyA').reservedForEmail === 'jane@example.com')
 }
+// Sold-state fast-follow: the SAME decline/accept guarantees must hold when
+// the puppy is SOLD (not merely reserved), and the confirm() the breeder
+// actually saw must be the status-aware sold message.
+{
+  const target = puppy({ id: 'puppyA', name: 'Green Boy', availabilityStatus: 'sold', reservedForEmail: 'other@example.com', reservedForName: 'Other Buyer' })
+  const h = createAssignBuyerHarness([target])
+  h.setConfirmReturn(false)
+  await h.handleAssignBuyer(enq(), target)
+  const shownMessage = h.getConfirmCalls()[0]?.message || ''
+  check('REQUIRED 6a: a sold puppy also triggers an explicit confirmation prompt', h.getConfirmCalls().length === 1)
+  check('REQUIRED 6a: the confirm shown for a sold puppy is the status-aware SOLD message, not the plain reserved one',
+    shownMessage.includes('SOLD') && !shownMessage.includes('is already reserved for'))
+  check('REQUIRED 6: declining on a SOLD puppy leaves it sold with the original buyer untouched',
+    h.getDogs().find(d => d.id === 'puppyA').availabilityStatus === 'sold' && h.getDogs().find(d => d.id === 'puppyA').reservedForEmail === 'other@example.com')
+  check('REQUIRED 6: no write/toast happened for the declined sold-state overwrite', h.getToasts().length === 0)
+}
+{
+  const target = puppy({ id: 'puppyA', name: 'Green Boy', availabilityStatus: 'sold', reservedForEmail: 'other@example.com', reservedForName: 'Other Buyer' })
+  const h = createAssignBuyerHarness([target])
+  h.setConfirmReturn(true)
+  await h.handleAssignBuyer(enq(), target)
+  const after = h.getDogs().find(d => d.id === 'puppyA')
+  check('REQUIRED 7: accepting on a SOLD puppy still writes the new reservation fields correctly',
+    after.reservedForEmail === 'jane@example.com' && after.reservedForName === 'Jane Buyer' && after.reservedForPhone === '0412345678')
+  check('REQUIRED 7: accepting on a SOLD puppy changes availabilityStatus to reserved (the disclosed downgrade actually happens)',
+    after.availabilityStatus === 'reserved')
+}
 {
   // Same buyer already assigned: idempotent no-op, no confirmation, no write.
   const target = puppy({ id: 'puppyA', availabilityStatus: 'reserved', reservedForEmail: 'jane@example.com', reservedForName: 'Jane Buyer' })
@@ -210,6 +268,17 @@ function createAssignBuyerHarness(initialDogs) {
     h.getToasts().some(t => t.msg === 'ALREADY_ASSIGNED') && !h.getToasts().some(t => t.msg === 'ASSIGNED'))
   check('SCENARIO 6: the puppy document is left byte-for-byte unchanged (no unnecessary write)',
     JSON.stringify(h.getDogs().find(d => d.id === 'puppyA')) === JSON.stringify(target))
+}
+{
+  // REQUIRED 8: the same idempotent guarantee for a SOLD puppy already
+  // matched to this buyer — the sold-state message fix must not have
+  // disturbed the pre-existing "same buyer, sold or reserved" no-op path.
+  const target = puppy({ id: 'puppyA', availabilityStatus: 'sold', reservedForEmail: 'jane@example.com', reservedForName: 'Jane Buyer' })
+  const h = createAssignBuyerHarness([target])
+  await h.handleAssignBuyer(enq(), target)
+  check('REQUIRED 8: re-assigning the SAME buyer on a SOLD puppy never prompts for confirmation', h.getConfirmCalls().length === 0)
+  check('REQUIRED 8: re-assigning the SAME buyer on a SOLD puppy is a no-op (document unchanged, no ASSIGNED toast)',
+    JSON.stringify(h.getDogs().find(d => d.id === 'puppyA')) === JSON.stringify(target) && !h.getToasts().some(t => t.msg === 'ASSIGNED'))
 }
 
 // Restricted (over-plan-cap) puppy: mirrors handleSavePuppy/SaleAvailabilityPanel's
@@ -265,7 +334,7 @@ function createAssignBuyerHarness(initialDogs) {
   const littersSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
 
   check('LittersPage.tsx imports the real pure decision functions from ../lib/assignBuyer (not an inline reimplementation)',
-    /import\s*\{\s*enquiryMatchesReservation,\s*hasConflictingReservation,\s*buildAssignBuyerUpdate\s*\}\s*from\s*'\.\.\/lib\/assignBuyer'/.test(littersSrc))
+    /import\s*\{\s*enquiryMatchesReservation,\s*hasConflictingReservation,\s*buildAssignBuyerUpdate,\s*buildAssignBuyerConfirmMessage\s*\}\s*from\s*'\.\.\/lib\/assignBuyer'/.test(littersSrc))
   check('LittersPage.tsx defines handleAssignBuyer', /async function handleAssignBuyer\(enq: ShowcaseEnquiry, puppy: Dog\)/.test(littersSrc))
   check('handleAssignBuyer calls the real updateDog() (reused, not a new write function)', /await updateDog\(puppy\.id, updates\)/.test(littersSrc))
   check('handleAssignBuyer derives updates via the real buildAssignBuyerUpdate(enq)', /const updates = buildAssignBuyerUpdate\(enq\)/.test(littersSrc))
@@ -273,6 +342,12 @@ function createAssignBuyerHarness(initialDogs) {
     /if \(\(puppy as any\)\.status === 'restricted'\)/.test(littersSrc))
   check('a conflicting reservation is gated behind an explicit window.confirm (matches this file\'s existing confirm() convention)',
     /if \(hasConflictingReservation\(enq, puppy\)\) \{[\s\S]{0,200}if \(!window\.confirm\(/.test(littersSrc))
+  check('LittersPage.tsx imports the real buildAssignBuyerConfirmMessage from ../lib/assignBuyer (status-aware confirm text, not an inline string)',
+    /import\s*\{[^}]*\bbuildAssignBuyerConfirmMessage\b[^}]*\}\s*from\s*'\.\.\/lib\/assignBuyer'/.test(littersSrc))
+  check('the confirm() call uses buildAssignBuyerConfirmMessage(enq, puppy) — not a hand-inlined "is already reserved for" string',
+    /window\.confirm\(buildAssignBuyerConfirmMessage\(enq, puppy\)\)/.test(littersSrc))
+  check('LittersPage.tsx no longer hand-builds the confirm text inline (no local currentBuyer variable duplicating the extracted logic)',
+    !/const currentBuyer = puppy\.reservedForName \|\| puppy\.reservedForEmail \|\| 'another buyer'/.test(littersSrc))
   check('local dogs state is updated after a successful write (Scenario: rendered state reflects the new reservation without a manual workaround)',
     /setDogs\(prev => prev\.map\(d => \(d\.id === puppy\.id \? \{ \.\.\.d, \.\.\.updates \} : d\)\)\)/.test(littersSrc))
   check('save failures route through the existing describeSaleAvailabilitySaveFailure sanitizer (existing UI/error convention, not a bespoke one)',

@@ -19,7 +19,7 @@ import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 import { prepareImageForUpload, readFileAsBase64, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } from '../lib/imageCompression'
 import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showcaseMoney'
 import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
-import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate } from '../lib/assignBuyer'
+import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage } from '../lib/assignBuyer'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -458,8 +458,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
       return
     }
     if (hasConflictingReservation(enq, puppy)) {
-      const currentBuyer = puppy.reservedForName || puppy.reservedForEmail || 'another buyer'
-      if (!window.confirm(`${puppy.name} is already reserved for ${currentBuyer}. Reassign to ${enq.name}?`)) return
+      if (!window.confirm(buildAssignBuyerConfirmMessage(enq, puppy))) return
     }
     setAssignBuyerBusy(prev => ({ ...prev, [enq.id]: true }))
     setAssignBuyerErrors(prev => ({ ...prev, [enq.id]: '' }))

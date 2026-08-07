@@ -26,6 +26,20 @@ export function hasConflictingReservation(enq: ShowcaseEnquiry, puppy: Dog): boo
   return reservedLike && !enquiryMatchesReservation(enq, puppy)
 }
 
+// Staging QA finding (Buyer Journey V1 fast-follow): the conflict-overwrite
+// confirm() must never say "reserved" for a puppy that's actually SOLD — a
+// breeder could read that as overwriting a soft hold, when accepting also
+// silently downgrades availabilityStatus from 'sold' back to 'reserved'.
+// Only called when hasConflictingReservation() is already true, so a
+// current buyer always exists on the sold/reserved puppy.
+export function buildAssignBuyerConfirmMessage(enq: ShowcaseEnquiry, puppy: Dog): string {
+  const currentBuyer = puppy.reservedForName || puppy.reservedForEmail || 'another buyer'
+  if (puppy.availabilityStatus === 'sold') {
+    return `${puppy.name} is currently SOLD to ${currentBuyer}.\n\nReassign buyer to ${enq.name}?\n\nThis will change ${puppy.name}'s status from SOLD to RESERVED and replace the current buyer.`
+  }
+  return `${puppy.name} is already reserved for ${currentBuyer}. Reassign to ${enq.name}?`
+}
+
 // Same reservedAt derivation SaleAvailabilityPanel already uses
 // (DogDetailPage.tsx: new Date().toISOString().split('T')[0]) — no new
 // timestamp format. Only includes email/phone keys when the enquiry
