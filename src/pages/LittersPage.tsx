@@ -18,6 +18,8 @@ import { describeTransferFailure } from '../lib/transferError'
 import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 import { prepareImageForUpload, readFileAsBase64, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } from '../lib/imageCompression'
 import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showcaseMoney'
+import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
+import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage, toFirestoreAssignBuyerUpdate } from '../lib/assignBuyer'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -188,6 +190,11 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   // undefined means "not loaded yet", [] means "loaded, none yet".
   const [enquiries, setEnquiries] = useState<Record<string, ShowcaseEnquiry[] | undefined>>({})
   const [enquiriesLoading, setEnquiriesLoading] = useState<Record<string, boolean>>({})
+  // ── Buyer Journey V1: Enquiry -> Assign Buyer connector ──
+  // Keyed by enquiry id (not puppy id) since the action lives on the
+  // enquiry row and multiple enquiries can reference the same puppy.
+  const [assignBuyerBusy, setAssignBuyerBusy] = useState<Record<string, boolean>>({})
+  const [assignBuyerErrors, setAssignBuyerErrors] = useState<Record<string, string>>({})
 
   // Edit litter state
   const [editingLitter, setEditingLitter] = useState<string | null>(null)
@@ -431,6 +438,44 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedLitter])
+
+  // Buyer Journey V1 connector: writes an enquiry's contact details into
+  // the puppy's EXISTING reservation fields via the same updateDog() call
+  // and the same reservedAt derivation SaleAvailabilityPanel already uses
+  // (DogDetailPage.tsx) — no new buyer/reservation model. Mirrors
+  // handleSavePuppy's restricted short-circuit below: firestore.rules
+  // already denies writes to a restricted (over-plan-cap) puppy, so this
+  // avoids a round-trip that would only fail with a confusing error.
+  async function handleAssignBuyer(enq: ShowcaseEnquiry, puppy: Dog) {
+    if (assignBuyerBusy[enq.id]) return
+    if ((puppy as any).status === 'restricted') {
+      toast("This puppy is over your plan's dog limit and is read-only — upgrade or free up a slot to assign a buyer.", 'error')
+      return
+    }
+    const reservedLike = puppy.availabilityStatus === 'reserved' || puppy.availabilityStatus === 'sold'
+    if (reservedLike && enquiryMatchesReservation(enq, puppy)) {
+      toast(`${puppy.name} is already assigned to ${enq.name}`)
+      return
+    }
+    if (hasConflictingReservation(enq, puppy)) {
+      if (!window.confirm(buildAssignBuyerConfirmMessage(enq, puppy))) return
+    }
+    setAssignBuyerBusy(prev => ({ ...prev, [enq.id]: true }))
+    setAssignBuyerErrors(prev => ({ ...prev, [enq.id]: '' }))
+    try {
+      const updates = buildAssignBuyerUpdate(enq)
+      await updateDog(puppy.id, toFirestoreAssignBuyerUpdate(updates))
+      setDogs(prev => prev.map(d => (d.id === puppy.id ? { ...d, ...updates } : d)))
+      toast(`${puppy.name} assigned to ${enq.name}`)
+    } catch (e) {
+      const { userMessage, logCode } = describeSaleAvailabilitySaveFailure(e)
+      console.error('assign-buyer-save failed', { code: logCode })
+      setAssignBuyerErrors(prev => ({ ...prev, [enq.id]: userMessage }))
+      toast(userMessage, 'error')
+    } finally {
+      setAssignBuyerBusy(prev => ({ ...prev, [enq.id]: false }))
+    }
+  }
 
   async function handleCreateShowcase(litterId: string) {
     const gen = showcaseGuard.currentGeneration()
@@ -1547,6 +1592,31 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                   {!enq.notified && (
                                     <div style={{ marginTop: 6, fontSize: 11, color: 'var(--gold)' }}>
                                       📧 Not emailed — reply directly using the contact details above
+                                    </div>
+                                  )}
+                                  {aboutPuppy && (
+                                    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                      {(aboutPuppy.availabilityStatus === 'reserved' || aboutPuppy.availabilityStatus === 'sold') && enquiryMatchesReservation(enq, aboutPuppy) ? (
+                                        <span style={{ fontSize: 11, color: 'var(--green-mid)', fontWeight: 600 }}>✓ Assigned to this buyer</span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className="btn btn-secondary btn-sm"
+                                          disabled={!!assignBuyerBusy[enq.id]}
+                                          onClick={() => void handleAssignBuyer(enq, aboutPuppy)}
+                                        >
+                                          {assignBuyerBusy[enq.id] ? (
+                                            <span className="spinner" />
+                                          ) : aboutPuppy.availabilityStatus === 'reserved' || aboutPuppy.availabilityStatus === 'sold' ? (
+                                            'Reassign buyer'
+                                          ) : (
+                                            'Assign buyer'
+                                          )}
+                                        </button>
+                                      )}
+                                      {assignBuyerErrors[enq.id] && (
+                                        <span role="alert" style={{ fontSize: 11, color: 'var(--danger)' }}>{assignBuyerErrors[enq.id]}</span>
+                                      )}
                                     </div>
                                   )}
                                 </div>
