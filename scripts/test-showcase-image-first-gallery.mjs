@@ -160,7 +160,34 @@ const cssSrc = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8'
   check('REQUIRED: the card still shows sex', /puppy\.sex === 'female' \? 'Female' : 'Male'/.test(cardSrc))
   check('REQUIRED: the card still shows age/DOB (getDogAge)', /getDogAge\(puppy\.dateOfBirth\)/.test(cardSrc))
   check('REQUIRED: the card still shows price where available', /puppy\.priceCents !== undefined && `Price/.test(cardSrc))
-  check('Enquire remains present and compact on the card (full-width button, tightened padding)', /Enquire about \{puppy\.name\}/.test(cardSrc) && /padding: '8px 14px 14px'/.test(cardSrc))
+  check('Enquire remains present and compact on the card (full-width button, tightened padding)', /onClick=\{onEnquire\}/.test(cardSrc) && /padding: '8px 14px 14px'/.test(cardSrc))
+
+  // ── Staging QA fast-follow: mobile Enquire CTA overflow ──
+  // The old visible label ("Enquire about {puppy.name}") combined with
+  // .btn's white-space: nowrap (index.css) overflowed/clipped on narrow
+  // mobile cards for longer names. The name is already shown directly
+  // above the button, so the fix shortens the VISIBLE label only,
+  // keeping the full descriptive text for assistive tech via aria-label.
+  check('REQUIRED: the card\'s visible Enquire label no longer includes the puppy name (was the actual overflow cause on narrow mobile widths)',
+    !/>Enquire about \{puppy\.name\}<\/button>/.test(cardSrc))
+  check('REQUIRED: the card button\'s visible text is the short, fixed label "Enquire" (never grows with name length)',
+    /aria-label=\{`Enquire about \$\{puppy\.name\}`\}[^>]*>Enquire<\/button>/.test(cardSrc))
+  check('REQUIRED: an aria-label preserves the full descriptive "Enquire about {name}" for screen readers even though the visible text is short',
+    /aria-label=\{`Enquire about \$\{puppy\.name\}`\}/.test(cardSrc))
+  check('REQUIRED: the button keeps a minimum 44px height for mobile touch-target accessibility', /minHeight: 44/.test(cardSrc))
+  check('the button still spans the full card width', /width: '100%'/.test(cardSrc))
+  check('box-sizing: border-box is explicit on the button (belt-and-braces alongside the global default)', /boxSizing: 'border-box'/.test(cardSrc))
+  check('the button still fires the same onEnquire handler — only the label changed, not the behavior', /onClick=\{onEnquire\}[^>]*aria-label=\{`Enquire about \$\{puppy\.name\}`\}/.test(cardSrc))
+
+  // Regression: this fix is scoped to the CARD only — the gallery
+  // sidebar's Enquire button (300px column, never reported as
+  // overflowing) must be completely untouched.
+  const dialogSrcForCta = extractFunctionSource(pageSrc, /function PuppyDialog\(/)
+  check('PuppyDialog function body was located (for the CTA-scope regression check)', dialogSrcForCta.length > 500)
+  check('the gallery/sidebar Enquire button is UNCHANGED — still shows the full "Enquire about {name}" label (out of scope for this fix, never reported broken)',
+    /<button className="btn btn-primary" onClick=\{onEnquire\} style=\{\{ width: '100%', marginTop: 16 \}\}>Enquire about \{puppy\.name\}<\/button>/.test(dialogSrcForCta))
+  check('the gallery/sidebar Enquire button was NOT given the new aria-label/minHeight treatment (that was card-specific)',
+    !/style=\{\{ width: '100%', marginTop: 16 \}\}>Enquire<\/button>/.test(dialogSrcForCta))
   check('name/status heading uses a smaller, more compact font size than before (21px -> 18px)', /fontSize: 18/.test(cardSrc) && !/fontSize: 21/.test(cardSrc))
 }
 

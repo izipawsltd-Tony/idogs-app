@@ -94,7 +94,14 @@ function PuppyCard({ puppy, onOpen, onEnquire }: { puppy: PublicPuppy; onOpen: (
         {(puppy.priceCents !== undefined || puppy.depositCents !== undefined) && <p style={{ fontWeight: 700, color: '#085041', fontSize: 14, margin: '6px 0 0' }}>{puppy.priceCents !== undefined && `Price ${money(puppy.priceCents)}`}{puppy.priceCents !== undefined && puppy.depositCents !== undefined && ' · '}{puppy.depositCents !== undefined && `Deposit ${money(puppy.depositCents)}`}</p>}
       </div>
     </button>
-    <div style={{ padding: '8px 14px 14px' }}><button className="btn btn-primary" onClick={onEnquire} style={{ width: '100%' }}>Enquire about {puppy.name}</button></div>
+    {/* Staging QA fix: the old "Enquire about {name}" label, combined
+        with .btn white-space: nowrap (index.css), overflowed/clipped on
+        narrow mobile cards for longer puppy names. The name is already
+        shown directly above, so the visible label is now short and fixed
+        regardless of name length; aria-label keeps the full descriptive
+        name for assistive tech. minHeight: 44 meets the mobile touch
+        target guideline. */}
+    <div style={{ padding: '8px 14px 14px' }}><button className="btn btn-primary" onClick={onEnquire} aria-label={`Enquire about ${puppy.name}`} style={{ width: '100%', minHeight: 44, padding: '10px 20px', boxSizing: 'border-box' }}>Enquire</button></div>
   </article>
 }
 
