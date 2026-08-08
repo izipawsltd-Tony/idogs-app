@@ -25,8 +25,16 @@
 //
 // POST /api/request-showcase-media-upload
 // Headers: Authorization: Bearer <Firebase ID token>
-// Body: { dogId, kind: 'photo' | 'video', contentType }
+// Body: { dogId, kind: 'photo' | 'video', contentType, sizeBytes }
 // Returns: { mediaId, uploadUrl, requiredHeaders, expiresInSeconds } | { error, reason? }
+//
+// sizeBytes is the client-CLAIMED byte length of what it's about to
+// upload — used here only as a fast-fail UX convenience (video >20MB is
+// rejected before a signed URL is ever minted, so a breeder gets an
+// immediate, clear error instead of waiting through a doomed upload).
+// It is NEVER the real security boundary: a client could lie about it,
+// so confirm-showcase-media-upload.js independently re-checks the REAL
+// uploaded object's actual Storage size before accepting anything.
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -37,7 +45,7 @@ import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
 import { canAddDogRecord, hasDogWriteAccess } from './_lib/dog-access.js'
 import { newMediaId, MAX_MEDIA_ITEMS_PER_KIND } from './_lib/showcase-media-access.js'
-import { UPLOAD_URL_TTL_MS, MEDIA_UPLOAD_GRANTS_COLLECTION, extensionForUpload, NO_OVERWRITE_HEADER } from './_lib/direct-upload.js'
+import { UPLOAD_URL_TTL_MS, MEDIA_UPLOAD_GRANTS_COLLECTION, extensionForUpload, NO_OVERWRITE_HEADER, MAX_DIRECT_VIDEO_UPLOAD_BYTES } from './_lib/direct-upload.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -70,10 +78,13 @@ async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
 
-  const { dogId, kind, contentType } = req.body || {}
+  const { dogId, kind, contentType, sizeBytes } = req.body || {}
   if (!dogId || typeof dogId !== 'string') return res.status(400).json({ error: 'dogId is required' })
   if (kind !== 'photo' && kind !== 'video') return res.status(400).json({ error: "kind must be 'photo' or 'video'" })
   if (!contentType || typeof contentType !== 'string') return res.status(400).json({ error: 'contentType is required' })
+  if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+    return res.status(400).json({ error: 'sizeBytes is required and must be a positive number' })
+  }
 
   // The ONLY thing that decides whether this upload may proceed and
   // what file extension its Storage path gets — never a client-supplied
@@ -83,6 +94,19 @@ async function handler(req, res) {
   const extension = extensionForUpload(kind, contentType)
   if (!extension) {
     return res.status(400).json({ error: `Unsupported contentType '${contentType}' for kind '${kind}'`, reason: 'UNSUPPORTED_CONTENT_TYPE' })
+  }
+
+  // Video-only, direct-upload-specific ceiling (see api/_lib/direct-
+  // upload.js's own comment on MAX_DIRECT_VIDEO_UPLOAD_BYTES — a
+  // DIFFERENT, stricter constant than the legacy base64-proxy path's
+  // 50MB pipeline ceiling, which is untouched by this). Photo size is
+  // deliberately NOT gated here — existing image compression/size
+  // behavior is unchanged.
+  if (kind === 'video' && sizeBytes > MAX_DIRECT_VIDEO_UPLOAD_BYTES) {
+    return res.status(400).json({
+      error: `Video exceeds the ${Math.floor(MAX_DIRECT_VIDEO_UPLOAD_BYTES / (1024 * 1024))}MB direct-upload limit`,
+      reason: 'FILE_TOO_LARGE',
+    })
   }
 
   const db = getFirestore()
@@ -123,6 +147,7 @@ async function handler(req, res) {
       kind,
       path: filePath,
       contentType,
+      expectedSizeBytes: sizeBytes,
       status: 'pending',
       createdAt: new Date().toISOString(),
       expiresAt: new Date(expiresAtMs).toISOString(),

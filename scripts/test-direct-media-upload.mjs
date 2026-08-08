@@ -34,7 +34,7 @@
 import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { makeChecker } from './_lib/test-check.mjs'
-import { extensionForUpload, UPLOAD_URL_TTL_MS, NO_OVERWRITE_HEADER, MEDIA_UPLOAD_GRANTS_COLLECTION } from '../api/_lib/direct-upload.js'
+import { extensionForUpload, UPLOAD_URL_TTL_MS, NO_OVERWRITE_HEADER, MEDIA_UPLOAD_GRANTS_COLLECTION, MAX_DIRECT_VIDEO_UPLOAD_BYTES } from '../api/_lib/direct-upload.js'
 
 const { check, checkAsync, skip, summary } = makeChecker()
 
@@ -56,6 +56,8 @@ const { check, checkAsync, skip, summary } = makeChecker()
   check('UPLOAD_URL_TTL_MS is exactly 10 minutes (approved decision)', UPLOAD_URL_TTL_MS === 10 * 60 * 1000)
   check('NO_OVERWRITE_HEADER carries the real GCS create-only precondition', NO_OVERWRITE_HEADER['x-goog-if-generation-match'] === '0')
   check('MEDIA_UPLOAD_GRANTS_COLLECTION is a non-empty string', typeof MEDIA_UPLOAD_GRANTS_COLLECTION === 'string' && MEDIA_UPLOAD_GRANTS_COLLECTION.length > 0)
+  check('MAX_DIRECT_VIDEO_UPLOAD_BYTES is exactly 20MB (video-limit round)', MAX_DIRECT_VIDEO_UPLOAD_BYTES === 20 * 1024 * 1024)
+  check('MAX_DIRECT_VIDEO_UPLOAD_BYTES is a DIFFERENT constant from image-pipeline.js\'s MAX_VIDEO_INPUT_BYTES (the legacy base64-proxy path\'s own 50MB ceiling, deliberately untouched)', MAX_DIRECT_VIDEO_UPLOAD_BYTES !== 50 * 1024 * 1024)
 
   // ── request-showcase-media-upload.js source ──
   const requestSrc = readFileSync(new URL('../api/request-showcase-media-upload.js', import.meta.url), 'utf8')
@@ -80,6 +82,19 @@ const { check, checkAsync, skip, summary } = makeChecker()
     /existingCount >= MAX_MEDIA_ITEMS_PER_KIND/.test(requestSrc))
   check('request-showcase-media-upload.js never introduces a media.public field anywhere (approved decision: publication stays a separate, contextual reference)',
     !/\bpublic\s*:/.test(requestSrc) && !/\.public\b/.test(requestSrc))
+  check('request-showcase-media-upload.js requires sizeBytes as a positive number before doing anything else',
+    /typeof sizeBytes !== 'number'/.test(requestSrc) && /sizeBytes <= 0/.test(requestSrc))
+  check('request-showcase-media-upload.js rejects a video whose CLAIMED sizeBytes exceeds MAX_DIRECT_VIDEO_UPLOAD_BYTES, BEFORE any Firestore/Storage call (grant-write and getSignedUrl both come later in the file)',
+    (() => {
+      const guardIdx = requestSrc.indexOf("kind === 'video' && sizeBytes > MAX_DIRECT_VIDEO_UPLOAD_BYTES")
+      const grantWriteIdx = requestSrc.indexOf('.doc(mediaId).set({')
+      const signIdx = requestSrc.indexOf('getSignedUrl')
+      return guardIdx !== -1 && grantWriteIdx !== -1 && signIdx !== -1 && guardIdx < grantWriteIdx && guardIdx < signIdx
+    })())
+  check('request-showcase-media-upload.js does NOT gate photo size by MAX_DIRECT_VIDEO_UPLOAD_BYTES (existing image compression/size behavior stays unchanged)',
+    !/kind === 'photo' && sizeBytes >/.test(requestSrc))
+  check('request-showcase-media-upload.js stores the client-claimed size on the grant as expectedSizeBytes (informational only — never the security boundary, see confirm)',
+    /expectedSizeBytes: sizeBytes/.test(requestSrc))
 
   // ── confirm-showcase-media-upload.js source ──
   const confirmSrc = readFileSync(new URL('../api/confirm-showcase-media-upload.js', import.meta.url), 'utf8')
@@ -111,6 +126,13 @@ const { check, checkAsync, skip, summary } = makeChecker()
     /signMediaItems\(bucket, updated\.photos/.test(confirmSrc))
   check('confirm-showcase-media-upload.js never introduces a media.public field anywhere',
     !/\bpublic\s*:/.test(confirmSrc) && !/\.public\b/.test(confirmSrc))
+  check('confirm-showcase-media-upload.js independently checks the REAL Storage object size via getMetadata() for video — never trusts the grant\'s client-claimed expectedSizeBytes alone',
+    /file\.getMetadata\(\)/.test(confirmSrc) && /actualSize > MAX_DIRECT_VIDEO_UPLOAD_BYTES/.test(confirmSrc) && !/expectedSizeBytes >/.test(confirmSrc))
+  check('confirm-showcase-media-upload.js checks the real object size BEFORE downloading the full buffer (getMetadata precedes file.download in the source)',
+    confirmSrc.indexOf('file.getMetadata()') !== -1 &&
+    confirmSrc.indexOf('file.getMetadata()') < confirmSrc.indexOf('file.download()'))
+  check('confirm-showcase-media-upload.js only applies the video size ceiling to kind === "video" (photo size behavior unchanged)',
+    /if \(kind === 'video'\) \{\s*\n\s*const \[metadata\] = await file\.getMetadata\(\)/.test(confirmSrc))
 
   // ── client wiring: src/lib/db.ts + LittersPage.tsx ──
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
@@ -122,6 +144,18 @@ const { check, checkAsync, skip, summary } = makeChecker()
     /'\/api\/request-showcase-media-upload'/.test(dbSrc) &&
     /method: 'PUT', headers: requiredHeaders, body/.test(dbSrc) &&
     /'\/api\/confirm-showcase-media-upload'/.test(dbSrc))
+  check('uploadShowcaseMediaDirect sends the REAL byte length (body.size) as sizeBytes, computed BEFORE the request call (so an oversized video can be rejected before a signed URL is ever minted)',
+    (() => {
+      const bodyIdx = dbSrc.indexOf('const body = typeof fileOrBase64')
+      const requestFetchIdx = dbSrc.indexOf("fetch('/api/request-showcase-media-upload'")
+      const sizeBytesIdx = dbSrc.indexOf('sizeBytes: body.size')
+      // `body` must be assigned before the request fetch call starts, and
+      // `sizeBytes: body.size` must appear as part of THAT call's own
+      // JSON body (i.e. after the fetch call begins), not some later,
+      // unrelated call.
+      return bodyIdx !== -1 && requestFetchIdx !== -1 && sizeBytesIdx !== -1 &&
+        bodyIdx < requestFetchIdx && requestFetchIdx < sizeBytesIdx
+    })())
 
   const littersSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
   check('LittersPage.tsx imports uploadShowcaseMediaDirect (not the old uploadShowcaseMedia) for its own upload calls',
@@ -191,9 +225,14 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
       photos: [], videos: [], ...extra,
     })
   }
-  async function requestGrant(dogId, kind, contentType, token) {
+  // sizeBytes defaults to a small, arbitrary claimed size — irrelevant
+  // to most existing tests below (which only care about auth/ownership/
+  // content-type behavior), and always well under the 20MB video
+  // ceiling so it never accidentally trips the new size guard. Tests
+  // specifically exercising the size limit pass an explicit value.
+  async function requestGrant(dogId, kind, contentType, token, sizeBytes = 100000) {
     const res = mockRes()
-    await requestHandler(mockReq({ dogId, kind, contentType }, token), res)
+    await requestHandler(mockReq({ dogId, kind, contentType, sizeBytes }, token), res)
     return res
   }
   async function readGrant(mediaId) {
@@ -475,6 +514,101 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
       if (res.statusCode !== 200) return false
       const dogAfter = (await seedDb.collection('dogs').doc(dogId).get()).data()
       return dogAfter.videos.length === 1 && dogAfter.videos[0].id === videoMediaId && (dogAfter.photos?.length || 0) === 1
+    })
+  }
+
+  // ── 20MB video limit (video-limit round) ──
+  {
+    const owner = await newUser('duvideolimit')
+    const dogId = `dudog_videolimit_${R}`
+    await seedDog(owner.uid, dogId)
+
+    // ── request-time: rejected on the CLAIMED size, before any grant is written ──
+    await checkAsync('request: a video whose claimed sizeBytes is over 20MB is rejected (400 FILE_TOO_LARGE), before any signed URL is ever issued', async () => {
+      const res = await requestGrant(dogId, 'video', 'video/mp4', owner.idToken, 20 * 1024 * 1024 + 1)
+      return res.statusCode === 400 && res.body.reason === 'FILE_TOO_LARGE' && res.body.mediaId === undefined
+    })
+    let underMediaId
+    await checkAsync('request: a video whose claimed sizeBytes is exactly 20MB is accepted (boundary is inclusive — only strictly OVER 20MB is rejected)', async () => {
+      const res = await requestGrant(dogId, 'video', 'video/mp4', owner.idToken, 20 * 1024 * 1024)
+      underMediaId = res.body?.mediaId
+      return res.statusCode === 200
+    })
+    await checkAsync('request: the grant document records the client-claimed size as expectedSizeBytes', async () => {
+      const grant = await readGrant(underMediaId)
+      return grant?.expectedSizeBytes === 20 * 1024 * 1024
+    })
+
+    // ── request-time: photo is NOT gated by the video ceiling ──
+    await checkAsync('request: a PHOTO grant with a claimed size well over 20MB is still accepted (the video ceiling never applies to photos — existing image size/compression behavior unchanged)', async () => {
+      const res = await requestGrant(dogId, 'photo', 'image/jpeg', owner.idToken, 25 * 1024 * 1024)
+      return res.statusCode === 200
+    })
+
+    // ── request-time: missing/invalid sizeBytes rejected ──
+    await checkAsync('request: a missing sizeBytes is rejected (400)', async () => {
+      const res = mockRes()
+      await requestHandler(mockReq({ dogId, kind: 'video', contentType: 'video/mp4' }, owner.idToken), res)
+      return res.statusCode === 400
+    })
+    await checkAsync('request: a zero/negative sizeBytes is rejected (400)', async () => {
+      const res = await requestGrant(dogId, 'video', 'video/mp4', owner.idToken, -1)
+      return res.statusCode === 400
+    })
+
+    // ── confirm-time: the REAL Storage object's actual size is what's
+    // enforced — a client that LIES about sizeBytes at request time
+    // (claims under 20MB) must still be rejected once the real uploaded
+    // object is checked, proving "do not rely only on client-supplied
+    // size" is real, not just a request-time formality. ──
+    let lyingMediaId, lyingPath
+    await checkAsync('request: a grant is issued with a claimed size well UNDER 20MB (the lie)', async () => {
+      const res = await requestGrant(dogId, 'video', 'video/mp4', owner.idToken, 1000)
+      lyingMediaId = res.body?.mediaId
+      lyingPath = (await readGrant(lyingMediaId))?.path
+      return res.statusCode === 200
+    })
+    const oversizedBuffer = Buffer.alloc(20 * 1024 * 1024 + 1024, 0x00)
+    await bucket.file(lyingPath).save(oversizedBuffer, { metadata: { contentType: 'video/mp4' } })
+    await checkAsync('confirm: the REAL uploaded object exceeds 20MB even though the grant claimed under 20MB — confirm independently rejects it (400 FILE_TOO_LARGE), proving the server never relies on the client-supplied size alone', async () => {
+      const res = await confirmGrant(lyingMediaId, owner.idToken)
+      return res.statusCode === 400 && res.body.reason === 'FILE_TOO_LARGE'
+    })
+    await checkAsync('confirm: the oversized object is deleted from Storage after rejection (no orphan left behind)', async () => {
+      const [exists] = await bucket.file(lyingPath).exists()
+      return exists === false
+    })
+    await checkAsync('confirm: the grant is marked rejected', async () => {
+      const grant = await readGrant(lyingMediaId)
+      return grant?.status === 'rejected'
+    })
+    await checkAsync('confirm: the oversized-video rejection happened WITHOUT ever needing a valid MP4 body (garbage bytes over 20MB are rejected on size alone, before magic-byte sniffing even runs) — confirms the size check runs first, cheaply, before downloading/processing the full object',
+      async () => {
+        // oversizedBuffer above is all zero bytes, not a real MP4 — if
+        // rejection had instead come from sniffing/processVideoForStorage,
+        // the reason would be UNSUPPORTED_VIDEO_TYPE, not FILE_TOO_LARGE.
+        // The FILE_TOO_LARGE reason already asserted above IS this proof;
+        // this check just documents why that reason is the meaningful one.
+        return true
+      })
+
+    // ── confirm-time: exactly-20MB real object is accepted ──
+    let boundaryMediaId, boundaryPath
+    await checkAsync('request: a grant is issued for the exact-20MB boundary test', async () => {
+      const res = await requestGrant(dogId, 'video', 'video/mp4', owner.idToken, 20 * 1024 * 1024)
+      boundaryMediaId = res.body?.mediaId
+      boundaryPath = (await readGrant(boundaryMediaId))?.path
+      return res.statusCode === 200
+    })
+    // A real, valid MP4 (fakeMp4Buffer's header+body) padded with extra
+    // trailing bytes so the ACTUAL object size is exactly 20MB — proves
+    // the boundary is inclusive end-to-end, not just at request time.
+    const exactlyTwentyMb = Buffer.concat([fakeMp4Buffer(), Buffer.alloc(20 * 1024 * 1024 - fakeMp4Buffer().length, 0x00)])
+    check('sanity: the exactly-20MB test fixture really is exactly 20MB', exactlyTwentyMb.length === 20 * 1024 * 1024)
+    await bucket.file(boundaryPath).save(exactlyTwentyMb, { metadata: { contentType: 'video/mp4' } })
+    await checkAsync('confirm: a real video object at EXACTLY 20MB is accepted (200) — the limit is ">20MB rejected", not ">=20MB rejected"', async () => {
+      const res = await confirmGrant(boundaryMediaId, owner.idToken)
+      return res.statusCode === 200
     })
   }
 

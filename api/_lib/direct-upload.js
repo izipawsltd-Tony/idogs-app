@@ -61,3 +61,18 @@ export function extensionForUpload(kind, contentType) {
 // already exists at that path. Real storage-layer enforcement, not just
 // reliance on the path's UUID being fresh (though it is also that).
 export const NO_OVERWRITE_HEADER = { 'x-goog-if-generation-match': '0' }
+
+// Video-size ceiling for THIS direct-upload path specifically —
+// deliberately a SEPARATE constant from api/_lib/image-pipeline.js's
+// MAX_VIDEO_INPUT_BYTES (50MB), which remains the legacy base64-proxy
+// path's own ceiling and is NOT changed by this. request-showcase-
+// media-upload.js enforces this against the client-CLAIMED size before
+// ever issuing a signed URL; confirm-showcase-media-upload.js
+// independently re-enforces it against the REAL uploaded object's
+// ACTUAL size (via Storage metadata, never the client's claim alone)
+// before accepting it. Matches lib/imageCompression.ts's
+// MAX_VIDEO_UPLOAD_BYTES on the client — kept as two separate constants
+// (client vs server modules can't share a literal import) rather than
+// one derived value, so a mismatch between them is a visible, obvious
+// diff in review rather than a silent import-graph coupling.
+export const MAX_DIRECT_VIDEO_UPLOAD_BYTES = 20 * 1024 * 1024

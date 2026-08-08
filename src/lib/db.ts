@@ -1291,10 +1291,16 @@ export async function uploadShowcaseMediaDirect(dogId: string, kind: 'photo' | '
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
 
+  // Computed BEFORE the request call so its real byte length (sizeBytes)
+  // can be sent along with the grant request — lets the server reject
+  // an oversized video before ever minting a signed URL, instead of
+  // only discovering it after the PUT has already happened.
+  const body = typeof fileOrBase64 === 'string' ? base64ToBlob(fileOrBase64, contentType) : fileOrBase64
+
   const requestRes = await fetch('/api/request-showcase-media-upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-    body: JSON.stringify({ dogId, kind, contentType }),
+    body: JSON.stringify({ dogId, kind, contentType, sizeBytes: body.size }),
   })
   if (!requestRes.ok) {
     const err = await requestRes.json().catch(() => ({}))
@@ -1302,7 +1308,6 @@ export async function uploadShowcaseMediaDirect(dogId: string, kind: 'photo' | '
   }
   const { mediaId, uploadUrl, requiredHeaders } = await requestRes.json()
 
-  const body = typeof fileOrBase64 === 'string' ? base64ToBlob(fileOrBase64, contentType) : fileOrBase64
   const putRes = await fetch(uploadUrl, { method: 'PUT', headers: requiredHeaders, body })
   if (!putRes.ok) {
     throw new Error(`Upload failed (${putRes.status}) — please try again`)

@@ -39,7 +39,7 @@ import { logSanitizedError } from './_lib/http-helpers.js'
 import { canAddDogRecord, hasDogWriteAccess } from './_lib/dog-access.js'
 import { processImageForStorage, processVideoForStorage, ImagePipelineError } from './_lib/image-pipeline.js'
 import { signMediaItems, MAX_MEDIA_ITEMS_PER_KIND } from './_lib/showcase-media-access.js'
-import { MEDIA_UPLOAD_GRANTS_COLLECTION } from './_lib/direct-upload.js'
+import { MEDIA_UPLOAD_GRANTS_COLLECTION, MAX_DIRECT_VIDEO_UPLOAD_BYTES } from './_lib/direct-upload.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -142,12 +142,33 @@ async function handler(req, res) {
       return res.status(400).json({ error: 'No file was found at the expected upload location — please try uploading again', reason: 'OBJECT_NOT_UPLOADED' })
     }
 
+    // Independent, server-side size check against the REAL Storage
+    // object — never the client-claimed expectedSizeBytes on the grant
+    // (a client could lie about that at request time). Checked via
+    // Storage metadata BEFORE downloading the full object, both so an
+    // oversized video is rejected without this function ever pulling a
+    // large buffer into memory, and so this is the actual security
+    // boundary the request-time check (a fast-fail UX convenience only)
+    // cannot itself provide.
+    if (kind === 'video') {
+      const [metadata] = await file.getMetadata()
+      const actualSize = Number(metadata.size)
+      if (!Number.isFinite(actualSize) || actualSize > MAX_DIRECT_VIDEO_UPLOAD_BYTES) {
+        await deleteObjectQuietly(bucket, grant.path)
+        await grantRef.update({ status: 'rejected' })
+        return res.status(400).json({
+          error: `Video exceeds the ${Math.floor(MAX_DIRECT_VIDEO_UPLOAD_BYTES / (1024 * 1024))}MB direct-upload limit`,
+          reason: 'FILE_TOO_LARGE',
+        })
+      }
+    }
+
     // Real, server-side validation of the ACTUAL uploaded bytes — never
     // trusts the contentType the client claimed when requesting the
     // grant. Reuses the exact same pipeline functions the base64-proxy
     // path uses, so a direct upload is held to identical rules (magic-
-    // byte sniffing, size ceiling, HEIC/HEIF handling for photos, MP4/
-    // MOV/WebM sniffing for video).
+    // byte sniffing, a broader sanity size ceiling, HEIC/HEIF handling
+    // for photos, MP4/MOV/WebM sniffing for video).
     const [rawBuffer] = await file.download()
     let processed
     try {
