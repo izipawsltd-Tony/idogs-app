@@ -1259,6 +1259,67 @@ export async function uploadShowcaseMedia(dogId: string, base64: string, kind: '
   return res.json()
 }
 
+// Implementation Phase 1 ("Unified Media & Performance" audit, direct-
+// upload architecture): decodes a base64 string (as produced by
+// lib/imageCompression.ts's prepareImageForUpload()) back into a real
+// Blob, so it can be sent as the BODY of a direct PUT to a signed
+// Storage URL instead of re-wrapping it in another layer of JSON/
+// base64. Local to this module — nothing else needs it.
+function base64ToBlob(base64: string, mediaType: string): Blob {
+  const byteChars = atob(base64)
+  const bytes = new Uint8Array(byteChars.length)
+  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i)
+  return new Blob([bytes], { type: mediaType })
+}
+
+// Implementation Phase 1: uploads one photo or video for a puppy's
+// Showcase gallery by sending the file BYTES DIRECTLY to Storage via a
+// short-lived signed URL (api/request-showcase-media-upload.js), then
+// asking the server to validate + finalize it
+// (api/confirm-showcase-media-upload.js) — never proxies the file
+// through this Vercel function's own request body the way
+// uploadShowcaseMedia() above does. This is what actually removes the
+// ~4.5MB Vercel body-size ceiling from the upload path (see
+// api/_lib/direct-upload.js's header comment).
+//
+// `fileOrBase64` is either the base64 string prepareImageForUpload()
+// already produces (photo path — decoded back into a Blob here) or a
+// real File/Blob directly (video path — never base64-encoded at all in
+// this flow, since there is no reason to inflate it ~33% just to
+// immediately decode it again).
+export async function uploadShowcaseMediaDirect(dogId: string, kind: 'photo' | 'video', fileOrBase64: Blob | string, contentType: string): Promise<{ mediaId: string; photos: SignedMediaItem[]; videos: SignedMediaItem[] }> {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+
+  const requestRes = await fetch('/api/request-showcase-media-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ dogId, kind, contentType }),
+  })
+  if (!requestRes.ok) {
+    const err = await requestRes.json().catch(() => ({}))
+    throw new Error(err.error || `Upload request failed (${requestRes.status})`)
+  }
+  const { mediaId, uploadUrl, requiredHeaders } = await requestRes.json()
+
+  const body = typeof fileOrBase64 === 'string' ? base64ToBlob(fileOrBase64, contentType) : fileOrBase64
+  const putRes = await fetch(uploadUrl, { method: 'PUT', headers: requiredHeaders, body })
+  if (!putRes.ok) {
+    throw new Error(`Upload failed (${putRes.status}) — please try again`)
+  }
+
+  const confirmRes = await fetch('/api/confirm-showcase-media-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ mediaId }),
+  })
+  if (!confirmRes.ok) {
+    const err = await confirmRes.json().catch(() => ({}))
+    throw new Error(err.error || `Upload confirmation failed (${confirmRes.status})`)
+  }
+  return confirmRes.json()
+}
+
 // Slice 2: reorders and/or deletes items in a puppy's photo/video
 // gallery — `order` is the FULL desired array of MediaItem ids (index 0
 // = cover), never Storage paths or URLs. Never a way to add a new item

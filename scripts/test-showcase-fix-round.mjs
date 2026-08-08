@@ -141,8 +141,15 @@ check('invalid Deposit text remains visible for correction — setDepositText is
   check('a HEIC decode failure throws (never resolves with a partial/garbage result) — prepareImageForUpload has no try/catch swallowing a decode error into a fallback value',
     !/catch[\s\S]{0,80}return \{ base64/.test(imgCompSrc))
 }
-check('a failed prepareImageForUpload() (any ImageCompressionError, including HEIC_DECODE_FAILED) is caught by Promise.allSettled in handleSaveShowcaseDraft — the file is never added to resolvedIds, so no upload-showcase-media call and no server-side media record is ever created for it',
-  /const prepared = kind === 'photo'\s*\n\s*\? await prepareImageForUpload\(file\)/.test(littersSrc) &&
+// UPDATE (Implementation Phase 1 — direct media upload): handleSaveShowcaseDraft
+// no longer computes a standalone `prepared`/`base64` variable before a
+// separate upload call — prepareImageForUpload(file) is now awaited
+// directly INSIDE uploadShowcaseMediaDirect()'s own argument list. The
+// property this check proves is unchanged: a thrown ImageCompressionError
+// still propagates out of the async map callback and is still caught by
+// Promise.allSettled, never reaching resolvedIds or any server call.
+check('a failed prepareImageForUpload() (any ImageCompressionError, including HEIC_DECODE_FAILED) is caught by Promise.allSettled in handleSaveShowcaseDraft — the file is never added to resolvedIds, so no confirmed upload and no server-side media record is ever created for it',
+  /await uploadShowcaseMediaDirect\(puppyId, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(littersSrc) &&
   /await Promise\.allSettled\(batch\.map\(async ref => \{/.test(littersSrc))
 check('a failed upload leaves the puppy\'s draft error visible (puppyErrors) rather than silently discarding the file — the breeder can see it happened and retry',
   /setPuppyErrors\(prev => \(\{ \.\.\.prev, \[puppyId\]: result\.error \}\)\)/.test(littersSrc))

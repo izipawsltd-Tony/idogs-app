@@ -119,15 +119,18 @@ check('decodeHeicToCanvas documents that HEIF rotation/mirror properties are man
 // right function from the right module actually being called". ──
 {
   const littersPageSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
-  check('LittersPage.tsx imports prepareImageForUpload/readFileAsBase64/MAX_VIDEO_UPLOAD_BYTES/ImageCompressionError from lib/imageCompression (MAX_HEIC_UPLOAD_BYTES no longer imported — it was removed)',
-    /import \{ prepareImageForUpload, readFileAsBase64, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError \} from '\.\.\/lib\/imageCompression'/.test(littersPageSrc))
+  // UPDATE (Implementation Phase 1 — direct media upload): readFileAsBase64
+  // is no longer imported here — video now uploads the raw File directly
+  // (uploadShowcaseMediaDirect), with no base64 step at all in this flow.
+  check('LittersPage.tsx imports prepareImageForUpload/MAX_VIDEO_UPLOAD_BYTES/ImageCompressionError from lib/imageCompression (MAX_HEIC_UPLOAD_BYTES and readFileAsBase64 no longer imported — both removed)',
+    /import \{ prepareImageForUpload, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError \} from '\.\.\/lib\/imageCompression'/.test(littersPageSrc))
   check('LittersPage.tsx no longer imports isHeicFile — the special HEIC pre-flight size gate that used it was removed along with MAX_HEIC_UPLOAD_BYTES',
     !littersPageSrc.includes("import { isHeicFile } from '../lib/heic'"))
   check('handleAddFiles no longer has a separate, stricter size ceiling for HEIC — it is gated by the same generic 30MB photo sanity check as every other format',
     !/isHeicFile\(file\) && file\.size > MAX_HEIC_UPLOAD_BYTES/.test(littersPageSrc) &&
     /kind === 'photo' && file\.size > 30 \* 1024 \* 1024/.test(littersPageSrc))
   check('handleSaveShowcaseDraft calls prepareImageForUpload for photo uploads (never sends a raw, uncompressed file of any format)',
-    /kind === 'photo'\s*\n\s*\? await prepareImageForUpload\(file\)/.test(littersPageSrc))
+    /await uploadShowcaseMediaDirect\(puppyId, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(littersPageSrc))
   check('A failed compression/decode (ImageCompressionError) surfaces its own specific, actionable message rather than a generic "Upload failed"',
     /reason instanceof ImageCompressionError \? reason\.message/.test(littersPageSrc))
 }

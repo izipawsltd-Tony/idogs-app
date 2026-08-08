@@ -43,7 +43,7 @@ import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
 import { canAddDogRecord, hasDogWriteAccess } from './_lib/dog-access.js'
 import { processImageForStorage, processVideoForStorage, ImagePipelineError } from './_lib/image-pipeline.js'
-import { newMediaId, signMediaItems } from './_lib/showcase-media-access.js'
+import { newMediaId, signMediaItems, MAX_MEDIA_ITEMS_PER_KIND } from './_lib/showcase-media-access.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -54,12 +54,6 @@ if (!getApps().length) {
     }),
   })
 }
-
-// Deliberately generous but bounded — Slice 2 requirement ("Multiple
-// litter/puppy images") without letting a single puppy's document grow
-// unbounded (Firestore documents have a real 1MB size ceiling, and a
-// gallery this large would be a poor showcase experience regardless).
-const MAX_MEDIA_ITEMS_PER_KIND = 30
 
 async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })

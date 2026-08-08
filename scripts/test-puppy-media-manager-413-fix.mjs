@@ -21,6 +21,20 @@
 // checks against the real LittersPage.tsx).
 //
 // Usage: node scripts/test-puppy-media-manager-413-fix.mjs (no emulator needed)
+//
+// UPDATE (Implementation Phase 1 — direct media upload): the transport
+// this fix relied on (compress client-side, then send as base64 JSON
+// through api/upload-showcase-media.js) has been superseded by
+// uploadShowcaseMediaDirect() (src/lib/db.ts) — the file now goes
+// straight to Storage via a short-lived signed URL, never through this
+// Vercel function's own request body at all, which removes the 413
+// ceiling from the equation entirely rather than continuing to compress
+// against it. The regex assertions below were updated to match the new
+// call shape; what they PROVE is unchanged: photos are still compressed
+// client-side via prepareImageForUpload() before any upload happens,
+// oversized video is still rejected before any network work, and
+// ShowcaseManager's separate handleAddFiles/handleSaveShowcaseDraft path
+// remains untouched.
 
 import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
@@ -90,24 +104,17 @@ check('PuppyMediaManager component body was found by the balanced-brace extracto
   check('LittersPage.tsx imports the real prepareImageForUpload from ../lib/imageCompression (reused, not duplicated)',
     /import\s*\{[^}]*\bprepareImageForUpload\b[^}]*\}\s*from\s*'\.\.\/lib\/imageCompression'/.test(littersSrc))
 
-  check('REQUIRED: PuppyMediaManager.handleUpload calls prepareImageForUpload(file) for the photo kind',
-    /const base64 = kind === 'photo' \? \(await prepareImageForUpload\(file\)\)\.base64/.test(puppyMediaManagerSrc))
+  check('REQUIRED: PuppyMediaManager.handleUpload compresses the photo via prepareImageForUpload() and passes the RESULT directly into uploadShowcaseMediaDirect — compression happens before any byte leaves the browser (guaranteed by JS argument-evaluation order: the awaited prepareImageForUpload() call is nested INSIDE the uploadShowcaseMediaDirect() call expression, so it must resolve before that call can even be invoked)',
+    /await uploadShowcaseMediaDirect\(puppy\.id, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(puppyMediaManagerSrc))
 
-  check('REQUIRED: the raw original file is NOT sent directly for photos — handleUpload no longer unconditionally calls readAsBase64(file) for both kinds',
-    !/const base64 = await readAsBase64\(file\)/.test(puppyMediaManagerSrc))
+  check('REQUIRED: the raw original file is NOT sent directly for photos — the photo branch never passes the raw `file` as the upload body',
+    !/uploadShowcaseMediaDirect\(puppy\.id, 'photo', file,/.test(puppyMediaManagerSrc))
 
-  // Causal-order proof: prepareImageForUpload's result must be computed
-  // and assigned to `base64` BEFORE uploadShowcaseMedia is ever called —
-  // not just present somewhere in the function.
-  const prepareIdx = puppyMediaManagerSrc.indexOf('prepareImageForUpload(file)')
-  const uploadCallIdx = puppyMediaManagerSrc.indexOf('uploadShowcaseMedia(puppy.id, base64, kind)')
-  check('prepareImageForUpload() is found in handleUpload', prepareIdx !== -1)
-  check('uploadShowcaseMedia() is found in handleUpload', uploadCallIdx !== -1)
-  check('REQUIRED: prepareImageForUpload() runs strictly BEFORE uploadShowcaseMedia() is called (compression happens before the network request, not after)',
-    prepareIdx !== -1 && uploadCallIdx !== -1 && prepareIdx < uploadCallIdx)
+  check('video is sent as the raw File directly (never compressed, and — since the direct-upload transport removed the base64-proxy step entirely — never base64-encoded either anymore, by design, not an oversight)',
+    /await uploadShowcaseMediaDirect\(puppy\.id, 'video', file, file\.type \|\| 'video\/mp4'\)/.test(puppyMediaManagerSrc))
 
-  check('video still uses the local raw readAsBase64() (video is never compressed client-side anywhere in this codebase — by design, not an oversight)',
-    /await readAsBase64\(file\)/.test(puppyMediaManagerSrc))
+  check('the old raw base64 FileReader helper (readAsBase64) was removed from this component — no longer needed now that video uploads the raw File directly',
+    !/function readAsBase64/.test(puppyMediaManagerSrc))
 
   check('no duplicate compression logic was introduced — PuppyMediaManager does not define its own resize/canvas/compress helper',
     !/canvas\.toDataURL\(['"]image\/jpeg['"]/.test(puppyMediaManagerSrc) && !/getContext\('2d'\)/.test(puppyMediaManagerSrc))
@@ -124,11 +131,8 @@ check('PuppyMediaManager component body was found by the balanced-brace extracto
   const guardIdx = puppyMediaManagerSrc.indexOf("if (kind === 'video' && file.size > MAX_VIDEO_UPLOAD_BYTES)")
   check('REQUIRED: PuppyMediaManager.handleUpload has an oversized-video guard', guardIdx !== -1)
 
-  const readAsBase64CallIdx = puppyMediaManagerSrc.indexOf('await readAsBase64(file)')
-  const uploadCallIdx2 = puppyMediaManagerSrc.indexOf('uploadShowcaseMedia(puppy.id, base64, kind)')
-  check('REQUIRED: the oversized-video guard runs BEFORE any base64 read (readAsBase64) is attempted',
-    guardIdx !== -1 && readAsBase64CallIdx !== -1 && guardIdx < readAsBase64CallIdx)
-  check('REQUIRED: the oversized-video guard runs BEFORE the network upload call',
+  const uploadCallIdx2 = puppyMediaManagerSrc.indexOf("await uploadShowcaseMediaDirect(puppy.id, 'video', file, file.type || 'video/mp4')")
+  check('REQUIRED: the oversized-video guard runs BEFORE the direct-upload call (no network/Storage-grant request is ever made for an oversized video)',
     guardIdx !== -1 && uploadCallIdx2 !== -1 && guardIdx < uploadCallIdx2)
 
   // Causal-chain proof (same rigor as this codebase's existing
@@ -158,7 +162,7 @@ check('PuppyMediaManager component body was found by the balanced-brace extracto
     const returnMatch = /\breturn\b/.exec(block)
     if (!returnMatch) return false
     const returnIdx = openIdx + returnMatch.index
-    const uploadIdx = fnBody.indexOf('uploadShowcaseMedia(puppy.id, base64, kind)')
+    const uploadIdx = fnBody.indexOf("uploadShowcaseMediaDirect(puppy.id, 'video', file, file.type || 'video/mp4')")
     if (uploadIdx === -1) return false
     return conditionIdx < returnIdx && returnIdx < uploadIdx
   }
@@ -178,7 +182,7 @@ check('PuppyMediaManager component body was found by the balanced-brace extracto
   }
 
   check('the video kind is still accepted and uploaded normally when under the size limit (guard is a ceiling, not a blanket block)',
-    /: await readAsBase64\(file\)/.test(puppyMediaManagerSrc))
+    /: await uploadShowcaseMediaDirect\(puppy\.id, 'video', file, file\.type \|\| 'video\/mp4'\)/.test(puppyMediaManagerSrc))
 }
 
 // =========================================================================
@@ -190,8 +194,8 @@ check('PuppyMediaManager component body was found by the balanced-brace extracto
     /if \(kind === 'photo' && file\.size > 30 \* 1024 \* 1024\) \{/.test(littersSrc))
   check('handleAddFiles still rejects oversized video with the original MAX_VIDEO_UPLOAD_BYTES guard, untouched',
     /if \(kind === 'video' && file\.size > MAX_VIDEO_UPLOAD_BYTES\) \{/.test(littersSrc))
-  check('handleSaveShowcaseDraft still calls prepareImageForUpload for queued photos, untouched',
-    /\? await prepareImageForUpload\(file\)/.test(littersSrc))
+  check('handleSaveShowcaseDraft still calls prepareImageForUpload for queued photos, untouched (now feeding uploadShowcaseMediaDirect as part of Implementation Phase 1, same compression step)',
+    /await uploadShowcaseMediaDirect\(puppyId, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(littersSrc))
   // handleAddFiles/handleSaveShowcaseDraft live in the PARENT component,
   // not inside PuppyMediaManager — confirms this fix didn't accidentally
   // merge the two previously-separate upload implementations into one.
@@ -204,8 +208,8 @@ check('PuppyMediaManager component body was found by the balanced-brace extracto
 // HEIC handling, and success semantics untouched.
 // =========================================================================
 {
-  check('handleUpload still calls the real uploadShowcaseMedia() (reused, no new/duplicate upload function)',
-    /const result = await uploadShowcaseMedia\(puppy\.id, base64, kind\)/.test(puppyMediaManagerSrc))
+  check('handleUpload calls the shared uploadShowcaseMediaDirect() for both kinds (reused, no new/duplicate upload function per kind)',
+    /const result = kind === 'photo'/.test(puppyMediaManagerSrc) && /await uploadShowcaseMediaDirect\(puppy\.id, 'photo'/.test(puppyMediaManagerSrc) && /await uploadShowcaseMediaDirect\(puppy\.id, 'video'/.test(puppyMediaManagerSrc))
   check('handleUpload still calls applyResult() to update local photos/videos state on success (existing success behavior preserved)',
     /applyResult\(result\)/.test(puppyMediaManagerSrc))
   check('handleUpload still shows the existing "Photo added"/"Video added" success toast, unchanged',
