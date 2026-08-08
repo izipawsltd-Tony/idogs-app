@@ -32,7 +32,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getStorage } from 'firebase-admin/storage'
-import { getFirestore, FieldValue } from 'firebase-admin/firestore'
+import { getFirestore } from 'firebase-admin/firestore'
 import { createHash } from 'crypto'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
@@ -40,6 +40,7 @@ import { canAddDogRecord, hasDogWriteAccess } from './_lib/dog-access.js'
 import { processImageForStorage, processVideoForStorage, ImagePipelineError } from './_lib/image-pipeline.js'
 import { signMediaItems, MAX_MEDIA_ITEMS_PER_KIND } from './_lib/showcase-media-access.js'
 import { MEDIA_UPLOAD_GRANTS_COLLECTION, MAX_DIRECT_VIDEO_UPLOAD_BYTES } from './_lib/direct-upload.js'
+import { closePendingGrant, releasePendingQuota } from './_lib/direct-upload-grants.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -111,7 +112,7 @@ async function handler(req, res) {
       // rather than leaving it for a future cleanup pass to discover,
       // and mark the grant expired so it's not mistaken for still-open.
       await deleteObjectQuietly(bucket, grant.path)
-      await grantRef.update({ status: 'expired' })
+      await closePendingGrant(db, grantRef, 'expired', { expiredAt: new Date().toISOString() })
       return res.status(410).json({ error: 'This upload window has expired — please try uploading again', reason: 'GRANT_EXPIRED' })
     }
 
@@ -121,11 +122,14 @@ async function handler(req, res) {
     const dogSnap = await db.collection('dogs').doc(grant.dogId).get()
     if (!dogSnap.exists) {
       await deleteObjectQuietly(bucket, grant.path)
+      await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
       return res.status(404).json({ error: 'Dog not found' })
     }
     const dog = dogSnap.data()
     if (!canAddDogRecord(dog, uid)) {
       const reason = hasDogWriteAccess(dog, uid) && dog?.status === 'restricted' ? 'DOG_RESTRICTED' : 'NOT_OWNER'
+      await deleteObjectQuietly(bucket, grant.path)
+      await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
       return res.status(403).json({ error: 'Not authorized to upload media for this dog', reason })
     }
 
@@ -133,12 +137,14 @@ async function handler(req, res) {
     const existingItems = (kind === 'photo' ? dog.photos : dog.videos) || []
     if (existingItems.length >= MAX_MEDIA_ITEMS_PER_KIND) {
       await deleteObjectQuietly(bucket, grant.path)
+      await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
       return res.status(409).json({ error: `This puppy already has the maximum of ${MAX_MEDIA_ITEMS_PER_KIND} ${kind}s`, reason: 'MEDIA_LIMIT_REACHED' })
     }
 
     const file = bucket.file(grant.path)
     const [exists] = await file.exists()
     if (!exists) {
+      await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
       return res.status(400).json({ error: 'No file was found at the expected upload location — please try uploading again', reason: 'OBJECT_NOT_UPLOADED' })
     }
 
@@ -155,7 +161,7 @@ async function handler(req, res) {
       const actualSize = Number(metadata.size)
       if (!Number.isFinite(actualSize) || actualSize > MAX_DIRECT_VIDEO_UPLOAD_BYTES) {
         await deleteObjectQuietly(bucket, grant.path)
-        await grantRef.update({ status: 'rejected' })
+        await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
         return res.status(400).json({
           error: `Video exceeds the ${Math.floor(MAX_DIRECT_VIDEO_UPLOAD_BYTES / (1024 * 1024))}MB direct-upload limit`,
           reason: 'FILE_TOO_LARGE',
@@ -175,7 +181,7 @@ async function handler(req, res) {
       processed = kind === 'photo' ? await processImageForStorage(rawBuffer) : await processVideoForStorage(rawBuffer)
     } catch (err) {
       await deleteObjectQuietly(bucket, grant.path)
-      await grantRef.update({ status: 'rejected' })
+      await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
       if (err instanceof ImagePipelineError) {
         return res.status(400).json({ error: err.message, reason: err.code })
       }
@@ -190,25 +196,41 @@ async function handler(req, res) {
     // this identical in spirit to upload-showcase-media.js's own
     // "hash the PROCESSED bytes" dedup guard.
     const contentHash = createHash('sha256').update(processed.buffer).digest('hex')
-    if (existingItems.some(item => item?.hash === contentHash)) {
-      await deleteObjectQuietly(bucket, grant.path)
-      await grantRef.update({ status: 'duplicate' })
-      return res.status(409).json({ error: `This ${kind} has already been uploaded for this puppy`, reason: 'DUPLICATE_MEDIA' })
-    }
-
     const arrayField = kind === 'photo' ? 'photos' : 'videos'
     const mediaItem = { id: mediaId, path: grant.path, hash: contentHash }
-    try {
-      await db.collection('dogs').doc(grant.dogId).update({
-        [arrayField]: FieldValue.arrayUnion(mediaItem),
-        updatedAt: new Date(),
-      })
-    } catch (writeErr) {
-      await deleteObjectQuietly(bucket, grant.path)
-      throw writeErr
-    }
+    const dogRef = db.collection('dogs').doc(grant.dogId)
+    const commitResult = await db.runTransaction(async tx => {
+      const [freshGrantSnap, freshDogSnap] = await Promise.all([tx.get(grantRef), tx.get(dogRef)])
+      if (!freshGrantSnap.exists) return { ok: false, reason: 'GRANT_NOT_FOUND' }
+      const freshGrant = freshGrantSnap.data()
+      if (freshGrant.status !== 'pending') return { ok: false, reason: 'ALREADY_CONFIRMED', preserveObject: freshGrant.status === 'confirmed' }
 
-    await grantRef.update({ status: 'confirmed', confirmedAt: new Date().toISOString() })
+      const reject = reason => {
+        tx.update(grantRef, { status: reason === 'DUPLICATE_MEDIA' ? 'duplicate' : 'rejected', rejectedAt: new Date().toISOString() })
+        releasePendingQuota(tx, db, freshGrant)
+        return { ok: false, reason }
+      }
+      if (new Date(freshGrant.expiresAt).getTime() < Date.now()) return reject('GRANT_EXPIRED')
+      if (!freshDogSnap.exists) return reject('DOG_NOT_FOUND')
+      const freshDog = freshDogSnap.data()
+      if (!canAddDogRecord(freshDog, uid)) return reject(hasDogWriteAccess(freshDog, uid) && freshDog?.status === 'restricted' ? 'DOG_RESTRICTED' : 'NOT_OWNER')
+      const freshItems = (kind === 'photo' ? freshDog.photos : freshDog.videos) || []
+      if (freshItems.length >= MAX_MEDIA_ITEMS_PER_KIND) return reject('MEDIA_LIMIT_REACHED')
+      if (freshItems.some(item => item?.hash === contentHash)) return reject('DUPLICATE_MEDIA')
+
+      tx.update(dogRef, { [arrayField]: [...freshItems, mediaItem], updatedAt: new Date() })
+      tx.update(grantRef, { status: 'confirmed', confirmedAt: new Date().toISOString() })
+      releasePendingQuota(tx, db, freshGrant)
+      return { ok: true }
+    })
+
+    if (!commitResult.ok) {
+      if (!commitResult.preserveObject) await deleteObjectQuietly(bucket, grant.path)
+      const status = commitResult.reason === 'ALREADY_CONFIRMED' || commitResult.reason === 'MEDIA_LIMIT_REACHED' || commitResult.reason === 'DUPLICATE_MEDIA' ? 409
+        : commitResult.reason === 'GRANT_EXPIRED' ? 410
+          : commitResult.reason === 'DOG_NOT_FOUND' || commitResult.reason === 'GRANT_NOT_FOUND' ? 404 : 403
+      return res.status(status).json({ error: 'Upload could not be confirmed', reason: commitResult.reason })
+    }
 
     const updatedSnap = await db.collection('dogs').doc(grant.dogId).get()
     const updated = updatedSnap.data()

@@ -163,13 +163,13 @@ function PuppyDialog({ puppy, onClose, onEnquire }: { puppy: PublicPuppy; onClos
         <div className="showcase-gallery-main">
           {!item ? <Placeholder name={puppy.name} /> : item.kind === 'photo'
             ? <img src={item.url} alt={`${puppy.name} photo ${active + 1} of ${media.length}`} style={contain} />
-            : <video src={item.url} controls aria-label={`${puppy.name} video ${active + 1} of ${media.length}`} style={contain} />}
+            : <video src={item.url} controls preload="metadata" aria-label={`${puppy.name} video ${active + 1} of ${media.length}`} style={contain} />}
           {media.length > 1 && <>
             <button onClick={goPrev} aria-label="Previous photo" style={navArrow('left')}>‹</button>
             <button onClick={goNext} aria-label="Next photo" style={navArrow('right')}>›</button>
           </>}
         </div>
-        {media.length > 1 && <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: 10, background: '#0b0b0b', flex: '0 0 auto' }}>{media.map((m, i) => <button key={`${m.kind}-${m.id}`} onClick={() => goTo(i)} aria-label={`Show ${m.kind} ${i + 1}`} aria-current={i === active} style={{ border: i === active ? '2px solid #fff' : '1px solid rgba(255,255,255,.35)', borderRadius: 6, padding: 0, minWidth: 56, height: 44, overflow: 'hidden', flexShrink: 0, opacity: i === active ? 1 : .65 }}>{m.kind === 'photo' ? <img src={m.url} alt="" loading="lazy" style={cover} /> : <video src={m.url} style={cover} />}</button>)}</div>}
+        {media.length > 1 && <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: 10, background: '#0b0b0b', flex: '0 0 auto' }}>{media.map((m, i) => <button key={`${m.kind}-${m.id}`} onClick={() => goTo(i)} aria-label={`Show ${m.kind} ${i + 1}`} aria-current={i === active} style={{ border: i === active ? '2px solid #fff' : '1px solid rgba(255,255,255,.35)', borderRadius: 6, padding: 0, minWidth: 56, height: 44, overflow: 'hidden', flexShrink: 0, opacity: i === active ? 1 : .65 }}>{m.kind === 'photo' ? <img src={m.url} alt="" loading="lazy" style={cover} /> : <video src={m.url} preload="none" style={cover} />}</button>)}</div>}
       </div>
       <div className="showcase-gallery-sidebar">
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}><h2 id="puppy-title" style={{ margin: 0, fontSize: 20 }}>{puppy.name}</h2><span style={{ ...badge, background: status.bg, color: status.fg }}>{status.label}</span></div>

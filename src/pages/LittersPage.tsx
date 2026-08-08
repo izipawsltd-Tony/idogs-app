@@ -1839,7 +1839,7 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
             {kind === 'photo' ? (
               <img src={item.url} alt="" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: i === 0 ? '2px solid var(--brand-600)' : '1px solid var(--border)' }} />
             ) : (
-              <video src={item.url} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted />
+              <video src={item.url} preload="none" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted />
             )}
             {i === 0 && <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 9, fontWeight: 700, background: 'var(--brand-600)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>COVER</span>}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
@@ -2460,7 +2460,7 @@ function ShowcaseManager({
             <div key={ref} style={{ position: 'relative', width: 72 }}>
               {kind === 'photo'
                 ? (url ? <img src={url} alt="" style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: i === 0 ? '2px solid var(--brand-600)' : '1px solid var(--border)' }} /> : <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--sand)' }} />)
-                : (url ? <video src={url} style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted /> : <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--sand)' }} />)}
+                : (url ? <video src={url} preload="none" style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted /> : <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--sand)' }} />)}
               {kind === 'photo' && i === 0 && <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 8, fontWeight: 700, background: 'var(--brand-600)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>COVER</span>}
               {/* Tony live-staging finding ("media missing from public
                   page"): uploaded media only ever appears publicly once

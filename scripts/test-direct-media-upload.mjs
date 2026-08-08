@@ -75,19 +75,21 @@ const { check, checkAsync, skip, summary } = makeChecker()
     /action: 'write'/.test(requestSrc) && /extensionHeaders: NO_OVERWRITE_HEADER/.test(requestSrc))
   check('request-showcase-media-upload.js signs with version: "v4" (required for extensionHeaders to bind into the signature)',
     /version: 'v4'/.test(requestSrc))
-  check('request-showcase-media-upload.js writes a pending grant BEFORE minting the signed URL, so a grant always exists for confirm to check against',
-    requestSrc.indexOf(`.doc(mediaId).set({`) !== -1 &&
-    requestSrc.indexOf(`.doc(mediaId).set({`) < requestSrc.indexOf('getSignedUrl'))
+  check('request-showcase-media-upload.js transactionally reserves a pending grant BEFORE minting the signed URL',
+    requestSrc.indexOf('createPendingGrant(db, mediaId, grant)') !== -1 &&
+    requestSrc.indexOf('createPendingGrant(db, mediaId, grant)') < requestSrc.indexOf('getSignedUrl'))
   check('request-showcase-media-upload.js re-checks MAX_MEDIA_ITEMS_PER_KIND before issuing a grant (saves a wasted upload for the common case)',
     /existingCount >= MAX_MEDIA_ITEMS_PER_KIND/.test(requestSrc))
   check('request-showcase-media-upload.js never introduces a media.public field anywhere (approved decision: publication stays a separate, contextual reference)',
     !/\bpublic\s*:/.test(requestSrc) && !/\.public\b/.test(requestSrc))
   check('request-showcase-media-upload.js requires sizeBytes as a positive number before doing anything else',
     /typeof sizeBytes !== 'number'/.test(requestSrc) && /sizeBytes <= 0/.test(requestSrc))
+  check('request-showcase-media-upload.js uses the shared MEDIA_UPLOAD_GRANTS_COLLECTION constant everywhere it references that collection — no hardcoded \'mediaUploadGrants\' string literal left behind',
+    /db\.collection\(MEDIA_UPLOAD_GRANTS_COLLECTION\)/.test(requestSrc) && !/db\.collection\('mediaUploadGrants'\)/.test(requestSrc))
   check('request-showcase-media-upload.js rejects a video whose CLAIMED sizeBytes exceeds MAX_DIRECT_VIDEO_UPLOAD_BYTES, BEFORE any Firestore/Storage call (grant-write and getSignedUrl both come later in the file)',
     (() => {
       const guardIdx = requestSrc.indexOf("kind === 'video' && sizeBytes > MAX_DIRECT_VIDEO_UPLOAD_BYTES")
-      const grantWriteIdx = requestSrc.indexOf('.doc(mediaId).set({')
+      const grantWriteIdx = requestSrc.indexOf('createPendingGrant(db, mediaId, grant)')
       const signIdx = requestSrc.indexOf('getSignedUrl')
       return guardIdx !== -1 && grantWriteIdx !== -1 && signIdx !== -1 && guardIdx < grantWriteIdx && guardIdx < signIdx
     })())
@@ -118,8 +120,8 @@ const { check, checkAsync, skip, summary } = makeChecker()
     /processVideoForStorage\(rawBuffer\)/.test(confirmSrc))
   check('confirm-showcase-media-upload.js deletes the Storage object when validation fails (never leaves an unproven file referencing nothing)',
     /await deleteObjectQuietly\(bucket, grant\.path\)/.test(confirmSrc))
-  check('confirm-showcase-media-upload.js still enforces the duplicate-content-hash guard, same as the base64 proxy path',
-    /existingItems\.some\(item => item\?\.hash === contentHash\)/.test(confirmSrc) && /DUPLICATE_MEDIA/.test(confirmSrc))
+  check('confirm-showcase-media-upload.js still enforces the duplicate-content-hash guard inside the final transaction',
+    /freshItems\.some\(item => item\?\.hash === contentHash\)/.test(confirmSrc) && /DUPLICATE_MEDIA/.test(confirmSrc))
   check('confirm-showcase-media-upload.js still enforces MAX_MEDIA_ITEMS_PER_KIND (re-checked, in case it was hit during the upload window)',
     /existingItems\.length >= MAX_MEDIA_ITEMS_PER_KIND/.test(confirmSrc))
   check('confirm-showcase-media-upload.js returns signed URLs via the same signMediaItems() every other Showcase media endpoint uses',
@@ -133,6 +135,18 @@ const { check, checkAsync, skip, summary } = makeChecker()
     confirmSrc.indexOf('file.getMetadata()') < confirmSrc.indexOf('file.download()'))
   check('confirm-showcase-media-upload.js only applies the video size ceiling to kind === "video" (photo size behavior unchanged)',
     /if \(kind === 'video'\) \{\s*\n\s*const \[metadata\] = await file\.getMetadata\(\)/.test(confirmSrc))
+  check('request flow uses a durable uid rate limit and transactional pending-grant quota',
+    /checkDurableRateLimit\(db, 'showcase-media-upload'/.test(requestSrc) && /createPendingGrant\(db, mediaId, grant\)/.test(requestSrc))
+  check('confirm flow atomically re-reads both grant and dog before appending media',
+    /db\.runTransaction/.test(confirmSrc) && /tx\.get\(grantRef\)/.test(confirmSrc) && /tx\.get\(dogRef\)/.test(confirmSrc))
+  check('confirm flow releases pending quota in the same final transaction',
+    /releasePendingQuota\(tx, db, freshGrant\)/.test(confirmSrc))
+
+  const cleanupSrc = readFileSync(new URL('../api/cleanup-showcase-media-uploads.js', import.meta.url), 'utf8')
+  check('expired-upload cleanup is cron-authenticated and only claims pending grants before deleting objects',
+    /checkCronAuth\(req\)/.test(cleanupSrc) && /closePendingGrant\(db, doc\.ref, 'expired'/.test(cleanupSrc) && /ignoreNotFound: true/.test(cleanupSrc))
+  check('Vercel schedules expired-upload cleanup',
+    /cleanup-showcase-media-uploads/.test(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')))
 
   // ── client wiring: src/lib/db.ts + LittersPage.tsx ──
   const dbSrc = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
@@ -162,6 +176,11 @@ const { check, checkAsync, skip, summary } = makeChecker()
     /uploadShowcaseMediaDirect/.test(littersSrc) && !/\buploadShowcaseMedia\b(?!Direct)/.test(littersSrc))
   check('LittersPage.tsx no longer imports readFileAsBase64 (video is uploaded as a raw File now, never base64-encoded first)',
     !/readFileAsBase64/.test(littersSrc))
+  check('editor video thumbnails do not preload media bytes', /<video[^>]+preload="none"/.test(littersSrc))
+
+  const publicSrc = readFileSync(new URL('../src/pages/ShowcasePublicPage.tsx', import.meta.url), 'utf8')
+  check('public video thumbnails use preload="none" and the active player uses metadata only',
+    /<video src=\{m\.url\} preload="none"/.test(publicSrc) && /controls preload="metadata"/.test(publicSrc))
 
   // ── storage.rules stays deny-all — direct-upload security comes from
   // the signed URL itself, never from relaxed Storage Rules ──

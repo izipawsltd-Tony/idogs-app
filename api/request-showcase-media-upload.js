@@ -41,11 +41,14 @@ import { getAuth } from 'firebase-admin/auth'
 import { getStorage } from 'firebase-admin/storage'
 import { getFirestore } from 'firebase-admin/firestore'
 import { randomUUID } from 'crypto'
+import { createHash } from 'crypto'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
 import { canAddDogRecord, hasDogWriteAccess } from './_lib/dog-access.js'
 import { newMediaId, MAX_MEDIA_ITEMS_PER_KIND } from './_lib/showcase-media-access.js'
-import { UPLOAD_URL_TTL_MS, MEDIA_UPLOAD_GRANTS_COLLECTION, extensionForUpload, NO_OVERWRITE_HEADER, MAX_DIRECT_VIDEO_UPLOAD_BYTES } from './_lib/direct-upload.js'
+import { UPLOAD_URL_TTL_MS, MEDIA_UPLOAD_GRANTS_COLLECTION, extensionForUpload, NO_OVERWRITE_HEADER, MAX_DIRECT_VIDEO_UPLOAD_BYTES, UPLOAD_REQUEST_RATE_WINDOW_MS, MAX_UPLOAD_REQUESTS_PER_WINDOW } from './_lib/direct-upload.js'
+import { checkDurableRateLimit } from './_lib/durable-rate-limit.js'
+import { createPendingGrant, closePendingGrant } from './_lib/direct-upload-grants.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -112,6 +115,13 @@ async function handler(req, res) {
   const db = getFirestore()
   const bucket = getStorage().bucket(bucketName)
 
+  const rateKey = createHash('sha256').update(uid).digest('hex')
+  const rate = await checkDurableRateLimit(db, 'showcase-media-upload', rateKey, UPLOAD_REQUEST_RATE_WINDOW_MS, MAX_UPLOAD_REQUESTS_PER_WINDOW)
+  if (!rate.allowed) {
+    res.setHeader?.('Retry-After', String(rate.retryAfterSeconds))
+    return res.status(429).json({ error: 'Too many upload requests — please wait and try again', reason: 'UPLOAD_RATE_LIMITED' })
+  }
+
   try {
     const dogSnap = await db.collection('dogs').doc(dogId).get()
     if (!dogSnap.exists) return res.status(404).json({ error: 'Dog not found' })
@@ -141,26 +151,34 @@ async function handler(req, res) {
     const filePath = `dogs/${uid}/${dogId}/${kind}s/${randomUUID()}.${extension}`
 
     const expiresAtMs = Date.now() + UPLOAD_URL_TTL_MS
-    await db.collection(MEDIA_UPLOAD_GRANTS_COLLECTION).doc(mediaId).set({
+    const grant = {
       uid,
       dogId,
       kind,
       path: filePath,
       contentType,
       expectedSizeBytes: sizeBytes,
+      quotaReserved: true,
       status: 'pending',
       createdAt: new Date().toISOString(),
       expiresAt: new Date(expiresAtMs).toISOString(),
-    })
+    }
+    const reservation = await createPendingGrant(db, mediaId, grant)
+    if (!reservation.created) {
+      return res.status(429).json({ error: 'Too many unfinished uploads — finish or wait for them to expire', reason: reservation.reason })
+    }
 
     const file = bucket.file(filePath)
-    const [uploadUrl] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'write',
-      expires: expiresAtMs,
-      contentType,
-      extensionHeaders: NO_OVERWRITE_HEADER,
-    })
+    let uploadUrl
+    try {
+      ;[uploadUrl] = await file.getSignedUrl({
+        version: 'v4', action: 'write', expires: expiresAtMs, contentType,
+        extensionHeaders: NO_OVERWRITE_HEADER,
+      })
+    } catch (signError) {
+      await closePendingGrant(db, db.collection(MEDIA_UPLOAD_GRANTS_COLLECTION).doc(mediaId), 'rejected', { rejectedAt: new Date().toISOString() })
+      throw signError
+    }
 
     return res.status(200).json({
       mediaId,

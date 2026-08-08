@@ -26,6 +26,11 @@
 export const UPLOAD_URL_TTL_MS = 10 * 60 * 1000 // 10 minutes — approved decision
 
 export const MEDIA_UPLOAD_GRANTS_COLLECTION = 'mediaUploadGrants'
+export const MEDIA_UPLOAD_QUOTAS_COLLECTION = 'mediaUploadQuotas'
+export const MAX_PENDING_UPLOADS_PER_USER = 10
+export const MAX_PENDING_UPLOADS_PER_DOG = 3
+export const UPLOAD_REQUEST_RATE_WINDOW_MS = 10 * 60 * 1000
+export const MAX_UPLOAD_REQUESTS_PER_WINDOW = 30
 
 // Deliberately narrow: a photo uploaded through this direct-upload path
 // is ALWAYS the client-compressed JPEG lib/imageCompression.ts's
