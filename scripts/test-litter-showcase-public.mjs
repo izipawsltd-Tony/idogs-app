@@ -25,6 +25,7 @@
 import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
 import { generateShareToken, hashShareToken, isShareLive, isValidExpiryIso, MAX_SHARE_EXPIRY_DAYS } from '../api/_lib/showcase-share.js'
+import { isValidShowcasePuppyDoc } from '../api/_lib/showcase-schema.js'
 
 const { check, skip, summary } = makeChecker()
 
@@ -71,10 +72,46 @@ const { check, skip, summary } = makeChecker()
     /litterData\.tenantId !== showcase\.tenantId/.test(publicSrc))
   check('api/showcase-public.js verifies the Dam belongs to the same tenant as the Showcase',
     /damData\.tenantId !== showcase\.tenantId/.test(publicSrc))
-  check('api/showcase-public.js verifies each puppy belongs to the same tenant AND the same litter as the Showcase',
-    /dog\.tenantId === showcase\.tenantId && dog\.litterId === litterId/.test(publicSrc))
+  // Stale-test fix (this exact regex was written against the OLD inline
+  // `dog.tenantId === showcase.tenantId && dog.litterId === litterId`
+  // check, before the "legacy-litterId fallback" fix — the very first
+  // fix of this branch's lineage, the production "Pink Girl broken
+  // image" bug — refactored that inline check into the shared, stronger
+  // isValidShowcasePuppyDoc() so a legacy dog missing litterId entirely
+  // still resolves via the litter's own puppyIds array instead of being
+  // dropped. The call site changed shape; this assertion was never
+  // updated to match, so it kept failing even though the real behavior
+  // is correct (confirmed by Section 1b's direct behavioral tests on the
+  // real function below, and by test-showcase-legacy-litterid-
+  // fallback.mjs, which covers that fix's own regression in full).
+  check('api/showcase-public.js verifies each puppy belongs to the same tenant AND the same litter as the Showcase (via the shared isValidShowcasePuppyDoc(), not an inline duplicate check)',
+    /isValidShowcasePuppyDoc\(snap\.id, snap\.data\(\), showcase\.tenantId, litterId, litterPuppyIds\)/.test(publicSrc))
+  check('api/showcase-public.js imports isValidShowcasePuppyDoc from the shared schema module (reused, not duplicated inline)',
+    /import \{ isValidShowcasePuppyDoc \} from '\.\/_lib\/showcase-schema\.js'/.test(publicSrc))
   check('api/showcase-public.js drops a single tenant/litter-mismatched puppy without failing the whole request for the other, valid puppies',
     /validPuppyDocs/.test(publicSrc))
+
+  // ── isValidShowcasePuppyDoc(): direct behavioral tests against the REAL
+  // function api/showcase-public.js actually calls (a plain, dependency-
+  // free function — importable directly, same as this file already does
+  // for showcase-share.js's exports). Kept in the SAME scope as the rest
+  // of Section 1 (not a separate block) since publicSrc/rotateSrc/
+  // updateShareSrc declared above are still needed further down. ──
+  const TENANT = 'tenantA'
+  const LITTER = 'litterA'
+  const OTHER_LITTER = 'litterB'
+  const litterPuppyIds = new Set(['legacy-puppy-in-litter'])
+
+  check('a puppy with matching tenant AND litterId is valid',
+    isValidShowcasePuppyDoc('p1', { tenantId: TENANT, litterId: LITTER }, TENANT, LITTER, litterPuppyIds) === true)
+  check('a puppy from a DIFFERENT tenant is rejected even if litterId matches (tenant check is never bypassed)',
+    isValidShowcasePuppyDoc('p2', { tenantId: 'someone-elses-tenant', litterId: LITTER }, TENANT, LITTER, litterPuppyIds) === false)
+  check('a puppy with the same tenant but a DIFFERENT litterId is rejected',
+    isValidShowcasePuppyDoc('p3', { tenantId: TENANT, litterId: OTHER_LITTER }, TENANT, LITTER, litterPuppyIds) === false)
+  check('REQUIRED (legacy fallback): a same-tenant puppy with NO litterId at all is still valid if it is a member of the litter\'s own puppyIds array',
+    isValidShowcasePuppyDoc('legacy-puppy-in-litter', { tenantId: TENANT, litterId: undefined }, TENANT, LITTER, litterPuppyIds) === true)
+  check('a same-tenant puppy with no litterId that is NOT in the litter\'s puppyIds array is rejected (the fallback is not a blanket bypass)',
+    isValidShowcasePuppyDoc('legacy-puppy-elsewhere', { tenantId: TENANT, litterId: undefined }, TENANT, LITTER, litterPuppyIds) === false)
 
   // Codex fix-round ("Public identifiers") — the raw Firestore dogId is
   // never returned; every puppy gets an opaque, deterministic reference.
