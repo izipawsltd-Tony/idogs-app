@@ -1511,7 +1511,21 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                       <button className="btn btn-primary btn-sm" onClick={() => handleSavePuppy(puppy, litter)} disabled={isPuppyRestricted}>Save changes</button>
                                       <button className="btn btn-secondary btn-sm" onClick={() => setEditingPuppy(null)}>Cancel</button>
                                     </div>
-                                    <PuppyMediaManager puppy={puppy} disabled={isPuppyRestricted} toast={toast} onUpdated={updated => setDogs(prev => prev.map(d => d.id === puppy.id ? { ...d, ...updated } : d))} />
+                                    {/* Single-upload UX: a Plus breeder already has Litter
+                                        Showcase (below) as a full photo/video manager for this
+                                        exact same puppy — showing PuppyMediaManager here too
+                                        would be two separate places to manage the same gallery.
+                                        A non-Plus breeder has no Showcase section at all (it's
+                                        Plus-gated), so PuppyMediaManager remains their only way
+                                        to manage a puppy's photos/videos — removing it for them
+                                        would be a real regression, not a duplicate removed. */}
+                                    {getEffectivePlanClient(profile) === 'plus' ? (
+                                      <div style={{ fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
+                                        📸 Manage this puppy's photos and videos in the <strong>Litter Showcase</strong> section below.
+                                      </div>
+                                    ) : (
+                                      <PuppyMediaManager puppy={puppy} disabled={isPuppyRestricted} toast={toast} onUpdated={updated => setDogs(prev => prev.map(d => d.id === puppy.id ? { ...d, ...updated } : d))} />
+                                    )}
                                   </div>
                                 )}
                               </div>

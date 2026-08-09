@@ -189,7 +189,13 @@ export default function DogListPage({ toast }: Props) {
           onChange={e => setSearch(e.target.value)}
         />
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {(['all', 'whelp', 'puppy', 'young_adult', 'adult', 'senior'] as const).map(stage => (
+          {/* 'whelp'/'puppy' are deliberately excluded from this generic
+              stage loop — the dedicated "🐾 Puppies" button just below
+              already covers both (see filterStage === 'puppies' in the
+              `filtered` computation above), so a separate "Born"/"Puppy"
+              button here would just be a second, overlapping way to
+              reach the same dogs. */}
+          {(['all', 'young_adult', 'adult', 'senior'] as const).map(stage => (
             <button
               key={stage}
               onClick={() => setFilterStage(stage)}
