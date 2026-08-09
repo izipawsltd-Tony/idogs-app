@@ -46,6 +46,14 @@ export function newMediaId() {
   return randomUUID()
 }
 
+// Deliberately generous but bounded — Slice 2 requirement ("Multiple
+// litter/puppy images") without letting a single puppy's document grow
+// unbounded (Firestore documents have a real 1MB size ceiling, and a
+// gallery this large would be a poor showcase experience regardless).
+// Shared here (rather than duplicated) so api/upload-showcase-media.js
+// and api/confirm-showcase-media-upload.js enforce the exact same cap.
+export const MAX_MEDIA_ITEMS_PER_KIND = 30
+
 // Generates fresh signed URLs for a list of { id, path } MediaItems.
 // Never persisted — recomputed on every call. `ttlMs` defaults to the
 // breeder-authenticated TTL above; api/showcase-media.js passes

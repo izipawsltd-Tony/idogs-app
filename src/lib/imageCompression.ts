@@ -66,9 +66,22 @@ const JPEG_QUALITY = 0.85
 
 // Videos are never compressed client-side (no safe, dependency-free way
 // to transcode video in-browser) — the only lever available is refusing
-// a video that would blow the request body ceiling with a clear,
-// actionable message instead of a cryptic platform 413.
-export const MAX_VIDEO_UPLOAD_BYTES = 3 * 1024 * 1024
+// a video that would blow this limit, with a clear, actionable message,
+// before any upload work starts.
+//
+// Implementation Phase 1 (direct-to-Storage upload) raised this from the
+// old 3MB base64-proxy-era ceiling to 20MB, now that video bytes go
+// straight to Storage via a signed URL and never pass through Vercel's
+// request-body limit at all (see api/_lib/direct-upload.js's own
+// MAX_DIRECT_VIDEO_UPLOAD_BYTES — the two constants are kept in sync
+// deliberately, not derived from one shared import, since this module
+// is client-only and that one is server-only). This client-side value
+// is just the first, cheapest rejection point — the server independently
+// re-enforces the same 20MB ceiling at both request time (against the
+// client-claimed size) and confirm time (against the REAL uploaded
+// object's actual size), so this check is a fast-fail UX convenience,
+// never the actual security boundary.
+export const MAX_VIDEO_UPLOAD_BYTES = 20 * 1024 * 1024
 
 export class ImageCompressionError extends Error {
   code: 'UNREADABLE' | 'TIMEOUT' | 'HEIC_DECODE_FAILED'

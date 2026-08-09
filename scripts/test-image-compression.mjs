@@ -47,13 +47,18 @@ check('exports prepareImageForUpload', /export async function prepareImageForUpl
 check('exports ImageCompressionError', /export class ImageCompressionError extends Error/.test(src))
 check("ImageCompressionError's code union includes HEIC_DECODE_FAILED", /'UNREADABLE' \| 'TIMEOUT' \| 'HEIC_DECODE_FAILED'/.test(src))
 
-// MAX_VIDEO_UPLOAD_BYTES must stay comfortably under Vercel's ~4.5MB body
-// limit even after base64 encoding (~33% larger) — verified directly
-// here (not just "a constant exists") since a regression that silently
-// raised this back toward/above the real platform ceiling would
-// reintroduce the exact 413 bug this fix round exists for. Videos are
-// still never compressed client-side, so this ceiling remains load-
-// bearing (unlike the now-removed HEIC one).
+// UPDATE (Implementation Phase 1 — direct media upload, video-limit
+// round): MAX_VIDEO_UPLOAD_BYTES used to have to stay comfortably under
+// Vercel's ~4.5MB body limit even after base64 encoding, because video
+// went through the base64-proxy path. That is no longer true — video
+// now uploads as a raw File straight to Storage via a signed URL (see
+// LittersPage.tsx/db.ts's uploadShowcaseMediaDirect), never touching
+// Vercel's request body or base64 at all, so this constant's real
+// ceiling is now the direct-upload path's own limit
+// (api/_lib/direct-upload.js's MAX_DIRECT_VIDEO_UPLOAD_BYTES) — checked
+// here to be exactly 20MB and kept in sync with the server-side value
+// (the two are deliberately separate constants, not one shared import
+// across a client/server boundary — see that module's own comment).
 {
   function parseByteExpression(text) {
     const parts = text.trim().split('*').map(part => part.trim())
@@ -62,9 +67,13 @@ check("ImageCompressionError's code union includes HEIC_DECODE_FAILED", /'UNREAD
   }
   const videoMatch = /export const MAX_VIDEO_UPLOAD_BYTES = ([\d.*\s]+)$/m.exec(src)
   const videoBytes = videoMatch ? parseByteExpression(videoMatch[1]) : null
-  const VERCEL_BODY_CEILING_WITH_BUFFER_BYTES = 4.3 * 1024 * 1024
   check('MAX_VIDEO_UPLOAD_BYTES parses as a genuine numeric byte expression', videoBytes !== null)
-  check('MAX_VIDEO_UPLOAD_BYTES, base64-inflated (~1.37x), stays comfortably under the ~4.5MB Vercel body ceiling', !!videoBytes && videoBytes * 1.37 < VERCEL_BODY_CEILING_WITH_BUFFER_BYTES, `${videoBytes} bytes`)
+  check('MAX_VIDEO_UPLOAD_BYTES is exactly 20MB (the approved direct-upload video limit)', videoBytes === 20 * 1024 * 1024, `${videoBytes} bytes`)
+
+  const directUploadSrc = readFileSync(new URL('../api/_lib/direct-upload.js', import.meta.url), 'utf8')
+  const serverMatch = /export const MAX_DIRECT_VIDEO_UPLOAD_BYTES = ([\d.*\s]+)$/m.exec(directUploadSrc)
+  const serverBytes = serverMatch ? parseByteExpression(serverMatch[1]) : null
+  check('api/_lib/direct-upload.js\'s MAX_DIRECT_VIDEO_UPLOAD_BYTES matches the client constant exactly (20MB on both sides, kept in sync deliberately, not by shared import)', videoBytes !== null && videoBytes === serverBytes)
 }
 
 // compressImageFile: same proven technique as the already-approved
@@ -119,15 +128,18 @@ check('decodeHeicToCanvas documents that HEIF rotation/mirror properties are man
 // right function from the right module actually being called". ──
 {
   const littersPageSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
-  check('LittersPage.tsx imports prepareImageForUpload/readFileAsBase64/MAX_VIDEO_UPLOAD_BYTES/ImageCompressionError from lib/imageCompression (MAX_HEIC_UPLOAD_BYTES no longer imported — it was removed)',
-    /import \{ prepareImageForUpload, readFileAsBase64, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError \} from '\.\.\/lib\/imageCompression'/.test(littersPageSrc))
+  // UPDATE (Implementation Phase 1 — direct media upload): readFileAsBase64
+  // is no longer imported here — video now uploads the raw File directly
+  // (uploadShowcaseMediaDirect), with no base64 step at all in this flow.
+  check('LittersPage.tsx imports prepareImageForUpload/MAX_VIDEO_UPLOAD_BYTES/ImageCompressionError from lib/imageCompression (MAX_HEIC_UPLOAD_BYTES and readFileAsBase64 no longer imported — both removed)',
+    /import \{ prepareImageForUpload, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError \} from '\.\.\/lib\/imageCompression'/.test(littersPageSrc))
   check('LittersPage.tsx no longer imports isHeicFile — the special HEIC pre-flight size gate that used it was removed along with MAX_HEIC_UPLOAD_BYTES',
     !littersPageSrc.includes("import { isHeicFile } from '../lib/heic'"))
   check('handleAddFiles no longer has a separate, stricter size ceiling for HEIC — it is gated by the same generic 30MB photo sanity check as every other format',
     !/isHeicFile\(file\) && file\.size > MAX_HEIC_UPLOAD_BYTES/.test(littersPageSrc) &&
     /kind === 'photo' && file\.size > 30 \* 1024 \* 1024/.test(littersPageSrc))
   check('handleSaveShowcaseDraft calls prepareImageForUpload for photo uploads (never sends a raw, uncompressed file of any format)',
-    /kind === 'photo'\s*\n\s*\? await prepareImageForUpload\(file\)/.test(littersPageSrc))
+    /await uploadShowcaseMediaDirect\(puppyId, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(littersPageSrc))
   check('A failed compression/decode (ImageCompressionError) surfaces its own specific, actionable message rather than a generic "Upload failed"',
     /reason instanceof ImageCompressionError \? reason\.message/.test(littersPageSrc))
 }

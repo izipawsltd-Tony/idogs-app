@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
   getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, DEFAULT_SHOWCASE_PUPPY_ENTRY,
-  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMedia, updateShowcaseMediaOrder, getShowcaseMediaUrls, getEnquiriesForLitter, reconcileLitterPuppy,
+  rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMediaDirect, updateShowcaseMediaOrder, getShowcaseMediaUrls, getEnquiriesForLitter, reconcileLitterPuppy,
   managePrivateDogAccess, type PrivateDogAccessGrant,
 } from '../lib/db'
 import type { SignedMediaItem } from '../lib/db'
@@ -16,7 +16,7 @@ import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
 import { sendTransferEmail } from '../lib/email'
 import { describeTransferFailure } from '../lib/transferError'
 import { emitDogUsageChanged } from '../lib/dogUsageEvents'
-import { prepareImageForUpload, readFileAsBase64, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } from '../lib/imageCompression'
+import { prepareImageForUpload, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } from '../lib/imageCompression'
 import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showcaseMoney'
 import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
 import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage, toFirestoreAssignBuyerUpdate } from '../lib/assignBuyer'
@@ -616,10 +616,16 @@ export default function LittersPage({ toast, dismissAll }: Props) {
       const batch = toUpload.slice(i, i + 2)
       const settled = await Promise.allSettled(batch.map(async ref => {
         const { file, kind } = queuedFiles.get(ref)!
-        const prepared = kind === 'photo'
-          ? await prepareImageForUpload(file)
-          : { base64: await readFileAsBase64(file), mediaType: file.type || 'video/mp4' }
-        const result = await uploadShowcaseMedia(puppyId, prepared.base64, kind)
+        // Implementation Phase 1: direct-to-Storage upload — photos are
+        // still compressed client-side first (prepareImageForUpload,
+        // unchanged), but the bytes now go straight to Storage via a
+        // signed URL instead of being proxied through this Vercel
+        // function as base64 JSON. Video is sent as the raw File
+        // (never base64-encoded at all now — no reason to inflate it
+        // ~33% just to immediately decode it server-side again).
+        const result = kind === 'photo'
+          ? await uploadShowcaseMediaDirect(puppyId, 'photo', (await prepareImageForUpload(file)).base64, 'image/jpeg')
+          : await uploadShowcaseMediaDirect(puppyId, 'video', file, file.type || 'video/mp4')
         return { ref, mediaId: result.mediaId }
       }))
       for (const outcome of settled) {
@@ -1768,29 +1774,24 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
     })
   }
 
-  // Video only — never compressed client-side (see this component's own
-  // header comment above), so this is still a raw read for that case.
-  function readAsBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve((reader.result as string).split(',')[1])
-      reader.onerror = reject
-      reader.readAsDataURL(file)
-    })
-  }
-
   async function handleUpload(file: File, kind: 'photo' | 'video') {
     // Same pre-flight guard handleAddFiles already uses below — reject
-    // an oversized video before any base64/network work, with the same
-    // user-facing wording, rather than letting it fail as a bare 413.
+    // an oversized video before any base64/network or Storage work,
+    // with the same user-facing wording, rather than letting it fail
+    // as a bare error from the signed-upload request.
     if (kind === 'video' && file.size > MAX_VIDEO_UPLOAD_BYTES) {
       toast(`This video is over ${Math.floor(MAX_VIDEO_UPLOAD_BYTES / (1024 * 1024))}MB — please trim or compress it before uploading`, 'error')
       return
     }
     setUploading(kind)
     try {
-      const base64 = kind === 'photo' ? (await prepareImageForUpload(file)).base64 : await readAsBase64(file)
-      const result = await uploadShowcaseMedia(puppy.id, base64, kind)
+      // Implementation Phase 1: direct-to-Storage upload — see the
+      // matching comment in handleSaveShowcaseDraft above. Photo
+      // compression (prepareImageForUpload, including HEIC decode) is
+      // unchanged; video is sent as the raw File with no base64 step.
+      const result = kind === 'photo'
+        ? await uploadShowcaseMediaDirect(puppy.id, 'photo', (await prepareImageForUpload(file)).base64, 'image/jpeg')
+        : await uploadShowcaseMediaDirect(puppy.id, 'video', file, file.type || 'video/mp4')
       applyResult(result)
       toast(`${kind === 'photo' ? 'Photo' : 'Video'} added`)
     } catch (err) {
@@ -1838,7 +1839,7 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
             {kind === 'photo' ? (
               <img src={item.url} alt="" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: i === 0 ? '2px solid var(--brand-600)' : '1px solid var(--border)' }} />
             ) : (
-              <video src={item.url} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted />
+              <video src={item.url} preload="none" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted />
             )}
             {i === 0 && <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 9, fontWeight: 700, background: 'var(--brand-600)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>COVER</span>}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
@@ -2459,7 +2460,7 @@ function ShowcaseManager({
             <div key={ref} style={{ position: 'relative', width: 72 }}>
               {kind === 'photo'
                 ? (url ? <img src={url} alt="" style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: i === 0 ? '2px solid var(--brand-600)' : '1px solid var(--border)' }} /> : <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--sand)' }} />)
-                : (url ? <video src={url} style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted /> : <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--sand)' }} />)}
+                : (url ? <video src={url} preload="none" style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: '1px solid var(--border)' }} muted /> : <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--sand)' }} />)}
               {kind === 'photo' && i === 0 && <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 8, fontWeight: 700, background: 'var(--brand-600)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>COVER</span>}
               {/* Tony live-staging finding ("media missing from public
                   page"): uploaded media only ever appears publicly once
