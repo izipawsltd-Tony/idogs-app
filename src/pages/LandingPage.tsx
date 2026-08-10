@@ -57,7 +57,7 @@ export default function LandingPage() {
         <header className="nav">
           <div className="nav-inner wrap">
             <a href="#top" className="brand-logo" aria-label="iDogs home">
-              <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 36, width: 'auto' }} />
+              <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 41.4, width: 'auto' }} />
             </a>
             <nav className="nav-links" aria-label="Primary">
               <a href="#features">Features</a>
@@ -85,8 +85,8 @@ export default function LandingPage() {
               <p className="eyebrow">Australian dog record-keeping</p>
               <h1>Every dog's story, connected for life.</h1>
               <p className="sub">An organised digital record for every dog — identity, health records and documents in one place.</p>
-              <p className="aud">For Australian dog owners and small breeders.</p>
-              <p className="incl">Whether you care for one dog, several dogs, or a small breeding program.</p>
+              <p className="aud">For Australian dog owners and breeders.</p>
+              <p className="incl">Whether you care for dogs or manage a breeding program.</p>
               <div className="cta-row">
                 <Link className="btn btn-primary" to="/signup">Start Free</Link>
                 <a className="btn btn-ghost" href="#howitworks">See How It Works</a>
@@ -109,7 +109,7 @@ export default function LandingPage() {
           <div className="trust-inner">
             <span className="trust-item"><span className="tick">✓</span> Australian-owned</span>
             <span className="trust-item"><span className="tick">✓</span> Built for dog owners</span>
-            <span className="trust-item"><span className="tick">✓</span> Designed for small breeders</span>
+            <span className="trust-item"><span className="tick">✓</span> Designed for breeders</span>
             <span className="trust-item"><span className="tick">✓</span> Start free</span>
           </div>
         </div>
@@ -155,7 +155,7 @@ export default function LandingPage() {
                 <Link className="btn btn-path" to="/signup">Start Free as a Dog Owner</Link>
               </div>
               <div className="path" id="for-breeders">
-                <h3>For Small Breeders</h3>
+                <h3>For Breeders</h3>
                 <p className="plead">A simpler way to manage each litter.</p>
                 <ul>
                   <li>Manage dogs and litters</li>
@@ -194,7 +194,7 @@ export default function LandingPage() {
 
         <section className="block alt">
           <div className="wrap">
-            <p className="kicker">For small breeders</p>
+            <p className="kicker">For breeders</p>
             <h2>Four simple steps to keep each dog's records connected.</h2>
             <ol className="flow" aria-label="Puppy Showcase workflow">
               <li className="flow-step"><span className="n">1</span> Create litter</li>
@@ -241,7 +241,7 @@ export default function LandingPage() {
         <section className="final">
           <div className="wrap">
             <h2>Give every dog a connected record for life.</h2>
-            <p>Built for Australian dog owners and small breeders. Start free.</p>
+            <p>Built for Australian dog owners and breeders. Start free.</p>
             <Link className="btn btn-primary" to="/signup">Start Free</Link>
           </div>
         </section>
@@ -251,7 +251,7 @@ export default function LandingPage() {
           <div className="wrap">
             <div className="foot-top">
               <div className="foot-brand">
-                <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 36, width: 'auto' }} />
+                <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 41.4, width: 'auto' }} />
                 <div style={{ maxWidth: '34ch', marginTop: 12, color: 'var(--on-forest-soft)' }}>An organised digital record for every dog.</div>
               </div>
               <div className="foot-cols">
@@ -332,7 +332,7 @@ function MobileMenu({ onClose }: { onClose: () => void }) {
     <div className="m-overlay open" id="lv2-mobile-menu" aria-hidden="false" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
       <div ref={panelRef} className="m-panel" role="dialog" aria-modal="true" aria-label="Menu">
         <div className="m-top">
-          <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 30, width: 'auto' }} />
+          <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 34.5, width: 'auto' }} />
           <button ref={closeRef} className="m-close" aria-label="Close menu" onClick={onClose}>✕</button>
         </div>
         <a href="#features" onClick={onClose}>Features</a>
