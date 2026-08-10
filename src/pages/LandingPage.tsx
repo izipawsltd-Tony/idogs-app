@@ -57,7 +57,7 @@ export default function LandingPage() {
         <header className="nav">
           <div className="nav-inner wrap">
             <a href="#top" className="brand-logo" aria-label="iDogs home">
-              <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 41.4, width: 'auto' }} />
+              <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ width: 125, height: 'auto' }} />
             </a>
             <nav className="nav-links" aria-label="Primary">
               <a href="#features">Features</a>
@@ -251,7 +251,7 @@ export default function LandingPage() {
           <div className="wrap">
             <div className="foot-top">
               <div className="foot-brand">
-                <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 41.4, width: 'auto' }} />
+                <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ width: 125, height: 'auto' }} />
                 <div style={{ maxWidth: '34ch', marginTop: 12, color: 'var(--on-forest-soft)' }}>An organised digital record for every dog.</div>
               </div>
               <div className="foot-cols">
@@ -268,9 +268,9 @@ export default function LandingPage() {
                 </div>
                 <div className="foot-col">
                   <h5>Legal</h5>
-                  <span className="pending">Privacy Policy — URL pending</span>
-                  <span className="pending">Terms of Use — URL pending</span>
-                  <span className="pending">Contact / Support — URL pending</span>
+                  <Link to="/privacy">Privacy Policy</Link>
+                  <Link to="/terms">Terms of Use</Link>
+                  <a href="mailto:hello@idogs.com.au">Contact / Support</a>
                 </div>
               </div>
             </div>
@@ -332,7 +332,7 @@ function MobileMenu({ onClose }: { onClose: () => void }) {
     <div className="m-overlay open" id="lv2-mobile-menu" aria-hidden="false" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
       <div ref={panelRef} className="m-panel" role="dialog" aria-modal="true" aria-label="Menu">
         <div className="m-top">
-          <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 34.5, width: 'auto' }} />
+          <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ width: 104.2, height: 'auto' }} />
           <button ref={closeRef} className="m-close" aria-label="Close menu" onClick={onClose}>✕</button>
         </div>
         <a href="#features" onClick={onClose}>Features</a>
