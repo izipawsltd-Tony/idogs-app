@@ -6,10 +6,22 @@
 //
 // Usage: node scripts/test-landing-pricing-ui.mjs
 
+// UPDATE (Landing Page V2, staging-only, 2026-08-10): the approved V2
+// design/copy brief hides the Pricing section entirely until real
+// prices/inclusions are verified (brief §2/§8) — this is a deliberate,
+// approved product decision, not a regression. Checks that specifically
+// depended on the pricing cards existing are marked skip() below with
+// their reason rather than deleted, since the brief's own "Awaiting
+// verification... Rename to FINAL only after all of the above verify"
+// note means Pricing is expected to return to the landing page in a
+// later round, at which point these checks become relevant again.
+// pricingCopy.ts's own values are still checked directly (independent
+// of whether the landing page currently renders them).
+
 import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
 
-const { check, summary } = makeChecker()
+const { check, skip, summary } = makeChecker()
 
 const landingSource = readFileSync(new URL('../src/pages/LandingPage.tsx', import.meta.url), 'utf8')
 const pricingCopySource = readFileSync(new URL('../src/lib/pricingCopy.ts', import.meta.url), 'utf8')
@@ -36,9 +48,9 @@ check(
 
 // ── Free, Plus Monthly, Plus Annual present ────────────────────────────
 
-check('LandingPage.tsx renders a Free pricing card', /plan="Free"/.test(landingSource))
-check('LandingPage.tsx renders a Plus Monthly pricing card', /plan="Plus Monthly"/.test(landingSource))
-check('LandingPage.tsx renders a Plus Annual pricing card', /plan="Plus Annual"/.test(landingSource))
+skip('LandingPage.tsx renders a Free pricing card', 'Pricing section hidden on Landing V2 (staging) until real prices/inclusions are verified — brief §2/§8')
+skip('LandingPage.tsx renders a Plus Monthly pricing card', 'Pricing section hidden on Landing V2 (staging) until real prices/inclusions are verified — brief §2/§8')
+skip('LandingPage.tsx renders a Plus Annual pricing card', 'Pricing section hidden on Landing V2 (staging) until real prices/inclusions are verified — brief §2/§8')
 
 // ── Correct dog limits and scan quotas (sourced from pricingCopy.ts) ───
 
@@ -58,15 +70,8 @@ check(
   'pricingCopy.ts defines the Plus monthly scan quota as 10',
   /export const SCAN_QUOTA_PLUS_MONTHLY = 10/.test(pricingCopySource)
 )
-check(
-  'LandingPage.tsx pricing cards render the dog caps from pricingCopy.ts (not hardcoded numbers)',
-  landingSource.includes('`Up to ${DOG_CAP_FREE} dogs`') && landingSource.includes('`Up to ${DOG_CAP_PLUS} dogs`')
-)
-check(
-  'LandingPage.tsx pricing cards render the scan quotas from pricingCopy.ts (not hardcoded numbers)',
-  landingSource.includes('${SCAN_QUOTA_FREE_LIFETIME} AI Document Scans total') &&
-    landingSource.includes('${SCAN_QUOTA_PLUS_MONTHLY} AI Document Scans / month')
-)
+skip('LandingPage.tsx pricing cards render the dog caps from pricingCopy.ts (not hardcoded numbers)', 'Pricing section hidden on Landing V2 (staging) — brief §2/§8')
+skip('LandingPage.tsx pricing cards render the scan quotas from pricingCopy.ts (not hardcoded numbers)', 'Pricing section hidden on Landing V2 (staging) — brief §2/§8')
 
 // ── False trial copy absent from the landing page ──────────────────────
 
@@ -87,16 +92,17 @@ check(
   'LandingPage.tsx never shows $40 as a purchasable annual price (backend does not support it)',
   !/\$40/.test(landingSource)
 )
+skip('LandingPage.tsx shows the real $49/year standard annual price', 'Pricing section hidden on Landing V2 (staging) — brief §2/§8')
 check(
-  'LandingPage.tsx shows the real $49/year standard annual price',
-  landingSource.includes('${PLUS_ANNUAL_PRICE_AUD}') && pricingCopySource.includes('export const PLUS_ANNUAL_PRICE_AUD = 49')
+  'pricingCopy.ts still defines the real $49/year standard annual price (independent of whether the landing page currently renders it)',
+  pricingCopySource.includes('export const PLUS_ANNUAL_PRICE_AUD = 49')
 )
 
 // ── CTA routes correct — all three pricing cards route through the real signup flow ──
 
-check(
+skip(
   'LandingPage.tsx Free/Plus Monthly/Plus Annual CTAs all route through navigate(\'/signup\') — the only real route available to a logged-out visitor (checkout requires an authenticated Firebase ID token)',
-  (landingSource.match(/onStart=\{\(\) => navigate\('\/signup'\)\}/g) || []).length === 3
+  'Pricing section hidden on Landing V2 (staging) — brief §2/§8. All other landing-page CTAs (Start Free, Log In) now use react-router <Link to="/signup"|"/login"> instead — verified separately.'
 )
 check(
   'LandingPage.tsx does not hardcode a Stripe price id anywhere',

@@ -18,7 +18,7 @@
 import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
 
-const { check, summary } = makeChecker()
+const { check, skip, summary } = makeChecker()
 
 const files = {
   landing: readFileSync(new URL('../src/pages/LandingPage.tsx', import.meta.url), 'utf8'),
@@ -65,19 +65,16 @@ check('TermsPage.tsx lists Plus Monthly and Plus Annual using shared pricingCopy
 check('LandingPage.tsx pricing cards have no Basic/Pro/Kennel plan card', !/plan="Basic"|plan="Pro"|plan="Kennel"/.test(files.landing))
 
 // ── PDF/JPG/PNG row uses correct left-aligned structure ────────────────
+// UPDATE (Landing Page V2, staging-only, 2026-08-10): PricingCard and
+// the whole Pricing section were removed from LandingPage.tsx — the
+// approved V2 brief hides Pricing entirely until real prices/inclusions
+// are verified (brief §2/§8). These three checks are specific to that
+// now-absent component; skipped rather than deleted since Pricing is
+// expected to return in a later round.
 
-check(
-  'LandingPage.tsx PricingCard feature list explicitly overrides the inherited center text-align from the Pricing section wrapper',
-  /listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, margin: '0 0 24px', textAlign: 'left'/.test(files.landing)
-)
-check(
-  'LandingPage.tsx PricingCard rows keep the fixed icon column + flex-start layout (icon and text share one left-aligned row)',
-  /display: 'flex', alignItems: 'flex-start', gap: 9/.test(files.landing)
-)
-check(
-  'LandingPage.tsx includes the PDF, JPG and PNG document support row on both Plus Monthly and Plus Annual',
-  (files.landing.match(/PDF, JPG and PNG document support/g) || []).length === 2
-)
+skip('LandingPage.tsx PricingCard feature list explicitly overrides the inherited center text-align from the Pricing section wrapper', 'Pricing section (and PricingCard) removed from Landing V2 (staging) — brief §2/§8')
+skip('LandingPage.tsx PricingCard rows keep the fixed icon column + flex-start layout (icon and text share one left-aligned row)', 'Pricing section (and PricingCard) removed from Landing V2 (staging) — brief §2/§8')
+skip('LandingPage.tsx includes the PDF, JPG and PNG document support row on both Plus Monthly and Plus Annual', 'Pricing section (and PricingCard) removed from Landing V2 (staging) — brief §2/§8')
 
 // ── Guarantee / cancel-anytime / billing-portal NOT published yet (deliberate, see file header) ──
 //
