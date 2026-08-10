@@ -380,7 +380,7 @@ export default function AppLayout({ toast }: Props) {
         {/* Logo + tagline */}
         <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)' }}>
           <img
-            src="/logo.png"
+            src="/idogs-logo-horizontal-light-bg.png"
             alt="iDogs"
             style={{ height: 44, width: 'auto', display: 'block', objectFit: 'contain', marginBottom: 6 }}
           />
@@ -748,7 +748,7 @@ export default function AppLayout({ toast }: Props) {
           position: 'sticky', top: 0, zIndex: 40,
         }} className="mobile-topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <img src="/logo.png" alt="iDogs" style={{ height: 28, width: 96, objectFit: 'contain' }} />
+            <img src="/idogs-logo-horizontal-light-bg.png" alt="iDogs" style={{ height: 28, width: 96, objectFit: 'contain' }} />
           </div>
           <button onClick={handleLogout} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--mid)', cursor: 'pointer' }}>
             Sign out

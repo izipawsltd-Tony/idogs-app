@@ -44,7 +44,7 @@ export default function ForgotPasswordPage() {
 
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <Link to="/" style={{ display: 'inline-block', textDecoration: 'none' }}>
-            <img src="/logo.png" alt="iDogs" style={{ height: 72, width: 240, objectFit: 'contain' }} />
+            <img src="/idogs-logo-horizontal-light-bg.png" alt="iDogs" style={{ height: 72, width: 240, objectFit: 'contain' }} />
           </Link>
         </div>
 

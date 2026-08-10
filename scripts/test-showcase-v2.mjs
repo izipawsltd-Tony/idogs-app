@@ -27,7 +27,17 @@ check('Copy Link does not call the rotate endpoint', /navigator\.clipboard[^\n]+
 check('share token survives reload in browser storage', manager.includes('window.localStorage.setItem') && manager.includes('window.localStorage.getItem'))
 check('restored token is verified against current server hash', manager.includes("window.crypto.subtle.digest('SHA-256'") && manager.includes('hash === showcase.shareTokenHash'))
 check('save failure copy is exact', manager.includes('Changes couldn’t be saved — try again'))
-check('public page uses official logo and no dog emoji placeholder', publicPage.includes('src="/logo.png"') && !publicPage.includes('🐶'))
+// UPDATE (official iDogs logo refresh, 2026-08-10): the single generic
+// /logo.png was replaced by two official, context-appropriate variants
+// (light-bg / dark-bg) — ShowcasePublicPage.tsx uses BOTH, per usage
+// site's actual background (light for the placeholder/not-found states,
+// dark for the Showcase header). The real intent this check protects —
+// "uses an official iDogs logo asset, never a dog-emoji placeholder" —
+// is unchanged; only the exact filename(s) it looks for are updated.
+check('public page uses official logo assets and no dog emoji placeholder',
+  publicPage.includes('src="/idogs-logo-horizontal-light-bg.png"') &&
+  publicPage.includes('src="/idogs-logo-horizontal-dark-bg.png"') &&
+  !publicPage.includes('🐶'))
 check('puppy-specific CTA and accessible dialog exist', publicPage.includes('Enquire about {puppy.name}') && publicPage.includes('aria-modal="true"'))
 check('dialog traps focus and restores the opener', publicPage.includes("event.key !== 'Tab'") && publicPage.includes('openerRef.current?.focus()') && publicPage.includes('closeRef.current?.focus()'))
 check('hidden money fields are omitted from DTO', publicApi.includes("entry.showPrice === true") && publicApi.includes("entry.showDeposit === true"))
