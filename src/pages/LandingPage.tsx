@@ -78,6 +78,7 @@ export default function LandingPage() {
           </div>
         </header>
 
+        <main>
         <section className="hero" id="top">
           <div className="wrap hero-grid">
             <div>
@@ -244,6 +245,7 @@ export default function LandingPage() {
             <Link className="btn btn-primary" to="/signup">Start Free</Link>
           </div>
         </section>
+        </main>
 
         <footer>
           <div className="wrap">
