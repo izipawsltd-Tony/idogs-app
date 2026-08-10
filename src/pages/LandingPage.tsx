@@ -90,7 +90,7 @@ export default function LandingPage() {
       }}>
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <img src="/logo.png" alt="iDogs" style={{ height: 50, width: 'auto', objectFit: 'contain' }} />
+          <img src="/idogs-logo-horizontal-light-bg.png" alt="iDogs" style={{ height: 50, width: 'auto', objectFit: 'contain' }} />
         </div>
         {/* Nav links */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -599,7 +599,7 @@ export default function LandingPage() {
             {/* Brand */}
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <img src="/logo.png" alt="iDogs" style={{ height: 32, width: 110, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
+                <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ height: 32, width: 110, objectFit: 'contain' }} />
               </div>
               <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', maxWidth: 240, lineHeight: 1.9, margin: 0 }}>
                 Every dog's story, forever.<br />
