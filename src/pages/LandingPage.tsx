@@ -314,7 +314,15 @@ function MobileMenu({ onClose }: { onClose: () => void }) {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
     }
     document.addEventListener('keydown', handleKeyDown)
-    return () => { document.removeEventListener('keydown', handleKeyDown); openerRef.current?.focus() }
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      // Deferred to the next frame: LandingPage's own effect removes
+      // `inert` from the page-content wrapper (which contains the
+      // hamburger button) in this same passive-effects flush, and an
+      // inert element cannot receive focus. Waiting a frame guarantees
+      // that removal has already committed before we try to focus it.
+      requestAnimationFrame(() => openerRef.current?.focus())
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onClose])
 
