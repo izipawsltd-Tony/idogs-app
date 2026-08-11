@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
 
 // ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
 // Ported from the approved design-review package:
@@ -93,9 +94,14 @@ export default function LandingPage() {
               </div>
             </div>
             {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
-            <div className="hero-visual" aria-label="iDogs product preview (placeholder — real screenshot to follow)">
+            <div className="hero-visual" aria-label="iDogs product preview">
               <div className="hv-poster">
-                <div className="hv-shot">Dog Profile — product screenshot</div>
+                <LandingMediaSlot
+                  slotId="hero"
+                  className="hv-shot"
+                  ariaLabel="iDogs product preview"
+                  fallback={<div className="hv-shot">Dog Profile — product screenshot</div>}
+                />
               </div>
               <div className="hv-strip">
                 <div className="hv-mini"><div className="m">Digital Passport / QR</div></div>
@@ -122,17 +128,32 @@ export default function LandingPage() {
             <div className="shots">
               <div>
                 <div className="frame-desktop"><div className="bar"><i></i><i></i><i></i></div>
-                  <div className="ph ph-desktop" role="img" aria-label="Dog records in one organised profile (product screenshot to follow)">Dog Profile &amp; records</div></div>
+                  <LandingMediaSlot
+                    slotId="dog-profile"
+                    className="ph ph-desktop"
+                    ariaLabel="Dog records in one organised profile"
+                    fallback={<div className="ph ph-desktop" role="img" aria-label="Dog records in one organised profile (product screenshot to follow)">Dog Profile &amp; records</div>}
+                  /></div>
                 <div className="shot-cap">Dog records in one organised profile</div>
               </div>
               <div>
                 <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <div className="ph ph-mobile" role="img" aria-label="A mobile-friendly Puppy Showcase (product screenshot to follow)">Puppy Showcase</div></div>
+                  <LandingMediaSlot
+                    slotId="puppy-showcase"
+                    className="ph ph-mobile"
+                    ariaLabel="A mobile-friendly Puppy Showcase"
+                    fallback={<div className="ph ph-mobile" role="img" aria-label="A mobile-friendly Puppy Showcase (product screenshot to follow)">Puppy Showcase</div>}
+                  /></div>
                 <div className="shot-cap">A mobile-friendly Puppy Showcase</div>
               </div>
               <div>
                 <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <div className="ph ph-mobile" role="img" aria-label="A limited public Passport view (product screenshot to follow)">Digital Passport / QR</div></div>
+                  <LandingMediaSlot
+                    slotId="digital-passport"
+                    className="ph ph-mobile"
+                    ariaLabel="A limited public Passport view"
+                    fallback={<div className="ph ph-mobile" role="img" aria-label="A limited public Passport view (product screenshot to follow)">Digital Passport / QR</div>}
+                  /></div>
                 <div className="shot-cap">A limited public Passport view</div>
               </div>
             </div>
@@ -342,6 +363,77 @@ function MobileMenu({ onClose }: { onClose: () => void }) {
         <Link className="btn btn-primary" to="/signup" onClick={onClose}>Start Free</Link>
       </div>
     </div>
+  )
+}
+
+// ── LANDING MEDIA SLOT (public rendering) ─────────────────────────
+// Renders one of the four Super-Admin-managed landing slots (see
+// src/pages/LandingMediaAdminPage.tsx and api/manage-landing-media.js).
+// Fetches the PUBLISHED config only (never a draft — drafts are never
+// client-readable at all, see firestore.rules) via a plain public
+// Firestore read, so new content shows up on the next normal page load
+// with no code change or redeploy.
+//
+// Reuses the caller's OWN placeholder className (e.g. "hv-shot", "ph
+// ph-desktop") directly on the rendered <img>/<video> — those classes
+// already define the exact aspect-ratio/border-radius/background this
+// slot must fill, so no new CSS is needed; object-fit:cover (added
+// inline, since the placeholder classes never needed it before) is what
+// makes a real image/video fill that same box cleanly.
+//
+// Falls back to the caller's exact original placeholder markup — never a
+// blank or broken box — whenever: nothing has been published yet, the
+// Firestore read fails, or the image/video itself fails to load
+// (onError). This is the ONLY thing that decides what's shown; there is
+// no separate "loading" flicker state, since the fallback IS a
+// legitimate, finished visual (the existing placeholder), not a spinner.
+function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
+  slotId: LandingSlotId
+  className: string
+  ariaLabel: string
+  fallback: ReactNode
+}) {
+  const [media, setMedia] = useState<PublishedLandingMedia | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setMedia(null)
+    setFailed(false)
+    fetchPublishedLandingMedia(slotId).then(result => {
+      if (!cancelled) setMedia(result)
+    })
+    return () => { cancelled = true }
+  }, [slotId])
+
+  if (!media || failed) return <>{fallback}</>
+
+  const fillStyle: CSSProperties = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+
+  if (media.kind === 'video') {
+    return (
+      <video
+        className={className}
+        style={fillStyle}
+        src={media.url}
+        aria-label={ariaLabel}
+        autoPlay
+        muted
+        loop
+        playsInline
+        onError={() => setFailed(true)}
+      />
+    )
+  }
+
+  return (
+    <img
+      className={className}
+      style={fillStyle}
+      src={media.url}
+      alt={ariaLabel}
+      onError={() => setFailed(true)}
+    />
   )
 }
 

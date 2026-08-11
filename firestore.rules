@@ -746,6 +746,31 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ── landingMediaPublished/{slotId} — self-managed Landing Page
+    // Media (Super Admin -> Landing Page Media). A fixed, small set of
+    // four slot documents (hero/dog-profile/puppy-showcase/digital-
+    // passport) that drive the public marketing landing page — no user,
+    // breeder, or dog data. Public-readable so the landing page can pick
+    // up newly-published media on a normal page load with no code change
+    // or redeploy. Write-denied to every client outright — the ONLY way
+    // this collection is ever written is the trusted Admin SDK endpoint
+    // api/manage-landing-media.js (Super Admin allowlist, verified
+    // Firebase ID token), same posture as every other Admin-SDK-owned
+    // collection in this file.
+    //
+    // The DRAFT side of this feature (landingMediaDrafts/{slotId}) is
+    // deliberately given NO explicit rule at all — it falls through to
+    // the default-deny match below, exactly like dogPrivateAccess and
+    // litterPuppyOperations above. A draft's private Storage object must
+    // never be discoverable by a public reader before an admin has
+    // chosen to Publish it; the admin's own preview goes through the
+    // authenticated api/get-landing-media-state.js endpoint, never a
+    // direct client Firestore read.
+    match /landingMediaPublished/{slotId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // ── Deny everything else by default ──
     match /{document=**} {
       allow read, write: if false;

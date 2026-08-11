@@ -5,18 +5,13 @@ import { useRequestGuard } from '../../hooks/useRequestGuard'
 import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '../../lib/db'
 import { getInitials, AU_STATES, isDogEligibleForCap, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../../lib/utils'
 import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
+import { SUPER_ADMIN_EMAILS } from '../../lib/superAdmin'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
-
-// ── Super Admin allowlist for Option B Console link ──
-const SUPER_ADMIN_EMAILS = [
-  'trunghieungo@gmail.com',
-  'theresanguyenngo@gmail.com',
-]
 
 // ── Plan configuration ──
 // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED): only two
@@ -477,6 +472,17 @@ export default function AppLayout({ toast }: Props) {
             >
               👑 Admin Console ↗
             </a>
+            <Link
+              to="/app/admin/landing-media"
+              className="btn btn-secondary btn-sm"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                width: '100%', marginTop: 8, fontWeight: 600, textDecoration: 'none',
+                boxSizing: 'border-box', height: 36, fontSize: 13, borderRadius: 8,
+              }}
+            >
+              🖼️ Landing Page Media
+            </Link>
           </div>
         )}
 
@@ -699,6 +705,20 @@ export default function AppLayout({ toast }: Props) {
                       >
                         👑 Admin Console ↗
                       </a>
+                      <button
+                        onClick={() => { setUserMenuOpen(false); navigate('/app/admin/landing-media') }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          width: '100%', padding: '10px 14px',
+                          background: 'none', border: 'none',
+                          fontSize: 13, color: 'var(--dark)', cursor: 'pointer',
+                          textAlign: 'left', boxSizing: 'border-box'
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--brand-50)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                      >
+                        🖼️ Landing Page Media
+                      </button>
                       <div style={{ height: 1, background: 'var(--border)' }} />
                     </>
                   )}
