@@ -24,6 +24,7 @@ import BillingPage from '../pages/BillingPage'
 import SurveyPage from '../pages/SurveyPage'
 import AdminSurveyPage from '../pages/AdminSurveyPage'
 import AdminAuditPage from '../pages/AdminAuditPage'
+import LandingMediaAdminPage from '../pages/LandingMediaAdminPage'
 import TermsPage from '../pages/TermsPage'
 import PrivacyPage from '../pages/PrivacyPage'
 import PassportPublicPage from '../pages/PassportPublicPage'
@@ -111,6 +112,7 @@ export default function App() {
           <Route path="billing" element={<BillingPage toast={toast} />} />
           <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
           <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
+          <Route path="admin/landing-media" element={<LandingMediaAdminPage toast={toast} />} />
           <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppies" replace />} />
           <Route path="buyers"  element={<BreederOnlyRoute><BuyersPage /></BreederOnlyRoute>} />
           <Route path="reports" element={<BreederOnlyRoute><ReportsPage toast={toast} /></BreederOnlyRoute>} />

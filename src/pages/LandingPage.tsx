@@ -1,804 +1,628 @@
-import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import {
-  PLUS_MONTHLY_PRICE_AUD,
-  PLUS_ANNUAL_PRICE_AUD,
-  DOG_CAP_FREE,
-  DOG_CAP_PLUS,
-  SCAN_QUOTA_FREE_LIFETIME,
-  SCAN_QUOTA_PLUS_MONTHLY,
-} from '../lib/pricingCopy'
+import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
 
-// ── FEATURE FLAGS ──────────────────────────────────────────────
-// Set SHOW_SOCIAL_PROOF = true when real data is available
-const SHOW_SOCIAL_PROOF = false
-
+// ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
+// Ported from the approved design-review package:
+//   iDogs_Landing_V2_Brief_DRAFT_FOR_PROTOTYPE (1).md (copy/product truth)
+//   idogs_landing_v2_prototype (3).html (layout/CSS/accessibility pattern)
+// Brief's own status line: "DRAFT for Design Review. NOT APPROVED FOR
+// PUBLICATION." — approved for THIS staging implementation only, per
+// explicit task instruction; still not approved for production.
+//
+// Pricing and FAQ are deliberately absent (hidden per brief §2/§8/§13 —
+// no verified prices/inclusions/answers yet). No Watch-Demo/video
+// lightbox (brief §9 — removed, opened an empty placeholder). No
+// unverified feature claim (ownership transfer, buyer enquiries, public
+// puppy profiles, per-field QR control, Forever Record detail, AI
+// quota, testimonials/stats) appears anywhere below — see brief §7.
+//
+// All CSS below is scoped under `.lv2-page` (never :root/html/body/bare
+// element selectors) so nothing here can leak into or collide with the
+// rest of the app's existing global stylesheet (index.css already
+// defines its own unrelated .btn/.btn-primary/etc. — confirmed by
+// direct inspection before writing this file).
 export default function LandingPage() {
   const { user, loading } = useAuth()
   const navigate = useNavigate()
-  const [waitlistName, setWaitlistName] = useState('')
-  const [waitlistEmail, setWaitlistEmail] = useState('')
-  const [waitlistRole, setWaitlistRole] = useState('')
-  const [waitlistSubmitting, setWaitlistSubmitting] = useState(false)
-  const [waitlistDone, setWaitlistDone] = useState(false)
-  const [waitlistError, setWaitlistError] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const pageContentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!loading && user) navigate('/app/dashboard')
   }, [user, loading])
 
-  async function handleWaitlist(e: React.FormEvent) {
-    e.preventDefault()
-    if (!waitlistName || !waitlistEmail || !waitlistRole) return
-    setWaitlistSubmitting(true)
-    setWaitlistError('')
-    try {
-      const res = await fetch('/api/survey', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: waitlistName, email: waitlistEmail, role: waitlistRole, source: 'waitlist' }),
-      })
-      if (!res.ok) throw new Error('Failed')
-      setWaitlistDone(true)
-    } catch {
-      setWaitlistError('Something went wrong. Please try again or email hello@idogs.com.au')
-    } finally {
-      setWaitlistSubmitting(false)
+  // Background must be inert + non-scrollable while the mobile menu is
+  // open — mirrors the approved prototype's makeOverlay() behaviour
+  // (inert the whole page-content wrapper, not a hand-maintained list of
+  // sections, so nothing is ever missed) and this codebase's own
+  // established overlay pattern (ShowcasePublicPage.tsx's PuppyDialog).
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    if (menuOpen) {
+      document.body.style.overflow = 'hidden'
+      pageContentRef.current?.setAttribute('inert', '')
+    } else {
+      document.body.style.overflow = previousOverflow
+      pageContentRef.current?.removeAttribute('inert')
     }
-  }
-
-  function scrollTo(id: string) {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
-  }
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [menuOpen])
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
+    <div className="lv2-page">
+      <style>{LV2_CSS}</style>
 
-      {/*
-        SEO META (set in index.html or your React Helmet / Vite plugin):
-        <title>iDogs | Every Dog's Story, Forever</title>
-        <meta name="description" content="Australia's digital passport and record system for breeders, kennels and dog owners." />
-      */}
-
-      {/* Mobile responsive overrides */}
-      <style>{`
-        @media (max-width: 640px) {
-          .hero-cta-group { flex-direction: column !important; align-items: stretch !important; }
-          .hero-cta-group .btn { width: 100% !important; justify-content: center !important; }
-          .features-grid { grid-template-columns: 1fr !important; }
-          .pricing-grid { grid-template-columns: 1fr !important; }
-          .footer-grid { flex-direction: column !important; gap: 32px !important; }
-          .footer-grid > div { max-width: 100% !important; }
-          .waitlist-form .form-group { margin-bottom: 4px; }
-          .waitlist-form .form-input,
-          .waitlist-form .form-select { height: 48px !important; font-size: 16px !important; }
-        }
-        @media (max-width: 900px) {
-          .feature-split { grid-template-columns: 1fr !important; }
-          .feature-split > div:first-child { min-height: 260px !important; }
-        }
-      `}</style>
-
-      {/* ── NAV ── */}
-      <nav style={{
-        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-        background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)',
-        borderBottom: '1px solid var(--border)',
-        padding: '0 24px', height: 60,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      }}>
-        {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <img src="/logo.png" alt="iDogs" style={{ height: 50, width: 'auto', objectFit: 'contain' }} />
-        </div>
-        {/* Nav links */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          {[
-            { label: 'How it Works', id: 'how-it-works' },
-            { label: 'Pricing', id: 'pricing' },
-            { label: 'FAQ', id: 'faq' },
-          ].map(link => (
-            <button
-              key={link.id}
-              onClick={() => scrollTo(link.id)}
-              style={{ fontSize: 13, color: 'var(--mid)', background: 'none', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, fontFamily: 'var(--font-body)', fontWeight: 500 }}
-            >
-              {link.label}
-            </button>
-          ))}
-          <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 4px' }} />
-          <button onClick={() => navigate('/login')} style={{ fontSize: 13, color: 'var(--mid)', background: 'none', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, fontFamily: 'var(--font-body)', fontWeight: 500 }}>Sign In</button>
-          <button onClick={() => navigate('/signup')} className="btn btn-primary" style={{ fontSize: 13, padding: '8px 16px', height: 36 }}>Start Free</button>
-        </div>
-      </nav>
-
-      {/* ── HERO ── */}
-      <section style={{
-        minHeight: '100vh', paddingTop: 100, paddingBottom: 80,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        textAlign: 'center', padding: '100px 24px 80px', position: 'relative', overflow: 'hidden',
-      }}>
-        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse 80% 60% at 50% 40%,rgba(29,158,117,0.07) 0%,transparent 70%)', pointerEvents: 'none' }} />
-
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '6px 14px', borderRadius: 20, background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.25)', marginBottom: 28, fontSize: 12, fontWeight: 500, color: '#7A5A10' }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--gold)', display: 'inline-block' }} />
-          NSW Puppy Farm Act 2024 · Dogs Australia compliant
-        </div>
-
-        {/* SEO H1 */}
-        <h1 style={{
-          fontFamily: 'var(--font-display)', fontSize: 'clamp(38px,6vw,64px)', fontWeight: 600,
-          lineHeight: 1.1, letterSpacing: '-0.03em', color: 'var(--dark)',
-          maxWidth: 780, margin: '0 auto 36px',
-        }}>
-          Every dog's story,<br />
-          <span style={{ color: 'var(--green)' }}>forever</span>
-        </h1>
-
-        {/* Primary subheading */}
-        <p style={{ fontSize: 'clamp(16px,2.2vw,20px)', color: 'var(--dark)', maxWidth: 620, margin: '0 auto 12px', lineHeight: 1.55, fontWeight: 500 }}>
-          Australia's digital passport and record system for breeders, kennels and dog owners.
-        </p>
-
-        {/* Brand positioning line */}
-        <p style={{ fontSize: 'clamp(13px,1.6vw,15px)', color: 'var(--light)', maxWidth: 480, margin: '0 auto 28px', lineHeight: 1.65, fontStyle: 'italic' }}>
-          From puppy to forever. Designed for every dog's lifetime journey.
-        </p>
-
-        {/* Audience badges — Breeders first */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 40 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--mid)', marginRight: 4 }}>Built for</span>
-          {['✓ Breeders', '✓ Kennels', '✓ Dog Owners'].map(label => (
-            <span key={label} style={{
-              fontSize: 13, fontWeight: 600, padding: '5px 14px', borderRadius: 20,
-              background: 'var(--green-light)', color: 'var(--green)',
-              border: '1px solid rgba(8,80,65,0.12)',
-            }}>{label}</span>
-          ))}
-        </div>
-
-        {/* Life timeline */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', maxWidth: 600, width: '100%', margin: '0 auto 48px', position: 'relative' }}>
-          {[
-            { emoji: '🐣', label: 'Born' },
-            { emoji: '🐶', label: 'Puppy' },
-            { emoji: '🏷️', label: 'Passport', highlight: true },
-            { emoji: '🐕', label: 'Adult' },
-            { emoji: '🌅', label: 'Senior' },
-            { emoji: '🕊️', label: 'Forever' },
-          ].map((stage, i, arr) => (
-            <div key={stage.label} style={{ display: 'flex', alignItems: 'center', flex: i < arr.length - 1 ? 1 : undefined }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <div style={{
-                  width: 44, height: 44, borderRadius: '50%',
-                  border: `2px solid ${stage.highlight ? 'var(--green-mid)' : 'var(--border)'}`,
-                  background: stage.highlight ? 'var(--green-light)' : 'var(--white)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 20, cursor: 'default',
-                }}>
-                  {stage.emoji}
-                </div>
-                <span style={{ fontSize: 10, color: stage.highlight ? 'var(--green)' : 'var(--light)', fontWeight: 500, letterSpacing: '.04em', textTransform: 'uppercase' }}>{stage.label}</span>
-              </div>
-              {i < arr.length - 1 && (
-                <div style={{ flex: 1, height: 2, background: 'linear-gradient(90deg,var(--green-light),var(--green-mid),var(--green-light))', marginBottom: 16 }} />
-              )}
+      <div ref={pageContentRef} id="lv2-page-content">
+        <header className="nav">
+          <div className="nav-inner wrap">
+            <a href="#top" className="brand-logo" aria-label="iDogs home">
+              <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ width: 125, height: 'auto' }} />
+            </a>
+            <nav className="nav-links" aria-label="Primary">
+              <a href="#features">Features</a>
+              <a href="#for-owners">For Owners</a>
+              <a href="#for-breeders">For Breeders</a>
+            </nav>
+            <div className="nav-right">
+              <Link className="nav-login" to="/login">Log In</Link>
+              <Link className="btn nav-cta" to="/signup">Start Free</Link>
+              <button
+                className="hamburger"
+                aria-label="Open menu"
+                aria-expanded={menuOpen}
+                aria-controls="lv2-mobile-menu"
+                onClick={() => setMenuOpen(true)}
+              >☰</button>
             </div>
-          ))}
-        </div>
+          </div>
+        </header>
 
-        {/* CTAs — mobile stack via flexWrap */}
-        <div className="hero-cta-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-          <button onClick={() => navigate('/signup')} className="btn btn-primary btn-lg" style={{ minWidth: 240 }}>
-            Create Your Dog's Passport Free
-          </button>
-          <button onClick={() => scrollTo('how-it-works')} className="btn btn-secondary btn-lg">
-            See How It Works →
-          </button>
-          <button
-            onClick={() => scrollTo('features')}
-            className="btn btn-ghost btn-lg"
-          >
-            ▶ See iDogs in Action
-          </button>
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--light)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, flexWrap: 'wrap' }}>
-          <span>🔒 Data secured in Asia-Pacific</span>
-          <span>🔒 Australian Privacy Act compliant</span>
-          <span>⚡ No credit card required</span>
-        </div>
-      </section>
-
-      {/* ── PROOF BAR ── */}
-      <div style={{ background: 'var(--white)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', padding: '18px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap' }}>
-          {[
-            { icon: '🐾', label: 'Built for Dogs Australia breeders & owners' },
-            { icon: '📋', label: 'Designed for NSW Puppy Farm Act 2024 compliance' },
-            { icon: '🔒', label: 'Australian Privacy Act 1988 compliant' },
-            { icon: '🇦🇺', label: 'Data secured in Asia-Pacific' },
-          ].map(s => (
-            <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 18 }}>{s.icon}</span>
-              <div style={{ fontSize: 12, color: 'var(--mid)', fontWeight: 500 }}>{s.label}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* ── SECTION 1: BREEDER SOFTWARE ── */}
-      <section id="features" style={{ background: 'var(--white)', padding: '80px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12, textAlign: 'center' }}>For breeders & kennels</div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(26px,4vw,36px)', fontWeight: 600, color: 'var(--dark)', marginBottom: 12, lineHeight: 1.2, letterSpacing: '-0.02em', textAlign: 'center' }}>
-            Breeder Software for Australian Dog Breeders
-          </h2>
-          <p style={{ fontSize: 16, color: 'var(--mid)', maxWidth: 560, margin: '0 auto 56px', textAlign: 'center', lineHeight: 1.6 }}>
-            Everything breeders need to manage records, documents and puppy information in one place.
-          </p>
-
-          {/* AI Scan feature */}
-          <div className="feature-split" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 60, alignItems: 'center', marginBottom: 80 }}>
-            <div style={{ background: 'var(--sand)', borderRadius: 24, padding: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 360 }}>
-              <AIScanMockup />
-            </div>
+        <main>
+        <section className="hero" id="top">
+          <div className="wrap hero-grid">
             <div>
-              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12 }}>AI document scan</div>
-              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(20px,3vw,32px)', fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--dark)', marginBottom: 12, lineHeight: 1.25 }}>Photograph a vet card.<br />Done.</h3>
-              <p style={{ fontSize: 15, color: 'var(--mid)', lineHeight: 1.7, marginBottom: 24 }}>Point your phone at any vet card, pedigree certificate, or OFA document. iDogs reads it and fills in the profile automatically.</p>
-              <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {[
-                  'Vaccination cards, worming records, vet notes',
-                  'OFA/PennHIP certificates, eye tests, DNA results',
-                  'Dogs Australia pedigree certificates',
-                  'Uncertain dates highlighted for your review',
-                ].map(item => (
-                  <li key={item} style={{ display: 'flex', gap: 10, fontSize: 14, color: 'var(--mid)', alignItems: 'flex-start' }}>
-                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--green-light)', border: '2px solid var(--green-mid)', flexShrink: 0, marginTop: 1 }} />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          {/* Steps */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 24, marginBottom: 48 }}>
-            {[
-              { step: '01', icon: '📸', title: 'Scan your documents', desc: 'Photograph vaccine cards, pedigree certs, or health test results. Our AI extracts all fields automatically — dates, vaccines, vet clinic names.' },
-              { step: '02', icon: '🐾', title: "Build your dog's digital passport", desc: 'Every record in one place, accessible anywhere. Each dog gets a unique QR code for instant sharing with vets, buyers, and boarding kennels.' },
-              { step: '03', icon: '🔔', title: 'Never miss a due date', desc: 'Automatic email reminders before vaccines and worming treatments expire — for every dog in your kennel, across every breed.' },
-              { step: '04', icon: '📄', title: 'Export when you need it', desc: 'One-click PDF or CSV report for Dogs Australia inspections, ownership transfers, or personal records. Covers all Australian state requirements.' },
-            ].map((item, i) => (
-              <div key={i}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', letterSpacing: '0.08em', marginBottom: 12 }}>STEP {item.step}</div>
-                <div style={{ fontSize: 36, marginBottom: 14 }}>{item.icon}</div>
-                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 10, lineHeight: 1.3 }}>{item.title}</h3>
-                <p style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.7 }}>{item.desc}</p>
+              <p className="eyebrow">Australian dog record-keeping</p>
+              <h1>Every dog's story, connected for life.</h1>
+              <p className="sub">An organised digital record for every dog — identity, health records and documents in one place.</p>
+              <p className="aud">For Australian dog owners and breeders.</p>
+              <p className="incl">Whether you care for dogs or manage a breeding program.</p>
+              <div className="cta-row">
+                <Link className="btn btn-primary" to="/signup">Start Free</Link>
+                <a className="btn btn-ghost" href="#howitworks">See How It Works</a>
               </div>
-            ))}
-          </div>
-
-          <div style={{ textAlign: 'center' }}>
-            <button onClick={() => navigate('/signup')} className="btn btn-primary" style={{ fontSize: 16, padding: '16px 40px', borderRadius: 12, height: 'auto' }}>
-              Get Started Free →
-            </button>
-            <p style={{ fontSize: 13, color: 'var(--light)', marginTop: 12 }}>Free forever for 1-2 dogs · Plus from ${PLUS_MONTHLY_PRICE_AUD}/month</p>
-          </div>
-        </div>
-      </section>
-
-      {/* ── SECTION 2: PERMANENT RECORDS ── */}
-      <section style={{ background: 'var(--sand)', padding: '80px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12, textAlign: 'center' }}>Records & documents</div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(26px,4vw,36px)', fontWeight: 600, color: 'var(--dark)', marginBottom: 48, lineHeight: 1.2, letterSpacing: '-0.02em', textAlign: 'center' }}>
-            Permanent Dog Records and Documents
-          </h2>
-
-          {/* How it works steps */}
-          <div id="how-it-works" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 2, background: 'var(--border)', borderRadius: 16, overflow: 'hidden' }}>
-            {[
-              { emoji: '🐾', num: '01', title: 'Create your account', desc: 'Sign up with your email in 60 seconds. No credit card required.' },
-              { emoji: '📸', num: '02', title: 'Add your dogs', desc: 'Photograph vaccine cards and pedigree certs. AI fills in the details.' },
-              { emoji: '🏷️', num: '03', title: 'Activate passports', desc: 'Each dog gets a QR passport automatically. Show it from your phone at every vet visit.' },
-              { emoji: '🤝', num: '04', title: 'Hand over with confidence', desc: 'When you sell a puppy, the new owner gets their full history. Their story continues.' },
-            ].map(step => (
-              <div key={step.num} style={{ background: 'var(--white)', padding: '32px 28px' }}>
-                <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--green-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, marginBottom: 20 }}>{step.emoji}</div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 48, fontWeight: 600, color: 'var(--sand-dark)', lineHeight: 1, marginBottom: 16, letterSpacing: '-0.04em' }}>{step.num}</div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>{step.title}</div>
-                <p style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.6 }}>{step.desc}</p>
+            </div>
+            {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
+            <div className="hero-visual" aria-label="iDogs product preview">
+              <div className="hv-poster">
+                <LandingMediaSlot
+                  slotId="hero"
+                  className="hv-shot"
+                  ariaLabel="iDogs product preview"
+                  fallback={<div className="hv-shot">Dog Profile — product screenshot</div>}
+                />
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── SECTION 3: DIGITAL PASSPORT (QR) ── */}
-      <section style={{ background: 'var(--white)', padding: '80px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div className="feature-split" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 60, alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12 }}>QR passport</div>
-              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(26px,4vw,36px)', fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--dark)', marginBottom: 12, lineHeight: 1.25 }}>
-                Every puppy leaves<br />with a digital passport.
-              </h2>
-              <p style={{ fontSize: 15, color: 'var(--mid)', lineHeight: 1.7, marginBottom: 24 }}>When your puppy goes to their new home, you hand over their entire story — in a QR code that lives in their owner's phone wallet.</p>
-              <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {[
-                  'Vet scans QR before consult — no re-taking history',
-                  'Kennel check-in auto-filled — no paper forms',
-                  'Emergency info visible without login',
-                  'Record lives forever — even after the dog passes',
-                ].map(item => (
-                  <li key={item} style={{ display: 'flex', gap: 10, fontSize: 14, color: 'var(--mid)', alignItems: 'flex-start' }}>
-                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--green-light)', border: '2px solid var(--green-mid)', flexShrink: 0, marginTop: 1 }} />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div style={{ background: 'var(--green)', borderRadius: 24, padding: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 360 }}>
-              <PhoneMockup />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── MISSION ── */}
-      <section style={{ background: 'var(--green)', padding: '80px 24px' }}>
-        <div style={{ maxWidth: 680, margin: '0 auto', textAlign: 'center' }}>
-          <h2 style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 'clamp(28px,4.5vw,44px)',
-            fontWeight: 600, color: '#fff',
-            lineHeight: 1.15, letterSpacing: '-0.03em',
-            marginBottom: 24,
-          }}>
-            Every Dog Has an Identity.
-          </h2>
-          <p style={{ fontSize: 'clamp(15px,2vw,18px)', color: 'rgba(255,255,255,0.8)', lineHeight: 1.7, marginBottom: 16 }}>
-            Too many dogs lose their records, vaccinations and history when they change hands, change vets, or are simply forgotten.
-          </p>
-          <p style={{ fontSize: 'clamp(15px,2vw,18px)', color: 'rgba(255,255,255,0.8)', lineHeight: 1.7, marginBottom: 40 }}>
-            We built iDogs so every dog can have a permanent digital identity that stays with them for life — from their first day with a breeder to their last chapter with a loving owner.
-          </p>
-          <button onClick={() => navigate('/signup')} style={{
-            height: 54, padding: '0 36px', borderRadius: 12,
-            background: 'var(--white)', color: 'var(--green)',
-            fontSize: 16, fontWeight: 600, border: 'none', cursor: 'pointer',
-            fontFamily: 'var(--font-display)',
-          }}>
-            Create Your Dog's Passport Free →
-          </button>
-        </div>
-      </section>
-
-      {/* ── SOCIAL PROOF — hidden until real data, enable via SHOW_SOCIAL_PROOF flag ── */}
-      {SHOW_SOCIAL_PROOF && (
-        <section style={{ background: 'var(--white)', padding: '80px 24px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12 }}>Trusted by</div>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(26px,4vw,36px)', fontWeight: 600, color: 'var(--dark)', marginBottom: 48, letterSpacing: '-0.02em' }}>
-              Trusted by Australian breeders and dog owners.
-            </h2>
-            {/* Stats — replace 0s with real numbers before enabling */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 32, marginBottom: 64 }}>
-              {[
-                { number: '0', label: 'Dogs registered' },
-                { number: '0', label: 'Active breeders' },
-                { number: '0', label: 'Dog owners' },
-              ].map(stat => (
-                <div key={stat.label}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 700, color: 'var(--green)', letterSpacing: '-0.03em' }}>{stat.number}</div>
-                  <div style={{ fontSize: 14, color: 'var(--mid)', marginTop: 4 }}>{stat.label}</div>
-                </div>
-              ))}
-            </div>
-            {/* Testimonials — add real ones before enabling */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 24 }}>
-              {[
-                { quote: 'Testimonial placeholder.', name: 'Breeder name', location: 'State', breed: 'Breed' },
-                { quote: 'Testimonial placeholder.', name: 'Owner name', location: 'State', breed: '' },
-              ].map((t, i) => (
-                <div key={i} style={{ background: 'var(--sand)', borderRadius: 16, padding: 28, textAlign: 'left' }}>
-                  <p style={{ fontSize: 15, color: 'var(--dark)', lineHeight: 1.7, marginBottom: 20, fontStyle: 'italic' }}>"{t.quote}"</p>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>{t.name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--light)' }}>{t.breed ? `${t.breed} breeder · ` : ''}{t.location}</div>
-                </div>
-              ))}
+              <div className="hv-strip">
+                <div className="hv-mini"><div className="m">Digital Passport / QR</div></div>
+                <div className="hv-mini"><div className="m">Mobile preview</div></div>
+              </div>
             </div>
           </div>
         </section>
-      )}
 
-      {/* ── PRICING ── */}
-      <section id="pricing" style={{ background: 'var(--sand)', padding: '80px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
-          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12 }}>Pricing</div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(26px,4vw,40px)', fontWeight: 600, color: 'var(--dark)', marginBottom: 12, letterSpacing: '-0.02em' }}>Simple, transparent pricing</h2>
-          <p style={{ fontSize: 16, color: 'var(--mid)', maxWidth: 500, margin: '0 auto 48px' }}>Free forever for 1-2 dogs. Upgrade to Plus anytime.</p>
-          <div className="pricing-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 16, maxWidth: 980, margin: '0 auto 24px' }}>
-            <PricingCard
-              plan="Free"
-              priceLabel="$0"
-              priceSub="Forever free"
-              desc="Pet owners with 1-2 dogs"
-              features={[
-                `Up to ${DOG_CAP_FREE} dogs`,
-                'Permanent Dog ID & QR Passport',
-                'Health records',
-                'Email reminders',
-                'Ownership transfer',
-                `${SCAN_QUOTA_FREE_LIFETIME} AI Document Scans total`,
-                'No PDF/CSV export',
-              ]}
-              ctaLabel="Get started free →"
-              onStart={() => navigate('/signup')}
-              isFree
-            />
-            <PricingCard
-              plan="Plus Monthly"
-              priceLabel={`$${PLUS_MONTHLY_PRICE_AUD}`}
-              priceSub="AUD / month"
-              desc="Active breeders & growing kennels"
-              features={[
-                `Up to ${DOG_CAP_PLUS} dogs`,
-                'Everything in Free',
-                `${SCAN_QUOTA_PLUS_MONTHLY} AI Document Scans / month`,
-                'Document storage',
-                'PDF & CSV report export',
-                'PDF, JPG and PNG document support',
-              ]}
-              ctaLabel="Choose Plus Monthly →"
-              onStart={() => navigate('/signup')}
-            />
-            <PricingCard
-              plan="Plus Annual"
-              priceLabel={`$${PLUS_ANNUAL_PRICE_AUD}`}
-              priceSub="AUD / year"
-              desc="Same Plus features, billed once a year"
-              badge={`Save ~${Math.round((1 - PLUS_ANNUAL_PRICE_AUD / (PLUS_MONTHLY_PRICE_AUD * 12)) * 100)}%`}
-              features={[
-                `Up to ${DOG_CAP_PLUS} dogs`,
-                'Everything in Free',
-                `${SCAN_QUOTA_PLUS_MONTHLY} AI Document Scans / month`,
-                'Document storage',
-                'PDF & CSV report export',
-                'PDF, JPG and PNG document support',
-              ]}
-              ctaLabel="Choose Plus Annual →"
-              onStart={() => navigate('/signup')}
-              featured
-            />
+        <div className="trust">
+          <div className="trust-inner">
+            <span className="trust-item"><span className="tick">✓</span> Australian-owned</span>
+            <span className="trust-item"><span className="tick">✓</span> Built for dog owners</span>
+            <span className="trust-item"><span className="tick">✓</span> Designed for breeders</span>
+            <span className="trust-item"><span className="tick">✓</span> Start free</span>
           </div>
-          <p style={{ fontSize: 12, color: 'var(--light)', marginBottom: 8 }}>All prices in AUD</p>
-          <p style={{ fontSize: 12, color: 'var(--mid)' }}>🐾 <strong>1-2 dogs?</strong> iDogs is free forever — no credit card, no expiry.</p>
         </div>
-      </section>
 
-      {/* ── EARLY ACCESS WAITLIST ── */}
-      <section style={{ background: 'var(--white)', padding: '80px 24px' }}>
-        <div style={{ maxWidth: 560, margin: '0 auto', textAlign: 'center' }}>
-          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12 }}>Early access</div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(26px,4vw,36px)', fontWeight: 600, color: 'var(--dark)', marginBottom: 16, lineHeight: 1.2, letterSpacing: '-0.02em' }}>
-            Join the Early Access List.
-          </h2>
-          <p style={{ fontSize: 16, color: 'var(--mid)', marginBottom: 36, lineHeight: 1.6 }}>
-            Help shape Australia's future digital passport for dogs.
-          </p>
-
-          {waitlistDone ? (
-            <div style={{ background: 'var(--green-light)', border: '1.5px solid var(--green-mid)', borderRadius: 16, padding: '32px 24px' }}>
-              <div style={{ fontSize: 32, marginBottom: 12 }}>🐾</div>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--green)', marginBottom: 8 }}>You're on the list!</div>
-              <div style={{ fontSize: 14, color: 'var(--mid)' }}>We'll be in touch when early access opens. Thank you for helping build iDogs.</div>
+        <section className="block" id="features">
+          <div className="wrap">
+            <p className="kicker">A quick look</p>
+            <h2>An organised digital record for every dog.</h2>
+            <p className="lead">A connected record from a dog's first day onward — profile, documents and a Digital Passport in one place.</p>
+            <div className="shots">
+              <div>
+                <div className="frame-desktop"><div className="bar"><i></i><i></i><i></i></div>
+                  <LandingMediaSlot
+                    slotId="dog-profile"
+                    className="ph ph-desktop"
+                    ariaLabel="Dog records in one organised profile"
+                    fallback={<div className="ph ph-desktop" role="img" aria-label="Dog records in one organised profile (product screenshot to follow)">Dog Profile &amp; records</div>}
+                  /></div>
+                <div className="shot-cap">Dog records in one organised profile</div>
+              </div>
+              <div>
+                <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
+                  <LandingMediaSlot
+                    slotId="puppy-showcase"
+                    className="ph ph-mobile"
+                    ariaLabel="A mobile-friendly Puppy Showcase"
+                    fallback={<div className="ph ph-mobile" role="img" aria-label="A mobile-friendly Puppy Showcase (product screenshot to follow)">Puppy Showcase</div>}
+                  /></div>
+                <div className="shot-cap">A mobile-friendly Puppy Showcase</div>
+              </div>
+              <div>
+                <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
+                  <LandingMediaSlot
+                    slotId="digital-passport"
+                    className="ph ph-mobile"
+                    ariaLabel="A limited public Passport view"
+                    fallback={<div className="ph ph-mobile" role="img" aria-label="A limited public Passport view (product screenshot to follow)">Digital Passport / QR</div>}
+                  /></div>
+                <div className="shot-cap">A limited public Passport view</div>
+              </div>
             </div>
-          ) : (
-            <form onSubmit={handleWaitlist} className="waitlist-form" style={{ display: 'flex', flexDirection: 'column', gap: 14, textAlign: 'left' }}>
-              <div className="form-group">
-                <label className="form-label">Name</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="Your name"
-                  value={waitlistName}
-                  onChange={e => setWaitlistName(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Email</label>
-                <input
-                  type="email"
-                  className="form-input"
-                  placeholder="your@email.com"
-                  value={waitlistEmail}
-                  onChange={e => setWaitlistEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">I am a…</label>
-                <select
-                  className="form-select"
-                  value={waitlistRole}
-                  onChange={e => setWaitlistRole(e.target.value)}
-                  required
-                  style={{ height: 48 }}
-                >
-                  <option value="">Select one</option>
-                  <option value="breeder">Breeder</option>
-                  <option value="kennel">Kennel</option>
-                  <option value="owner">Dog Owner</option>
-                  <option value="vet">Vet</option>
-                </select>
-              </div>
-              {waitlistError && <div className="form-error">{waitlistError}</div>}
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={waitlistSubmitting}
-                style={{ fontSize: 16, padding: '14px', borderRadius: 10, height: 'auto', marginTop: 4 }}
-              >
-                {waitlistSubmitting ? 'Joining…' : 'Join Early Access →'}
-              </button>
-              <div style={{ display: 'flex', gap: 24, fontSize: 12, color: 'var(--light)', justifyContent: 'center', flexWrap: 'wrap' }}>
-                <span>✓ No spam</span>
-                <span>✓ No credit card</span>
-                <span>✓ Unsubscribe anytime</span>
-              </div>
-            </form>
-          )}
-        </div>
-      </section>
-
-      {/* ── FAQ ── */}
-      <section id="faq" style={{ background: 'var(--sand)', padding: '80px 24px' }}>
-        <div style={{ maxWidth: 720, margin: '0 auto' }}>
-          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--green)', marginBottom: 12, textAlign: 'center' }}>FAQ</div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(26px,4vw,36px)', fontWeight: 600, color: 'var(--dark)', marginBottom: 48, letterSpacing: '-0.02em', textAlign: 'center' }}>Common questions</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {[
-              { q: "Where is my data stored?", a: "Your data is stored securely in Asia-Pacific, fully compliant with the Australian Privacy Act 1988." },
-              { q: "Does it work for all dog breeds and states?", a: "Yes — iDogs works for all Dogs Australia / Dogs Australia registered breeds across all Australian states and territories. Our compliance export covers NSW, VIC, QLD, SA, WA, TAS, ACT, and NT requirements." },
-              { q: "Can my vet or the new owner access my dog's records?", a: "The QR Passport is publicly accessible (no login required) showing vaccine status and basic health info. Full records are only accessible to the dog's registered owner." },
-              { q: "What happens to my data if I cancel?", a: "Your data is kept for 30 days after cancellation. You can export everything as PDF or CSV before leaving. We never delete your dogs' stories without notice." },
-              { q: "Can I migrate from Excel or another system?", a: "Yes — you can manually add records or use our AI Document Scan to photograph existing paperwork. Most breeders are fully migrated within a day." },
-              { q: "Is the Free plan really free forever?", a: "Yes — up to 2 dogs is free forever, no credit card required, no expiry. Upgrade to Plus anytime if you need more dogs or AI scans." },
-            ].map((item, i, arr) => (
-              <div key={i} style={{ padding: '20px 0', borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>{item.q}</div>
-                <div style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.7 }}>{item.a}</div>
-              </div>
-            ))}
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* ── FINAL CTA ── */}
-      <section style={{ background: 'var(--green)', padding: '100px 24px' }}>
-        <div style={{ maxWidth: 700, margin: '0 auto', textAlign: 'center' }}>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(28px,5vw,48px)', fontWeight: 600, color: '#fff', lineHeight: 1.15, letterSpacing: '-0.03em', marginBottom: 16 }}>Give every dog a passport today.</h2>
-          <p style={{ fontSize: 17, color: 'rgba(255,255,255,0.7)', marginBottom: 40, lineHeight: 1.6 }}>Free forever for 1-2 dogs. No credit card required. Your dogs' stories start the moment you sign up.</p>
-          <button onClick={() => navigate('/signup')} style={{ height: 54, padding: '0 36px', borderRadius: 12, background: 'var(--dark)', color: '#fff', fontSize: 16, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)' }}>
-            Create Your Dog's Passport Free →
-          </button>
-          <div style={{ marginTop: 20, fontSize: 12, color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, flexWrap: 'wrap' }}>
-            <span>🇦🇺 Asia-Pacific hosting</span><span>🔒 Privacy Act compliant</span><span>⚡ No credit card required</span>
-          </div>
-        </div>
-      </section>
-
-      {/* ── FOOTER ── */}
-      <footer style={{ background: 'var(--dark)', padding: '48px 24px 32px', color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div className="footer-grid" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 40, flexWrap: 'wrap', marginBottom: 40 }}>
-            {/* Brand */}
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <img src="/logo.png" alt="iDogs" style={{ height: 32, width: 110, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
-              </div>
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', maxWidth: 240, lineHeight: 1.9, margin: 0 }}>
-                Every dog's story, forever.<br />
-                Built for Australian breeders, kennels and dog owners.<br />
-                <a href="mailto:hello@idogs.com.au" style={{ color: 'rgba(255,255,255,0.4)', textDecoration: 'none' }}>hello@idogs.com.au</a>
-              </p>
-            </div>
-            {/* Footer nav columns */}
-            {[
-              {
-                title: 'Company',
-                links: [
-                  { label: 'About', href: '#' },
-                  { label: 'Contact', href: 'mailto:hello@idogs.com.au' },
-                  { label: 'Roadmap', href: '#' },
-                  { label: 'Blog', href: '#' },
-                ],
-              },
-              {
-                title: 'Product',
-                links: [
-                  { label: 'Features', href: '#features' },
-                  { label: 'Pricing', href: '#pricing' },
-                  { label: 'QR Passport', href: '#features' },
-                  { label: 'AI Document Scan', href: '#features' },
-                ],
-              },
-              {
-                title: 'Legal',
-                links: [
-                  { label: 'Privacy Policy', href: '/privacy' },
-                  { label: 'Terms of Service', href: '/terms' },
-                ],
-              },
-            ].map(group => (
-              <div key={group.title}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.6)', letterSpacing: '.05em', textTransform: 'uppercase', marginBottom: 12 }}>{group.title}</div>
-                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {group.links.map(l => (
-                    <li key={l.label}>
-                      <a href={l.href} style={{ color: 'rgba(255,255,255,0.4)', textDecoration: 'none', fontSize: 13 }}>{l.label}</a>
-                    </li>
-                  ))}
+        <section className="block alt" id="paths">
+          <div className="wrap">
+            <p className="kicker">Who it's for</p>
+            <h2>Find the part of iDogs that fits you.</h2>
+            <div className="paths">
+              <div className="path" id="for-owners">
+                <h3>For Dog Owners</h3>
+                <p className="plead">Keep your dog's records organised in one place.</p>
+                <ul>
+                  <li>Digital dog profile</li>
+                  <li>Health and vaccination records</li>
+                  <li>QR sharing</li>
                 </ul>
+                <Link className="btn btn-path" to="/signup">Start Free as a Dog Owner</Link>
               </div>
-            ))}
-          </div>
-          {/* Bottom bar */}
-          <div style={{ paddingTop: 24, borderTop: '1px solid rgba(255,255,255,0.08)', textAlign: 'center' }}>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', fontStyle: 'italic', marginBottom: 4 }}>Every dog has an identity.</div>
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginBottom: 2 }}>© iDogs. All rights reserved.</div>
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)' }}>Australia</div>
-          </div>
-        </div>
-      </footer>
-    </div>
-  )
-}
-
-// ── INLINE COMPONENTS ────────────────────────────────────────
-
-function AIScanMockup() {
-  return (
-    <div style={{ background: 'var(--white)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden', width: '100%', maxWidth: 320 }}>
-      <div style={{ background: 'var(--dark)', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.7)' }}>AI Document Scan</span>
-        <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 20, background: 'rgba(29,158,117,0.25)', color: '#5DCAA5', fontWeight: 500 }}>Auto-filling…</span>
-      </div>
-      {[
-        { done: true, label: 'Photo captured', sub: 'Vaccine_Card_Luna.jpg' },
-        { done: true, label: 'Text extracted', sub: '12 fields detected' },
-        { done: false, label: 'Filling profile', sub: "Matching to Luna's record", active: true },
-      ].map(step => (
-        <div key={step.label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0, background: step.done ? 'var(--green-light)' : step.active ? 'var(--green)' : 'var(--sand)', color: step.done ? 'var(--green)' : step.active ? '#fff' : 'var(--light)' }}>
-            {step.done ? '✓' : step.active ? '→' : '·'}
-          </div>
-          <div>
-            <div style={{ fontSize: 13, color: 'var(--dark)', fontWeight: 500 }}>{step.label}</div>
-            <div style={{ fontSize: 11, color: 'var(--light)' }}>{step.sub}</div>
-          </div>
-        </div>
-      ))}
-      {[
-        { label: 'Vaccine', value: 'C8 Distemper combo' },
-        { label: 'Date given', value: '14 Mar 2026' },
-        { label: 'Next due', value: '14 Mar 2027' },
-        { label: 'Vet clinic', value: 'Paws & Claws, Adelaide' },
-      ].map(f => (
-        <div key={f.label} style={{ padding: '6px 16px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--sand-dark)', fontSize: 12 }}>
-          <span style={{ color: 'var(--light)' }}>{f.label}</span>
-          <span style={{ fontWeight: 500, color: 'var(--green)' }}>{f.value}</span>
-        </div>
-      ))}
-      <div style={{ padding: '12px 16px', display: 'flex', gap: 8 }}>
-        <button style={{ flex: 1, padding: '10px', borderRadius: 8, background: 'var(--green)', color: '#fff', border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Apply to profile</button>
-        <button style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--sand)', color: 'var(--mid)', border: 'none', fontSize: 13, cursor: 'pointer' }}>Edit</button>
-      </div>
-    </div>
-  )
-}
-
-function PhoneMockup() {
-  return (
-    <div style={{ background: '#111', borderRadius: 28, padding: 14, width: 200, boxShadow: '0 24px 60px rgba(8,80,65,0.2)' }}>
-      <div style={{ background: 'var(--white)', borderRadius: 16, overflow: 'hidden' }}>
-        <div style={{ background: '#111', height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 80, height: 18, background: '#222', borderRadius: '0 0 12px 12px' }} />
-        </div>
-        <div style={{ background: 'linear-gradient(135deg, var(--brand-900), var(--brand-600))', padding: 16, color: '#fff' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'rgba(255,255,255,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>🐕</div>
-            <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, color: '#fff' }}>Luna</div>
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,.65)' }}>Golden Retriever · F · 4yr</div>
+              <div className="path" id="for-breeders">
+                <h3>For Breeders</h3>
+                <p className="plead">A simpler way to manage each litter.</p>
+                <ul>
+                  <li>Manage dogs and litters</li>
+                  <li>Create a Puppy Showcase</li>
+                  <li>Add puppy photos</li>
+                </ul>
+                <Link className="btn btn-path" to="/signup">Start Free as a Breeder</Link>
+              </div>
             </div>
           </div>
-          <div style={{ background: '#fff', borderRadius: 8, padding: 10, marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="80" height="80" viewBox="0 0 60 60">
-              <rect x="0" y="0" width="18" height="18" fill="none" stroke="#2E7D4E" strokeWidth="2"/>
-              <rect x="3" y="3" width="12" height="12" fill="#2E7D4E"/>
-              <rect x="42" y="0" width="18" height="18" fill="none" stroke="#2E7D4E" strokeWidth="2"/>
-              <rect x="45" y="3" width="12" height="12" fill="#2E7D4E"/>
-              <rect x="0" y="42" width="18" height="18" fill="none" stroke="#2E7D4E" strokeWidth="2"/>
-              <rect x="3" y="45" width="12" height="12" fill="#2E7D4E"/>
-              <rect x="22" y="2" width="4" height="3" fill="#2E7D4E"/><rect x="27" y="2" width="6" height="3" fill="#2E7D4E"/>
-              <rect x="35" y="2" width="5" height="3" fill="#2E7D4E"/><rect x="22" y="7" width="5" height="3" fill="#2E7D4E"/>
-              <rect x="2" y="22" width="5" height="4" fill="#2E7D4E"/><rect x="9" y="22" width="3" height="7" fill="#2E7D4E"/>
-              <rect x="22" y="22" width="5" height="4" fill="#2E7D4E"/><rect x="29" y="22" width="6" height="3" fill="#2E7D4E"/>
-              <rect x="22" y="42" width="3" height="14" fill="#2E7D4E"/><rect x="27" y="42" width="7" height="3" fill="#2E7D4E"/>
-              <rect x="42" y="42" width="3" height="6" fill="#2E7D4E"/><rect x="47" y="42" width="10" height="3" fill="#2E7D4E"/>
-            </svg>
-          </div>
-          <div style={{ display: 'flex', gap: 4 }}>
-            <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 20, background: 'rgba(159,225,203,.25)', color: '#9FE1CB', fontWeight: 500 }}>Vaccines ✓</span>
-            <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 20, background: 'rgba(250,199,117,.25)', color: '#FAC775', fontWeight: 500 }}>Chicken ⚠</span>
-          </div>
-          <p style={{ fontSize: 9, color: 'rgba(255,255,255,.5)', textAlign: 'center', marginTop: 6 }}>Scan with any phone camera</p>
-        </div>
-        <div style={{ padding: '10px 12px', background: '#fff' }}>
-          {[
-            { name: 'C8 Distemper', date: 'Mar 2026', status: 'Current' },
-            { name: 'Kennel cough', date: 'Mar 2026', status: 'Current' },
-          ].map(v => (
-            <div key={v.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid #f0ede8', fontSize: 11 }}>
-              <span style={{ color: '#1A1917', fontWeight: 500 }}>{v.name}</span>
-              <span style={{ fontSize: 10, fontWeight: 500, padding: '2px 7px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)' }}>{v.status}</span>
+        </section>
+
+        <section className="block" id="passport">
+          <div className="wrap">
+            <p className="kicker">The record</p>
+            <h2>One Digital Passport for Life</h2>
+            <p className="lead">An organised record that stays connected through every stage of a dog's life.</p>
+            <div className="pillars">
+              <div className="pillar"><h4>Identity &amp; microchip</h4><p>A connected identity record through every life stage.</p></div>
+              <div className="pillar"><h4>Health &amp; vaccination</h4><p>Health records kept in one place.</p></div>
+              <div className="pillar"><h4>Documents</h4><p>Keep important document copies together.</p></div>
+              <div className="pillar"><h4>QR sharing</h4><p>A limited public view for selected information.</p></div>
             </div>
-          ))}
+            <div className="life">
+              <p className="kicker">Through every stage</p>
+              <ol className="life-row">
+                <li className="life-stage"><div className="life-connector"></div><div className="dot"></div><h4>Birth</h4></li>
+                <li className="life-stage"><div className="life-connector"></div><div className="dot"></div><h4>Puppy</h4></li>
+                <li className="life-stage"><div className="life-connector"></div><div className="dot"></div><h4>Adult</h4></li>
+                <li className="life-stage"><div className="life-connector"></div><div className="dot"></div><h4>Senior</h4></li>
+                <li className="life-stage forever"><div className="dot"></div><h4>Later Life</h4></li>
+              </ol>
+            </div>
+          </div>
+        </section>
+
+        <section className="block alt">
+          <div className="wrap">
+            <p className="kicker">For breeders</p>
+            <h2>Four simple steps to keep each dog's records connected.</h2>
+            <ol className="flow" aria-label="Puppy Showcase workflow">
+              <li className="flow-step"><span className="n">1</span> Create litter</li>
+              <li className="flow-step"><span className="n">2</span> Add puppies</li>
+              <li className="flow-step"><span className="n">3</span> Add photos</li>
+              <li className="flow-step"><span className="n">4</span> Publish Showcase</li>
+            </ol>
+            <p className="lead"><strong>Show every puppy beautifully.</strong></p>
+            <div className="showcase-feats">
+              <span>Shareable public link</span><span>Photos</span>
+              <span>Mobile-friendly viewing</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="block" id="howitworks">
+          <div className="wrap">
+            <div className="ai-card">
+              <div>
+                <h3>AI Document Scan</h3>
+                <p>Turn dog documents into organised records faster. Upload a supported document and iDogs will extract key details for you to review before saving.</p>
+                <span className="ai-note">Review extracted information before saving.</span>
+              </div>
+              <ol className="ai-flow" aria-label="AI Document Scan steps">
+                <li><span className="n">1</span> Upload a supported document</li>
+                <li><span className="n">2</span> iDogs extracts key details</li>
+                <li><span className="n">3</span> You review and edit</li>
+                <li><span className="n">4</span> Save to the dog's record</li>
+              </ol>
+            </div>
+            <p className="kicker">How it works</p>
+            <h2>Three simple steps to keep each dog's records connected.</h2>
+            <div className="steps steps-3">
+              <div className="step"><div className="n">1</div><h4>Create the dog's profile</h4></div>
+              <div className="step ai-here"><div className="n">2</div><h4>Add records and documents</h4><span className="tag">AI Scan lives here</span></div>
+              <div className="step"><div className="n">3</div><h4>Share selected information when needed</h4></div>
+            </div>
+          </div>
+        </section>
+
+        {/* Pricing section intentionally absent — hidden until real prices/inclusions are verified (brief §2/§8) */}
+        {/* FAQ section intentionally absent — no answer verified against the real product yet (brief §13) */}
+
+        <section className="final">
+          <div className="wrap">
+            <h2>Give every dog a connected record for life.</h2>
+            <p>Built for Australian dog owners and breeders. Start free.</p>
+            <Link className="btn btn-primary" to="/signup">Start Free</Link>
+          </div>
+        </section>
+        </main>
+
+        <footer>
+          <div className="wrap">
+            <div className="foot-top">
+              <div className="foot-brand">
+                <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ width: 125, height: 'auto' }} />
+                <div style={{ maxWidth: '34ch', marginTop: 12, color: 'var(--on-forest-soft)' }}>An organised digital record for every dog.</div>
+              </div>
+              <div className="foot-cols">
+                <div className="foot-col">
+                  <h5>Product</h5>
+                  <a href="#features">Features</a>
+                  <a href="#for-owners">For Owners</a>
+                  <a href="#for-breeders">For Breeders</a>
+                </div>
+                <div className="foot-col">
+                  <h5>Account</h5>
+                  <Link to="/login">Log In</Link>
+                  <Link to="/signup">Start Free</Link>
+                </div>
+                <div className="foot-col">
+                  <h5>Legal</h5>
+                  <Link to="/privacy">Privacy Policy</Link>
+                  <Link to="/terms">Terms of Use</Link>
+                  <a href="mailto:hello@idogs.com.au">Contact / Support</a>
+                </div>
+              </div>
+            </div>
+            <p className="foot-legal">iDogs provides record-management tools and does not constitute legal or regulatory advice. Breeders remain responsible for meeting applicable state, local council and registry requirements. <em>(Disclaimer pending legal review.)</em></p>
+            <p className="foot-copy">© 2026 iDogs. All rights reserved.</p>
+          </div>
+        </footer>
+
+        <div className="sticky-cta">
+          <Link className="btn btn-primary" to="/signup">Start Free</Link>
         </div>
+      </div>
+
+      {menuOpen && <MobileMenu onClose={() => setMenuOpen(false)} />}
+    </div>
+  )
+}
+
+// ── MOBILE MENU (accessible overlay) ─────────────────────────────
+// Focus trap / Escape-to-close / focus-restore pattern mirrors this
+// codebase's own established overlay implementation
+// (ShowcasePublicPage.tsx's PuppyDialog) rather than reinventing one:
+// openerRef captures whatever had focus the instant this mounts (the
+// hamburger button, since that's what was just clicked), closeRef gets
+// initial focus, Tab/Shift+Tab wraps within the panel's own focusable
+// elements, Escape closes, and focus returns to the opener on unmount.
+function MobileMenu({ onClose }: { onClose: () => void }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const openerRef = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null)
+
+  useEffect(() => {
+    closeRef.current?.focus()
+    const panel = panelRef.current
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+      if (event.key !== 'Tab' || !panel) return
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+      if (!focusable.length) { event.preventDefault(); panel.focus(); return }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      // Deferred to the next frame: LandingPage's own effect removes
+      // `inert` from the page-content wrapper (which contains the
+      // hamburger button) in this same passive-effects flush, and an
+      // inert element cannot receive focus. Waiting a frame guarantees
+      // that removal has already committed before we try to focus it.
+      requestAnimationFrame(() => openerRef.current?.focus())
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onClose])
+
+  return (
+    <div className="m-overlay open" id="lv2-mobile-menu" aria-hidden="false" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div ref={panelRef} className="m-panel" role="dialog" aria-modal="true" aria-label="Menu">
+        <div className="m-top">
+          <img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ width: 104.2, height: 'auto' }} />
+          <button ref={closeRef} className="m-close" aria-label="Close menu" onClick={onClose}>✕</button>
+        </div>
+        <a href="#features" onClick={onClose}>Features</a>
+        <a href="#for-owners" onClick={onClose}>For Owners</a>
+        <a href="#for-breeders" onClick={onClose}>For Breeders</a>
+        <Link to="/login" style={{ border: 'none' }} onClick={onClose}>Log In</Link>
+        <Link className="btn btn-primary" to="/signup" onClick={onClose}>Start Free</Link>
       </div>
     </div>
   )
 }
 
-function PricingCard({ plan, desc, priceLabel, priceSub, badge, features, featured, isFree, ctaLabel, onStart }: {
-  plan: string; desc: string; priceLabel: string; priceSub: string; badge?: string;
-  features: string[]; featured?: boolean; isFree?: boolean; ctaLabel: string; onStart: () => void
+// ── LANDING MEDIA SLOT (public rendering) ─────────────────────────
+// Renders one of the four Super-Admin-managed landing slots (see
+// src/pages/LandingMediaAdminPage.tsx and api/manage-landing-media.js).
+// Fetches the PUBLISHED config only (never a draft — drafts are never
+// client-readable at all, see firestore.rules) via a plain public
+// Firestore read, so new content shows up on the next normal page load
+// with no code change or redeploy.
+//
+// Reuses the caller's OWN placeholder className (e.g. "hv-shot", "ph
+// ph-desktop") directly on the rendered <img>/<video> — those classes
+// already define the exact aspect-ratio/border-radius/background this
+// slot must fill, so no new CSS is needed; object-fit:cover (added
+// inline, since the placeholder classes never needed it before) is what
+// makes a real image/video fill that same box cleanly.
+//
+// Falls back to the caller's exact original placeholder markup — never a
+// blank or broken box — whenever: nothing has been published yet, the
+// Firestore read fails, or the image/video itself fails to load
+// (onError). This is the ONLY thing that decides what's shown; there is
+// no separate "loading" flicker state, since the fallback IS a
+// legitimate, finished visual (the existing placeholder), not a spinner.
+function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
+  slotId: LandingSlotId
+  className: string
+  ariaLabel: string
+  fallback: ReactNode
 }) {
+  const [media, setMedia] = useState<PublishedLandingMedia | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setMedia(null)
+    setFailed(false)
+    fetchPublishedLandingMedia(slotId).then(result => {
+      if (!cancelled) setMedia(result)
+    })
+    return () => { cancelled = true }
+  }, [slotId])
+
+  if (!media || failed) return <>{fallback}</>
+
+  const fillStyle: CSSProperties = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+
+  if (media.kind === 'video') {
+    return (
+      <video
+        className={className}
+        style={fillStyle}
+        src={media.url}
+        aria-label={ariaLabel}
+        autoPlay
+        muted
+        loop
+        playsInline
+        onError={() => setFailed(true)}
+      />
+    )
+  }
+
   return (
-    <div style={{
-      background: 'var(--white)',
-      border: featured ? '2px solid var(--green)' : '1.5px solid var(--border)',
-      borderRadius: 24, padding: 32,
-      position: 'relative',
-      boxShadow: featured ? '0 8px 32px rgba(8,80,65,0.12)' : 'none',
-    }}>
-      {featured && (
-        <div style={{ position: 'absolute', top: -13, left: '50%', transform: 'translateX(-50%)', background: 'var(--green)', color: '#fff', fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: 20, whiteSpace: 'nowrap', letterSpacing: '.04em' }}>Best value</div>
-      )}
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 4 }}>{plan}</div>
-      <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 16 }}>{desc}</div>
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
-          <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: isFree ? 'var(--mid)' : featured ? 'var(--green)' : 'var(--dark)' }}>{priceLabel}</span>
-          <span style={{ fontSize: 13, color: 'var(--light)' }}>{priceSub}</span>
-        </div>
-        {badge && (
-          <div style={{ fontSize: 12, color: 'var(--green)', background: 'var(--green-light)', padding: '3px 10px', borderRadius: 20, display: 'inline-block', fontWeight: 500 }}>{badge}</div>
-        )}
-      </div>
-      <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, margin: '0 0 24px', textAlign: 'left' }}>
-        {features.map(f => (
-          <li key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, fontSize: 13, color: 'var(--mid)', lineHeight: 1.4 }}>
-            <span style={{ width: 16, height: 16, borderRadius: '50%', background: 'var(--green-light)', flexShrink: 0, marginTop: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'var(--green)', fontWeight: 600 }}>✓</span>
-            {f}
-          </li>
-        ))}
-      </ul>
-      <button onClick={onStart} style={{
-        display: 'block', width: '100%', textAlign: 'center',
-        fontSize: 14, fontWeight: 600, padding: '13px',
-        borderRadius: 10,
-        background: isFree ? 'var(--white)' : featured ? 'var(--green)' : 'transparent',
-        color: isFree ? 'var(--mid)' : featured ? '#fff' : 'var(--green)',
-        border: isFree ? '1.5px solid var(--border)' : featured ? 'none' : '1.5px solid var(--green)',
-        cursor: 'pointer',
-        transition: 'all 0.15s',
-      }}>{ctaLabel}</button>
-    </div>
+    <img
+      className={className}
+      style={fillStyle}
+      src={media.url}
+      alt={ariaLabel}
+      onError={() => setFailed(true)}
+    />
   )
 }
+
+// ── SCOPED CSS ─────────────────────────────────────────────────
+// Every rule below is prefixed under `.lv2-page` (or `.lv2-page` IS the
+// selector) — nothing here is a bare/global element or :root selector,
+// so it cannot leak into or be overridden by the rest of the app's
+// existing global stylesheet (index.css), and nothing from index.css's
+// own .btn/.btn-primary/etc. can bleed into this page either, since
+// `.lv2-page .btn-primary` (two classes) always outranks a bare
+// `.btn-primary` (one class) in specificity regardless of source order.
+const LV2_CSS = `
+  .lv2-page {
+    --forest:#16302B; --forest-2:#21453D; --bone:#F5F1E8; --bone-2:#EAE3D3;
+    --brass:#C08A2D; --brass-lo:#9C6E1F;
+    --ink:#14231F; --ink-soft:#4A5A54; --line:#D6CDB8;
+    --on-forest:#EFE9DA; --on-forest-soft:#A9BDB4;
+    --radius:14px; --maxw:1180px;
+    margin:0; font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    color:var(--ink); background:var(--bone); line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  .lv2-page *, .lv2-page *::before, .lv2-page *::after { box-sizing:border-box; }
+  @media (prefers-reduced-motion: reduce){ .lv2-page * { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
+  .lv2-page [inert] { pointer-events:none; }
+  .lv2-page h1, .lv2-page h2, .lv2-page h3, .lv2-page .display { font-family:'Fraunces','Georgia',serif; font-weight:600; line-height:1.08; letter-spacing:-0.01em; }
+  .lv2-page .wrap { max-width:var(--maxw); margin:0 auto; padding:0 24px; }
+  .lv2-page a:focus-visible, .lv2-page button:focus-visible, .lv2-page [tabindex]:focus-visible { outline:3px solid var(--brass); outline-offset:2px; border-radius:6px; }
+  .lv2-page .btn { display:inline-flex; align-items:center; justify-content:center; min-height:44px; border-radius:999px; font-family:inherit; font-weight:700; cursor:pointer; text-decoration:none; border:none; }
+
+  .lv2-page header.nav { position:sticky; top:0; z-index:40; background:rgba(22,48,43,.94); backdrop-filter:blur(8px); }
+  .lv2-page .nav-inner { display:flex; align-items:center; justify-content:space-between; padding:12px 24px; max-width:var(--maxw); margin:0 auto; gap:16px; }
+  .lv2-page .brand-logo { display:inline-flex; align-items:center; }
+  .lv2-page .nav-links { display:flex; gap:24px; align-items:center; font-size:14px; }
+  .lv2-page .nav-links a { text-decoration:none; color:var(--on-forest-soft); }
+  .lv2-page .nav-links a:hover, .lv2-page .nav-links a:focus-visible { color:var(--on-forest); }
+  .lv2-page .nav-right { display:flex; align-items:center; gap:14px; }
+  .lv2-page .nav-login { text-decoration:none; color:var(--on-forest-soft); font-size:14px; display:inline-flex; align-items:center; min-height:44px; padding:0 6px; }
+  .lv2-page .nav-login:hover { color:var(--on-forest); }
+  .lv2-page .nav-cta { background:var(--brass); color:var(--forest); padding:10px 18px; font-size:14px; font-weight:800; }
+  .lv2-page .nav-cta:hover { background:#d29a3c; }
+  .lv2-page .hamburger { display:none; background:none; border:1px solid var(--on-forest-soft); border-radius:8px; color:var(--on-forest); min-height:44px; min-width:44px; padding:10px; cursor:pointer; font-size:18px; align-items:center; justify-content:center; }
+
+  .lv2-page .m-overlay { display:none; position:fixed; inset:0; z-index:60; background:rgba(10,20,17,.6); }
+  .lv2-page .m-overlay.open { display:block; }
+  .lv2-page .m-panel { position:absolute; top:0; right:0; width:min(84vw,340px); height:100%; background:var(--forest); color:var(--on-forest); padding:20px; display:flex; flex-direction:column; gap:2px; box-shadow:-20px 0 60px -20px rgba(0,0,0,.7); }
+  .lv2-page .m-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .lv2-page .m-panel a { color:var(--on-forest); text-decoration:none; padding:14px 8px; border-bottom:1px solid rgba(255,255,255,.08); font-size:16px; min-height:44px; display:flex; align-items:center; }
+  .lv2-page .m-panel .btn { margin-top:14px; }
+  .lv2-page .m-close { background:none; border:1px solid var(--on-forest-soft); border-radius:8px; color:var(--on-forest); min-height:44px; min-width:44px; cursor:pointer; font-size:18px; }
+
+  .lv2-page .hero { background:var(--forest); color:var(--on-forest); padding:76px 0 64px; position:relative; overflow:hidden; }
+  .lv2-page .hero:before { content:""; position:absolute; inset:0; background:radial-gradient(700px 380px at 82% -8%, rgba(192,138,45,.20), transparent 60%); pointer-events:none; }
+  .lv2-page .hero-grid { display:grid; grid-template-columns:1.12fr .88fr; gap:48px; align-items:center; position:relative; }
+  .lv2-page .eyebrow { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--brass); font-weight:700; margin-bottom:18px; }
+  .lv2-page .hero h1 { font-size:clamp(38px,5vw,60px); margin:0 0 20px; }
+  .lv2-page .hero .sub { font-size:19px; color:var(--on-forest-soft); max-width:34ch; margin:0 0 10px; }
+  .lv2-page .hero .aud { font-size:15px; color:var(--on-forest); font-weight:600; margin:14px 0 4px; }
+  .lv2-page .hero .incl { font-size:14px; color:var(--on-forest-soft); margin:0 0 28px; }
+  .lv2-page .cta-row { display:flex; gap:14px; flex-wrap:wrap; }
+  .lv2-page .btn-primary { background:var(--brass); color:var(--forest); padding:15px 28px; font-size:16px; font-weight:800; box-shadow:0 10px 30px -12px rgba(192,138,45,.6); }
+  .lv2-page .btn-primary:hover { background:#d29a3c; transform:translateY(-1px); }
+  .lv2-page .btn-ghost { background:transparent; color:var(--on-forest); border:1.5px solid var(--on-forest-soft); padding:15px 24px; font-size:16px; font-weight:700; }
+  .lv2-page .btn-ghost:hover { border-color:var(--on-forest); }
+
+  .lv2-page .hero-visual { background:linear-gradient(160deg,var(--forest-2),#1a3a33); border:1px solid rgba(192,138,45,.4); border-radius:18px; padding:16px; box-shadow:0 24px 60px -30px rgba(0,0,0,.7); }
+  .lv2-page .hv-poster { position:relative; border-radius:12px; overflow:hidden; }
+  .lv2-page .hv-shot { aspect-ratio:16/11; background:repeating-linear-gradient(135deg,#274a42 0 14px,#22443c 14px 28px); display:grid; place-items:center; text-align:center; color:var(--on-forest-soft); font-size:13px; padding:16px; }
+  .lv2-page .hv-strip { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+  .lv2-page .hv-mini { background:var(--forest); border-radius:8px; padding:6px; }
+  .lv2-page .hv-mini .m { aspect-ratio:9/6; background:repeating-linear-gradient(135deg,#2b4c44 0 10px,#264640 10px 20px); border-radius:5px; display:grid; place-items:center; font-size:11px; color:var(--on-forest-soft); text-align:center; padding:6px; }
+
+  .lv2-page .trust { background:var(--bone-2); border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .lv2-page .trust-inner { display:flex; flex-wrap:wrap; gap:14px 40px; justify-content:center; padding:18px 24px; max-width:var(--maxw); margin:0 auto; }
+  .lv2-page .trust-item { display:flex; align-items:center; gap:9px; font-size:14px; font-weight:600; color:var(--ink-soft); }
+  .lv2-page .trust-item .tick { color:var(--brass-lo); font-weight:900; }
+
+  .lv2-page section.block { padding:72px 0; scroll-margin-top:80px; }
+  .lv2-page section.block.alt { background:var(--bone-2); }
+  .lv2-page .path { scroll-margin-top:80px; }
+  .lv2-page .kicker { font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--brass-lo); font-weight:700; margin-bottom:12px; }
+  .lv2-page .block h2 { font-size:clamp(28px,3.4vw,40px); margin:0 0 14px; max-width:24ch; }
+  .lv2-page .lead { font-size:17px; color:var(--ink-soft); max-width:62ch; margin:0; }
+
+  .lv2-page .shots { display:grid; grid-template-columns:1.6fr 1fr 1fr; gap:22px; align-items:end; margin-top:20px; }
+  .lv2-page .frame-desktop, .lv2-page .frame-mobile { background:var(--forest); border-radius:14px; padding:10px; box-shadow:0 20px 50px -28px rgba(0,0,0,.5); }
+  .lv2-page .frame-desktop .bar, .lv2-page .frame-mobile .bar { display:flex; gap:5px; padding:5px 4px 8px; }
+  .lv2-page .frame-desktop .bar i, .lv2-page .frame-mobile .bar i { width:9px; height:9px; border-radius:50%; background:rgba(255,255,255,.35); }
+  .lv2-page .ph { width:100%; background:repeating-linear-gradient(135deg,var(--bone-2) 0 12px,#e2dac7 12px 24px); border-radius:8px; display:grid; place-items:center; text-align:center; color:var(--ink-soft); font-size:13px; font-weight:600; padding:16px; }
+  .lv2-page .ph-desktop { aspect-ratio:16/10; }
+  .lv2-page .ph-mobile { aspect-ratio:9/19.5; }
+  .lv2-page .shot-cap { text-align:center; font-size:13px; color:var(--ink-soft); margin-top:10px; }
+
+  .lv2-page .paths { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:20px; }
+  .lv2-page .path { background:var(--bone); border:1px solid var(--line); border-radius:var(--radius); padding:30px 28px; }
+  .lv2-page section.block.alt .path { background:#fff; }
+  .lv2-page .path h3 { font-size:23px; margin:0 0 8px; }
+  .lv2-page .path .plead { font-size:15px; color:var(--ink-soft); margin:0 0 18px; }
+  .lv2-page .path ul { list-style:none; margin:0 0 22px; padding:0; }
+  .lv2-page .path li { padding:8px 0 8px 26px; position:relative; font-size:15px; border-top:1px solid var(--line); }
+  .lv2-page .path li:first-child { border-top:none; }
+  .lv2-page .path li:before { content:"→"; position:absolute; left:0; color:var(--brass-lo); font-weight:800; }
+  .lv2-page .btn-path { background:var(--forest); color:var(--on-forest); padding:12px 22px; font-size:15px; font-weight:700; }
+  .lv2-page .btn-path:hover { background:var(--forest-2); }
+
+  .lv2-page .pillars { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-top:20px; }
+  .lv2-page .pillar { background:var(--bone); border:1px solid var(--line); border-radius:var(--radius); padding:22px; }
+  .lv2-page section.block.alt .pillar { background:#fff; }
+  .lv2-page .pillar h4 { font-family:'Fraunces',serif; font-size:17px; margin:0 0 6px; }
+  .lv2-page .pillar p { margin:0; font-size:14px; color:var(--ink-soft); }
+
+  .lv2-page .life { margin-top:40px; }
+  .lv2-page .life-row { display:flex; align-items:stretch; gap:0; list-style:none; padding:0; margin:0; }
+  .lv2-page .life-stage { flex:1; text-align:center; padding:20px 10px; position:relative; }
+  .lv2-page .life-stage .dot { width:16px; height:16px; border-radius:50%; background:var(--brass); margin:0 auto 12px; box-shadow:0 0 0 5px rgba(192,138,45,.18); }
+  .lv2-page .life-stage.forever .dot { background:var(--forest); box-shadow:0 0 0 5px rgba(22,48,43,.14); }
+  .lv2-page .life-stage h4 { font-family:'Fraunces',serif; font-size:17px; margin:0; }
+  .lv2-page .life-connector { position:absolute; top:47px; left:50%; width:100%; height:2px; background:var(--line); z-index:0; }
+  .lv2-page .life-stage:last-child .life-connector { display:none; }
+
+  .lv2-page .flow { display:flex; flex-wrap:wrap; gap:10px; margin:22px 0; padding:0; list-style:none; }
+  .lv2-page .flow-step { background:var(--forest); color:var(--on-forest); border-radius:999px; padding:10px 16px; font-size:14px; font-weight:600; display:flex; align-items:center; gap:10px; }
+  .lv2-page .flow-step .n { color:var(--brass); font-weight:800; }
+  .lv2-page .flow-step:not(:last-child)::after { content:"→"; color:var(--brass-lo); font-weight:800; margin-left:14px; }
+  .lv2-page .showcase-feats { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .lv2-page .showcase-feats span { font-size:13px; padding:6px 12px; background:var(--bone); border:1px solid var(--line); border-radius:8px; }
+  .lv2-page section.block.alt .showcase-feats span { background:#fff; }
+
+  .lv2-page .ai-card { background:var(--forest); color:var(--on-forest); border-radius:var(--radius); padding:30px; margin-bottom:26px; display:grid; grid-template-columns:1.3fr 1fr; gap:26px; align-items:center; }
+  .lv2-page .ai-card h3 { font-size:22px; margin:0 0 8px; color:var(--on-forest); }
+  .lv2-page .ai-card p { color:var(--on-forest-soft); margin:0 0 12px; font-size:15px; }
+  .lv2-page .ai-note { display:inline-block; background:rgba(192,138,45,.16); border:1px solid var(--brass); color:var(--bone); font-size:13px; font-weight:600; padding:7px 13px; border-radius:8px; }
+  .lv2-page .ai-flow { display:flex; flex-direction:column; gap:8px; list-style:none; padding:0; margin:0; }
+  .lv2-page .ai-flow li { background:rgba(245,241,232,.06); border:1px solid rgba(245,241,232,.14); border-radius:8px; padding:10px 14px; font-size:14px; display:flex; align-items:center; gap:10px; color:var(--on-forest); }
+  .lv2-page .ai-flow li .n { color:var(--brass); font-weight:800; }
+  .lv2-page .steps { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
+  .lv2-page .steps.steps-3 { grid-template-columns:repeat(3,1fr); }
+  .lv2-page .step { background:var(--bone); border:1px solid var(--line); border-radius:var(--radius); padding:20px; }
+  .lv2-page section.block.alt .step { background:#fff; }
+  .lv2-page .step .n { font-family:'Fraunces',serif; color:var(--brass-lo); font-size:26px; }
+  .lv2-page .step h4 { font-size:15px; margin:6px 0 0; }
+  .lv2-page .step.ai-here { border-color:var(--brass); box-shadow:0 0 0 1px var(--brass); }
+  .lv2-page .step .tag { display:inline-block; margin-top:8px; font-size:11px; font-weight:700; color:var(--brass-lo); text-transform:uppercase; letter-spacing:.05em; }
+
+  .lv2-page .final { background:var(--forest); color:var(--on-forest); text-align:center; padding:76px 0; }
+  .lv2-page .final h2 { font-size:clamp(28px,3.6vw,42px); margin:0 0 12px; }
+  .lv2-page .final p { color:var(--on-forest-soft); margin:0 0 26px; font-size:17px; }
+
+  .lv2-page footer { background:#0f221e; color:var(--on-forest-soft); padding:44px 0 40px; font-size:14px; }
+  .lv2-page .foot-top { display:flex; justify-content:space-between; flex-wrap:wrap; gap:30px; }
+  .lv2-page .foot-col h5 { color:var(--on-forest); font-size:13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 12px; }
+  .lv2-page .foot-col a, .lv2-page .foot-col span { display:block; color:var(--on-forest-soft); text-decoration:none; padding:7px 0; min-height:auto; font-size:14px; }
+  .lv2-page .foot-col a:hover { color:var(--on-forest); }
+  .lv2-page .foot-col .pending { color:#6f847c; font-size:12.5px; }
+  .lv2-page .foot-cols { display:flex; gap:56px; flex-wrap:wrap; }
+  .lv2-page .foot-legal { max-width:64ch; margin-top:26px; padding-top:18px; border-top:1px solid rgba(255,255,255,.08); font-size:12.5px; color:#6f847c; }
+  .lv2-page .foot-copy { margin-top:10px; font-size:12.5px; color:#6f847c; }
+
+  .lv2-page .sticky-cta { display:none; position:fixed; bottom:0; left:0; right:0; z-index:50; background:rgba(22,48,43,.97); padding:12px 16px; padding-bottom:calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--brass-lo); }
+  .lv2-page .sticky-cta .btn { width:100%; }
+
+  @media (max-width:900px){
+    .lv2-page .hero-grid{grid-template-columns:1fr;gap:34px;}
+    .lv2-page .shots{grid-template-columns:1fr;justify-items:center;}
+    .lv2-page .frame-desktop, .lv2-page .frame-mobile{max-width:420px;width:100%;}
+    .lv2-page .paths{grid-template-columns:1fr;}
+    .lv2-page .pillars{grid-template-columns:1fr 1fr;}
+    .lv2-page .steps{grid-template-columns:1fr 1fr;}
+    .lv2-page .steps.steps-3{grid-template-columns:1fr 1fr;}
+    .lv2-page .ai-card{grid-template-columns:1fr;}
+    .lv2-page .nav-links{display:none;}
+    .lv2-page .nav-right .nav-login{display:none;}
+    .lv2-page .hamburger{display:inline-flex;}
+  }
+  @media (max-width:620px){
+    .lv2-page section.block{padding:52px 0;}
+    .lv2-page .hero{padding:52px 0 44px;}
+    .lv2-page .pillars{grid-template-columns:1fr;}
+    .lv2-page .steps, .lv2-page .steps.steps-3{grid-template-columns:1fr;}
+    .lv2-page .life-row{flex-direction:column;gap:12px;}
+    .lv2-page .life-stage{text-align:left;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--bone);border:1px solid var(--line);border-radius:10px;}
+    .lv2-page section.block.alt .life-stage{background:#fff;}
+    .lv2-page .life-stage .dot{margin:0;flex:none;}
+    .lv2-page .life-connector{display:none;}
+    .lv2-page .flow{flex-direction:column;}
+    .lv2-page .flow-step:not(:last-child)::after{display:none;}
+    .lv2-page .flow-step{width:100%;}
+    .lv2-page .foot-cols{gap:30px;}
+    .lv2-page .sticky-cta{display:block;}
+    .lv2-page .final, .lv2-page footer{padding-bottom:90px;}
+  }
+  @media (max-width:390px){ .lv2-page .wrap{padding:0 18px;} .lv2-page .hero h1{font-size:33px;} }
+`

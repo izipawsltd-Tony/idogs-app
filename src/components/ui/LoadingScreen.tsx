@@ -13,7 +13,7 @@ export default function LoadingScreen() {
       <div style={{ width: '100%', maxWidth: 400, textAlign: 'center' }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <img
-            src="/logo.png"
+            src="/idogs-logo-horizontal-light-bg.png"
             alt="iDogs"
             style={{ height: 60, width: 200, objectFit: 'contain', display: 'inline-block' }}
           />
