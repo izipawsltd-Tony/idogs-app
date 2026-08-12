@@ -36,6 +36,7 @@ import ReportsPage from '../pages/ReportsPage'
 import BuyersPage from '../pages/BuyersPage'
 import ClaimDogPage from '../pages/ClaimDogPage'
 import PrivateDogPage from '../pages/PrivateDogPage'
+import SuperAdminWorkspacePage from '../pages/SuperAdminWorkspacePage'
 
 import AppLayout from './layout/AppLayout'
 import LoadingScreen from './ui/LoadingScreen'
@@ -91,6 +92,14 @@ export default function App() {
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+
+        {/* Super Admin has its own operations shell, outside AppLayout. */}
+        <Route path="/app/super-admin/:section" element={
+          <ProtectedRoute>
+            <SuperAdminWorkspacePage />
+          </ProtectedRoute>
+        } />
+        <Route path="/app/super-admin" element={<Navigate to="/app/super-admin/dashboard" replace />} />
 
         {/* Protected — app */}
         <Route path="/app" element={

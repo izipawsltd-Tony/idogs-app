@@ -448,10 +448,8 @@ export default function AppLayout({ toast }: Props) {
         {/* Admin Console Shortcut */}
         {isSuperAdmin && (
           <div style={{ padding: '0 14px 12px' }}>
-            <a
-              href={`https://idogs-admin-codex.vercel.app/app/super-admin/dashboard?email=${encodeURIComponent(user?.email || '')}`}
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              to="/app/super-admin/dashboard"
               className="btn btn-secondary btn-sm"
               style={{
                 display: 'flex',
@@ -470,8 +468,8 @@ export default function AppLayout({ toast }: Props) {
                 borderRadius: 8
               }}
             >
-              👑 Admin Console ↗
-            </a>
+              👑 Admin Console
+            </Link>
             <Link
               to="/app/admin/landing-media"
               className="btn btn-secondary btn-sm"
@@ -689,10 +687,8 @@ export default function AppLayout({ toast }: Props) {
                 }}>
                   {isSuperAdmin && (
                     <>
-                      <a
-                        href={`https://idogs-admin-codex.vercel.app/app/super-admin/dashboard?email=${encodeURIComponent(user?.email || '')}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        onClick={() => { setUserMenuOpen(false); navigate('/app/super-admin/dashboard') }}
                         style={{
                           display: 'flex', alignItems: 'center', gap: 8,
                           width: '100%', padding: '10px 14px',
@@ -703,8 +699,8 @@ export default function AppLayout({ toast }: Props) {
                         onMouseEnter={e => (e.currentTarget.style.background = 'var(--gold-50, #FAF7EB)')}
                         onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                       >
-                        👑 Admin Console ↗
-                      </a>
+                        👑 Admin Console
+                      </button>
                       <button
                         onClick={() => { setUserMenuOpen(false); navigate('/app/admin/landing-media') }}
                         style={{
