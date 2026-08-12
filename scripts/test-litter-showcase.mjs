@@ -393,22 +393,21 @@ function extractFunctionSource(src, signaturePattern) {
   // Requirement: warn before reload/close with unsaved changes.
   check('ShowcaseManager registers a beforeunload warning while any puppy draft is dirty', /window\.addEventListener\('beforeunload', handleBeforeUnload\)/.test(showcaseManagerSrc) && /if \(!anyDirty\) return/.test(showcaseManagerSrc))
 
-  // Tony live-staging finding ("cannot add puppy images or videos", and
-  // later "media missing from public page"): media upload/publish is now
-  // entirely local-draft + queued, reachable regardless of whether the
-  // puppy has any media yet, with an explicit Private/Published badge
-  // per item so "uploaded but never published" can't happen silently.
-  check('ShowcaseManager queues a new file locally (handleAddFiles) rather than uploading it immediately',
-    /function handleAddFiles/.test(showcaseManagerSrc) && !/handleAddFiles[\s\S]{0,400}await uploadShowcaseMedia/.test(showcaseManagerSrc))
-  check('Large-image fix: oversized video is rejected up front with an actionable message (video cannot be compressed client-side); HEIC/HEIF now shares the same generic 30MB photo ceiling as every other format, since it is decoded+compressed like any other photo rather than sent raw',
-    /kind === 'photo' && file\.size > 30 \* 1024 \* 1024/.test(showcaseManagerSrc) && /kind === 'video' && file\.size > MAX_VIDEO_UPLOAD_BYTES/.test(showcaseManagerSrc))
-  check('Each media thumbnail shows an explicit Private/Published/Queued badge',
-    /isQueued \? 'Queued' : isPublished \? 'Published' : 'Private'/.test(showcaseManagerSrc))
-  check('Removing an already-persisted media item requires confirmation; a queued (not-yet-uploaded) one does not',
-    /const isQueued = ref\.startsWith\('local:'\)/.test(showcaseManagerSrc) && /if \(!isQueued && !window\.confirm/.test(showcaseManagerSrc))
-  check('An explicit "Set as cover" action exists for photos beyond the first (not just implicit via reordering)',
-    /Set as cover photo/.test(showcaseManagerSrc) && /handleSetCover/.test(showcaseManagerSrc))
-  check('The "Photos & videos" toggle button is NOT gated behind the puppy already having media (it must be the way to add the FIRST one)',
+  // Single-source media UX: Puppy Edit owns uploads/gallery management;
+  // Showcase only previews that same gallery and selects public items.
+  const puppyMediaManagerSrc = extractFunctionSource(littersPageSrc, /function PuppyMediaManager\(/)
+  const renderMediaGridSrc = extractFunctionSource(showcaseManagerSrc, /function renderMediaGrid\(/)
+  check('Puppy Edit remains the canonical upload source with Add photo and Add video controls',
+    /\+ Add photo/.test(puppyMediaManagerSrc) && /\+ Add video/.test(puppyMediaManagerSrc))
+  check('Showcase has no duplicate photo/video file inputs or Add photo/Add video controls',
+    !/type="file"/.test(showcaseManagerSrc) && !/\+ Add photo|\+ Add video/.test(showcaseManagerSrc))
+  check('Each Showcase media thumbnail shows an explicit Private/Published badge',
+    /isPublished \? 'Published' : 'Private'/.test(renderMediaGridSrc))
+  check('Showcase media thumbnails cannot reorder, delete, or set the canonical cover',
+    !/handleReorder|handleRemoveMedia|handleSetCover/.test(renderMediaGridSrc))
+  check('Showcase explains that gallery management belongs in Edit puppy and this panel only selects public media',
+    /Upload, remove, reorder, and choose the cover in Edit puppy above/.test(showcaseManagerSrc) && /Select here only what appears publicly/.test(showcaseManagerSrc))
+  check('The "Photos & videos" preview/publication toggle is available even when the puppy has no media',
     (() => {
       const idx = showcaseManagerSrc.indexOf("setMediaOpenFor(opening ? puppy.id : null)")
       if (idx === -1) return false

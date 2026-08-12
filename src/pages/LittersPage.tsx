@@ -2117,6 +2117,28 @@ function ShowcaseManager({
   const [privateAccessBusy, setPrivateAccessBusy] = useState<Record<string, boolean>>({})
   const [privateAccessErrors, setPrivateAccessErrors] = useState<Record<string, string>>({})
 
+  // Puppy Edit is the canonical gallery manager. Keep this Showcase draft
+  // synchronized when Edit adds, removes, reorders, or changes the cover so
+  // the accordion is only a current preview/publication selector, never a
+  // second media-management source.
+  useEffect(() => {
+    const nextPhotoOrders = Object.fromEntries(puppyDogs.map(p => [p.id, (p.photos || []).map(item => item.id)]))
+    const nextVideoOrders = Object.fromEntries(puppyDogs.map(p => [p.id, (p.videos || []).map(item => item.id)]))
+    setPhotoOrders(nextPhotoOrders)
+    setVideoOrders(nextVideoOrders)
+    setPublishedPhotos(prev => Object.fromEntries(puppyDogs.map(p => [
+      p.id,
+      (prev[p.id] || []).filter(id => nextPhotoOrders[p.id].includes(id)),
+    ])))
+    setPublishedVideos(prev => Object.fromEntries(puppyDogs.map(p => [
+      p.id,
+      (prev[p.id] || []).filter(id => nextVideoOrders[p.id].includes(id)),
+    ])))
+    if (mediaOpenFor && puppyDogs.some(p => p.id === mediaOpenFor)) {
+      void ensureMediaLoaded(mediaOpenFor, true)
+    }
+  }, [puppyDogs])
+
   const visibleCount = puppyDogs.filter(p => fields[p.id]?.visible).length
   const anyDirty = Object.values(dirty).some(Boolean)
   const hasMoneyErrors = Object.values(moneyErrors).some(errors => Boolean(errors.price || errors.deposit))
@@ -2145,8 +2167,8 @@ function ShowcaseManager({
     setDirty(prev => ({ ...prev, [puppyId]: true }))
   }
 
-  async function ensureMediaLoaded(puppyId: string) {
-    if (existingMedia[puppyId] || mediaLoading[puppyId]) return
+  async function ensureMediaLoaded(puppyId: string, force = false) {
+    if ((!force && existingMedia[puppyId]) || mediaLoading[puppyId]) return
     setMediaLoading(prev => ({ ...prev, [puppyId]: true }))
     try {
       const result = await getShowcaseMediaUrls(puppyId)
@@ -2454,7 +2476,6 @@ function ShowcaseManager({
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
         {order.map((ref, i) => {
           const url = mediaUrlForRef(puppy.id, ref, kind)
-          const isQueued = ref.startsWith('local:')
           const isPublished = published.includes(ref)
           return (
             <div key={ref} style={{ position: 'relative', width: 72 }}>
@@ -2470,16 +2491,8 @@ function ShowcaseManager({
                   "uploaded but forgot to publish" is no longer possible
                   to miss. */}
               <span style={{ position: 'absolute', top: 2, right: 2, fontSize: 8, fontWeight: 700, background: isPublished ? 'var(--brand-600)' : 'var(--gold)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>
-                {isQueued ? 'Queued' : isPublished ? 'Published' : 'Private'}
+                {isPublished ? 'Published' : 'Private'}
               </span>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-                <button type="button" disabled={i === 0} onClick={() => handleReorder(puppy.id, kind, ref, -1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>◀</button>
-                <button type="button" onClick={() => handleRemoveMedia(puppy.id, kind, ref)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>✕</button>
-                <button type="button" disabled={i === order.length - 1} onClick={() => handleReorder(puppy.id, kind, ref, 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>▶</button>
-              </div>
-              {kind === 'photo' && i > 0 && (
-                <button type="button" onClick={() => handleSetCover(puppy.id, ref)} title="Set as cover photo" style={{ width: '100%', marginTop: 2, fontSize: 9, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--mid)', padding: '1px 0' }}>★ Set cover</button>
-              )}
               <label style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 2, fontSize: 9, cursor: 'pointer' }}>
                 <input type="checkbox" checked={isPublished} onChange={e => handleTogglePublished(puppy.id, kind, ref, e.target.checked)} style={{ width: 11, height: 11, accentColor: 'var(--brand-600)' }} />
                 Publish
@@ -2864,27 +2877,13 @@ function ShowcaseManager({
                           <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
                         ) : (
                           <>
+                            <p style={{ fontSize: 11, color: 'var(--light)', marginBottom: 10 }}>
+                              Upload, remove, reorder, and choose the cover in Edit puppy above. Select here only what appears publicly.
+                            </p>
                             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Photos {photoOrder.length > 0 && `(${photoOrder.length})`}</div>
                             {renderMediaGrid(puppy, 'photo')}
-                            <input
-                              type="file"
-                              accept="image/*,.heic,.heif"
-                              style={{ display: 'none' }}
-                              id={`add-photo-${puppy.id}`}
-                              onChange={e => { handleAddFiles(puppy.id, e.target.files, 'photo'); e.target.value = '' }}
-                            />
-                            <label htmlFor={`add-photo-${puppy.id}`} className="btn btn-secondary btn-sm" style={{ marginBottom: 14, cursor: 'pointer', display: 'inline-block' }}>+ Add photo</label>
-
                             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Videos {videoOrder.length > 0 && `(${videoOrder.length})`}</div>
                             {renderMediaGrid(puppy, 'video')}
-                            <input
-                              type="file"
-                              accept="video/mp4,video/quicktime,video/webm"
-                              style={{ display: 'none' }}
-                              id={`add-video-${puppy.id}`}
-                              onChange={e => { handleAddFiles(puppy.id, e.target.files, 'video'); e.target.value = '' }}
-                            />
-                            <label htmlFor={`add-video-${puppy.id}`} className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', display: 'inline-block' }}>+ Add video</label>
                           </>
                         )}
                       </div>
