@@ -144,15 +144,13 @@ check('invalid Deposit text remains visible for correction — setDepositText is
 // UPDATE (Implementation Phase 1 — direct media upload): handleSaveShowcaseDraft
 // no longer computes a standalone `prepared`/`base64` variable before a
 // separate upload call — prepareImageForUpload(file) is now awaited
-// directly INSIDE uploadShowcaseMediaDirect()'s own argument list. The
-// property this check proves is unchanged: a thrown ImageCompressionError
-// still propagates out of the async map callback and is still caught by
-// Promise.allSettled, never reaching resolvedIds or any server call.
-check('a failed prepareImageForUpload() (any ImageCompressionError, including HEIC_DECODE_FAILED) is caught by Promise.allSettled in handleSaveShowcaseDraft — the file is never added to resolvedIds, so no confirmed upload and no server-side media record is ever created for it',
-  /await uploadShowcaseMediaDirect\(puppyId, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(littersSrc) &&
-  /await Promise\.allSettled\(batch\.map\(async ref => \{/.test(littersSrc))
-check('a failed upload leaves the puppy\'s draft error visible (puppyErrors) rather than silently discarding the file — the breeder can see it happened and retry',
-  /setPuppyErrors\(prev => \(\{ \.\.\.prev, \[puppyId\]: result\.error \}\)\)/.test(littersSrc))
+// directly INSIDE the canonical PuppyMediaManager upload call. Showcase
+// must never run compression/upload logic itself.
+check('Puppy Edit remains the only compressed photo upload path',
+  /await uploadShowcaseMediaDirect\(puppy\.id, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(littersSrc) &&
+  (littersSrc.match(/prepareImageForUpload\(file\)/g) || []).length === 1)
+check('Showcase has no queued upload or Promise.allSettled media path',
+  !/function handleAddFiles|await Promise\.allSettled\(batch\.map\(async ref/.test(littersSrc))
 
 // Authorization/ownership/Storage Rules are untouched by this fix round —
 // verified structurally by confirming the upload endpoint's auth check

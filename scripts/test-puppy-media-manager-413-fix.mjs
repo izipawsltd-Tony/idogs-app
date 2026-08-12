@@ -187,20 +187,19 @@ check('PuppyMediaManager component body was found by the balanced-brace extracto
 
 // =========================================================================
 // SECTION 4 (REQUIRED) — the existing ShowcaseManager queued-upload path
-// (handleAddFiles / handleSaveShowcaseDraft) remains unchanged.
+// Showcase no longer has a second upload path; all guards stay canonical.
 // =========================================================================
 {
-  check('handleAddFiles still exists with its original 30MB photo sanity ceiling, untouched',
-    /if \(kind === 'photo' && file\.size > 30 \* 1024 \* 1024\) \{/.test(littersSrc))
-  check('handleAddFiles still rejects oversized video with the original MAX_VIDEO_UPLOAD_BYTES guard, untouched',
-    /if \(kind === 'video' && file\.size > MAX_VIDEO_UPLOAD_BYTES\) \{/.test(littersSrc))
-  check('handleSaveShowcaseDraft still calls prepareImageForUpload for queued photos, untouched (now feeding uploadShowcaseMediaDirect as part of Implementation Phase 1, same compression step)',
-    /await uploadShowcaseMediaDirect\(puppyId, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(littersSrc))
-  // handleAddFiles/handleSaveShowcaseDraft live in the PARENT component,
-  // not inside PuppyMediaManager — confirms this fix didn't accidentally
-  // merge the two previously-separate upload implementations into one.
-  check('handleAddFiles is a DIFFERENT function from PuppyMediaManager\'s own handleUpload (two distinct upload paths still exist, not merged)',
-    !/function handleAddFiles/.test(puppyMediaManagerSrc))
+  check('Showcase no longer defines a duplicate handleAddFiles upload path',
+    !/function handleAddFiles/.test(littersSrc))
+  check('Showcase save cannot call uploadShowcaseMediaDirect or updateShowcaseMediaOrder',
+    (() => {
+      const showcaseSave = extractFunctionSource(littersSrc, /async function handleSaveShowcaseDraft\(/)
+      return !/uploadShowcaseMediaDirect|updateShowcaseMediaOrder/.test(showcaseSave)
+    })())
+  check('PuppyMediaManager remains the single handleUpload implementation',
+    /async function handleUpload/.test(puppyMediaManagerSrc) &&
+    (littersSrc.match(/async function handleUpload/g) || []).length === 1)
 }
 
 // =========================================================================

@@ -281,7 +281,7 @@ function extractFunctionSource(src, signaturePattern) {
   check('LittersPage.tsx manages Showcase via lib/db.ts server-endpoint wrappers, not direct Firestore writes',
     /createShowcase\(litterId\)/.test(littersPageSrc) &&
     /setShowcaseEnabled\(litterId, !current\.enabled\)/.test(littersPageSrc) &&
-    /updateShowcasePuppy\(litterId, puppyId, resolvedFields\)/.test(littersPageSrc) &&
+    /updateShowcasePuppy\(litterId, puppyId, fields\)/.test(littersPageSrc) &&
     !/bulkUpdateShowcasePuppies/.test(littersPageSrc))
   // Codex fix-round finding 2: the raw `profile?.plan !== 'plus'` check is
   // gone — gating must go through the shared client mirror of
@@ -329,7 +329,8 @@ function extractFunctionSource(src, signaturePattern) {
     check(`${name} was found`, fnBody.length > 0)
     check(`${name} captures the guard's generation before its first await`, /const gen = showcaseGuard\.currentGeneration\(\)/.test(fnBody))
     const guardCheckCount = (fnBody.match(/if \(!isShowcaseRequestCurrent\(gen\)\) return/g) || []).length
-    check(`${name} checks isShowcaseRequestCurrent after every await (at least 3 checks)`, guardCheckCount >= 3, `found ${guardCheckCount}`)
+    const minimumGuardChecks = name === 'handleSaveShowcaseDraft' ? 2 : 3
+    check(`${name} checks isShowcaseRequestCurrent after every await`, guardCheckCount >= minimumGuardChecks, `found ${guardCheckCount}`)
   }
 
   // handleToggleShowcaseEnabled remains the only per-field autosave
@@ -346,19 +347,15 @@ function extractFunctionSource(src, signaturePattern) {
     check('handleToggleShowcaseEnabled never optimistically writes to showcases before the server confirms (no setShowcases call outside the success branch)', (fnBody.match(/setShowcases\(/g) || []).length === 1)
   }
 
-  // handleSaveShowcaseDraft's own partial-failure contract: resolvedIds
-  // must be returned on BOTH the success and every failure branch (never
-  // silently dropped), and it must update dogs/showcases state itself so
-  // ShowcaseManager doesn't need a full page reload to see a persisted
-  // media reorder.
+  // Showcase save persists only Showcase fields. Canonical media mutation
+  // belongs exclusively to PuppyMediaManager.
   {
     const fnBody = extractFunctionSource(littersPageSrc, /async function handleSaveShowcaseDraft\(/)
-    const resolvedIdsReturnCount = (fnBody.match(/resolvedIds \}/g) || []).length
-    check('handleSaveShowcaseDraft returns resolvedIds on every return path (success AND every failure branch)', resolvedIdsReturnCount >= 5, `found ${resolvedIdsReturnCount}`)
-    check('handleSaveShowcaseDraft updates dogs state when media actually changed (photo and/or video)', /setDogs\(prev => prev\.map\(d => d\.id === puppyId/.test(fnBody))
+    check('handleSaveShowcaseDraft cannot upload or mutate canonical puppy media',
+      !/uploadShowcaseMediaDirect|updateShowcaseMediaOrder|setDogs\(/.test(fnBody))
+    check('handleSaveShowcaseDraft sends only Showcase fields to updateShowcasePuppy',
+      /updateShowcasePuppy\(litterId, puppyId, fields\)/.test(fnBody))
     check('handleSaveShowcaseDraft updates showcases state on a successful save', /setShowcases\(prev => \(\{ \.\.\.prev, \[litterId\]: showcase \}\)\)/.test(fnBody))
-    check('handleSaveShowcaseDraft only reorders media when the final order actually differs from what is currently persisted (skips a needless call otherwise)',
-      /JSON\.stringify\(currentPhotoIds\) !== JSON\.stringify\(finalPhotoOrder\)/.test(fnBody) && /JSON\.stringify\(currentVideoIds\) !== JSON\.stringify\(finalVideoOrder\)/.test(fnBody))
   }
 
   // UI gap fix: ShowcaseManager itself — status feedback + Draft → Save
@@ -373,12 +370,12 @@ function extractFunctionSource(src, signaturePattern) {
     /no public (?:Showcase )?(?:page|viewer|link)/i.test(showcaseManagerSrc) ||
     /nothing is shared publicly until/i.test(showcaseManagerSrc))
   // Tony live-staging fix round ("Draft → Save"): status is now keyed off
-  // a genuinely local `saveState`/`saveProgress`, not a `busy` prop tied to
+  // a genuinely local `saveState`, not a `busy` prop tied to
   // the LITTER-level toggle — it must show the exact UX states specified:
-  // a per-file progress line while saving, an unsaved-changes state before
+  // a saving line, an unsaved-changes state before
   // the FIRST save, a Retry-labeled error state after a failed save, and
   // "All changes saved" only once nothing is dirty.
-  check('ShowcaseManager shows per-file save progress ("Saving file X of Y…")', /Saving file \$\{/.test(showcaseManagerSrc))
+  check('ShowcaseManager shows a saving state without media-upload progress', /Saving…/.test(showcaseManagerSrc) && !/Saving file \$\{/.test(showcaseManagerSrc))
   check('ShowcaseManager shows the exact "Some changes could not be saved — Retry" state on failure', /Some changes could not be saved — Retry/.test(showcaseManagerSrc))
   check('ShowcaseManager shows an explicit "You have unsaved changes" state before the first save', /You have unsaved changes/.test(showcaseManagerSrc))
   check('ShowcaseManager renders an explicit "All changes saved" confirmation once nothing is dirty', /All changes saved/.test(showcaseManagerSrc))
