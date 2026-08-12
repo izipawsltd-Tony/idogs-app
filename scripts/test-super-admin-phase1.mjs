@@ -24,7 +24,7 @@ check(page.includes('fetchSuperAdminWorkspace()'), 'workspace loads through the 
 check(page.includes("'organisations'") && page.includes("'users'") && page.includes("'subscriptions'") && page.includes("'audit-logs'"), 'all Phase 1 sections are present')
 check(page.includes('Pagination') && page.includes('placeholder="Search…"'), 'lists include pagination and search')
 check(routes.includes('path="/app/super-admin/:section"'), 'dedicated Super Admin route is registered')
-check(routes.includes('<ProtectedRoute>\n            <SuperAdminWorkspacePage />'), 'Super Admin route also requires normal verified authentication')
+check(/<ProtectedRoute>\s*<SuperAdminWorkspacePage\s*\/>\s*<\/ProtectedRoute>/.test(routes), 'Super Admin route also requires normal verified authentication')
 check(layout.includes('to="/app/super-admin/dashboard"'), 'existing shortcut now opens the internal workspace')
 check(!layout.includes('idogs-admin-codex.vercel.app'), 'legacy external prototype link is removed')
 
