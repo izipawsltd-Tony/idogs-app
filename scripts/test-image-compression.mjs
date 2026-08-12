@@ -122,12 +122,19 @@ check('decodeHeicToCanvas documents that HEIF rotation/mirror properties are man
 
 // ── LittersPage.tsx wiring — confirms the module is actually USED, not
 // just defined, and that the obsolete small-HEIC-size gate is gone. The
-// Draft → Save behavioral checks (queuing, size-limit rejection
-// messages, etc.) live in test-litter-showcase.mjs alongside the rest of
-// ShowcaseManager's own tests; these are narrowly scoped to "is the
-// right function from the right module actually being called". ──
+// Puppy Edit behavioral checks live alongside the rest of the litter media
+// tests. These assertions are narrowly scoped to proving that the canonical
+// PuppyMediaManager path uses this module and Showcase does not grow a second
+// upload/compression path. ──
 {
   const littersPageSrc = readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
+  const puppyMediaStart = littersPageSrc.indexOf('function PuppyMediaManager(')
+  const showcaseManagerStart = littersPageSrc.indexOf('function ShowcaseManager(')
+  const puppyMediaManagerSrc = littersPageSrc.slice(puppyMediaStart, showcaseManagerStart)
+  const showcaseManagerSrc = littersPageSrc.slice(showcaseManagerStart)
+  const showcaseSaveStart = littersPageSrc.indexOf('async function handleSaveShowcaseDraft(')
+  const showcaseSaveEnd = littersPageSrc.indexOf('\n  async function ', showcaseSaveStart + 1)
+  const showcaseSaveSrc = littersPageSrc.slice(showcaseSaveStart, showcaseSaveEnd)
   // UPDATE (Implementation Phase 1 — direct media upload): readFileAsBase64
   // is no longer imported here — video now uploads the raw File directly
   // (uploadShowcaseMediaDirect), with no base64 step at all in this flow.
@@ -135,13 +142,17 @@ check('decodeHeicToCanvas documents that HEIF rotation/mirror properties are man
     /import \{ prepareImageForUpload, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError \} from '\.\.\/lib\/imageCompression'/.test(littersPageSrc))
   check('LittersPage.tsx no longer imports isHeicFile — the special HEIC pre-flight size gate that used it was removed along with MAX_HEIC_UPLOAD_BYTES',
     !littersPageSrc.includes("import { isHeicFile } from '../lib/heic'"))
-  check('handleAddFiles no longer has a separate, stricter size ceiling for HEIC — it is gated by the same generic 30MB photo sanity check as every other format',
-    !/isHeicFile\(file\) && file\.size > MAX_HEIC_UPLOAD_BYTES/.test(littersPageSrc) &&
-    /kind === 'photo' && file\.size > 30 \* 1024 \* 1024/.test(littersPageSrc))
-  check('handleSaveShowcaseDraft calls prepareImageForUpload for photo uploads (never sends a raw, uncompressed file of any format)',
-    /await uploadShowcaseMediaDirect\(puppyId, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(littersPageSrc))
-  check('A failed compression/decode (ImageCompressionError) surfaces its own specific, actionable message rather than a generic "Upload failed"',
-    /reason instanceof ImageCompressionError \? reason\.message/.test(littersPageSrc))
+  check('Puppy Edit has no separate, stricter HEIC size ceiling; every photo reaches the shared prepareImageForUpload path',
+    !/isHeicFile\(file\) && file\.size > MAX_HEIC_UPLOAD_BYTES/.test(puppyMediaManagerSrc) &&
+    /kind === 'photo'[\s\S]{0,160}prepareImageForUpload\(file\)/.test(puppyMediaManagerSrc))
+  check('Puppy Edit is the canonical photo upload path and sends only compressed JPEG output to direct Storage upload',
+    /await uploadShowcaseMediaDirect\(puppy\.id, 'photo', \(await prepareImageForUpload\(file\)\)\.base64, 'image\/jpeg'\)/.test(puppyMediaManagerSrc))
+  check('A failed Puppy Edit compression/decode surfaces its specific actionable Error message rather than replacing it with a generic upload failure',
+    /catch \(err\) \{[\s\S]{0,180}err instanceof Error && err\.message \? err\.message : `Failed to upload \$\{kind\}`/.test(puppyMediaManagerSrc))
+  check('Showcase save does not invoke image compression or upload handlers',
+    !/prepareImageForUpload|uploadShowcaseMediaDirect|handleUpload|handleAddFiles/.test(showcaseSaveSrc))
+  check('Showcase rendering defines no duplicate file input or media upload handler',
+    !/type="file"|function handleAddFiles|async function handleUpload/.test(showcaseManagerSrc))
 }
 
 // ── vite-env.d.ts: the ambient module declaration this TS build needs
