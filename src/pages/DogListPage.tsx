@@ -19,20 +19,22 @@ interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
+type DogFilter = 'all' | 'puppies' | 'young_adult' | 'adult' | 'senior' | 'remembered' | 'transferred'
+
 export default function DogListPage({ toast }: Props) {
   const { user, profile } = useAuth()
   const isOwner = profile?.role === 'owner'
   const [dogs, setDogs] = useState<Dog[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filterStage, setFilterStage] = useState<LifeStage | 'all' | 'transferred' | 'puppies'>('all')
+  const [filterStage, setFilterStage] = useState<DogFilter>('all')
   const [searchParams] = useSearchParams()
   useEffect(() => {
     const stage = searchParams.get('stage')
-    const valid = ['whelp', 'puppy', 'young_adult', 'adult', 'senior', 'remembered']
-    if (stage === 'puppies') setFilterStage('puppies')
+    const valid: DogFilter[] = ['young_adult', 'adult', 'senior', 'remembered', 'transferred']
+    if (stage === 'whelp' || stage === 'puppy' || stage === 'puppies') setFilterStage('puppies')
     else if (stage === 'transferred') setFilterStage('transferred')
-    else if (stage && valid.includes(stage)) setFilterStage(stage as LifeStage)
+    else if (stage && valid.includes(stage as DogFilter)) setFilterStage(stage as DogFilter)
   }, [])
 
   // Health "X missing" drill-down (?missingTest=hip|elbow|eye|dna) — a mode
@@ -107,6 +109,34 @@ export default function DogListPage({ toast }: Props) {
 
   const activeDogs = dogs.filter(d => d.status !== 'transferred' && (d as any).transferStatus !== 'pendingClaim')
   const transferredDogs = dogs.filter(d => d.status === 'transferred' || (d as any).transferStatus === 'pendingClaim')
+
+  const filterCounts = useMemo(() => {
+    const counts: Record<DogFilter, number> = {
+      all: activeDogs.length,
+      puppies: 0,
+      young_adult: 0,
+      adult: 0,
+      senior: 0,
+      remembered: 0,
+      transferred: transferredDogs.length,
+    }
+    activeDogs.forEach(dog => {
+      const stage = dog.isDeceased ? 'remembered' : calculateLifeStage(dog.dateOfBirth, dog.breed)
+      if (stage === 'whelp' || stage === 'puppy') counts.puppies += 1
+      else if (stage in counts) counts[stage as DogFilter] += 1
+    })
+    return counts
+  }, [activeDogs, transferredDogs.length])
+
+  const filterTabs: { key: DogFilter; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'puppies', label: 'Puppies' },
+    { key: 'young_adult', label: 'Passport' },
+    { key: 'adult', label: 'Adult' },
+    { key: 'senior', label: 'Senior' },
+    { key: 'remembered', label: 'Forever' },
+    { key: 'transferred', label: 'Transferred' },
+  ]
 
   const filtered = dogs.filter(d => {
     const matchSearch = !search || (d.name || '').toLowerCase().includes(search.toLowerCase()) || (d.breed || '').toLowerCase().includes(search.toLowerCase())
@@ -188,66 +218,28 @@ export default function DogListPage({ toast }: Props) {
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {(['all', 'whelp', 'puppy', 'young_adult', 'adult', 'senior'] as const).map(stage => (
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', maxWidth: '100%', minWidth: 0, paddingBottom: 2 }}>
+          {filterTabs.map(tab => (
             <button
-              key={stage}
-              onClick={() => setFilterStage(stage)}
+              key={tab.key}
+              onClick={() => setFilterStage(tab.key)}
               style={{
                 padding: '7px 14px',
                 borderRadius: 20,
                 border: '1.5px solid',
-                borderColor: filterStage === stage ? 'var(--brand-600)' : 'var(--border)',
-                background: filterStage === stage ? 'var(--brand-50)' : 'var(--white)',
-                color: filterStage === stage ? 'var(--brand-600)' : 'var(--mid)',
+                borderColor: filterStage === tab.key ? 'var(--brand-600)' : 'var(--border)',
+                background: filterStage === tab.key ? 'var(--brand-50)' : 'var(--white)',
+                color: filterStage === tab.key ? 'var(--brand-600)' : 'var(--mid)',
                 fontSize: 13,
                 fontWeight: 500,
                 cursor: 'pointer',
+                flex: '0 0 auto',
+                whiteSpace: 'nowrap',
               }}
             >
-              {stage === 'all' ? 'All' : `${LIFE_STAGE_EMOJI[stage]} ${LIFE_STAGE_LABELS[stage]}`}
+              {tab.label} ({filterCounts[tab.key]})
             </button>
           ))}
-
-          {/* Puppies (Born + Puppy grouped) filter */}
-          <button
-            key="puppies"
-            onClick={() => setFilterStage('puppies')}
-            style={{
-              padding: '7px 14px',
-              borderRadius: 20,
-              border: '1.5px solid',
-              borderColor: filterStage === 'puppies' ? 'var(--brand-600)' : 'var(--border)',
-              background: filterStage === 'puppies' ? 'var(--brand-50)' : 'var(--white)',
-              color: filterStage === 'puppies' ? 'var(--brand-600)' : 'var(--mid)',
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: 'pointer',
-            }}
-          >
-            🐾 Puppies
-          </button>
-
-          {/* Transferred filter */}
-          {transferredDogs.length > 0 && (
-            <button
-              key="transferred"
-              onClick={() => setFilterStage('transferred')}
-              style={{
-                padding: '7px 14px',
-                borderRadius: 20,
-                border: '1.5px solid',
-                borderColor: filterStage === 'transferred' ? 'var(--brand-600)' : 'var(--border)',
-                background: filterStage === 'transferred' ? 'var(--brand-50)' : 'var(--white)',
-                color: filterStage === 'transferred' ? 'var(--brand-600)' : 'var(--mid)',
-                fontSize: 13,
-                fontWeight: 500,
-                cursor: 'pointer',
-              }}
-            >
-              🔄 Transferred ({transferredDogs.length})
-            </button>
-          )}
         </div>
       </div>
       )}
