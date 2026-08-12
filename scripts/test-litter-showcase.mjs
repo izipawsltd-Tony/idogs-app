@@ -281,7 +281,7 @@ function extractFunctionSource(src, signaturePattern) {
   check('LittersPage.tsx manages Showcase via lib/db.ts server-endpoint wrappers, not direct Firestore writes',
     /createShowcase\(litterId\)/.test(littersPageSrc) &&
     /setShowcaseEnabled\(litterId, !current\.enabled\)/.test(littersPageSrc) &&
-    /updateShowcasePuppy\(litterId, puppyId, resolvedFields\)/.test(littersPageSrc) &&
+    /updateShowcasePuppy\(litterId, puppyId, fields\)/.test(littersPageSrc) &&
     !/bulkUpdateShowcasePuppies/.test(littersPageSrc))
   // Codex fix-round finding 2: the raw `profile?.plan !== 'plus'` check is
   // gone — gating must go through the shared client mirror of
@@ -329,7 +329,8 @@ function extractFunctionSource(src, signaturePattern) {
     check(`${name} was found`, fnBody.length > 0)
     check(`${name} captures the guard's generation before its first await`, /const gen = showcaseGuard\.currentGeneration\(\)/.test(fnBody))
     const guardCheckCount = (fnBody.match(/if \(!isShowcaseRequestCurrent\(gen\)\) return/g) || []).length
-    check(`${name} checks isShowcaseRequestCurrent after every await (at least 3 checks)`, guardCheckCount >= 3, `found ${guardCheckCount}`)
+    const minimumGuardChecks = name === 'handleSaveShowcaseDraft' ? 2 : 3
+    check(`${name} checks isShowcaseRequestCurrent after every await`, guardCheckCount >= minimumGuardChecks, `found ${guardCheckCount}`)
   }
 
   // handleToggleShowcaseEnabled remains the only per-field autosave
@@ -346,19 +347,15 @@ function extractFunctionSource(src, signaturePattern) {
     check('handleToggleShowcaseEnabled never optimistically writes to showcases before the server confirms (no setShowcases call outside the success branch)', (fnBody.match(/setShowcases\(/g) || []).length === 1)
   }
 
-  // handleSaveShowcaseDraft's own partial-failure contract: resolvedIds
-  // must be returned on BOTH the success and every failure branch (never
-  // silently dropped), and it must update dogs/showcases state itself so
-  // ShowcaseManager doesn't need a full page reload to see a persisted
-  // media reorder.
+  // Showcase save persists only Showcase fields. Canonical media mutation
+  // belongs exclusively to PuppyMediaManager.
   {
     const fnBody = extractFunctionSource(littersPageSrc, /async function handleSaveShowcaseDraft\(/)
-    const resolvedIdsReturnCount = (fnBody.match(/resolvedIds \}/g) || []).length
-    check('handleSaveShowcaseDraft returns resolvedIds on every return path (success AND every failure branch)', resolvedIdsReturnCount >= 5, `found ${resolvedIdsReturnCount}`)
-    check('handleSaveShowcaseDraft updates dogs state when media actually changed (photo and/or video)', /setDogs\(prev => prev\.map\(d => d\.id === puppyId/.test(fnBody))
+    check('handleSaveShowcaseDraft cannot upload or mutate canonical puppy media',
+      !/uploadShowcaseMediaDirect|updateShowcaseMediaOrder|setDogs\(/.test(fnBody))
+    check('handleSaveShowcaseDraft sends only Showcase fields to updateShowcasePuppy',
+      /updateShowcasePuppy\(litterId, puppyId, fields\)/.test(fnBody))
     check('handleSaveShowcaseDraft updates showcases state on a successful save', /setShowcases\(prev => \(\{ \.\.\.prev, \[litterId\]: showcase \}\)\)/.test(fnBody))
-    check('handleSaveShowcaseDraft only reorders media when the final order actually differs from what is currently persisted (skips a needless call otherwise)',
-      /JSON\.stringify\(currentPhotoIds\) !== JSON\.stringify\(finalPhotoOrder\)/.test(fnBody) && /JSON\.stringify\(currentVideoIds\) !== JSON\.stringify\(finalVideoOrder\)/.test(fnBody))
   }
 
   // UI gap fix: ShowcaseManager itself — status feedback + Draft → Save
@@ -373,12 +370,12 @@ function extractFunctionSource(src, signaturePattern) {
     /no public (?:Showcase )?(?:page|viewer|link)/i.test(showcaseManagerSrc) ||
     /nothing is shared publicly until/i.test(showcaseManagerSrc))
   // Tony live-staging fix round ("Draft → Save"): status is now keyed off
-  // a genuinely local `saveState`/`saveProgress`, not a `busy` prop tied to
+  // a genuinely local `saveState`, not a `busy` prop tied to
   // the LITTER-level toggle — it must show the exact UX states specified:
-  // a per-file progress line while saving, an unsaved-changes state before
+  // a saving line, an unsaved-changes state before
   // the FIRST save, a Retry-labeled error state after a failed save, and
   // "All changes saved" only once nothing is dirty.
-  check('ShowcaseManager shows per-file save progress ("Saving file X of Y…")', /Saving file \$\{/.test(showcaseManagerSrc))
+  check('ShowcaseManager shows a saving state without media-upload progress', /Saving…/.test(showcaseManagerSrc) && !/Saving file \$\{/.test(showcaseManagerSrc))
   check('ShowcaseManager shows the exact "Some changes could not be saved — Retry" state on failure', /Some changes could not be saved — Retry/.test(showcaseManagerSrc))
   check('ShowcaseManager shows an explicit "You have unsaved changes" state before the first save', /You have unsaved changes/.test(showcaseManagerSrc))
   check('ShowcaseManager renders an explicit "All changes saved" confirmation once nothing is dirty', /All changes saved/.test(showcaseManagerSrc))
@@ -393,22 +390,21 @@ function extractFunctionSource(src, signaturePattern) {
   // Requirement: warn before reload/close with unsaved changes.
   check('ShowcaseManager registers a beforeunload warning while any puppy draft is dirty', /window\.addEventListener\('beforeunload', handleBeforeUnload\)/.test(showcaseManagerSrc) && /if \(!anyDirty\) return/.test(showcaseManagerSrc))
 
-  // Tony live-staging finding ("cannot add puppy images or videos", and
-  // later "media missing from public page"): media upload/publish is now
-  // entirely local-draft + queued, reachable regardless of whether the
-  // puppy has any media yet, with an explicit Private/Published badge
-  // per item so "uploaded but never published" can't happen silently.
-  check('ShowcaseManager queues a new file locally (handleAddFiles) rather than uploading it immediately',
-    /function handleAddFiles/.test(showcaseManagerSrc) && !/handleAddFiles[\s\S]{0,400}await uploadShowcaseMedia/.test(showcaseManagerSrc))
-  check('Large-image fix: oversized video is rejected up front with an actionable message (video cannot be compressed client-side); HEIC/HEIF now shares the same generic 30MB photo ceiling as every other format, since it is decoded+compressed like any other photo rather than sent raw',
-    /kind === 'photo' && file\.size > 30 \* 1024 \* 1024/.test(showcaseManagerSrc) && /kind === 'video' && file\.size > MAX_VIDEO_UPLOAD_BYTES/.test(showcaseManagerSrc))
-  check('Each media thumbnail shows an explicit Private/Published/Queued badge',
-    /isQueued \? 'Queued' : isPublished \? 'Published' : 'Private'/.test(showcaseManagerSrc))
-  check('Removing an already-persisted media item requires confirmation; a queued (not-yet-uploaded) one does not',
-    /const isQueued = ref\.startsWith\('local:'\)/.test(showcaseManagerSrc) && /if \(!isQueued && !window\.confirm/.test(showcaseManagerSrc))
-  check('An explicit "Set as cover" action exists for photos beyond the first (not just implicit via reordering)',
-    /Set as cover photo/.test(showcaseManagerSrc) && /handleSetCover/.test(showcaseManagerSrc))
-  check('The "Photos & videos" toggle button is NOT gated behind the puppy already having media (it must be the way to add the FIRST one)',
+  // Single-source media UX: Puppy Edit owns uploads/gallery management;
+  // Showcase only previews that same gallery and selects public items.
+  const puppyMediaManagerSrc = extractFunctionSource(littersPageSrc, /function PuppyMediaManager\(/)
+  const renderMediaGridSrc = extractFunctionSource(showcaseManagerSrc, /function renderMediaGrid\(/)
+  check('Puppy Edit remains the canonical upload source with Add photo and Add video controls',
+    /\+ Add photo/.test(puppyMediaManagerSrc) && /\+ Add video/.test(puppyMediaManagerSrc))
+  check('Showcase has no duplicate photo/video file inputs or Add photo/Add video controls',
+    !/type="file"/.test(showcaseManagerSrc) && !/\+ Add photo|\+ Add video/.test(showcaseManagerSrc))
+  check('Each Showcase media thumbnail shows an explicit Private/Published badge',
+    /isPublished \? 'Published' : 'Private'/.test(renderMediaGridSrc))
+  check('Showcase media thumbnails cannot reorder, delete, or set the canonical cover',
+    !/handleReorder|handleRemoveMedia|handleSetCover/.test(renderMediaGridSrc))
+  check('Showcase explains that gallery management belongs in Edit puppy and this panel only selects public media',
+    /Upload, remove, reorder, and choose the cover in Edit puppy above/.test(showcaseManagerSrc) && /Select here only what appears publicly/.test(showcaseManagerSrc))
+  check('The "Photos & videos" preview/publication toggle is available even when the puppy has no media',
     (() => {
       const idx = showcaseManagerSrc.indexOf("setMediaOpenFor(opening ? puppy.id : null)")
       if (idx === -1) return false

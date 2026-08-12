@@ -568,119 +568,24 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     }
   }
 
-  // Tony live-staging fix round ("Draft → Save"): visibility, availability,
-  // colour/personality/date/price/deposit, publish state, cover/order, and
-  // media itself all used to autosave individually (one network call per
-  // keystroke/toggle/upload) — see the removed handleTogglePuppyVisible/
-  // handlePuppyAvailabilityChange/handlePublishedMediaChange/
-  // handleShowcaseDetailsChange/handleShowcaseBulkAction this replaces.
-  // That made "All changes saved" only ever true for the ONE field that
-  // just fired, never a reliable statement about the whole panel, and
-  // gave a large-image upload no natural place to compress/retry without
-  // either blocking every other field or silently losing the file.
-  //
-  // ShowcaseManager now owns an entirely local draft (including a queue of
-  // not-yet-uploaded File objects) and calls this ONE function when the
-  // breeder clicks "Save changes". It uploads any queued files first
-  // (compressed client-side where possible — see lib/imageCompression.ts —
-  // limited to 2 concurrent requests, one file per request, never combined),
-  // then finalizes media order/deletions, then persists every other field
-  // in a single updateShowcasePuppy call. `photoOrder`/`videoOrder` are the
-  // FINAL desired arrays of refs — either a real, already-persisted
-  // MediaItem.id, or a `local:<id>` placeholder present as a key in
-  // `queuedFiles` for anything not uploaded yet.
-  //
-  // Partial-failure contract: `resolvedIds` (local ref -> real mediaId) is
-  // returned on BOTH success and failure. On failure, ShowcaseManager uses
-  // it to mark every already-uploaded file as done (so a retry never
-  // re-uploads it) while leaving the rest of the draft — and every field
-  // that was never reached — exactly as the breeder left it, ready to
-  // retry with nothing lost and nothing falsely reported as saved.
+  // Showcase saves only Showcase-specific fields and publication choices.
+  // Puppy Edit owns the canonical media collection; this path must never
+  // upload, delete, or reorder dog.photos/dog.videos.
   async function handleSaveShowcaseDraft(
     litterId: string,
     puppyId: string,
-    fields: Parameters<typeof updateShowcasePuppy>[2],
-    photoOrder: string[],
-    videoOrder: string[],
-    queuedFiles: Map<string, { file: File; kind: 'photo' | 'video' }>,
-    onFileUploaded: () => void
+    fields: Parameters<typeof updateShowcasePuppy>[2]
   ) {
     const gen = showcaseGuard.currentGeneration()
-    const resolvedIds: Record<string, string> = {}
-
-    // Upload queued files 2 at a time, in stable order (photos then
-    // videos) so "Saving file X of Y" is a single, monotonic count for
-    // the whole save, not a per-kind one that could look like it restarted.
-    const toUpload = [...photoOrder, ...videoOrder].filter(ref => queuedFiles.has(ref))
-    for (let i = 0; i < toUpload.length; i += 2) {
-      const batch = toUpload.slice(i, i + 2)
-      const settled = await Promise.allSettled(batch.map(async ref => {
-        const { file, kind } = queuedFiles.get(ref)!
-        // Implementation Phase 1: direct-to-Storage upload — photos are
-        // still compressed client-side first (prepareImageForUpload,
-        // unchanged), but the bytes now go straight to Storage via a
-        // signed URL instead of being proxied through this Vercel
-        // function as base64 JSON. Video is sent as the raw File
-        // (never base64-encoded at all now — no reason to inflate it
-        // ~33% just to immediately decode it server-side again).
-        const result = kind === 'photo'
-          ? await uploadShowcaseMediaDirect(puppyId, 'photo', (await prepareImageForUpload(file)).base64, 'image/jpeg')
-          : await uploadShowcaseMediaDirect(puppyId, 'video', file, file.type || 'video/mp4')
-        return { ref, mediaId: result.mediaId }
-      }))
-      for (const outcome of settled) {
-        if (outcome.status === 'fulfilled') {
-          resolvedIds[outcome.value.ref] = outcome.value.mediaId
-          onFileUploaded()
-        } else {
-          if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
-          const reason = outcome.reason
-          const message = reason instanceof ImageCompressionError ? reason.message
-            : reason instanceof Error && reason.message ? reason.message : 'Upload failed'
-          return { ok: false as const, error: message, resolvedIds }
-        }
-      }
-    }
-
-    if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
-
-    const finalPhotoOrder = photoOrder.map(ref => resolvedIds[ref] ?? ref)
-    const finalVideoOrder = videoOrder.map(ref => resolvedIds[ref] ?? ref)
-
     try {
-      const currentPuppy = dogs.find(d => d.id === puppyId)
-      const currentPhotoIds = (currentPuppy?.photos || []).map(p => p.id)
-      const currentVideoIds = (currentPuppy?.videos || []).map(p => p.id)
-      let latestPhotos: MediaItem[] | undefined
-      let latestVideos: MediaItem[] | undefined
-
-      if (JSON.stringify(currentPhotoIds) !== JSON.stringify(finalPhotoOrder)) {
-        const result = await updateShowcaseMediaOrder(puppyId, 'photo', finalPhotoOrder)
-        if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
-        latestPhotos = result.photos.map(p => ({ id: p.id, path: '' }))
-      }
-      if (JSON.stringify(currentVideoIds) !== JSON.stringify(finalVideoOrder)) {
-        const result = await updateShowcaseMediaOrder(puppyId, 'video', finalVideoOrder)
-        if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
-        latestVideos = result.videos.map(v => ({ id: v.id, path: '' }))
-      }
-      if (latestPhotos || latestVideos) {
-        setDogs(prev => prev.map(d => d.id === puppyId ? { ...d, ...(latestPhotos ? { photos: latestPhotos } : {}), ...(latestVideos ? { videos: latestVideos } : {}) } : d))
-      }
-
-      const resolvedFields = {
-        ...fields,
-        publishedPhotoIds: (fields.publishedPhotoIds || []).map(ref => resolvedIds[ref] ?? ref),
-        publishedVideoIds: (fields.publishedVideoIds || []).map(ref => resolvedIds[ref] ?? ref),
-      }
-      const showcase = await updateShowcasePuppy(litterId, puppyId, resolvedFields)
-      if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
+      const showcase = await updateShowcasePuppy(litterId, puppyId, fields)
+      if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale' }
       setShowcases(prev => ({ ...prev, [litterId]: showcase }))
-      return { ok: true as const, resolvedIds }
+      return { ok: true as const }
     } catch (err) {
-      if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale', resolvedIds }
+      if (!isShowcaseRequestCurrent(gen)) return { ok: false as const, error: 'stale' }
       const message = err instanceof Error && err.message ? err.message : 'Failed to save changes'
-      return { ok: false as const, error: message, resolvedIds }
+      return { ok: false as const, error: message }
     }
   }
 
@@ -1554,8 +1459,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                           busy={!!showcaseBusy[litter.id]}
                           saveError={showcaseSaveError[litter.id] || ''}
                           onToggleEnabled={() => handleToggleShowcaseEnabled(litter.id, showcases[litter.id] as LitterShowcase)}
-                          onSaveDraft={(puppyId, fields, photoOrder, videoOrder, queuedFiles, onFileUploaded) =>
-                            handleSaveShowcaseDraft(litter.id, puppyId, fields, photoOrder, videoOrder, queuedFiles, onFileUploaded)}
+                          onSaveDraft={(puppyId, fields) => handleSaveShowcaseDraft(litter.id, puppyId, fields)}
                           shareBusy={!!shareBusy[litter.id]}
                           shareError={shareError[litter.id] || ''}
                           shareLastRotatedToken={shareLastRotatedToken[litter.id]}
@@ -1707,10 +1611,9 @@ export default function LittersPage({ toast, dismissAll }: Props) {
 // validation, HEIC/HEIF re-decode as a defense-in-depth backstop).
 // Staging fix ("mobile upload 413"): this component used to send the
 // RAW file straight to the server as base64 JSON with no client-side
-// resize — unlike ShowcaseManager's queued draft flow (handleAddFiles /
-// handleSaveShowcaseDraft below), which already went through
-// lib/imageCompression.ts's prepareImageForUpload() for exactly this
-// reason. A real phone JPEG (routinely 3-8MB) base64-inflates by ~33%,
+// resize. PuppyMediaManager now owns the only upload flow and applies
+// lib/imageCompression.ts's prepareImageForUpload() before upload. A real
+// phone JPEG (routinely 3-8MB) base64-inflates by ~33%,
 // landing well past Vercel's Serverless Function request-body ceiling
 // (4.5MB) before api/upload-showcase-media.js's handler ever runs —
 // api/_lib/image-pipeline.js's own much more generous server-side
@@ -1720,8 +1623,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
 // base64/network work) — no separate copy of that logic. Video is never
 // compressed client-side anywhere in this codebase (no safe
 // dependency-free in-browser transcode); the only lever is rejecting an
-// oversized video up front with a clear message, mirroring
-// handleAddFiles's own MAX_VIDEO_UPLOAD_BYTES guard.
+// oversized video up front with a clear message.
 // Codex fix-round ("Revocable media delivery"): dog.photos/dog.videos are
 // now PRIVATE Storage paths ({id, path} — see MediaItem in
 // src/types/index.ts), never directly renderable. This component fetches
@@ -1775,8 +1677,7 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
   }
 
   async function handleUpload(file: File, kind: 'photo' | 'video') {
-    // Same pre-flight guard handleAddFiles already uses below — reject
-    // an oversized video before any base64/network or Storage work,
+    // Reject an oversized video before any base64/network or Storage work,
     // with the same user-facing wording, rather than letting it fail
     // as a bare error from the signed-upload request.
     if (kind === 'video' && file.size > MAX_VIDEO_UPLOAD_BYTES) {
@@ -1946,25 +1847,10 @@ const PUBLIC_AVAILABILITY_OPTIONS: ShowcaseAvailability[] = ['available', 'reser
 
 // ── LITTER SHOWCASE MANAGER — Draft → Save (Tony live-staging fix
 // round) ─────────────────────────────────────────────────────────────
-// Every puppy-level field (visibility, availability, colour,
-// personality, ready date, price/deposit + show-publicly, publish
-// state, cover/order) and all media (new uploads, reorder, deletion)
-// now live in a LOCAL draft per puppy until the breeder clicks "Save
-// changes" — nothing here calls the server on every keystroke/toggle
-// any more (see the removed handleTogglePuppyVisible/
-// handlePuppyAvailabilityChange/handlePublishedMediaChange/
-// handleShowcaseDetailsChange/handleShowcaseBulkAction this replaced,
-// and handleSaveShowcaseDraft in the parent, called exactly once per
-// dirty puppy on Save). The litter-level "Showcase enabled" toggle and
-// the public-share-link panel below remain their own already-good,
-// single-boolean autosave actions — unrelated to the "many small edits"
-// problem this redesign targets.
-//
-// A queued (not-yet-uploaded) file exists ONLY as a `local:<ref>` key in
-// `queuedFiles` and a matching entry in `photoOrders`/`videoOrders` (and
-// optionally `publishedPhotos`/`publishedVideos`) — the SAME ref is used
-// everywhere until Save resolves it to a real MediaItem.id (see
-// handleSaveAll below and handleSaveShowcaseDraft in the parent).
+// Every Showcase-specific puppy field (visibility, availability, public
+// details and media publication selection) lives in a local draft until
+// Save. Canonical media upload, deletion, order and cover management live
+// exclusively in PuppyMediaManager above.
 
 interface PuppyDraftFields {
   visible: boolean
@@ -1976,12 +1862,6 @@ interface PuppyDraftFields {
   depositCents: number | null
   showPrice: boolean
   showDeposit: boolean
-}
-
-interface QueuedFile {
-  file: File
-  kind: 'photo' | 'video'
-  previewUrl: string
 }
 
 function buildDraftFields(entry: LitterShowcase['puppies'][string], fallbackColour: string | null | undefined): PuppyDraftFields {
@@ -2037,11 +1917,6 @@ function buildDraftFields(entry: LitterShowcase['puppies'][string], fallbackColo
 
 // Strict validation runs on blur. Invalid raw text remains visible and
 // the last valid cents remain committed; Save is blocked until corrected.
-let localMediaRefCounter = 0
-function newLocalMediaRef() {
-  localMediaRefCounter += 1
-  return `local:${Date.now()}-${localMediaRefCounter}`
-}
 
 function ShowcaseManager({
   litterId, showcase, puppyDogs, busy, saveError, onToggleEnabled, onSaveDraft,
@@ -2055,12 +1930,8 @@ function ShowcaseManager({
   onToggleEnabled: () => void
   onSaveDraft: (
     puppyId: string,
-    fields: Parameters<typeof updateShowcasePuppy>[2],
-    photoOrder: string[],
-    videoOrder: string[],
-    queuedFiles: Map<string, { file: File; kind: 'photo' | 'video' }>,
-    onFileUploaded: () => void
-  ) => Promise<{ ok: true; resolvedIds: Record<string, string> } | { ok: false; error: string; resolvedIds: Record<string, string> }>
+    fields: Parameters<typeof updateShowcasePuppy>[2]
+  ) => Promise<{ ok: true } | { ok: false; error: string }>
   shareBusy: boolean
   shareError: string
   // Only ever set immediately after THIS session rotated a link — never
@@ -2102,20 +1973,39 @@ function ShowcaseManager({
     Object.fromEntries(puppyDogs.map(p => [p.id, [...((showcase.puppies?.[p.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY).publishedPhotoIds || [])]])))
   const [publishedVideos, setPublishedVideos] = useState<Record<string, string[]>>(() =>
     Object.fromEntries(puppyDogs.map(p => [p.id, [...((showcase.puppies?.[p.id] ?? DEFAULT_SHOWCASE_PUPPY_ENTRY).publishedVideoIds || [])]])))
-  const [queuedFiles, setQueuedFiles] = useState<Record<string, Map<string, QueuedFile>>>(() =>
-    Object.fromEntries(puppyDogs.map(p => [p.id, new Map<string, QueuedFile>()])))
   const [dirty, setDirty] = useState<Record<string, boolean>>({})
   const [puppyErrors, setPuppyErrors] = useState<Record<string, string>>({})
   const [moneyErrors, setMoneyErrors] = useState<Record<string, { price?: string; deposit?: string }>>({})
   const [existingMedia, setExistingMedia] = useState<Record<string, { photos: SignedMediaItem[]; videos: SignedMediaItem[] }>>({})
   const [mediaLoading, setMediaLoading] = useState<Record<string, boolean>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle')
-  const [saveProgress, setSaveProgress] = useState<{ done: number; total: number } | null>(null)
   const [privateAccessOpenFor, setPrivateAccessOpenFor] = useState<string | null>(null)
   const [privateAccessGrants, setPrivateAccessGrants] = useState<Record<string, PrivateDogAccessGrant | null | undefined>>({})
   const [privateAccessEmails, setPrivateAccessEmails] = useState<Record<string, string>>({})
   const [privateAccessBusy, setPrivateAccessBusy] = useState<Record<string, boolean>>({})
   const [privateAccessErrors, setPrivateAccessErrors] = useState<Record<string, string>>({})
+
+  // Puppy Edit is the canonical gallery manager. Keep this Showcase draft
+  // synchronized when Edit adds, removes, reorders, or changes the cover so
+  // the accordion is only a current preview/publication selector, never a
+  // second media-management source.
+  useEffect(() => {
+    const nextPhotoOrders = Object.fromEntries(puppyDogs.map(p => [p.id, (p.photos || []).map(item => item.id)]))
+    const nextVideoOrders = Object.fromEntries(puppyDogs.map(p => [p.id, (p.videos || []).map(item => item.id)]))
+    setPhotoOrders(nextPhotoOrders)
+    setVideoOrders(nextVideoOrders)
+    setPublishedPhotos(prev => Object.fromEntries(puppyDogs.map(p => [
+      p.id,
+      (prev[p.id] || []).filter(id => nextPhotoOrders[p.id].includes(id)),
+    ])))
+    setPublishedVideos(prev => Object.fromEntries(puppyDogs.map(p => [
+      p.id,
+      (prev[p.id] || []).filter(id => nextVideoOrders[p.id].includes(id)),
+    ])))
+    if (mediaOpenFor && puppyDogs.some(p => p.id === mediaOpenFor)) {
+      void ensureMediaLoaded(mediaOpenFor, true)
+    }
+  }, [puppyDogs])
 
   const visibleCount = puppyDogs.filter(p => fields[p.id]?.visible).length
   const anyDirty = Object.values(dirty).some(Boolean)
@@ -2145,8 +2035,8 @@ function ShowcaseManager({
     setDirty(prev => ({ ...prev, [puppyId]: true }))
   }
 
-  async function ensureMediaLoaded(puppyId: string) {
-    if (existingMedia[puppyId] || mediaLoading[puppyId]) return
+  async function ensureMediaLoaded(puppyId: string, force = false) {
+    if ((!force && existingMedia[puppyId]) || mediaLoading[puppyId]) return
     setMediaLoading(prev => ({ ...prev, [puppyId]: true }))
     try {
       const result = await getShowcaseMediaUrls(puppyId)
@@ -2159,101 +2049,8 @@ function ShowcaseManager({
   }
 
   function mediaUrlForRef(puppyId: string, ref: string, kind: 'photo' | 'video'): string | undefined {
-    if (ref.startsWith('local:')) return queuedFiles[puppyId]?.get(ref)?.previewUrl
     const list = kind === 'photo' ? existingMedia[puppyId]?.photos : existingMedia[puppyId]?.videos
     return list?.find(item => item.id === ref)?.url
-  }
-
-  function handleAddFiles(puppyId: string, fileList: FileList | null, kind: 'photo' | 'video') {
-    if (!fileList || fileList.length === 0) return
-    const file = fileList[0]
-    // Tony live-staging fix round ("large-image 413" / "HEIC upload
-    // fails"): reject up front, with an actionable message, anything this
-    // component has no business even trying to load (an absurd raw
-    // upload) or cannot safely transcode client-side (video — no safe
-    // dependency-free client-side transcode). Photos — including HEIC/
-    // HEIF — are NOT gated here on size beyond this one generic sanity
-    // ceiling: lib/imageCompression.ts's prepareImageForUpload() decodes
-    // (HEIC/HEIF via libheif-js's WASM build) and compresses every photo
-    // format identically at Save time, well under Vercel's body-size
-    // ceiling regardless of the original file's size. HEIC previously had
-    // its own much stricter 3MB pre-flight ceiling here because it used
-    // to be sent RAW (uncompressed) — that is exactly what made ordinary
-    // iPhone photos (routinely 3-8MB) fail; it is gone now that HEIC is
-    // decoded and compressed like every other format.
-    if (kind === 'photo' && file.size > 30 * 1024 * 1024) {
-      toast('This photo is over 30MB — please choose a smaller file', 'error')
-      return
-    }
-    if (kind === 'video' && file.size > MAX_VIDEO_UPLOAD_BYTES) {
-      toast(`This video is over ${Math.floor(MAX_VIDEO_UPLOAD_BYTES / (1024 * 1024))}MB — please trim or compress it before uploading`, 'error')
-      return
-    }
-    const ref = newLocalMediaRef()
-    const previewUrl = URL.createObjectURL(file)
-    setQueuedFiles(prev => {
-      const next = new Map(prev[puppyId])
-      next.set(ref, { file, kind, previewUrl })
-      return { ...prev, [puppyId]: next }
-    })
-    if (kind === 'photo') setPhotoOrders(prev => ({ ...prev, [puppyId]: [...(prev[puppyId] || []), ref] }))
-    else setVideoOrders(prev => ({ ...prev, [puppyId]: [...(prev[puppyId] || []), ref] }))
-    markDirty(puppyId)
-  }
-
-  function handleSetCover(puppyId: string, ref: string) {
-    setPhotoOrders(prev => {
-      const current = prev[puppyId] || []
-      const idx = current.indexOf(ref)
-      if (idx <= 0) return prev
-      const next = [...current]
-      next.splice(idx, 1)
-      next.unshift(ref)
-      return { ...prev, [puppyId]: next }
-    })
-    markDirty(puppyId)
-  }
-
-  function handleReorder(puppyId: string, kind: 'photo' | 'video', ref: string, direction: -1 | 1) {
-    const setter = kind === 'photo' ? setPhotoOrders : setVideoOrders
-    setter(prev => {
-      const current = prev[puppyId] || []
-      const idx = current.indexOf(ref)
-      const target = idx + direction
-      if (idx === -1 || target < 0 || target >= current.length) return prev
-      const next = [...current]
-      const tmp = next[idx]
-      next[idx] = next[target]
-      next[target] = tmp
-      return { ...prev, [puppyId]: next }
-    })
-    markDirty(puppyId)
-  }
-
-  function handleRemoveMedia(puppyId: string, kind: 'photo' | 'video', ref: string) {
-    // A not-yet-uploaded file needs no confirmation — nothing is
-    // persisted yet, so removing it from the queue is a pure, harmless
-    // undo. An already-persisted item DOES require confirmation (task
-    // requirement) even though the actual server delete is only QUEUED,
-    // not sent immediately — deferred to Save like everything else here
-    // — since a breeder who confirms and then reloads before saving
-    // would otherwise lose that intent silently with no record of it.
-    const isQueued = ref.startsWith('local:')
-    if (!isQueued && !window.confirm(`Remove this ${kind}? This cannot be undone once you save.`)) return
-    const orderSetter = kind === 'photo' ? setPhotoOrders : setVideoOrders
-    orderSetter(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).filter(r => r !== ref) }))
-    const publishedSetter = kind === 'photo' ? setPublishedPhotos : setPublishedVideos
-    publishedSetter(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).filter(r => r !== ref) }))
-    if (isQueued) {
-      setQueuedFiles(prev => {
-        const next = new Map(prev[puppyId])
-        const queuedEntry = next.get(ref)
-        if (queuedEntry) URL.revokeObjectURL(queuedEntry.previewUrl)
-        next.delete(ref)
-        return { ...prev, [puppyId]: next }
-      })
-    }
-    markDirty(puppyId)
   }
 
   function handleTogglePublished(puppyId: string, kind: 'photo' | 'video', ref: string, checked: boolean) {
@@ -2360,26 +2157,13 @@ function ShowcaseManager({
     }
   }
 
-  // The one "Save changes" (and, on a retry, effectively "Retry") action
-  // for the whole panel — iterates every DIRTY puppy sequentially
-  // (bounded, predictable server load; each puppy's own upload step is
-  // already internally capped at 2 concurrent requests — see
-  // handleSaveShowcaseDraft in the parent), reports a single running
-  // "Saving file X of Y" count across all of them, and never marks the
-  // overall save "All changes saved" unless EVERY dirty puppy genuinely
-  // persisted. A puppy that fails keeps its `dirty` flag, its specific
-  // error, and whatever files hadn't uploaded yet — a second click only
-  // ever retries what's still outstanding, never the whole panel over
-  // again, and never silently drops or re-sends something that already
-  // succeeded.
+  // The one Save/Retry action for Showcase-specific draft fields. It never
+  // uploads or mutates canonical puppy media.
   async function handleSaveAll() {
     if (hasMoneyErrors) return
     const dirtyPuppyIds = puppyDogs.map(p => p.id).filter(id => dirty[id])
     if (dirtyPuppyIds.length === 0) return
     setSaveState('saving')
-    const totalFiles = dirtyPuppyIds.reduce((sum, id) => sum + (queuedFiles[id]?.size || 0), 0)
-    let uploadedSoFar = 0
-    setSaveProgress(totalFiles > 0 ? { done: 0, total: totalFiles } : null)
 
     let anyFailed = false
     for (const puppyId of dirtyPuppyIds) {
@@ -2397,38 +2181,7 @@ function ShowcaseManager({
         publishedPhotoIds: publishedPhotos[puppyId] || [],
         publishedVideoIds: publishedVideos[puppyId] || [],
       }
-      const filesForPuppy = new Map(
-        Array.from((queuedFiles[puppyId] || new Map<string, QueuedFile>()).entries())
-          .map(([ref, q]) => [ref, { file: q.file, kind: q.kind }] as const)
-      )
-      const result = await onSaveDraft(
-        puppyId,
-        patch,
-        photoOrders[puppyId] || [],
-        videoOrders[puppyId] || [],
-        filesForPuppy,
-        () => { uploadedSoFar += 1; setSaveProgress(prev => (prev ? { ...prev, done: uploadedSoFar } : prev)) }
-      )
-
-      // Whether this puppy fully succeeded or not, resolve every local
-      // ref that DID finish uploading to its real id — those files are
-      // genuinely persisted now, so a retry must never re-upload them.
-      if (Object.keys(result.resolvedIds).length > 0) {
-        const resolve = (ref: string) => result.resolvedIds[ref] ?? ref
-        setPhotoOrders(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).map(resolve) }))
-        setVideoOrders(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).map(resolve) }))
-        setPublishedPhotos(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).map(resolve) }))
-        setPublishedVideos(prev => ({ ...prev, [puppyId]: (prev[puppyId] || []).map(resolve) }))
-        setQueuedFiles(prev => {
-          const next = new Map(prev[puppyId])
-          for (const ref of Object.keys(result.resolvedIds)) {
-            const queuedEntry = next.get(ref)
-            if (queuedEntry) URL.revokeObjectURL(queuedEntry.previewUrl)
-            next.delete(ref)
-          }
-          return { ...prev, [puppyId]: next }
-        })
-      }
+      const result = await onSaveDraft(puppyId, patch)
 
       if (result.ok) {
         setDirty(prev => ({ ...prev, [puppyId]: false }))
@@ -2443,7 +2196,6 @@ function ShowcaseManager({
       }
     }
 
-    setSaveProgress(null)
     setSaveState(anyFailed ? 'error' : 'idle')
   }
 
@@ -2454,7 +2206,6 @@ function ShowcaseManager({
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
         {order.map((ref, i) => {
           const url = mediaUrlForRef(puppy.id, ref, kind)
-          const isQueued = ref.startsWith('local:')
           const isPublished = published.includes(ref)
           return (
             <div key={ref} style={{ position: 'relative', width: 72 }}>
@@ -2470,16 +2221,8 @@ function ShowcaseManager({
                   "uploaded but forgot to publish" is no longer possible
                   to miss. */}
               <span style={{ position: 'absolute', top: 2, right: 2, fontSize: 8, fontWeight: 700, background: isPublished ? 'var(--brand-600)' : 'var(--gold)', color: '#fff', padding: '1px 4px', borderRadius: 4 }}>
-                {isQueued ? 'Queued' : isPublished ? 'Published' : 'Private'}
+                {isPublished ? 'Published' : 'Private'}
               </span>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-                <button type="button" disabled={i === 0} onClick={() => handleReorder(puppy.id, kind, ref, -1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>◀</button>
-                <button type="button" onClick={() => handleRemoveMedia(puppy.id, kind, ref)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>✕</button>
-                <button type="button" disabled={i === order.length - 1} onClick={() => handleReorder(puppy.id, kind, ref, 1)} style={{ fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mid)' }}>▶</button>
-              </div>
-              {kind === 'photo' && i > 0 && (
-                <button type="button" onClick={() => handleSetCover(puppy.id, ref)} title="Set as cover photo" style={{ width: '100%', marginTop: 2, fontSize: 9, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--mid)', padding: '1px 0' }}>★ Set cover</button>
-              )}
               <label style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 2, fontSize: 9, cursor: 'pointer' }}>
                 <input type="checkbox" checked={isPublished} onChange={e => handleTogglePublished(puppy.id, kind, ref, e.target.checked)} style={{ width: 11, height: 11, accentColor: 'var(--brand-600)' }} />
                 Publish
@@ -2596,7 +2339,7 @@ function ShowcaseManager({
         {saveState === 'saving' ? (
           <span style={{ color: 'var(--mid)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span className="spinner" style={{ width: 12, height: 12 }} />
-            {saveProgress ? `Saving file ${saveProgress.done + 1 > saveProgress.total ? saveProgress.total : saveProgress.done + 1} of ${saveProgress.total}…` : 'Saving…'}
+            Saving…
           </span>
         ) : saveState === 'error' ? (
           <span style={{ color: 'var(--danger)' }}>Some changes could not be saved — Retry</span>
@@ -2864,27 +2607,13 @@ function ShowcaseManager({
                           <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
                         ) : (
                           <>
+                            <p style={{ fontSize: 11, color: 'var(--light)', marginBottom: 10 }}>
+                              Upload, remove, reorder, and choose the cover in Edit puppy above. Select here only what appears publicly.
+                            </p>
                             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Photos {photoOrder.length > 0 && `(${photoOrder.length})`}</div>
                             {renderMediaGrid(puppy, 'photo')}
-                            <input
-                              type="file"
-                              accept="image/*,.heic,.heif"
-                              style={{ display: 'none' }}
-                              id={`add-photo-${puppy.id}`}
-                              onChange={e => { handleAddFiles(puppy.id, e.target.files, 'photo'); e.target.value = '' }}
-                            />
-                            <label htmlFor={`add-photo-${puppy.id}`} className="btn btn-secondary btn-sm" style={{ marginBottom: 14, cursor: 'pointer', display: 'inline-block' }}>+ Add photo</label>
-
                             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Videos {videoOrder.length > 0 && `(${videoOrder.length})`}</div>
                             {renderMediaGrid(puppy, 'video')}
-                            <input
-                              type="file"
-                              accept="video/mp4,video/quicktime,video/webm"
-                              style={{ display: 'none' }}
-                              id={`add-video-${puppy.id}`}
-                              onChange={e => { handleAddFiles(puppy.id, e.target.files, 'video'); e.target.value = '' }}
-                            />
-                            <label htmlFor={`add-video-${puppy.id}`} className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', display: 'inline-block' }}>+ Add video</label>
                           </>
                         )}
                       </div>
