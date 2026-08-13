@@ -1,8 +1,10 @@
 // api/super-admin/organisations/[id].js — Get details for a single organisation
 import { getFirestore } from 'firebase-admin/firestore'
-import { computeEffectivePlan } from '../../_lib/entitlements.js'
+import { getAuth } from 'firebase-admin/auth'
+import { computeEffectivePlan, hasValidInternalEntitlement } from '../../_lib/entitlements.js'
 import { getEstimatedMonthlyPrice } from '../_pricing.js'
-import { verifySuperAdmin } from '../_auth.js'
+import { ALLOWED_ADMINS, verifySuperAdmin } from '../_auth.js'
+import { accountState, normalizeEntitlement } from '../_operations.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -20,6 +22,7 @@ export default async function handler(req, res) {
 
   try {
     const db = getFirestore()
+    const auth = getAuth()
 
     // 2. Fetch breeder user document
     const userDoc = await db.collection('users').doc(id).get()
@@ -32,6 +35,7 @@ export default async function handler(req, res) {
     if (userData.role !== 'breeder') {
       return res.status(403).json({ error: 'Forbidden: Account is not a Breeder organisation' })
     }
+    const authUser = await auth.getUser(id).catch(error => error.code === 'auth/user-not-found' ? null : Promise.reject(error))
 
     // 3. Fetch dogs and litters in parallel (where tenantId === id)
     const [dogsSnap, littersSnap] = await Promise.all([
@@ -115,6 +119,10 @@ export default async function handler(req, res) {
         state: userData.state || null,
         phone: userData.phone || null,
         estimatedMrr,
+        accountState: accountState(authUser),
+        internalEntitlement: normalizeEntitlement(userData.internalEntitlement),
+        internalEntitlementActive: hasValidInternalEntitlement(userData),
+        superAdminAuthorized: ALLOWED_ADMINS.includes(String(userData.email || '').toLowerCase().trim()),
         dogsCount: activeDogs.length,
         littersCount: litters.length,
         puppiesCount,

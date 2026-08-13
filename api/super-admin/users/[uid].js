@@ -1,8 +1,9 @@
 // api/super-admin/users/[uid].js — Get details for a single user
 import { getFirestore } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
-import { computeEffectivePlan } from '../../_lib/entitlements.js'
-import { verifySuperAdmin } from '../_auth.js'
+import { computeEffectivePlan, hasValidInternalEntitlement } from '../../_lib/entitlements.js'
+import { accountState, normalizeEntitlement } from '../_operations.js'
+import { ALLOWED_ADMINS, verifySuperAdmin } from '../_auth.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -139,6 +140,10 @@ export default async function handler(req, res) {
         phone: profileData?.phone || authData?.phoneNumber || null,
         subscriptionStatus: profileData?.subscriptionStatus || null,
         stripeSubscriptionId: profileData?.stripeSubscriptionId || null,
+        accountState: accountState(authData),
+        internalEntitlement: normalizeEntitlement(profileData?.internalEntitlement),
+        internalEntitlementActive: hasValidInternalEntitlement(profileData || {}),
+        superAdminAuthorized: ALLOWED_ADMINS.includes(String(email).toLowerCase().trim()),
         dogsCount: activeDogs.length,
         littersCount: isOwner ? 0 : litters.length,
         puppiesCount: isOwner ? 0 : puppiesCount,
