@@ -50,6 +50,8 @@ import SuperAdminAuditLogsPage from '../super-admin/pages/SuperAdminAuditLogsPag
 import SuperAdminAuditLogDetailPage from '../super-admin/pages/SuperAdminAuditLogDetailPage'
 import SuperAdminSupportPage from '../super-admin/pages/SuperAdminSupportPage'
 import SuperAdminSettingsPage from '../super-admin/pages/SuperAdminSettingsPage'
+import SuperAdminSupportInboxPage from '../super-admin/pages/SuperAdminSupportInboxPage'
+import SuperAdminFaqManagementPage from '../super-admin/pages/SuperAdminFaqManagementPage'
 
 import AppLayout from './layout/AppLayout'
 import LoadingScreen from './ui/LoadingScreen'
@@ -124,6 +126,8 @@ export default function App() {
           <Route path="billing-payments" element={<SuperAdminModulePlaceholderPage title="Billing & Payments" section="Revenue" description="Billing and payment review will be added in a later Super Admin batch." />} />
           <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
           <Route path="support" element={<SuperAdminSupportPage />} />
+          <Route path="support-inbox" element={<SuperAdminSupportInboxPage />} />
+          <Route path="support-faqs" element={<SuperAdminFaqManagementPage />} />
           <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
           <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
           <Route path="settings" element={<SuperAdminSettingsPage />} />

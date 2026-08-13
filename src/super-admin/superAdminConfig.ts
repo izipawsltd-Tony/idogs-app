@@ -69,6 +69,16 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
         description: 'Read-only support signals (no ticket system yet)',
       },
       {
+        label: 'Support Inbox',
+        path: `${SUPER_ADMIN_BASE_PATH}/support-inbox`,
+        description: 'Reply to and manage user conversations',
+      },
+      {
+        label: 'FAQ Management',
+        path: `${SUPER_ADMIN_BASE_PATH}/support-faqs`,
+        description: 'Draft and publish support answers',
+      },
+      {
         label: 'Audit Logs',
         path: `${SUPER_ADMIN_BASE_PATH}/audit-logs`,
         description: 'Administrative activity, targets, reasons, and state changes',
