@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mergePuppyEntry, validatePuppyPatch, ShowcaseValidationError } from '../api/_lib/showcase-schema.js'
 
 let passed = 0
@@ -34,9 +34,17 @@ check('save failure copy is exact', manager.includes('Changes couldn’t be save
 // dark for the Showcase header). The real intent this check protects —
 // "uses an official iDogs logo asset, never a dog-emoji placeholder" —
 // is unchanged; only the exact filename(s) it looks for are updated.
+for (const asset of [
+  '01_idogs_primary_horizontal_transparent.png',
+  '02_idogs_icon_transparent.png',
+  '03_idogs_reversed_white_transparent.png',
+  '04_idogs_trademark_colour_white_background.png',
+]) {
+  check(`official logo asset exists: ${asset}`, existsSync(new URL(`../public/${asset}`, import.meta.url)))
+}
 check('public page uses official logo assets and no dog emoji placeholder',
-  publicPage.includes('src="/idogs-logo-horizontal-light-bg.png"') &&
-  publicPage.includes('src="/idogs-logo-horizontal-dark-bg.png"') &&
+  publicPage.includes('src="/01_idogs_primary_horizontal_transparent.png"') &&
+  publicPage.includes('src="/03_idogs_reversed_white_transparent.png"') &&
   !publicPage.includes('🐶'))
 check('puppy-specific CTA and accessible dialog exist', publicPage.includes('Enquire about {puppy.name}') && publicPage.includes('aria-modal="true"'))
 check('dialog traps focus and restores the opener', publicPage.includes("event.key !== 'Tab'") && publicPage.includes('openerRef.current?.focus()') && publicPage.includes('closeRef.current?.focus()'))

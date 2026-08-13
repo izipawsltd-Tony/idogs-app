@@ -29,9 +29,7 @@
 .super-admin-brand img {
   width: 92px;
   height: auto;
-  background: #ffffff;
-  border-radius: 8px;
-  padding: 5px 7px;
+  object-fit: contain;
 }
 
 .super-admin-brand span,

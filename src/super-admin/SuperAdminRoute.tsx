@@ -12,7 +12,7 @@ function SuperAdminLoadingScreen() {
   return (
     <div className="super-admin-loading">
       <div className="super-admin-loading-mark">
-        <img src="/logo.png" alt="iDogs" />
+        <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" />
       </div>
       <div className="spinner" />
     </div>

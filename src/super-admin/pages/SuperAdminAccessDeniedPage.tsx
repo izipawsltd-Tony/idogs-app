@@ -4,7 +4,7 @@ export default function SuperAdminAccessDeniedPage() {
   return (
     <div className="super-admin-denied">
       <div className="super-admin-denied-card">
-        <img src="/logo.png" alt="iDogs" />
+        <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" />
         <p className="super-admin-kicker">Super SaaS Admin</p>
         <h1>Access restricted</h1>
         <p>

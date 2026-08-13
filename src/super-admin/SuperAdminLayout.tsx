@@ -16,7 +16,7 @@ export default function SuperAdminLayout() {
     <div className="super-admin-shell">
       <aside className="super-admin-sidebar" aria-label="Super Admin navigation">
         <div className="super-admin-brand">
-          <img src="/logo.png" alt="iDogs" />
+          <img src="/03_idogs_reversed_white_transparent.png" alt="iDogs" />
           <div>
             <span>Super SaaS Admin</span>
             <strong>Operations Console</strong>

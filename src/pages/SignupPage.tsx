@@ -83,7 +83,7 @@ export default function SignupPage({ toast }: Props) {
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <Link to="/" style={{ display: 'inline-block', textDecoration: 'none' }}>
-            <img src="/idogs-logo-horizontal-light-bg.png" alt="iDogs" style={{ height: 72, width: 240, objectFit: 'contain' }} />
+            <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ height: 72, width: 240, objectFit: 'contain' }} />
           </Link>
           <div style={{ marginTop: 12 }}>
             <span style={{ fontSize: 13, fontWeight: 500, padding: '4px 12px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)' }}>
