@@ -22,6 +22,8 @@ interface AuditLogRow {
   reason: string | null
   beforeState: Record<string, unknown> | null
   afterState: Record<string, unknown> | null
+  outcome: string | null
+  providerMessageId: string | null
 }
 
 interface Summary {
@@ -59,6 +61,7 @@ const ACTION_LABELS: Record<string, string> = {
   super_admin_grant_entitlement: 'Grant entitlement',
   super_admin_update_entitlement: 'Update entitlement',
   super_admin_revoke_entitlement: 'Revoke entitlement',
+  super_admin_send_verification_email: 'Send verification email',
 }
 
 export function auditStateSummary(state: Record<string, unknown> | null): string {
@@ -68,6 +71,7 @@ export function auditStateSummary(state: Record<string, unknown> | null): string
   const parts: string[] = []
   if (account?.access) parts.push(`Access: ${account.access}`)
   if (entitlement) parts.push(`Entitlement: ${entitlement.granted ? `granted${entitlement.expiresAt ? ` until ${entitlement.expiresAt}` : ''}` : 'revoked'}`)
+  if (typeof state.emailVerified === 'boolean') parts.push(`Email verified: ${state.emailVerified ? 'yes' : 'no'}`)
   return parts.length ? parts.join('; ') : 'Recorded state'
 }
 
@@ -412,6 +416,8 @@ export default function SuperAdminAuditLogsPage() {
                             <div><strong>Target</strong><span>{l.targetUserEmail || l.dogName || 'Legacy target not recorded'}{l.targetUserId || l.dogId ? ` (${l.targetUserId || l.dogId})` : ''}</span></div>
                             <div><strong>Organisation</strong><span>{l.targetOrganisationName || 'Not recorded'}{l.targetOrganisationId || l.tenantId ? ` (${l.targetOrganisationId || l.tenantId})` : ''}</span></div>
                             <div><strong>Action / type</strong><span>{ACTION_LABELS[l.action] || l.action} · {l.isDeletionEvent ? 'Deletion' : 'Standard'}{l.actorRole ? ` · ${l.actorRole}` : ''}</span></div>
+                            {l.outcome && <div><strong>Outcome</strong><span>{l.outcome.replace(/_/g, ' ')}</span></div>}
+                            {l.providerMessageId && <div><strong>Provider message ID</strong><span>{l.providerMessageId}</span></div>}
                             <div className="super-admin-audit-detail-wide"><strong>Details</strong><span>{l.details || 'Legacy details not recorded'}</span></div>
                           </div>
                           <div className="super-admin-audit-state-grid">

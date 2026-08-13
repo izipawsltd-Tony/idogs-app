@@ -66,11 +66,7 @@ export async function verifySuperAdmin(req, res, authOverride = null) {
     return decodedToken
   } catch (error) {
     console.error('Super Admin Auth Error:', error.message)
-    res.status(401).json({
-      error: 'Unauthorized: Invalid or expired token',
-      message: error.message,
-      code: error.code
-    })
+    res.status(401).json({ error: 'Unauthorized: Invalid or expired token' })
     return null
   }
 }

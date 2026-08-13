@@ -171,6 +171,8 @@ await test('older audit records without Phase 2 identity fields normalize safely
     reason: null,
     beforeState: null,
     afterState: null,
+    outcome: null,
+    providerMessageId: null,
   })
   const nested = normalizeAuditIdentity({ target: { uid: 'user-1', email: 'legacy@example.com', role: 'breeder' }, reason: 'Legacy nested target' })
   assert.equal(nested.targetUserEmail, 'legacy@example.com')

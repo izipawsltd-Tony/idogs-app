@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import SuperAdminAccountOperations, { type AdminAccountState, type AdminEntitlementState } from '../SuperAdminAccountOperations'
+import SuperAdminEmailVerificationAction, { type EmailVerificationStatus } from '../SuperAdminEmailVerificationAction'
 
 interface AssociatedDog {
   id: string
@@ -35,7 +36,8 @@ interface UserDetail {
   email: string
   role: string
   plan: string
-  emailVerified: boolean
+  emailVerified: boolean | null
+  emailVerificationStatus: EmailVerificationStatus
   createdAt: string | null
   lastSignInTime: string | null
   firstName: string | null
@@ -249,10 +251,10 @@ export default function SuperAdminUserDetailPage() {
             fontWeight: 700,
             padding: '6px 12px',
             borderRadius: 6,
-            background: data.emailVerified ? '#d1fae5' : '#fee2e2',
-            color: data.emailVerified ? '#065f46' : '#991b1b'
+            background: data.emailVerificationStatus === 'verified' ? '#d1fae5' : data.emailVerificationStatus === 'not_verified' ? '#fee2e2' : '#e2e8f0',
+            color: data.emailVerificationStatus === 'verified' ? '#065f46' : data.emailVerificationStatus === 'not_verified' ? '#991b1b' : '#475569'
           }}>
-            {data.emailVerified ? 'Email Verified' : 'Email Unverified'}
+            {data.emailVerificationStatus === 'verified' ? 'Email Verified' : data.emailVerificationStatus === 'not_verified' ? 'Email Not Verified' : 'Auth Account Unavailable'}
           </span>
         </div>
       </section>
@@ -261,7 +263,7 @@ export default function SuperAdminUserDetailPage() {
       <div className="super-admin-panel" style={{ background: '#fbfcfc', border: '1px solid #dfe5df', padding: 16, marginBottom: 24, borderRadius: 8 }}>
         <h4 style={{ margin: '0 0 6px', fontSize: 13, color: '#53635a', fontWeight: 700, textTransform: 'uppercase' }}>Operational Limitations Warning</h4>
         <p style={{ margin: 0, fontSize: 12, color: '#6c7a70', lineHeight: 1.5 }}>
-          This console provides a <strong>read-only</strong> inspection tool. User credentials modification, email verification toggling, password resetting, and account deletion are completely disabled in iDogs V1.
+          Email verification support only sends a new secure link; it never marks an account verified. Password resets, email changes, impersonation, and account deletion remain disabled.
         </p>
       </div>
 
@@ -425,16 +427,25 @@ export default function SuperAdminUserDetailPage() {
           </div>
 
           {user ? (
-            <SuperAdminAccountOperations
-              user={user}
-              targetUid={data.uid}
-              targetLabel={data.email}
-              accountState={data.accountState}
-              entitlement={data.internalEntitlement}
-              entitlementActive={data.internalEntitlementActive}
-              superAdminAuthorized={data.superAdminAuthorized}
-              onUpdated={fetchUserDetail}
-            />
+            <>
+              <SuperAdminEmailVerificationAction
+                user={user}
+                targetUid={data.uid}
+                targetEmail={data.email}
+                status={data.emailVerificationStatus}
+                onUpdated={fetchUserDetail}
+              />
+              <SuperAdminAccountOperations
+                user={user}
+                targetUid={data.uid}
+                targetLabel={data.email}
+                accountState={data.accountState}
+                entitlement={data.internalEntitlement}
+                entitlementActive={data.internalEntitlementActive}
+                superAdminAuthorized={data.superAdminAuthorized}
+                onUpdated={fetchUserDetail}
+              />
+            </>
           ) : null}
 
         </div>
