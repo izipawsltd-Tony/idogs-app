@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { Fragment, useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 
@@ -71,6 +71,10 @@ export function auditStateSummary(state: Record<string, unknown> | null): string
   return parts.length ? parts.join('; ') : 'Recorded state'
 }
 
+function auditStateDetails(state: Record<string, unknown> | null): string {
+  return state ? JSON.stringify(state, null, 2) : 'Not recorded'
+}
+
 type DateFilter = 'all' | '24h' | '7d' | '30d'
 
 export default function SuperAdminAuditLogsPage() {
@@ -86,6 +90,7 @@ export default function SuperAdminAuditLogsPage() {
   const [filterAction, setFilterAction] = useState('all')
   const [filterRole, setFilterRole] = useState('all')
   const [filterDate, setFilterDate] = useState<DateFilter>('all')
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null)
 
   async function fetchAuditLogs() {
     if (!user) return
@@ -342,45 +347,43 @@ export default function SuperAdminAuditLogsPage() {
           </div>
         </div>
 
-        <div style={{ overflowX: 'auto' }}>
+        <div>
           {filteredLogs.length === 0 ? (
             <p style={{ fontSize: 13, color: '#6c7a70', padding: '30px 0', textAlign: 'center' }}>No events match the active search filters.</p>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <table className="super-admin-audit-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid #dfe5df', textAlign: 'left', color: '#6c7a70' }}>
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Timestamp</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Actor</th>
-                  <th style={{ padding: '10px 8px', fontWeight: 600 }}>Role</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Action</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Target</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Organisation</th>
-                  <th style={{ padding: '10px 8px', fontWeight: 600, textAlign: 'center' }}>Type</th>
-                  <th style={{ padding: '10px 8px', fontWeight: 600 }}>Reason</th>
-                  <th style={{ padding: '10px 8px', fontWeight: 600 }}>Before → After</th>
-                  <th style={{ padding: '10px 8px', fontWeight: 600, textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredLogs.map(l => (
-                  <tr key={l.id} style={{ borderBottom: '1px solid #f4f6f5' }}>
-                    <td style={{ padding: '10px 8px', color: '#53635a', whiteSpace: 'nowrap' }}>{formatDateTime(l.createdAt)}</td>
-                    <td style={{ padding: '10px 8px', color: '#10291d', fontWeight: 600 }}>{l.performedByEmail || l.performedBy || 'System'}</td>
-                    <td style={{ padding: '10px 8px' }}>
-                      {l.actorRole ? (
-                        <span style={{
-                          fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-                          background: l.actorRole === 'owner' ? '#e2e8f0' : '#e1f5ee',
-                          color: l.actorRole === 'owner' ? '#475569' : '#085041',
-                          textTransform: 'uppercase',
-                        }}>
-                          {l.actorRole}
-                        </span>
-                      ) : '—'}
+                {filteredLogs.map(l => {
+                  const isExpanded = expandedLogId === l.id
+                  const detailPanelId = `audit-details-${l.id}`
+                  return (
+                  <Fragment key={l.id}>
+                  <tr className="super-admin-audit-row" style={{ borderBottom: isExpanded ? 0 : '1px solid #f4f6f5' }}>
+                    <td data-label="Timestamp" style={{ padding: '10px 8px', color: '#53635a', whiteSpace: 'nowrap' }}>{formatDateTime(l.createdAt)}</td>
+                    <td data-label="Actor" style={{ padding: '10px 8px', color: '#10291d', fontWeight: 600 }}>{l.performedByEmail || l.performedBy || 'System'}</td>
+                    <td data-label="Action" style={{ padding: '10px 8px' }}>
+                      <div>{ACTION_LABELS[l.action] || l.action}</div>
+                      <button
+                        type="button"
+                        className="super-admin-audit-toggle"
+                        aria-expanded={isExpanded}
+                        aria-controls={detailPanelId}
+                        onClick={() => setExpandedLogId(current => current === l.id ? null : l.id)}
+                      >
+                        {isExpanded ? '▴ Hide details' : '▾ View details'}
+                      </button>
                     </td>
-                    <td style={{ padding: '10px 8px' }}>{ACTION_LABELS[l.action] || l.action}</td>
-                    <td style={{ padding: '10px 8px', color: '#53635a' }}>{l.targetUserEmail || l.targetUserId || l.dogName || l.dogId || 'Legacy target not recorded'}</td>
-                    <td style={{ padding: '10px 8px' }}>
+                    <td data-label="Target" style={{ padding: '10px 8px', color: '#53635a', overflowWrap: 'anywhere' }}>{l.targetUserEmail || l.targetUserId || l.dogName || l.dogId || 'Legacy target not recorded'}</td>
+                    <td data-label="Organisation" style={{ padding: '10px 8px', overflowWrap: 'anywhere' }}>
                       {l.targetOrganisationId || l.tenantId ? (
                         l.targetOrganisationId || l.tenantIsOrganisation ? (
                           <Link to={`/app/super-admin/organisations/${l.targetOrganisationId || l.tenantId}`} style={{ color: '#085041', fontWeight: 600 }}>
@@ -391,36 +394,33 @@ export default function SuperAdminAuditLogsPage() {
                         )
                       ) : '—'}
                     </td>
-                    <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                      <span style={{
-                        fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-                        background: l.isDeletionEvent ? '#fee2e2' : '#eef5f0',
-                        color: l.isDeletionEvent ? '#991b1b' : '#1a3a2a',
-                        textTransform: 'uppercase',
-                      }}>
-                        {l.isDeletionEvent ? 'Deletion' : 'Standard'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '10px 8px', color: '#53635a', maxWidth: 220 }} title={l.reason || l.details}>
-                      {l.reason || l.details || 'Legacy reason not recorded'}
-                    </td>
-                    <td style={{ padding: '10px 8px', color: '#53635a', minWidth: 220, fontSize: 12 }}>
-                      {auditStateSummary(l.beforeState)} → {auditStateSummary(l.afterState)}
-                    </td>
-                    <td style={{ padding: '10px 8px', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        <Link to={`/app/super-admin/audit-logs/${l.id}`} className="btn btn-secondary btn-sm" style={{ padding: '4px 10px', textDecoration: 'none' }}>
-                          View
-                        </Link>
-                        {l.performedBy && (
-                          <Link to={`/app/super-admin/users/${l.performedBy}`} className="btn btn-secondary btn-sm" style={{ padding: '4px 10px', textDecoration: 'none' }}>
-                            View User
-                          </Link>
-                        )}
-                      </div>
-                    </td>
                   </tr>
-                ))}
+                  {isExpanded && (
+                    <tr className="super-admin-audit-detail-row">
+                      <td colSpan={5}>
+                        <section id={detailPanelId} className="super-admin-audit-details" aria-label={`Details for ${ACTION_LABELS[l.action] || l.action}`}>
+                          <div className="super-admin-audit-detail-summary">
+                            <div><strong>Reason</strong><span>{l.reason || 'Legacy reason not recorded'}</span></div>
+                            <div><strong>Target</strong><span>{l.targetUserEmail || l.dogName || 'Legacy target not recorded'}{l.targetUserId || l.dogId ? ` (${l.targetUserId || l.dogId})` : ''}</span></div>
+                            <div><strong>Organisation</strong><span>{l.targetOrganisationName || 'Not recorded'}{l.targetOrganisationId || l.tenantId ? ` (${l.targetOrganisationId || l.tenantId})` : ''}</span></div>
+                            <div><strong>Action / type</strong><span>{ACTION_LABELS[l.action] || l.action} · {l.isDeletionEvent ? 'Deletion' : 'Standard'}{l.actorRole ? ` · ${l.actorRole}` : ''}</span></div>
+                            <div className="super-admin-audit-detail-wide"><strong>Details</strong><span>{l.details || 'Legacy details not recorded'}</span></div>
+                          </div>
+                          <div className="super-admin-audit-state-grid">
+                            <div><strong>Before state</strong><span>{auditStateSummary(l.beforeState)}</span><pre>{auditStateDetails(l.beforeState)}</pre></div>
+                            <div><strong>After state</strong><span>{auditStateSummary(l.afterState)}</span><pre>{auditStateDetails(l.afterState)}</pre></div>
+                          </div>
+                          <div className="super-admin-audit-detail-actions">
+                            <Link to={`/app/super-admin/audit-logs/${l.id}`} className="btn btn-secondary btn-sm">Open event</Link>
+                            {l.performedBy && <Link to={`/app/super-admin/users/${l.performedBy}`} className="btn btn-secondary btn-sm">View actor</Link>}
+                          </div>
+                        </section>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           )}

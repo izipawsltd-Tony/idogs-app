@@ -208,15 +208,35 @@ await test('browser component has confirmation, required reason, no direct Fires
 
 await test('audit table renders target identity, organisation, reason, state transition, and safe legacy fallback', () => {
   const source = fs.readFileSync(path.join(root, 'src/super-admin/pages/SuperAdminAuditLogsPage.tsx'), 'utf8')
-  for (const heading of ['Timestamp', 'Actor', 'Action', 'Target', 'Organisation', 'Reason', 'Before → After']) {
+  for (const heading of ['Timestamp', 'Actor', 'Action', 'Target', 'Organisation']) {
     assert.match(source, new RegExp(`>${heading}<`))
   }
   assert.match(source, /targetUserEmail \|\| l\.targetUserId/)
   assert.match(source, /targetOrganisationName/)
-  assert.match(source, /l\.reason \|\| l\.details/)
+  assert.match(source, /l\.reason \|\| ['"]Legacy reason not recorded['"]/)
+  assert.match(source, /l\.details \|\| ['"]Legacy details not recorded['"]/)
   assert.match(source, /auditStateSummary\(l\.beforeState\).*auditStateSummary\(l\.afterState\)/s)
   assert.match(source, /Legacy target not recorded/)
   assert.doesNotMatch(source, /Read-only Phase 1|Admin write actions are not enabled in V1/)
+})
+
+await test('audit rows expose accessible responsive expand/collapse details', () => {
+  const source = fs.readFileSync(path.join(root, 'src/super-admin/pages/SuperAdminAuditLogsPage.tsx'), 'utf8')
+  const css = fs.readFileSync(path.join(root, 'src/super-admin/superAdmin.css'), 'utf8')
+  assert.match(source, /expandedLogId/)
+  assert.match(source, /aria-expanded=\{isExpanded\}/)
+  assert.match(source, /aria-controls=\{detailPanelId\}/)
+  assert.match(source, /View details/)
+  assert.match(source, /Hide details/)
+  assert.match(source, />Reason</)
+  assert.match(source, />Before state</)
+  assert.match(source, />After state</)
+  assert.match(source, /auditStateDetails\(l\.beforeState\)/)
+  assert.match(source, /auditStateDetails\(l\.afterState\)/)
+  assert.match(source, /Legacy reason not recorded/)
+  assert.match(source, /Legacy target not recorded/)
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.super-admin-audit-table/)
+  assert.doesNotMatch(source, /overflowX: ['"]auto['"]/)
 })
 
 await test('active Audit Logs navigation route mounts the Phase 2 component and normalized API', () => {
