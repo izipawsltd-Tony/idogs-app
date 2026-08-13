@@ -1,6 +1,7 @@
 // api/super-admin/audit-logs/[id].js — Get a single audit log event by document id
 import { getFirestore } from 'firebase-admin/firestore'
 import { verifySuperAdmin } from '../_auth.js'
+import { normalizeAuditIdentity } from '../_audit-view.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -34,6 +35,15 @@ export default async function handler(req, res) {
 
     const actorData = actorDoc && actorDoc.exists ? actorDoc.data() : null
     const tenantData = tenantDoc && tenantDoc.exists ? tenantDoc.data() : null
+    const usersMap = {}
+    if (d.targetUserId && d.targetUserId === d.tenantId && tenantData) {
+      usersMap[d.targetUserId] = {
+        email: tenantData.email || null,
+        role: tenantData.role || null,
+        name: tenantData.kennelName || tenantData.displayName || `${tenantData.firstName || ''} ${tenantData.lastName || ''}`.trim() || null,
+      }
+    }
+    const identity = normalizeAuditIdentity(d, usersMap)
 
     const getSafeDate = (val) => {
       if (!val) return null
@@ -55,6 +65,7 @@ export default async function handler(req, res) {
         performedByEmail: d.performedByEmail || actorData?.email || null,
         actorRole: actorData?.role || null,
         tenantIsOrganisation: tenantData?.role === 'breeder',
+        ...identity,
       },
       dataModelNotice:
         'This event is displayed exactly as stored in the auditLogs collection. Actor role and organisation eligibility are derived by looking up performedBy/tenantId against user profiles, not a stored relationship.',

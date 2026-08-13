@@ -1,23 +1,7 @@
-import { useState, useEffect, type CSSProperties } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-
-const disabledButtonStyle: CSSProperties = {
-  padding: '4px 10px',
-  fontSize: 12,
-  borderRadius: 6,
-  border: '1px solid var(--border)',
-  background: '#f4f6f5',
-  color: '#9aa39d',
-  cursor: 'not-allowed',
-}
-
-const disabledDangerButtonStyle: CSSProperties = {
-  ...disabledButtonStyle,
-  color: '#b91c1c',
-  background: '#fee2e2',
-  borderColor: '#fca5a5',
-}
+import SuperAdminAccountOperations, { type AdminAccountState, type AdminEntitlementState } from '../SuperAdminAccountOperations'
 
 interface AssociatedDog {
   id: string
@@ -61,6 +45,10 @@ interface UserDetail {
   phone: string | null
   subscriptionStatus: string | null
   stripeSubscriptionId: string | null
+  accountState: AdminAccountState
+  internalEntitlement: AdminEntitlementState | null
+  internalEntitlementActive: boolean
+  superAdminAuthorized: boolean
   dogsCount: number
   littersCount: number
   puppiesCount: number
@@ -436,24 +424,18 @@ export default function SuperAdminUserDetailPage() {
             </div>
           </div>
 
-          {/* Placeholder operations */}
-          <div className="super-admin-panel" style={{ padding: 20 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 700, color: '#10291d' }}>Console Operations</h3>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <button type="button" disabled title="Coming later" style={disabledButtonStyle}>
-                Impersonate User — Coming later
-              </button>
-              <button type="button" disabled title="Coming later" style={disabledButtonStyle}>
-                Toggle Email Verification — Coming later
-              </button>
-              <button type="button" disabled title="Coming later" style={disabledButtonStyle}>
-                Reset Password — Coming later
-              </button>
-              <button type="button" disabled title="Coming later" style={disabledDangerButtonStyle}>
-                Delete User Account — Coming later
-              </button>
-            </div>
-          </div>
+          {user ? (
+            <SuperAdminAccountOperations
+              user={user}
+              targetUid={data.uid}
+              targetLabel={data.email}
+              accountState={data.accountState}
+              entitlement={data.internalEntitlement}
+              entitlementActive={data.internalEntitlementActive}
+              superAdminAuthorized={data.superAdminAuthorized}
+              onUpdated={fetchUserDetail}
+            />
+          ) : null}
 
         </div>
 

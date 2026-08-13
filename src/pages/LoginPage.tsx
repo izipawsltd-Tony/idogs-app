@@ -61,7 +61,7 @@ export default function LoginPage({ toast }: Props) {
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <Link to="/" style={{ display: 'inline-block', textDecoration: 'none' }}>
             <img
-              src="/idogs-logo-horizontal-light-bg.png"
+              src="/01_idogs_primary_horizontal_transparent.png"
               alt="iDogs"
               style={{ height: 72, width: 240, objectFit: 'contain' }}
             />

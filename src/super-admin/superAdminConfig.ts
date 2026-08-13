@@ -71,7 +71,7 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
       {
         label: 'Audit Logs',
         path: `${SUPER_ADMIN_BASE_PATH}/audit-logs`,
-        description: 'Read-only platform activity trail',
+        description: 'Administrative activity, targets, reasons, and state changes',
       },
     ],
   },

@@ -14,6 +14,13 @@ interface AuditLogDetail {
   performedByEmail: string | null
   actorRole: string | null
   tenantIsOrganisation: boolean
+  targetUserId: string | null
+  targetUserEmail: string | null
+  targetOrganisationId: string | null
+  targetOrganisationName: string | null
+  reason: string | null
+  beforeState: Record<string, unknown> | null
+  afterState: Record<string, unknown> | null
 }
 
 interface ApiResponse {
@@ -177,7 +184,18 @@ export default function SuperAdminAuditLogDetailPage() {
           <div><span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6c7a70', marginBottom: 4 }}>ACTION</span>{data.action}</div>
           <div><span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6c7a70', marginBottom: 4 }}>ACTOR</span>{data.performedByEmail || data.performedBy || 'System'}</div>
           <div><span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6c7a70', marginBottom: 4 }}>ACTOR ROLE</span>{data.actorRole || '—'}</div>
-          <div><span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6c7a70', marginBottom: 4 }}>TARGET</span>{data.dogName || data.dogId || '—'}</div>
+          <div><span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6c7a70', marginBottom: 4 }}>TARGET</span>{data.targetUserEmail || data.targetUserId || data.dogName || data.dogId || 'Legacy target not recorded'}</div>
+          <div><span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6c7a70', marginBottom: 4 }}>ORGANISATION</span>{data.targetOrganisationName || data.targetOrganisationId || 'Not applicable'}</div>
+        </div>
+
+        <div style={{ marginTop: 20 }}>
+          <span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6c7a70', marginBottom: 6 }}>REASON</span>
+          <p style={{ fontSize: 13, color: '#1a3a2a', background: '#f7f9f8', border: '1px solid #e6ece7', borderRadius: 6, padding: 12 }}>{data.reason || 'Legacy reason not recorded'}</p>
+        </div>
+
+        <div style={{ marginTop: 20 }}>
+          <span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#6c7a70', marginBottom: 6 }}>BEFORE → AFTER</span>
+          <pre style={{ fontSize: 12, color: '#1a3a2a', background: '#f7f9f8', border: '1px solid #e6ece7', borderRadius: 6, padding: 12, whiteSpace: 'pre-wrap' }}>{JSON.stringify(data.beforeState, null, 2) || 'Legacy state not recorded'}{`\n→\n`}{JSON.stringify(data.afterState, null, 2) || 'Legacy state not recorded'}</pre>
         </div>
 
         <div style={{ marginTop: 20 }}>

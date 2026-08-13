@@ -2,7 +2,8 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 
-if (!getApps().length) {
+function getAdminAuth() {
+  if (getApps().length) return getAuth()
   let privateKey = process.env.FIREBASE_PRIVATE_KEY || ''
   privateKey = privateKey.trim()
   if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
@@ -20,6 +21,7 @@ if (!getApps().length) {
       privateKey,
     }),
   })
+  return getAuth()
 }
 
 // Single source of truth for the Super Admin allowlist on the server side.
@@ -35,7 +37,7 @@ export const ALLOWED_ADMINS = ['trunghieungo@gmail.com', 'theresanguyenngo@gmail
  * @param {import('http').ServerResponse} res
  * @returns {Promise<import('firebase-admin/auth').DecodedIdToken | null>}
  */
-export async function verifySuperAdmin(req, res) {
+export async function verifySuperAdmin(req, res, authOverride = null) {
   const authHeader = req.headers.authorization || ''
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
 
@@ -45,7 +47,8 @@ export async function verifySuperAdmin(req, res) {
   }
 
   try {
-    const decodedToken = await getAuth().verifyIdToken(idToken)
+    const auth = authOverride || getAdminAuth()
+    const decodedToken = await auth.verifyIdToken(idToken)
 
     // Enforce verified email
     if (!decodedToken.email_verified) {

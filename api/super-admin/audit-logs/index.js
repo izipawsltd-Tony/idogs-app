@@ -5,6 +5,7 @@
 // (orderBy('createdAt','desc') with no `where` clause needs no composite index).
 import { getFirestore } from 'firebase-admin/firestore'
 import { verifySuperAdmin } from '../_auth.js'
+import { normalizeAuditIdentity } from '../_audit-view.js'
 
 const RECENT_LIMIT = 500
 
@@ -31,6 +32,7 @@ export default async function handler(req, res) {
       usersMap[doc.id] = {
         email: d.email || null,
         role: d.role || 'breeder',
+        name: d.kennelName || d.displayName || `${d.firstName || ''} ${d.lastName || ''}`.trim() || null,
       }
     })
 
@@ -50,6 +52,7 @@ export default async function handler(req, res) {
       const performedBy = d.performedBy || null
       const actor = performedBy ? usersMap[performedBy] : null
       const tenant = d.tenantId ? usersMap[d.tenantId] : null
+      const identity = normalizeAuditIdentity(d, usersMap)
 
       auditLogs.push({
         id: doc.id,
@@ -63,6 +66,7 @@ export default async function handler(req, res) {
         performedByEmail: d.performedByEmail || actor?.email || null,
         actorRole: actor?.role || null,
         tenantIsOrganisation: tenant?.role === 'breeder',
+        ...identity,
         isDeletionEvent: typeof d.action === 'string' && d.action.endsWith('_deleted'),
       })
     })

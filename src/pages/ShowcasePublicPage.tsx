@@ -18,7 +18,7 @@ const STATUS = {
 const money = (cents: number) => new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 2 }).format(cents / 100)
 
 function Placeholder({ name }: { name: string }) {
-  return <div aria-label={`${name} has no public photo`} style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: 'linear-gradient(145deg,#E1F5EE,#FDF3DC)' }}><img src="/idogs-logo-horizontal-light-bg.png" alt="" style={{ width: '55%', maxHeight: 56, objectFit: 'contain', opacity: .72 }} /></div>
+  return <div aria-label={`${name} has no public photo`} style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: 'linear-gradient(145deg,#E1F5EE,#FDF3DC)' }}><img src="/01_idogs_primary_horizontal_transparent.png" alt="" style={{ width: '55%', maxHeight: 56, objectFit: 'contain', opacity: .72 }} /></div>
 }
 
 export default function ShowcasePublicPage() {
@@ -55,12 +55,12 @@ export default function ShowcasePublicPage() {
   }
 
   if (loading) return <main style={center}><div className="spinner" aria-label="Loading Showcase" /></main>
-  if (notFound || !litter) return <main style={center}><div style={{ textAlign: 'center', maxWidth: 420 }}><img src="/idogs-logo-horizontal-light-bg.png" alt="iDogs" style={{ width: 150, marginBottom: 28 }} /><h1 style={{ fontSize: 24 }}>This link isn&apos;t available</h1><p style={{ color: 'var(--mid)' }}>It may have been turned off, replaced with a new link, or has expired.</p><Link className="btn btn-primary" to="/">Go to iDogs</Link></div></main>
+  if (notFound || !litter) return <main style={center}><div style={{ textAlign: 'center', maxWidth: 420 }}><img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ width: 150, marginBottom: 28 }} /><h1 style={{ fontSize: 24 }}>This link isn&apos;t available</h1><p style={{ color: 'var(--mid)' }}>It may have been turned off, replaced with a new link, or has expired.</p><Link className="btn btn-primary" to="/">Go to iDogs</Link></div></main>
 
   return <main style={{ minHeight: '100vh', background: '#F5F0E8', color: '#1A1917' }}>
     <header style={{ background: 'linear-gradient(135deg,#063D32,#0D6B58)', color: 'white', padding: '24px 20px 64px' }}>
       <div style={{ maxWidth: 1100, margin: 'auto' }}>
-        <Link to="/" aria-label="iDogs home"><img src="/idogs-logo-horizontal-dark-bg.png" alt="iDogs" style={{ width: 132, marginBottom: 30 }} /></Link>
+        <Link to="/" aria-label="iDogs home"><img src="/03_idogs_reversed_white_transparent.png" alt="iDogs" style={{ width: 132, marginBottom: 30 }} /></Link>
         <div style={{ color: '#BCE7DC', textTransform: 'uppercase', letterSpacing: 2, fontSize: 12, fontWeight: 700 }}>Litter Showcase</div>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(30px,6vw,52px)', margin: '8px 0 14px', overflowWrap: 'break-word' }}>{litter.name}</h1>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px', color: 'rgba(255,255,255,.82)', fontSize: 14 }}>
