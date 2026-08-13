@@ -15,6 +15,13 @@ interface AuditLogRow {
   actorRole: string | null
   tenantIsOrganisation: boolean
   isDeletionEvent: boolean
+  targetUserId: string | null
+  targetUserEmail: string | null
+  targetOrganisationId: string | null
+  targetOrganisationName: string | null
+  reason: string | null
+  beforeState: Record<string, unknown> | null
+  afterState: Record<string, unknown> | null
 }
 
 interface Summary {
@@ -47,6 +54,21 @@ const ACTION_LABELS: Record<string, string> = {
   litter_created: 'Litter created',
   puppy_added: 'Puppy added',
   life_stage_changed: 'Life stage changed',
+  super_admin_suspend_account: 'Suspend account',
+  super_admin_reactivate_account: 'Reactivate account',
+  super_admin_grant_entitlement: 'Grant entitlement',
+  super_admin_update_entitlement: 'Update entitlement',
+  super_admin_revoke_entitlement: 'Revoke entitlement',
+}
+
+export function auditStateSummary(state: Record<string, unknown> | null): string {
+  if (!state) return 'Not recorded'
+  const account = state.account as { access?: string } | undefined
+  const entitlement = state.entitlement as { granted?: boolean; expiresAt?: string | null } | null | undefined
+  const parts: string[] = []
+  if (account?.access) parts.push(`Access: ${account.access}`)
+  if (entitlement) parts.push(`Entitlement: ${entitlement.granted ? 'granted' : 'revoked'}${entitlement.expiresAt ? ` until ${entitlement.expiresAt}` : ''}`)
+  return parts.length ? parts.join('; ') : 'Recorded state'
 }
 
 type DateFilter = 'all' | '24h' | '7d' | '30d'
@@ -142,6 +164,9 @@ export default function SuperAdminAuditLogsPage() {
       (l.performedBy || '').toLowerCase().includes(term) ||
       (l.action || '').toLowerCase().includes(term) ||
       (l.tenantId || '').toLowerCase().includes(term) ||
+      (l.targetUserEmail || '').toLowerCase().includes(term) ||
+      (l.targetOrganisationName || '').toLowerCase().includes(term) ||
+      (l.reason || '').toLowerCase().includes(term) ||
       (l.dogName || '').toLowerCase().includes(term) ||
       (l.details || '').toLowerCase().includes(term)
 
@@ -345,7 +370,8 @@ export default function SuperAdminAuditLogsPage() {
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Target</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Organisation</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600, textAlign: 'center' }}>Type</th>
-                  <th style={{ padding: '10px 8px', fontWeight: 600 }}>Details</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 600 }}>Reason</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 600 }}>Before → After</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600, textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
@@ -367,15 +393,15 @@ export default function SuperAdminAuditLogsPage() {
                       ) : '—'}
                     </td>
                     <td style={{ padding: '10px 8px' }}>{ACTION_LABELS[l.action] || l.action}</td>
-                    <td style={{ padding: '10px 8px', color: '#53635a' }}>{l.dogName || l.dogId || '—'}</td>
+                    <td style={{ padding: '10px 8px', color: '#53635a' }}>{l.targetUserEmail || l.targetUserId || l.dogName || l.dogId || 'Legacy target not recorded'}</td>
                     <td style={{ padding: '10px 8px' }}>
-                      {l.tenantId ? (
-                        l.tenantIsOrganisation ? (
-                          <Link to={`/app/super-admin/organisations/${l.tenantId}`} style={{ color: '#085041', fontWeight: 600 }}>
-                            {l.tenantId.slice(0, 8)}…
+                      {l.targetOrganisationId || l.tenantId ? (
+                        l.targetOrganisationId || l.tenantIsOrganisation ? (
+                          <Link to={`/app/super-admin/organisations/${l.targetOrganisationId || l.tenantId}`} style={{ color: '#085041', fontWeight: 600 }}>
+                            {l.targetOrganisationName || `${(l.targetOrganisationId || l.tenantId)!.slice(0, 8)}…`}
                           </Link>
                         ) : (
-                          <span style={{ color: '#53635a' }}>{l.tenantId.slice(0, 8)}…</span>
+                          <span style={{ color: '#53635a' }}>{l.targetOrganisationName || `${l.tenantId!.slice(0, 8)}…`}</span>
                         )
                       ) : '—'}
                     </td>
@@ -389,8 +415,11 @@ export default function SuperAdminAuditLogsPage() {
                         {l.isDeletionEvent ? 'Deletion' : 'Standard'}
                       </span>
                     </td>
-                    <td style={{ padding: '10px 8px', color: '#53635a', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={l.details}>
-                      {l.details || '—'}
+                    <td style={{ padding: '10px 8px', color: '#53635a', maxWidth: 220 }} title={l.reason || l.details}>
+                      {l.reason || l.details || 'Legacy reason not recorded'}
+                    </td>
+                    <td style={{ padding: '10px 8px', color: '#53635a', minWidth: 220, fontSize: 12 }}>
+                      {auditStateSummary(l.beforeState)} → {auditStateSummary(l.afterState)}
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>

@@ -12,10 +12,14 @@ import {
 } from '../../_operations.js'
 
 function safeTarget(profile, authUser, uid) {
+  const organisationName = profile?.role === 'breeder'
+    ? profile.kennelName || profile.displayName || `${profile.firstName || ''} ${profile.lastName || ''}`.trim() || null
+    : null
   return {
     uid,
     email: profile?.email || authUser?.email || null,
     role: profile?.role || null,
+    organisationName,
   }
 }
 

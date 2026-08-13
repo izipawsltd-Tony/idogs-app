@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verifySuperAdmin } from '../api/super-admin/_auth.js'
+import { normalizeAuditIdentity } from '../api/super-admin/_audit-view.js'
 import {
   OperationError,
   accountState,
@@ -130,11 +131,50 @@ await test('audit record contains mandatory actor, target, action, reason, times
   const audit = buildAuditRecord({ actor: { uid: 'admin-1', email: 'admin@example.com' }, target: { uid: 'user-1', email: 'user@example.com', role: 'breeder' }, action: 'suspend_account', reason: 'Security review requested', beforeState, afterState, timestamp: 'SERVER_TIMESTAMP' })
   assert.equal(audit.performedBy, 'admin-1')
   assert.equal(audit.targetUserId, 'user-1')
+  assert.equal(audit.targetUserEmail, 'user@example.com')
   assert.equal(audit.targetOrganisationId, 'user-1')
+  assert.equal(audit.targetOrganisationName, undefined)
   assert.equal(audit.reason, 'Security review requested')
   assert.deepEqual(audit.beforeState, beforeState)
   assert.deepEqual(audit.afterState, afterState)
   assert.equal(audit.createdAt, 'SERVER_TIMESTAMP')
+})
+
+await test('suspend/reactivate/grant/update/revoke audits all persist known target identity and state', () => {
+  const actions = ['suspend_account', 'reactivate_account', 'grant_entitlement', 'update_entitlement', 'revoke_entitlement']
+  for (const action of actions) {
+    const audit = buildAuditRecord({
+      actor: { uid: 'admin-1', email: 'admin@example.com' },
+      target: { uid: 'user-1', email: 'breeder@example.com', role: 'breeder', organisationName: 'Example Kennel' },
+      action,
+      reason: `Approved ${action}`,
+      beforeState: { account: { access: 'active' } },
+      afterState: { account: { access: 'suspended' } },
+      timestamp: 'SERVER_TIMESTAMP',
+    })
+    assert.equal(audit.targetUserId, 'user-1')
+    assert.equal(audit.targetUserEmail, 'breeder@example.com')
+    assert.equal(audit.targetOrganisationId, 'user-1')
+    assert.equal(audit.targetOrganisationName, 'Example Kennel')
+    assert.ok(audit.reason)
+    assert.ok(audit.beforeState)
+    assert.ok(audit.afterState)
+  }
+})
+
+await test('older audit records without Phase 2 identity fields normalize safely', () => {
+  assert.deepEqual(normalizeAuditIdentity({ action: 'dog_created', dogId: 'dog-1' }), {
+    targetUserId: null,
+    targetUserEmail: null,
+    targetOrganisationId: null,
+    targetOrganisationName: null,
+    reason: null,
+    beforeState: null,
+    afterState: null,
+  })
+  const nested = normalizeAuditIdentity({ target: { uid: 'user-1', email: 'legacy@example.com', role: 'breeder' }, reason: 'Legacy nested target' })
+  assert.equal(nested.targetUserEmail, 'legacy@example.com')
+  assert.equal(nested.targetOrganisationId, 'user-1')
 })
 
 await test('entitlement snapshots expose only controlled entitlement fields', () => {
@@ -164,6 +204,15 @@ await test('browser component has confirmation, required reason, no direct Fires
   assert.match(source, /if \(!response\.ok\) throw/)
   assert.match(source, /await onUpdated\(\)/)
   assert.doesNotMatch(source, /firebase\/firestore|setDoc|updateDoc|deleteDoc|addDoc/)
+})
+
+await test('audit table renders target identity, organisation, reason, state transition, and safe legacy fallback', () => {
+  const source = fs.readFileSync(path.join(root, 'src/super-admin/pages/SuperAdminAuditLogsPage.tsx'), 'utf8')
+  assert.match(source, /targetUserEmail \|\| l\.targetUserId/)
+  assert.match(source, /targetOrganisationName/)
+  assert.match(source, /l\.reason \|\| l\.details/)
+  assert.match(source, /auditStateSummary\(l\.beforeState\).*auditStateSummary\(l\.afterState\)/s)
+  assert.match(source, /Legacy target not recorded/)
 })
 
 console.log(`\n${passed} passed, 0 failed`)
