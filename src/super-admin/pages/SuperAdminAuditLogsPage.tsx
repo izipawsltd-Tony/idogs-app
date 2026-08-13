@@ -67,7 +67,7 @@ export function auditStateSummary(state: Record<string, unknown> | null): string
   const entitlement = state.entitlement as { granted?: boolean; expiresAt?: string | null } | null | undefined
   const parts: string[] = []
   if (account?.access) parts.push(`Access: ${account.access}`)
-  if (entitlement) parts.push(`Entitlement: ${entitlement.granted ? 'granted' : 'revoked'}${entitlement.expiresAt ? ` until ${entitlement.expiresAt}` : ''}`)
+  if (entitlement) parts.push(`Entitlement: ${entitlement.granted ? `granted${entitlement.expiresAt ? ` until ${entitlement.expiresAt}` : ''}` : 'revoked'}`)
   return parts.length ? parts.join('; ') : 'Recorded state'
 }
 
@@ -91,6 +91,12 @@ export default function SuperAdminAuditLogsPage() {
   const [filterRole, setFilterRole] = useState('all')
   const [filterDate, setFilterDate] = useState<DateFilter>('all')
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null)
+  const [technicalLogId, setTechnicalLogId] = useState<string | null>(null)
+
+  function toggleLogDetails(logId: string) {
+    setExpandedLogId(expandedLogId === logId ? null : logId)
+    setTechnicalLogId(null)
+  }
 
   async function fetchAuditLogs() {
     if (!user) return
@@ -364,7 +370,9 @@ export default function SuperAdminAuditLogsPage() {
               <tbody>
                 {filteredLogs.map(l => {
                   const isExpanded = expandedLogId === l.id
+                  const isTechnicalExpanded = technicalLogId === l.id
                   const detailPanelId = `audit-details-${l.id}`
+                  const technicalPanelId = `audit-technical-${l.id}`
                   return (
                   <Fragment key={l.id}>
                   <tr className="super-admin-audit-row" style={{ borderBottom: isExpanded ? 0 : '1px solid #f4f6f5' }}>
@@ -377,7 +385,7 @@ export default function SuperAdminAuditLogsPage() {
                         className="super-admin-audit-toggle"
                         aria-expanded={isExpanded}
                         aria-controls={detailPanelId}
-                        onClick={() => setExpandedLogId(current => current === l.id ? null : l.id)}
+                        onClick={() => toggleLogDetails(l.id)}
                       >
                         {isExpanded ? '▴ Hide details' : '▾ View details'}
                       </button>
@@ -407,9 +415,24 @@ export default function SuperAdminAuditLogsPage() {
                             <div className="super-admin-audit-detail-wide"><strong>Details</strong><span>{l.details || 'Legacy details not recorded'}</span></div>
                           </div>
                           <div className="super-admin-audit-state-grid">
-                            <div><strong>Before state</strong><span>{auditStateSummary(l.beforeState)}</span><pre>{auditStateDetails(l.beforeState)}</pre></div>
-                            <div><strong>After state</strong><span>{auditStateSummary(l.afterState)}</span><pre>{auditStateDetails(l.afterState)}</pre></div>
+                            <div><strong>Before state</strong><span>{auditStateSummary(l.beforeState)}</span></div>
+                            <div><strong>After state</strong><span>{auditStateSummary(l.afterState)}</span></div>
                           </div>
+                          <button
+                            type="button"
+                            className="super-admin-audit-technical-toggle"
+                            aria-expanded={isTechnicalExpanded}
+                            aria-controls={technicalPanelId}
+                            onClick={() => setTechnicalLogId(current => current === l.id ? null : l.id)}
+                          >
+                            {isTechnicalExpanded ? 'Hide technical data' : 'Show technical data'}
+                          </button>
+                          {isTechnicalExpanded && (
+                            <div id={technicalPanelId} className="super-admin-audit-technical-grid">
+                              <div><strong>Before JSON</strong><pre>{auditStateDetails(l.beforeState)}</pre></div>
+                              <div><strong>After JSON</strong><pre>{auditStateDetails(l.afterState)}</pre></div>
+                            </div>
+                          )}
                           <div className="super-admin-audit-detail-actions">
                             <Link to={`/app/super-admin/audit-logs/${l.id}`} className="btn btn-secondary btn-sm">Open event</Link>
                             {l.performedBy && <Link to={`/app/super-admin/users/${l.performedBy}`} className="btn btn-secondary btn-sm">View actor</Link>}
