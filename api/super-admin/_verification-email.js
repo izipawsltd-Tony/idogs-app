@@ -8,12 +8,42 @@ const ACTOR_LIMIT = 20
 const RATE_COLLECTION = 'superAdminVerificationEmailRateLimits'
 
 export class VerificationEmailError extends Error {
-  constructor(status, message, outcome = 'rejected') {
+  constructor(status, message, outcome = 'rejected', diagnostic = null) {
     super(message)
     this.name = 'VerificationEmailError'
     this.status = status
     this.outcome = outcome
+    this.diagnostic = diagnostic
   }
+}
+
+function safeDiagnosticToken(value, fallback) {
+  const token = typeof value === 'string' ? value.trim() : ''
+  return /^[A-Za-z0-9_.:/-]{1,120}$/.test(token) ? token : fallback
+}
+
+export function safeRequestId(value) {
+  return safeDiagnosticToken(value, 'request-unavailable')
+}
+
+export function safeProviderCode(value) {
+  return safeDiagnosticToken(value, 'unknown_error')
+}
+
+export function logVerificationDiagnostic(logger, fields) {
+  const entry = {
+    event: 'super_admin_verification_email_failed',
+    stage: fields.stage,
+    requestId: safeRequestId(fields.requestId),
+  }
+  if (fields.stage === 'firebase_link_generation') entry.code = safeProviderCode(fields.code)
+  if (fields.stage === 'resend_delivery') {
+    entry.status = Number.isInteger(fields.status) ? fields.status : 0
+    entry.code = safeProviderCode(fields.code)
+  }
+  if (fields.stage === 'audit_finalize') entry.category = safeProviderCode(fields.category)
+  logger(JSON.stringify(entry))
+  return entry
 }
 
 function isPlainObject(value) {
@@ -135,23 +165,58 @@ export async function sendViaResend({ email, verificationLink, fetchImpl = fetch
       html: verificationEmailHtml({ verificationLink }),
     }),
   })
-  if (!response.ok) throw new VerificationEmailError(502, 'Verification email could not be delivered', 'delivery_failed')
+  if (!response.ok) {
+    const provider = await response.json().catch(() => ({}))
+    throw new VerificationEmailError(502, 'Verification email could not be delivered', 'delivery_failed', {
+      stage: 'resend_delivery',
+      status: response.status,
+      code: safeProviderCode(provider?.name || provider?.code),
+    })
+  }
   const data = await response.json().catch(() => ({}))
   return typeof data.id === 'string' ? data.id : null
 }
 
-export async function performVerificationDelivery({ auth, auditRef, target, continueUrl, fetchImpl }) {
-  let providerMessageId = null
+async function markDeliveryFailed(auditRef, providerMessageId, requestId, logger) {
   try {
-    const verificationLink = await auth.generateEmailVerificationLink(target.email, { url: continueUrl })
-    providerMessageId = await sendViaResend({ email: target.email, verificationLink, fetchImpl })
-    await auditRef.update({ outcome: 'sent', providerMessageId: providerMessageId || null })
-    return { providerMessageId }
+    await auditRef.update({ outcome: 'delivery_failed', providerMessageId: providerMessageId || null })
+  } catch {
+    logVerificationDiagnostic(logger, { stage: 'audit_finalize', category: 'delivery_failed_update', requestId })
+  }
+}
+
+export async function performVerificationDelivery({ auth, auditRef, target, continueUrl, fetchImpl, requestId, logger = console.error }) {
+  let verificationLink
+  try {
+    verificationLink = await auth.generateEmailVerificationLink(target.email, { url: continueUrl })
   } catch (error) {
-    await auditRef.update({ outcome: 'delivery_failed', providerMessageId: providerMessageId || null }).catch(() => {})
-    if (error instanceof VerificationEmailError) throw error
+    logVerificationDiagnostic(logger, { stage: 'firebase_link_generation', code: error?.code, requestId })
+    await markDeliveryFailed(auditRef, null, requestId, logger)
     throw new VerificationEmailError(502, 'Verification email could not be delivered', 'delivery_failed')
   }
+
+  let providerMessageId
+  try {
+    providerMessageId = await sendViaResend({ email: target.email, verificationLink, fetchImpl })
+  } catch (error) {
+    const diagnostic = error instanceof VerificationEmailError ? error.diagnostic : null
+    logVerificationDiagnostic(logger, {
+      stage: 'resend_delivery',
+      status: diagnostic?.status,
+      code: diagnostic?.code,
+      requestId,
+    })
+    await markDeliveryFailed(auditRef, null, requestId, logger)
+    throw new VerificationEmailError(502, 'Verification email could not be delivered', 'delivery_failed')
+  }
+
+  try {
+    await auditRef.update({ outcome: 'sent', providerMessageId: providerMessageId || null })
+  } catch {
+    logVerificationDiagnostic(logger, { stage: 'audit_finalize', category: 'sent_update', requestId })
+    throw new VerificationEmailError(502, 'Verification email could not be delivered', 'delivery_failed')
+  }
+  return { providerMessageId }
 }
 
 export const VERIFICATION_EMAIL_LIMITS = Object.freeze({ TARGET_LIMIT, TARGET_WINDOW_MS, ACTOR_LIMIT, ACTOR_WINDOW_MS })

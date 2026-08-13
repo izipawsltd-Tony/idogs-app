@@ -6,6 +6,7 @@ import {
   buildVerificationAudit,
   evaluateVerificationRateLimits,
   performVerificationDelivery,
+  logVerificationDiagnostic,
   sendViaResend,
   validateVerificationEmailPayload,
   verificationEmailHtml,
@@ -61,12 +62,15 @@ await test('expired rate windows reset server-side', () => {
 
 await test('Firebase link generation failure never reports sent', async () => {
   const updates = []
+  const logs = []
   await assert.rejects(() => performVerificationDelivery({
-    auth: { generateEmailVerificationLink: async () => { throw new Error('firebase detail') } },
-    auditRef: { update: async value => updates.push(value) }, target, continueUrl: 'https://example.com/login',
+    auth: { generateEmailVerificationLink: async () => { const error = new Error('firebase detail with oobCode=secret'); error.code = 'auth/unauthorized-continue-uri'; throw error } },
+    auditRef: { update: async value => updates.push(value) }, target, continueUrl: 'https://example.com/login', requestId: 'req-firebase', logger: value => logs.push(value),
   }), error => error instanceof VerificationEmailError && error.status === 502)
   assert.equal(updates.some(value => value.outcome === 'sent'), false)
   assert.equal(updates.at(-1).outcome, 'delivery_failed')
+  assert.deepEqual(JSON.parse(logs[0]), { event: 'super_admin_verification_email_failed', stage: 'firebase_link_generation', requestId: 'req-firebase', code: 'auth/unauthorized-continue-uri' })
+  assert.doesNotMatch(logs.join(' '), /oobCode|secret|user@example\.com/)
 })
 
 await test('Resend failure never reports sent and exposes no provider internals', async () => {
@@ -77,15 +81,45 @@ await test('Resend failure never reports sent and exposes no provider internals'
   })
 })
 
+await test('Resend delivery diagnostics contain only stage, status, safe code and request ID', async () => {
+  const logs = []
+  await assert.rejects(() => performVerificationDelivery({
+    auth: { generateEmailVerificationLink: async () => 'https://secret.example/?oobCode=top-secret' },
+    auditRef: { update: async () => {} }, target, continueUrl: 'https://example.com/login', requestId: 'req-resend', logger: value => logs.push(value),
+    fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({ name: 'restricted_api_key', message: 'body must stay hidden', apiKey: 're_secret' }) }),
+  }), VerificationEmailError)
+  assert.deepEqual(JSON.parse(logs[0]), { event: 'super_admin_verification_email_failed', stage: 'resend_delivery', requestId: 'req-resend', status: 403, code: 'restricted_api_key' })
+  assert.doesNotMatch(logs.join(' '), /oobCode|top-secret|body must stay hidden|re_secret|Authorization|user@example\.com/)
+})
+
 await test('successful delivery marks audit sent only after provider confirmation', async () => {
   const events = []
   const result = await performVerificationDelivery({
     auth: { generateEmailVerificationLink: async email => { events.push(`link:${email}`); return 'https://secret.example/token' } },
-    auditRef: { update: async value => events.push(value) }, target, continueUrl: 'https://example.com/login',
+    auditRef: { update: async value => events.push(value) }, target, continueUrl: 'https://example.com/login', requestId: 'req-success', logger: () => {},
     fetchImpl: async () => ({ ok: true, json: async () => ({ id: 'msg_safe' }) }),
   })
   assert.equal(result.providerMessageId, 'msg_safe')
   assert.deepEqual(events.at(-1), { outcome: 'sent', providerMessageId: 'msg_safe' })
+})
+
+await test('audit finalization failure has a separate sanitized stage and never returns success', async () => {
+  const logs = []
+  await assert.rejects(() => performVerificationDelivery({
+    auth: { generateEmailVerificationLink: async () => 'https://secret.example/?oobCode=top-secret' },
+    auditRef: { update: async value => { if (value.outcome === 'sent') throw new Error('firestore sensitive detail') } },
+    target, continueUrl: 'https://example.com/login', requestId: 'req-audit', logger: value => logs.push(value),
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ id: 'msg_safe' }) }),
+  }), error => error instanceof VerificationEmailError && error.status === 502)
+  assert.deepEqual(JSON.parse(logs[0]), { event: 'super_admin_verification_email_failed', stage: 'audit_finalize', requestId: 'req-audit', category: 'sent_update' })
+  assert.doesNotMatch(logs.join(' '), /oobCode|top-secret|firestore sensitive detail|msg_safe|user@example\.com/)
+})
+
+await test('diagnostic whitelist drops unsafe codes and never serializes arbitrary fields', () => {
+  const logs = []
+  const entry = logVerificationDiagnostic(value => logs.push(value), { stage: 'resend_delivery', status: 401, code: 'bad code with secret', requestId: 'req-safe', authorization: 'Bearer secret', emailBody: '<html>secret</html>' })
+  assert.deepEqual(entry, { event: 'super_admin_verification_email_failed', stage: 'resend_delivery', requestId: 'req-safe', status: 401, code: 'unknown_error' })
+  assert.doesNotMatch(logs[0], /Bearer|emailBody|html|secret/)
 })
 
 await test('email HTML uses current iDogs logo and escapes the action URL', () => {
@@ -129,6 +163,8 @@ await test('raw verification link/token is never returned or deliberately logged
   assert.doesNotMatch(endpoint, /json\([^\n]*verificationLink/)
   assert.doesNotMatch(endpoint, /console\.[a-z]+\([^\n]*(verificationLink|token)/i)
   assert.match(endpoint, /outcome: 'sent'/)
+  assert.match(endpoint, /referenceId: requestId/)
+  assert.doesNotMatch(endpoint, /json\([^\n]*(provider|diagnostic|oobCode|verificationLink)/)
 })
 
 await test('UI has a synchronous double-submit guard and waits for server success', () => {

@@ -1,5 +1,6 @@
 import { getAuth } from 'firebase-admin/auth'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
+import { randomUUID } from 'node:crypto'
 import { verifySuperAdmin } from '../../_auth.js'
 import {
   VerificationEmailError,
@@ -8,6 +9,7 @@ import {
   recordRejectedAttempt,
   reserveVerificationAttempt,
   validateVerificationEmailPayload,
+  safeRequestId,
 } from '../../_verification-email.js'
 
 function targetIdentity(uid, authUser, profile) {
@@ -30,6 +32,7 @@ export default async function handler(req, res) {
 
   let auditRef = null
   let context = null
+  const requestId = safeRequestId(req.headers['x-vercel-id'] || randomUUID())
   try {
     const uid = typeof req.query.uid === 'string' ? req.query.uid.trim() : ''
     if (!uid || uid.length > 128 || !/^[A-Za-z0-9_-]+$/.test(uid)) {
@@ -61,14 +64,14 @@ export default async function handler(req, res) {
     if (!reservation.allowed) throw new VerificationEmailError(429, reservation.message)
 
     const baseUrl = String(process.env.APP_URL || 'https://idogs.com.au').replace(/\/$/, '')
-    await performVerificationDelivery({ auth, auditRef, target, continueUrl: `${baseUrl}/login` })
-    return res.status(200).json({ success: true, outcome: 'sent', auditId: auditRef.id })
+    await performVerificationDelivery({ auth, auditRef, target, continueUrl: `${baseUrl}/login`, requestId })
+    return res.status(200).json({ success: true, outcome: 'sent', auditId: auditRef.id, referenceId: requestId })
   } catch (error) {
-    if (error instanceof VerificationEmailError) return res.status(error.status).json({ error: error.message })
-    console.error('Super Admin verification email attempt failed', { auditId: auditRef?.id || null })
+    if (error instanceof VerificationEmailError) return res.status(error.status).json({ error: error.message, referenceId: requestId })
+    console.error(JSON.stringify({ event: 'super_admin_verification_email_failed', stage: 'runtime_other', requestId }))
     if (auditRef && context) {
       await auditRef.set(buildVerificationAudit({ ...context, outcome: 'delivery_failed', timestamp: FieldValue.serverTimestamp() }), { merge: true }).catch(() => {})
     }
-    return res.status(500).json({ error: 'Verification email operation failed' })
+    return res.status(500).json({ error: 'Verification email operation failed', referenceId: requestId })
   }
 }
