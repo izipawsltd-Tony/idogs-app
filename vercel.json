@@ -3,6 +3,6 @@
     { "path": "/api/cleanup-showcase-media-uploads", "schedule": "17 3 * * *" }
   ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/" }
+    { "source": "/((?!api/).*)", "destination": "/" }
   ]
 }

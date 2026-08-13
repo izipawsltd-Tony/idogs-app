@@ -1,0 +1,380 @@
+.super-admin-shell {
+  min-height: 100vh;
+  display: flex;
+  background: #f4f6f5;
+  color: #1a3a2a;
+}
+
+.super-admin-sidebar {
+  width: 280px;
+  min-height: 100vh;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  background: #10291d;
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(255,255,255,0.08);
+}
+
+.super-admin-brand {
+  padding: 22px 20px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.super-admin-brand img {
+  width: 92px;
+  height: auto;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 5px 7px;
+}
+
+.super-admin-brand span,
+.super-admin-identity span,
+.super-admin-kicker {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.super-admin-brand span {
+  color: rgba(255,255,255,0.62);
+}
+
+.super-admin-brand strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 14px;
+  color: #ffffff;
+}
+
+.super-admin-nav {
+  flex: 1;
+  padding: 14px 12px 24px;
+  overflow-y: auto;
+}
+
+.super-admin-nav section {
+  margin-bottom: 16px;
+}
+
+.super-admin-nav h2 {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.48);
+  padding: 8px 10px;
+}
+
+.super-admin-nav-link {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: rgba(255,255,255,0.74);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+
+.super-admin-nav-link span {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.super-admin-nav-link small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.48);
+  line-height: 1.35;
+}
+
+.super-admin-nav-link:hover,
+.super-admin-nav-link.active {
+  background: rgba(255,255,255,0.08);
+  color: #ffffff;
+  border-color: rgba(255,255,255,0.08);
+}
+
+.super-admin-nav-link.active small {
+  color: rgba(255,255,255,0.72);
+}
+
+.super-admin-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.super-admin-topbar {
+  min-height: 72px;
+  background: #ffffff;
+  border-bottom: 1px solid #dfe5df;
+  padding: 14px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.super-admin-topbar h1 {
+  margin-top: 2px;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.super-admin-kicker {
+  color: #5f7167;
+}
+
+.super-admin-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: right;
+}
+
+.super-admin-identity strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: #1a3a2a;
+}
+
+.super-admin-content {
+  padding: 28px;
+}
+
+.super-admin-page {
+  max-width: 1120px;
+}
+
+.super-admin-page-title {
+  margin-bottom: 22px;
+}
+
+.super-admin-page-title h2 {
+  margin-top: 4px;
+  font-size: 28px;
+  letter-spacing: 0;
+}
+
+.super-admin-page-title p:last-child {
+  max-width: 680px;
+  margin-top: 8px;
+  color: #53635a;
+}
+
+.super-admin-panel,
+.super-admin-module-card,
+.super-admin-denied-card {
+  background: #ffffff;
+  border: 1px solid #dfe5df;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(16,41,29,0.06);
+}
+
+.super-admin-panel {
+  padding: 22px;
+  margin-bottom: 18px;
+}
+
+.super-admin-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.super-admin-panel-header h3,
+.super-admin-placeholder h3,
+.super-admin-module-card h3 {
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.super-admin-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #eef5f0;
+  color: #1a3a2a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.super-admin-principles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.super-admin-principles div {
+  padding: 14px;
+  border-radius: 8px;
+  background: #f7f9f8;
+  border: 1px solid #e6ece7;
+}
+
+.super-admin-principles span {
+  display: block;
+  width: 22px;
+  height: 3px;
+  border-radius: 999px;
+  background: #1a3a2a;
+  margin-bottom: 10px;
+}
+
+.super-admin-principles p,
+.super-admin-module-card p,
+.super-admin-placeholder p {
+  color: #53635a;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.super-admin-module-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.super-admin-module-card {
+  padding: 18px;
+}
+
+.super-admin-module-card span,
+.super-admin-placeholder span {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6c7a70;
+}
+
+.super-admin-module-card h3 {
+  margin-bottom: 6px;
+}
+
+.super-admin-placeholder {
+  max-width: 620px;
+}
+
+.super-admin-denied,
+.super-admin-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f6f5;
+  padding: 24px;
+}
+
+.super-admin-denied-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 28px;
+  text-align: center;
+}
+
+.super-admin-denied-card img {
+  height: 52px;
+  width: auto;
+  margin: 0 auto 18px;
+}
+
+.super-admin-denied-card h1 {
+  margin: 4px 0 8px;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.super-admin-denied-card p:not(.super-admin-kicker) {
+  color: #53635a;
+  margin-bottom: 20px;
+}
+
+.super-admin-loading {
+  gap: 16px;
+  flex-direction: column;
+}
+
+.super-admin-loading-mark {
+  width: 112px;
+  padding: 10px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #dfe5df;
+}
+
+@media (max-width: 900px) {
+  .super-admin-shell {
+    display: block;
+  }
+
+  .super-admin-sidebar {
+    width: 100%;
+    min-height: auto;
+    position: static;
+  }
+
+  .super-admin-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+    padding-bottom: 16px;
+  }
+
+  .super-admin-nav section {
+    margin-bottom: 0;
+  }
+
+  .super-admin-topbar,
+  .super-admin-identity {
+    align-items: flex-start;
+  }
+
+  .super-admin-topbar {
+    position: static;
+    flex-direction: column;
+  }
+
+  .super-admin-identity {
+    width: 100%;
+    justify-content: space-between;
+    text-align: left;
+  }
+
+  .super-admin-principles,
+  .super-admin-module-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .super-admin-nav {
+    grid-template-columns: 1fr;
+  }
+
+  .super-admin-content,
+  .super-admin-topbar {
+    padding: 18px;
+  }
+}

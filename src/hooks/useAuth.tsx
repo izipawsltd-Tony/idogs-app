@@ -40,8 +40,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true)
       setUser(u)
       if (u) {
-        const p = await getUserProfile(u.uid)
-        setProfile(p)
+        try {
+          const p = await getUserProfile(u.uid)
+          setProfile(p)
+        } catch (err) {
+          // Super Admin routing depends on the verified Firebase identity,
+          // not on a Firestore profile read succeeding. Fail closed for the
+          // normal profile while still allowing the route guards to settle.
+          console.error('Failed to load user profile:', err)
+          setProfile(null)
+        }
       } else {
         setProfile(null)
       }
