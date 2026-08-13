@@ -36,6 +36,20 @@ import ReportsPage from '../pages/ReportsPage'
 import BuyersPage from '../pages/BuyersPage'
 import ClaimDogPage from '../pages/ClaimDogPage'
 import PrivateDogPage from '../pages/PrivateDogPage'
+import SuperAdminRoute from '../super-admin/SuperAdminRoute'
+import SuperAdminLayout from '../super-admin/SuperAdminLayout'
+import SuperAdminOverviewPage from '../super-admin/pages/SuperAdminOverviewPage'
+import SuperAdminModulePlaceholderPage from '../super-admin/pages/SuperAdminModulePlaceholderPage'
+import SuperAdminOrganisationsPage from '../super-admin/pages/SuperAdminOrganisationsPage'
+import SuperAdminOrganisationDetailPage from '../super-admin/pages/SuperAdminOrganisationDetailPage'
+import SuperAdminUsersPage from '../super-admin/pages/SuperAdminUsersPage'
+import SuperAdminUserDetailPage from '../super-admin/pages/SuperAdminUserDetailPage'
+import SuperAdminSubscriptionsPage from '../super-admin/pages/SuperAdminSubscriptionsPage'
+import SuperAdminPlansPricingPage from '../super-admin/pages/SuperAdminPlansPricingPage'
+import SuperAdminAuditLogsPage from '../super-admin/pages/SuperAdminAuditLogsPage'
+import SuperAdminAuditLogDetailPage from '../super-admin/pages/SuperAdminAuditLogDetailPage'
+import SuperAdminSupportPage from '../super-admin/pages/SuperAdminSupportPage'
+import SuperAdminSettingsPage from '../super-admin/pages/SuperAdminSettingsPage'
 
 import AppLayout from './layout/AppLayout'
 import LoadingScreen from './ui/LoadingScreen'
@@ -91,6 +105,29 @@ export default function App() {
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+
+        {/* Isolated Super SaaS Admin — intentionally outside AppLayout. */}
+        <Route path="/app/super-admin" element={
+          <ProtectedRoute>
+            <SuperAdminRoute>
+              <SuperAdminLayout />
+            </SuperAdminRoute>
+          </ProtectedRoute>
+        }>
+          <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
+          <Route path="dashboard" element={<SuperAdminOverviewPage />} />
+          <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
+          <Route path="organisations/:id" element={<SuperAdminOrganisationDetailPage />} />
+          <Route path="users" element={<SuperAdminUsersPage />} />
+          <Route path="users/:uid" element={<SuperAdminUserDetailPage />} />
+          <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
+          <Route path="billing-payments" element={<SuperAdminModulePlaceholderPage title="Billing & Payments" section="Revenue" description="Billing and payment review will be added in a later Super Admin batch." />} />
+          <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
+          <Route path="support" element={<SuperAdminSupportPage />} />
+          <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
+          <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
+          <Route path="settings" element={<SuperAdminSettingsPage />} />
+        </Route>
 
         {/* Protected — app */}
         <Route path="/app" element={
