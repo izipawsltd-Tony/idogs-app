@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';import { readFileSync } from 'node:fs';import { matchFaqs,normalizeFaqText,plainText,exactFields,SUPPORT_STATUSES } from '../api/support/_shared.js'
+let passed=0;function test(name,fn){try{fn();passed++;console.log(`PASS: ${name}`)}catch(e){console.error(`FAIL: ${name}`);throw e}}
+const faqs=[{id:'1',question:'How do I verify my email?',answer:'Open the verification link.',category:'Account',keywords:['email','verification'],status:'published',sortOrder:1},{id:'2',question:'Email verification help',answer:'Ask support for help.',category:'Account',keywords:['email'],status:'published',sortOrder:2},{id:'3',question:'Change my password',answer:'Use forgot password.',category:'Account',keywords:['password'],status:'published',sortOrder:3},{id:'4',question:'Verify email troubleshooting',answer:'Check spam.',category:'Account',keywords:['verify','email'],status:'published',sortOrder:4}]
+test('normalizes case, punctuation and spacing',()=>assert.equal(normalizeFaqText('  Verify,   EMAIL! '),'verify email'))
+test('deterministic FAQ matching returns no more than three published candidates',()=>{const r=matchFaqs('VERIFY email',faqs);assert.ok(r.length<=3);assert.ok(r.length>0)})
+test('low-confidence FAQ matching fails safe with no invented answer',()=>assert.deepEqual(matchFaqs('quantum banana',faqs),[]))
+test('plain text preserves XSS-looking input as inert text',()=>assert.equal(plainText('<img src=x onerror=alert(1)>'),'<img src=x onerror=alert(1)>'))
+test('unexpected fields are rejected',()=>assert.throws(()=>exactFields({message:'ok',role:'admin'},['message'])))
+test('support statuses are explicit',()=>assert.deepEqual(SUPPORT_STATUSES,['new','open','waiting_for_support','waiting_on_user','closed']))
+const userApi=readFileSync(new URL('../api/support/index.js',import.meta.url),'utf8');const convoApi=readFileSync(new URL('../api/support/conversations/[id].js',import.meta.url),'utf8');const adminApi=readFileSync(new URL('../api/super-admin/support-conversation.js',import.meta.url),'utf8');const faqApi=readFileSync(new URL('../api/super-admin/support-faqs.js',import.meta.url),'utf8');const widget=readFileSync(new URL('../src/components/SupportChatWidget.tsx',import.meta.url),'utf8');const layout=readFileSync(new URL('../src/components/layout/AppLayout.tsx',import.meta.url),'utf8');const css=readFileSync(new URL('../src/components/supportChat.css',import.meta.url),'utf8');const app=readFileSync(new URL('../src/components/App.tsx',import.meta.url),'utf8')
+test('every user API verifies Firebase token and derives owner UID server-side',()=>assert.ok(userApi.includes('verifyUser')&&userApi.includes('ctx.token.uid')&&!userApi.includes('req.body.ownerUid')))
+test('cross-user conversation access checks stored ownerUid',()=>assert.ok(convoApi.includes("snap.data().ownerUid !== ctx.token.uid")))
+test('rate limits enforce 3 conversations/24h and 10 messages/10m',()=>assert.ok(userApi.includes('3, 86400000')&&convoApi.includes('10, 600000')))
+test('Draft FAQ is hidden from user queries',()=>assert.ok(userApi.includes("where('status', '==', 'published')")))
+test('admin endpoints use existing verified Super Admin guard',()=>assert.ok(adminApi.includes('verifySuperAdmin')&&faqApi.includes('verifySuperAdmin')))
+test('close/reopen require confirmation and reason length',()=>assert.ok(adminApi.includes("['close','reopen']")&&adminApi.includes('length<5')))
+test('admin audit excludes full message body',()=>{const auditBlock=adminApi.slice(adminApi.indexOf("batch.set(db.collection('auditLogs')"));assert.ok(!auditBlock.includes('text:message'))})
+test('widget has synchronous double-submit guard and API-only access',()=>assert.ok(widget.includes('lock.current')&&widget.includes("fetch(path")&&!widget.includes("from 'firebase/firestore'")))
+test('widget includes Escape, dialog ARIA and privacy/reply copy',()=>assert.ok(widget.includes("e.key==='Escape'")&&widget.includes('role="dialog"')&&widget.includes('We usually reply within 1 business day.')&&widget.includes('Do not share passwords')))
+test('widget is authenticated app-only through AppLayout',()=>assert.ok(layout.includes('<SupportChatWidget />')&&!app.includes('<SupportChatWidget')))
+test('mobile CSS prevents horizontal overflow',()=>assert.ok(css.includes('max-width:100%')&&css.includes('overflow-wrap:anywhere')&&css.includes('@media(max-width:600px)')))
+test('Super Admin routes mount Inbox and FAQ Management',()=>assert.ok(app.includes('SuperAdminSupportInboxPage')&&app.includes('SuperAdminFaqManagementPage')))
+console.log(`\n${passed} passed, 0 failed`)

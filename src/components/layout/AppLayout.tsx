@@ -8,6 +8,7 @@ import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
 import { SUPER_ADMIN_EMAILS } from '../../lib/superAdmin'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
+import SupportChatWidget from '../SupportChatWidget'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -792,6 +793,7 @@ export default function AppLayout({ toast }: Props) {
               own uid-dependent counts below use useRequestGuard +
               useLayoutEffect-based clearing directly instead. */}
           <Outlet key={user?.uid} />
+          <SupportChatWidget />
         </main>
       </div>
 
