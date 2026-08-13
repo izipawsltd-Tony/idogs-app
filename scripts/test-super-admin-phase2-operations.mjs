@@ -208,11 +208,29 @@ await test('browser component has confirmation, required reason, no direct Fires
 
 await test('audit table renders target identity, organisation, reason, state transition, and safe legacy fallback', () => {
   const source = fs.readFileSync(path.join(root, 'src/super-admin/pages/SuperAdminAuditLogsPage.tsx'), 'utf8')
+  for (const heading of ['Timestamp', 'Actor', 'Action', 'Target', 'Organisation', 'Reason', 'Before → After']) {
+    assert.match(source, new RegExp(`>${heading}<`))
+  }
   assert.match(source, /targetUserEmail \|\| l\.targetUserId/)
   assert.match(source, /targetOrganisationName/)
   assert.match(source, /l\.reason \|\| l\.details/)
   assert.match(source, /auditStateSummary\(l\.beforeState\).*auditStateSummary\(l\.afterState\)/s)
   assert.match(source, /Legacy target not recorded/)
+  assert.doesNotMatch(source, /Read-only Phase 1|Admin write actions are not enabled in V1/)
+})
+
+await test('active Audit Logs navigation route mounts the Phase 2 component and normalized API', () => {
+  const app = fs.readFileSync(path.join(root, 'src/components/App.tsx'), 'utf8')
+  const nav = fs.readFileSync(path.join(root, 'src/super-admin/superAdminConfig.ts'), 'utf8')
+  const page = fs.readFileSync(path.join(root, 'src/super-admin/pages/SuperAdminAuditLogsPage.tsx'), 'utf8')
+  const api = fs.readFileSync(path.join(root, 'api/super-admin/audit-logs/index.js'), 'utf8')
+
+  assert.match(app, /import SuperAdminAuditLogsPage from ['"]\.\.\/super-admin\/pages\/SuperAdminAuditLogsPage['"]/)
+  assert.match(app, /<Route path="audit-logs" element=\{<SuperAdminAuditLogsPage \/>\} \/>/)
+  assert.match(nav, /path: `\$\{SUPER_ADMIN_BASE_PATH\}\/audit-logs`/)
+  assert.match(page, /fetch\(['"]\/api\/super-admin\/audit-logs['"]/)
+  assert.match(api, /normalizeAuditIdentity\(d, usersMap\)/)
+  assert.doesNotMatch(app, /SuperAdminWorkspacePage|\/app\/super-admin\/:section/)
 })
 
 console.log(`\n${passed} passed, 0 failed`)

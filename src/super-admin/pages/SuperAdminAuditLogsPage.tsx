@@ -224,23 +224,9 @@ export default function SuperAdminAuditLogsPage() {
         <p className="super-admin-kicker">Operations</p>
         <h2>Audit Logs</h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: '#53635a' }}>
-          Read-only platform activity trail.
+          Phase 2 administrative activity with target identity, reasons, and state changes.
         </p>
       </section>
-
-      <div style={{
-        padding: '12px 16px',
-        background: '#fdf3dc',
-        border: '1px solid #f0e2b8',
-        borderRadius: 8,
-        color: '#7a5b0c',
-        fontSize: 12,
-        lineHeight: 1.5,
-        marginBottom: 12,
-        fontWeight: 600,
-      }}>
-        🔒 Read-only audit trail. Admin write actions are not enabled in V1.
-      </div>
 
       {dataModelNotice && (
         <div style={{
@@ -363,7 +349,7 @@ export default function SuperAdminAuditLogsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid #dfe5df', textAlign: 'left', color: '#6c7a70' }}>
-                  <th style={{ padding: '10px 8px', fontWeight: 600 }}>Time</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 600 }}>Timestamp</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Actor</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Role</th>
                   <th style={{ padding: '10px 8px', fontWeight: 600 }}>Action</th>
