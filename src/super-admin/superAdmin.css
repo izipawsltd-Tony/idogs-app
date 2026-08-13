@@ -457,6 +457,72 @@
   margin-top: 16px;
 }
 
+.super-admin-verification-panel .super-admin-panel-header {
+  margin-bottom: 14px;
+}
+
+.super-admin-verification-panel .super-admin-panel-header p {
+  max-width: 560px;
+  margin: 5px 0 0;
+  color: #53635a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.verification-verified { background: #d1fae5; color: #065f46; }
+.verification-not_verified { background: #fee2e2; color: #991b1b; }
+.verification-unavailable { background: #e2e8f0; color: #475569; }
+
+.super-admin-confirmation {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #d7b45a;
+  border-radius: 8px;
+  background: #fffbeb;
+}
+
+.super-admin-confirmation p,
+.super-admin-confirmation small {
+  color: #53635a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.super-admin-confirmation label:not(.super-admin-confirm-checkbox) {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.super-admin-confirmation textarea {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  margin-top: 5px;
+  resize: vertical;
+}
+
+.super-admin-confirm-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.super-admin-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.super-admin-break-word { overflow-wrap: anywhere; }
+.super-admin-inline-result { margin: 12px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.super-admin-inline-result.success { color: #085041; }
+.super-admin-inline-result.error { color: #b91c1c; }
+
 @media (max-width: 900px) {
   .super-admin-shell {
     display: block;

@@ -17,5 +17,7 @@ export function normalizeAuditIdentity(data, usersMap = {}) {
     reason: text(data.reason),
     beforeState: data.beforeState && typeof data.beforeState === 'object' ? data.beforeState : null,
     afterState: data.afterState && typeof data.afterState === 'object' ? data.afterState : null,
+    outcome: text(data.outcome),
+    providerMessageId: text(data.providerMessageId),
   }
 }
