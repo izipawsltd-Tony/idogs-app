@@ -1,11 +1,24 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 
 type Conversation = { id: string; ownerUid: string; ownerEmail?: string; ownerName?: string; organisationId?: string; organisationName?: string; subject: string; status: string; assigneeEmail?: string; lastMessagePreview?: string; lastMessageAt?: string; adminUnreadCount?: number }
 type Message = { id: string; text: string; senderType: string; createdAt?: string }
 
-const POLL_INTERVAL = 30000
+const POLL_INTERVAL = 15000
+const FILTERS = ['new', 'open', 'waiting_for_support', 'waiting_on_user', 'closed', 'all'] as const
+
+function conversationTime(item: Conversation) {
+  return Date.parse(item.lastMessageAt || '') || 0
+}
+
+function matchesSearch(item: Conversation, query: string) {
+  const normalized = query.trim().toLocaleLowerCase()
+  if (!normalized) return true
+  return [item.subject, item.ownerUid, item.ownerEmail, item.ownerName, item.organisationId, item.organisationName, item.lastMessagePreview]
+    .filter(Boolean)
+    .some(value => String(value).toLocaleLowerCase().includes(normalized))
+}
 
 function mergeMessages(current: Message[], incoming: Message[]) {
   const merged = new Map(current.map(item => [item.id, item]))
@@ -16,11 +29,14 @@ function mergeMessages(current: Message[], incoming: Message[]) {
 export default function SuperAdminSupportInboxPage() {
   const { user } = useAuth()
   const [filter, setFilter] = useState('all')
+  const [search, setSearch] = useState('')
   const [list, setList] = useState<Conversation[]>([])
   const [selected, setSelected] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [announcement, setAnnouncement] = useState('')
   const lock = useRef(false)
@@ -30,6 +46,13 @@ export default function SuperAdminSupportInboxPage() {
   const messageCount = useRef(0)
   const thread = useRef<HTMLDivElement>(null)
   const shouldScroll = useRef(true)
+
+  const counts = useMemo(() => Object.fromEntries(FILTERS.map(item => [item, item === 'all' ? list.length : list.filter(conversation => conversation.status === item).length])), [list])
+  const unreadCount = useMemo(() => list.reduce((total, item) => total + Number(item.adminUnreadCount || 0), 0), [list])
+  const visibleList = useMemo(() => list
+    .filter(item => filter === 'all' || item.status === filter)
+    .filter(item => matchesSearch(item, search))
+    .sort((a, b) => conversationTime(b) - conversationTime(a)), [filter, list, search])
 
   async function call(path: string, init?: RequestInit) {
     const token = await user!.getIdToken()
@@ -43,11 +66,13 @@ export default function SuperAdminSupportInboxPage() {
 
   async function refreshInbox() {
     const request = ++inboxRequest.current
+    setRefreshing(true)
     try {
-      const result = await call(`/api/super-admin/support-inbox?status=${filter}`)
+      const result = await call('/api/super-admin/support-inbox?status=all')
       if (request !== inboxRequest.current) return
       const next = (result.conversations || []) as Conversation[]
       setList(next)
+      setError('')
       const current = selectedRef.current
       if (current) {
         const fresh = next.find(item => item.id === current.id)
@@ -57,7 +82,12 @@ export default function SuperAdminSupportInboxPage() {
         }
       }
     } catch {
-      if (request === inboxRequest.current) setError('Inbox could not be loaded.')
+      if (request === inboxRequest.current) setError('Inbox could not be loaded. Existing conversations are still shown where available.')
+    } finally {
+      if (request === inboxRequest.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
   }
 
@@ -113,7 +143,7 @@ export default function SuperAdminSupportInboxPage() {
       if (selectedRef.current) await refreshThread(selectedRef.current.id)
     }, POLL_INTERVAL)
     return () => clearInterval(timer)
-  }, [filter, user])
+  }, [user])
 
   async function act(action: string, payload: Record<string, unknown> = {}) {
     const current = selectedRef.current
@@ -148,20 +178,20 @@ export default function SuperAdminSupportInboxPage() {
   }
 
   return <div>
-    <div className="super-admin-page-header"><div><span className="super-admin-kicker">Operations</span><h2>Support Inbox</h2><p>Persistent user conversations and in-app replies.</p></div></div>
-    {error && <p role="alert">{error}</p>}
+    <div className="super-admin-page-header"><div><span className="super-admin-kicker">Operations</span><h2>Support Inbox {unreadCount > 0 && <span className="support-admin-total-unread" aria-label={`${unreadCount} unread messages`}>{unreadCount}</span>}</h2><p>Persistent user conversations and in-app replies.</p></div><button className="support-admin-refresh" type="button" disabled={refreshing} onClick={refreshInbox}>{refreshing ? 'Refreshing…' : 'Refresh inbox'}</button></div>
+    {error && <div className="support-admin-error" role="alert"><span>{error}</span><button type="button" onClick={refreshInbox}>Try again</button></div>}
     <p className="support-sr-live" aria-live="polite" aria-atomic="true">{announcement}</p>
-    <div className="support-admin-filters" aria-label="Support status filters">{['new', 'open', 'waiting_on_user', 'closed', 'all'].map(item => <button className={filter === item ? 'active' : ''} type="button" key={item} onClick={() => setFilter(item)}>{item.replaceAll('_', ' ')}</button>)}</div>
+    <div className="support-admin-toolbar"><label className="support-admin-search" htmlFor="support-inbox-search"><span>Search conversations</span><input id="support-inbox-search" type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Email, name, subject or message" /></label><div className="support-admin-filters" aria-label="Support status filters">{FILTERS.map(item => <button className={filter === item ? 'active' : ''} type="button" key={item} onClick={() => setFilter(item)} aria-pressed={filter === item}><span>{item.replaceAll('_', ' ')}</span><b>{counts[item]}</b></button>)}</div></div>
     <div className="support-admin-grid">
-      <section className="super-admin-panel support-admin-list" aria-label="Support conversations">{list.map(item => <button type="button" key={item.id} onClick={() => openConversation(item)} className={selected?.id === item.id ? 'selected' : ''} aria-pressed={selected?.id === item.id}><strong>{item.subject}</strong><span>{item.ownerEmail || item.ownerName || item.ownerUid}</span><small>{item.lastMessagePreview || 'No preview'} · {item.status.replaceAll('_', ' ')}</small>{Number(item.adminUnreadCount) > 0 && <b>{item.adminUnreadCount} unread</b>}</button>)}</section>
+      <section className="super-admin-panel support-admin-list" aria-label="Support conversations">{loading ? <div className="support-admin-list-state" role="status">Loading conversations…</div> : visibleList.length === 0 ? <div className="support-admin-list-state"><strong>No conversations found</strong><span>{search ? 'Try a different search or status filter.' : 'There are no conversations in this status.'}</span></div> : visibleList.map(item => <button type="button" key={item.id} onClick={() => openConversation(item)} className={selected?.id === item.id ? 'selected' : ''} aria-pressed={selected?.id === item.id}><span className="support-admin-row-heading"><strong>{item.subject}</strong>{Number(item.adminUnreadCount) > 0 && <b aria-label={`${item.adminUnreadCount} unread`}>{item.adminUnreadCount}</b>}</span><span>{item.ownerEmail || item.ownerName || item.ownerUid}</span><small className="support-admin-preview">{item.lastMessagePreview || 'No preview'}</small><span className="support-admin-row-meta"><small>{item.status.replaceAll('_', ' ')}</small>{item.lastMessageAt && <time dateTime={item.lastMessageAt}>{new Date(item.lastMessageAt).toLocaleString()}</time>}</span></button>)}</section>
       <section className="super-admin-panel support-admin-thread">{selected ? <>
-        <h3>{selected.subject}</h3>
+        <div className="support-admin-thread-heading"><div><span className={`support-admin-status status-${selected.status}`}>{selected.status.replaceAll('_', ' ')}</span><h3>{selected.subject}</h3></div><button className="support-admin-mobile-back" type="button" onClick={() => { selectedRef.current = null; setSelected(null) }}>Back to inbox</button></div>
         <p><Link to={`/app/super-admin/users/${selected.ownerUid}`}>{selected.ownerEmail || selected.ownerUid}</Link>{selected.organisationId && <> · <Link to={`/app/super-admin/organisations/${selected.organisationId}`}>{selected.organisationName || selected.organisationId}</Link></>}</p>
-        <p>Status: {selected.status.replaceAll('_', ' ')} · Assignee: {selected.assigneeEmail || 'Unassigned'}</p>
+        <p>Assignee: <strong>{selected.assigneeEmail || 'Unassigned'}</strong></p>
         <div className="support-admin-actions"><button disabled={busy} onClick={() => act('assign')}>Assign to me</button><button disabled={busy} onClick={() => act('waiting_on_user')}>Waiting on user</button>{selected.status === 'closed' ? <button disabled={busy} onClick={() => reasonAction('reopen')}>Reopen</button> : <button disabled={busy} onClick={() => reasonAction('close')}>Close</button>}</div>
         <div className="support-admin-messages" ref={thread}>{messages.map(item => <div key={item.id} className={item.senderType}><p>{item.text}</p>{item.createdAt && <time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time>}</div>)}</div>
         {selected.status === 'closed' ? <p>This conversation is closed. Reopen it before replying.</p> : <form onSubmit={reply}><label htmlFor="admin-support-reply">Reply</label><textarea id="admin-support-reply" maxLength={2000} value={message} onChange={event => setMessage(event.target.value)} required/><button disabled={busy}>{busy ? 'Sending…' : 'Reply'}</button></form>}
-      </> : <p>Select a conversation.</p>}</section>
+      </> : <div className="support-admin-thread-empty"><strong>Select a conversation</strong><span>Choose a conversation from the inbox to view its history and reply.</span></div>}</section>
     </div>
   </div>
 }
