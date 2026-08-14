@@ -55,8 +55,10 @@ export default function SupportChatWidget() {
   async function call(path: string, init?: RequestInit) {
     if (!user) throw new Error('Sign in required')
     const token = await user.getIdToken()
-    const response = await fetch(path, { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init?.headers || {}) } })
-    const result = await response.json()
+    const response = await fetch(path, { ...init, cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init?.headers || {}) } })
+    const raw = await response.text()
+    let result: Record<string, any>
+    try { result = JSON.parse(raw) } catch { throw new Error('Support returned an invalid response. Please try again.') }
     if (!response.ok) throw new Error(result.error || 'Support request failed')
     return result
   }
@@ -67,7 +69,7 @@ export default function SupportChatWidget() {
     const keepAtBottom = initial || !element || element.scrollHeight - element.scrollTop - element.clientHeight < 80
     try {
       const result = await call(`/api/support/conversations/${encodeURIComponent(id)}`)
-      if (request !== threadRequest.current || activeRef.current !== id) return
+      if (request !== threadRequest.current || activeRef.current !== id) return null
       const incoming = (result.messages || []) as Message[]
       setMessages(current => mergeMessages(current, incoming))
       setActiveConversation(result.conversation || null)
@@ -75,8 +77,10 @@ export default function SupportChatWidget() {
       if (incoming.length > messageCount.current && !initial) setAnnouncement(`${incoming.length - messageCount.current} new support message${incoming.length - messageCount.current === 1 ? '' : 's'}`)
       messageCount.current = Math.max(messageCount.current, incoming.length)
       shouldScroll.current = keepAtBottom
+      return incoming
     } catch {
       if (request === threadRequest.current) setError('Conversation could not be loaded.')
+      return null
     }
   }
 
@@ -125,6 +129,7 @@ export default function SupportChatWidget() {
     refreshList(true)
     setTimeout(() => panel.current?.focus(), 0)
     const timer = setInterval(async () => {
+      if (lock.current) return
       await refreshList(false)
       if (activeRef.current) await refreshConversation(activeRef.current)
     }, POLL_INTERVAL)
@@ -176,12 +181,14 @@ export default function SupportChatWidget() {
     try {
       const sentText = message
       const result = await call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'handoff', subject: query.slice(0, 120), message: sentText }) })
+      if (typeof result.conversationId !== 'string' || typeof result.messageId !== 'string' || result.status !== 'new' || !result.updatedAt) throw new Error('Support could not confirm the saved conversation.')
+      rememberActive(result.conversationId)
+      setMessages([])
+      const persisted = await refreshConversation(result.conversationId, true)
+      if (!persisted?.some(item => item.id === result.messageId)) throw new Error('Support could not confirm the saved message. Please refresh before retrying.')
       setMessage('')
       setHandoff(false)
       setSuggestions([])
-      rememberActive(result.conversationId)
-      setMessages([])
-      await refreshConversation(result.conversationId, true)
       await refreshList(false)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Request failed')
@@ -201,9 +208,10 @@ export default function SupportChatWidget() {
     const sentText = message
     try {
       const result = await call(`/api/support/conversations/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify({ message: sentText }) })
+      if (typeof result.messageId !== 'string' || result.conversationId !== id || result.status !== 'waiting_for_support' || !result.updatedAt) throw new Error('Support could not confirm the saved message.')
+      const persisted = await refreshConversation(id)
+      if (!persisted?.some(item => item.id === result.messageId)) throw new Error('Support could not confirm the saved message. Please refresh before retrying.')
       setMessage('')
-      setMessages(current => mergeMessages(current, [{ id: result.messageId, text: sentText, senderType: 'user', createdAt: new Date().toISOString() }]))
-      await refreshConversation(id)
       await refreshList(false)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Request failed')

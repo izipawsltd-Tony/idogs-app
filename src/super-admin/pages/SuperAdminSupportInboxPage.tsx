@@ -33,8 +33,10 @@ export default function SuperAdminSupportInboxPage() {
 
   async function call(path: string, init?: RequestInit) {
     const token = await user!.getIdToken()
-    const response = await fetch(path, { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } })
-    const result = await response.json()
+    const response = await fetch(path, { ...init, cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } })
+    const raw = await response.text()
+    let result: Record<string, any>
+    try { result = JSON.parse(raw) } catch { throw new Error('Support returned an invalid response. Please try again.') }
     if (!response.ok) throw new Error(result.error || 'Request failed')
     return result
   }
@@ -69,7 +71,7 @@ export default function SuperAdminSupportInboxPage() {
     const keepAtBottom = initial || nearBottom()
     try {
       const result = await call(`/api/super-admin/support-conversation?id=${encodeURIComponent(id)}`)
-      if (request !== threadRequest.current || selectedRef.current?.id !== id) return
+      if (request !== threadRequest.current || selectedRef.current?.id !== id) return null
       const incoming = (result.messages || []) as Message[]
       const conversation = { ...selectedRef.current, ...(result.conversation || {}) } as Conversation
       selectedRef.current = conversation
@@ -79,8 +81,10 @@ export default function SuperAdminSupportInboxPage() {
       if (incoming.length > messageCount.current && !initial) setAnnouncement(`${incoming.length - messageCount.current} new support message${incoming.length - messageCount.current === 1 ? '' : 's'}`)
       messageCount.current = Math.max(messageCount.current, incoming.length)
       shouldScroll.current = keepAtBottom
+      return incoming
     } catch {
       if (request === threadRequest.current) setError('Conversation could not be loaded.')
+      return null
     }
   }
 
@@ -104,6 +108,7 @@ export default function SuperAdminSupportInboxPage() {
     if (!user) return
     refreshInbox()
     const timer = setInterval(async () => {
+      if (lock.current) return
       await refreshInbox()
       if (selectedRef.current) await refreshThread(selectedRef.current.id)
     }, POLL_INTERVAL)
@@ -117,9 +122,12 @@ export default function SuperAdminSupportInboxPage() {
     setBusy(true)
     setError('')
     try {
-      await call(`/api/super-admin/support-conversation?id=${encodeURIComponent(current.id)}`, { method: 'POST', body: JSON.stringify({ action, ...payload }) })
-      if (action === 'reply') setMessage('')
-      await refreshThread(current.id)
+      const result = await call(`/api/super-admin/support-conversation?id=${encodeURIComponent(current.id)}`, { method: 'POST', body: JSON.stringify({ action, ...payload }) })
+      const persisted = await refreshThread(current.id)
+      if (action === 'reply') {
+        if (typeof result.messageId !== 'string' || result.conversationId !== current.id || result.status !== 'waiting_on_user' || !result.updatedAt || !persisted?.some(item => item.id === result.messageId)) throw new Error('Support could not confirm the saved reply. Please refresh before retrying.')
+        setMessage('')
+      }
       await refreshInbox()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Request failed')
