@@ -4,6 +4,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { computeEffectivePlan, hasValidInternalEntitlement } from '../../_lib/entitlements.js'
 import { accountState, normalizeEntitlement } from '../_operations.js'
 import { ALLOWED_ADMINS, verifySuperAdmin } from '../_auth.js'
+import { supportsPasswordSignIn } from '../_password-reset.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -132,6 +133,7 @@ export default async function handler(req, res) {
         plan,
         emailVerified: authData ? authData.emailVerified : null,
         emailVerificationStatus: !authData ? 'unavailable' : authData.emailVerified ? 'verified' : 'not_verified',
+        passwordResetStatus: !authData || !authData.email ? 'auth_unavailable' : supportsPasswordSignIn(authData) ? 'available' : 'unsupported_provider',
         createdAt: authData && authData.metadata.creationTime ? new Date(authData.metadata.creationTime).toISOString() : (createdDate ? createdDate.toISOString() : null),
         lastSignInTime: authData && authData.metadata.lastSignInTime ? new Date(authData.metadata.lastSignInTime).toISOString() : null,
         firstName: profileData?.firstName || null,
