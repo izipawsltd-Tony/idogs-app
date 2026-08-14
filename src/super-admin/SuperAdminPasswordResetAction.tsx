@@ -47,7 +47,7 @@ export default function SuperAdminPasswordResetAction({ user, targetUid, targetE
   }
 
   return (
-    <section className="super-admin-panel super-admin-verification-panel" aria-labelledby="password-reset-heading">
+    <section id="password-reset-support" className="super-admin-panel super-admin-verification-panel" aria-labelledby="password-reset-heading">
       <div className="super-admin-panel-header">
         <div><h3 id="password-reset-heading">Password reset support</h3><p>Send a secure reset link without viewing, setting or generating a password.</p></div>
         <span className={`super-admin-status password-reset-${status}`}>{labels[status]}</span>
