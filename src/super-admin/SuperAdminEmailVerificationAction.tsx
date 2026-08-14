@@ -60,7 +60,7 @@ export default function SuperAdminEmailVerificationAction({ user, targetUid, tar
   }
 
   return (
-    <section className="super-admin-panel super-admin-verification-panel" aria-labelledby="email-verification-heading">
+    <section id="email-verification-support" className="super-admin-panel super-admin-verification-panel" aria-labelledby="email-verification-heading">
       <div className="super-admin-panel-header">
         <div>
           <h3 id="email-verification-heading">Email verification support</h3>

@@ -4,6 +4,7 @@ import { useAuth } from '../../hooks/useAuth'
 import SuperAdminAccountOperations, { type AdminAccountState, type AdminEntitlementState } from '../SuperAdminAccountOperations'
 import SuperAdminEmailVerificationAction, { type EmailVerificationStatus } from '../SuperAdminEmailVerificationAction'
 import SuperAdminPasswordResetAction, { type PasswordResetStatus } from '../SuperAdminPasswordResetAction'
+import SuperAdminAccountSecurityOverview, { type AccountSecurityOverview } from '../SuperAdminAccountSecurityOverview'
 
 interface AssociatedDog {
   id: string
@@ -40,6 +41,7 @@ interface UserDetail {
   emailVerified: boolean | null
   emailVerificationStatus: EmailVerificationStatus
   passwordResetStatus: PasswordResetStatus
+  securityOverview: AccountSecurityOverview
   createdAt: string | null
   lastSignInTime: string | null
   firstName: string | null
@@ -294,6 +296,12 @@ export default function SuperAdminUserDetailPage() {
           </h3>
         </div>
       </section>
+
+      <SuperAdminAccountSecurityOverview
+        overview={data.securityOverview}
+        emailVerificationStatus={data.emailVerificationStatus}
+        passwordResetStatus={data.passwordResetStatus}
+      />
 
       {/* Main Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, flexWrap: 'wrap', marginBottom: 24 }}>

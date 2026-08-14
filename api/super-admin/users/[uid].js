@@ -5,6 +5,7 @@ import { computeEffectivePlan, hasValidInternalEntitlement } from '../../_lib/en
 import { accountState, normalizeEntitlement } from '../_operations.js'
 import { ALLOWED_ADMINS, verifySuperAdmin } from '../_auth.js'
 import { supportsPasswordSignIn } from '../_password-reset.js'
+import { buildAccountSecurityOverview } from '../_account-security.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -36,7 +37,7 @@ export default async function handler(req, res) {
     try {
       authData = await auth.getUser(uid)
     } catch (authErr) {
-      console.warn(`User UID ${uid} not found in Firebase Auth:`, authErr.message)
+      if (authErr?.code !== 'auth/user-not-found') throw authErr
     }
 
     // 3. If neither exists, user is not found
@@ -125,6 +126,8 @@ export default async function handler(req, res) {
 
     const createdDate = getSafeDate(profileData?.createdAt)
 
+    const internalEntitlement = normalizeEntitlement(profileData?.internalEntitlement)
+    const internalEntitlementActive = hasValidInternalEntitlement(profileData || {})
     const payload = {
       user: {
         uid,
@@ -144,8 +147,9 @@ export default async function handler(req, res) {
         subscriptionStatus: profileData?.subscriptionStatus || null,
         stripeSubscriptionId: profileData?.stripeSubscriptionId || null,
         accountState: accountState(authData),
-        internalEntitlement: normalizeEntitlement(profileData?.internalEntitlement),
-        internalEntitlementActive: hasValidInternalEntitlement(profileData || {}),
+        internalEntitlement,
+        internalEntitlementActive,
+        securityOverview: buildAccountSecurityOverview({ authUser: authData, entitlement: internalEntitlement, entitlementActive: internalEntitlementActive }),
         superAdminAuthorized: ALLOWED_ADMINS.includes(String(email).toLowerCase().trim()),
         dogsCount: activeDogs.length,
         littersCount: isOwner ? 0 : litters.length,
