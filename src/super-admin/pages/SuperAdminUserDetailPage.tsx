@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import SuperAdminAccountOperations, { type AdminAccountState, type AdminEntitlementState } from '../SuperAdminAccountOperations'
 import SuperAdminEmailVerificationAction, { type EmailVerificationStatus } from '../SuperAdminEmailVerificationAction'
+import SuperAdminPasswordResetAction, { type PasswordResetStatus } from '../SuperAdminPasswordResetAction'
 
 interface AssociatedDog {
   id: string
@@ -38,6 +39,7 @@ interface UserDetail {
   plan: string
   emailVerified: boolean | null
   emailVerificationStatus: EmailVerificationStatus
+  passwordResetStatus: PasswordResetStatus
   createdAt: string | null
   lastSignInTime: string | null
   firstName: string | null
@@ -263,7 +265,7 @@ export default function SuperAdminUserDetailPage() {
       <div className="super-admin-panel" style={{ background: '#fbfcfc', border: '1px solid #dfe5df', padding: 16, marginBottom: 24, borderRadius: 8 }}>
         <h4 style={{ margin: '0 0 6px', fontSize: 13, color: '#53635a', fontWeight: 700, textTransform: 'uppercase' }}>Operational Limitations Warning</h4>
         <p style={{ margin: 0, fontSize: 12, color: '#6c7a70', lineHeight: 1.5 }}>
-          Email verification support only sends a new secure link; it never marks an account verified. Password resets, email changes, impersonation, and account deletion remain disabled.
+          Email support actions only send secure links; they never mark email verified or password changed. Email changes, impersonation, and account deletion remain disabled.
         </p>
       </div>
 
@@ -433,6 +435,13 @@ export default function SuperAdminUserDetailPage() {
                 targetUid={data.uid}
                 targetEmail={data.email}
                 status={data.emailVerificationStatus}
+                onUpdated={fetchUserDetail}
+              />
+              <SuperAdminPasswordResetAction
+                user={user}
+                targetUid={data.uid}
+                targetEmail={data.email}
+                status={data.passwordResetStatus}
                 onUpdated={fetchUserDetail}
               />
               <SuperAdminAccountOperations
