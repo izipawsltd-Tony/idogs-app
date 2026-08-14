@@ -79,7 +79,7 @@ export default function SupportChatWidget() {
       shouldScroll.current = keepAtBottom
       return incoming
     } catch {
-      if (request === threadRequest.current) setError('Conversation could not be loaded.')
+      if (request === threadRequest.current && initial) setError('Conversation could not be loaded.')
       return null
     }
   }
@@ -120,21 +120,22 @@ export default function SupportChatWidget() {
         if (selected) await selectConversation(selected.id)
       }
     } catch {
-      if (request === listRequest.current) setError('Support could not be loaded.')
+      if (request === listRequest.current && !activeRef.current) setError('Support could not be loaded.')
     }
   }
 
   useEffect(() => {
     if (!open || !user) return
-    refreshList(true)
+    refreshList(!active)
     setTimeout(() => panel.current?.focus(), 0)
     const timer = setInterval(async () => {
       if (lock.current) return
       await refreshList(false)
-      if (activeRef.current) await refreshConversation(activeRef.current)
+      const activeId = active || activeRef.current
+      if (activeId) await refreshConversation(activeId)
     }, POLL_INTERVAL)
     return () => clearInterval(timer)
-  }, [open, user])
+  }, [open, user, active])
 
   useEffect(() => {
     if (!user) {
