@@ -8,6 +8,44 @@ interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
+interface BillingInvoice {
+  id: string
+  number: string | null
+  status: string
+  amountPaid: number
+  amountDue: number
+  currency: string
+  createdAt: string | null
+  hostedInvoiceUrl: string | null
+  invoicePdf: string | null
+}
+
+interface BillingSummary {
+  subscription: {
+    id: string
+    status: string
+    cancelAtPeriodEnd: boolean
+    currentPeriodEnd: string | null
+  } | null
+  invoices: BillingInvoice[]
+  canManageBilling: boolean
+}
+
+function formatMoney(cents: number, currency: string): string {
+  return new Intl.NumberFormat('en-AU', {
+    style: 'currency',
+    currency: currency || 'AUD',
+  }).format(cents / 100)
+}
+
+function formatBillingDate(value: string | null): string {
+  if (!value) return 'Not available'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Not available'
+    : date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
 // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §1.1, LOCKED) —
 // only two real entitlements: Free and Plus. Monthly/Annual are billing
 // intervals of Plus, not separate tiers. The $40 annual launch offer is
@@ -36,6 +74,10 @@ export default function BillingPage({ toast }: Props) {
   const { user, profile } = useAuth()
   const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(false)
+  const [portalLoading, setPortalLoading] = useState(false)
+  const [detailsLoading, setDetailsLoading] = useState(true)
+  const [detailsError, setDetailsError] = useState<string | null>(null)
+  const [billingDetails, setBillingDetails] = useState<BillingSummary | null>(null)
   const [interval, setInterval] = useState<IntervalKey>('plus_monthly')
 
   const isPlus = profile?.plan === 'plus'
@@ -52,6 +94,48 @@ export default function BillingPage({ toast }: Props) {
       toast('Checkout cancelled — you can try again anytime.', 'info')
     }
   }, [])
+
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    setDetailsLoading(true)
+    setDetailsError(null)
+    user.getIdToken()
+      .then(idToken => fetch('/api/billing-summary', {
+        headers: { Authorization: `Bearer ${idToken}` },
+      }))
+      .then(async res => {
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(body.error || 'Failed to load billing details')
+        if (!cancelled) setBillingDetails(body as BillingSummary)
+      })
+      .catch(() => {
+        if (!cancelled) setDetailsError('Billing details are temporarily unavailable.')
+      })
+      .finally(() => {
+        if (!cancelled) setDetailsLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [user])
+
+  async function handleOpenPortal() {
+    if (!user) return
+    setPortalLoading(true)
+    try {
+      const idToken = await user.getIdToken()
+      const res = await fetch('/api/create-billing-portal', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}` },
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok || !body.url) throw new Error('Portal unavailable')
+      window.location.href = body.url
+    } catch {
+      toast('Failed to open billing management. Please try again.', 'error')
+    } finally {
+      setPortalLoading(false)
+    }
+  }
 
   async function handleSubscribe(planKey: IntervalKey) {
     if (!user) return
@@ -106,6 +190,33 @@ export default function BillingPage({ toast }: Props) {
           )}
         </div>
       </div>
+
+      {/* Stripe-backed subscription management */}
+      {(detailsLoading || detailsError || billingDetails?.canManageBilling) && (
+        <div className="card" style={{ marginBottom: 24, padding: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--dark)' }}>Subscription management</div>
+              {detailsLoading ? (
+                <div style={{ fontSize: 12, color: 'var(--light)', marginTop: 4 }}>Loading secure billing details…</div>
+              ) : detailsError ? (
+                <div role="alert" style={{ fontSize: 12, color: 'var(--danger, #C0392B)', marginTop: 4 }}>{detailsError}</div>
+              ) : billingDetails?.subscription ? (
+                <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>
+                  {billingDetails.subscription.cancelAtPeriodEnd ? 'Access scheduled to end' : 'Next renewal'}: <strong>{formatBillingDate(billingDetails.subscription.currentPeriodEnd)}</strong>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>Manage payment methods, invoices and cancellation securely in Stripe.</div>
+              )}
+            </div>
+            {billingDetails?.canManageBilling && (
+              <button type="button" className="btn btn-secondary" onClick={handleOpenPortal} disabled={portalLoading}>
+                {portalLoading ? 'Opening…' : 'Manage subscription'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Free tier highlight */}
       {isOwner && !isPlus && (
@@ -223,6 +334,35 @@ export default function BillingPage({ toast }: Props) {
       <div style={{ background: 'var(--sand)', borderRadius: 12, padding: '14px 20px', marginBottom: 24, fontSize: 13, color: 'var(--mid)' }}>
         🐾 <strong>1-2 dogs?</strong> iDogs is free forever for up to 2 dogs — no credit card, no expiry.
         Ownership transfer and your dog's permanent QR Passport are free on every plan.
+      </div>
+
+      {/* Payment history */}
+      <div className="card" style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Payment history</div>
+        {detailsLoading ? (
+          <div style={{ fontSize: 13, color: 'var(--light)' }}>Loading payment history…</div>
+        ) : detailsError ? (
+          <div role="alert" style={{ fontSize: 13, color: 'var(--danger, #C0392B)' }}>{detailsError}</div>
+        ) : !billingDetails?.invoices.length ? (
+          <div style={{ fontSize: 13, color: 'var(--light)' }}>No invoices yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {billingDetails.invoices.map((invoice, index) => (
+              <div key={invoice.id} style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr auto', gap: 12, alignItems: 'center', padding: '12px 0', borderTop: index ? '1px solid var(--sand)' : 'none', fontSize: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 600, color: 'var(--dark)' }}>{invoice.number || 'Stripe invoice'}</div>
+                  <div style={{ color: 'var(--light)', marginTop: 2 }}>{formatBillingDate(invoice.createdAt)}</div>
+                </div>
+                <div style={{ color: 'var(--mid)', textTransform: 'capitalize' }}>{invoice.status.replaceAll('_', ' ')}</div>
+                <div style={{ fontWeight: 600, color: 'var(--dark)' }}>{formatMoney(invoice.amountPaid || invoice.amountDue, invoice.currency)}</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {invoice.hostedInvoiceUrl && <a className="btn btn-secondary btn-sm" href={invoice.hostedInvoiceUrl} target="_blank" rel="noreferrer">View</a>}
+                  {invoice.invoicePdf && <a className="btn btn-secondary btn-sm" href={invoice.invoicePdf} target="_blank" rel="noreferrer">PDF</a>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* FAQ */}
