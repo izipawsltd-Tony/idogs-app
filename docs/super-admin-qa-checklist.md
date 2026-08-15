@@ -16,9 +16,9 @@ already-public allowlisted admin emails.
 - `/app/super-admin/plans-pricing`
 - `/app/super-admin/audit-logs`
 - `/app/super-admin/audit-logs/:id` (open one from the list)
-- `/app/super-admin/support`
+- `/app/super-admin/support-inbox`
+- `/app/super-admin/support-faqs`
 - `/app/super-admin/settings`
-- `/app/super-admin/billing-payments` (should still show the placeholder — not built yet)
 
 For each route, confirm:
 - [ ] Page loads without a blank screen or console crash
@@ -26,10 +26,11 @@ For each route, confirm:
 - [ ] Data populates (or a clear empty state shows if there's nothing to display)
 - [ ] Sidebar highlights the correct nav item as active
 - [ ] No disabled button is clickable or triggers a network request
-- [ ] Read-only notice is visible where expected (Subscriptions, Plans & Pricing, Audit Logs, Support, Settings)
-- [ ] V1 data-model limitation notice is visible where expected (Subscriptions, Plans & Pricing, Audit Logs, Support)
+- [ ] Read-only notice is visible where expected (Subscriptions, Plans & Pricing, Audit Logs, Settings)
+- [ ] V1 data-model limitation notice is visible where expected (Subscriptions, Plans & Pricing, Audit Logs)
 - [ ] No Stripe/payment live action is reachable anywhere (Plans & Pricing, Settings integration buttons all disabled)
-- [ ] No support reply/assign/resolve/close action is reachable on the Support page
+- [ ] Support Inbox reply/assign/status actions work and remain Super Admin protected
+- [ ] FAQ search, status filter, save draft, publish and unpublish work
 
 ## 2. Detail-page specific checks
 
@@ -41,7 +42,7 @@ For each route, confirm:
   - Organisations list → Organisation detail
   - Subscriptions → View User / View Org (Org link only for breeder-role rows)
   - Audit Logs → View / View User / View Org
-  - Support → View User (recent signals + recent accounts)
+  - Support Inbox → View User / View Organisation
 
 ## 3. Access control checks
 
@@ -64,19 +65,19 @@ GET /api/super-admin/subscriptions
 GET /api/super-admin/plans-pricing
 GET /api/super-admin/audit-logs
 GET /api/super-admin/audit-logs/<id>
-GET /api/super-admin/support
+GET /api/super-admin/support-inbox
+GET /api/super-admin/support-faqs
 GET /api/super-admin/settings
 ```
 
 Each should return `401 {"error":"Unauthorized: Missing Authorization header"}`.
 
-## 5. No-write safety checks
+## 5. Controlled-write safety checks
 
-- [ ] No button anywhere in `/app/super-admin/*` performs a create/edit/delete/suspend/resolve/assign action
-- [ ] No page issues a non-GET `fetch()` call
+- [ ] All write actions require the verified Super Admin API guard
+- [ ] Sensitive actions retain confirmation/reason requirements where applicable
 - [ ] No page or API response contains a private key, service account email, Stripe secret/price ID, or other credential
-- [ ] No Firestore `.set()/.update()/.delete()/.add()` calls anywhere under `api/super-admin/*`
-- [ ] No Firebase Auth write calls (`createUser`/`updateUser`/`deleteUser`/`setCustomUserClaims`) anywhere under `api/super-admin/*`
+- [ ] FAQ and Support writes create audit records and expose no credentials
 
 ## 6. Pre-push / pre-preview-deploy checks
 

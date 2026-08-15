@@ -39,7 +39,6 @@ import PrivateDogPage from '../pages/PrivateDogPage'
 import SuperAdminRoute from '../super-admin/SuperAdminRoute'
 import SuperAdminLayout from '../super-admin/SuperAdminLayout'
 import SuperAdminOverviewPage from '../super-admin/pages/SuperAdminOverviewPage'
-import SuperAdminModulePlaceholderPage from '../super-admin/pages/SuperAdminModulePlaceholderPage'
 import SuperAdminOrganisationsPage from '../super-admin/pages/SuperAdminOrganisationsPage'
 import SuperAdminOrganisationDetailPage from '../super-admin/pages/SuperAdminOrganisationDetailPage'
 import SuperAdminUsersPage from '../super-admin/pages/SuperAdminUsersPage'
@@ -48,7 +47,6 @@ import SuperAdminSubscriptionsPage from '../super-admin/pages/SuperAdminSubscrip
 import SuperAdminPlansPricingPage from '../super-admin/pages/SuperAdminPlansPricingPage'
 import SuperAdminAuditLogsPage from '../super-admin/pages/SuperAdminAuditLogsPage'
 import SuperAdminAuditLogDetailPage from '../super-admin/pages/SuperAdminAuditLogDetailPage'
-import SuperAdminSupportPage from '../super-admin/pages/SuperAdminSupportPage'
 import SuperAdminSettingsPage from '../super-admin/pages/SuperAdminSettingsPage'
 import SuperAdminSupportInboxPage from '../super-admin/pages/SuperAdminSupportInboxPage'
 import SuperAdminFaqManagementPage from '../super-admin/pages/SuperAdminFaqManagementPage'
@@ -123,9 +121,7 @@ export default function App() {
           <Route path="users" element={<SuperAdminUsersPage />} />
           <Route path="users/:uid" element={<SuperAdminUserDetailPage />} />
           <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
-          <Route path="billing-payments" element={<SuperAdminModulePlaceholderPage title="Billing & Payments" section="Revenue" description="Billing and payment review will be added in a later Super Admin batch." />} />
           <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
-          <Route path="support" element={<SuperAdminSupportPage />} />
           <Route path="support-inbox" element={<SuperAdminSupportInboxPage />} />
           <Route path="support-faqs" element={<SuperAdminFaqManagementPage />} />
           <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />

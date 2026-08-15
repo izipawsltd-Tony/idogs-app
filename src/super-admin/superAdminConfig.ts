@@ -49,11 +49,6 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
         description: 'Read-only subscription and plan overview',
       },
       {
-        label: 'Billing & Payments',
-        path: `${SUPER_ADMIN_BASE_PATH}/billing-payments`,
-        description: 'Future billing and payment review',
-      },
-      {
         label: 'Plans & Pricing',
         path: `${SUPER_ADMIN_BASE_PATH}/plans-pricing`,
         description: 'Read-only plan catalogue and usage',
@@ -63,11 +58,6 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
   {
     label: 'Operations',
     items: [
-      {
-        label: 'Support',
-        path: `${SUPER_ADMIN_BASE_PATH}/support`,
-        description: 'Read-only support signals (no ticket system yet)',
-      },
       {
         label: 'Support Inbox',
         path: `${SUPER_ADMIN_BASE_PATH}/support-inbox`,
