@@ -348,7 +348,7 @@ export default function BillingPage({ toast }: Props) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {billingDetails.invoices.map((invoice, index) => (
-              <div key={invoice.id} style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr auto', gap: 12, alignItems: 'center', padding: '12px 0', borderTop: index ? '1px solid var(--sand)' : 'none', fontSize: 12 }}>
+              <div key={invoice.id} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, alignItems: 'center', padding: '12px 0', borderTop: index ? '1px solid var(--sand)' : 'none', fontSize: 12 }}>
                 <div>
                   <div style={{ fontWeight: 600, color: 'var(--dark)' }}>{invoice.number || 'Stripe invoice'}</div>
                   <div style={{ color: 'var(--light)', marginTop: 2 }}>{formatBillingDate(invoice.createdAt)}</div>
