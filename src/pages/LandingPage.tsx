@@ -104,8 +104,22 @@ export default function LandingPage() {
                 />
               </div>
               <div className="hv-strip">
-                <div className="hv-mini"><div className="m">Digital Passport / QR</div></div>
-                <div className="hv-mini"><div className="m">Mobile preview</div></div>
+                <div className="hv-mini">
+                  <LandingMediaSlot
+                    slotId="digital-passport"
+                    className="m"
+                    ariaLabel="Digital Passport and QR preview"
+                    fallback={<div className="m">Digital Passport / QR</div>}
+                  />
+                </div>
+                <div className="hv-mini">
+                  <LandingMediaSlot
+                    slotId="puppy-showcase"
+                    className="m"
+                    ariaLabel="Mobile Puppy Showcase preview"
+                    fallback={<div className="m">Mobile preview</div>}
+                  />
+                </div>
               </div>
             </div>
           </div>
