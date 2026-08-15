@@ -518,6 +518,7 @@ const LV2_CSS = `
   .lv2-page .hv-strip { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
   .lv2-page .hv-mini { background:var(--forest); border-radius:8px; padding:6px; }
   .lv2-page .hv-mini .m { aspect-ratio:9/6; background:repeating-linear-gradient(135deg,#2b4c44 0 10px,#264640 10px 20px); border-radius:5px; display:grid; place-items:center; font-size:11px; color:var(--on-forest-soft); text-align:center; padding:6px; }
+  .lv2-page .hv-mini img.m, .lv2-page .hv-mini video.m { object-fit:contain!important; background:var(--forest); padding:0; }
 
   .lv2-page .trust { background:var(--bone-2); border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
   .lv2-page .trust-inner { display:flex; flex-wrap:wrap; gap:14px 40px; justify-content:center; padding:18px 24px; max-width:var(--maxw); margin:0 auto; }
