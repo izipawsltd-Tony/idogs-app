@@ -9,8 +9,11 @@ name: Billing Grace Period Check
 # deploy in this repo.
 
 on:
-  schedule:
-    - cron: '15 22 * * *'  # 8:15am AEST (UTC+10) = 10:15pm UTC — just after daily-reminders
+  # Schedule DISABLED (17/08/2026): endpoint chỉ trỏ staging, không cần chạy
+  # tự động hằng ngày. Chỉ dùng khi test billing-grace trên staging.
+  # BẬT LẠI: thêm lại khối schedule dưới đây khi tính năng lên production.
+  #   schedule:
+  #     - cron: '15 22 * * *'  # 8:15am AEST
   workflow_dispatch:
 
 jobs:
