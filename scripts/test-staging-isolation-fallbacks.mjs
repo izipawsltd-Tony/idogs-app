@@ -501,10 +501,13 @@ await checkAsync('api/upload.js: config-mismatch server log contains no bucket n
   // prices this assertion used to pin — that retirement IS the intended
   // change, not an accidental drift the round-19 staging-isolation patch
   // this test file otherwise guards would have caused. Updated to pin the
-  // new locked Plus Monthly/Annual price ids instead, preserving the same
-  // "this file wasn't carelessly touched" intent against a NEW baseline.
-  check('api/_lib/checkout-handler.js Stripe price IDs match the locked iDogs Pricing v1.1 Plus prices',
-    /price_1TwZZL5lmfxrCiH3IeSldxni/.test(checkoutSrc) && /price_1TwZa25lmfxrCiH3L1PL7jMd/.test(checkoutSrc) &&
+  // LIVE-mode Plus Monthly/Annual price ids (swapped in after the TEST-mode
+  // ids caused "No such price" in production Stripe Checkout), preserving
+  // the same "this file wasn't carelessly touched" intent against a NEW
+  // baseline.
+  check('api/_lib/checkout-handler.js Stripe price IDs match the locked iDogs Pricing v1.1 Plus prices (LIVE mode)',
+    /price_1TxMJ9GHgBd6ZgJEcwyahH58/.test(checkoutSrc) && /price_1TxMJ8GHgBd6ZgJEt56IzJJd/.test(checkoutSrc) &&
+    !/price_1TwZZL5lmfxrCiH3IeSldxni/.test(checkoutSrc) && !/price_1TwZa25lmfxrCiH3L1PL7jMd/.test(checkoutSrc) &&
     !/price_1TiaZn5lmfxrCiH3GCzSSuAy/.test(checkoutSrc) && !/price_1Tiabb5lmfxrCiH3kBdaQsRH/.test(checkoutSrc) &&
     !/price_1TiU7j5lmfxrCiH3J1WbbrLR/.test(checkoutSrc) && !/price_1Tialb5lmfxrCiH3pe82Abps/.test(checkoutSrc))
 
@@ -554,7 +557,6 @@ await checkAsync('api/upload.js: config-mismatch server log contains no bucket n
   }
 
   for (const [file, op, code] of [
-    ['_lib/checkout-handler.js', 'create-checkout', 'CHECKOUT_SESSION_FAILED'],
     ['get-signed-url.js', 'get-signed-url', 'SIGNED_URL_FAILED'],
     ['upload-document.js', 'upload-document', 'UPLOAD_FAILED'],
   ]) {
@@ -562,6 +564,14 @@ await checkAsync('api/upload.js: config-mismatch server log contains no bucket n
     check(`${file} calls logSanitizedError('${op}', '${code}') in its general catch-all with fixed, allowlisted arguments`,
       new RegExp(`logSanitizedError\\('${op}', '${code}'\\)`).test(src))
   }
+
+  // _lib/checkout-handler.js additionally forwards the caught error's own
+  // .message and Stripe SDK .code (non-secret diagnostics — see
+  // logSanitizedError's own comment) so a live "No such price" misconfig is
+  // visible in server logs instead of just a generic 'CHECKOUT_SESSION_FAILED'.
+  const checkoutHandlerSrc2 = readFileSync(new URL('../api/_lib/checkout-handler.js', import.meta.url), 'utf8')
+  check("_lib/checkout-handler.js calls logSanitizedError('create-checkout', 'CHECKOUT_SESSION_FAILED', ...) with fixed operation/code plus only err.message/err.code detail",
+    /logSanitizedError\('create-checkout', 'CHECKOUT_SESSION_FAILED', \{\s*message: err\?\.message,\s*code: err\?\.code,?\s*\}\)/.test(checkoutHandlerSrc2))
   const uploadSrc2 = readFileSync(new URL('../api/upload.js', import.meta.url), 'utf8')
   check("upload.js calls logSanitizedError with a server-controlled (not raw request) operation label + fixed code",
     /logSanitizedError\(`upload \(\$\{uploadType\}\)`, 'UPLOAD_FAILED'\)/.test(uploadSrc2))

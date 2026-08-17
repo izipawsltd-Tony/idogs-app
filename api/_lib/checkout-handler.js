@@ -10,8 +10,8 @@ import { logSanitizedError } from './http-helpers.js'
 // The $40 launch-offer price mentioned in §1.1 of the record is explicitly
 // NOT implemented per this round's scope.
 export const CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TwZZL5lmfxrCiH3IeSldxni',
-  plus_annual: 'price_1TwZa25lmfxrCiH3L1PL7jMd',
+  plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58',
+  plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
 })
 
 // Both keys resolve to the same entitlement — Plus. The billing interval
@@ -99,8 +99,11 @@ export function createCheckoutHandler({
         },
       })
       return res.status(200).json({ url: session.url })
-    } catch {
-      logSanitizedError('create-checkout', 'CHECKOUT_SESSION_FAILED')
+    } catch (err) {
+      logSanitizedError('create-checkout', 'CHECKOUT_SESSION_FAILED', {
+        message: err?.message,
+        code: err?.code,
+      })
       return res.status(500).json({ error: 'Failed to create checkout' })
     }
   }

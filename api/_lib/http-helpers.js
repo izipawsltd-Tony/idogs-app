@@ -69,7 +69,17 @@ export const MAX_STRING_LENGTH = 10000
 // upload-document.js, upload.js, create-checkout.js each keep their own
 // existing try/catch shape) use this directly in their catch block
 // instead of `console.error(label, err)`.
-export function logSanitizedError(operation, code) {
+// `detail` is optional and, when present, must carry ONLY non-secret
+// diagnostic fields — the caught error's own `.message` and (for Stripe SDK
+// errors) `.code`, e.g. "No such price" / 'resource_missing'. Unlike a raw
+// error object or its stack, neither field can carry config values, URLs, or
+// bucket/file paths, so surfacing them here doesn't reopen the leak this
+// function exists to close. Never pass the raw error object itself.
+export function logSanitizedError(operation, code, detail) {
+  if (detail) {
+    console.error(`${operation}: operation failed`, { code, message: detail.message, stripeCode: detail.code })
+    return
+  }
   console.error(`${operation}: operation failed`, { code })
 }
 

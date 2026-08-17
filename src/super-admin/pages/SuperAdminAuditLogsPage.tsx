@@ -79,6 +79,22 @@ function auditStateDetails(state: Record<string, unknown> | null): string {
   return state ? JSON.stringify(state, null, 2) : 'Not recorded'
 }
 
+function escapeCsvCell(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  const str = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  if (/[",\n\r]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`
+  }
+  return str
+}
+
+const AUDIT_CSV_COLUMNS: (keyof AuditLogRow)[] = [
+  'id', 'createdAt', 'action', 'details', 'tenantId', 'dogId', 'dogName',
+  'performedBy', 'performedByEmail', 'actorRole', 'tenantIsOrganisation', 'isDeletionEvent',
+  'targetUserId', 'targetUserEmail', 'targetOrganisationId', 'targetOrganisationName',
+  'reason', 'beforeState', 'afterState', 'outcome', 'providerMessageId',
+]
+
 type DateFilter = 'all' | '24h' | '7d' | '30d'
 
 export default function SuperAdminAuditLogsPage() {
@@ -191,6 +207,34 @@ export default function SuperAdminAuditLogsPage() {
 
     return matchSearch && matchAction && matchRole && matchDate
   })
+
+  function handleExportCsv() {
+    if (filteredLogs.length === 0) {
+      alert('No audit log rows to export for the current filters.')
+      return
+    }
+
+    const header = AUDIT_CSV_COLUMNS.join(',')
+    const rows = filteredLogs.map(log =>
+      AUDIT_CSV_COLUMNS.map(column => escapeCsvCell(log[column])).join(',')
+    )
+    const csvContent = String.fromCharCode(0xFEFF) + [header, ...rows].join('\r\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `audit-logs-${timestamp}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
 
   if (loading) {
     return (
@@ -348,11 +392,10 @@ export default function SuperAdminAuditLogsPage() {
             </span>
             <button
               type="button"
-              disabled
-              title="Coming later"
-              style={{ padding: '4px 10px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border)', background: '#f4f6f5', color: '#9aa39d', cursor: 'not-allowed' }}
+              onClick={handleExportCsv}
+              style={{ padding: '4px 10px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--primary, #2f6f4f)', color: '#fff', cursor: 'pointer' }}
             >
-              Export — Coming later
+              Export CSV
             </button>
           </div>
         </div>
