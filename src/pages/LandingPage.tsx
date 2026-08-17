@@ -103,24 +103,6 @@ export default function LandingPage() {
                   fallback={<div className="hv-shot">Dog Profile — product screenshot</div>}
                 />
               </div>
-              <div className="hv-strip">
-                <div className="hv-mini">
-                  <LandingMediaSlot
-                    slotId="digital-passport"
-                    className="m"
-                    ariaLabel="Digital Passport and QR preview"
-                    fallback={<div className="m">Digital Passport / QR</div>}
-                  />
-                </div>
-                <div className="hv-mini">
-                  <LandingMediaSlot
-                    slotId="puppy-showcase"
-                    className="m"
-                    ariaLabel="Mobile Puppy Showcase preview"
-                    fallback={<div className="m">Mobile preview</div>}
-                  />
-                </div>
-              </div>
             </div>
           </div>
         </section>
@@ -514,7 +496,8 @@ const LV2_CSS = `
 
   .lv2-page .hero-visual { background:linear-gradient(160deg,var(--forest-2),#1a3a33); border:1px solid rgba(192,138,45,.4); border-radius:18px; padding:16px; box-shadow:0 24px 60px -30px rgba(0,0,0,.7); }
   .lv2-page .hv-poster { position:relative; border-radius:12px; overflow:hidden; }
-  .lv2-page .hv-shot { aspect-ratio:16/11; background:repeating-linear-gradient(135deg,#274a42 0 14px,#22443c 14px 28px); display:grid; place-items:center; text-align:center; color:var(--on-forest-soft); font-size:13px; padding:16px; }
+  .lv2-page .hv-shot { aspect-ratio:1/1; background:repeating-linear-gradient(135deg,#274a42 0 14px,#22443c 14px 28px); display:grid; place-items:center; text-align:center; color:var(--on-forest-soft); font-size:13px; padding:16px; }
+  /* unused after hero simplification */
   .lv2-page .hv-strip { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
   .lv2-page .hv-mini { background:var(--forest); border-radius:8px; padding:6px; }
   .lv2-page .hv-mini .m { aspect-ratio:9/6; background:repeating-linear-gradient(135deg,#2b4c44 0 10px,#264640 10px 20px); border-radius:5px; display:grid; place-items:center; font-size:11px; color:var(--on-forest-soft); text-align:center; padding:6px; }
