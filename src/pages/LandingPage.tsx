@@ -521,8 +521,8 @@ const LV2_CSS = `
   .lv2-page .frame-desktop .bar i, .lv2-page .frame-mobile .bar i { width:9px; height:9px; border-radius:50%; background:rgba(255,255,255,.35); }
   .lv2-page .ph { width:100%; background:repeating-linear-gradient(135deg,var(--bone-2) 0 12px,#e2dac7 12px 24px); border-radius:8px; display:grid; place-items:center; text-align:center; color:var(--ink-soft); font-size:13px; font-weight:600; padding:16px; }
   .lv2-page .ph-desktop { aspect-ratio:16/10; }
-  .lv2-page .ph-mobile { aspect-ratio:3/5; }
-  .lv2-page .frame-mobile img.ph-mobile, .lv2-page .frame-mobile video.ph-mobile { object-fit:contain!important; background:var(--bone-2); padding:0; }
+  .lv2-page .ph-mobile { aspect-ratio:3/5; overflow:hidden; }
+  .lv2-page .frame-mobile img.ph-mobile, .lv2-page .frame-mobile video.ph-mobile { object-fit:cover!important; background:var(--bone-2); padding:0; }
   .lv2-page .shot-cap { text-align:center; font-size:13px; color:var(--ink-soft); margin-top:10px; }
 
   .lv2-page .paths { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:20px; }
