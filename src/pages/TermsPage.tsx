@@ -98,7 +98,7 @@ export default function TermsPage() {
 
           <LegalSection title="12. Contact">
             <p>For questions about these Terms, contact us at:</p>
-            <p><strong>iziPaws Pty Ltd</strong><br />ABN: 42 693 563 745<br />Adelaide, South Australia<br />Email: info@izipaws.com.au</p>
+            <p><strong>iziPaws Pty Ltd</strong><br />ABN: 42 693 563 745<br />Adelaide, South Australia<br />Email: hello@idogs.com.au</p>
           </LegalSection>
         </div>
       </div>

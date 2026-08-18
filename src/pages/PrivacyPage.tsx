@@ -25,7 +25,7 @@ export default function PrivacyPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
           <LegalSection title="1. Who We Are">
             <p>iziPaws Pty Ltd (ABN 42 693 563 745), trading as iDogs, is the operator of idogs.com.au ("the Service"). We are based in Adelaide, South Australia.</p>
-            <p>Contact: info@izipaws.com.au</p>
+            <p>Contact: hello@idogs.com.au</p>
           </LegalSection>
 
           <LegalSection title="2. Information We Collect">
@@ -75,7 +75,7 @@ export default function PrivacyPage() {
               <li><strong>Opt out</strong> of marketing communications</li>
               <li><strong>Complain</strong> to the Office of the Australian Information Commissioner (OAIC) if you believe we've breached your privacy</li>
             </ul>
-            <p>To exercise these rights, contact us at info@izipaws.com.au.</p>
+            <p>To exercise these rights, contact us at hello@idogs.com.au.</p>
           </LegalSection>
 
           <LegalSection title="7. Data Retention">
@@ -102,7 +102,7 @@ export default function PrivacyPage() {
 
           <LegalSection title="11. Contact and Complaints">
             <p>For privacy questions or complaints:</p>
-            <p><strong>iziPaws Pty Ltd</strong><br />ABN: 42 693 563 745<br />Adelaide, South Australia<br />Email: info@izipaws.com.au</p>
+            <p><strong>iziPaws Pty Ltd</strong><br />ABN: 42 693 563 745<br />Adelaide, South Australia<br />Email: hello@idogs.com.au</p>
             <p>If you are not satisfied with our response, you may lodge a complaint with the <strong>Office of the Australian Information Commissioner (OAIC)</strong> at oaic.gov.au or call 1300 363 992.</p>
           </LegalSection>
         </div>
