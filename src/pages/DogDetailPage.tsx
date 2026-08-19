@@ -2872,7 +2872,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   notesError?: boolean; auditError?: boolean
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
   onRetry?: () => void
-  dogId: string; onNoteChanged: () => Promise<void>
+  dogId: string | undefined; onNoteChanged: () => Promise<void>
 }) {
   const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
   const [editingId, setEditingId] = useState<string | null>(null)
