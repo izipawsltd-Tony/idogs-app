@@ -937,6 +937,21 @@ export async function addActivityNote(dogId: string, note: string, photoUrl?: st
   return ref.id
 }
 
+// Update an existing timeline note (text + optional event date).
+// Photo is not changed here — editing only touches note body and noteDate.
+export async function updateActivityNote(id: string, note: string, noteDate?: string): Promise<void> {
+  await updateDoc(doc(db, 'activityNotes', id), {
+    note,
+    ...(noteDate ? { noteDate } : {}),
+  })
+}
+
+// Delete a timeline note. Bước A: xoá Firestore doc thôi; file ảnh (nếu có)
+// tạm thời để lại trên Storage — dọn ở Bước B qua Admin SDK endpoint.
+export async function deleteActivityNote(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'activityNotes', id))
+}
+
 // ── LITTERS ───────────────────────────────────────────────────
 
 // Excludes archived litters (Codex round 5, Blocker 2) — api/delete-litter.js

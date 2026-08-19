@@ -4,7 +4,7 @@ import QRCode from 'qrcode'
 import { useAuth } from '../hooks/useAuth'
 import {
   getDog, getDogs, getVaccineRecords, getWormingRecords, getHealthTests,
-  getReminders, getActivityNotes, addActivityNote,
+  getReminders, getActivityNotes, addActivityNote, updateActivityNote, deleteActivityNote,
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder,
   addWormingRecord, deleteWormingRecord,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, logAudit, syncLifeStage,
@@ -453,6 +453,11 @@ export default function DogDetailPage({ toast }: Props) {
     } finally {
       setSavingNote(false)
     }
+  }
+
+  async function handleNoteChanged() {
+    const n = await getActivityNotes(dogId)
+    setNotes(n)
   }
 
   async function handleDelete() {
@@ -1185,7 +1190,7 @@ export default function DogDetailPage({ toast }: Props) {
           explicit Retry action alongside it. */}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />}
       {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} onRetry={retryDocuments} />}
-      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} />}
+      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} />}
 
       {tab === 'breeding' && !isOwner && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
         await updateDog(dogId!, updates)
@@ -2745,6 +2750,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
 
 type StoryEvent = {
   date: string
+  id?: string
   icon: string
   title: string
   detail?: string
@@ -2821,7 +2827,7 @@ function buildStoryEvents(dog: Dog, vaccines: VaccineRecord[], wormings: Worming
     // Timeline ordering/display, not createdAt (the date the note record
     // was saved) — falls back to createdAt for notes added before this
     // field existed.
-    events.push({ date: n.noteDate || n.createdAt, icon: '📝', title: n.note, photoUrl: n.photoUrl, kind: 'note' })
+    events.push({ date: n.noteDate || n.createdAt, id: n.id, icon: '📝', title: n.note, photoUrl: n.photoUrl, kind: 'note' })
   })
 
   events.push(...getPastMilestoneEvents(dog.dateOfBirth, dog.createdAt))
@@ -2854,7 +2860,7 @@ const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
   note: 'var(--brand-600)',
 }
 
-function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast, notesError, auditError, vaccinesError, wormingError, healthTestsError, onRetry }: {
+function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast, notesError, auditError, vaccinesError, wormingError, healthTestsError, onRetry, dogId, onNoteChanged }: {
   dog: Dog; notes: ActivityNote[]; newNote: string; setNewNote: (v: string) => void;
   newNoteDate: string; setNewNoteDate: (v: string) => void;
   onAddNote: () => void; saving: boolean;
@@ -2866,8 +2872,12 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   notesError?: boolean; auditError?: boolean
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
   onRetry?: () => void
+  dogId: string; onNoteChanged: () => Promise<void>
 }) {
   const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
+  const [editDate, setEditDate] = useState('')
   // Codex round 16: the Timeline is a MERGE of five independent sources
   // (notes, life-stage transitions derived from audit logs, vaccines,
   // wormings, health tests) — each already has its own dedicated error
@@ -3025,7 +3035,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
           <div style={{ position: 'absolute', left: 15, top: 6, bottom: 6, width: 2, background: 'var(--border)' }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {events.map((e, i) => (
-              <div key={i} style={{ position: 'relative' }}>
+              <div key={e.id ?? i} style={{ position: 'relative' }}>
                 {/* Dot on the timeline */}
                 <div style={{
                   position: 'absolute', left: -36, top: 0,
@@ -3049,7 +3059,33 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
                   )}
                   <div style={{ fontSize: 14, color: 'var(--dark)', lineHeight: 1.6, marginBottom: 4 }}>{e.title}</div>
                   {e.detail && <div style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 4 }}>{e.detail}</div>}
-                  <div style={{ fontSize: 12, color: 'var(--light)' }}>{formatDate(e.date)}</div>
+                  {editingId === e.id ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                      <textarea value={editText} onChange={ev => setEditText(ev.target.value)} rows={2} style={{ fontSize: 13, padding: 6, borderRadius: 6, border: '1px solid var(--border)', resize: 'vertical' }} />
+                      <input type="date" value={editDate} onChange={ev => setEditDate(ev.target.value)} style={{ fontSize: 13, padding: 6, borderRadius: 6, border: '1px solid var(--border)', width: 'fit-content' }} />
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" className="btn btn-sm" disabled={!editText.trim()} onClick={async () => {
+                          try { await updateActivityNote(e.id!, editText.trim(), editDate); await onNoteChanged(); setEditingId(null); toast('Note updated') }
+                          catch { toast('Could not update note', 'error') }
+                        }}>Save</button>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditingId(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ fontSize: 12, color: 'var(--light)' }}>{formatDate(e.date)}</div>
+                      {e.kind === 'note' && e.id && (
+                        <div style={{ display: 'flex', gap: 10 }}>
+                          <button type="button" onClick={() => { setEditingId(e.id!); setEditText(e.title); setEditDate((e.date || '').slice(0, 10)) }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>
+                          <button type="button" onClick={async () => {
+                            if (!confirm('Delete this note? This cannot be undone.')) return
+                            try { await deleteActivityNote(e.id!); await onNoteChanged(); toast('Note deleted') }
+                            catch { toast('Could not delete note', 'error') }
+                          }} style={{ background: 'none', border: 'none', color: 'var(--danger, #c0392b)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Delete</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
