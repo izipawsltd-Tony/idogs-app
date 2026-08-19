@@ -456,6 +456,7 @@ export default function DogDetailPage({ toast }: Props) {
   }
 
   async function handleNoteChanged() {
+    if (!dogId) return
     const n = await getActivityNotes(dogId)
     setNotes(n)
   }
