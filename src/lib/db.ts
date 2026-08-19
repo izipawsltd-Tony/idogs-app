@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, setDoc, Timestamp
+  query, where, serverTimestamp, setDoc, Timestamp, deleteField
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage, LitterShowcase, ShowcaseAvailability, ShowcasePuppyEntry } from '../types'
@@ -1634,6 +1634,10 @@ export async function getAllDocumentsForUser(_userId: string): Promise<any[]> {
 
 export async function deleteDocument(id: string): Promise<void> {
   await deleteDoc(doc(db, 'documents', id))
+}
+
+export async function updateDocument(id: string, name: string): Promise<void> {
+  await updateDoc(doc(db, 'documents', id), name.trim() ? { name: name.trim() } : { name: deleteField() })
 }
 
 // ADR-002 Phase C2: scanLogs denies all client reads (see firestore.rules

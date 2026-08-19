@@ -7,7 +7,7 @@ import {
   getReminders, getActivityNotes, addActivityNote, updateActivityNote, deleteActivityNote,
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder,
   addWormingRecord, deleteWormingRecord,
-  getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, logAudit, syncLifeStage,
+  getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, updateDocument, logAudit, syncLifeStage,
   getAuditLogs, type AuditEntry, isCurrentOwner, safeReadFirestoreErrorCode
 } from '../lib/db'
 import { useRequestGuard } from '../hooks/useRequestGuard'
@@ -2645,6 +2645,8 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetry
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
 function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void }) {
+  const [editingDocId, setEditingDocId] = useState<string | null>(null)
+  const [editDocName, setEditDocName] = useState('')
   const { user } = useAuth()
   function getDocIcon(type: string) {
     if (type === 'vaccine_card') return '💉'
@@ -2698,7 +2700,25 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 2 }}>
-                  {getDocLabel(doc.documentType)}
+                  {editingDocId === doc.id ? (
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input value={editDocName} onChange={e => setEditDocName(e.target.value)} placeholder={getDocLabel(doc.documentType)} autoFocus style={{ fontSize: 14, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', flex: 1 }} />
+                      <button type="button" className="btn btn-sm" onClick={async () => {
+                        try {
+                          await updateDocument(doc.id, editDocName)
+                          setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, name: editDocName.trim() || undefined } : d))
+                          setEditingDocId(null)
+                          toast('Name updated')
+                        } catch { toast('Could not update name', 'error') }
+                      }}>Save</button>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditingDocId(null)}>Cancel</button>
+                    </div>
+                  ) : (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      {doc.name || getDocLabel(doc.documentType)}
+                      <button type="button" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || '') }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--light)' }}>
                   {doc.fileType?.toUpperCase()} · {doc.uploadedAt?.toDate?.()?.toLocaleDateString('en-AU') || 'Recently uploaded'}
@@ -2736,7 +2756,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
                   className="btn btn-ghost btn-sm"
                   style={{ color: 'var(--error)' }}
                 >
-                  🗑️ Remove from list
+                  Delete
                 </button>
               </div>
             </div>
