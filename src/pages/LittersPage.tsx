@@ -4,7 +4,7 @@ import {
   getLitters, getDogs, createLitter, updateLitter, deleteLitterServer, removePuppyFromLitter, createLitterPuppyAtomic, updateDog, transferDogOwnership,
   getShowcaseForLitter, createShowcase, setShowcaseEnabled, updateShowcasePuppy, DEFAULT_SHOWCASE_PUPPY_ENTRY,
   rotateShowcaseShare, updateShowcaseShare, uploadShowcaseMediaDirect, updateShowcaseMediaOrder, getShowcaseMediaUrls, getEnquiriesForLitter, reconcileLitterPuppy,
-  managePrivateDogAccess, type PrivateDogAccessGrant,
+  managePrivateDogAccess, addActivityNote, type PrivateDogAccessGrant,
 } from '../lib/db'
 import type { SignedMediaItem } from '../lib/db'
 import { doc, collection, getDoc } from 'firebase/firestore'
@@ -1648,6 +1648,10 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [photos, setPhotos] = useState<SignedMediaItem[]>([])
   const [videos, setVideos] = useState<SignedMediaItem[]>([])
+  const [alsoTimeline, setAlsoTimeline] = useState(false)
+  const [timelineNote, setTimelineNote] = useState('')
+  const [timelineDate, setTimelineDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const { user } = useAuth()
   const photoInputRef = useRef<HTMLInputElement>(null)
   const videoInputRef = useRef<HTMLInputElement>(null)
 
@@ -1677,24 +1681,44 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
   }
 
   async function handleUpload(file: File, kind: 'photo' | 'video') {
-    // Reject an oversized video before any base64/network or Storage work,
-    // with the same user-facing wording, rather than letting it fail
-    // as a bare error from the signed-upload request.
     if (kind === 'video' && file.size > MAX_VIDEO_UPLOAD_BYTES) {
       toast(`This video is over ${Math.floor(MAX_VIDEO_UPLOAD_BYTES / (1024 * 1024))}MB — please trim or compress it before uploading`, 'error')
       return
     }
     setUploading(kind)
     try {
-      // Implementation Phase 1: direct-to-Storage upload — see the
-      // matching comment in handleSaveShowcaseDraft above. Photo
-      // compression (prepareImageForUpload, including HEIC decode) is
-      // unchanged; video is sent as the raw File with no base64 step.
+      // Compress the photo ONCE; reuse the base64 for showcase + timeline.
+      let photoBase64: string | null = null
+      if (kind === 'photo') {
+        photoBase64 = (await prepareImageForUpload(file)).base64
+      }
       const result = kind === 'photo'
-        ? await uploadShowcaseMediaDirect(puppy.id, 'photo', (await prepareImageForUpload(file)).base64, 'image/jpeg')
+        ? await uploadShowcaseMediaDirect(puppy.id, 'photo', photoBase64!, 'image/jpeg')
         : await uploadShowcaseMediaDirect(puppy.id, 'video', file, file.type || 'video/mp4')
       applyResult(result)
       toast(`${kind === 'photo' ? 'Photo' : 'Video'} added`)
+
+      // Optionally mirror the photo onto the puppy's Timeline. Second
+      // upload (different storage), reuses base64. Never rolls back showcase.
+      if (kind === 'photo' && alsoTimeline && timelineNote.trim() && photoBase64) {
+        try {
+          const idToken = await user?.getIdToken()
+          let photoUrl: string | undefined
+          const up = await fetch('/api/upload?type=note', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify({ base64: photoBase64, mediaType: 'image/jpeg', dogId: puppy.id }),
+          })
+          if (up.ok) photoUrl = (await up.json()).fileUrl
+          await addActivityNote(puppy.id, timelineNote.trim(), photoUrl, timelineDate)
+          toast('Also added to timeline')
+          setAlsoTimeline(false)
+          setTimelineNote('')
+          setTimelineDate(new Date().toISOString().slice(0, 10))
+        } catch {
+          toast('Photo added to showcase, but timeline note failed — add it from the dog page', 'info')
+        }
+      }
     } catch (err) {
       toast(err instanceof Error && err.message ? err.message : `Failed to upload ${kind}`, 'error')
     } finally {
@@ -1765,6 +1789,34 @@ function PuppyMediaManager({ puppy, disabled, toast, onUpdated }: {
     <div>
       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--mid)', marginBottom: 6 }}>Photos {photos.length > 0 && `(${photos.length})`}</div>
       <MediaRow kind="photo" items={photos} />
+      <div style={{ marginBottom: 8 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--mid)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={alsoTimeline} disabled={disabled || uploading !== null} onChange={e => setAlsoTimeline(e.target.checked)} />
+          Also add the next photo to this puppy's timeline
+        </label>
+        {alsoTimeline && (
+          <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <textarea
+              value={timelineNote}
+              onChange={e => setTimelineNote(e.target.value)}
+              placeholder="Timeline note (required) — e.g. First day exploring the garden"
+              rows={2}
+              disabled={disabled || uploading !== null}
+              style={{ fontSize: 13, padding: 6, borderRadius: 6, border: '1px solid var(--line)', resize: 'vertical' }}
+            />
+            <input
+              type="date"
+              value={timelineDate}
+              onChange={e => setTimelineDate(e.target.value)}
+              disabled={disabled || uploading !== null}
+              style={{ fontSize: 13, padding: 6, borderRadius: 6, border: '1px solid var(--line)', width: 'fit-content' }}
+            />
+            {!timelineNote.trim() && (
+              <span style={{ fontSize: 11, color: 'var(--mid)' }}>Add a note — the photo goes to the timeline when you upload it.</span>
+            )}
+          </div>
+        )}
+      </div>
       <input ref={photoInputRef} type="file" accept="image/*,.heic,.heif" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f, 'photo'); e.target.value = '' }} />
       <button type="button" className="btn btn-secondary btn-sm" disabled={disabled || uploading !== null} onClick={() => photoInputRef.current?.click()} style={{ marginBottom: 14 }}>
         {uploading === 'photo' ? <span className="spinner" /> : '+ Add photo'}
