@@ -23,6 +23,8 @@ export default function SupportChatWidget() {
   const [category, setCategory] = useState('')
   const [categories, setCategories] = useState<string[]>([])
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [faqItems, setFaqItems] = useState<Suggestion[]>([])
+  const [openFaqId, setOpenFaqId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [active, setActive] = useState('')
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null)
@@ -127,6 +129,7 @@ export default function SupportChatWidget() {
   useEffect(() => {
     if (!open || !user) return
     refreshList(!active)
+    loadList(category)
     setTimeout(() => panel.current?.focus(), 0)
     const timer = setInterval(async () => {
       if (lock.current) return
@@ -154,6 +157,14 @@ export default function SupportChatWidget() {
     document.addEventListener('keydown', key)
     return () => document.removeEventListener('keydown', key)
   }, [open])
+
+  async function loadList(cat: string) {
+    try {
+      const result = await call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'list', category: cat }) })
+      setFaqItems(result.items || [])
+      setOpenFaqId(null)
+    } catch { /* im lang, van con o go tay */ }
+  }
 
   async function suggest(event: FormEvent) {
     event.preventDefault()
@@ -250,7 +261,21 @@ export default function SupportChatWidget() {
         {closed ? <div className="support-closed"><p>This conversation is closed and remains available to read.</p><button type="button" onClick={backToConversations}>Start a new conversation</button></div> : <form className="support-composer" onSubmit={reply}><label htmlFor="support-reply">Reply</label><textarea id="support-reply" maxLength={2000} value={message} onChange={event => setMessage(event.target.value)} required/><button disabled={busy} type="submit">{busy ? 'Sending…' : 'Send'}</button></form>}
       </div> : <>
         {conversations.length > 0 && <section><h3>Your conversations</h3>{conversations.map(item => <button type="button" className="support-conversation" key={item.id} onClick={() => selectConversation(item.id)}><span>{item.subject}</span><small>{item.status.replaceAll('_', ' ')}{Number(item.userUnreadCount || 0) > 0 ? ` · ${item.userUnreadCount} unread` : ''}</small></button>)}</section>}
-        <form onSubmit={suggest}><label htmlFor="support-category">FAQ category</label><select id="support-category" value={category} onChange={event => setCategory(event.target.value)}><option value="">All categories</option>{categories.map(item => <option key={item}>{item}</option>)}</select><label htmlFor="support-question">How can we help?</label><textarea id="support-question" maxLength={500} value={query} onChange={event => setQuery(event.target.value)} required/><button disabled={busy} type="submit">Find answers</button></form>
+        <form onSubmit={suggest}><label htmlFor="support-category">FAQ category</label><select id="support-category" value={category} onChange={event => { setCategory(event.target.value); loadList(event.target.value) }}><option value="">All categories</option>{categories.map(item => <option key={item}>{item}</option>)}</select><label htmlFor="support-question">How can we help?</label><textarea id="support-question" maxLength={500} value={query} onChange={event => setQuery(event.target.value)} required/><button disabled={busy} type="submit">Find answers</button></form>
+        {faqItems.length > 0 && (
+          <div className="support-faq-list">
+            {faqItems.map(item => (
+              <div className="support-faq-item" key={item.id}>
+                <button type="button" onClick={() => setOpenFaqId(openFaqId === item.id ? null : item.id)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: openFaqId === item.id ? 'var(--sand)' : 'transparent', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 6, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>
+                  {item.question}
+                </button>
+                {openFaqId === item.id && (
+                  <p style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6, margin: '0 0 10px', padding: '0 12px' }}>{item.answer}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {suggestions.map(item => <article className="support-faq" key={item.id}><strong>{item.question}</strong><p>{item.answer}</p><div><button type="button" onClick={() => call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'feedback', faqId: item.id, helpful: true }) }).then(() => setSuggestions([]))}>This answered my question</button><button type="button" onClick={() => setHandoff(true)}>Talk to support</button></div></article>)}
         {(handoff || suggestions.length === 0 && query) && <form onSubmit={submitHandoff}><h3>Talk to support</h3><label htmlFor="support-message">Message</label><textarea id="support-message" maxLength={2000} value={message} onChange={event => setMessage(event.target.value)} required/><button disabled={busy} type="submit">{busy ? 'Starting…' : 'Start conversation'}</button></form>}
       </>}
