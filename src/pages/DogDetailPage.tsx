@@ -2135,6 +2135,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
   error?: boolean
   onRetry?: () => void
 }) {
+  const latestGivenDate = wormings.reduce((max, w) => (w.dateGiven > max ? w.dateGiven : max), '')
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
   const [saving, setSaving] = useState(false)
@@ -2248,7 +2249,11 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
                   Given: {formatDate(w.dateGiven)}{w.nextDue ? ` · Next due: ${formatDate(w.nextDue)}` : ''}{w.weightKg ? ` · ${w.weightKg}kg` : ''}
                 </div>
               </div>
-              {w.nextDue && <span className={`badge ${isOverdue(w.nextDue) ? 'badge-red' : 'badge-green'}`}>{isOverdue(w.nextDue) ? 'Overdue' : 'Current'}</span>}
+              {w.dateGiven < latestGivenDate ? (
+                <span className="badge badge-gray">Superseded</span>
+              ) : w.nextDue ? (
+                <span className={`badge ${isOverdue(w.nextDue) ? 'badge-red' : 'badge-green'}`}>{isOverdue(w.nextDue) ? 'Overdue' : 'Current'}</span>
+              ) : null}
               <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
             </div>
           ))}
