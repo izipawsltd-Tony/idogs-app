@@ -19,18 +19,17 @@ export default function SupportChatWidget() {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [query, setQuery] = useState('')
   const [category, setCategory] = useState('')
   const [categories, setCategories] = useState<string[]>([])
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [faqItems, setFaqItems] = useState<Suggestion[]>([])
-  const [openFaqId, setOpenFaqId] = useState<string | null>(null)
+  type ChatTurn = { id: string; role: 'user' | 'assistant'; text: string }
+  const [chatLog, setChatLog] = useState<ChatTurn[]>([])
+  const [chatInput, setChatInput] = useState('')
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [active, setActive] = useState('')
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [message, setMessage] = useState('')
-  const [handoff, setHandoff] = useState(false)
   const [announcement, setAnnouncement] = useState('')
   const panel = useRef<HTMLDivElement>(null)
   const thread = useRef<HTMLDivElement>(null)
@@ -162,51 +161,37 @@ export default function SupportChatWidget() {
     try {
       const result = await call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'list', category: cat }) })
       setFaqItems(result.items || [])
-      setOpenFaqId(null)
     } catch { /* im lang, van con o go tay */ }
   }
 
-  async function suggest(event: FormEvent) {
-    event.preventDefault()
-    if (lock.current || activeRef.current) return
+  async function askAssistant(text: string) {
+    const q = text.trim()
+    if (!q || lock.current) return
+    const userTurn: ChatTurn = { id: `u-${Date.now()}`, role: 'user', text: q }
+    setChatLog(prev => [...prev, userTurn])
+    setChatInput('')
     lock.current = true
     setBusy(true)
     setError('')
     try {
-      const result = await call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'suggest', query, category }) })
-      setSuggestions(result.suggestions || [])
-      setHandoff((result.suggestions || []).length === 0)
+      const result = await call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'suggest', query: q, category }) })
+      const hits = (result.suggestions || []) as Suggestion[]
+      if (hits.length > 0) {
+        setChatLog(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: hits[0].answer }])
+      } else {
+        // Khong co trong FAQ -> tao conversation cho support tra loi qua email/inbox
+        const result2 = await call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'handoff', subject: q.slice(0, 120), message: q }) })
+        if (typeof result2.conversationId === 'string') {
+          setChatLog(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: "Thanks for your question! I don't have a ready answer for this one, so I've passed it to our support team — they'll get back to you by email as soon as someone's available." }])
+        } else {
+          setChatLog(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: 'Sorry, something went wrong sending that. Please try again.' }])
+        }
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Request failed')
     } finally {
-      lock.current = false
       setBusy(false)
-    }
-  }
-
-  async function submitHandoff(event: FormEvent) {
-    event.preventDefault()
-    if (lock.current) return
-    lock.current = true
-    setBusy(true)
-    setError('')
-    try {
-      const sentText = message
-      const result = await call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'handoff', subject: query.slice(0, 120), message: sentText }) })
-      if (typeof result.conversationId !== 'string' || typeof result.messageId !== 'string' || result.status !== 'new' || !result.updatedAt) throw new Error('Support could not confirm the saved conversation.')
-      rememberActive(result.conversationId)
-      setMessages([])
-      const persisted = await refreshConversation(result.conversationId, true)
-      if (!persisted?.some(item => item.id === result.messageId)) throw new Error('Support could not confirm the saved message. Please refresh before retrying.')
-      setMessage('')
-      setHandoff(false)
-      setSuggestions([])
-      await refreshList(false)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Request failed')
-    } finally {
       lock.current = false
-      setBusy(false)
     }
   }
 
@@ -261,23 +246,30 @@ export default function SupportChatWidget() {
         {closed ? <div className="support-closed"><p>This conversation is closed and remains available to read.</p><button type="button" onClick={backToConversations}>Start a new conversation</button></div> : <form className="support-composer" onSubmit={reply}><label htmlFor="support-reply">Reply</label><textarea id="support-reply" maxLength={2000} value={message} onChange={event => setMessage(event.target.value)} required/><button disabled={busy} type="submit">{busy ? 'Sending…' : 'Send'}</button></form>}
       </div> : <>
         {conversations.length > 0 && <section><h3>Your conversations</h3>{conversations.map(item => <button type="button" className="support-conversation" key={item.id} onClick={() => selectConversation(item.id)}><span>{item.subject}</span><small>{item.status.replaceAll('_', ' ')}{Number(item.userUnreadCount || 0) > 0 ? ` · ${item.userUnreadCount} unread` : ''}</small></button>)}</section>}
-        <form onSubmit={suggest}><label htmlFor="support-category">FAQ category</label><select id="support-category" value={category} onChange={event => { setCategory(event.target.value); loadList(event.target.value) }}><option value="">All categories</option>{categories.map(item => <option key={item}>{item}</option>)}</select><label htmlFor="support-question">How can we help?</label><textarea id="support-question" maxLength={500} value={query} onChange={event => setQuery(event.target.value)} required/><button disabled={busy} type="submit">Find answers</button></form>
-        {faqItems.length > 0 && (
-          <div className="support-faq-list">
-            {faqItems.map(item => (
-              <div className="support-faq-item" key={item.id}>
-                <button type="button" onClick={() => setOpenFaqId(openFaqId === item.id ? null : item.id)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: openFaqId === item.id ? 'var(--sand)' : 'transparent', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 6, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>
-                  {item.question}
-                </button>
-                {openFaqId === item.id && (
-                  <p style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6, margin: '0 0 10px', padding: '0 12px' }}>{item.answer}</p>
-                )}
+        <div className="support-chat-flow">
+          <div className="support-chat-log">
+            <div className="support-message assistant"><p>Hi! I'm the iDogs assistant. Ask me anything — plans, QR Passport, scans, transfers — or pick a question below. If I can't answer, I'll pass it to our support team.</p></div>
+            {faqItems.length > 0 && chatLog.length === 0 && (
+              <div className="support-chip-row" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0' }}>
+                {faqItems.slice(0, 5).map(item => (
+                  <button type="button" key={item.id} onClick={() => askAssistant(item.question)} style={{ padding: '6px 10px', background: 'var(--sand)', border: '1px solid var(--border)', borderRadius: 16, cursor: 'pointer', fontSize: 12, color: 'var(--dark)', textAlign: 'left' }}>{item.question}</button>
+                ))}
               </div>
+            )}
+            {chatLog.map(turn => (
+              <div key={turn.id} className={`support-message ${turn.role === 'user' ? 'user' : 'assistant'}`}><p>{turn.text}</p></div>
             ))}
           </div>
-        )}
-        {suggestions.map(item => <article className="support-faq" key={item.id}><strong>{item.question}</strong><p>{item.answer}</p><div><button type="button" onClick={() => call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'feedback', faqId: item.id, helpful: true }) }).then(() => setSuggestions([]))}>This answered my question</button><button type="button" onClick={() => setHandoff(true)}>Talk to support</button></div></article>)}
-        {(handoff || suggestions.length === 0 && query) && <form onSubmit={submitHandoff}><h3>Talk to support</h3><label htmlFor="support-message">Message</label><textarea id="support-message" maxLength={2000} value={message} onChange={event => setMessage(event.target.value)} required/><button disabled={busy} type="submit">{busy ? 'Starting…' : 'Start conversation'}</button></form>}
+          <form className="support-composer" onSubmit={event => { event.preventDefault(); askAssistant(chatInput) }}>
+            <label htmlFor="support-ask" className="support-sr-only">Ask a question</label>
+            <select id="support-category" value={category} onChange={event => { setCategory(event.target.value); loadList(event.target.value) }} style={{ marginBottom: 6 }}>
+              <option value="">All topics</option>
+              {categories.map(item => <option key={item}>{item}</option>)}
+            </select>
+            <textarea id="support-ask" maxLength={500} value={chatInput} onChange={event => setChatInput(event.target.value)} placeholder="Type your question…" required />
+            <button disabled={busy} type="submit">{busy ? 'Sending…' : 'Send'}</button>
+          </form>
+        </div>
       </>}
     </div>}
   </div>
