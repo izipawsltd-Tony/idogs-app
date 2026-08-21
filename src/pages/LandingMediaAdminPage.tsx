@@ -279,7 +279,7 @@ function SlotCard({ slotId, ui, onFileSelected, onPublish, onCancelDraft, onRemo
         </button>
       </div>
       <div style={{ fontSize: 10, color: 'var(--light)' }}>
-        Images: JPG/PNG/WebP, max 5MB. Videos: MP4/WebM, max 20MB.
+        Images: JPG/PNG/WebP, max 5MB. Videos: MP4/WebM, max 50MB.
       </div>
     </div>
   )

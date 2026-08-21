@@ -30,7 +30,7 @@ export const LANDING_UPLOAD_URL_TTL_MS = 10 * 60 * 1000 // 10 minutes -- matches
 export const LANDING_DRAFT_PREVIEW_URL_TTL_MS = 15 * 60 * 1000 // matches showcase-media-access.js's SIGNED_MEDIA_URL_TTL_MS (authenticated-admin preview, not the short public-redirect TTL)
 
 export const MAX_LANDING_IMAGE_BYTES = 5 * 1024 * 1024
-export const MAX_LANDING_VIDEO_BYTES = 20 * 1024 * 1024
+export const MAX_LANDING_VIDEO_BYTES = 50 * 1024 * 1024
 
 // Task spec, explicit and narrower than the generic pipeline: images are
 // JPG/JPEG, PNG, WebP only (no HEIC/HEIF -- these are admin-supplied

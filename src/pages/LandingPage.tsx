@@ -287,7 +287,7 @@ export default function LandingPage() {
                   <h5>Legal</h5>
                   <Link to="/privacy">Privacy Policy</Link>
                   <Link to="/terms">Terms of Use</Link>
-                  <a href="mailto:hello@idogs.com.au">Contact / Support</a>
+                  <a href="mailto:hello@idogs.com.au">Contact: hello@idogs.com.au</a>
                 </div>
               </div>
             </div>
@@ -391,6 +391,8 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
 }) {
   const [media, setMedia] = useState<PublishedLandingMedia | null>(null)
   const [failed, setFailed] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [muted, setMuted] = useState(true)
 
   useEffect(() => {
     let cancelled = false
@@ -408,17 +410,33 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
 
   if (media.kind === 'video') {
     return (
-      <video
-        className={className}
-        style={fillStyle}
-        src={media.url}
-        aria-label={ariaLabel}
-        autoPlay
-        muted
-        loop
-        playsInline
-        onError={() => setFailed(true)}
-      />
+      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+        <video
+          ref={videoRef}
+          className={className}
+          style={fillStyle}
+          src={media.url}
+          aria-label={ariaLabel}
+          autoPlay
+          muted={muted}
+          loop
+          playsInline
+          onError={() => setFailed(true)}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            const v = videoRef.current
+            if (!v) return
+            v.muted = !v.muted
+            setMuted(v.muted)
+          }}
+          aria-label={muted ? 'Unmute video' : 'Mute video'}
+          style={{ position: 'absolute', bottom: 12, right: 12, width: 40, height: 40, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
+        >
+          {muted ? '🔇' : '🔊'}
+        </button>
+      </div>
     )
   }
 

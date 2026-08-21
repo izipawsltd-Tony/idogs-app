@@ -17,7 +17,7 @@ export type LandingSlotId = typeof SLOT_IDS[number]
 export type LandingMediaKind = 'image' | 'video'
 
 export const MAX_LANDING_IMAGE_BYTES = 5 * 1024 * 1024
-export const MAX_LANDING_VIDEO_BYTES = 20 * 1024 * 1024
+export const MAX_LANDING_VIDEO_BYTES = 50 * 1024 * 1024
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const ALLOWED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm'])
