@@ -14,6 +14,7 @@
 // checks, fail-closed shapes) is actually present in the shipped code.
 
 import fs from 'node:fs'
+import { registerHooks } from 'node:module'
 import {
   cleanCustomerLabel, validatePuppyIds, isPlausibleShareToken, serializeGrant,
   effectiveOwnerId, generateShareToken, hashShareToken, isValidExpiryIso,
@@ -152,6 +153,177 @@ check('dogPrivateAccess buyer view still requires a verified email (unchanged)',
 check('Showcase rotate endpoint still checks Plus eligibility + litter/showcase ownership (unchanged)', /checkBreederPlusAccess/.test(rotateSrc) && /loadOwnedLitter/.test(rotateSrc) && /loadOwnedShowcase/.test(rotateSrc))
 check('showcase-share.js exports are all still present (unmodified)', ['generateShareToken', 'hashShareToken', 'isValidExpiryIso', 'MAX_SHARE_EXPIRY_DAYS', 'isShareLive', 'isTenantPlusEligible'].every(name => shareLibSrc.includes(`export function ${name}`) || shareLibSrc.includes(`export const ${name}`)))
 check('private-dog-access.js exports are all still present (unmodified)', ['effectiveOwnerId', 'canManagePrivateDogAccess', 'canGrantPrivateDogAccess', 'grantAllowsBuyerRead', 'isSafeDogDocumentPath', 'normalizeBuyerEmail'].every(name => privateAccessLibSrc.includes(`export function ${name}`)))
+
+// ── Behavioral: manage updateMetadata through the real handler ──────
+// Replace only the Firebase Admin process boundaries. The endpoint itself,
+// its HTTP wrapper, validation helpers, transaction branches, and response
+// serialization are imported and executed unchanged.
+const firebaseMockUrls = {
+  'firebase-admin/app': 'mock:firebase-admin/app',
+  'firebase-admin/auth': 'mock:firebase-admin/auth',
+  'firebase-admin/firestore': 'mock:firebase-admin/firestore',
+}
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    return firebaseMockUrls[specifier]
+      ? { url: firebaseMockUrls[specifier], shortCircuit: true }
+      : nextResolve(specifier, context)
+  },
+  load(url, context, nextLoad) {
+    if (url === firebaseMockUrls['firebase-admin/app']) {
+      return {
+        format: 'module',
+        source: `
+          export const getApps = () => [{}]
+          export const initializeApp = value => value
+          export const cert = value => value
+        `,
+        shortCircuit: true,
+      }
+    }
+    if (url === firebaseMockUrls['firebase-admin/auth']) {
+      return {
+        format: 'module',
+        source: `export const getAuth = () => globalThis.__puppyGrantFirebase.auth`,
+        shortCircuit: true,
+      }
+    }
+    if (url === firebaseMockUrls['firebase-admin/firestore']) {
+      return {
+        format: 'module',
+        source: `
+          export const getFirestore = () => globalThis.__puppyGrantFirebase.db
+          export const FieldValue = {
+            serverTimestamp: () => globalThis.__puppyGrantFirebase.serverTimestamp(),
+          }
+        `,
+        shortCircuit: true,
+      }
+    }
+    return nextLoad(url, context)
+  },
+})
+
+const { default: managePuppyShareGrant } = await import('../api/manage-puppy-share-grant.js')
+
+const BASE_GRANT = Object.freeze({
+  ownerId: 'owner-1',
+  puppyIds: ['puppy-1', 'puppy-2'],
+  customerLabel: 'Original label',
+  tokenHash: 'a'.repeat(64),
+  status: 'active',
+  expiresAt: '2027-01-15T00:00:00.000Z',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-02T00:00:00.000Z',
+  lastResetAt: '2026-01-03T00:00:00.000Z',
+})
+
+function copyGrant(grant = BASE_GRANT) {
+  return { ...grant, puppyIds: [...grant.puppyIds] }
+}
+
+async function invokeUpdateMetadata(body, { uid = 'owner-1', grant = BASE_GRANT } = {}) {
+  const stored = copyGrant(grant)
+  let writes = 0
+  const grantRef = {
+    id: 'grant-1',
+    async get() { return { exists: true, data: () => stored } },
+  }
+  const db = {
+    collection(name) {
+      if (name !== 'puppyShareGrants') throw new Error(`Unexpected collection: ${name}`)
+      return { doc: id => {
+        if (id !== 'grant-1') throw new Error(`Unexpected grant id: ${id}`)
+        return grantRef
+      } }
+    },
+    async runTransaction(fn) {
+      return fn({
+        async get(ref) {
+          if (ref !== grantRef) throw new Error('Unexpected transaction read')
+          return { exists: true, data: () => stored }
+        },
+        update(ref, update) {
+          if (ref !== grantRef) throw new Error('Unexpected transaction write')
+          writes += 1
+          Object.assign(stored, update)
+        },
+      })
+    },
+  }
+  globalThis.__puppyGrantFirebase = {
+    auth: { async verifyIdToken() { return { uid } } },
+    db,
+    serverTimestamp: () => 'SERVER_TIMESTAMP',
+  }
+
+  const response = { statusCode: null, body: null }
+  const res = {
+    status(code) { response.statusCode = code; return this },
+    json(value) { response.body = value; return value },
+  }
+  await managePuppyShareGrant({
+    method: 'POST',
+    headers: { authorization: 'Bearer test-token' },
+    body: { grantId: 'grant-1', action: 'updateMetadata', ...body },
+  }, res)
+  return { ...response, stored, writes }
+}
+
+const nonOwnerBefore = copyGrant()
+const nonOwner = await invokeUpdateMetadata({ customerLabel: 'Intruder edit' }, { uid: 'other-owner' })
+check('updateMetadata rejects a non-owner and leaves the grant unchanged',
+  nonOwner.statusCode === 403 && nonOwner.writes === 0 && JSON.stringify(nonOwner.stored) === JSON.stringify(nonOwnerBefore))
+
+const labelOnly = await invokeUpdateMetadata({ customerLabel: '  New label  ' })
+check('updateMetadata label-only preserves expiry, token, and status',
+  labelOnly.statusCode === 200 && labelOnly.writes === 1 && labelOnly.stored.customerLabel === 'New label' &&
+  labelOnly.stored.expiresAt === BASE_GRANT.expiresAt && labelOnly.stored.tokenHash === BASE_GRANT.tokenHash &&
+  labelOnly.stored.status === BASE_GRANT.status)
+
+const clearExpiry = await invokeUpdateMetadata({ expiresAt: null })
+check('updateMetadata null expiry clears expiry and preserves label',
+  clearExpiry.statusCode === 200 && clearExpiry.writes === 1 && clearExpiry.stored.expiresAt === null &&
+  clearExpiry.stored.customerLabel === BASE_GRANT.customerLabel)
+
+const pastBefore = copyGrant()
+const pastExpiry = await invokeUpdateMetadata({ expiresAt: new Date(Date.now() - 60_000).toISOString() })
+check('updateMetadata rejects a past expiry with 400 and leaves the grant unchanged',
+  pastExpiry.statusCode === 400 && pastExpiry.body?.error === 'expiresAt must be in the future' &&
+  pastExpiry.writes === 0 && JSON.stringify(pastExpiry.stored) === JSON.stringify(pastBefore))
+
+const tooFarBefore = copyGrant()
+const tooFarExpiry = await invokeUpdateMetadata({ expiresAt: new Date(Date.now() + 731 * 86_400_000).toISOString() })
+check('updateMetadata rejects expiry beyond two years with 400 and leaves the grant unchanged',
+  tooFarExpiry.statusCode === 400 && tooFarExpiry.writes === 0 &&
+  JSON.stringify(tooFarExpiry.stored) === JSON.stringify(tooFarBefore))
+
+const whitespaceLabel = await invokeUpdateMetadata({ customerLabel: ' \t\n ' })
+check('updateMetadata stores a whitespace-only label as null',
+  whitespaceLabel.statusCode === 200 && whitespaceLabel.writes === 1 && whitespaceLabel.stored.customerLabel === null)
+
+const neitherBefore = copyGrant()
+const neitherField = await invokeUpdateMetadata({})
+check('updateMetadata rejects neither field with no write and unchanged updatedAt',
+  neitherField.statusCode === 400 && neitherField.writes === 0 &&
+  neitherField.stored.updatedAt === neitherBefore.updatedAt && JSON.stringify(neitherField.stored) === JSON.stringify(neitherBefore))
+
+const protectedBefore = copyGrant()
+const protectedFields = await invokeUpdateMetadata({
+  customerLabel: 'Allowed edit',
+  expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+  ownerId: 'attacker',
+  puppyIds: ['other-puppy'],
+  tokenHash: 'b'.repeat(64),
+  status: 'revoked',
+  createdAt: '1900-01-01T00:00:00.000Z',
+  lastResetAt: '1900-01-01T00:00:00.000Z',
+})
+check('updateMetadata never changes protected fields',
+  protectedFields.statusCode === 200 && protectedFields.writes === 1 &&
+  ['ownerId', 'puppyIds', 'tokenHash', 'status', 'createdAt', 'lastResetAt'].every(field =>
+    JSON.stringify(protectedFields.stored[field]) === JSON.stringify(protectedBefore[field])))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)

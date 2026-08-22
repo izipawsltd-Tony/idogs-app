@@ -19,7 +19,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
-import { generateShareToken, hashShareToken, serializeGrant } from './_lib/puppy-share-grants.js'
+import { generateShareToken, hashShareToken, isValidExpiryIso, cleanCustomerLabel, serializeGrant } from './_lib/puppy-share-grants.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -31,7 +31,7 @@ if (!getApps().length) {
   })
 }
 
-const ACTIONS = ['pause', 'resume', 'revoke', 'reset']
+const ACTIONS = ['pause', 'resume', 'revoke', 'reset', 'updateMetadata']
 
 async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -70,6 +70,45 @@ async function handler(req, res) {
   // reads-then-one-write with no side-effecting work inside it.
   const rawToken = action === 'reset' ? generateShareToken() : null
   const tokenHash = rawToken ? hashShareToken(rawToken) : null
+
+  // updateMetadata: parsed and validated BEFORE the transaction opens —
+  // same "fail fast on bad input before any Firestore work" posture as
+  // api/create-puppy-share-grant.js's own puppyIds/expiresAt validation.
+  // Partial-update semantics: a field ABSENT from the body (undefined) is
+  // left completely untouched; only fields the caller actually supplied
+  // end up in metadataUpdate, and only those are ever written.
+  let metadataUpdate = null
+  if (action === 'updateMetadata') {
+    const hasCustomerLabel = body.customerLabel !== undefined
+    const hasExpiresAt = body.expiresAt !== undefined
+    if (!hasCustomerLabel && !hasExpiresAt) {
+      throw new ApiError(400, 'updateMetadata requires customerLabel or expiresAt')
+    }
+
+    metadataUpdate = {}
+
+    if (hasCustomerLabel) {
+      // cleanCustomerLabel already normalizes null, empty, and
+      // whitespace-only values to null, and caps/cleans a real string —
+      // reused as-is, no separate branch needed for the null case.
+      metadataUpdate.customerLabel = cleanCustomerLabel(body.customerLabel)
+    }
+
+    if (hasExpiresAt) {
+      if (body.expiresAt === null) {
+        metadataUpdate.expiresAt = null
+      } else {
+        if (!isValidExpiryIso(body.expiresAt)) {
+          throw new ApiError(400, 'expiresAt must be a valid date no more than 2 years in the future')
+        }
+        const parsedExpiresAt = new Date(body.expiresAt)
+        if (parsedExpiresAt.getTime() <= Date.now()) {
+          throw new ApiError(400, 'expiresAt must be in the future')
+        }
+        metadataUpdate.expiresAt = parsedExpiresAt.toISOString()
+      }
+    }
+  }
 
   const result = await db.runTransaction(async tx => {
     const snap = await tx.get(grantRef)
@@ -112,11 +151,20 @@ async function handler(req, res) {
     // status, expiresAt, createdAt, ownerId are all left untouched. No
     // other document (sibling grant, dog, litterShowcases,
     // dogPrivateAccess) is read or written anywhere in this transaction.
-    tx.update(grantRef, {
-      tokenHash,
-      lastResetAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    })
+    if (action === 'reset') {
+      tx.update(grantRef, {
+        tokenHash,
+        lastResetAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      return { status: 200 }
+    }
+
+    // action === 'updateMetadata' — only the fields the caller actually
+    // supplied (metadataUpdate) are written, plus updatedAt. Never
+    // ownerId, puppyIds, tokenHash, status, createdAt, or lastResetAt —
+    // this action never rotates the token and never returns one.
+    tx.update(grantRef, { ...metadataUpdate, updatedAt: FieldValue.serverTimestamp() })
     return { status: 200 }
   })
 
