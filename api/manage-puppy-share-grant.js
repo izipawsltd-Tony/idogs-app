@@ -1,0 +1,135 @@
+// api/manage-puppy-share-grant.js — breeder-authed lifecycle management
+// for one Private Puppy Update Link grant: pause, resume, revoke, or
+// reset (rotate token).
+//
+// Every action re-derives authorization from the grant document itself
+// (grant.ownerId === uid) — never from the request body, which carries
+// no ownerId field at all. Every write targets exactly ONE grant
+// document, inside a single Firestore transaction — never any other
+// grant, dog, litterShowcases, or dogPrivateAccess document.
+//
+// POST /api/manage-puppy-share-grant
+// Headers: Authorization: Bearer <Firebase ID token>
+// Body: { grantId: string, action: 'pause'|'resume'|'revoke'|'reset' }
+// Returns: { grant, shareToken? } | { error, reason? }
+// shareToken is present ONLY when action === 'reset', and only that once
+// — the new raw token, replacing the previous one for THIS grant only.
+
+import { initializeApp, getApps, cert } from 'firebase-admin/app'
+import { getAuth } from 'firebase-admin/auth'
+import { getFirestore, FieldValue } from 'firebase-admin/firestore'
+import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
+import { generateShareToken, hashShareToken, serializeGrant } from './_lib/puppy-share-grants.js'
+
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    }),
+  })
+}
+
+const ACTIONS = ['pause', 'resume', 'revoke', 'reset']
+
+async function handler(req, res) {
+  if (req.method !== 'POST') {
+    throw new ApiError(405, 'Method not allowed')
+  }
+
+  const authHeader = req.headers.authorization || ''
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!idToken) {
+    throw new ApiError(401, 'Missing Authorization header')
+  }
+
+  let uid
+  try {
+    const decoded = await getAuth().verifyIdToken(idToken)
+    uid = decoded.uid
+  } catch {
+    throw new ApiError(401, 'Invalid or expired token')
+  }
+
+  const body = parseJsonBody(req)
+  const { grantId, action } = body
+  if (!grantId || typeof grantId !== 'string') {
+    throw new ApiError(400, 'grantId is required')
+  }
+  if (!ACTIONS.includes(action)) {
+    throw new ApiError(400, 'Invalid action')
+  }
+
+  const db = getFirestore()
+  const grantRef = db.collection('puppyShareGrants').doc(grantId)
+
+  // Generated BEFORE the transaction, same as api/rotate-showcase-share.js's
+  // own rawToken/tokenHash — only used if action === 'reset', but computed
+  // unconditionally up front so the transaction body stays a pure set of
+  // reads-then-one-write with no side-effecting work inside it.
+  const rawToken = action === 'reset' ? generateShareToken() : null
+  const tokenHash = rawToken ? hashShareToken(rawToken) : null
+
+  const result = await db.runTransaction(async tx => {
+    const snap = await tx.get(grantRef)
+    if (!snap.exists) {
+      return { status: 404, error: 'Grant not found' }
+    }
+    const grant = snap.data()
+    if (grant.ownerId !== uid) {
+      return { status: 403, error: 'Not authorized' }
+    }
+
+    if (action === 'revoke') {
+      // Idempotent: revoking an already-revoked grant is a harmless no-op
+      // success, not an error.
+      if (grant.status !== 'revoked') {
+        tx.update(grantRef, { status: 'revoked', updatedAt: FieldValue.serverTimestamp() })
+      }
+      return { status: 200 }
+    }
+
+    // Revoked is terminal for every other action — a dead grant cannot
+    // be paused, resumed, or given a new token. Only a brand-new grant
+    // (api/create-puppy-share-grant.js) restores access.
+    if (grant.status === 'revoked') {
+      return { status: 409, error: 'This grant has been revoked and cannot be modified', reason: 'GRANT_REVOKED' }
+    }
+
+    if (action === 'pause') {
+      tx.update(grantRef, { status: 'paused', updatedAt: FieldValue.serverTimestamp() })
+      return { status: 200 }
+    }
+
+    if (action === 'resume') {
+      tx.update(grantRef, { status: 'active', updatedAt: FieldValue.serverTimestamp() })
+      return { status: 200 }
+    }
+
+    // action === 'reset' — rotate the token. Touches ONLY tokenHash /
+    // lastResetAt / updatedAt on THIS grantRef — puppyIds, customerLabel,
+    // status, expiresAt, createdAt, ownerId are all left untouched. No
+    // other document (sibling grant, dog, litterShowcases,
+    // dogPrivateAccess) is read or written anywhere in this transaction.
+    tx.update(grantRef, {
+      tokenHash,
+      lastResetAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    return { status: 200 }
+  })
+
+  if (result.error) {
+    throw new ApiError(result.status, result.error, result.reason ? { reason: result.reason } : {})
+  }
+
+  const grantSnap = await grantRef.get()
+  const response = { grant: serializeGrant(grantRef.id, grantSnap.data()) }
+  if (rawToken) {
+    response.shareToken = rawToken
+  }
+  return res.status(200).json(response)
+}
+
+export default withApiErrorHandling('manage-puppy-share-grant', handler)
