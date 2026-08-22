@@ -77,7 +77,11 @@ async function handler(req, res) {
     if (!isValidExpiryIso(body.expiresAt)) {
       throw new ApiError(400, 'expiresAt must be a valid date no more than 2 years in the future')
     }
-    expiresAt = new Date(body.expiresAt).toISOString()
+    const parsedExpiresAt = new Date(body.expiresAt)
+    if (parsedExpiresAt.getTime() <= Date.now()) {
+      throw new ApiError(400, 'expiresAt must be in the future')
+    }
+    expiresAt = parsedExpiresAt.toISOString()
   }
 
   const db = getFirestore()

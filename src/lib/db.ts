@@ -1438,6 +1438,89 @@ export async function managePrivateDogAccess(
   return body.grant || null
 }
 
+export interface PuppyShareGrant {
+  id: string
+  ownerId: string
+  puppyIds: string[]
+  customerLabel: string | null
+  status: 'active' | 'paused' | 'revoked'
+  expiresAt: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  lastResetAt: string | null
+}
+
+export interface PuppyShareGrantResult {
+  grant: PuppyShareGrant
+  // Present only immediately after create/reset. The server stores only
+  // the token hash, so callers must never persist this raw value.
+  shareToken?: string
+}
+
+async function puppyShareAuthHeaders() {
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` }
+}
+
+export async function createPuppyShareGrant(input: {
+  puppyIds: string[]
+  customerLabel?: string | null
+  expiresAt?: string | null
+}): Promise<PuppyShareGrantResult> {
+  const res = await fetch('/api/create-puppy-share-grant', {
+    method: 'POST', headers: await puppyShareAuthHeaders(), body: JSON.stringify(input),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `Create private update link failed (${res.status})`)
+  return body as PuppyShareGrantResult
+}
+
+export async function listPuppyShareGrants(puppyId: string): Promise<PuppyShareGrant[]> {
+  const headers = await puppyShareAuthHeaders()
+  const res = await fetch(`/api/list-puppy-share-grants?puppyId=${encodeURIComponent(puppyId)}`, { headers })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `Load private update links failed (${res.status})`)
+  return Array.isArray(body.grants) ? body.grants : []
+}
+
+export async function managePuppyShareGrant(
+  grantId: string,
+  action: 'pause' | 'resume' | 'revoke' | 'reset' | 'updateMetadata',
+  metadata?: { customerLabel?: string | null; expiresAt?: string | null },
+): Promise<PuppyShareGrantResult> {
+  const res = await fetch('/api/manage-puppy-share-grant', {
+    method: 'POST',
+    headers: await puppyShareAuthHeaders(),
+    body: JSON.stringify({ grantId, action, ...(metadata || {}) }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `Update private link failed (${res.status})`)
+  return body as PuppyShareGrantResult
+}
+
+export interface PuppyShareView {
+  puppies: Array<{
+    id: string
+    name: string
+    breed?: string
+    sex?: string
+    colour?: string | null
+    dateOfBirth?: string | null
+    photos: SignedMediaItem[]
+    videos: SignedMediaItem[]
+  }>
+}
+
+export async function getPuppyShareView(token: string): Promise<PuppyShareView> {
+  const res = await fetch('/api/puppy-share-view', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error('This private update link is unavailable.')
+  return body as PuppyShareView
+}
+
 export interface PrivateDogView {
   ownedByCaller: boolean
   dog: {

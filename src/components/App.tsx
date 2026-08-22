@@ -36,6 +36,7 @@ import ReportsPage from '../pages/ReportsPage'
 import BuyersPage from '../pages/BuyersPage'
 import ClaimDogPage from '../pages/ClaimDogPage'
 import PrivateDogPage from '../pages/PrivateDogPage'
+import PuppySharePublicPage from '../pages/PuppySharePublicPage'
 import SuperAdminRoute from '../super-admin/SuperAdminRoute'
 import SuperAdminLayout from '../super-admin/SuperAdminLayout'
 import SuperAdminOverviewPage from '../super-admin/pages/SuperAdminOverviewPage'
@@ -100,6 +101,7 @@ export default function App() {
         <Route path="/signup" element={<SignupPage toast={toast} />} />
         <Route path="/p/:passportId" element={<PassportPublicPage />} />
         <Route path="/s/:token" element={<ShowcasePublicPage />} />
+        <Route path="/shared/:token" element={<PuppySharePublicPage />} />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/survey" element={<SurveyPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />

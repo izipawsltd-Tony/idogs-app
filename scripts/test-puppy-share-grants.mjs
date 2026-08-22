@@ -325,5 +325,36 @@ check('updateMetadata never changes protected fields',
   ['ownerId', 'puppyIds', 'tokenHash', 'status', 'createdAt', 'lastResetAt'].every(field =>
     JSON.stringify(protectedFields.stored[field]) === JSON.stringify(protectedBefore[field])))
 
+// Create and UI/public-route regression coverage added with the client
+// integration. These assertions target the concrete validation/control
+// flow and endpoint calls, rather than broad word-presence checks.
+const appSrc = fs.readFileSync(new URL('../src/components/App.tsx', import.meta.url), 'utf8')
+const dbClientSrc = fs.readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf8')
+const littersPageSrc = fs.readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
+const publicPageSrc = fs.readFileSync(new URL('../src/pages/PuppySharePublicPage.tsx', import.meta.url), 'utf8')
+
+check('create rejects past expiresAt locally without modifying the shared expiry helper',
+  /const parsedExpiresAt = new Date\(body\.expiresAt\)[\s\S]*parsedExpiresAt\.getTime\(\) <= Date\.now\(\)[\s\S]*expiresAt must be in the future/.test(createSrc) &&
+  !/must be in the future/.test(grantsLibSrc))
+check('public route contains only the token and never a puppy id',
+  /path="\/shared\/:token"/.test(appSrc) && !/path="\/shared\/:dogId\/:token"/.test(appSrc))
+check('public client sends the token in a POST body, not a query string',
+  /fetch\('\/api\/puppy-share-view',[\s\S]*method: 'POST'[\s\S]*JSON\.stringify\(\{ token \}\)/.test(dbClientSrc) &&
+  !/puppy-share-view\?/.test(dbClientSrc))
+check('public page renders photos and videos but no documents',
+  /puppy\.photos/.test(publicPageSrc) && /puppy\.videos/.test(publicPageSrc) && !/documents/i.test(publicPageSrc))
+check('breeder UI clearly separates no-login update links from login buyer access',
+  /Private update link — no login required/.test(littersPageSrc) &&
+  /Buyer private access — login required, after deposit/.test(littersPageSrc))
+check('raw share tokens remain React memory state and are never written to localStorage',
+  /const \[puppyShareTokens, setPuppyShareTokens\] = useState/.test(littersPageSrc) &&
+  !littersPageSrc.slice(
+    littersPageSrc.indexOf('const [puppyShareTokens'),
+    littersPageSrc.indexOf('// The one Save/Retry action'),
+  ).includes('localStorage'))
+check('breeder UI exposes every approved lifecycle action',
+  ['pause', 'resume', 'revoke', 'reset', 'updateMetadata'].every(action =>
+    new RegExp(`runPuppyShareAction\\([^\\n]+['\"]${action}['\"]`).test(littersPageSrc)))
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)
