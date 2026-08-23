@@ -1,6 +1,6 @@
 // api/manage-puppy-share-grant.js — breeder-authed lifecycle management
-// for one Private Puppy Update Link grant: pause, resume, revoke, or
-// reset (rotate token).
+// for one Private Puppy Update Link grant: pause, resume, revoke, reset,
+// copy/share, or metadata update.
 //
 // Every action re-derives authorization from the grant document itself
 // (grant.ownerId === uid) — never from the request body, which carries
@@ -10,16 +10,19 @@
 //
 // POST /api/manage-puppy-share-grant
 // Headers: Authorization: Bearer <Firebase ID token>
-// Body: { grantId: string, action: 'pause'|'resume'|'revoke'|'reset' }
+// Body: { grantId: string, action: 'pause'|'resume'|'revoke'|'reset'|'copy'|'updateMetadata' }
 // Returns: { grant, shareToken? } | { error, reason? }
-// shareToken is present ONLY when action === 'reset', and only that once
-// — the new raw token, replacing the previous one for THIS grant only.
+// shareToken is present for reset (new random token) and copy (stable
+// derived alias). Neither raw token is ever persisted.
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
-import { generateShareToken, hashShareToken, isValidExpiryIso, cleanCustomerLabel, serializeGrant } from './_lib/puppy-share-grants.js'
+import {
+  generateShareToken, hashShareToken, isValidExpiryIso, cleanCustomerLabel,
+  serializeGrant, deriveCopyShareToken,
+} from './_lib/puppy-share-grants.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -31,7 +34,7 @@ if (!getApps().length) {
   })
 }
 
-const ACTIONS = ['pause', 'resume', 'revoke', 'reset', 'updateMetadata']
+const ACTIONS = ['pause', 'resume', 'revoke', 'reset', 'copy', 'updateMetadata']
 
 async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -64,19 +67,16 @@ async function handler(req, res) {
   const db = getFirestore()
   const grantRef = db.collection('puppyShareGrants').doc(grantId)
 
-  // Generated BEFORE the transaction, same as api/rotate-showcase-share.js's
-  // own rawToken/tokenHash — only used if action === 'reset', but computed
-  // unconditionally up front so the transaction body stays a pure set of
-  // reads-then-one-write with no side-effecting work inside it.
-  const rawToken = action === 'reset' ? generateShareToken() : null
-  const tokenHash = rawToken ? hashShareToken(rawToken) : null
+  // Reset is the only action that creates a new random token and replaces
+  // tokenHash. Copy never mutates tokenHash; it derives a stable alias
+  // from the current tokenHash + grant id, so the original customer link
+  // remains valid and the same copy/share URL can be reproduced later.
+  const rawResetToken = action === 'reset' ? generateShareToken() : null
+  const resetTokenHash = rawResetToken ? hashShareToken(rawResetToken) : null
 
   // updateMetadata: parsed and validated BEFORE the transaction opens —
   // same "fail fast on bad input before any Firestore work" posture as
   // api/create-puppy-share-grant.js's own puppyIds/expiresAt validation.
-  // Partial-update semantics: a field ABSENT from the body (undefined) is
-  // left completely untouched; only fields the caller actually supplied
-  // end up in metadataUpdate, and only those are ever written.
   let metadataUpdate = null
   if (action === 'updateMetadata') {
     const hasCustomerLabel = body.customerLabel !== undefined
@@ -88,9 +88,6 @@ async function handler(req, res) {
     metadataUpdate = {}
 
     if (hasCustomerLabel) {
-      // cleanCustomerLabel already normalizes null, empty, and
-      // whitespace-only values to null, and caps/cleans a real string —
-      // reused as-is, no separate branch needed for the null case.
       metadataUpdate.customerLabel = cleanCustomerLabel(body.customerLabel)
     }
 
@@ -121,8 +118,6 @@ async function handler(req, res) {
     }
 
     if (action === 'revoke') {
-      // Idempotent: revoking an already-revoked grant is a harmless no-op
-      // success, not an error.
       if (grant.status !== 'revoked') {
         tx.update(grantRef, { status: 'revoked', updatedAt: FieldValue.serverTimestamp() })
       }
@@ -130,10 +125,17 @@ async function handler(req, res) {
     }
 
     // Revoked is terminal for every other action — a dead grant cannot
-    // be paused, resumed, or given a new token. Only a brand-new grant
-    // (api/create-puppy-share-grant.js) restores access.
+    // be copied, paused, resumed, reset, or edited.
     if (grant.status === 'revoked') {
       return { status: 409, error: 'This grant has been revoked and cannot be modified', reason: 'GRANT_REVOKED' }
+    }
+
+    if (action === 'copy') {
+      const shareToken = deriveCopyShareToken(grantId, grant.tokenHash)
+      if (!shareToken) {
+        return { status: 500, error: 'Unable to create share link' }
+      }
+      return { status: 200, shareToken }
     }
 
     if (action === 'pause') {
@@ -146,24 +148,16 @@ async function handler(req, res) {
       return { status: 200 }
     }
 
-    // action === 'reset' — rotate the token. Touches ONLY tokenHash /
-    // lastResetAt / updatedAt on THIS grantRef — puppyIds, customerLabel,
-    // status, expiresAt, createdAt, ownerId are all left untouched. No
-    // other document (sibling grant, dog, litterShowcases,
-    // dogPrivateAccess) is read or written anywhere in this transaction.
     if (action === 'reset') {
       tx.update(grantRef, {
-        tokenHash,
+        tokenHash: resetTokenHash,
         lastResetAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       })
       return { status: 200 }
     }
 
-    // action === 'updateMetadata' — only the fields the caller actually
-    // supplied (metadataUpdate) are written, plus updatedAt. Never
-    // ownerId, puppyIds, tokenHash, status, createdAt, or lastResetAt —
-    // this action never rotates the token and never returns one.
+    // action === 'updateMetadata'
     tx.update(grantRef, { ...metadataUpdate, updatedAt: FieldValue.serverTimestamp() })
     return { status: 200 }
   })
@@ -174,8 +168,10 @@ async function handler(req, res) {
 
   const grantSnap = await grantRef.get()
   const response = { grant: serializeGrant(grantRef.id, grantSnap.data()) }
-  if (rawToken) {
-    response.shareToken = rawToken
+  if (action === 'copy' && result.shareToken) {
+    response.shareToken = result.shareToken
+  } else if (rawResetToken) {
+    response.shareToken = rawResetToken
   }
   return res.status(200).json(response)
 }
