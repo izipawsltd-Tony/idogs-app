@@ -11,6 +11,7 @@
 // write access and neither is modified by this feature — both stay
 // completely independent of puppyShareGrants.
 
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { generateShareToken, hashShareToken, isValidExpiryIso, MAX_SHARE_EXPIRY_DAYS } from './showcase-share.js'
 import { effectiveOwnerId } from './private-dog-access.js'
 
@@ -45,6 +46,62 @@ export function validatePuppyIds(value) {
   return value
 }
 
+// A breeder must be able to Share/Copy an existing customer link again
+// after a reload or on another device, while preserving the original
+// random link and without ever storing a raw token. We derive a stable,
+// recoverable alias from the grant's existing 256-bit tokenHash. The raw
+// alias is never stored. Reset changes tokenHash, so both the original
+// link and every derived alias become invalid together, preserving reset
+// semantics.
+//
+// The token contains only an opaque Firestore grant id plus an HMAC. It
+// never contains a puppy id, owner id, email, customer label, or raw
+// tokenHash. The HMAC key is tokenHash, which has the entropy of the
+// original CSPRNG token and is server-only.
+const COPY_TOKEN_VERSION = 'v1'
+const COPY_TOKEN_PURPOSE = 'puppy-share-copy'
+
+function copySignature(grantId, tokenHash) {
+  return createHmac('sha256', String(tokenHash))
+    .update(`${COPY_TOKEN_PURPOSE}:${COPY_TOKEN_VERSION}:${grantId}`)
+    .digest('base64url')
+}
+
+export function deriveCopyShareToken(grantId, tokenHash) {
+  if (typeof grantId !== 'string' || !grantId || typeof tokenHash !== 'string' || !tokenHash) return null
+  const payload = `${COPY_TOKEN_VERSION}:${grantId}:${copySignature(grantId, tokenHash)}`
+  return Buffer.from(payload, 'utf8').toString('base64url')
+}
+
+export function parseCopyShareToken(value) {
+  if (typeof value !== 'string' || value.length < 32 || value.length > 128 || !/^[A-Za-z0-9_-]+$/.test(value)) return null
+  let decoded
+  try {
+    decoded = Buffer.from(value, 'base64url').toString('utf8')
+  } catch {
+    return null
+  }
+  const parts = decoded.split(':')
+  if (parts.length !== 3 || parts[0] !== COPY_TOKEN_VERSION) return null
+  const [, grantId, signature] = parts
+  if (!grantId || !signature || !/^[A-Za-z0-9_-]{43}$/.test(signature)) return null
+  return { grantId, signature }
+}
+
+export function verifyCopyShareToken(value, tokenHash) {
+  const parsed = parseCopyShareToken(value)
+  if (!parsed || typeof tokenHash !== 'string' || !tokenHash) return null
+  const expected = copySignature(parsed.grantId, tokenHash)
+  try {
+    const actualBuffer = Buffer.from(parsed.signature, 'base64url')
+    const expectedBuffer = Buffer.from(expected, 'base64url')
+    if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) return null
+  } catch {
+    return null
+  }
+  return parsed.grantId
+}
+
 // Loose shape/charset check on a caller-supplied raw share token BEFORE
 // it is ever hashed or looked up — lets api/puppy-share-view.js reject an
 // obviously-malformed value with zero Firestore reads, and without ever
@@ -59,12 +116,10 @@ export function isPlausibleShareToken(value) {
   return typeof value === 'string' && value.length >= 32 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value)
 }
 
-// Strips the one field a client must never receive back: tokenHash.
-// Every breeder-facing response (create/list/manage) goes through this —
-// the public, unauthenticated view (api/puppy-share-view.js) builds its
-// own, separately allowlisted response shape and deliberately does NOT
-// use this function at all, so the two response shapes can never
-// accidentally merge.
+// Strips the fields a client must never receive back: tokenHash and any
+// other server-only token material. Every breeder-facing response
+// (create/list/manage) goes through this — the public, unauthenticated
+// view builds its own, separately allowlisted response shape.
 export function serializeGrant(id, data) {
   return {
     id,
