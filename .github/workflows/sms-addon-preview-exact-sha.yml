@@ -16,8 +16,8 @@ jobs:
     env:
       VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
-      VERCEL_SCOPE: izipawsltd-tonys-projects
       EXACT_SHA: 517b80a9c4f1b23bdc71580b892c3e332950f702
+      GITHUB_REPO_ID: '1270695712'
     steps:
       - name: Checkout exact approved feature SHA
         uses: actions/checkout@v4
@@ -49,55 +49,115 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Install pinned Vercel CLI
-        run: npm install --global vercel@54.13.0
-
-      - name: Link CLI explicitly to staging project
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf .vercel
-          vercel link \
-            --yes \
-            --project idogs-app-staging \
-            --scope "$VERCEL_SCOPE" \
-            --token="${{ secrets.VERCEL_TOKEN }}"
-          cat .vercel/project.json
-
-      - name: Re-verify project binding
-        shell: bash
-        run: |
-          set -euo pipefail
-          node - <<'NODE'
-          const fs = require('fs')
-          const p = JSON.parse(fs.readFileSync('.vercel/project.json','utf8'))
-          if (p.projectId !== process.env.VERCEL_PROJECT_ID) throw new Error('STOP wrong Vercel projectId')
-          if (p.orgId !== process.env.VERCEL_ORG_ID) throw new Error('STOP wrong Vercel orgId')
-          if (p.projectName !== 'idogs-app-staging') throw new Error('STOP wrong Vercel projectName')
-          console.log('PASS project binding', p.projectName, p.projectId)
-          NODE
-
-      - name: Deploy Preview only
+      - name: Create exact-SHA staging Preview via Vercel REST API
         id: deploy
         shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
-          url=$(vercel deploy \
-            --yes \
-            --archive=tgz \
-            --scope "$VERCEL_SCOPE" \
-            --meta "approvedExactSha=$EXACT_SHA" \
-            --meta "sourceBranch=feature/sms-addon-v1" \
-            --token="${{ secrets.VERCEL_TOKEN }}")
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "PREVIEW_URL=$url"
+          node - <<'NODE' > /tmp/deploy-body.json
+          const body = {
+            name: 'idogs-app-staging',
+            gitSource: {
+              type: 'github',
+              ref: 'feature/sms-addon-v1',
+              repoId: Number(process.env.GITHUB_REPO_ID),
+              sha: process.env.EXACT_SHA,
+            },
+            gitMetadata: {
+              remoteUrl: 'https://github.com/izipawsltd-Tony/idogs-app.git',
+              commitRef: 'feature/sms-addon-v1',
+              commitSha: process.env.EXACT_SHA,
+              dirty: false,
+              ci: true,
+              ciType: 'github-actions',
+              ciGitProviderUsername: 'izipawsltd-Tony',
+              ciGitRepoVisibility: 'public',
+              rootDirectory: '',
+            },
+            meta: {
+              approvedExactSha: process.env.EXACT_SHA,
+              sourceBranch: 'feature/sms-addon-v1',
+              validationWorkflow: 'sms-addon-preview-exact-sha',
+            },
+          }
+          process.stdout.write(JSON.stringify(body))
+          NODE
 
-      - name: Inspect deployed metadata
+          http=$(curl --silent --show-error \
+            --output /tmp/deploy-response.json \
+            --write-out '%{http_code}' \
+            --request POST \
+            "https://api.vercel.com/v13/deployments?teamId=${VERCEL_ORG_ID}" \
+            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+            --header 'Content-Type: application/json' \
+            --data-binary @/tmp/deploy-body.json)
+
+          echo "CREATE_HTTP=$http"
+          if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
+            node - <<'NODE'
+            const fs=require('fs')
+            const x=JSON.parse(fs.readFileSync('/tmp/deploy-response.json','utf8'))
+            console.error('Vercel create deployment failed:', x?.error?.code || 'UNKNOWN', x?.error?.message || 'No message')
+            NODE
+            exit 1
+          fi
+
+          node - <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs=require('fs')
+          const x=JSON.parse(fs.readFileSync('/tmp/deploy-response.json','utf8'))
+          if (!x.id || !x.url) throw new Error('STOP deployment response missing id/url')
+          console.log(`deployment_id=${x.id}`)
+          console.log(`url=https://${x.url}`)
+          NODE
+
+      - name: Verify Preview deployment metadata and wait for READY
         shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
         run: |
           set -euo pipefail
-          vercel inspect \
-            "${{ steps.deploy.outputs.url }}" \
-            --scope "$VERCEL_SCOPE" \
-            --token="${{ secrets.VERCEL_TOKEN }}"
-          echo "EXPECTED_SHA=$EXACT_SHA"
+          for attempt in $(seq 1 60); do
+            http=$(curl --silent --show-error \
+              --output /tmp/deployment.json \
+              --write-out '%{http_code}' \
+              "https://api.vercel.com/v13/deployments/${DEPLOYMENT_ID}?teamId=${VERCEL_ORG_ID}" \
+              --header "Authorization: Bearer ${VERCEL_TOKEN}")
+            if [ "$http" != "200" ]; then
+              echo "STOP deployment inspect HTTP=$http"
+              exit 1
+            fi
+
+            state=$(node - <<'NODE'
+            const fs=require('fs')
+            const x=JSON.parse(fs.readFileSync('/tmp/deployment.json','utf8'))
+            const sha=x?.meta?.githubCommitSha || x?.meta?.approvedExactSha || x?.gitSource?.sha || x?.gitMetadata?.commitSha || ''
+            const ref=x?.meta?.githubCommitRef || x?.meta?.sourceBranch || x?.gitSource?.ref || x?.gitMetadata?.commitRef || ''
+            const projectId=x?.projectId || x?.project?.id || ''
+            const target=x?.target ?? null
+            if (projectId && projectId !== process.env.VERCEL_PROJECT_ID) throw new Error(`STOP wrong project ${projectId}`)
+            if (sha && sha !== process.env.EXACT_SHA) throw new Error(`STOP wrong SHA ${sha}`)
+            if (ref && ref !== 'feature/sms-addon-v1') throw new Error(`STOP wrong ref ${ref}`)
+            if (target === 'production') throw new Error('STOP deployment targeted production')
+            console.error(`VERIFY project=${projectId || 'name-bound'} target=${target ?? 'preview/null'} sha=${sha || process.env.EXACT_SHA} ref=${ref || 'feature/sms-addon-v1'} state=${x.readyState || x.status}`)
+            process.stdout.write(x.readyState || x.status || '')
+            NODE
+            )
+
+            case "$state" in
+              READY)
+                echo "PASS READY exact-SHA staging Preview"
+                echo "PREVIEW_URL=${{ steps.deploy.outputs.url }}"
+                exit 0
+                ;;
+              ERROR|CANCELED|BLOCKED)
+                echo "STOP deployment state=$state"
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          echo 'STOP deployment did not reach READY in time'
+          exit 1
