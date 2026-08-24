@@ -192,7 +192,7 @@ export interface HealthTest {
 export interface Reminder {
   id: string
   dogId: string
-  type: 'vaccination' | 'worming' | 'vet_appointment' | 'heat_cycle' | 'custom'
+  type: 'vaccination' | 'worming' | 'vet_appointment' | 'heat_cycle' | 'mating' | 'pregnancy' | 'whelping' | 'custom' | 'vaccine' | 'heat'
   title: string
   dueDate: string
   notifyDaysBefore: number
@@ -500,6 +500,18 @@ export interface UserProfile {
   // plusScansPeriodStart/planActivatedAt currently belong to; see
   // api/_lib/webhook-handler.js's quotaInitFields().
   plusScansSubscriptionId?: string
+  // iDogs SMS Add-on V1 — trusted server-owned billing/quota state.
+  // Never writable by browser clients; see firestore.rules userBillingFields().
+  smsAddonStatus?: 'active' | 'inactive' | 'past_due' | 'cancelled'
+  smsStripeSubscriptionId?: string | null
+  smsStripePriceId?: string | null
+  smsPeriodStart?: string | null
+  smsPeriodEnd?: string | null
+  smsCreditsLimit?: number
+  smsCreditsUsed?: number
+  smsLastBillingEventAt?: string | null
+  smsLastKnownSubscriptionId?: string | null
+  smsSubscriptionEventTimestamps?: Record<string, number>
   // Internal/admin-granted Plus entitlement, independent of Stripe — see
   // api/_lib/entitlements.js's computeEffectivePlan() and
   // scripts/grant-internal-entitlement.mjs. Server-owned (protected by
