@@ -4,7 +4,6 @@ on:
   push:
     branches: ['feature/sms-addon-v1']
   pull_request:
-    branches: [master]
     paths:
       - 'api/**'
       - 'src/**'
