@@ -83,10 +83,12 @@ V1 reminder candidates:
 The system must label inferred dates as estimates.
 
 ### 4.4 Whelping
-Source: litter expectedDueDate.
+Canonical source once a litter exists: litter `expectedDueDate`.
+Fallback source only when there is no active litter whelping schedule for that dam: heat-cycle `whelpingEstimate`.
+This precedence is mandatory so one pregnancy cannot emit duplicate whelping SMS from both records.
 Default SMS reminder: 7 days before expected due date and 1 day before.
-Only one SMS per configured milestone.
-If actualBirthDate is recorded, future expected-whelping SMS for that litter must stop.
+Only one SMS per configured milestone/source.
+If litter `actualBirthDate` (or fallback cycle actual whelping) is recorded, future expected-whelping SMS must stop.
 
 ### 4.5 Vaccination
 Source: vaccineRecords.nextDue.
@@ -295,23 +297,24 @@ If SMS Stripe Price/env is absent, APIs fail closed with a configuration error a
 21. Pregnancy estimate is labelled estimated and requires mating date.
 22. Whelping reminders fire at configured 7-day/1-day milestones only once each.
 23. actualBirthDate suppresses later expected-whelping reminders.
-24. Transferred dog does not send to former owner.
+24. When both litter expectedDueDate and heat-cycle whelpingEstimate exist, litter is canonical and no duplicate whelping SMS is sent.
+25. Transferred dog does not send to former owner.
 
 ### UI
-25. Billing shows $3/month and 20 credits/month.
-26. Usage shows X/20 and warnings at >=80% and exhausted.
-27. Settings links non-subscribers to Billing.
-28. SMS API/status failure does not break normal Reminders page.
-29. Mobile layout is usable at common iPhone viewport widths.
+26. Billing shows $3/month and 20 credits/month.
+27. Usage shows X/20 and warnings at >=80% and exhausted.
+28. Settings links non-subscribers to Billing.
+29. SMS API/status failure does not break normal Reminders page.
+30. Mobile layout is usable at common iPhone viewport widths.
 
 ### Regression/build
-30. Existing email reminders continue.
-31. Existing in-app reminders continue.
-32. Existing vaccination reminder behavior remains compatible.
-33. Existing heat reminder behavior remains compatible.
-34. npm build passes.
-35. git diff --check passes.
-36. Existing targeted reminder/billing/security tests pass.
+31. Existing email reminders continue.
+32. Existing in-app reminders continue.
+33. Existing vaccination reminder behavior remains compatible.
+34. Existing heat reminder behavior remains compatible.
+35. npm build passes.
+36. git diff --check passes.
+37. Existing targeted reminder/billing/security tests pass.
 
 ## 14. Deployment gates
 
