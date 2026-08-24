@@ -22,6 +22,17 @@ function periodOf(subscription) {
 function hasConfiguredPrice(subscription, priceId) {
   return Boolean(priceId) && (subscription?.items?.data || []).some(item => item?.price?.id === priceId)
 }
+function subscriptionIdFromInvoice(invoice) {
+  const direct = invoice?.subscription
+  if (typeof direct === 'string') return direct
+  if (direct && typeof direct.id === 'string') return direct.id
+
+  const parentSubscription = invoice?.parent?.subscription_details?.subscription
+  if (typeof parentSubscription === 'string') return parentSubscription
+  if (parentSubscription && typeof parentSubscription.id === 'string') return parentSubscription.id
+  return null
+}
+
 function statusForStripe(status) {
   if (status === 'active' || status === 'trialing') return 'active'
   if (status === 'past_due') return 'past_due'
@@ -112,6 +123,12 @@ export function createSmsWebhookHandler({
           })
           return { status: 200, body: { received: true } }
         }
+      } else if (event.type === 'invoice.paid' || event.type === 'invoice.payment_failed') {
+        // Stripe renewals are the authoritative moment for a new paid
+        // billing period. Retrieve the linked subscription and then apply
+        // the exact same product/customer/price gates as subscription events.
+        const subscriptionId = subscriptionIdFromInvoice(event.data.object)
+        if (subscriptionId) subscription = await getSubscription(subscriptionId)
       }
 
       if (subscription) await applySubscription(event, eventRef, claim.leaseToken, subscription)
