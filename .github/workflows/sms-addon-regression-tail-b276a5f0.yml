@@ -1,0 +1,44 @@
+name: SMS Add-on exact-SHA regression tail b276a5f0
+
+on:
+  push:
+    branches:
+      - ops/sms-addon-regression-tail-b276a5f0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXACT_SHA: b276a5f02c33cbcd64c5f7a28bdc7fb76328b519
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXACT_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact SHA and clean tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_SHA"
+          test -z "$(git status --porcelain)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Heat cycle DTO regression
+        run: node scripts/test-heat-cycle-client-dto.mjs
+      - name: Heat predictor regression
+        run: node scripts/test-heat-predictor-sync.mjs
+      - name: Settings role gating regression
+        run: node scripts/test-settings-role-gating.mjs
+      - name: Staging isolation regression
+        run: node scripts/test-staging-isolation-fallbacks.mjs
+      - name: Build
+        run: npm run build
