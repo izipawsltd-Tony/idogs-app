@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - ops/sms-addon-preview-517b80a9
+  pull_request_target:
+    branches:
+      - ops/sms-addon-preview-517b80a9
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: read
