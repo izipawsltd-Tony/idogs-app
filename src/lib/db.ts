@@ -141,6 +141,18 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
     lastKnownSubscriptionId: _lastKnownSubscriptionId,
     subscriptionEventTimestamps: _subscriptionEventTimestamps,
     plusScansSubscriptionId: _plusScansSubscriptionId,
+    // SMS add-on entitlement/quota is also server-owned. A browser-created
+    // profile must never bootstrap or reset paid SMS state.
+    smsAddonStatus: _smsAddonStatus,
+    smsStripeSubscriptionId: _smsStripeSubscriptionId,
+    smsStripePriceId: _smsStripePriceId,
+    smsPeriodStart: _smsPeriodStart,
+    smsPeriodEnd: _smsPeriodEnd,
+    smsCreditsLimit: _smsCreditsLimit,
+    smsCreditsUsed: _smsCreditsUsed,
+    smsLastBillingEventAt: _smsLastBillingEventAt,
+    smsLastKnownSubscriptionId: _smsLastKnownSubscriptionId,
+    smsSubscriptionEventTimestamps: _smsSubscriptionEventTimestamps,
     // Internal Super Admin entitlement (firestore.rules userBillingFields())
     // — same server-owned-only contract; a signup request can never grant
     // itself internal access.
