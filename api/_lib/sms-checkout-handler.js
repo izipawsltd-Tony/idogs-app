@@ -1,27 +1,36 @@
-import { requireAppUrl, logConfigError } from './require-config.js'
+import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 import { computeEffectivePlan } from './entitlements.js'
+import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
 
 function parseBody(req) {
   if (typeof req.body !== 'string') return req.body || {}
   try { return JSON.parse(req.body || '{}') } catch { return {} }
 }
 
+function customerIdOf(subscription) {
+  if (typeof subscription?.customer === 'string') return subscription.customer
+  return subscription?.customer?.id || null
+}
+
+function hasBasePlusPrice(subscription) {
+  const allowed = new Set(Object.values(CHECKOUT_PRICE_IDS))
+  return (subscription?.items?.data || []).some(item => allowed.has(item?.price?.id))
+}
+
+function hasPrice(subscription, priceId) {
+  return (subscription?.items?.data || []).some(item => item?.price?.id === priceId)
+}
+
 export function createSmsAddonCheckoutHandler({
   verifyIdToken,
   getProfile,
-  createSession,
+  retrieveSubscription,
+  updateSubscription,
   getPriceId = () => process.env.STRIPE_SMS_ADDON_PRICE_ID,
-  getAppUrl = requireAppUrl,
 } = {}) {
   return async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
-
-    const appUrl = getAppUrl()
-    if (!appUrl) {
-      logConfigError('create-sms-addon-checkout', 'APP_URL_NOT_CONFIGURED')
-      return res.status(500).json({ error: 'APP_URL not configured' })
-    }
 
     const priceId = getPriceId()
     if (!priceId || typeof priceId !== 'string') {
@@ -40,8 +49,8 @@ export function createSmsAddonCheckoutHandler({
     if (!identity?.uid) return res.status(401).json({ error: 'Authenticated identity is incomplete' })
 
     const body = parseBody(req)
-    if (body.priceId !== undefined || body.userId !== undefined) {
-      return res.status(400).json({ error: 'Unsupported checkout fields' })
+    if (body.priceId !== undefined || body.userId !== undefined || body.subscriptionId !== undefined) {
+      return res.status(400).json({ error: 'Unsupported add-on fields' })
     }
 
     try {
@@ -50,31 +59,47 @@ export function createSmsAddonCheckoutHandler({
       if (computeEffectivePlan(profile) !== 'plus') {
         return res.status(403).json({ error: 'iDogs Plus is required for the SMS add-on' })
       }
-      if (!profile.stripeCustomerId || typeof profile.stripeCustomerId !== 'string') {
-        return res.status(409).json({ error: 'A Stripe billing account is required' })
+      if (!profile.stripeCustomerId || !profile.stripeSubscriptionId) {
+        return res.status(409).json({ error: 'An active Stripe Plus subscription is required' })
       }
-      if (profile.smsAddonStatus === 'active' || profile.smsAddonStatus === 'past_due') {
+      if (profile.subscriptionStatus !== 'active' && profile.subscriptionStatus !== 'trialing') {
+        return res.status(409).json({ error: 'Resolve your Plus subscription billing status before adding SMS' })
+      }
+
+      const subscription = await retrieveSubscription(profile.stripeSubscriptionId)
+      if (!subscription || subscription.id !== profile.stripeSubscriptionId) {
+        return res.status(409).json({ error: 'Plus subscription could not be verified' })
+      }
+      if (customerIdOf(subscription) !== profile.stripeCustomerId) {
+        return res.status(409).json({ error: 'Stripe customer mismatch' })
+      }
+      if (!hasBasePlusPrice(subscription)) {
+        return res.status(409).json({ error: 'Verified iDogs Plus price not found on subscription' })
+      }
+      if (hasPrice(subscription, priceId)) {
         return res.status(409).json({ error: 'SMS add-on already exists; manage it in Billing' })
       }
 
-      const session = await createSession({
-        mode: 'subscription',
-        customer: profile.stripeCustomerId,
-        line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${appUrl}/app/billing?sms_success=1`,
-        cancel_url: `${appUrl}/app/billing?sms_cancelled=1`,
-        metadata: { userId: identity.uid, product: 'sms_addon_v1' },
-        subscription_data: {
-          metadata: { userId: identity.uid, product: 'sms_addon_v1' },
-        },
+      const updated = await updateSubscription(subscription.id, {
+        items: [{ price: priceId, quantity: 1 }],
+        proration_behavior: 'always_invoice',
+        payment_behavior: 'pending_if_incomplete',
+        expand: ['latest_invoice'],
       })
-      if (!session?.url) throw new Error('SESSION_URL_MISSING')
-      return res.status(200).json({ url: session.url })
+
+      const pending = Boolean(updated?.pending_update)
+      const hostedInvoiceUrl = typeof updated?.latest_invoice === 'object'
+        ? updated.latest_invoice?.hosted_invoice_url || null
+        : null
+
+      return res.status(pending ? 202 : 200).json({
+        success: true,
+        status: pending ? 'pending_payment' : 'activating',
+        hostedInvoiceUrl,
+      })
     } catch (err) {
-      logSanitizedError('create-sms-addon-checkout', 'SMS_CHECKOUT_FAILED', {
-        code: err?.code,
-      })
-      return res.status(500).json({ error: 'Failed to start SMS add-on checkout' })
+      logSanitizedError('create-sms-addon-checkout', 'SMS_ADDON_UPDATE_FAILED', { code: err?.code })
+      return res.status(500).json({ error: 'Failed to add SMS to your Plus subscription' })
     }
   }
 }
