@@ -44,6 +44,33 @@ const COLLAR_EMOJI: Record<string, string> = {
 
 const emptyPuppy: PuppyForm = { name: '', sex: 'female', colour: '', collarColour: '', weightKg: '', microchip: '', notes: '' }
 
+function formatReadyHomeDate(value: string | null | undefined): string {
+  if (!value) return ''
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : ''
+}
+
+function parseReadyHomeDate(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(trimmed)
+  if (!match) return null
+
+  const day = Number(match[1])
+  const month = Number(match[2])
+  const year = Number(match[3])
+
+  const candidate = new Date(Date.UTC(year, month - 1, day))
+  if (
+    candidate.getUTCFullYear() !== year ||
+    candidate.getUTCMonth() !== month - 1 ||
+    candidate.getUTCDate() !== day
+  ) return null
+
+  return `${match[3]}-${match[2]}-${match[1]}`
+}
+
 // NON-AUTHORITATIVE preview only — used to word handleDeleteLitter's
 // confirm() dialog before the request is even sent to the server. The
 // actual decision is made server-side, fresh, inside api/delete-litter.js
@@ -2608,18 +2635,34 @@ function ShowcaseManager({
                     </label>
                     <label className="form-group ready-home-field" style={{ margin: 0, minWidth: 0, maxWidth: '100%' }}>
                       <span className="form-label">Ready for new home</span>
-                      <div className="ready-home-input-wrap">
-                        <input
-                          className="form-input ready-home-date-input"
-                          type="date"
-                          value={puppyFields.readyToGoHomeDate ?? ''}
-                          aria-label="Ready for new home, day month year"
-                          onChange={e => updateField(puppy.id, 'readyToGoHomeDate', e.target.value || null)}
-                        />
-                        {!puppyFields.readyToGoHomeDate && (
-                          <span className="ready-home-date-placeholder" aria-hidden="true">dd/mm/yyyy</span>
-                        )}
-                      </div>
+                      <input
+                        key={puppyFields.readyToGoHomeDate ?? 'empty'}
+                        className="form-input ready-home-date-input"
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="dd/mm/yyyy"
+                        defaultValue={formatReadyHomeDate(puppyFields.readyToGoHomeDate)}
+                        aria-label="Ready for new home, dd/mm/yyyy"
+                        onBlur={e => {
+                          const raw = e.currentTarget.value.trim()
+                          if (!raw) {
+                            e.currentTarget.setCustomValidity('')
+                            updateField(puppy.id, 'readyToGoHomeDate', null)
+                            return
+                          }
+
+                          const parsed = parseReadyHomeDate(raw)
+                          if (!parsed) {
+                            e.currentTarget.setCustomValidity('Enter a valid date as dd/mm/yyyy')
+                            e.currentTarget.reportValidity()
+                            return
+                          }
+
+                          e.currentTarget.setCustomValidity('')
+                          e.currentTarget.value = formatReadyHomeDate(parsed)
+                          updateField(puppy.id, 'readyToGoHomeDate', parsed)
+                        }}
+                      />
                     </label>
                     <label className="form-group" style={{ margin: 0, gridColumn: '1/-1' }}>
                       <span className="form-label">Personality <span style={{ color: 'var(--light)', fontWeight: 400 }}>(max 500 characters)</span></span>

@@ -658,3 +658,34 @@ h1, h2, h3, h4, h5, h6 {
     overflow: hidden;
   }
 }
+
+
+/* READY HOME FINAL TEXT FIX */
+.ready-home-field {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: visible !important;
+  box-sizing: border-box;
+}
+
+.ready-home-date-input {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+@media (max-width: 640px) {
+  .ready-home-date-input {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-md);
+  }
+}

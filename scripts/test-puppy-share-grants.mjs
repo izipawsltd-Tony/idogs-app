@@ -1,11 +1,11 @@
-// scripts/test-puppy-share-grants.mjs — Private Puppy Update Links,
+// scripts/test-puppy-share-grants.mjs â€” Private Puppy Update Links,
 // Phase 1 backend (puppyShareGrants). Pure-function unit tests for the
 // shared helpers module, plus static-source assertions proving the new
 // endpoints match the approved plan and that dogPrivateAccess/
 // litterShowcases/Showcase source files are completely untouched by this
 // feature.
 //
-// No live Firestore/Auth calls are made here (no emulator dependency) —
+// No live Firestore/Auth calls are made here (no emulator dependency) â€”
 // same posture as this codebase's closest sibling test,
 // test-showcase-private-dog-access.mjs, which this file's structure
 // deliberately mirrors: pure-function checks against real exported
@@ -28,7 +28,7 @@ function check(name, ok) {
   else { failed++; console.error(`FAIL: ${name}`) }
 }
 
-// ── validatePuppyIds ──────────────────────────────────────────────
+// â”€â”€ validatePuppyIds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 check('rejects non-array', validatePuppyIds('dog1') === null)
 check('rejects empty array (0 puppies)', validatePuppyIds([]) === null)
 check('accepts exactly 1 puppy', JSON.stringify(validatePuppyIds(['dog1'])) === JSON.stringify(['dog1']))
@@ -38,7 +38,7 @@ check('rejects duplicate puppy ids', validatePuppyIds(['dog1', 'dog1']) === null
 check('rejects non-string entries', validatePuppyIds(['dog1', 42]) === null)
 check('rejects blank-string entries', validatePuppyIds(['dog1', '  ']) === null)
 
-// ── cleanCustomerLabel ────────────────────────────────────────────
+// â”€â”€ cleanCustomerLabel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 check('customerLabel accepts a normal string', cleanCustomerLabel('Jane Smith') === 'Jane Smith')
 check('customerLabel trims whitespace', cleanCustomerLabel('  Jane  ') === 'Jane')
 check('customerLabel caps at 120 chars', cleanCustomerLabel('x'.repeat(500)).length === MAX_CUSTOMER_LABEL_LENGTH)
@@ -48,7 +48,7 @@ check('customerLabel treats empty string as null', cleanCustomerLabel('') === nu
 check('customerLabel treats whitespace-only as null', cleanCustomerLabel('   ') === null)
 check('customerLabel strips control characters', cleanCustomerLabel('Jane\x00Smith') === 'JaneSmith')
 
-// ── isPlausibleShareToken ─────────────────────────────────────────
+// â”€â”€ isPlausibleShareToken â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const realToken = generateShareToken()
 check('a real generateShareToken() output passes the format check', isPlausibleShareToken(realToken))
 check('rejects non-string', !isPlausibleShareToken(12345))
@@ -56,7 +56,7 @@ check('rejects too-short value', !isPlausibleShareToken('short'))
 check('rejects a value with disallowed characters', !isPlausibleShareToken('abc!@#$%^&*()_+'.repeat(3)))
 check('rejects empty string', !isPlausibleShareToken(''))
 
-// ── token generation / hashing (reused, not reimplemented) ────────
+// â”€â”€ token generation / hashing (reused, not reimplemented) â”€â”€â”€â”€â”€â”€â”€â”€
 const tokenA = generateShareToken()
 const tokenB = generateShareToken()
 check('generateShareToken produces distinct values across calls', tokenA !== tokenB)
@@ -64,18 +64,18 @@ check('hashShareToken is deterministic for the same input', hashShareToken(token
 check('hashShareToken produces different hashes for different tokens', hashShareToken(tokenA) !== hashShareToken(tokenB))
 check('hashShareToken output looks like a hex sha256 digest', /^[0-9a-f]{64}$/.test(hashShareToken(tokenA)))
 
-// ── isValidExpiryIso (reused, not reimplemented) ──────────────────
+// â”€â”€ isValidExpiryIso (reused, not reimplemented) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 check('accepts a near-future ISO date', isValidExpiryIso(new Date(Date.now() + 86400000).toISOString()))
 check('rejects an unparseable date', !isValidExpiryIso('not-a-date'))
 check('rejects a date more than 2 years out', !isValidExpiryIso(new Date(Date.now() + 800 * 86400000).toISOString()))
 
-// ── effectiveOwnerId (reused, not reimplemented) ──────────────────
+// â”€â”€ effectiveOwnerId (reused, not reimplemented) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 check('modern dog effective owner comes from currentOwnerId', effectiveOwnerId({ tenantId: 'old', currentOwnerId: 'new' }) === 'new')
 check('legacy dog effective owner falls back to tenantId', effectiveOwnerId({ tenantId: 'legacy' }) === 'legacy')
 check('transferred dog effective owner is the NEW owner, not the original breeder', effectiveOwnerId({ tenantId: 'breeder1', currentOwnerId: 'buyer1' }) === 'buyer1')
 check('cross-owner: original breeder no longer matches after transfer', effectiveOwnerId({ tenantId: 'breeder1', currentOwnerId: 'buyer1' }) !== 'breeder1')
 
-// ── serializeGrant ─────────────────────────────────────────────────
+// â”€â”€ serializeGrant â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const rawGrantData = {
   ownerId: 'breeder1', puppyIds: ['dog1', 'dog2'], customerLabel: 'Jane',
   tokenHash: 'deadbeef'.repeat(8), status: 'active', expiresAt: null,
@@ -90,7 +90,7 @@ check('serializeGrant converts Firestore Timestamp-like createdAt to an ISO stri
 check('serializeGrant passes through puppyIds unchanged (both, not 1)', JSON.stringify(serialized.puppyIds) === JSON.stringify(['dog1', 'dog2']))
 check('serializeGrant defaults a missing lastResetAt to null', serialized.lastResetAt === null)
 
-// ── Static-source assertions: new endpoints match the approved plan ──
+// â”€â”€ Static-source assertions: new endpoints match the approved plan â”€â”€
 const grantsLibSrc = fs.readFileSync(new URL('../api/_lib/puppy-share-grants.js', import.meta.url), 'utf8')
 const createSrc = fs.readFileSync(new URL('../api/create-puppy-share-grant.js', import.meta.url), 'utf8')
 const manageSrc = fs.readFileSync(new URL('../api/manage-puppy-share-grant.js', import.meta.url), 'utf8')
@@ -149,15 +149,15 @@ check('public view has a single unavailable() helper reused by every fail-closed
 check('public view returns generic unavailable when zero valid puppies remain after ownership filtering', /validDogs\.length === 0/.test(viewSrc))
 check('public view reuses signMediaItems, does not reimplement Storage signing', /from '\.\/_lib\/showcase-media-access\.js'/.test(viewSrc) && /signMediaItems/.test(viewSrc) && !/getSignedUrl/.test(viewSrc))
 check('public view uses the same 5-minute signed URL TTL as private-dog-view.js', /PRIVATE_URL_TTL_MS = 5 \* 60 \* 1000/.test(viewSrc))
-check('public view response is exactly { puppies } — no ownerId/tokenHash/customerLabel/grantId', /res\.status\(200\)\.json\(\{ puppies \}\)/.test(viewSrc))
+check('public view response is exactly { puppies } â€” no ownerId/tokenHash/customerLabel/grantId', /res\.status\(200\)\.json\(\{ puppies \}\)/.test(viewSrc))
 check('Phase 1 public view per-puppy object ends with photos/videos, no documents field', /photos,\s*\n\s*videos,\s*\n\s*\}/.test(viewSrc))
 check('Phase 1 public view has no documents:/dog.documents code reference', !/\bdocuments:/.test(viewSrc) && !/dog\.documents/.test(viewSrc))
 
-check('puppyShareGrants Firestore rule is NOT present yet — rules deploy is a separate later step', !/puppyShareGrants/.test(rulesSrc))
+check('puppyShareGrants Firestore rule is NOT present yet â€” rules deploy is a separate later step', !/puppyShareGrants/.test(rulesSrc))
 check('dogPrivateAccess rule is completely unchanged', /match \/dogPrivateAccess\/\{dogId\}[\s\S]*?allow read, write: if false;/.test(rulesSrc))
 check('litterShowcases rule is completely unchanged', /match \/litterShowcases\/\{litterId\}[\s\S]*?allow create, update, delete: if false;/.test(rulesSrc))
 
-// ── Regression: existing dogPrivateAccess/Showcase source files untouched ──
+// â”€â”€ Regression: existing dogPrivateAccess/Showcase source files untouched â”€â”€
 const manageDogSrc = fs.readFileSync(new URL('../api/manage-private-dog-access.js', import.meta.url), 'utf8')
 const privateViewSrc = fs.readFileSync(new URL('../api/private-dog-view.js', import.meta.url), 'utf8')
 const rotateSrc = fs.readFileSync(new URL('../api/rotate-showcase-share.js', import.meta.url), 'utf8')
@@ -170,7 +170,7 @@ check('Showcase rotate endpoint still checks Plus eligibility + litter/showcase 
 check('showcase-share.js exports are all still present (unmodified)', ['generateShareToken', 'hashShareToken', 'isValidExpiryIso', 'MAX_SHARE_EXPIRY_DAYS', 'isShareLive', 'isTenantPlusEligible'].every(name => shareLibSrc.includes(`export function ${name}`) || shareLibSrc.includes(`export const ${name}`)))
 check('private-dog-access.js exports are all still present (unmodified)', ['effectiveOwnerId', 'canManagePrivateDogAccess', 'canGrantPrivateDogAccess', 'grantAllowsBuyerRead', 'isSafeDogDocumentPath', 'normalizeBuyerEmail'].every(name => privateAccessLibSrc.includes(`export function ${name}`)))
 
-// ── Behavioral: manage updateMetadata through the real handler ──────
+// â”€â”€ Behavioral: manage updateMetadata through the real handler â”€â”€â”€â”€â”€â”€
 // Replace only the Firebase Admin process boundaries. The endpoint itself,
 // its HTTP wrapper, validation helpers, transaction branches, and response
 // serialization are imported and executed unchanged.
@@ -360,8 +360,8 @@ check('public client sends the token in a POST body, not a query string',
 check('public page renders photos and videos but no documents',
   /puppy\.photos/.test(publicPageSrc) && /puppy\.videos/.test(publicPageSrc) && !/documents/i.test(publicPageSrc))
 check('breeder UI clearly separates no-login update links from login buyer access',
-  /Private update link — no login required/.test(littersPageSrc) &&
-  /Buyer private access — login required, after deposit/.test(littersPageSrc))
+  /Private update link â€” no login required/.test(littersPageSrc) &&
+  /Buyer private access â€” login required, after deposit/.test(littersPageSrc))
 check('raw share tokens remain React memory state and are never written to localStorage',
   /const \[puppyShareTokens, setPuppyShareTokens\] = useState/.test(littersPageSrc) &&
   !littersPageSrc.slice(
@@ -392,12 +392,22 @@ check('mobile UI round 2 protects Showcase fields',
   littersPageSrc.includes('puppy-showcase-fields-grid') &&
   littersPageSrc.includes('puppy-private-share-create-grid'))
 
-check('Ready for new home exposes dd/mm/yyyy placeholder',
-  littersPageSrc.includes('ready-home-date-placeholder') &&
-  littersPageSrc.includes('dd/mm/yyyy'))
+check('Ready for new home uses dd/mm/yyyy text display',
+  littersPageSrc.includes('type="text"') &&
+  littersPageSrc.includes('placeholder="dd/mm/yyyy"') &&
+  littersPageSrc.includes('formatReadyHomeDate') &&
+  littersPageSrc.includes('parseReadyHomeDate'))
 
 check('Ready for new home has dedicated iOS width guard',
   littersPageSrc.includes('ready-home-date-input'))
+
+check('Ready for new home uses Australian text date',
+  littersPageSrc.includes('placeholder="dd/mm/yyyy"') &&
+  littersPageSrc.includes('formatReadyHomeDate') &&
+  littersPageSrc.includes('parseReadyHomeDate'))
+
+check('Ready for new home no longer uses native iOS date input',
+  !/ready-home-date-input"[\s\S]{0,120}type="date"/.test(littersPageSrc))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)
