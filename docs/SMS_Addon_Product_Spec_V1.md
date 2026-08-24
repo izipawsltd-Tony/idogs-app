@@ -243,18 +243,20 @@ No provider credentials or Vercel environment variables are changed as part of n
 
 ## 11. Stripe integration
 
-Add-on must be represented by a dedicated Stripe recurring Price.
-Server config keys:
+Add-on must be represented by a dedicated Stripe recurring Price attached as an item to the existing Plus subscription.
+Server config key:
 - STRIPE_SMS_ADDON_PRICE_ID
-- STRIPE_SMS_WEBHOOK_SECRET
 
 Checkout/update logic must:
 - authenticate user;
 - never trust client-supplied arbitrary price IDs;
 - allowlist the configured SMS price;
-- create the SMS add-on as an isolated recurring subscription on the same trusted Stripe Customer as the base iDogs Plus subscription;
-- never replace, downgrade, or mutate the base iDogs Plus subscription from SMS billing code;
-- update SMS entitlement only through the isolated trusted SMS webhook handler.
+- add the SMS recurring Price as a subscription item on the existing verified iDogs Plus subscription;
+- verify the stored Stripe Customer, stored Plus subscription id and allowlisted base Plus Price before mutation;
+- add the item with Stripe proration + pending-update payment handling so the item is not applied until required payment succeeds;
+- never replace, downgrade, change interval, or remove the base iDogs Plus Price from SMS billing code;
+- derive SMS entitlement from the existing verified Stripe webhook only after the SMS Price is present on the active Plus subscription;
+- remove the need for a second SMS-specific Stripe webhook or webhook secret.
 
 If SMS Stripe Price/env is absent, APIs fail closed with a configuration error and UI shows unavailable/not configured rather than granting access.
 
