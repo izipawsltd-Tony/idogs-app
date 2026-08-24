@@ -16,6 +16,7 @@ jobs:
     env:
       VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      VERCEL_SCOPE: izipawsltd-tonys-projects
       EXACT_SHA: 517b80a9c4f1b23bdc71580b892c3e332950f702
     steps:
       - name: Checkout exact approved feature SHA
@@ -51,12 +52,16 @@ jobs:
       - name: Install pinned Vercel CLI
         run: npm install --global vercel@54.13.0
 
-      - name: Bind CLI explicitly to staging project
+      - name: Link CLI explicitly to staging project
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .vercel
-          printf '{"projectId":"%s","orgId":"%s","projectName":"idogs-app-staging"}\n' "$VERCEL_PROJECT_ID" "$VERCEL_ORG_ID" > .vercel/project.json
+          rm -rf .vercel
+          vercel link \
+            --yes \
+            --project idogs-app-staging \
+            --scope "$VERCEL_SCOPE" \
+            --token="${{ secrets.VERCEL_TOKEN }}"
           cat .vercel/project.json
 
       - name: Re-verify project binding
@@ -77,7 +82,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          url=$(vercel deploy --yes --archive=tgz --token="${{ secrets.VERCEL_TOKEN }}")
+          url=$(vercel deploy \
+            --yes \
+            --archive=tgz \
+            --scope "$VERCEL_SCOPE" \
+            --meta "approvedExactSha=$EXACT_SHA" \
+            --meta "sourceBranch=feature/sms-addon-v1" \
+            --token="${{ secrets.VERCEL_TOKEN }}")
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "PREVIEW_URL=$url"
 
@@ -85,5 +96,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          vercel inspect "${{ steps.deploy.outputs.url }}" --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel inspect \
+            "${{ steps.deploy.outputs.url }}" \
+            --scope "$VERCEL_SCOPE" \
+            --token="${{ secrets.VERCEL_TOKEN }}"
           echo "EXPECTED_SHA=$EXACT_SHA"
