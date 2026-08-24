@@ -1,6 +1,7 @@
 name: SMS Add-on exact-SHA staging Preview
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - ops/sms-addon-preview-517b80a9
