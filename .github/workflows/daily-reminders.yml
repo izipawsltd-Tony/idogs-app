@@ -1,19 +1,11 @@
-name: Daily Reminders
+name: Daily Reminders (disabled on SMS preview ops branch)
 
 on:
-  schedule:
-    - cron: '0 22 * * *'  # 8am AEST (UTC+10) = 10pm UTC
-  workflow_dispatch:       # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
-  send-reminders:
+  disabled:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger reminders API
-        run: |
-          curl -X POST https://idogs.com.au/api/send-reminders \
-            -H "Content-Type: application/json" \
-            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
-            --fail \
-            --silent \
-            --show-error
+      - name: Preview ops safety guard
+        run: echo "Scheduled production reminders are intentionally disabled on this temporary ops branch."
