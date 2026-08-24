@@ -507,3 +507,101 @@ h1, h2, h3, h4, h5, h6 {
     max-width: 100% !important;
   }
 }
+
+
+/* PUPPY SHARE MOBILE HOTFIX ROUND 2 */
+.litter-header,
+.litter-header-actions,
+.puppy-showcase-fields-grid,
+.puppy-private-share-create-grid {
+  min-width: 0;
+}
+
+.puppy-showcase-fields-grid > *,
+.puppy-showcase-fields-grid .form-group,
+.puppy-showcase-fields-grid .form-input,
+.puppy-showcase-fields-grid .form-textarea,
+.puppy-private-share-create-grid > *,
+.puppy-private-share-create-grid .form-group,
+.puppy-private-share-create-grid .form-input,
+.puppy-private-share-create-grid .form-select {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+@media (max-width: 640px) {
+  .litter-header {
+    padding: 12px !important;
+    gap: 8px !important;
+    flex-wrap: wrap !important;
+    align-items: flex-start !important;
+  }
+
+  .litter-header > :first-child {
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .litter-header > :first-child > :last-child {
+    min-width: 0 !important;
+    overflow: hidden;
+  }
+
+  .litter-header-actions {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    flex-wrap: wrap !important;
+    padding-left: 58px;
+  }
+
+  .litter-puppy-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    width: 100% !important;
+    padding-left: 44px !important;
+    gap: 6px !important;
+  }
+
+  .litter-puppy-actions .btn,
+  .litter-puppy-actions > .badge {
+    width: 100% !important;
+    min-width: 0 !important;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .puppy-showcase-fields-grid {
+    padding-left: 0 !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .puppy-showcase-fields-grid > * {
+    grid-column: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .puppy-showcase-fields-grid input,
+  .puppy-showcase-fields-grid textarea,
+  .puppy-showcase-fields-grid select {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .puppy-private-share-create-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .puppy-private-share-card,
+  .puppy-private-share-grant {
+    box-sizing: border-box !important;
+  }
+}

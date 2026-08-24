@@ -1178,7 +1178,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
               <div key={litter.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
 
                 {/* Litter header */}
-                <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div className="litter-header" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
                   <div
                     style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}
                     onClick={() => setExpandedLitter(isExpanded ? null : litter.id)}
@@ -1191,7 +1191,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                       </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="litter-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                     <span className="badge badge-green">{litter.puppyIds?.length || 0} puppies</span>
                     <button
                       className="btn btn-sm"
@@ -1397,7 +1397,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                       disabled={isPuppyPromoted}
                                       title={isPuppyPromoted ? PUPPY_DELETE_KNOWN_MESSAGES.PROMOTED_ACTIVE_IN_MY_DOGS : undefined}
                                       onClick={() => handleDeletePuppy(puppy.id, litter)}
-                                    >✕</button>
+                                    >Delete</button>
                                   </div>
                                 </div>
 
@@ -2600,7 +2600,7 @@ function ShowcaseManager({
                       ⚠ This puppy is public but has no published photo or video — it will show the iDogs placeholder. Publish at least one item below.
                     </div>
                   )}
-                  <div style={{ paddingLeft: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+                  <div className="puppy-showcase-fields-grid" style={{ paddingLeft: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, minWidth: 0 }}>
                     <label className="form-group" style={{ margin: 0 }}>
                       <span className="form-label">Public colour</span>
                       <input className="form-input" value={puppyFields.colour ?? ''} maxLength={80}
@@ -2678,7 +2678,7 @@ function ShowcaseManager({
                         <div style={{ marginTop: 9, borderTop: '1px solid var(--border)', paddingTop: 9 }}>
                           {puppyShareBusy[puppy.id] && puppyShareGrants[puppy.id] === undefined ? <div className="spinner" /> : (
                             <>
-                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 8, alignItems: 'end' }}>
+                              <div className="puppy-private-share-create-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 8, alignItems: 'end', minWidth: 0 }}>
                                 <label className="form-group" style={{ margin: 0 }}>
                                   <span className="form-label">Customer label (internal)</span>
                                   <input className="form-input" maxLength={120} placeholder="e.g. Jane — Facebook enquiry" value={shareDraftFor(puppy.id).customerLabel} onChange={e => setPuppyShareDrafts(prev => ({ ...prev, [puppy.id]: { ...shareDraftFor(puppy.id), customerLabel: e.target.value } }))} />

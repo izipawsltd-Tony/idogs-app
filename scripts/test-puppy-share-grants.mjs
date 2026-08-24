@@ -381,5 +381,16 @@ check('mobile litter/share classes are wired',
   /litter-puppy-actions/.test(littersPageSrc) &&
   /puppy-private-share-grid/.test(littersPageSrc))
 
+check('mobile UI round 2 keeps Delete explicit',
+  littersPageSrc.includes('>Delete</button>'))
+
+check('mobile UI round 2 protects litter header',
+  littersPageSrc.includes('litter-header') &&
+  littersPageSrc.includes('litter-header-actions'))
+
+check('mobile UI round 2 protects Showcase fields',
+  littersPageSrc.includes('puppy-showcase-fields-grid') &&
+  littersPageSrc.includes('puppy-private-share-create-grid'))
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)
