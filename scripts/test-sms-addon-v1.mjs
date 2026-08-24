@@ -190,41 +190,120 @@ await check('old-period provider failure never refunds into new period', async (
 function fakeRes(){
   return { statusCode:200, body:null, status(n){this.statusCode=n;return this}, json(v){this.body=v;return this} }
 }
-await check('SMS checkout fails closed when Stripe price is missing', async () => {
+await check('SMS add-on fails closed when Stripe price is missing', async () => {
+  let updated=false
   const handler=createSmsAddonCheckoutHandler({
     verifyIdToken:async()=>({uid:'u1'}),
-    getProfile:async()=>({plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1'}),
-    createSession:async()=>{throw new Error('must not call')},
+    getProfile:async()=>({
+      plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'
+    }),
+    retrieveSubscription:async()=>({}),
+    updateSubscription:async()=>{updated=true},
     getPriceId:()=>undefined,
-    getAppUrl:()=> 'https://example.test',
   })
   const res=fakeRes()
   await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
   assert.equal(res.statusCode,503)
+  assert.equal(updated,false)
 })
-await check('SMS checkout requires Plus', async () => {
+await check('SMS add-on requires paid Plus subscription', async () => {
   const handler=createSmsAddonCheckoutHandler({
     verifyIdToken:async()=>({uid:'u1'}),
-    getProfile:async()=>({plan:'free',stripeCustomerId:'cus_1'}),
-    createSession:async()=>({url:'https://stripe.test'}),
+    getProfile:async()=>({plan:'free',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'}),
+    retrieveSubscription:async()=>({}),
+    updateSubscription:async()=>({}),
     getPriceId:()=> 'price_sms',
-    getAppUrl:()=> 'https://example.test',
   })
   const res=fakeRes()
   await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
   assert.equal(res.statusCode,403)
 })
-await check('client cannot inject arbitrary Stripe price id into SMS checkout', async () => {
+await check('SMS add-on rejects subscription without verified Plus price', async () => {
+  let updated=false
   const handler=createSmsAddonCheckoutHandler({
     verifyIdToken:async()=>({uid:'u1'}),
-    getProfile:async()=>({plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1'}),
-    createSession:async()=>({url:'https://stripe.test'}),
+    getProfile:async()=>({
+      plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'
+    }),
+    retrieveSubscription:async()=>({
+      id:'sub_1',customer:'cus_1',items:{data:[{id:'si_wrong',price:{id:'price_wrong'}}]}
+    }),
+    updateSubscription:async()=>{updated=true},
     getPriceId:()=> 'price_sms',
-    getAppUrl:()=> 'https://example.test',
   })
   const res=fakeRes()
-  await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{priceId:'evil'}},res)
+  await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
+  assert.equal(res.statusCode,409)
+  assert.equal(updated,false)
+})
+await check('client cannot inject Stripe price or subscription id', async () => {
+  let updated=false
+  const handler=createSmsAddonCheckoutHandler({
+    verifyIdToken:async()=>({uid:'u1'}),
+    getProfile:async()=>({
+      plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'
+    }),
+    retrieveSubscription:async()=>({}),
+    updateSubscription:async()=>{updated=true},
+    getPriceId:()=> 'price_sms',
+  })
+  const res=fakeRes()
+  await handler({
+    method:'POST',headers:{authorization:'Bearer ok'},
+    body:{priceId:'evil',subscriptionId:'sub_evil'}
+  },res)
   assert.equal(res.statusCode,400)
+  assert.equal(updated,false)
+})
+await check('SMS add-on mutates only verified existing Plus subscription', async () => {
+  let called=null
+  const handler=createSmsAddonCheckoutHandler({
+    verifyIdToken:async()=>({uid:'u1'}),
+    getProfile:async()=>({
+      plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'
+    }),
+    retrieveSubscription:async()=>({
+      id:'sub_1',
+      customer:'cus_1',
+      items:{data:[{id:'si_plus',price:{id:'price_1TxMJ9GHgBd6ZgJEcwyahH58'}}]},
+    }),
+    updateSubscription:async(id,params)=>{
+      called={id,params}
+      return {id:'sub_1',pending_update:null,latest_invoice:null}
+    },
+    getPriceId:()=> 'price_sms',
+  })
+  const res=fakeRes()
+  await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
+  assert.equal(res.statusCode,200)
+  assert.equal(called.id,'sub_1')
+  assert.deepEqual(called.params.items,[{price:'price_sms',quantity:1}])
+  assert.equal(called.params.proration_behavior,'always_invoice')
+  assert.equal(called.params.payment_behavior,'pending_if_incomplete')
+})
+await check('pending SMS payment returns hosted invoice when Stripe provides one', async () => {
+  const handler=createSmsAddonCheckoutHandler({
+    verifyIdToken:async()=>({uid:'u1'}),
+    getProfile:async()=>({
+      plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'
+    }),
+    retrieveSubscription:async()=>({
+      id:'sub_1',
+      customer:'cus_1',
+      items:{data:[{id:'si_plus',price:{id:'price_1TxMJ9GHgBd6ZgJEcwyahH58'}}]},
+    }),
+    updateSubscription:async()=>({
+      id:'sub_1',
+      pending_update:{expires_at:9999999999},
+      latest_invoice:{hosted_invoice_url:'https://invoice.test/pay'},
+    }),
+    getPriceId:()=> 'price_sms',
+  })
+  const res=fakeRes()
+  await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
+  assert.equal(res.statusCode,202)
+  assert.equal(res.body.status,'pending_payment')
+  assert.equal(res.body.hostedInvoiceUrl,'https://invoice.test/pay')
 })
 
 console.log(`SMS Add-on V1: ${passed}/${passed} PASS`)
