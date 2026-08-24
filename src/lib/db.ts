@@ -151,8 +151,6 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
     smsCreditsLimit: _smsCreditsLimit,
     smsCreditsUsed: _smsCreditsUsed,
     smsLastBillingEventAt: _smsLastBillingEventAt,
-    smsLastKnownSubscriptionId: _smsLastKnownSubscriptionId,
-    smsSubscriptionEventTimestamps: _smsSubscriptionEventTimestamps,
     // Internal Super Admin entitlement (firestore.rules userBillingFields())
     // — same server-owned-only contract; a signup request can never grant
     // itself internal access.
