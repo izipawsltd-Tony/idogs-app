@@ -1043,9 +1043,9 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                     {puppies.map(puppy => (
                       <div key={puppy.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--sand)' }}>
                         <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🐶</div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{puppy.name}</div>
-                          <div style={{ fontSize: 12, color: 'var(--light)' }}>{puppy.sex === 'female' ? '♀' : '♂'} · {puppy.colour}</div>
+                        <div className="litter-puppy-summary" style={{ flex: '1 1 160px', minWidth: 0 }}>
+                                    <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', overflowWrap: 'anywhere' }}>{puppy.name}</div>
+                                    <div style={{ fontSize: 12, color: 'var(--light)', overflowWrap: 'anywhere' }}>{puppy.sex === 'female' ? '♀' : '♂'} · {puppy.colour}</div>
                         </div>
                         {((puppy as any).status === 'transferred' || (puppy as any).transferStatus === 'pendingClaim') && (
                           <span className="badge badge-gray" style={{ fontSize: 11 }}>Transferred</span>
@@ -1344,7 +1344,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                             return (
                               <div key={puppy.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--white)' }}>
                                 {/* Puppy row */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px' }}>
+                                <div className="litter-puppy-row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', flexWrap: 'wrap', minWidth: 0 }}>
                                   <div style={{
                                     width: 36, height: 36, borderRadius: '50%',
                                     background: puppy.profilePhoto ? `url(${puppy.profilePhoto}) center/cover` : 'var(--brand-50)',
@@ -1368,7 +1368,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                   {isPuppyPromoted && (
                                     <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', border: '1px solid rgba(8,80,65,.16)', whiteSpace: 'nowrap' }}>✓ In My Dogs</span>
                                   )}
-                                  <div style={{ display: 'flex', gap: 6 }}>
+                                  <div className="litter-puppy-actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', maxWidth: '100%' }}>
                                     <button
                                       className="btn btn-secondary btn-sm"
                                       onClick={() => isEditingThisPuppy ? setEditingPuppy(null) : startEditPuppy(puppy)}
@@ -2225,7 +2225,7 @@ function ShowcaseManager({
       mergePuppyShareGrant(result.grant)
       if (result.shareToken) setPuppyShareTokens(prev => ({ ...prev, [result.grant.id]: result.shareToken! }))
       setPuppyShareDrafts(prev => ({ ...prev, [puppy.id]: { customerLabel: '', expiresAt: '', secondPuppyId: '' } }))
-      toast('Private update link created. Copy it now — it cannot be shown again after reload.')
+      toast('Private update link created. You can Share link again later from this card.')
     } catch (err) {
       setPuppyShareErrors(prev => ({ ...prev, [puppy.id]: err instanceof Error ? err.message : 'Failed to create private update link' }))
     } finally {
@@ -2246,7 +2246,7 @@ function ShowcaseManager({
       } : undefined)
       mergePuppyShareGrant(result.grant)
       if (result.shareToken) setPuppyShareTokens(prev => ({ ...prev, [grant.id]: result.shareToken! }))
-      if (action === 'reset') toast('Link reset. Copy the new link now — the previous link no longer works.')
+      if (action === 'reset') toast('Link reset. The previous link no longer works; use Share link for the new one.')
       else toast(action === 'updateMetadata' ? 'Link details saved' : `Link ${action === 'resume' ? 'resumed' : `${action}d`}`)
     } catch (err) {
       setPuppyShareErrors(prev => ({ ...prev, [puppy.id]: err instanceof Error ? err.message : 'Failed to update private link' }))
@@ -2255,18 +2255,52 @@ function ShowcaseManager({
     }
   }
 
-  async function copyPuppyShareLink(grantId: string) {
-    const token = puppyShareTokens[grantId]
-    if (!token) return
-    const url = `${window.location.origin}/shared/${token}`
+  async function copyPuppyShareLink(puppy: Dog, grant: PuppyShareGrant) {
+    setPuppyShareBusy(prev => ({ ...prev, [puppy.id]: true }))
+    setPuppyShareErrors(prev => ({ ...prev, [puppy.id]: '' }))
     try {
-      await navigator.clipboard.writeText(url)
-      toast('Private update link copied')
-    } catch {
-      window.prompt('Copy this private update link:', url)
+      let token = puppyShareTokens[grant.id]
+
+      if (!token) {
+        const result = await managePuppyShareGrant(grant.id, 'copy')
+        const recoveredToken = result.shareToken
+        if (!recoveredToken) throw new Error('Unable to create a shareable link')
+        token = recoveredToken
+        setPuppyShareTokens(prev => ({ ...prev, [grant.id]: recoveredToken }))
+      }
+
+      if (!token) throw new Error('Unable to create a shareable link')
+
+      const url = `${window.location.origin}/shared/${token}`
+
+      if (typeof navigator.share === 'function') {
+        try {
+          await navigator.share({
+            title: `${puppy.name} puppy update`,
+            url,
+          })
+          toast('Private update link shared')
+          return
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') return
+        }
+      }
+
+      try {
+        await navigator.clipboard.writeText(url)
+        toast('Private update link copied')
+      } catch {
+        window.prompt('Copy this private update link:', url)
+      }
+    } catch (err) {
+      setPuppyShareErrors(prev => ({
+        ...prev,
+        [puppy.id]: err instanceof Error ? err.message : 'Failed to share private update link',
+      }))
+    } finally {
+      setPuppyShareBusy(prev => ({ ...prev, [puppy.id]: false }))
     }
   }
-
   // The one Save/Retry action for Showcase-specific draft fields. It never
   // uploads or mutates canonical puppy media.
   async function handleSaveAll() {
@@ -2629,9 +2663,9 @@ function ShowcaseManager({
                       <span style={{ fontSize: 11 }} title="Independent of the puppy's own 'Show this puppy publicly' checkbox above — this only controls whether the DEPOSIT amount is shown, on a puppy that is already public."><input type="checkbox" checked={puppyFields.showDeposit} disabled={puppyFields.depositCents == null} onChange={e => updateField(puppy.id, 'showDeposit', e.target.checked)} /> Show deposit publicly</span>
                     </label>
                   </div>
-                  <div style={{ paddingLeft: 26 }}>
-                    <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '9px 10px', background: '#fff' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="puppy-private-share-wrap" style={{ paddingLeft: 26, minWidth: 0 }}>
+                    <div className="puppy-private-share-card" style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '9px 10px', background: '#fff', minWidth: 0, maxWidth: '100%' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
                         <div>
                           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--dark)' }}>🔗 Private update link — no login required</div>
                           <div style={{ fontSize: 11, color: 'var(--light)', marginTop: 2 }}>Share photos and videos for this puppy, with an optional second puppy from this litter.</div>
@@ -2662,26 +2696,27 @@ function ShowcaseManager({
                                 </label>
                                 <button type="button" className="btn btn-primary btn-sm" disabled={puppyShareBusy[puppy.id]} onClick={() => void createPrivateUpdateLink(puppy)}>{puppyShareBusy[puppy.id] ? 'Creating…' : 'Create link'}</button>
                               </div>
-                              <p style={{ fontSize: 11, color: 'var(--light)', margin: '7px 0 0' }}>The full link is shown only once after Create or Reset. Save it before leaving this page.</p>
+                              <p style={{ fontSize: 11, color: 'var(--light)', margin: '7px 0 0' }}>You can Share link again later from the customer card. Reset only when you intentionally want the old link to stop working.</p>
                               {puppyShareErrors[puppy.id] && <div role="alert" style={{ fontSize: 11, color: 'var(--danger)', marginTop: 7 }}>{puppyShareErrors[puppy.id]}</div>}
                               {(puppyShareGrants[puppy.id] || []).length === 0 ? <p style={{ fontSize: 12, color: 'var(--light)', margin: '12px 0 0' }}>No private update links for this puppy yet.</p> : (
                                 <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
                                   {(puppyShareGrants[puppy.id] || []).map(grant => {
                                     const edit = puppyShareEdits[grant.id] || { customerLabel: grant.customerLabel || '', expiresAt: expiryForInput(grant.expiresAt) }
                                     const coveredNames = grant.puppyIds.map(id => puppyDogs.find(item => item.id === id)?.name).filter(Boolean).join(' + ')
-                                    return <div key={grant.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 9, background: 'var(--sand)' }}>
+                                    return <div key={grant.id} className="puppy-private-share-grant" style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 9, background: 'var(--sand)', minWidth: 0, maxWidth: '100%' }}>
                                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                                         <strong style={{ fontSize: 12 }}>{grant.customerLabel || 'Unlabelled customer'} · {coveredNames}</strong>
                                         <span style={{ fontSize: 11, fontWeight: 700, color: grant.status === 'active' ? 'var(--brand-600)' : grant.status === 'paused' ? 'var(--gold)' : 'var(--danger)' }}>{grant.status.toUpperCase()}</span>
                                       </div>
-                                      {puppyShareTokens[grant.id] && <div role="status" style={{ marginTop: 8, padding: 8, borderRadius: 7, background: 'var(--gold-light)', fontSize: 11 }}><strong>Copy now:</strong> this link cannot be retrieved after reload. <button type="button" className="btn btn-primary btn-sm" style={{ marginLeft: 6 }} onClick={() => void copyPuppyShareLink(grant.id)}>Copy link</button></div>}
-                                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 6, alignItems: 'end', marginTop: 8 }}>
+                                      {puppyShareTokens[grant.id] && <div role="status" style={{ marginTop: 8, padding: 8, borderRadius: 7, background: 'var(--gold-light)', fontSize: 11, overflowWrap: 'anywhere' }}><strong>Link ready:</strong> use Share link now or anytime later.</div>}
+                                      <div className="puppy-private-share-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 6, alignItems: 'end', marginTop: 8, minWidth: 0 }}>
                                         <label className="form-group" style={{ margin: 0 }}><span className="form-label">Customer label</span><input className="form-input" maxLength={120} value={edit.customerLabel} disabled={grant.status === 'revoked'} onChange={e => setPuppyShareEdits(prev => ({ ...prev, [grant.id]: { ...edit, customerLabel: e.target.value } }))} /></label>
                                         <label className="form-group" style={{ margin: 0 }}><span className="form-label">Expiry</span><input className="form-input" type="datetime-local" value={edit.expiresAt} disabled={grant.status === 'revoked'} onChange={e => setPuppyShareEdits(prev => ({ ...prev, [grant.id]: { ...edit, expiresAt: e.target.value } }))} /></label>
                                         <button type="button" className="btn btn-secondary btn-sm" disabled={puppyShareBusy[puppy.id] || grant.status === 'revoked'} onClick={() => void runPuppyShareAction(puppy, grant, 'updateMetadata')}>Save details</button>
                                       </div>
                                       {grant.expiresAt && <div style={{ fontSize: 11, color: 'var(--light)', marginTop: 5 }}>Expires {formatDateTime(grant.expiresAt)}</div>}
                                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                                        {grant.status !== 'revoked' && <button type="button" className="btn btn-primary btn-sm" disabled={puppyShareBusy[puppy.id]} onClick={() => void copyPuppyShareLink(puppy, grant)}>Share link</button>}
                                         {grant.status === 'active' && <button type="button" className="btn btn-secondary btn-sm" disabled={puppyShareBusy[puppy.id]} onClick={() => void runPuppyShareAction(puppy, grant, 'pause')}>Pause</button>}
                                         {grant.status === 'paused' && <button type="button" className="btn btn-primary btn-sm" disabled={puppyShareBusy[puppy.id]} onClick={() => void runPuppyShareAction(puppy, grant, 'resume')}>Resume</button>}
                                         {grant.status !== 'revoked' && <><button type="button" className="btn btn-secondary btn-sm" disabled={puppyShareBusy[puppy.id]} onClick={() => void runPuppyShareAction(puppy, grant, 'reset')}>Reset link</button><button type="button" className="btn btn-ghost btn-sm" disabled={puppyShareBusy[puppy.id]} style={{ color: 'var(--danger)' }} onClick={() => void runPuppyShareAction(puppy, grant, 'revoke')}>Revoke</button></>}

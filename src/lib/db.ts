@@ -1486,7 +1486,7 @@ export async function listPuppyShareGrants(puppyId: string): Promise<PuppyShareG
 
 export async function managePuppyShareGrant(
   grantId: string,
-  action: 'pause' | 'resume' | 'revoke' | 'reset' | 'updateMetadata',
+  action: 'pause' | 'resume' | 'revoke' | 'reset' | 'copy' | 'updateMetadata',
   metadata?: { customerLabel?: string | null; expiresAt?: string | null },
 ): Promise<PuppyShareGrantResult> {
   const res = await fetch('/api/manage-puppy-share-grant', {

@@ -98,7 +98,12 @@ const listSrc = fs.readFileSync(new URL('../api/list-puppy-share-grants.js', imp
 const viewSrc = fs.readFileSync(new URL('../api/puppy-share-view.js', import.meta.url), 'utf8')
 const rulesSrc = fs.readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
 
-check('shared lib reuses generateShareToken/hashShareToken from showcase-share.js, does not reimplement', /from '\.\/showcase-share\.js'/.test(grantsLibSrc) && /generateShareToken/.test(grantsLibSrc) && /hashShareToken/.test(grantsLibSrc) && !/from ['"]node:crypto['"]/.test(grantsLibSrc) && !/from ['"]crypto['"]/.test(grantsLibSrc))
+check('shared lib reuses generateShareToken/hashShareToken and uses HMAC only for recoverable aliases',
+  grantsLibSrc.includes("from './showcase-share.js'") &&
+  grantsLibSrc.includes('generateShareToken') &&
+  grantsLibSrc.includes('hashShareToken') &&
+  grantsLibSrc.includes('createHmac') &&
+  grantsLibSrc.includes('timingSafeEqual'))
 check('shared lib reuses effectiveOwnerId from private-dog-access.js, does not reimplement', /from '\.\/private-dog-access\.js'/.test(grantsLibSrc) && /effectiveOwnerId/.test(grantsLibSrc) && !/currentOwnerId.*tenantId.*\|\|/.test(grantsLibSrc.replace(/\n/g, ' ')))
 
 check('create endpoint derives ownerId from the verified token, never the request body', /ownerId:\s*uid/.test(createSrc) && !/body\.ownerId/.test(createSrc) && !/req\.body\.ownerId/.test(createSrc))
@@ -108,7 +113,10 @@ check('create endpoint returns the raw token exactly once', /shareToken:\s*rawTo
 check("create endpoint's Firestore write never includes a raw 'token' field (only tokenHash)", !/\btoken:\s/.test(createSrc))
 
 check('manage endpoint re-derives authorization from the grant document, never the request body', /grant\.ownerId !== uid/.test(manageSrc) && !/body\.ownerId/.test(manageSrc))
-check('manage endpoint treats revoke as idempotent', /revoke.*idempotent|idempotent.*revoke/is.test(manageSrc))
+check('manage endpoint treats revoke as idempotent',
+  manageSrc.includes("if (action === 'revoke')") &&
+  manageSrc.includes("if (grant.status !== 'revoked')") &&
+  manageSrc.includes('return { status: 200 }'))
 check('manage endpoint blocks pause/resume/reset once revoked (409, terminal state)', /409/.test(manageSrc) && /revoked/.test(manageSrc))
 check('reset action updates only tokenHash/lastResetAt/updatedAt on the target grant', /tx\.update\(grantRef,\s*\{\s*tokenHash/.test(manageSrc))
 check('manage endpoint uses a Firestore transaction for every action', /runTransaction/.test(manageSrc))
@@ -122,7 +130,15 @@ check('list endpoint shapes every response through serializeGrant (strips tokenH
 
 check('public view endpoint is unauthenticated (no verifyIdToken call)', !/verifyIdToken/.test(viewSrc))
 check('public view reads the token from the request BODY, not query/URL', /body\.token/.test(viewSrc) && !/req\.query/.test(viewSrc))
-check('public view rate-limits before any Firestore read', /checkDurableRateLimit/.test(viewSrc) && viewSrc.indexOf('checkDurableRateLimit(') < viewSrc.indexOf("collection('puppyShareGrants')"))
+check('public view rate-limits before invoking token lookup', (() => {
+  const handlerStart = viewSrc.indexOf('export default async function handler(req, res)')
+  if (handlerStart < 0) return false
+  const handlerSrc = viewSrc.slice(handlerStart)
+  const rateLimitAt = handlerSrc.indexOf('const rateLimitResult = await checkDurableRateLimit(')
+  const lookupAt = handlerSrc.indexOf('const loadedGrant = await loadGrantByToken(token)')
+  return rateLimitAt >= 0 && lookupAt > rateLimitAt
+})())
+
 check('public view validates token format before any lookup or logging', /isPlausibleShareToken/.test(viewSrc))
 check('public view never logs the raw token value', !/console\.(log|error)\([^)]*\btoken\b(?!Hash)/.test(viewSrc.replace(/tokenHash/g, 'TOKENHASH')))
 check('public view fails closed on zero OR multiple tokenHash matches (limit(2), size!==1)', /\.limit\(2\)/.test(viewSrc) && /size !== 1/.test(viewSrc))
@@ -355,6 +371,15 @@ check('raw share tokens remain React memory state and are never written to local
 check('breeder UI exposes every approved lifecycle action',
   ['pause', 'resume', 'revoke', 'reset', 'updateMetadata'].every(action =>
     new RegExp(`runPuppyShareAction\\([^\\n]+['\"]${action}['\"]`).test(littersPageSrc)))
+
+check('existing grants expose Share link even without an in-memory token',
+  /grant\.status !== 'revoked'[\s\S]*copyPuppyShareLink\(puppy, grant\)/.test(littersPageSrc))
+check('iPhone native share is preferred with clipboard fallback',
+  /navigator\.share/.test(littersPageSrc) && /navigator\.clipboard\.writeText/.test(littersPageSrc))
+check('mobile litter/share classes are wired',
+  /litter-puppy-row/.test(littersPageSrc) &&
+  /litter-puppy-actions/.test(littersPageSrc) &&
+  /puppy-private-share-grid/.test(littersPageSrc))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)
