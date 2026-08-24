@@ -29,6 +29,14 @@ interface BillingSummary {
   } | null
   invoices: BillingInvoice[]
   canManageBilling: boolean
+  sms: {
+    configured: boolean
+    status: 'active' | 'inactive' | 'past_due' | 'cancelled' | string
+    creditsUsed: number
+    creditsLimit: number
+    periodStart: string | null
+    periodEnd: string | null
+  }
 }
 
 function formatMoney(cents: number, currency: string): string {
@@ -75,6 +83,7 @@ export default function BillingPage({ toast }: Props) {
   const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [portalLoading, setPortalLoading] = useState(false)
+  const [smsCheckoutLoading, setSmsCheckoutLoading] = useState(false)
   const [detailsLoading, setDetailsLoading] = useState(true)
   const [detailsError, setDetailsError] = useState<string | null>(null)
   const [billingDetails, setBillingDetails] = useState<BillingSummary | null>(null)
@@ -92,6 +101,12 @@ export default function BillingPage({ toast }: Props) {
     }
     if (searchParams.get('cancelled')) {
       toast('Checkout cancelled — you can try again anytime.', 'info')
+    }
+    if (searchParams.get('sms_success')) {
+      toast('SMS add-on checkout completed. Activation will appear after Stripe confirms it.', 'success')
+    }
+    if (searchParams.get('sms_cancelled')) {
+      toast('SMS add-on checkout cancelled.', 'info')
     }
   }, [])
 
@@ -157,6 +172,25 @@ export default function BillingPage({ toast }: Props) {
       toast('Failed to start checkout. Please try again.', 'error')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleSmsSubscribe() {
+    if (!user) return
+    setSmsCheckoutLoading(true)
+    try {
+      const idToken = await user.getIdToken()
+      const res = await fetch('/api/create-sms-addon-checkout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}` },
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok || !body.url) throw new Error(body.error || 'SMS checkout unavailable')
+      window.location.href = body.url
+    } catch {
+      toast('SMS add-on checkout is unavailable. Please try again later.', 'error')
+    } finally {
+      setSmsCheckoutLoading(false)
     }
   }
 
@@ -334,6 +368,81 @@ export default function BillingPage({ toast }: Props) {
       <div style={{ background: 'var(--sand)', borderRadius: 12, padding: '14px 20px', marginBottom: 24, fontSize: 13, color: 'var(--mid)' }}>
         🐾 <strong>1-2 dogs?</strong> iDogs is free forever for up to 2 dogs — no credit card, no expiry.
         Ownership transfer and your dog's permanent QR Passport are free on every plan.
+      </div>
+
+      {/* SMS Add-on V1 */}
+      <div className="card" style={{ marginBottom: 24, padding: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 320px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>SMS Add-on</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: 'var(--dark)' }}>$3</span>
+              <span style={{ fontSize: 13, color: 'var(--light)' }}>AUD / month</span>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6 }}>
+              20 SMS credits each billing month for vaccination, worming and breeding reminders:
+              heat cycle, mating, pregnancy and whelping.
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--light)', marginTop: 6 }}>
+              One long or Unicode SMS can use more than one credit. Unused credits do not roll over.
+            </div>
+          </div>
+
+          <div style={{ minWidth: 220, flex: '0 1 260px' }}>
+            {detailsLoading ? (
+              <div style={{ fontSize: 13, color: 'var(--light)' }}>Loading SMS status…</div>
+            ) : detailsError ? (
+              <div role="alert" style={{ fontSize: 13, color: 'var(--danger, #C0392B)' }}>SMS status temporarily unavailable.</div>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>
+                  Status: <span style={{ textTransform: 'capitalize' }}>{billingDetails?.sms.status || 'inactive'}</span>
+                </div>
+                {billingDetails?.sms.status === 'active' && (
+                  <>
+                    <div style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 6 }}>
+                      Usage: <strong>{billingDetails.sms.creditsUsed} / {billingDetails.sms.creditsLimit}</strong> credits
+                    </div>
+                    <div style={{ height: 8, borderRadius: 999, background: 'var(--sand)', overflow: 'hidden', marginBottom: 8 }}>
+                      <div style={{
+                        width: `${Math.min(100, (billingDetails.sms.creditsUsed / Math.max(1, billingDetails.sms.creditsLimit)) * 100)}%`,
+                        height: '100%',
+                        background: 'var(--green)',
+                      }} />
+                    </div>
+                    {billingDetails.sms.creditsUsed >= billingDetails.sms.creditsLimit && (
+                      <div role="alert" style={{ fontSize: 12, color: 'var(--danger, #C0392B)', marginBottom: 8 }}>
+                        SMS credits exhausted. Email and in-app reminders continue normally.
+                      </div>
+                    )}
+                    {billingDetails.sms.creditsUsed < billingDetails.sms.creditsLimit &&
+                     billingDetails.sms.creditsUsed >= billingDetails.sms.creditsLimit * 0.8 && (
+                      <div style={{ fontSize: 12, color: 'var(--gold)', marginBottom: 8 }}>
+                        You have used at least 80% of this month's SMS credits.
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {billingDetails?.sms.status === 'active' || billingDetails?.sms.status === 'past_due' ? (
+                  <button className="btn btn-secondary" type="button" onClick={handleOpenPortal} disabled={portalLoading}>
+                    {portalLoading ? 'Opening…' : 'Manage SMS add-on'}
+                  </button>
+                ) : !isPlus ? (
+                  <div style={{ fontSize: 12, color: 'var(--light)' }}>Upgrade to iDogs Plus before adding SMS reminders.</div>
+                ) : !billingDetails?.sms.configured ? (
+                  <button className="btn btn-secondary" type="button" disabled title="Stripe SMS add-on is not configured for this environment">
+                    SMS add-on coming soon
+                  </button>
+                ) : (
+                  <button className="btn btn-primary" type="button" onClick={handleSmsSubscribe} disabled={smsCheckoutLoading}>
+                    {smsCheckoutLoading ? 'Opening checkout…' : 'Add SMS — $3/month'}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Payment history */}
