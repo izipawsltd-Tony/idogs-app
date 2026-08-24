@@ -153,8 +153,14 @@ export async function markSmsDeliveryFailed({ db, tenantId, deliveryId, errorCod
     const profile = userSnap.exists ? userSnap.data() : {}
     const used = safeInt(profile.smsCreditsUsed, 0)
     const segments = safeInt(delivery.segmentCount, 0)
+    const sameBillingPeriod = typeof delivery.periodStart === 'string' &&
+      delivery.periodStart === profile.smsPeriodStart
 
-    tx.set(userRef, { smsCreditsUsed: Math.max(0, used - segments) }, { merge: true })
+    // Never refund an old-period reservation into a newly reset period.
+    // A provider response can race a Stripe renewal webhook at month-end.
+    if (sameBillingPeriod) {
+      tx.set(userRef, { smsCreditsUsed: Math.max(0, used - segments) }, { merge: true })
+    }
     tx.set(deliveryRef, {
       status: 'failed',
       failedAt: now.toISOString(),
