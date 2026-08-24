@@ -716,6 +716,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ── processedSmsStripeEvents — isolated SMS add-on webhook ledger.
+    // Same Admin-SDK-only trust boundary as the base subscription ledger.
+    match /processedSmsStripeEvents/{eventId} {
+      allow read, write: if false;
+    }
+
     // ── processedStripeEvents — webhook idempotency ledger
     // (api/_lib/webhook-handler.js). Written exclusively by the Admin SDK
     // to detect a redelivered/replayed Stripe event before applying its
