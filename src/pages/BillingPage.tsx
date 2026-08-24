@@ -185,10 +185,22 @@ export default function BillingPage({ toast }: Props) {
         headers: { Authorization: `Bearer ${idToken}` },
       })
       const body = await res.json().catch(() => ({}))
-      if (!res.ok || !body.url) throw new Error(body.error || 'SMS checkout unavailable')
-      window.location.href = body.url
+      if (!res.ok) throw new Error(body.error || 'SMS add-on unavailable')
+
+      if (body.hostedInvoiceUrl) {
+        window.location.href = body.hostedInvoiceUrl
+        return
+      }
+
+      toast(
+        body.status === 'pending_payment'
+          ? 'SMS add-on payment is pending. It will activate after Stripe confirms payment.'
+          : 'SMS add-on update submitted. Activation will appear after Stripe confirms it.',
+        'success',
+      )
+      window.location.href = '/app/billing?sms_success=1'
     } catch {
-      toast('SMS add-on checkout is unavailable. Please try again later.', 'error')
+      toast('SMS add-on is unavailable. Please check Billing or try again later.', 'error')
     } finally {
       setSmsCheckoutLoading(false)
     }
@@ -436,7 +448,7 @@ export default function BillingPage({ toast }: Props) {
                   </button>
                 ) : (
                   <button className="btn btn-primary" type="button" onClick={handleSmsSubscribe} disabled={smsCheckoutLoading}>
-                    {smsCheckoutLoading ? 'Opening checkout…' : 'Add SMS — $3/month'}
+                    {smsCheckoutLoading ? 'Adding SMS…' : 'Add SMS — $3/month'}
                   </button>
                 )}
               </>
