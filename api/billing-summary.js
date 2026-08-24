@@ -26,4 +26,5 @@ export default createBillingSummaryHandler({
   },
   retrieveSubscription: id => stripe.subscriptions.retrieve(id, { expand: ['items.data.price'] }),
   listInvoices: params => stripe.invoices.list(params),
+  isSmsConfigured: () => Boolean(process.env.STRIPE_SMS_ADDON_PRICE_ID && process.env.STRIPE_SMS_WEBHOOK_SECRET),
 })
