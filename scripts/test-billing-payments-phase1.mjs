@@ -35,7 +35,19 @@ res = await run(summary, { method: 'POST', headers: { authorization: 'Bearer val
 assert.equal(res.statusCode, 405, 'summary is GET only')
 
 res = await run(summary, { method: 'GET', headers: { authorization: 'Bearer valid' } })
-assert.deepEqual(res.body, { subscription: null, invoices: [], canManageBilling: false }, 'free account has an empty safe summary')
+assert.deepEqual(res.body, {
+  subscription: null,
+  invoices: [],
+  canManageBilling: false,
+  sms: {
+    configured: false,
+    status: 'inactive',
+    creditsUsed: 0,
+    creditsLimit: 20,
+    periodStart: null,
+    periodEnd: null,
+  },
+}, 'free account has an empty safe billing summary plus inactive SMS status')
 
 summary = createBillingSummaryHandler({
   verifyIdToken: auth,
@@ -67,6 +79,14 @@ assert.equal(res.statusCode, 200)
 assert.equal(res.body.subscription.id, 'sub_1')
 assert.equal(res.body.invoices[0].amountPaid, 500)
 assert.equal(res.body.canManageBilling, true)
+assert.deepEqual(res.body.sms, {
+  configured: false,
+  status: 'inactive',
+  creditsUsed: 0,
+  creditsLimit: 20,
+  periodStart: null,
+  periodEnd: null,
+}, 'linked billing account still receives a safe inactive SMS summary when SMS price is not configured')
 
 summary = createBillingSummaryHandler({
   verifyIdToken: auth,
@@ -104,4 +124,4 @@ const noCustomerPortal = createBillingPortalHandler({
 res = await run(noCustomerPortal, { method: 'POST', headers: { authorization: 'Bearer valid' } })
 assert.equal(res.statusCode, 409, 'portal is unavailable without a linked Stripe customer')
 
-console.log('Billing & Payments Phase 1: 9/9 PASS')
+console.log('Billing & Payments Phase 1: 11/11 PASS')
