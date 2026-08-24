@@ -2606,10 +2606,20 @@ function ShowcaseManager({
                       <input className="form-input" value={puppyFields.colour ?? ''} maxLength={80}
                         onChange={e => updateField(puppy.id, 'colour', e.target.value || null)} />
                     </label>
-                    <label className="form-group" style={{ margin: 0 }}>
+                    <label className="form-group ready-home-field" style={{ margin: 0, minWidth: 0, maxWidth: '100%' }}>
                       <span className="form-label">Ready for new home</span>
-                      <input className="form-input" type="date" value={puppyFields.readyToGoHomeDate ?? ''}
-                        onChange={e => updateField(puppy.id, 'readyToGoHomeDate', e.target.value || null)} />
+                      <div className="ready-home-input-wrap">
+                        <input
+                          className="form-input ready-home-date-input"
+                          type="date"
+                          value={puppyFields.readyToGoHomeDate ?? ''}
+                          aria-label="Ready for new home, day month year"
+                          onChange={e => updateField(puppy.id, 'readyToGoHomeDate', e.target.value || null)}
+                        />
+                        {!puppyFields.readyToGoHomeDate && (
+                          <span className="ready-home-date-placeholder" aria-hidden="true">dd/mm/yyyy</span>
+                        )}
+                      </div>
                     </label>
                     <label className="form-group" style={{ margin: 0, gridColumn: '1/-1' }}>
                       <span className="form-label">Personality <span style={{ color: 'var(--light)', fontWeight: 400 }}>(max 500 characters)</span></span>

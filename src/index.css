@@ -605,3 +605,56 @@ h1, h2, h3, h4, h5, h6 {
     box-sizing: border-box !important;
   }
 }
+
+
+/* READY HOME IOS MICRO FIX */
+.ready-home-field,
+.ready-home-input-wrap {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ready-home-input-wrap {
+  position: relative;
+  overflow: hidden;
+}
+
+.ready-home-date-input {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  inline-size: 100% !important;
+  max-inline-size: 100% !important;
+  min-inline-size: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.ready-home-date-placeholder {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--light);
+  font-size: inherit;
+  line-height: 1;
+}
+
+@media (max-width: 640px) {
+  .ready-home-field,
+  .ready-home-input-wrap,
+  .ready-home-date-input {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .ready-home-date-input {
+    display: block !important;
+    overflow: hidden;
+  }
+}

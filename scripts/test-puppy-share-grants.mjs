@@ -392,5 +392,12 @@ check('mobile UI round 2 protects Showcase fields',
   littersPageSrc.includes('puppy-showcase-fields-grid') &&
   littersPageSrc.includes('puppy-private-share-create-grid'))
 
+check('Ready for new home exposes dd/mm/yyyy placeholder',
+  littersPageSrc.includes('ready-home-date-placeholder') &&
+  littersPageSrc.includes('dd/mm/yyyy'))
+
+check('Ready for new home has dedicated iOS width guard',
+  littersPageSrc.includes('ready-home-date-input'))
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)
