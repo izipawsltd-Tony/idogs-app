@@ -557,6 +557,8 @@ export default async function handler(req, res) {
           message,
           milestoneKey,
           reminderWindowDays = reminderDays,
+          sourceKind = 'heatCycle',
+          litterId = null,
         }) {
           if (!dueDate) return
           const due = new Date(dueDate)
@@ -576,7 +578,7 @@ export default async function handler(req, res) {
                 title,
                 dueDate,
                 type: eventType,
-                heatCycleId: cycleId,
+                ...(sourceKind === 'litter' ? { litterId: cycleId } : { heatCycleId: cycleId }),
                 status: daysUntil < 0 ? 'overdue' : 'pending',
                 createdAt: today.toISOString(),
                 updatedAt: today.toISOString(),
@@ -593,6 +595,7 @@ export default async function handler(req, res) {
                 phone,
                 message,
                 dogId: dog.id,
+                litterId,
                 eventType,
                 sourceRecordId: cycleId,
                 milestoneKey,
@@ -605,6 +608,53 @@ export default async function handler(req, res) {
             }
           }
         }
+
+        // Litter.expectedDueDate is the canonical whelping source once a
+        // litter exists. heatCycles.whelpingEstimate is fallback only; this
+        // prevents one pregnancy from producing two whelping SMS messages.
+        const littersSnap = await db.collection('litters')
+          .where('damId', '==', dog.id)
+          .get()
+        const activeWhelpingLitters = littersSnap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }))
+          .filter(litter =>
+            litter.tenantId === tenantId &&
+            !litter.archived &&
+            Boolean(litter.expectedDueDate) &&
+            !litter.actualBirthDate
+          )
+
+        for (const litter of activeWhelpingLitters) {
+          const due = new Date(litter.expectedDueDate)
+          if (Number.isNaN(due.getTime())) continue
+          const daysUntil = Math.ceil((due - today) / (1000 * 60 * 60 * 24))
+          if (daysUntil <= 7 && daysUntil > 1) {
+            await upsertBreedingReminderAndSms({
+              cycleId: litter.id,
+              eventType: 'whelping',
+              dueDate: litter.expectedDueDate,
+              title: `Expected whelping — ${formatDate(litter.expectedDueDate)}`,
+              message: `iDogs: ${dog.name} expected whelping date is ${formatDate(litter.expectedDueDate)} - about 7 days away. Review your whelping plan.`,
+              milestoneKey: 'whelping-7d',
+              reminderWindowDays: 7,
+              sourceKind: 'litter',
+              litterId: litter.id,
+            })
+          } else if (daysUntil <= 1 && daysUntil >= 0) {
+            await upsertBreedingReminderAndSms({
+              cycleId: litter.id,
+              eventType: 'whelping',
+              dueDate: litter.expectedDueDate,
+              title: `Expected whelping — ${formatDate(litter.expectedDueDate)}`,
+              message: `iDogs: ${dog.name} expected whelping date is ${formatDate(litter.expectedDueDate)}. Please review your whelping plan today.`,
+              milestoneKey: 'whelping-1d',
+              reminderWindowDays: 1,
+              sourceKind: 'litter',
+              litterId: litter.id,
+            })
+          }
+        }
+        const hasCanonicalLitterWhelping = activeWhelpingLitters.length > 0
 
         for (const cycleDoc of cyclesSnap.docs) {
           const cycle = cycleDoc.data()
@@ -634,7 +684,7 @@ export default async function handler(req, res) {
             })
           }
 
-          if (cycle.whelpingEstimate && !cycle.whelpingActual) {
+          if (!hasCanonicalLitterWhelping && cycle.whelpingEstimate && !cycle.whelpingActual) {
             const due = new Date(cycle.whelpingEstimate)
             const daysUntil = Math.ceil((due - today) / (1000 * 60 * 60 * 24))
             if (daysUntil <= 7 && daysUntil > 1) {
