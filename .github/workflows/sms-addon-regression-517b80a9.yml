@@ -1,0 +1,82 @@
+name: SMS Add-on exact-SHA regressions
+
+on:
+  push:
+    branches:
+      - ops/sms-addon-regression-517b80a9
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXACT_SHA: 517b80a9c4f1b23bdc71580b892c3e332950f702
+    steps:
+      - name: Checkout exact feature SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXACT_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact SHA and clean tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_SHA"
+          test -z "$(git status --porcelain)"
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: SMS V1 tests
+        run: node scripts/test-sms-addon-v1.mjs
+
+      - name: Billing navigation regression
+        run: node scripts/test-billing-navigation.mjs
+
+      - name: Billing P0 security regression
+        run: node scripts/test-billing-p0-security.mjs
+
+      - name: Billing payments regression
+        run: node scripts/test-billing-payments-phase1.mjs
+
+      - name: Entitlements regression
+        run: node scripts/test-entitlements.mjs
+
+      - name: Stripe webhook regression
+        run: node scripts/test-webhook-handler.mjs
+
+      - name: Cron auth regression
+        run: node scripts/test-cron-auth.mjs
+
+      - name: Reminders batch regression
+        run: node scripts/test-reminders-batch-regression.mjs
+
+      - name: Reminder rules static regression
+        run: node scripts/test-reminder-rules.mjs
+
+      - name: Heat cycle DTO regression
+        run: node scripts/test-heat-cycle-client-dto.mjs
+
+      - name: Heat predictor regression
+        run: node scripts/test-heat-predictor-sync.mjs
+
+      - name: Settings role gating regression
+        run: node scripts/test-settings-role-gating.mjs
+
+      - name: Staging isolation regression
+        run: node scripts/test-staging-isolation-fallbacks.mjs
+
+      - name: Build
+        run: npm run build
