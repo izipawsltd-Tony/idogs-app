@@ -22,5 +22,6 @@ export default createSmsAddonCheckoutHandler({
     const snap = await db.collection('users').doc(uid).get()
     return snap.exists ? snap.data() : null
   },
-  createSession: params => stripe.checkout.sessions.create(params),
+  retrieveSubscription: id => stripe.subscriptions.retrieve(id, { expand: ['items.data.price'] }),
+  updateSubscription: (id, params) => stripe.subscriptions.update(id, params),
 })
