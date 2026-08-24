@@ -175,6 +175,18 @@ await check('manual failure refund never drops below zero', async () => {
   await markSmsDeliveryFailed({db,tenantId:'u1',deliveryId:'d1',now:NOW})
   assert.equal(db.store.users.u1.smsCreditsUsed,0)
 })
+await check('old-period provider failure never refunds into new period', async () => {
+  const current=activeProfile(5)
+  current.smsPeriodStart='2026-09-01T00:00:00.000Z'
+  current.smsPeriodEnd='2026-10-01T00:00:00.000Z'
+  const db=new FakeDb({
+    users:{u1:current},
+    smsDeliveries:{dOld:{status:'reserved',segmentCount:1,periodStart:'2026-08-01T00:00:00.000Z'}},
+  })
+  await markSmsDeliveryFailed({db,tenantId:'u1',deliveryId:'dOld',now:new Date('2026-09-01T00:01:00.000Z')})
+  assert.equal(db.store.users.u1.smsCreditsUsed,5)
+  assert.equal(db.store.smsDeliveries.dOld.status,'failed')
+})
 function fakeRes(){
   return { statusCode:200, body:null, status(n){this.statusCode=n;return this}, json(v){this.body=v;return this} }
 }
