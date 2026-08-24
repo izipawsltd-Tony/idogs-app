@@ -5,10 +5,6 @@ on:
   push:
     branches:
       - ops/sms-addon-preview-517b80a9
-  pull_request_target:
-    branches:
-      - ops/sms-addon-preview-517b80a9
-    types: [opened, reopened, synchronize]
 
 permissions:
   contents: read
@@ -63,9 +59,6 @@ jobs:
           printf '{"projectId":"%s","orgId":"%s","projectName":"idogs-app-staging"}\n' "$VERCEL_PROJECT_ID" "$VERCEL_ORG_ID" > .vercel/project.json
           cat .vercel/project.json
 
-      - name: Pull Preview project settings only
-        run: vercel pull --yes --environment=preview --token="${{ secrets.VERCEL_TOKEN }}"
-
       - name: Re-verify project binding
         shell: bash
         run: |
@@ -74,6 +67,7 @@ jobs:
           const fs = require('fs')
           const p = JSON.parse(fs.readFileSync('.vercel/project.json','utf8'))
           if (p.projectId !== process.env.VERCEL_PROJECT_ID) throw new Error('STOP wrong Vercel projectId')
+          if (p.orgId !== process.env.VERCEL_ORG_ID) throw new Error('STOP wrong Vercel orgId')
           if (p.projectName !== 'idogs-app-staging') throw new Error('STOP wrong Vercel projectName')
           console.log('PASS project binding', p.projectName, p.projectId)
           NODE
