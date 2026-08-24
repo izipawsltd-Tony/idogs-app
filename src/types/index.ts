@@ -510,8 +510,6 @@ export interface UserProfile {
   smsCreditsLimit?: number
   smsCreditsUsed?: number
   smsLastBillingEventAt?: string | null
-  smsLastKnownSubscriptionId?: string | null
-  smsSubscriptionEventTimestamps?: Record<string, number>
   // Internal/admin-granted Plus entitlement, independent of Stripe — see
   // api/_lib/entitlements.js's computeEffectivePlan() and
   // scripts/grant-internal-entitlement.mjs. Server-owned (protected by
