@@ -16,7 +16,7 @@ jobs:
     env:
       VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
-      EXACT_SHA: 517b80a9c4f1b23bdc71580b892c3e332950f702
+      EXACT_SHA: b276a5f02c33cbcd64c5f7a28bdc7fb76328b519
       GITHUB_REPO_ID: '1270695712'
     steps:
       - name: Checkout exact approved feature SHA
@@ -96,21 +96,20 @@ jobs:
 
           echo "CREATE_HTTP=$http"
           if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
-            node - <<'NODE'
-            const fs=require('fs')
-            const x=JSON.parse(fs.readFileSync('/tmp/deploy-response.json','utf8'))
-            console.error('Vercel create deployment failed:', x?.error?.code || 'UNKNOWN', x?.error?.message || 'No message')
-            NODE
+            code=$(jq -r '.error.code // "UNKNOWN"' /tmp/deploy-response.json)
+            message=$(jq -r '.error.message // "No message"' /tmp/deploy-response.json)
+            echo "Vercel create deployment failed: $code $message" >&2
             exit 1
           fi
 
-          node - <<'NODE' >> "$GITHUB_OUTPUT"
-          const fs=require('fs')
-          const x=JSON.parse(fs.readFileSync('/tmp/deploy-response.json','utf8'))
-          if (!x.id || !x.url) throw new Error('STOP deployment response missing id/url')
-          console.log(`deployment_id=${x.id}`)
-          console.log(`url=https://${x.url}`)
-          NODE
+          deployment_id=$(jq -r '.id // empty' /tmp/deploy-response.json)
+          deployment_url=$(jq -r '.url // empty' /tmp/deploy-response.json)
+          test -n "$deployment_id"
+          test -n "$deployment_url"
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+          echo "url=https://$deployment_url" >> "$GITHUB_OUTPUT"
+          echo "DEPLOYMENT_ID=$deployment_id"
+          echo "PREVIEW_URL=https://$deployment_url"
 
       - name: Verify Preview deployment metadata and wait for READY
         shell: bash
@@ -125,27 +124,20 @@ jobs:
               --write-out '%{http_code}' \
               "https://api.vercel.com/v13/deployments/${DEPLOYMENT_ID}?teamId=${VERCEL_ORG_ID}" \
               --header "Authorization: Bearer ${VERCEL_TOKEN}")
-            if [ "$http" != "200" ]; then
-              echo "STOP deployment inspect HTTP=$http"
-              exit 1
-            fi
+            test "$http" = "200"
 
-            state=$(node - <<'NODE'
-            const fs=require('fs')
-            const x=JSON.parse(fs.readFileSync('/tmp/deployment.json','utf8'))
-            const sha=x?.meta?.githubCommitSha || x?.meta?.approvedExactSha || x?.gitSource?.sha || x?.gitMetadata?.commitSha || ''
-            const ref=x?.meta?.githubCommitRef || x?.meta?.sourceBranch || x?.gitSource?.ref || x?.gitMetadata?.commitRef || ''
-            const projectId=x?.projectId || x?.project?.id || ''
-            const target=x?.target ?? null
-            if (projectId && projectId !== process.env.VERCEL_PROJECT_ID) throw new Error(`STOP wrong project ${projectId}`)
-            if (sha && sha !== process.env.EXACT_SHA) throw new Error(`STOP wrong SHA ${sha}`)
-            if (ref && ref !== 'feature/sms-addon-v1') throw new Error(`STOP wrong ref ${ref}`)
-            if (target === 'production') throw new Error('STOP deployment targeted production')
-            console.error(`VERIFY project=${projectId || 'name-bound'} target=${target ?? 'preview/null'} sha=${sha || process.env.EXACT_SHA} ref=${ref || 'feature/sms-addon-v1'} state=${x.readyState || x.status}`)
-            process.stdout.write(x.readyState || x.status || '')
-            NODE
-            )
+            project_id=$(jq -r '.projectId // .project.id // empty' /tmp/deployment.json)
+            target=$(jq -r 'if .target == null then "preview/null" else .target end' /tmp/deployment.json)
+            sha=$(jq -r '.meta.githubCommitSha // .meta.approvedExactSha // .gitSource.sha // .gitMetadata.commitSha // empty' /tmp/deployment.json)
+            ref=$(jq -r '.meta.githubCommitRef // .meta.sourceBranch // .gitSource.ref // .gitMetadata.commitRef // empty' /tmp/deployment.json)
+            state=$(jq -r '.readyState // .status // empty' /tmp/deployment.json)
 
+            if [ -n "$project_id" ] && [ "$project_id" != "$VERCEL_PROJECT_ID" ]; then echo "STOP wrong project $project_id"; exit 1; fi
+            if [ -n "$sha" ] && [ "$sha" != "$EXACT_SHA" ]; then echo "STOP wrong SHA $sha"; exit 1; fi
+            if [ -n "$ref" ] && [ "$ref" != "feature/sms-addon-v1" ]; then echo "STOP wrong ref $ref"; exit 1; fi
+            if [ "$target" = "production" ]; then echo "STOP deployment targeted production"; exit 1; fi
+
+            echo "VERIFY project=${project_id:-name-bound} target=$target sha=${sha:-$EXACT_SHA} ref=${ref:-feature/sms-addon-v1} state=$state"
             case "$state" in
               READY)
                 echo "PASS READY exact-SHA staging Preview"
