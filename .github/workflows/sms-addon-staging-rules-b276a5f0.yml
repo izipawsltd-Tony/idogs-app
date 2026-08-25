@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      EXACT_SHA: f249ce0bb5971d229682ae65eff71f89041cf1bc
+      EXACT_SHA: 4f715b3bcce2171f626ff17830a95171794d8877
       VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       GITHUB_REPO_ID: '1270695712'
@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node -e 'const fs=require("fs"); const b={name:"idogs-app-staging",gitSource:{type:"github",ref:"feature/sms-addon-v1",repoId:Number(process.env.GITHUB_REPO_ID),sha:process.env.EXACT_SHA},gitMetadata:{remoteUrl:"https://github.com/izipawsltd-Tony/idogs-app.git",commitRef:"feature/sms-addon-v1",commitSha:process.env.EXACT_SHA,dirty:false,ci:true,ciType:"github-actions",ciGitProviderUsername:"izipawsltd-Tony",ciGitRepoVisibility:"public",rootDirectory:""},meta:{approvedExactSha:process.env.EXACT_SHA,sourceBranch:"feature/sms-addon-v1",validationWorkflow:"sms-addon-staging-diagnostic-preview",sanitizedGuardDiagnostics:"price-ids-only"}}; fs.writeFileSync("/tmp/deploy.json",JSON.stringify(b))'
+          node -e 'const fs=require("fs"); const b={name:"idogs-app-staging",gitSource:{type:"github",ref:"feature/sms-addon-v1",repoId:Number(process.env.GITHUB_REPO_ID),sha:process.env.EXACT_SHA},gitMetadata:{remoteUrl:"https://github.com/izipawsltd-Tony/idogs-app.git",commitRef:"feature/sms-addon-v1",commitSha:process.env.EXACT_SHA,dirty:false,ci:true,ciType:"github-actions",ciGitProviderUsername:"izipawsltd-Tony",ciGitRepoVisibility:"public",rootDirectory:""},meta:{approvedExactSha:process.env.EXACT_SHA,sourceBranch:"feature/sms-addon-v1",validationWorkflow:"sms-addon-staging-diagnostic-preview",sanitizedGuardDiagnostics:"price-ids-only-v2"}}; fs.writeFileSync("/tmp/deploy.json",JSON.stringify(b))'
           http=$(curl --silent --show-error --output /tmp/deploy-response.json --write-out '%{http_code}' \
             --request POST \
             "https://api.vercel.com/v13/deployments?teamId=${VERCEL_ORG_ID}" \
