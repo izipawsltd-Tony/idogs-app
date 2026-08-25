@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      EXACT_SHA: 500d20772b61c3b38badf91f32af0ed31fb9c07b
+      EXACT_SHA: b6dd7e6acee2b7be6fd6909c2d57d09f8dbdab2e
       VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       GITHUB_REPO_ID: 1270695712
@@ -25,7 +25,7 @@ jobs:
           set -euo pipefail
           test "$VERCEL_PROJECT_ID" = "prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o"
           test "$VERCEL_ORG_ID" = "team_oZF1Z0BUEceb9fAXdmFV1Saz"
-          test "$EXACT_SHA" = "500d20772b61c3b38badf91f32af0ed31fb9c07b"
+          test "$EXACT_SHA" = "b6dd7e6acee2b7be6fd6909c2d57d09f8dbdab2e"
           test -n "${VERCEL_TOKEN:-}"
           echo "PASS staging preview gate"
 
