@@ -4,7 +4,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 
 const TARGET_EMAIL = 'idogsbreeder@gmail.com'
-const TOKEN_SHA256 = 'c717394e6908a9d2fe7bf43f468931b83c111a1dfafc3903f016637af88737c4'
+const TOKEN_SHA256 = 'c70d30cbd70482cff600e6f41c707f66b21319da811acb354e1fc7742ff261a3'
 
 function tokenOk(value) {
   const actual = crypto.createHash('sha256').update(String(value || '')).digest('hex')
