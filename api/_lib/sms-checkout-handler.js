@@ -3,6 +3,11 @@ import { logSanitizedError } from './http-helpers.js'
 import { computeEffectivePlan } from './entitlements.js'
 import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
 
+// This is the verified iDogs Plus test-mode price in the iDogs Stripe Test mode
+// environment. It is accepted only on Vercel Preview for the isolated iDogs
+// staging Firebase project; production continues to accept only CHECKOUT_PRICE_IDS.
+const STAGING_PLUS_PRICE_ID = 'price_1TxaNJGHgBd6ZgJEpAhrWark'
+
 function parseBody(req) {
   if (typeof req.body !== 'string') return req.body || {}
   try { return JSON.parse(req.body || '{}') } catch { return {} }
@@ -19,8 +24,16 @@ function subscriptionPriceIds(subscription) {
     .filter(id => typeof id === 'string' && id)
 }
 
+function allowedBasePlusPriceIds() {
+  const allowed = [...Object.values(CHECKOUT_PRICE_IDS)]
+  if (process.env.VERCEL_ENV === 'preview' && process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging') {
+    allowed.push(STAGING_PLUS_PRICE_ID)
+  }
+  return allowed
+}
+
 function hasBasePlusPrice(subscription) {
-  const allowed = new Set(Object.values(CHECKOUT_PRICE_IDS))
+  const allowed = new Set(allowedBasePlusPriceIds())
   return subscriptionPriceIds(subscription).some(id => allowed.has(id))
 }
 
@@ -85,10 +98,6 @@ export function createSmsAddonCheckoutHandler({
         return reject409(res, 'SMS_GUARD_CUSTOMER_MISMATCH', 'Stripe customer mismatch')
       }
       if (!hasBasePlusPrice(subscription)) {
-        console.error('create-sms-addon-checkout: safe iDogs Plus price mismatch', {
-          subscriptionPriceIds: subscriptionPriceIds(subscription),
-          allowedPlusPriceIds: Object.values(CHECKOUT_PRICE_IDS),
-        })
         return reject409(res, 'SMS_GUARD_PLUS_PRICE_MISMATCH', 'Verified iDogs Plus price not found on subscription')
       }
       if (hasPrice(subscription, priceId)) {
