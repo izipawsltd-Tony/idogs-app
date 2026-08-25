@@ -1,9 +1,7 @@
 name: SMS Add-on staging Firestore Rules
 
 on:
-  push:
-    branches:
-      - ops/sms-addon-staging-config-b276a5f0
+  workflow_dispatch:
 
 permissions:
   contents: read
