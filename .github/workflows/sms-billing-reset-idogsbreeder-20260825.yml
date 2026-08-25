@@ -1,0 +1,120 @@
+name: One-time staging billing reset idogsbreeder
+
+on:
+  push:
+    branches:
+      - ops/sms-billing-reset-idogsbreeder-20260825
+
+permissions:
+  contents: read
+
+jobs:
+  reset-staging-billing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXACT_SHA: 50829161edd00a771c1676195190f702eb6504b6
+      VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      TARGET_EMAIL: idogsbreeder@gmail.com
+    steps:
+      - name: Verify staging-only gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$VERCEL_PROJECT_ID" = "prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o"
+          test "$VERCEL_ORG_ID" = "team_oZF1Z0BUEceb9fAXdmFV1Saz"
+          test "$EXACT_SHA" = "50829161edd00a771c1676195190f702eb6504b6"
+          test "$TARGET_EMAIL" = "idogsbreeder@gmail.com"
+          test -n "${VERCEL_TOKEN:-}"
+          echo "PASS staging-only reset gate"
+
+      - name: Checkout exact feature SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXACT_SHA }}
+
+      - name: Verify exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_SHA"
+          test -z "$(git status --porcelain)"
+          echo "PASS exact SHA and clean tree"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pull staging production env securely
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '{"projectId":"%s","orgId":"%s","projectName":"idogs-app-staging"}\n' "$VERCEL_PROJECT_ID" "$VERCEL_ORG_ID" > .vercel/project.json
+          npx --yes vercel@latest env pull .env.reset --environment=production --yes --token "$VERCEL_TOKEN" --scope izipawsltd-tonys-projects >/tmp/vercel-env-pull.log 2>&1
+          test -s .env.reset
+          grep -q '^FIREBASE_PROJECT_ID=' .env.reset
+          grep -q '^FIREBASE_CLIENT_EMAIL=' .env.reset
+          grep -q '^FIREBASE_PRIVATE_KEY=' .env.reset
+          echo "PASS staging env pulled"
+
+      - name: Reset only stale billing fields for target user
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source .env.reset
+          set +a
+          node --input-type=module <<'NODE'
+          import { initializeApp, cert } from 'firebase-admin/app'
+          import { getAuth } from 'firebase-admin/auth'
+          import { getFirestore, FieldValue } from 'firebase-admin/firestore'
+
+          const projectId = process.env.FIREBASE_PROJECT_ID
+          const email = process.env.TARGET_EMAIL
+          if (projectId !== 'idogs-app-staging') throw new Error(`STOP wrong Firebase project: ${projectId}`)
+          if (email !== 'idogsbreeder@gmail.com') throw new Error(`STOP wrong target email: ${email}`)
+
+          initializeApp({ credential: cert({
+            projectId,
+            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+            privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+          }) })
+
+          const authUser = await getAuth().getUserByEmail(email)
+          const db = getFirestore()
+          const ref = db.collection('users').doc(authUser.uid)
+          const snap = await ref.get()
+          if (!snap.exists) throw new Error('STOP target user profile not found')
+          const before = snap.data() || {}
+
+          const deleteFields = [
+            'stripeCustomerId','stripeSubscriptionId','trialEndsAt','planActivatedAt','pastDueSince',
+            'billingInterval','scanPeriodAnchorDay','plusScansUsed','plusScansPeriodStart',
+            'lastKnownSubscriptionId','subscriptionEventTimestamps','plusScansSubscriptionId',
+            'smsAddonStatus','smsStripeSubscriptionId','smsStripePriceId','smsPeriodStart','smsPeriodEnd',
+            'smsCreditsLimit','smsCreditsUsed','smsLastBillingEventAt'
+          ]
+          const update = {
+            plan: 'free',
+            subscriptionStatus: 'inactive',
+            billingResetAt: new Date().toISOString(),
+            billingResetReason: 'staging_qa_wrong_stripe_sandbox_mapping',
+          }
+          for (const field of deleteFields) update[field] = FieldValue.delete()
+          await ref.update(update)
+
+          const after = (await ref.get()).data() || {}
+          if (after.plan !== 'free' || after.subscriptionStatus !== 'inactive') throw new Error('STOP reset verification failed')
+          for (const field of ['stripeCustomerId','stripeSubscriptionId','smsStripeSubscriptionId','smsStripePriceId']) {
+            if (Object.prototype.hasOwnProperty.call(after, field)) throw new Error(`STOP field still present: ${field}`)
+          }
+          if (before.email && before.email !== after.email) throw new Error('STOP unrelated email field changed')
+          console.log('PASS staging billing mapping reset for target user; unrelated profile data preserved')
+          NODE
+
+      - name: Remove pulled env file
+        if: always()
+        shell: bash
+        run: rm -f .env.reset
