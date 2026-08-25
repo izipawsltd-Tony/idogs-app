@@ -22,6 +22,11 @@ function hasPrice(subscription, priceId) {
   return (subscription?.items?.data || []).some(item => item?.price?.id === priceId)
 }
 
+function reject409(res, code, message) {
+  logSanitizedError('create-sms-addon-checkout', code)
+  return res.status(409).json({ error: message })
+}
+
 export function createSmsAddonCheckoutHandler({
   verifyIdToken,
   getProfile,
@@ -60,24 +65,24 @@ export function createSmsAddonCheckoutHandler({
         return res.status(403).json({ error: 'iDogs Plus is required for the SMS add-on' })
       }
       if (!profile.stripeCustomerId || !profile.stripeSubscriptionId) {
-        return res.status(409).json({ error: 'An active Stripe Plus subscription is required' })
+        return reject409(res, 'SMS_GUARD_MISSING_BILLING_LINK', 'An active Stripe Plus subscription is required')
       }
       if (profile.subscriptionStatus !== 'active' && profile.subscriptionStatus !== 'trialing') {
-        return res.status(409).json({ error: 'Resolve your Plus subscription billing status before adding SMS' })
+        return reject409(res, 'SMS_GUARD_SUBSCRIPTION_STATUS', 'Resolve your Plus subscription billing status before adding SMS')
       }
 
       const subscription = await retrieveSubscription(profile.stripeSubscriptionId)
       if (!subscription || subscription.id !== profile.stripeSubscriptionId) {
-        return res.status(409).json({ error: 'Plus subscription could not be verified' })
+        return reject409(res, 'SMS_GUARD_SUBSCRIPTION_VERIFY', 'Plus subscription could not be verified')
       }
       if (customerIdOf(subscription) !== profile.stripeCustomerId) {
-        return res.status(409).json({ error: 'Stripe customer mismatch' })
+        return reject409(res, 'SMS_GUARD_CUSTOMER_MISMATCH', 'Stripe customer mismatch')
       }
       if (!hasBasePlusPrice(subscription)) {
-        return res.status(409).json({ error: 'Verified iDogs Plus price not found on subscription' })
+        return reject409(res, 'SMS_GUARD_PLUS_PRICE_MISMATCH', 'Verified iDogs Plus price not found on subscription')
       }
       if (hasPrice(subscription, priceId)) {
-        return res.status(409).json({ error: 'SMS add-on already exists; manage it in Billing' })
+        return reject409(res, 'SMS_GUARD_ALREADY_PRESENT', 'SMS add-on already exists; manage it in Billing')
       }
 
       const updated = await updateSubscription(subscription.id, {
