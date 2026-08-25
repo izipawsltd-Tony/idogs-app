@@ -55,8 +55,9 @@ jobs:
           set -euo pipefail
           cd /tmp/idogs-reset
           node - <<'NODE'
-          const admin = require('firebase-admin')
-          const { FieldValue } = require('firebase-admin/firestore')
+          const { initializeApp, refreshToken } = require('firebase-admin/app')
+          const { getAuth } = require('firebase-admin/auth')
+          const { getFirestore, FieldValue } = require('firebase-admin/firestore')
           const path = require('path')
           const toolsRoot = path.dirname(require.resolve('firebase-tools/package.json'))
           const api = require(path.join(toolsRoot, 'lib', 'api.js'))
@@ -65,17 +66,17 @@ jobs:
           const targetEmail = process.env.TARGET_EMAIL
           if(projectId !== 'idogs-app-staging' || targetEmail !== 'idogsbreeder@gmail.com') throw new Error('STOP staging-only guard')
 
-          const credential = admin.credential.refreshToken({
+          const credential = refreshToken({
             type: 'authorized_user',
             client_id: api.clientId,
             client_secret: api.clientSecret,
             refresh_token: process.env.FIREBASE_TOKEN,
           })
-          admin.initializeApp({ credential, projectId })
+          const app = initializeApp({ credential, projectId })
 
           ;(async () => {
-            const authUser = await admin.auth().getUserByEmail(targetEmail)
-            const db = admin.firestore()
+            const authUser = await getAuth(app).getUserByEmail(targetEmail)
+            const db = getFirestore(app)
             const ref = db.collection('users').doc(authUser.uid)
             const snap = await ref.get()
             if(!snap.exists) throw new Error('STOP: target Firestore profile not found')
