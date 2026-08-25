@@ -58,6 +58,7 @@ jobs:
           const { initializeApp, refreshToken } = require('firebase-admin/app')
           const { getAuth } = require('firebase-admin/auth')
           const { getFirestore, FieldValue } = require('firebase-admin/firestore')
+          const { isDeepStrictEqual } = require('util')
           const path = require('path')
           const toolsRoot = path.dirname(require.resolve('firebase-tools/package.json'))
           const api = require(path.join(toolsRoot, 'lib', 'api.js'))
@@ -66,37 +67,41 @@ jobs:
           const targetEmail = process.env.TARGET_EMAIL
           if(projectId !== 'idogs-app-staging' || targetEmail !== 'idogsbreeder@gmail.com') throw new Error('STOP staging-only guard')
 
+          if(typeof api.clientId !== 'function' || typeof api.clientSecret !== 'function') {
+            throw new Error('STOP: unexpected firebase-tools API credential exports')
+          }
           const credential = refreshToken({
             type: 'authorized_user',
-            client_id: api.clientId,
-            client_secret: api.clientSecret,
+            client_id: api.clientId(),
+            client_secret: api.clientSecret(),
             refresh_token: process.env.FIREBASE_TOKEN,
           })
           const app = initializeApp({ credential, projectId })
 
           ;(async () => {
             const authUser = await getAuth(app).getUserByEmail(targetEmail)
+            if(authUser.email !== targetEmail) throw new Error('STOP: Auth email mismatch')
+
             const db = getFirestore(app)
             const ref = db.collection('users').doc(authUser.uid)
             const snap = await ref.get()
             if(!snap.exists) throw new Error('STOP: target Firestore profile not found')
             const before = snap.data() || {}
 
+            const deleteFields = [
+              'stripeCustomerId','stripeSubscriptionId','trialEndsAt','planActivatedAt','pastDueSince','billingInterval',
+              'scanPeriodAnchorDay','plusScansUsed','plusScansPeriodStart','lastKnownSubscriptionId',
+              'subscriptionEventTimestamps','plusScansSubscriptionId','smsAddonStatus','smsStripeSubscriptionId',
+              'smsStripePriceId','smsPeriodStart','smsPeriodEnd','smsCreditsLimit','smsCreditsUsed','smsLastBillingEventAt'
+            ]
+            const intendedFields = new Set(['plan','subscriptionStatus', ...deleteFields])
             const staleKeys = ['stripeCustomerId','stripeSubscriptionId','smsStripeSubscriptionId','smsStripePriceId']
             const alreadyReset = before.plan === 'free' && before.subscriptionStatus === 'inactive' && !staleKeys.some(k => Object.prototype.hasOwnProperty.call(before,k))
 
             if(!alreadyReset) {
-              const deleteFields = [
-                'stripeCustomerId','stripeSubscriptionId','trialEndsAt','planActivatedAt','pastDueSince','billingInterval',
-                'scanPeriodAnchorDay','plusScansUsed','plusScansPeriodStart','lastKnownSubscriptionId',
-                'subscriptionEventTimestamps','plusScansSubscriptionId','smsAddonStatus','smsStripeSubscriptionId',
-                'smsStripePriceId','smsPeriodStart','smsPeriodEnd','smsCreditsLimit','smsCreditsUsed','smsLastBillingEventAt'
-              ]
               const update = {
                 plan: 'free',
                 subscriptionStatus: 'inactive',
-                billingResetAt: new Date().toISOString(),
-                billingResetReason: 'staging_qa_wrong_stripe_sandbox_mapping',
               }
               for(const field of deleteFields) update[field] = FieldValue.delete()
               await ref.update(update)
@@ -106,16 +111,28 @@ jobs:
             const stale = staleKeys.filter(k => Object.prototype.hasOwnProperty.call(after,k))
             if(after.plan !== 'free') throw new Error('VERIFY plan is not free')
             if(after.subscriptionStatus !== 'inactive') throw new Error('VERIFY subscriptionStatus is not inactive')
-            if(stale.length) throw new Error('VERIFY stale billing IDs remain')
-            if(before.email && after.email !== before.email) throw new Error('VERIFY unrelated email field changed')
+            if(stale.length) throw new Error(`VERIFY stale billing IDs remain: ${stale.join(',')}`)
+
+            const stripIntended = (obj) => Object.fromEntries(Object.entries(obj).filter(([k]) => !intendedFields.has(k)))
+            if(!isDeepStrictEqual(stripIntended(before), stripIntended(after))) {
+              throw new Error('VERIFY unrelated user/profile fields changed')
+            }
+
+            const deletedStillPresent = deleteFields.filter(k => Object.prototype.hasOwnProperty.call(after,k))
+            if(deletedStillPresent.length) throw new Error(`VERIFY billing reset fields remain: ${deletedStillPresent.join(',')}`)
 
             console.log('PASS staging billing reset verified', JSON.stringify({
               target: targetEmail,
+              uid: authUser.uid,
               projectId,
               alreadyReset,
               plan: after.plan,
               subscriptionStatus: after.subscriptionStatus,
-              staleBillingIdsPresent: false,
+              stripeCustomerIdPresent: Object.prototype.hasOwnProperty.call(after,'stripeCustomerId'),
+              stripeSubscriptionIdPresent: Object.prototype.hasOwnProperty.call(after,'stripeSubscriptionId'),
+              smsStripeSubscriptionIdPresent: Object.prototype.hasOwnProperty.call(after,'smsStripeSubscriptionId'),
+              smsStripePriceIdPresent: Object.prototype.hasOwnProperty.call(after,'smsStripePriceId'),
+              unrelatedFieldsUnchanged: true,
             }))
-          })().catch(err => { console.error(err?.message || err); process.exit(1) })
+          })().catch(err => { console.error(err?.stack || err?.message || err); process.exit(1) })
           NODE
