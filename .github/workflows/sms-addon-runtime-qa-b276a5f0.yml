@@ -1,0 +1,40 @@
+name: SMS Add-on exact-SHA regression QA
+
+on:
+  push:
+    branches:
+      - ops/sms-addon-staging-config-b276a5f0
+
+permissions:
+  contents: read
+
+jobs:
+  sms-addon-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXACT_SHA: b276a5f02c33cbcd64c5f7a28bdc7fb76328b519
+    steps:
+      - name: Checkout exact approved feature SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXACT_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact SHA and clean tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_SHA"
+          test -z "$(git status --porcelain)"
+          echo "PASS exact SHA + clean tree"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: SMS Add-on V1 tests
+        run: node scripts/test-sms-addon-v1.mjs
+
+      - name: Billing payments regression
+        run: node scripts/test-billing-payments-phase1.mjs
