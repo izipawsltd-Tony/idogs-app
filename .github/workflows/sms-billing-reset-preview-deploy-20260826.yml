@@ -33,7 +33,7 @@ jobs:
           mkdir -p /tmp/idogs-reset
           cd /tmp/idogs-reset
           npm init -y >/dev/null 2>&1
-          npm install --no-audit --no-fund firebase-admin@latest firebase-tools@14.15.2
+          npm install --no-audit --no-fund firebase-tools@14.15.2
 
       - name: Verify Firebase token can access staging project
         shell: bash
@@ -55,79 +55,111 @@ jobs:
           set -euo pipefail
           cd /tmp/idogs-reset
           node - <<'NODE'
-          const { initializeApp, refreshToken } = require('firebase-admin/app')
-          const { getAuth } = require('firebase-admin/auth')
-          const { getFirestore, FieldValue } = require('firebase-admin/firestore')
-          const { isDeepStrictEqual } = require('util')
           const path = require('path')
           const toolsRoot = path.dirname(require.resolve('firebase-tools/package.json'))
           const api = require(path.join(toolsRoot, 'lib', 'api.js'))
 
           const projectId = process.env.FIREBASE_PROJECT_ID
           const targetEmail = process.env.TARGET_EMAIL
+          const refreshToken = process.env.FIREBASE_TOKEN
           if(projectId !== 'idogs-app-staging' || targetEmail !== 'idogsbreeder@gmail.com') throw new Error('STOP staging-only guard')
+          if(!refreshToken) throw new Error('STOP: FIREBASE_TOKEN missing')
+          if(typeof api.clientId !== 'function' || typeof api.clientSecret !== 'function') throw new Error('STOP: unexpected firebase-tools API credential exports')
 
-          if(typeof api.clientId !== 'function' || typeof api.clientSecret !== 'function') {
-            throw new Error('STOP: unexpected firebase-tools API credential exports')
+          const deleteFields = [
+            'stripeCustomerId','stripeSubscriptionId','trialEndsAt','planActivatedAt','pastDueSince','billingInterval',
+            'scanPeriodAnchorDay','plusScansUsed','plusScansPeriodStart','lastKnownSubscriptionId',
+            'subscriptionEventTimestamps','plusScansSubscriptionId','smsAddonStatus','smsStripeSubscriptionId',
+            'smsStripePriceId','smsPeriodStart','smsPeriodEnd','smsCreditsLimit','smsCreditsUsed','smsLastBillingEventAt'
+          ]
+          const intendedFields = new Set(['plan','subscriptionStatus', ...deleteFields])
+          const staleKeys = ['stripeCustomerId','stripeSubscriptionId','smsStripeSubscriptionId','smsStripePriceId']
+
+          const stable = (value) => {
+            if(Array.isArray(value)) return value.map(stable)
+            if(value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, stable(value[k])]))
+            return value
           }
-          const credential = refreshToken({
-            type: 'authorized_user',
-            client_id: api.clientId(),
-            client_secret: api.clientSecret(),
-            refresh_token: process.env.FIREBASE_TOKEN,
-          })
-          const app = initializeApp({ credential, projectId })
+          const stripIntended = (fields) => Object.fromEntries(Object.entries(fields || {}).filter(([k]) => !intendedFields.has(k)))
+
+          async function jsonFetch(url, options={}) {
+            const res = await fetch(url, options)
+            const text = await res.text()
+            let body = null
+            try { body = text ? JSON.parse(text) : null } catch { body = text }
+            if(!res.ok) throw new Error(`HTTP ${res.status} ${url}: ${typeof body === 'string' ? body : JSON.stringify(body)}`)
+            return body
+          }
 
           ;(async () => {
-            const authUser = await getAuth(app).getUserByEmail(targetEmail)
-            if(authUser.email !== targetEmail) throw new Error('STOP: Auth email mismatch')
+            const tokenBody = await jsonFetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: {'content-type':'application/x-www-form-urlencoded'},
+              body: new URLSearchParams({
+                client_id: api.clientId(),
+                client_secret: api.clientSecret(),
+                refresh_token: refreshToken,
+                grant_type: 'refresh_token',
+              }),
+            })
+            const accessToken = tokenBody?.access_token
+            if(!accessToken) throw new Error('STOP: OAuth access token missing')
 
-            const db = getFirestore(app)
-            const ref = db.collection('users').doc(authUser.uid)
-            const snap = await ref.get()
-            if(!snap.exists) throw new Error('STOP: target Firestore profile not found')
-            const before = snap.data() || {}
+            const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`
+            const authHeaders = {authorization:`Bearer ${accessToken}`, 'content-type':'application/json'}
+            const queryBody = {
+              structuredQuery: {
+                from: [{collectionId:'users'}],
+                where: {fieldFilter:{field:{fieldPath:'email'}, op:'EQUAL', value:{stringValue:targetEmail}}},
+                limit: 2,
+              },
+            }
+            const queryUrl = `${base}:runQuery`
+            const rows = await jsonFetch(queryUrl, {method:'POST', headers:authHeaders, body:JSON.stringify(queryBody)})
+            const docs = (Array.isArray(rows) ? rows : []).map(r => r.document).filter(Boolean)
+            if(docs.length !== 1) throw new Error(`STOP: expected exactly one staging user profile for ${targetEmail}, found ${docs.length}`)
+            const beforeDoc = docs[0]
+            if(!beforeDoc.name.startsWith(`projects/${projectId}/databases/(default)/documents/users/`)) throw new Error('STOP: resolved document is outside staging users collection')
+            const before = beforeDoc.fields || {}
+            if(before.email?.stringValue !== targetEmail) throw new Error('STOP: Firestore email mismatch')
 
-            const deleteFields = [
-              'stripeCustomerId','stripeSubscriptionId','trialEndsAt','planActivatedAt','pastDueSince','billingInterval',
-              'scanPeriodAnchorDay','plusScansUsed','plusScansPeriodStart','lastKnownSubscriptionId',
-              'subscriptionEventTimestamps','plusScansSubscriptionId','smsAddonStatus','smsStripeSubscriptionId',
-              'smsStripePriceId','smsPeriodStart','smsPeriodEnd','smsCreditsLimit','smsCreditsUsed','smsLastBillingEventAt'
-            ]
-            const intendedFields = new Set(['plan','subscriptionStatus', ...deleteFields])
-            const staleKeys = ['stripeCustomerId','stripeSubscriptionId','smsStripeSubscriptionId','smsStripePriceId']
-            const alreadyReset = before.plan === 'free' && before.subscriptionStatus === 'inactive' && !staleKeys.some(k => Object.prototype.hasOwnProperty.call(before,k))
+            const alreadyReset = before.plan?.stringValue === 'free' && before.subscriptionStatus?.stringValue === 'inactive' && !staleKeys.some(k => Object.prototype.hasOwnProperty.call(before,k))
 
             if(!alreadyReset) {
-              const update = {
-                plan: 'free',
-                subscriptionStatus: 'inactive',
-              }
-              for(const field of deleteFields) update[field] = FieldValue.delete()
-              await ref.update(update)
+              const relativeName = beforeDoc.name.split('/documents/')[1]
+              const mask = ['plan','subscriptionStatus', ...deleteFields]
+                .map(field => `updateMask.fieldPaths=${encodeURIComponent(field)}`).join('&')
+              const patchUrl = `${base}/${relativeName}?${mask}`
+              await jsonFetch(patchUrl, {
+                method:'PATCH',
+                headers:authHeaders,
+                body:JSON.stringify({fields:{plan:{stringValue:'free'}, subscriptionStatus:{stringValue:'inactive'}}}),
+              })
             }
 
-            const after = (await ref.get()).data() || {}
+            const afterRows = await jsonFetch(queryUrl, {method:'POST', headers:authHeaders, body:JSON.stringify(queryBody)})
+            const afterDocs = (Array.isArray(afterRows) ? afterRows : []).map(r => r.document).filter(Boolean)
+            if(afterDocs.length !== 1) throw new Error(`VERIFY expected one profile after write, found ${afterDocs.length}`)
+            const after = afterDocs[0].fields || {}
+
+            if(after.plan?.stringValue !== 'free') throw new Error('VERIFY plan is not free')
+            if(after.subscriptionStatus?.stringValue !== 'inactive') throw new Error('VERIFY subscriptionStatus is not inactive')
             const stale = staleKeys.filter(k => Object.prototype.hasOwnProperty.call(after,k))
-            if(after.plan !== 'free') throw new Error('VERIFY plan is not free')
-            if(after.subscriptionStatus !== 'inactive') throw new Error('VERIFY subscriptionStatus is not inactive')
             if(stale.length) throw new Error(`VERIFY stale billing IDs remain: ${stale.join(',')}`)
-
-            const stripIntended = (obj) => Object.fromEntries(Object.entries(obj).filter(([k]) => !intendedFields.has(k)))
-            if(!isDeepStrictEqual(stripIntended(before), stripIntended(after))) {
-              throw new Error('VERIFY unrelated user/profile fields changed')
-            }
-
             const deletedStillPresent = deleteFields.filter(k => Object.prototype.hasOwnProperty.call(after,k))
             if(deletedStillPresent.length) throw new Error(`VERIFY billing reset fields remain: ${deletedStillPresent.join(',')}`)
 
+            const beforeUnrelated = JSON.stringify(stable(stripIntended(before)))
+            const afterUnrelated = JSON.stringify(stable(stripIntended(after)))
+            if(beforeUnrelated !== afterUnrelated) throw new Error('VERIFY unrelated user/dogs/profile fields changed')
+
             console.log('PASS staging billing reset verified', JSON.stringify({
               target: targetEmail,
-              uid: authUser.uid,
               projectId,
+              document: beforeDoc.name,
               alreadyReset,
-              plan: after.plan,
-              subscriptionStatus: after.subscriptionStatus,
+              plan: after.plan.stringValue,
+              subscriptionStatus: after.subscriptionStatus.stringValue,
               stripeCustomerIdPresent: Object.prototype.hasOwnProperty.call(after,'stripeCustomerId'),
               stripeSubscriptionIdPresent: Object.prototype.hasOwnProperty.call(after,'stripeSubscriptionId'),
               smsStripeSubscriptionIdPresent: Object.prototype.hasOwnProperty.call(after,'smsStripeSubscriptionId'),
