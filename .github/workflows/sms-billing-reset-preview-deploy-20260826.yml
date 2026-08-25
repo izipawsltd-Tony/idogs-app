@@ -104,32 +104,32 @@ jobs:
             })
             const accessToken = tokenBody?.access_token
             if(!accessToken) throw new Error('STOP: OAuth access token missing')
+            const authHeaders = {authorization:`Bearer ${accessToken}`, 'content-type':'application/json'}
+
+            const lookupUrl = `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:lookup`
+            const lookup = await jsonFetch(lookupUrl, {
+              method:'POST',
+              headers:authHeaders,
+              body:JSON.stringify({email:[targetEmail]}),
+            })
+            const users = Array.isArray(lookup?.users) ? lookup.users : []
+            if(users.length !== 1) throw new Error(`STOP: expected exactly one Auth user for ${targetEmail}, found ${users.length}`)
+            const authUser = users[0]
+            if(authUser.email !== targetEmail || !authUser.localId) throw new Error('STOP: Auth user email/UID mismatch')
+            const uid = authUser.localId
 
             const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`
-            const authHeaders = {authorization:`Bearer ${accessToken}`, 'content-type':'application/json'}
-            const queryBody = {
-              structuredQuery: {
-                from: [{collectionId:'users'}],
-                where: {fieldFilter:{field:{fieldPath:'email'}, op:'EQUAL', value:{stringValue:targetEmail}}},
-                limit: 2,
-              },
-            }
-            const queryUrl = `${base}:runQuery`
-            const rows = await jsonFetch(queryUrl, {method:'POST', headers:authHeaders, body:JSON.stringify(queryBody)})
-            const docs = (Array.isArray(rows) ? rows : []).map(r => r.document).filter(Boolean)
-            if(docs.length !== 1) throw new Error(`STOP: expected exactly one staging user profile for ${targetEmail}, found ${docs.length}`)
-            const beforeDoc = docs[0]
-            if(!beforeDoc.name.startsWith(`projects/${projectId}/databases/(default)/documents/users/`)) throw new Error('STOP: resolved document is outside staging users collection')
+            const docUrl = `${base}/users/${encodeURIComponent(uid)}`
+            const beforeDoc = await jsonFetch(docUrl, {method:'GET', headers:authHeaders})
+            if(beforeDoc.name !== `projects/${projectId}/databases/(default)/documents/users/${uid}`) throw new Error('STOP: resolved Firestore document mismatch')
             const before = beforeDoc.fields || {}
-            if(before.email?.stringValue !== targetEmail) throw new Error('STOP: Firestore email mismatch')
 
             const alreadyReset = before.plan?.stringValue === 'free' && before.subscriptionStatus?.stringValue === 'inactive' && !staleKeys.some(k => Object.prototype.hasOwnProperty.call(before,k))
 
             if(!alreadyReset) {
-              const relativeName = beforeDoc.name.split('/documents/')[1]
               const mask = ['plan','subscriptionStatus', ...deleteFields]
                 .map(field => `updateMask.fieldPaths=${encodeURIComponent(field)}`).join('&')
-              const patchUrl = `${base}/${relativeName}?${mask}`
+              const patchUrl = `${docUrl}?${mask}`
               await jsonFetch(patchUrl, {
                 method:'PATCH',
                 headers:authHeaders,
@@ -137,11 +137,8 @@ jobs:
               })
             }
 
-            const afterRows = await jsonFetch(queryUrl, {method:'POST', headers:authHeaders, body:JSON.stringify(queryBody)})
-            const afterDocs = (Array.isArray(afterRows) ? afterRows : []).map(r => r.document).filter(Boolean)
-            if(afterDocs.length !== 1) throw new Error(`VERIFY expected one profile after write, found ${afterDocs.length}`)
-            const after = afterDocs[0].fields || {}
-
+            const afterDoc = await jsonFetch(docUrl, {method:'GET', headers:authHeaders})
+            const after = afterDoc.fields || {}
             if(after.plan?.stringValue !== 'free') throw new Error('VERIFY plan is not free')
             if(after.subscriptionStatus?.stringValue !== 'inactive') throw new Error('VERIFY subscriptionStatus is not inactive')
             const stale = staleKeys.filter(k => Object.prototype.hasOwnProperty.call(after,k))
@@ -155,6 +152,7 @@ jobs:
 
             console.log('PASS staging billing reset verified', JSON.stringify({
               target: targetEmail,
+              uid,
               projectId,
               document: beforeDoc.name,
               alreadyReset,
