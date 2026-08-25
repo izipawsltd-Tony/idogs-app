@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      EXACT_SHA: 4f715b3bcce2171f626ff17830a95171794d8877
+      EXACT_SHA: bc2448d3859d2efdd8ab0944321d76c2c65acd5d
       VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       GITHUB_REPO_ID: '1270695712'
@@ -33,17 +33,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node -e 'const fs=require("fs"); const b={name:"idogs-app-staging",gitSource:{type:"github",ref:"feature/sms-addon-v1",repoId:Number(process.env.GITHUB_REPO_ID),sha:process.env.EXACT_SHA},gitMetadata:{remoteUrl:"https://github.com/izipawsltd-Tony/idogs-app.git",commitRef:"feature/sms-addon-v1",commitSha:process.env.EXACT_SHA,dirty:false,ci:true,ciType:"github-actions",ciGitProviderUsername:"izipawsltd-Tony",ciGitRepoVisibility:"public",rootDirectory:""},meta:{approvedExactSha:process.env.EXACT_SHA,sourceBranch:"feature/sms-addon-v1",validationWorkflow:"sms-addon-staging-diagnostic-preview",sanitizedGuardDiagnostics:"price-ids-only-v2"}}; fs.writeFileSync("/tmp/deploy.json",JSON.stringify(b))'
+          node -e 'const fs=require("fs"); const b={name:"idogs-app-staging",gitSource:{type:"github",ref:"feature/sms-addon-v1",repoId:Number(process.env.GITHUB_REPO_ID),sha:process.env.EXACT_SHA},gitMetadata:{remoteUrl:"https://github.com/izipawsltd-Tony/idogs-app.git",commitRef:"feature/sms-addon-v1",commitSha:process.env.EXACT_SHA,dirty:false,ci:true,ciType:"github-actions",ciGitProviderUsername:"izipawsltd-Tony",ciGitRepoVisibility:"public",rootDirectory:""},meta:{approvedExactSha:process.env.EXACT_SHA,sourceBranch:"feature/sms-addon-v1",validationWorkflow:"sms-addon-staging-diagnostic-preview",stagingPriceDiagnostic:"true"}}; fs.writeFileSync("/tmp/deploy.json",JSON.stringify(b))'
           http=$(curl --silent --show-error --output /tmp/deploy-response.json --write-out '%{http_code}' \
             --request POST \
             "https://api.vercel.com/v13/deployments?teamId=${VERCEL_ORG_ID}" \
             --header "Authorization: Bearer ${VERCEL_TOKEN}" \
             --header 'Content-Type: application/json' \
             --data-binary @/tmp/deploy.json)
-          if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
-            echo "STOP deployment create HTTP $http"
-            exit 4
-          fi
+          if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then echo "STOP deployment create HTTP $http"; exit 4; fi
           node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/tmp/deploy-response.json","utf8")); if(!x.id||!x.url) process.exit(5); fs.appendFileSync(process.env.GITHUB_OUTPUT,`deployment_id=${x.id}\nurl=https://${x.url}\n`)'
 
       - name: Wait for READY exact-SHA diagnostic Preview
