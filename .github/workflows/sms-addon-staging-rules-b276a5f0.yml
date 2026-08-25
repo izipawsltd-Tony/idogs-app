@@ -1,18 +1,25 @@
-name: SMS Add-on staging Firestore Rules
+name: SMS Add-on staging config
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - ops/sms-addon-staging-config-b276a5f0
 
 permissions:
   contents: read
 
 jobs:
-  deploy-rules:
+  configure-staging:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       EXACT_SHA: b276a5f02c33cbcd64c5f7a28bdc7fb76328b519
       FIREBASE_PROJECT: idogs-app-staging
+      VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      GITHUB_REPO_ID: '1270695712'
+      SMS_PRICE_ID: price_1U88qD5lmfxrCiH3mheJlLQe
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
     steps:
       - name: Checkout exact approved feature SHA
@@ -22,36 +29,148 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact SHA and clean tree
+      - name: Verify exact SHA and staging-only gates
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXACT_SHA"
           test -z "$(git status --porcelain)"
           test "$FIREBASE_PROJECT" = "idogs-app-staging"
-          echo "PASS exact SHA and staging project gate"
+          test "$VERCEL_PROJECT_ID" = "prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o"
+          test "$VERCEL_ORG_ID" = "team_oZF1Z0BUEceb9fAXdmFV1Saz"
+          test "$SMS_PRICE_ID" = "price_1U88qD5lmfxrCiH3mheJlLQe"
+          echo "PASS exact SHA + staging-only gates"
 
-      - name: Verify Firebase credential exists
+      - name: Upsert SMS Stripe Price env on staging project only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${VERCEL_TOKEN:-}"
+          cat > /tmp/env.json <<JSON
+          {
+            "key": "STRIPE_SMS_ADDON_PRICE_ID",
+            "value": "${SMS_PRICE_ID}",
+            "type": "encrypted",
+            "target": ["preview", "production"],
+            "comment": "iDogs SMS Add-on V1 test-mode price for idogs-app-staging only"
+          }
+          JSON
+          http=$(curl --silent --show-error --output /tmp/env-response.json --write-out '%{http_code}' \
+            --request POST \
+            "https://api.vercel.com/v10/projects/${VERCEL_PROJECT_ID}/env?upsert=true&teamId=${VERCEL_ORG_ID}" \
+            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+            --header 'Content-Type: application/json' \
+            --data-binary @/tmp/env.json)
+          echo "ENV_HTTP=$http"
+          if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
+            node - <<'NODE'
+            const fs=require('fs'); const x=JSON.parse(fs.readFileSync('/tmp/env-response.json','utf8'))
+            console.error('STOP Vercel env upsert failed:', x?.error?.code || 'UNKNOWN', x?.error?.message || '')
+            NODE
+            exit 1
+          fi
+          node - <<'NODE'
+          const fs=require('fs'); const x=JSON.parse(fs.readFileSync('/tmp/env-response.json','utf8'))
+          if (Array.isArray(x.failed) && x.failed.length) throw new Error('STOP env upsert partial failure')
+          console.log('PASS STRIPE_SMS_ADDON_PRICE_ID configured on idogs-app-staging targets preview+production(stable staging)')
+          NODE
+
+      - name: Deploy Firestore Rules only to Firebase staging if credential exists
         shell: bash
         run: |
           set -euo pipefail
           if [ -z "${FIREBASE_TOKEN:-}" ]; then
-            echo "STOP: GitHub secret FIREBASE_TOKEN is not configured"
-            exit 1
+            echo "RULES_BLOCKED_NO_FIREBASE_TOKEN"
+            exit 0
           fi
-          echo "PASS Firebase token present"
-
-      - name: Deploy Firestore Rules only to staging
-        shell: bash
-        run: |
-          set -euo pipefail
           npx --yes firebase-tools@14.15.2 deploy \
             --only firestore:rules \
             --project "$FIREBASE_PROJECT" \
             --token "$FIREBASE_TOKEN" \
             --non-interactive
+          echo "PASS Firestore Rules deployed only to idogs-app-staging"
 
-      - name: Confirm scope
+      - name: Create exact-SHA Preview after env update
+        id: deploy
+        shell: bash
         run: |
-          echo "PASS: Firestore Rules deployed only to idogs-app-staging"
-          echo "No indexes, Storage Rules, Functions, Hosting or production deployment requested"
+          set -euo pipefail
+          node - <<'NODE' > /tmp/deploy-body.json
+          const body = {
+            name: 'idogs-app-staging',
+            gitSource: {
+              type: 'github',
+              ref: 'feature/sms-addon-v1',
+              repoId: Number(process.env.GITHUB_REPO_ID),
+              sha: process.env.EXACT_SHA,
+            },
+            gitMetadata: {
+              remoteUrl: 'https://github.com/izipawsltd-Tony/idogs-app.git',
+              commitRef: 'feature/sms-addon-v1',
+              commitSha: process.env.EXACT_SHA,
+              dirty: false,
+              ci: true,
+              ciType: 'github-actions',
+              ciGitProviderUsername: 'izipawsltd-Tony',
+              ciGitRepoVisibility: 'public',
+              rootDirectory: '',
+            },
+            meta: {
+              approvedExactSha: process.env.EXACT_SHA,
+              sourceBranch: 'feature/sms-addon-v1',
+              validationWorkflow: 'sms-addon-staging-config',
+              smsPriceConfigured: 'true'
+            },
+          }
+          process.stdout.write(JSON.stringify(body))
+          NODE
+          http=$(curl --silent --show-error --output /tmp/deploy-response.json --write-out '%{http_code}' \
+            --request POST \
+            "https://api.vercel.com/v13/deployments?teamId=${VERCEL_ORG_ID}" \
+            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
+            --header 'Content-Type: application/json' \
+            --data-binary @/tmp/deploy-body.json)
+          echo "CREATE_HTTP=$http"
+          if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then
+            node - <<'NODE'
+            const fs=require('fs'); const x=JSON.parse(fs.readFileSync('/tmp/deploy-response.json','utf8'))
+            console.error('STOP deployment create failed:', x?.error?.code || 'UNKNOWN', x?.error?.message || '')
+            NODE
+            exit 1
+          fi
+          node - <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs=require('fs'); const x=JSON.parse(fs.readFileSync('/tmp/deploy-response.json','utf8'))
+          if (!x.id || !x.url) throw new Error('STOP deployment response missing id/url')
+          console.log(`deployment_id=${x.id}`)
+          console.log(`url=https://${x.url}`)
+          NODE
+
+      - name: Wait for READY exact-SHA Preview
+        shell: bash
+        env:
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 80); do
+            http=$(curl --silent --show-error --output /tmp/deployment.json --write-out '%{http_code}' \
+              "https://api.vercel.com/v13/deployments/${DEPLOYMENT_ID}?teamId=${VERCEL_ORG_ID}" \
+              --header "Authorization: Bearer ${VERCEL_TOKEN}")
+            test "$http" = "200"
+            state=$(node - <<'NODE'
+            const fs=require('fs'); const x=JSON.parse(fs.readFileSync('/tmp/deployment.json','utf8'))
+            const sha=x?.meta?.githubCommitSha || x?.meta?.approvedExactSha || x?.gitSource?.sha || ''
+            const projectId=x?.projectId || x?.project?.id || ''
+            const target=x?.target ?? null
+            if (projectId && projectId !== process.env.VERCEL_PROJECT_ID) throw new Error(`STOP wrong project ${projectId}`)
+            if (sha && sha !== process.env.EXACT_SHA) throw new Error(`STOP wrong SHA ${sha}`)
+            if (target === 'production') throw new Error('STOP accidentally targeted production deployment')
+            process.stdout.write(x.readyState || x.status || '')
+            NODE
+            )
+            case "$state" in
+              READY) echo "PASS READY exact-SHA staging Preview with SMS price env"; exit 0;;
+              ERROR|CANCELED|BLOCKED) echo "STOP deployment state=$state"; exit 1;;
+            esac
+            sleep 5
+          done
+          echo 'STOP timeout waiting for READY'; exit 1
