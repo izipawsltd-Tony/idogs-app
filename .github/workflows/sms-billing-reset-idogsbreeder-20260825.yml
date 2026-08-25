@@ -52,11 +52,12 @@ jobs:
           set -euo pipefail
           mkdir -p .vercel
           printf '{"projectId":"%s","orgId":"%s","projectName":"idogs-app-staging"}\n' "$VERCEL_PROJECT_ID" "$VERCEL_ORG_ID" > .vercel/project.json
-          npx --yes vercel@latest env pull .env.reset --environment=production --yes --token "$VERCEL_TOKEN" --scope izipawsltd-tonys-projects >/tmp/vercel-env-pull.log 2>&1
-          test -s .env.reset
-          grep -q '^FIREBASE_PROJECT_ID=' .env.reset
-          grep -q '^FIREBASE_CLIENT_EMAIL=' .env.reset
-          grep -q '^FIREBASE_PRIVATE_KEY=' .env.reset
+          npx --yes vercel@54.13.0 pull --yes --environment=production --token "$VERCEL_TOKEN" --scope izipawsltd-tonys-projects >/tmp/vercel-pull.log 2>&1 || { sed -E 's/(token|secret|key|password)[^ ]*/REDACTED/Ig' /tmp/vercel-pull.log | tail -40; exit 1; }
+          test -s .vercel/.env.production.local
+          grep -q '^FIREBASE_PROJECT_ID=' .vercel/.env.production.local
+          grep -q '^FIREBASE_CLIENT_EMAIL=' .vercel/.env.production.local
+          grep -q '^FIREBASE_PRIVATE_KEY=' .vercel/.env.production.local
+          cp .vercel/.env.production.local .env.reset
           echo "PASS staging env pulled"
 
       - name: Reset only stale billing fields for target user
@@ -117,4 +118,4 @@ jobs:
       - name: Remove pulled env file
         if: always()
         shell: bash
-        run: rm -f .env.reset
+        run: rm -f .env.reset .vercel/.env.production.local
