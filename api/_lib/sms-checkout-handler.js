@@ -28,8 +28,8 @@ function hasPrice(subscription, priceId) {
   return subscriptionPriceIds(subscription).includes(priceId)
 }
 
-function reject409(res, code, message, details) {
-  logSanitizedError('create-sms-addon-checkout', code, details)
+function reject409(res, code, message) {
+  logSanitizedError('create-sms-addon-checkout', code)
   return res.status(409).json({ error: message })
 }
 
@@ -85,15 +85,11 @@ export function createSmsAddonCheckoutHandler({
         return reject409(res, 'SMS_GUARD_CUSTOMER_MISMATCH', 'Stripe customer mismatch')
       }
       if (!hasBasePlusPrice(subscription)) {
-        return reject409(
-          res,
-          'SMS_GUARD_PLUS_PRICE_MISMATCH',
-          'Verified iDogs Plus price not found on subscription',
-          {
-            subscriptionPriceIds: subscriptionPriceIds(subscription),
-            allowedPlusPriceIds: Object.values(CHECKOUT_PRICE_IDS),
-          },
-        )
+        console.error('create-sms-addon-checkout: safe iDogs Plus price mismatch', {
+          subscriptionPriceIds: subscriptionPriceIds(subscription),
+          allowedPlusPriceIds: Object.values(CHECKOUT_PRICE_IDS),
+        })
+        return reject409(res, 'SMS_GUARD_PLUS_PRICE_MISMATCH', 'Verified iDogs Plus price not found on subscription')
       }
       if (hasPrice(subscription, priceId)) {
         return reject409(res, 'SMS_GUARD_ALREADY_PRESENT', 'SMS add-on already exists; manage it in Billing')
