@@ -1,0 +1,59 @@
+name: SMS Add-on staging Firestore Rules
+
+on:
+  push:
+    branches:
+      - ops/sms-addon-staging-config-b276a5f0
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXACT_SHA: b276a5f02c33cbcd64c5f7a28bdc7fb76328b519
+      FIREBASE_PROJECT: idogs-app-staging
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+    steps:
+      - name: Checkout exact approved feature SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXACT_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact SHA and clean tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_SHA"
+          test -z "$(git status --porcelain)"
+          test "$FIREBASE_PROJECT" = "idogs-app-staging"
+          echo "PASS exact SHA and staging project gate"
+
+      - name: Verify Firebase credential exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${FIREBASE_TOKEN:-}" ]; then
+            echo "STOP: GitHub secret FIREBASE_TOKEN is not configured"
+            exit 1
+          fi
+          echo "PASS Firebase token present"
+
+      - name: Deploy Firestore Rules only to staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes firebase-tools@14.15.2 deploy \
+            --only firestore:rules \
+            --project "$FIREBASE_PROJECT" \
+            --token "$FIREBASE_TOKEN" \
+            --non-interactive
+
+      - name: Confirm scope
+        run: |
+          echo "PASS: Firestore Rules deployed only to idogs-app-staging"
+          echo "No indexes, Storage Rules, Functions, Hosting or production deployment requested"
