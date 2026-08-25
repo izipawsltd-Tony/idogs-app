@@ -1,4 +1,4 @@
-name: SMS Add-on staging Stripe Preview env
+name: SMS Add-on staging diagnostic Preview
 
 on:
   push:
@@ -9,11 +9,11 @@ permissions:
   contents: read
 
 jobs:
-  configure-preview-stripe:
+  deploy-diagnostic-preview:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      EXACT_SHA: b276a5f02c33cbcd64c5f7a28bdc7fb76328b519
+      EXACT_SHA: 1bfcee5361bce1c784c7d96549454d4c4d2e9cd8
       VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       GITHUB_REPO_ID: '1270695712'
@@ -26,34 +26,14 @@ jobs:
           test "$VERCEL_PROJECT_ID" = "prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o"
           test "$VERCEL_ORG_ID" = "team_oZF1Z0BUEceb9fAXdmFV1Saz"
           test -n "${VERCEL_TOKEN:-}"
-          echo "PASS staging project gate"
+          echo "PASS staging-only gate"
 
-      - name: Extend existing staging STRIPE_SECRET_KEY target to Preview without reading value
-        shell: bash
-        run: |
-          set -euo pipefail
-          http=$(curl --silent --show-error --output /tmp/envs.json --write-out '%{http_code}' \
-            "https://api.vercel.com/v10/projects/${VERCEL_PROJECT_ID}/env?teamId=${VERCEL_ORG_ID}" \
-            --header "Authorization: Bearer ${VERCEL_TOKEN}")
-          test "$http" = "200"
-
-          env_id=$(node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/tmp/envs.json","utf8")); const envs=Array.isArray(x.envs)?x.envs:[]; const e=envs.find(v=>v.key==="STRIPE_SECRET_KEY" && Array.isArray(v.target) && v.target.includes("production")); if(!e?.id) process.exit(2); process.stdout.write(e.id)')
-
-          http=$(curl --silent --show-error --output /tmp/patch.json --write-out '%{http_code}' \
-            --request PATCH \
-            "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}/env/${env_id}?teamId=${VERCEL_ORG_ID}" \
-            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
-            --header 'Content-Type: application/json' \
-            --data '{"target":["preview","production"],"comment":"Existing Stripe secret for idogs-app-staging Preview + stable staging"}')
-          test "$http" = "200"
-          node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/tmp/patch.json","utf8")); const t=Array.isArray(x.target)?x.target:[]; if(!t.includes("preview")||!t.includes("production")) process.exit(3); console.log("PASS STRIPE_SECRET_KEY targets preview+production on idogs-app-staging")'
-
-      - name: Create exact-SHA Preview with corrected env targets
+      - name: Create exact-SHA diagnostic Preview
         id: deploy
         shell: bash
         run: |
           set -euo pipefail
-          node -e 'const fs=require("fs"); const b={name:"idogs-app-staging",gitSource:{type:"github",ref:"feature/sms-addon-v1",repoId:Number(process.env.GITHUB_REPO_ID),sha:process.env.EXACT_SHA},gitMetadata:{remoteUrl:"https://github.com/izipawsltd-Tony/idogs-app.git",commitRef:"feature/sms-addon-v1",commitSha:process.env.EXACT_SHA,dirty:false,ci:true,ciType:"github-actions",ciGitProviderUsername:"izipawsltd-Tony",ciGitRepoVisibility:"public",rootDirectory:""},meta:{approvedExactSha:process.env.EXACT_SHA,sourceBranch:"feature/sms-addon-v1",validationWorkflow:"sms-addon-staging-preview-stripe-env",stripeSecretPreviewTarget:"true",smsPriceConfigured:"true"}}; fs.writeFileSync("/tmp/deploy.json",JSON.stringify(b))'
+          node -e 'const fs=require("fs"); const b={name:"idogs-app-staging",gitSource:{type:"github",ref:"feature/sms-addon-v1",repoId:Number(process.env.GITHUB_REPO_ID),sha:process.env.EXACT_SHA},gitMetadata:{remoteUrl:"https://github.com/izipawsltd-Tony/idogs-app.git",commitRef:"feature/sms-addon-v1",commitSha:process.env.EXACT_SHA,dirty:false,ci:true,ciType:"github-actions",ciGitProviderUsername:"izipawsltd-Tony",ciGitRepoVisibility:"public",rootDirectory:""},meta:{approvedExactSha:process.env.EXACT_SHA,sourceBranch:"feature/sms-addon-v1",validationWorkflow:"sms-addon-staging-diagnostic-preview",sanitizedGuardDiagnostics:"true"}}; fs.writeFileSync("/tmp/deploy.json",JSON.stringify(b))'
           http=$(curl --silent --show-error --output /tmp/deploy-response.json --write-out '%{http_code}' \
             --request POST \
             "https://api.vercel.com/v13/deployments?teamId=${VERCEL_ORG_ID}" \
@@ -66,7 +46,7 @@ jobs:
           fi
           node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/tmp/deploy-response.json","utf8")); if(!x.id||!x.url) process.exit(5); fs.appendFileSync(process.env.GITHUB_OUTPUT,`deployment_id=${x.id}\nurl=https://${x.url}\n`)'
 
-      - name: Wait for READY exact-SHA Preview
+      - name: Wait for READY exact-SHA diagnostic Preview
         shell: bash
         env:
           DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
@@ -79,7 +59,7 @@ jobs:
             test "$http" = "200"
             state=$(node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/tmp/deployment.json","utf8")); const sha=x?.meta?.githubCommitSha||x?.meta?.approvedExactSha||x?.gitSource?.sha||""; const projectId=x?.projectId||x?.project?.id||""; if(projectId&&projectId!==process.env.VERCEL_PROJECT_ID) process.exit(6); if(sha&&sha!==process.env.EXACT_SHA) process.exit(7); if(x?.target==="production") process.exit(8); process.stdout.write(x.readyState||x.status||"")')
             case "$state" in
-              READY) echo "PASS READY exact-SHA staging Preview with Stripe secret target"; exit 0;;
+              READY) echo "PASS READY exact-SHA diagnostic staging Preview"; exit 0;;
               ERROR|CANCELED|BLOCKED) echo "STOP deployment state=$state"; exit 9;;
             esac
             sleep 5
