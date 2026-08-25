@@ -14,11 +14,11 @@ function tokenOk(value) {
 }
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
   if (process.env.VERCEL_ENV !== 'preview' || process.env.FIREBASE_PROJECT_ID !== 'idogs-app-staging') {
     return res.status(404).json({ error: 'Not found' })
   }
-  if (!tokenOk(req.headers['x-ops-token'])) return res.status(403).json({ error: 'Forbidden' })
+  if (!tokenOk(req.query?.token)) return res.status(403).json({ error: 'Forbidden' })
 
   if (!getApps().length) {
     initializeApp({ credential: cert({
