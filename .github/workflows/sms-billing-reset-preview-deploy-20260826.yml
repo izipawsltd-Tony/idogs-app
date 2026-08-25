@@ -1,4 +1,4 @@
-name: One-time staging billing reset execute
+name: One-time staging billing reset direct Firebase
 
 on:
   push:
@@ -13,47 +13,108 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      EXACT_SHA: 5f9e06e1194ed57085346322c247c3c9b5c46c22
-      DEPLOYMENT_ID: dpl_3tGpFkn9mPAqPSMAwDU9s2YVP1zP
-      DEPLOYMENT_URL: https://idogs-app-staging-r19ik11o8-izipawsltd-tonys-projects.vercel.app
-      VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
-      VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      FIREBASE_PROJECT_ID: idogs-app-staging
+      TARGET_EMAIL: idogsbreeder@gmail.com
     steps:
-      - name: Verify READY exact-SHA staging Preview
+      - name: Verify staging-only gate
         shell: bash
         run: |
           set -euo pipefail
-          http=$(curl --silent --show-error --output /tmp/deployment.json --write-out '%{http_code}' "https://api.vercel.com/v13/deployments/${DEPLOYMENT_ID}?teamId=${VERCEL_ORG_ID}" --header "Authorization: Bearer ${VERCEL_TOKEN}")
-          test "$http" = "200"
+          test "$FIREBASE_PROJECT_ID" = "idogs-app-staging"
+          test "$TARGET_EMAIL" = "idogsbreeder@gmail.com"
+          test -n "${FIREBASE_TOKEN:-}"
+          echo "PASS staging-only Firebase reset gate"
+
+      - name: Install one-time Firebase tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/idogs-reset
+          cd /tmp/idogs-reset
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund firebase-admin@latest firebase-tools@14.15.2
+
+      - name: Verify Firebase token can access staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/idogs-reset
+          ./node_modules/.bin/firebase projects:list --token "$FIREBASE_TOKEN" --json > /tmp/projects.json
           node - <<'NODE'
-          const fs=require('fs');
-          const x=JSON.parse(fs.readFileSync('/tmp/deployment.json','utf8'));
-          const sha=x?.meta?.githubCommitSha||x?.meta?.approvedExactSha||x?.gitSource?.sha||'';
-          const projectId=x?.projectId||x?.project?.id||'';
-          const state=x?.readyState||x?.status||'';
-          if(projectId && projectId!==process.env.VERCEL_PROJECT_ID) throw new Error('wrong project');
-          if(sha!==process.env.EXACT_SHA) throw new Error('wrong sha');
-          if(x?.target) throw new Error('not preview');
-          if(state!=='READY') throw new Error('not ready');
-          console.log('PASS exact-SHA READY staging Preview');
+          const fs=require('fs')
+          const x=JSON.parse(fs.readFileSync('/tmp/projects.json','utf8'))
+          const rows=Array.isArray(x.result)?x.result:(Array.isArray(x)?x:[])
+          if(!rows.some(p => p.projectId === 'idogs-app-staging')) throw new Error('STOP: staging project not accessible')
+          console.log('PASS Firebase token has idogs-app-staging access')
           NODE
 
-      - name: Reset and verify staging billing mapping
+      - name: Reset only stale billing fields and verify
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .vercel
-          printf '{"projectId":"%s","orgId":"%s","projectName":"idogs-app-staging"}\n' "$VERCEL_PROJECT_ID" "$VERCEL_ORG_ID" > .vercel/project.json
-          npx --yes vercel@latest curl /api/_ops-reset-staging-billing \
-            --deployment "$DEPLOYMENT_URL" \
-            --token "$VERCEL_TOKEN" \
-            --scope izipawsltd-tonys-projects \
-            -H 'x-reset-confirm: staging-idogsbreeder-reset-20260826' \
-            --silent --show-error --fail-with-body > /tmp/reset.json
+          cd /tmp/idogs-reset
           node - <<'NODE'
-          const fs=require('fs');
-          const x=JSON.parse(fs.readFileSync('/tmp/reset.json','utf8'));
-          if(x.ok!==true||x.plan!=='free'||x.subscriptionStatus!=='inactive'||x.staleBillingIdsPresent!==false) throw new Error('reset verification failed');
-          console.log('PASS billing reset verified', JSON.stringify(x));
+          const admin = require('firebase-admin')
+          const { FieldValue } = require('firebase-admin/firestore')
+          const path = require('path')
+          const toolsRoot = path.dirname(require.resolve('firebase-tools/package.json'))
+          const api = require(path.join(toolsRoot, 'lib', 'api.js'))
+
+          const projectId = process.env.FIREBASE_PROJECT_ID
+          const targetEmail = process.env.TARGET_EMAIL
+          if(projectId !== 'idogs-app-staging' || targetEmail !== 'idogsbreeder@gmail.com') throw new Error('STOP staging-only guard')
+
+          const credential = admin.credential.refreshToken({
+            type: 'authorized_user',
+            client_id: api.clientId,
+            client_secret: api.clientSecret,
+            refresh_token: process.env.FIREBASE_TOKEN,
+          })
+          admin.initializeApp({ credential, projectId })
+
+          ;(async () => {
+            const authUser = await admin.auth().getUserByEmail(targetEmail)
+            const db = admin.firestore()
+            const ref = db.collection('users').doc(authUser.uid)
+            const snap = await ref.get()
+            if(!snap.exists) throw new Error('STOP: target Firestore profile not found')
+            const before = snap.data() || {}
+
+            const staleKeys = ['stripeCustomerId','stripeSubscriptionId','smsStripeSubscriptionId','smsStripePriceId']
+            const alreadyReset = before.plan === 'free' && before.subscriptionStatus === 'inactive' && !staleKeys.some(k => Object.prototype.hasOwnProperty.call(before,k))
+
+            if(!alreadyReset) {
+              const deleteFields = [
+                'stripeCustomerId','stripeSubscriptionId','trialEndsAt','planActivatedAt','pastDueSince','billingInterval',
+                'scanPeriodAnchorDay','plusScansUsed','plusScansPeriodStart','lastKnownSubscriptionId',
+                'subscriptionEventTimestamps','plusScansSubscriptionId','smsAddonStatus','smsStripeSubscriptionId',
+                'smsStripePriceId','smsPeriodStart','smsPeriodEnd','smsCreditsLimit','smsCreditsUsed','smsLastBillingEventAt'
+              ]
+              const update = {
+                plan: 'free',
+                subscriptionStatus: 'inactive',
+                billingResetAt: new Date().toISOString(),
+                billingResetReason: 'staging_qa_wrong_stripe_sandbox_mapping',
+              }
+              for(const field of deleteFields) update[field] = FieldValue.delete()
+              await ref.update(update)
+            }
+
+            const after = (await ref.get()).data() || {}
+            const stale = staleKeys.filter(k => Object.prototype.hasOwnProperty.call(after,k))
+            if(after.plan !== 'free') throw new Error('VERIFY plan is not free')
+            if(after.subscriptionStatus !== 'inactive') throw new Error('VERIFY subscriptionStatus is not inactive')
+            if(stale.length) throw new Error('VERIFY stale billing IDs remain')
+            if(before.email && after.email !== before.email) throw new Error('VERIFY unrelated email field changed')
+
+            console.log('PASS staging billing reset verified', JSON.stringify({
+              target: targetEmail,
+              projectId,
+              alreadyReset,
+              plan: after.plan,
+              subscriptionStatus: after.subscriptionStatus,
+              staleBillingIdsPresent: false,
+            }))
+          })().catch(err => { console.error(err?.message || err); process.exit(1) })
           NODE
