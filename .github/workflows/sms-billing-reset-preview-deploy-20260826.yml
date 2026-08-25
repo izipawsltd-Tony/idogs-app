@@ -7,13 +7,14 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   deploy-reset-preview:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      EXACT_SHA: 701aac9be9b7a4a1f2ea64745f9c05ddd0a9570d
+      EXACT_SHA: 5f9e06e1194ed57085346322c247c3c9b5c46c22
       VERCEL_ORG_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       VERCEL_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       GITHUB_REPO_ID: 1270695712
@@ -25,7 +26,7 @@ jobs:
           set -euo pipefail
           test "$VERCEL_PROJECT_ID" = "prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o"
           test "$VERCEL_ORG_ID" = "team_oZF1Z0BUEceb9fAXdmFV1Saz"
-          test "$EXACT_SHA" = "701aac9be9b7a4a1f2ea64745f9c05ddd0a9570d"
+          test "$EXACT_SHA" = "5f9e06e1194ed57085346322c247c3c9b5c46c22"
           test -n "${VERCEL_TOKEN:-}"
           echo "PASS staging preview gate"
 
@@ -35,12 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           node -e 'const fs=require("fs"); const b={name:"idogs-app-staging",gitSource:{type:"github",ref:"ops/sms-billing-reset-preview-20260826",repoId:Number(process.env.GITHUB_REPO_ID),sha:process.env.EXACT_SHA},gitMetadata:{remoteUrl:"https://github.com/izipawsltd-Tony/idogs-app.git",commitRef:"ops/sms-billing-reset-preview-20260826",commitSha:process.env.EXACT_SHA,dirty:false,ci:true,ciType:"github-actions",ciGitProviderUsername:"izipawsltd-Tony",ciGitRepoVisibility:"public",rootDirectory:""},meta:{approvedExactSha:process.env.EXACT_SHA,sourceBranch:"ops/sms-billing-reset-preview-20260826",validationWorkflow:"one-time-staging-billing-reset-preview"}}; fs.writeFileSync("/tmp/deploy.json",JSON.stringify(b))'
-          http=$(curl --silent --show-error --output /tmp/deploy-response.json --write-out '%{http_code}' \
-            --request POST \
-            "https://api.vercel.com/v13/deployments?teamId=${VERCEL_ORG_ID}" \
-            --header "Authorization: Bearer ${VERCEL_TOKEN}" \
-            --header 'Content-Type: application/json' \
-            --data-binary @/tmp/deploy.json)
+          http=$(curl --silent --show-error --output /tmp/deploy-response.json --write-out '%{http_code}' --request POST "https://api.vercel.com/v13/deployments?teamId=${VERCEL_ORG_ID}" --header "Authorization: Bearer ${VERCEL_TOKEN}" --header 'Content-Type: application/json' --data-binary @/tmp/deploy.json)
           if [ "$http" -lt 200 ] || [ "$http" -ge 300 ]; then echo "STOP deployment create HTTP $http"; cat /tmp/deploy-response.json; exit 4; fi
           node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/tmp/deploy-response.json","utf8")); if(!x.id||!x.url) process.exit(5); fs.appendFileSync(process.env.GITHUB_OUTPUT,`deployment_id=${x.id}\nurl=https://${x.url}\n`)'
 
@@ -51,15 +47,24 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 80); do
-            http=$(curl --silent --show-error --output /tmp/deployment.json --write-out '%{http_code}' \
-              "https://api.vercel.com/v13/deployments/${DEPLOYMENT_ID}?teamId=${VERCEL_ORG_ID}" \
-              --header "Authorization: Bearer ${VERCEL_TOKEN}")
+            http=$(curl --silent --show-error --output /tmp/deployment.json --write-out '%{http_code}' "https://api.vercel.com/v13/deployments/${DEPLOYMENT_ID}?teamId=${VERCEL_ORG_ID}" --header "Authorization: Bearer ${VERCEL_TOKEN}")
             test "$http" = "200"
             state=$(node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/tmp/deployment.json","utf8")); const sha=x?.meta?.githubCommitSha||x?.meta?.approvedExactSha||x?.gitSource?.sha||""; const projectId=x?.projectId||x?.project?.id||""; if(projectId&&projectId!==process.env.VERCEL_PROJECT_ID) process.exit(6); if(sha&&sha!==process.env.EXACT_SHA) process.exit(7); if(x?.target) process.exit(8); process.stdout.write(x.readyState||x.status||"")')
             case "$state" in
-              READY) echo "PASS READY exact-SHA reset preview"; node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/tmp/deployment.json","utf8")); console.log(`DEPLOYMENT_URL=https://${x.url}`)'; exit 0;;
+              READY) echo "PASS READY exact-SHA reset preview"; exit 0;;
               ERROR|CANCELED|BLOCKED) echo "STOP deployment state=$state"; exit 9;;
             esac
             sleep 5
           done
           echo 'STOP timeout waiting for READY'; exit 10
+
+      - name: Reset and verify staging billing mapping
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vercel" | node -pe 'JSON.parse(fs.readFileSync(0,"utf8")).value')
+          http=$(curl --silent --show-error --output /tmp/reset.json --write-out '%{http_code}' "${DEPLOYMENT_URL}/api/_ops-reset-staging-billing" -H "x-vercel-trusted-oidc-idp-token: ${OIDC_TOKEN}" -H 'x-reset-confirm: staging-idogsbreeder-reset-20260826')
+          test "$http" = "200"
+          node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/tmp/reset.json","utf8")); if(x.ok!==true||x.plan!=="free"||x.subscriptionStatus!=="inactive"||x.staleBillingIdsPresent!==false) process.exit(11); console.log("PASS billing reset verified", JSON.stringify(x));'
