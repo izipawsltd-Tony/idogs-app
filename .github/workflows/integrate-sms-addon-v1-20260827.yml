@@ -59,6 +59,28 @@ jobs:
           echo "INTEGRATION_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           git log --oneline --decorate -12
 
+      - name: Align stale billing security fixture with approved Plus monthly test price
+        shell: bash
+        run: |
+          set -euo pipefail
+          OLD='price_1TxMJ9GHgBd6ZgJEcwyahH58'
+          NEW='price_1TxaNJGHgBd6ZgJEpAhrWark'
+          FILE='scripts/test-billing-p0-security.mjs'
+          grep -q "$OLD" "$FILE"
+          grep -q "plus_monthly: '$NEW'" api/_lib/checkout-handler.js
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/test-billing-p0-security.mjs')
+          s = p.read_text()
+          old = 'price_1TxMJ9GHgBd6ZgJEcwyahH58'
+          new = 'price_1TxaNJGHgBd6ZgJEpAhrWark'
+          assert s.count(old) == 1, s.count(old)
+          p.write_text(s.replace(old, new))
+          PY
+          git add "$FILE"
+          git commit -m 'test(billing): align Plus monthly price fixture'
+          echo "INTEGRATION_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: npm ci
 
