@@ -63,6 +63,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = '18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
+          echo 'Git status after Vercel pull/build:'
+          git status --porcelain
+          echo 'Tracked diff names after Vercel pull/build:'
+          git diff --name-only
           test -z "$(git status --porcelain)"
 
       - name: Deploy prebuilt artifact to production
