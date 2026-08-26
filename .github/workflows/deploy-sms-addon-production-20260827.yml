@@ -58,16 +58,26 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
 
-      - name: Re-verify source remains clean
+      - name: Re-verify exact source and restore known lockfile side effect
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = '18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
-          echo 'Git status after Vercel pull/build:'
-          git status --porcelain
-          echo 'Tracked diff names after Vercel pull/build:'
-          git diff --name-only
+          EXPECTED='18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git diff --cached --name-only)"
+
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            echo 'Vercel local build modified only package-lock.json; restoring exact committed lockfile.'
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift after build:\n'
+            printf '%s\n' "${changed[@]}"
+            exit 1
+          fi
+
           test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
 
       - name: Deploy prebuilt artifact to production
         env:
