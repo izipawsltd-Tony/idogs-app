@@ -84,6 +84,7 @@ export default function BillingPage({ toast }: Props) {
   const [loading, setLoading] = useState(false)
   const [portalLoading, setPortalLoading] = useState(false)
   const [smsCheckoutLoading, setSmsCheckoutLoading] = useState(false)
+  const [smsRemoveLoading, setSmsRemoveLoading] = useState(false)
   const [detailsLoading, setDetailsLoading] = useState(true)
   const [detailsError, setDetailsError] = useState<string | null>(null)
   const [billingDetails, setBillingDetails] = useState<BillingSummary | null>(null)
@@ -107,6 +108,9 @@ export default function BillingPage({ toast }: Props) {
     }
     if (searchParams.get('sms_cancelled')) {
       toast('SMS add-on checkout cancelled.', 'info')
+    }
+    if (searchParams.get('sms_removed')) {
+      toast('SMS add-on removed. Your iDogs Plus subscription remains active.', 'success')
     }
   }, [])
 
@@ -229,6 +233,39 @@ export default function BillingPage({ toast }: Props) {
       toast('SMS add-on is unavailable. Please check Billing or try again later.', 'error')
     } finally {
       setSmsCheckoutLoading(false)
+    }
+  }
+
+
+  async function handleSmsRemove() {
+    if (!user || smsRemoveLoading) return
+    const confirmed = window.confirm('Remove the SMS add-on? Your iDogs Plus subscription will stay active.')
+    if (!confirmed) return
+
+    setSmsRemoveLoading(true)
+    try {
+      const idToken = await user.getIdToken()
+      const res = await fetch('/api/remove-sms-addon', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}` },
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || 'Failed to remove SMS add-on')
+
+      setBillingDetails(current => current ? {
+        ...current,
+        sms: {
+          ...current.sms,
+          status: 'cancelled',
+          periodStart: null,
+          periodEnd: null,
+        },
+      } : current)
+      toast('SMS add-on removed. Your iDogs Plus subscription remains active.', 'success')
+    } catch {
+      toast('Failed to remove SMS add-on. Please try again.', 'error')
+    } finally {
+      setSmsRemoveLoading(false)
     }
   }
 
@@ -463,8 +500,8 @@ export default function BillingPage({ toast }: Props) {
                 )}
 
                 {billingDetails?.sms.status === 'active' || billingDetails?.sms.status === 'past_due' ? (
-                  <button className="btn btn-secondary" type="button" onClick={handleOpenPortal} disabled={portalLoading}>
-                    {portalLoading ? 'Opening…' : 'Manage SMS add-on'}
+                  <button className="btn btn-secondary" type="button" onClick={handleSmsRemove} disabled={smsRemoveLoading}>
+                    {smsRemoveLoading ? 'Removing SMS…' : 'Remove SMS add-on'}
                   </button>
                 ) : !isPlus ? (
                   <div style={{ fontSize: 12, color: 'var(--light)' }}>Upgrade to iDogs Plus before adding SMS reminders.</div>

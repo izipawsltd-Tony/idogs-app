@@ -7,7 +7,7 @@ import {
   sendSmsWithQuota,
   SMS_MONTHLY_CREDITS,
 } from '../api/_lib/sms-addon.js'
-import { createSmsAddonCheckoutHandler } from '../api/_lib/sms-checkout-handler.js'
+import { createSmsAddonCheckoutHandler, createSmsAddonRemoveHandler } from '../api/_lib/sms-checkout-handler.js'
 
 let passed = 0
 async function check(name, fn) {
@@ -304,6 +304,42 @@ await check('pending SMS payment returns hosted invoice when Stripe provides one
   assert.equal(res.statusCode,202)
   assert.equal(res.body.status,'pending_payment')
   assert.equal(res.body.hostedInvoiceUrl,'https://invoice.test/pay')
+})
+
+
+await check('Remove SMS add-on deletes only the verified SMS subscription item and keeps Plus', async () => {
+  let called=null
+  const handler=createSmsAddonRemoveHandler({
+    verifyIdToken:async()=>({uid:'u1'}),
+    getProfile:async()=>({plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'}),
+    retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',items:{data:[
+      {id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}},
+      {id:'si_sms',price:{id:'price_sms'}},
+    ]}}),
+    updateSubscription:async(id,params)=>{ called={id,params}; return {id} },
+    getPriceId:()=> 'price_sms',
+  })
+  const res=fakeRes()
+  await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
+  assert.equal(res.statusCode,200)
+  assert.equal(called.id,'sub_1')
+  assert.deepEqual(called.params.items,[{id:'si_sms',deleted:true}])
+  assert.equal(called.params.proration_behavior,'always_invoice')
+})
+
+await check('Remove SMS add-on is idempotency-safe when the SMS item is already absent', async () => {
+  let updated=false
+  const handler=createSmsAddonRemoveHandler({
+    verifyIdToken:async()=>({uid:'u1'}),
+    getProfile:async()=>({plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'}),
+    retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]}}),
+    updateSubscription:async()=>{ updated=true },
+    getPriceId:()=> 'price_sms',
+  })
+  const res=fakeRes()
+  await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
+  assert.equal(res.statusCode,409)
+  assert.equal(updated,false)
 })
 
 console.log(`SMS Add-on V1: ${passed}/${passed} PASS`)

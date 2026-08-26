@@ -127,3 +127,74 @@ export function createSmsAddonCheckoutHandler({
     }
   }
 }
+
+
+export function createSmsAddonRemoveHandler({
+  verifyIdToken,
+  getProfile,
+  retrieveSubscription,
+  updateSubscription,
+  getPriceId = () => process.env.STRIPE_SMS_ADDON_PRICE_ID,
+} = {}) {
+  return async function handler(req, res) {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+
+    const priceId = getPriceId()
+    if (!priceId || typeof priceId !== 'string') {
+      logConfigError('remove-sms-addon', 'SMS_PRICE_NOT_CONFIGURED')
+      return res.status(503).json({ error: 'SMS add-on is not configured' })
+    }
+
+    const authHeader = req.headers?.authorization || ''
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
+    if (!token) return res.status(401).json({ error: 'Missing Authorization header' })
+
+    let identity
+    try { identity = await verifyIdToken(token) } catch {
+      return res.status(401).json({ error: 'Invalid or expired token' })
+    }
+    if (!identity?.uid) return res.status(401).json({ error: 'Authenticated identity is incomplete' })
+
+    const body = parseBody(req)
+    if (body.priceId !== undefined || body.userId !== undefined || body.subscriptionId !== undefined || body.itemId !== undefined) {
+      return res.status(400).json({ error: 'Unsupported add-on fields' })
+    }
+
+    try {
+      const profile = await getProfile(identity.uid)
+      if (!profile) return res.status(404).json({ error: 'Profile not found' })
+      if (computeEffectivePlan(profile) !== 'plus') {
+        return res.status(403).json({ error: 'iDogs Plus is required for the SMS add-on' })
+      }
+      if (!profile.stripeCustomerId || !profile.stripeSubscriptionId) {
+        return reject409(res, 'SMS_REMOVE_MISSING_BILLING_LINK', 'An active Stripe Plus subscription is required')
+      }
+
+      const subscription = await retrieveSubscription(profile.stripeSubscriptionId)
+      if (!subscription || subscription.id !== profile.stripeSubscriptionId) {
+        return reject409(res, 'SMS_REMOVE_SUBSCRIPTION_VERIFY', 'Plus subscription could not be verified')
+      }
+      if (customerIdOf(subscription) !== profile.stripeCustomerId) {
+        return reject409(res, 'SMS_REMOVE_CUSTOMER_MISMATCH', 'Stripe customer mismatch')
+      }
+      if (!hasBasePlusPrice(subscription)) {
+        return reject409(res, 'SMS_REMOVE_PLUS_PRICE_MISMATCH', 'Verified iDogs Plus price not found on subscription')
+      }
+
+      const smsItem = (subscription.items?.data || []).find(item => item?.price?.id === priceId)
+      if (!smsItem?.id) {
+        return reject409(res, 'SMS_REMOVE_ALREADY_ABSENT', 'SMS add-on is already removed')
+      }
+
+      await updateSubscription(subscription.id, {
+        items: [{ id: smsItem.id, deleted: true }],
+        proration_behavior: 'always_invoice',
+      })
+
+      return res.status(200).json({ success: true, status: 'removing' })
+    } catch (err) {
+      logSanitizedError('remove-sms-addon', 'SMS_REMOVE_FAILED', { code: err?.code })
+      return res.status(500).json({ error: 'Failed to remove SMS from your Plus subscription' })
+    }
+  }
+}
