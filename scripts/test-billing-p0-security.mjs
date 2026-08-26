@@ -100,7 +100,7 @@ for (const legacyPlan of ['basic', 'pro', 'kennel', 'sms_addon', 'starter']) {
 check(
   'exactly the two Plus price ids are allowlisted — no $40 launch-offer price, no legacy tiers',
   Object.keys(CHECKOUT_PRICE_IDS).length === 2 &&
-    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxMJ9GHgBd6ZgJEcwyahH58' &&
+    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxaNJGHgBd6ZgJEpAhrWark' &&
     CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'
 )
 
