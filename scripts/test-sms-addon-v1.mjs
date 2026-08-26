@@ -265,7 +265,7 @@ await check('SMS add-on mutates only verified existing Plus subscription', async
     retrieveSubscription:async()=>({
       id:'sub_1',
       customer:'cus_1',
-      items:{data:[{id:'si_plus',price:{id:'price_1TxMJ9GHgBd6ZgJEcwyahH58'}}]},
+      items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]},
     }),
     updateSubscription:async(id,params)=>{
       called={id,params}
@@ -290,7 +290,7 @@ await check('pending SMS payment returns hosted invoice when Stripe provides one
     retrieveSubscription:async()=>({
       id:'sub_1',
       customer:'cus_1',
-      items:{data:[{id:'si_plus',price:{id:'price_1TxMJ9GHgBd6ZgJEcwyahH58'}}]},
+      items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]},
     }),
     updateSubscription:async()=>({
       id:'sub_1',

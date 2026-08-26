@@ -409,7 +409,7 @@ export function createWebhookHandler({
             itemCount: subscription?.items?.data?.length ?? 0,
             hasPriceOnFirstItem: !!subscription?.items?.data?.[0]?.price?.id,
           })
-          return // price id not on the allowlist — never grant entitlement off an unrecognized price
+          throw new Error('UNRECOGNIZED_PLUS_PRICE') // fail/retry instead of falsely marking the event completed
         }
         const nowIso = now().toISOString()
         const userRef = db.collection('users').doc(userId)

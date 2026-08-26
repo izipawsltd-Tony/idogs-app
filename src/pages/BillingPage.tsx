@@ -113,24 +113,50 @@ export default function BillingPage({ toast }: Props) {
   useEffect(() => {
     if (!user) return
     let cancelled = false
-    setDetailsLoading(true)
-    setDetailsError(null)
-    user.getIdToken()
-      .then(idToken => fetch('/api/billing-summary', {
-        headers: { Authorization: `Bearer ${idToken}` },
-      }))
-      .then(async res => {
+
+    const loadBillingDetails = async (showLoading = false) => {
+      if (showLoading) {
+        setDetailsLoading(true)
+        setDetailsError(null)
+      }
+      try {
+        const idToken = await user.getIdToken()
+        const res = await fetch('/api/billing-summary', {
+          headers: { Authorization: `Bearer ${idToken}` },
+          cache: 'no-store',
+        })
         const body = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(body.error || 'Failed to load billing details')
-        if (!cancelled) setBillingDetails(body as BillingSummary)
-      })
-      .catch(() => {
-        if (!cancelled) setDetailsError('Billing details are temporarily unavailable.')
-      })
-      .finally(() => {
-        if (!cancelled) setDetailsLoading(false)
-      })
-    return () => { cancelled = true }
+        if (!cancelled) {
+          setBillingDetails(body as BillingSummary)
+          setDetailsError(null)
+        }
+      } catch {
+        if (!cancelled && showLoading) setDetailsError('Billing details are temporarily unavailable.')
+      } finally {
+        if (!cancelled && showLoading) setDetailsLoading(false)
+      }
+    }
+
+    void loadBillingDetails(true)
+
+    // Returning from Stripe's hosted invoice can restore this page from the
+    // browser back/forward cache without remounting React. Refresh billing
+    // state on focus/pageshow/visibility so webhook-confirmed SMS entitlement
+    // and the new invoice appear without requiring Ctrl+F5.
+    const refreshAfterExternalBilling = () => {
+      if (document.visibilityState !== 'hidden') void loadBillingDetails(false)
+    }
+    window.addEventListener('focus', refreshAfterExternalBilling)
+    window.addEventListener('pageshow', refreshAfterExternalBilling)
+    document.addEventListener('visibilitychange', refreshAfterExternalBilling)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', refreshAfterExternalBilling)
+      window.removeEventListener('pageshow', refreshAfterExternalBilling)
+      document.removeEventListener('visibilitychange', refreshAfterExternalBilling)
+    }
   }, [user])
 
   async function handleOpenPortal() {
