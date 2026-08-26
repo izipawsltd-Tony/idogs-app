@@ -1,0 +1,92 @@
+name: Apply SMS billing micro-fixes
+
+on:
+  push:
+    branches:
+      - ops/sms-microfixes-20260826
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/sms-addon-v1
+          fetch-depth: 0
+
+      - name: Fail-closed precheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED=b982c78d5ec8b529ef70d163f27202c4c6b218f2
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test "$(git rev-parse origin/feature/sms-addon-v1)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          echo "PASS exact feature SHA and clean worktree"
+
+      - name: Apply only two micro-fixes plus regression assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          webhook = Path('api/_lib/webhook-handler.js')
+          text = webhook.read_text()
+          old = """          return // price id not on the allowlist — never grant entitlement off an unrecognized price\n"""
+          new = """          throw new Error('UNRECOGNIZED_PLUS_PRICE') // fail/retry instead of falsely marking the event completed\n"""
+          if text.count(old) != 1:
+              raise SystemExit(f'STOP webhook replacement count={text.count(old)}')
+          webhook.write_text(text.replace(old, new))
+
+          billing = Path('src/pages/BillingPage.tsx')
+          text = billing.read_text()
+          old = """  useEffect(() => {\n    if (!user) return\n    let cancelled = false\n    setDetailsLoading(true)\n    setDetailsError(null)\n    user.getIdToken()\n      .then(idToken => fetch('/api/billing-summary', {\n        headers: { Authorization: `Bearer ${idToken}` },\n      }))\n      .then(async res => {\n        const body = await res.json().catch(() => ({}))\n        if (!res.ok) throw new Error(body.error || 'Failed to load billing details')\n        if (!cancelled) setBillingDetails(body as BillingSummary)\n      })\n      .catch(() => {\n        if (!cancelled) setDetailsError('Billing details are temporarily unavailable.')\n      })\n      .finally(() => {\n        if (!cancelled) setDetailsLoading(false)\n      })\n    return () => { cancelled = true }\n  }, [user])\n"""
+          new = """  useEffect(() => {\n    if (!user) return\n    let cancelled = false\n\n    const loadBillingDetails = async (showLoading = false) => {\n      if (showLoading) {\n        setDetailsLoading(true)\n        setDetailsError(null)\n      }\n      try {\n        const idToken = await user.getIdToken()\n        const res = await fetch('/api/billing-summary', {\n          headers: { Authorization: `Bearer ${idToken}` },\n          cache: 'no-store',\n        })\n        const body = await res.json().catch(() => ({}))\n        if (!res.ok) throw new Error(body.error || 'Failed to load billing details')\n        if (!cancelled) {\n          setBillingDetails(body as BillingSummary)\n          setDetailsError(null)\n        }\n      } catch {\n        if (!cancelled && showLoading) setDetailsError('Billing details are temporarily unavailable.')\n      } finally {\n        if (!cancelled && showLoading) setDetailsLoading(false)\n      }\n    }\n\n    void loadBillingDetails(true)\n\n    // Returning from Stripe's hosted invoice can restore this page from the\n    // browser back/forward cache without remounting React. Refresh billing\n    // state on focus/pageshow/visibility so webhook-confirmed SMS entitlement\n    // and the new invoice appear without requiring Ctrl+F5.\n    const refreshAfterExternalBilling = () => {\n      if (document.visibilityState !== 'hidden') void loadBillingDetails(false)\n    }\n    window.addEventListener('focus', refreshAfterExternalBilling)\n    window.addEventListener('pageshow', refreshAfterExternalBilling)\n    document.addEventListener('visibilitychange', refreshAfterExternalBilling)\n\n    return () => {\n      cancelled = true\n      window.removeEventListener('focus', refreshAfterExternalBilling)\n      window.removeEventListener('pageshow', refreshAfterExternalBilling)\n      document.removeEventListener('visibilitychange', refreshAfterExternalBilling)\n    }\n  }, [user])\n"""
+          if text.count(old) != 1:
+              raise SystemExit(f'STOP BillingPage replacement count={text.count(old)}')
+          billing.write_text(text.replace(old, new))
+
+          test = Path('scripts/test-webhook-handler.mjs')
+          text = test.read_text()
+          old = """await checkAsync('checkout.session.completed with an unrecognized price id never grants Plus (allowlist enforced)', async () => {\n  const { process, db } = makeHandler({ subscriptions: { sub_evil: subFixture({ id: 'sub_evil', priceId: 'price_attacker_injected' }) } })\n  await fire(process, checkoutEvent({ evtId: 'evt_evil', subscriptionId: 'sub_evil' }))\n  const snap = await db.collection('users').doc('user-1').get()\n  return snap.exists === false\n})\n"""
+          new = """await checkAsync('checkout.session.completed with an unrecognized price id fails retriably and never grants Plus', async () => {\n  const { process, db } = makeHandler({ subscriptions: { sub_evil: subFixture({ id: 'sub_evil', priceId: 'price_attacker_injected' }) } })\n  const res = await fire(process, checkoutEvent({ evtId: 'evt_evil', subscriptionId: 'sub_evil' }))\n  const snap = await db.collection('users').doc('user-1').get()\n  const stored = db._dump('processedStripeEvents')['evt_evil']\n  return res.status === 500 && snap.exists === false && stored.status === 'failed' && typeof stored.failedAt === 'string'\n})\n"""
+          if text.count(old) != 1:
+              raise SystemExit(f'STOP webhook test replacement count={text.count(old)}')
+          test.write_text(text.replace(old, new))
+          PY
+
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "api/_lib/webhook-handler.js scripts/test-webhook-handler.mjs src/pages/BillingPage.tsx "
+          git diff --check
+          echo "PASS patch scope"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Targeted regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-sms-addon-v1.mjs
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit and push feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "izipawsltd-Tony"
+          git config user.email "izipawsltd@gmail.com"
+          git add api/_lib/webhook-handler.js src/pages/BillingPage.tsx scripts/test-webhook-handler.mjs
+          git commit -m "fix(sms): retry webhook failures and refresh billing"
+          NEW_SHA=$(git rev-parse HEAD)
+          git push origin HEAD:feature/sms-addon-v1
+          test "$(git ls-remote origin refs/heads/feature/sms-addon-v1 | awk '{print $1}')" = "$NEW_SHA"
+          echo "PASS feature push $NEW_SHA"
