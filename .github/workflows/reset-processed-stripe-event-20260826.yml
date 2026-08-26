@@ -1,0 +1,95 @@
+name: One-time reset processed Stripe event on staging
+
+on:
+  push:
+    branches:
+      - ops/reset-processed-stripe-event-20260826
+
+permissions:
+  contents: read
+
+jobs:
+  reset-event:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      FIREBASE_PROJECT_ID: idogs-app-staging
+      EVENT_ID: evt_1U8e1GGHgBd6ZgJEJJJxOgbH
+      EVENT_TYPE: checkout.session.completed
+    steps:
+      - name: Install Firebase tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/idogs-event-reset
+          cd /tmp/idogs-event-reset
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund firebase-tools@14.15.2
+
+      - name: Reset only approved processed event and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/idogs-event-reset
+          node - <<'NODE'
+          const path = require('path')
+          const toolsRoot = path.dirname(require.resolve('firebase-tools/package.json'))
+          const api = require(path.join(toolsRoot, 'lib', 'api.js'))
+
+          const projectId = process.env.FIREBASE_PROJECT_ID
+          const eventId = process.env.EVENT_ID
+          const eventType = process.env.EVENT_TYPE
+          const refreshToken = process.env.FIREBASE_TOKEN
+          if (projectId !== 'idogs-app-staging') throw new Error('STOP: wrong Firebase project')
+          if (eventId !== 'evt_1U8e1GGHgBd6ZgJEJJJxOgbH') throw new Error('STOP: wrong event id')
+          if (eventType !== 'checkout.session.completed') throw new Error('STOP: wrong event type')
+          if (!refreshToken) throw new Error('STOP: FIREBASE_TOKEN missing')
+
+          async function jsonFetch(url, options={}) {
+            const res = await fetch(url, options)
+            const text = await res.text()
+            let body = null
+            try { body = text ? JSON.parse(text) : null } catch { body = text }
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${url}: ${typeof body === 'string' ? body : JSON.stringify(body)}`)
+            return body
+          }
+
+          ;(async () => {
+            const tokenBody = await jsonFetch('https://oauth2.googleapis.com/token', {
+              method:'POST',
+              headers:{'content-type':'application/x-www-form-urlencoded'},
+              body:new URLSearchParams({
+                client_id: api.clientId(),
+                client_secret: api.clientSecret(),
+                refresh_token: refreshToken,
+                grant_type:'refresh_token',
+              }),
+            })
+            const accessToken = tokenBody?.access_token
+            if (!accessToken) throw new Error('STOP: OAuth access token missing')
+            const headers = {authorization:`Bearer ${accessToken}`, 'content-type':'application/json'}
+            const docUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/processedStripeEvents/${encodeURIComponent(eventId)}`
+            const before = await jsonFetch(docUrl, {method:'GET', headers})
+            const expectedName = `projects/${projectId}/databases/(default)/documents/processedStripeEvents/${eventId}`
+            if (before.name !== expectedName) throw new Error('STOP: document mismatch')
+            const f = before.fields || {}
+            if (f.type?.stringValue !== eventType) throw new Error(`STOP: event type mismatch: ${f.type?.stringValue || 'missing'}`)
+            if (f.status?.stringValue !== 'completed') throw new Error(`STOP: expected completed status, got ${f.status?.stringValue || 'missing'}`)
+
+            const nowIso = new Date().toISOString()
+            const mask = ['status','failedAt','completedAt'].map(x => `updateMask.fieldPaths=${encodeURIComponent(x)}`).join('&')
+            await jsonFetch(`${docUrl}?${mask}`, {
+              method:'PATCH', headers,
+              body:JSON.stringify({fields:{status:{stringValue:'failed'}, failedAt:{timestampValue:nowIso}}}),
+            })
+
+            const after = await jsonFetch(docUrl, {method:'GET', headers})
+            const af = after.fields || {}
+            if (af.type?.stringValue !== eventType) throw new Error('VERIFY: event type changed')
+            if (af.status?.stringValue !== 'failed') throw new Error('VERIFY: status is not failed')
+            if (!af.failedAt?.timestampValue) throw new Error('VERIFY: failedAt missing')
+            if (Object.prototype.hasOwnProperty.call(af,'completedAt')) throw new Error('VERIFY: completedAt still present')
+            console.log('PASS processed Stripe event reset verified', JSON.stringify({projectId,eventId,eventType,status:af.status.stringValue,completedAtPresent:false}))
+          })().catch(err => { console.error(err?.stack || err?.message || err); process.exit(1) })
+          NODE
