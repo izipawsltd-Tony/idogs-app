@@ -505,11 +505,12 @@ await checkAsync('checkout.session.completed reactivates restricted dogs up to t
   return r1.status === 'active' && r4.status === 'restricted'
 })
 
-await checkAsync('checkout.session.completed with an unrecognized price id never grants Plus (allowlist enforced)', async () => {
+await checkAsync('checkout.session.completed with an unrecognized price id fails retriably and never grants Plus', async () => {
   const { process, db } = makeHandler({ subscriptions: { sub_evil: subFixture({ id: 'sub_evil', priceId: 'price_attacker_injected' }) } })
-  await fire(process, checkoutEvent({ evtId: 'evt_evil', subscriptionId: 'sub_evil' }))
+  const res = await fire(process, checkoutEvent({ evtId: 'evt_evil', subscriptionId: 'sub_evil' }))
   const snap = await db.collection('users').doc('user-1').get()
-  return snap.exists === false
+  const stored = db._dump('processedStripeEvents')['evt_evil']
+  return res.status === 500 && snap.exists === false && stored.status === 'failed' && typeof stored.failedAt === 'string'
 })
 
 // ── H5: out-of-order / stale subscription events ──────────────────────
