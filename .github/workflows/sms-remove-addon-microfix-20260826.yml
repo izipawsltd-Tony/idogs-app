@@ -36,6 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 /tmp/apply.py
+          git add -N api/remove-sms-addon.js
           test "$(git diff --name-only | sort | tr '\n' ' ')" = "api/_lib/sms-checkout-handler.js api/remove-sms-addon.js scripts/test-sms-addon-v1.mjs src/pages/BillingPage.tsx "
           git diff --check
           echo "PASS patch scope"
