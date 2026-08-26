@@ -29,7 +29,7 @@ jobs:
           test -z "$(git status --porcelain)"
           echo "PASS exact feature SHA and clean worktree"
 
-      - name: Apply only two micro-fixes plus regression assertion
+      - name: Apply only two micro-fixes plus regression assertions
         shell: bash
         run: |
           set -euo pipefail
@@ -59,9 +59,22 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit(f'STOP webhook test replacement count={text.count(old)}')
           test.write_text(text.replace(old, new))
+
+          # The previous approved Plus-price micro-fix changed runtime to the
+          # current iDogs test price, but this SMS regression fixture still
+          # referenced the retired monthly price. Align test data only.
+          sms_test = Path('scripts/test-sms-addon-v1.mjs')
+          text = sms_test.read_text()
+          retired = 'price_1TxMJ9GHgBd6ZgJEcwyahH58'
+          current = 'price_1TxaNJGHgBd6ZgJEpAhrWark'
+          count = text.count(retired)
+          if count < 1:
+              raise SystemExit('STOP stale SMS Plus-price fixture not found')
+          sms_test.write_text(text.replace(retired, current))
+          print(f'PASS aligned {count} stale SMS test price fixture(s)')
           PY
 
-          test "$(git diff --name-only | sort | tr '\n' ' ')" = "api/_lib/webhook-handler.js scripts/test-webhook-handler.mjs src/pages/BillingPage.tsx "
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "api/_lib/webhook-handler.js scripts/test-sms-addon-v1.mjs scripts/test-webhook-handler.mjs src/pages/BillingPage.tsx "
           git diff --check
           echo "PASS patch scope"
 
@@ -84,7 +97,7 @@ jobs:
           set -euo pipefail
           git config user.name "izipawsltd-Tony"
           git config user.email "izipawsltd@gmail.com"
-          git add api/_lib/webhook-handler.js src/pages/BillingPage.tsx scripts/test-webhook-handler.mjs
+          git add api/_lib/webhook-handler.js src/pages/BillingPage.tsx scripts/test-webhook-handler.mjs scripts/test-sms-addon-v1.mjs
           git commit -m "fix(sms): retry webhook failures and refresh billing"
           NEW_SHA=$(git rev-parse HEAD)
           git push origin HEAD:feature/sms-addon-v1
