@@ -10,7 +10,7 @@ import { logSanitizedError } from './http-helpers.js'
 // The $40 launch-offer price mentioned in §1.1 of the record is explicitly
 // NOT implemented per this round's scope.
 export const CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58',
+  plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',
   plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
 })
 

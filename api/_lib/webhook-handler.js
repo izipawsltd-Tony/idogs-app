@@ -67,6 +67,7 @@ import { randomBytes } from 'node:crypto'
 import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
 import { reconcileDogCapTx, reactivateUpToCapTx } from './dog-cap.js'
 import { anchorDayFromDate } from './entitlements.js'
+import { SMS_MONTHLY_CREDITS } from './sms-addon.js'
 
 const PRICE_INTERVAL = Object.freeze({
   [CHECKOUT_PRICE_IDS.plus_monthly]: 'monthly',
@@ -80,6 +81,62 @@ function resolveInterval(subscription) {
     if (priceId && PRICE_INTERVAL[priceId]) return PRICE_INTERVAL[priceId]
   }
   return null
+}
+
+function smsItemOf(subscription, smsPriceId) {
+  if (!smsPriceId) return null
+  return (subscription?.items?.data || []).find(item => item?.price?.id === smsPriceId) || null
+}
+
+function isoFromSeconds(value) {
+  return Number.isFinite(value) ? new Date(value * 1000).toISOString() : null
+}
+
+function smsPeriodOf(subscription, item) {
+  const start = isoFromSeconds(item?.current_period_start) || isoFromSeconds(subscription?.current_period_start)
+  const end = isoFromSeconds(item?.current_period_end) || isoFromSeconds(subscription?.current_period_end)
+  return start && end ? { start, end } : null
+}
+
+function smsEntitlementFields(profile, subscription, smsPriceId, nowIso) {
+  if (!smsPriceId) return {}
+
+  const item = smsItemOf(subscription, smsPriceId)
+  if (!item) {
+    const hadSms = profile?.smsAddonStatus && profile.smsAddonStatus !== 'inactive'
+    return {
+      smsAddonStatus: hadSms ? 'cancelled' : 'inactive',
+      smsStripeSubscriptionId: null,
+      smsStripePriceId: null,
+      smsPeriodStart: null,
+      smsPeriodEnd: null,
+      smsLastBillingEventAt: nowIso,
+    }
+  }
+
+  const status = subscription?.status
+  const smsStatus =
+    status === 'active' || status === 'trialing' ? 'active' :
+    status === 'past_due' ? 'past_due' :
+    status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired' ? 'cancelled' :
+    'inactive'
+
+  const period = smsPeriodOf(subscription, item)
+  const periodChanged = smsStatus === 'active' && period &&
+    (profile?.smsAddonStatus !== 'active' ||
+      profile?.smsPeriodStart !== period.start ||
+      profile?.smsPeriodEnd !== period.end)
+
+  return {
+    smsAddonStatus: smsStatus,
+    smsStripeSubscriptionId: smsStatus === 'cancelled' ? null : subscription.id,
+    smsStripePriceId: smsPriceId,
+    smsPeriodStart: period?.start || profile?.smsPeriodStart || null,
+    smsPeriodEnd: period?.end || profile?.smsPeriodEnd || null,
+    smsCreditsLimit: SMS_MONTHLY_CREDITS,
+    ...(periodChanged ? { smsCreditsUsed: 0 } : {}),
+    smsLastBillingEventAt: nowIso,
+  }
 }
 
 function extractUserId(obj) {
@@ -324,7 +381,13 @@ export async function runFencedTransaction(db, eventRef, leaseToken, fn) {
   })
 }
 
-export function createWebhookHandler({ constructEvent, getSubscription, db, now = () => new Date() }) {
+export function createWebhookHandler({
+  constructEvent,
+  getSubscription,
+  db,
+  getSmsPriceId = () => process.env.STRIPE_SMS_ADDON_PRICE_ID,
+  now = () => new Date(),
+}) {
   async function applyEvent(event, eventRef, leaseToken) {
     switch (event.type) {
       case 'checkout.session.completed': {
@@ -346,7 +409,7 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
             itemCount: subscription?.items?.data?.length ?? 0,
             hasPriceOnFirstItem: !!subscription?.items?.data?.[0]?.price?.id,
           })
-          return // price id not on the allowlist — never grant entitlement off an unrecognized price
+          throw new Error('UNRECOGNIZED_PLUS_PRICE') // fail/retry instead of falsely marking the event completed
         }
         const nowIso = now().toISOString()
         const userRef = db.collection('users').doc(userId)
@@ -376,6 +439,7 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
             // breaks when subscription.updated(active) for this same new
             // subscription happens to arrive BEFORE this checkout event.
             ...quotaInitFields(profile, session.subscription, nowIso),
+            ...smsEntitlementFields(profile, subscription, getSmsPriceId(), nowIso),
           }, { merge: true })
         })
         return
@@ -421,6 +485,7 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
               scanPeriodAnchorDay: subscriptionStartAnchorDay(subscription),
               ...subscriptionTrackingFields(profile, subscriptionId, event.created, eventCustomerId),
               ...quotaInitFields(profile, subscriptionId, now().toISOString()),
+              ...smsEntitlementFields(profile, subscription, getSmsPriceId(), now().toISOString()),
             }, { merge: true })
           })
         } else if (status === 'past_due') {
@@ -437,6 +502,7 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
               subscriptionStatus: status,
               pastDueSince: profile.pastDueSince || now().toISOString(),
               ...subscriptionTrackingFields(profile, subscriptionId, event.created, eventCustomerId),
+              ...smsEntitlementFields(profile, subscription, getSmsPriceId(), now().toISOString()),
             }, { merge: true })
           })
         } else if (DOWNGRADE_STATUSES.has(status)) {
@@ -458,6 +524,7 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
               // subscription, or a later event for this same id would be
               // wrongly rejected as SUPERSEDED by evaluateSubscriptionEvent.
               ...subscriptionTrackingFields(profile, subscriptionId, event.created, eventCustomerId),
+              ...smsEntitlementFields(profile, subscription, getSmsPriceId(), now().toISOString()),
             }, { merge: true })
           })
         } else {
@@ -469,6 +536,7 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
             tx.set(userRef, {
               subscriptionStatus: status,
               ...subscriptionTrackingFields(profile, subscriptionId, event.created, eventCustomerId),
+              ...smsEntitlementFields(profile, subscription, getSmsPriceId(), now().toISOString()),
             }, { merge: true })
           })
         }
@@ -500,6 +568,12 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
             // "the active one". See the DOWNGRADE_STATUSES branch above
             // for why this must happen on every accepted branch.
             ...subscriptionTrackingFields(profile, subscriptionId, event.created, eventCustomerId),
+            smsAddonStatus: 'cancelled',
+            smsStripeSubscriptionId: null,
+            smsStripePriceId: null,
+            smsPeriodStart: null,
+            smsPeriodEnd: null,
+            smsLastBillingEventAt: now().toISOString(),
           }, { merge: true })
         })
         return
@@ -545,6 +619,7 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
               // quotaInitFields correctly initializes B's quota fresh,
               // independent of A's history.
               ...quotaInitFields(profile, subscriptionId, now().toISOString()),
+              ...smsEntitlementFields(profile, subscription, getSmsPriceId(), now().toISOString()),
             }, { merge: true })
           } else {
             // "Harmless" only in the sense of never touching plan/status —
@@ -554,7 +629,10 @@ export function createWebhookHandler({ constructEvent, getSubscription, db, now 
             // recorded event happens to be a non-past-due invoice isn't
             // left unrecorded as "current" (see the DOWNGRADE_STATUSES
             // branch's comment above for why that matters).
-            tx.set(userRef, { ...tracking }, { merge: true })
+            tx.set(userRef, {
+              ...tracking,
+              ...smsEntitlementFields(profile, subscription, getSmsPriceId(), now().toISOString()),
+            }, { merge: true })
           }
         })
         return

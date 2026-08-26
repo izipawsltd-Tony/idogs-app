@@ -56,6 +56,7 @@ export function createBillingSummaryHandler({
   getProfile,
   retrieveSubscription,
   listInvoices,
+  isSmsConfigured = () => false,
 } = {}) {
   return async function billingSummaryHandler(req, res) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
@@ -67,10 +68,18 @@ export function createBillingSummaryHandler({
       const profile = await getProfile(auth.uid)
       if (!profile) return res.status(404).json({ error: 'Profile not found' })
 
+      const sms = {
+        configured: Boolean(isSmsConfigured()),
+        status: typeof profile.smsAddonStatus === 'string' ? profile.smsAddonStatus : 'inactive',
+        creditsUsed: Number.isInteger(profile.smsCreditsUsed) && profile.smsCreditsUsed >= 0 ? profile.smsCreditsUsed : 0,
+        creditsLimit: Number.isInteger(profile.smsCreditsLimit) && profile.smsCreditsLimit > 0 ? profile.smsCreditsLimit : 20,
+        periodStart: typeof profile.smsPeriodStart === 'string' ? profile.smsPeriodStart : null,
+        periodEnd: typeof profile.smsPeriodEnd === 'string' ? profile.smsPeriodEnd : null,
+      }
       const customerId = typeof profile.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
       const subscriptionId = typeof profile.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : null
       if (!customerId) {
-        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false })
+        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms })
       }
 
       let subscription = null
@@ -90,7 +99,7 @@ export function createBillingSummaryHandler({
 
       const result = await listInvoices({ customer: customerId, limit: 12 })
       const invoices = (result?.data || []).map(mapInvoice).filter(invoice => invoice.id)
-      return res.status(200).json({ subscription, invoices, canManageBilling: true })
+      return res.status(200).json({ subscription, invoices, canManageBilling: true, sms })
     } catch {
       logSanitizedError('billing-summary', 'BILLING_SUMMARY_FAILED')
       return res.status(500).json({ error: 'Failed to load billing details' })

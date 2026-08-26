@@ -276,6 +276,17 @@ service cloud.firestore {
         // demand — this field must be exactly as protected as
         // plusScansUsed itself.
         'plusScansSubscriptionId',
+        // iDogs SMS Add-on V1 — paid entitlement, Stripe identity and quota
+        // counters are trusted server state. Client writes to any of these
+        // could self-grant SMS or restore consumed credits.
+        'smsAddonStatus',
+        'smsStripeSubscriptionId',
+        'smsStripePriceId',
+        'smsPeriodStart',
+        'smsPeriodEnd',
+        'smsCreditsLimit',
+        'smsCreditsUsed',
+        'smsLastBillingEventAt',
         // Internal Super Admin entitlement (api/_lib/entitlements.js
         // computeEffectivePlan()) — an admin-granted Plus override,
         // completely independent of Stripe. A client that could set this
@@ -693,6 +704,13 @@ service cloud.firestore {
     // all, and no client action should ever be able to forge, inspect,
     // or tamper with an operation record.
     match /litterPuppyOperations/{id} {
+      allow read, write: if false;
+    }
+
+    // ── smsDeliveries — SMS quota/idempotency ledger. Written only by
+    // trusted Admin SDK reminder services. No browser access is required;
+    // user-facing usage is exposed by authenticated billing-summary APIs.
+    match /smsDeliveries/{deliveryId} {
       allow read, write: if false;
     }
 

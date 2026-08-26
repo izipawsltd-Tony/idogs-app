@@ -6,6 +6,7 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
 import { requireAppUrl, logConfigError } from './_lib/require-config.js'
 import { checkCronAuth } from './_lib/cron-auth.js'
+import { sendSmsWithQuota } from './_lib/sms-addon.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -62,7 +63,7 @@ async function getReminderEligibleDogs(tenantId) {
   return Array.from(dogs.values())
 }
 
-async function sendSMS(phone, message) {
+async function sendSmsProvider(phone, message) {
   const command = new PublishCommand({
     Message: message,
     PhoneNumber: phone,
@@ -72,6 +73,35 @@ async function sendSMS(phone, message) {
     },
   })
   return sns.send(command)
+}
+
+async function sendReminderSms({
+  tenantId,
+  phone,
+  message,
+  dogId = null,
+  litterId = null,
+  eventType,
+  sourceRecordId,
+  milestoneKey,
+  idempotencyKey,
+  now,
+}) {
+  if (!phone) return { sent: false, reason: 'NO_PHONE' }
+  return sendSmsWithQuota({
+    db,
+    tenantId,
+    phone,
+    message,
+    dogId,
+    litterId,
+    eventType,
+    sourceRecordId,
+    milestoneKey,
+    idempotencyKey,
+    sendProvider: sendSmsProvider,
+    now,
+  })
 }
 
 function formatDate(str) {
@@ -167,7 +197,6 @@ export default async function handler(req, res) {
       const reminderDays = user.reminderDays || 7
       const reminderFrequency = user.reminderFrequency || 'once' // 'once' | 'daily'
       const heatReminderDays = user.heatReminderDays || 14 // separate setting for heat cycles
-      const hasSmsAddon = user.smsAddon === true
       const phone = user.phone
 
       // Get dogs currently owned by this user — see getReminderEligibleDogs()
@@ -342,14 +371,24 @@ export default async function handler(req, res) {
                 }
               }
 
-              // Send SMS if addon enabled and phone exists
-              if (hasSmsAddon && phone) {
+              // SMS is independently gated by server-owned entitlement/quota.
+              // A blocked/failed SMS never blocks the email/in-app reminder path.
+              if (phone) {
                 try {
-                  const e164 = phone.replace(/\s/g, '').replace(/^0/, '+61')
-                  await sendSMS(e164, msg)
-                  smsSent++
-                } catch (e) {
-                  console.error('SMS reminder error:', e)
+                  const smsResult = await sendReminderSms({
+                    tenantId,
+                    phone,
+                    message: `iDogs: ${dog.name} ${vaccine.name} is ${dueLabelShort} (${formatDate(vaccine.nextDue)}). Please arrange with your vet if needed.`,
+                    dogId: dog.id,
+                    eventType: 'vaccination',
+                    sourceRecordId: vDoc.id,
+                    milestoneKey: vaccine.nextDue,
+                    idempotencyKey: `vaccination:${tenantId}:${dog.id}:${vDoc.id}:${vaccine.nextDue}`,
+                    now: today,
+                  })
+                  if (smsResult.sent) smsSent++
+                } catch {
+                  console.error('SMS reminder error')
                 }
               }
 
@@ -374,6 +413,300 @@ export default async function handler(req, res) {
               }
             } catch (e) {
               // non-critical
+            }
+          }
+        }
+
+        // ── WORMING REMINDERS ─────────────────────────────────────────
+        // The latest treatment record owns the active worming schedule.
+        // Older records are historical and must never continue sending.
+        const wormingSnap = await db.collection('wormingRecords')
+          .where('dogId', '==', dog.id)
+          .get()
+        const wormingRecords = wormingSnap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(w => w.dateGiven)
+          .sort((a, b) => String(b.dateGiven).localeCompare(String(a.dateGiven)))
+
+        const activeWorming = wormingRecords[0]
+        if (activeWorming?.nextDue) {
+          const dueDate = new Date(activeWorming.nextDue)
+          const daysUntilDue = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24))
+          const isInWindow = daysUntilDue <= reminderDays && daysUntilDue >= -365
+          const reminderId = `worming_${dog.id}_${activeWorming.id}`
+
+          // Resolve older worming reminder documents as superseded.
+          for (const old of wormingRecords.slice(1)) {
+            try {
+              const oldRef = db.collection('reminders').doc(`worming_${dog.id}_${old.id}`)
+              const oldSnap = await oldRef.get()
+              if (oldSnap.exists && oldSnap.data()?.status !== 'completed') {
+                await oldRef.update({
+                  status: 'completed',
+                  completedAt: today.toISOString(),
+                  completedReason: 'superseded_by_newer_worming',
+                  updatedAt: today.toISOString(),
+                })
+              }
+            } catch {
+              // non-critical
+            }
+          }
+
+          if (isInWindow) {
+            const isOverdue = daysUntilDue < 0
+            const dueLabelShort = isOverdue
+              ? `overdue by ${Math.abs(daysUntilDue)} day${Math.abs(daysUntilDue) !== 1 ? 's' : ''}`
+              : daysUntilDue === 0 ? 'today'
+              : daysUntilDue === 1 ? 'tomorrow'
+              : `in ${daysUntilDue} days`
+
+            try {
+              const reminderRef = db.collection('reminders').doc(reminderId)
+              const existing = await reminderRef.get()
+              if (!existing.exists || existing.data()?.status !== 'completed') {
+                await reminderRef.set({
+                  id: reminderId,
+                  dogId: dog.id,
+                  tenantId,
+                  title: `Worming due ${dueLabelShort}`,
+                  dueDate: activeWorming.nextDue,
+                  type: 'worming',
+                  wormingId: activeWorming.id,
+                  status: isOverdue ? 'overdue' : 'pending',
+                  createdAt: today.toISOString(),
+                  updatedAt: today.toISOString(),
+                }, { merge: true })
+              }
+            } catch {
+              console.error('Failed to upsert worming reminder')
+            }
+
+            const hasSentBefore = Boolean(activeWorming.lastReminderSentAt)
+            const sentWithinLast20h = hasSentBefore &&
+              (today - new Date(activeWorming.lastReminderSentAt)) < 1000 * 60 * 60 * 20
+            const blockedByFrequencyPref = reminderFrequency === 'once' ? hasSentBefore : sentWithinLast20h
+
+            if (!blockedByFrequencyPref) {
+              if (user.email) {
+                try {
+                  await fetch(`${appUrl}/api/send-email`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
+                    body: JSON.stringify({
+                      to_email: user.email,
+                      to_name: user.firstName || 'there',
+                      subject: `Reminder: ${dog.name} worming is ${dueLabelShort}`,
+                      message: `<p>Hi ${user.firstName || 'there'},</p><p><strong>${dog.name}'s worming</strong> is due on <strong>${formatDate(activeWorming.nextDue)}</strong>.</p><p>Please check the recorded treatment schedule in iDogs.</p>`,
+                    }),
+                  })
+                  emailSent++
+                } catch {
+                  console.error('Worming email error')
+                }
+              }
+
+              if (phone) {
+                try {
+                  const smsResult = await sendReminderSms({
+                    tenantId,
+                    phone,
+                    message: `iDogs: ${dog.name} worming is due ${formatDate(activeWorming.nextDue)}. Check the recorded treatment schedule in iDogs.`,
+                    dogId: dog.id,
+                    eventType: 'worming',
+                    sourceRecordId: activeWorming.id,
+                    milestoneKey: activeWorming.nextDue,
+                    idempotencyKey: `worming:${tenantId}:${dog.id}:${activeWorming.id}:${activeWorming.nextDue}`,
+                    now: today,
+                  })
+                  if (smsResult.sent) smsSent++
+                } catch {
+                  console.error('Worming SMS error')
+                }
+              }
+
+              try {
+                await db.collection('wormingRecords').doc(activeWorming.id).update({
+                  lastReminderSentAt: today.toISOString(),
+                })
+              } catch {
+                console.error('Failed to record worming reminder sent')
+              }
+            }
+          }
+        }
+
+        // ── EXPLICIT BREEDING CYCLE REMINDERS ───────────────────────
+        // Uses dates the breeder actually stored. Pregnancy check may be
+        // estimated as mating + 28 days; the message explicitly says so.
+        const cyclesSnap = await db.collection('heatCycles')
+          .where('dogId', '==', dog.id)
+          .get()
+
+        function addDays(dateString, days) {
+          const d = new Date(dateString)
+          d.setUTCDate(d.getUTCDate() + days)
+          return d.toISOString().split('T')[0]
+        }
+
+        async function upsertBreedingReminderAndSms({
+          cycleId,
+          eventType,
+          dueDate,
+          title,
+          message,
+          milestoneKey,
+          reminderWindowDays = reminderDays,
+          sourceKind = 'heatCycle',
+          litterId = null,
+        }) {
+          if (!dueDate) return
+          const due = new Date(dueDate)
+          if (Number.isNaN(due.getTime())) return
+          const daysUntil = Math.ceil((due - today) / (1000 * 60 * 60 * 24))
+          if (daysUntil > reminderWindowDays || daysUntil < -1) return
+
+          const reminderId = `${eventType}_${dog.id}_${cycleId}_${milestoneKey}`
+          try {
+            const ref = db.collection('reminders').doc(reminderId)
+            const existing = await ref.get()
+            if (!existing.exists || existing.data()?.status !== 'completed') {
+              await ref.set({
+                id: reminderId,
+                dogId: dog.id,
+                tenantId,
+                title,
+                dueDate,
+                type: eventType,
+                ...(sourceKind === 'litter' ? { litterId: cycleId } : { heatCycleId: cycleId }),
+                status: daysUntil < 0 ? 'overdue' : 'pending',
+                createdAt: today.toISOString(),
+                updatedAt: today.toISOString(),
+              }, { merge: true })
+            }
+          } catch {
+            console.error('Failed to upsert breeding reminder')
+          }
+
+          if (phone && daysUntil >= 0) {
+            try {
+              const smsResult = await sendReminderSms({
+                tenantId,
+                phone,
+                message,
+                dogId: dog.id,
+                litterId,
+                eventType,
+                sourceRecordId: cycleId,
+                milestoneKey,
+                idempotencyKey: `${eventType}:${tenantId}:${dog.id}:${cycleId}:${milestoneKey}:${dueDate}`,
+                now: today,
+              })
+              if (smsResult.sent) smsSent++
+            } catch {
+              console.error('Breeding SMS error')
+            }
+          }
+        }
+
+        // Litter.expectedDueDate is the canonical whelping source once a
+        // litter exists. heatCycles.whelpingEstimate is fallback only; this
+        // prevents one pregnancy from producing two whelping SMS messages.
+        const littersSnap = await db.collection('litters')
+          .where('damId', '==', dog.id)
+          .get()
+        const activeWhelpingLitters = littersSnap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }))
+          .filter(litter =>
+            litter.tenantId === tenantId &&
+            !litter.archived &&
+            Boolean(litter.expectedDueDate) &&
+            !litter.actualBirthDate
+          )
+
+        for (const litter of activeWhelpingLitters) {
+          const due = new Date(litter.expectedDueDate)
+          if (Number.isNaN(due.getTime())) continue
+          const daysUntil = Math.ceil((due - today) / (1000 * 60 * 60 * 24))
+          if (daysUntil <= 7 && daysUntil > 1) {
+            await upsertBreedingReminderAndSms({
+              cycleId: litter.id,
+              eventType: 'whelping',
+              dueDate: litter.expectedDueDate,
+              title: `Expected whelping — ${formatDate(litter.expectedDueDate)}`,
+              message: `iDogs: ${dog.name} expected whelping date is ${formatDate(litter.expectedDueDate)} - about 7 days away. Review your whelping plan.`,
+              milestoneKey: 'whelping-7d',
+              reminderWindowDays: 7,
+              sourceKind: 'litter',
+              litterId: litter.id,
+            })
+          } else if (daysUntil <= 1 && daysUntil >= 0) {
+            await upsertBreedingReminderAndSms({
+              cycleId: litter.id,
+              eventType: 'whelping',
+              dueDate: litter.expectedDueDate,
+              title: `Expected whelping — ${formatDate(litter.expectedDueDate)}`,
+              message: `iDogs: ${dog.name} expected whelping date is ${formatDate(litter.expectedDueDate)}. Please review your whelping plan today.`,
+              milestoneKey: 'whelping-1d',
+              reminderWindowDays: 1,
+              sourceKind: 'litter',
+              litterId: litter.id,
+            })
+          }
+        }
+        const hasCanonicalLitterWhelping = activeWhelpingLitters.length > 0
+
+        for (const cycleDoc of cyclesSnap.docs) {
+          const cycle = cycleDoc.data()
+          const cycleId = cycleDoc.id
+
+          if (cycle.matingDate) {
+            await upsertBreedingReminderAndSms({
+              cycleId,
+              eventType: 'mating',
+              dueDate: cycle.matingDate,
+              title: `Mating reminder — ${formatDate(cycle.matingDate)}`,
+              message: `iDogs: ${dog.name} mating reminder for ${formatDate(cycle.matingDate)}. Check the breeding plan in iDogs.`,
+              milestoneKey: 'mating',
+            })
+          }
+
+          if (!cycle.pregnancyConfirmed && cycle.matingDate) {
+            const pregnancyDate = cycle.ultrasoundDate || addDays(cycle.matingDate, 28)
+            const estimated = !cycle.ultrasoundDate
+            await upsertBreedingReminderAndSms({
+              cycleId,
+              eventType: 'pregnancy',
+              dueDate: pregnancyDate,
+              title: `${estimated ? 'Estimated ' : ''}pregnancy check — ${formatDate(pregnancyDate)}`,
+              message: `iDogs: ${dog.name} ${estimated ? 'estimated ' : ''}pregnancy check is due ${formatDate(pregnancyDate)}. Review the breeding plan in iDogs.`,
+              milestoneKey: estimated ? 'pregnancy-estimated-day28' : 'pregnancy-check',
+            })
+          }
+
+          if (!hasCanonicalLitterWhelping && cycle.whelpingEstimate && !cycle.whelpingActual) {
+            const due = new Date(cycle.whelpingEstimate)
+            const daysUntil = Math.ceil((due - today) / (1000 * 60 * 60 * 24))
+            if (daysUntil <= 7 && daysUntil > 1) {
+              await upsertBreedingReminderAndSms({
+                cycleId,
+                eventType: 'whelping',
+                dueDate: cycle.whelpingEstimate,
+                title: `Expected whelping — ${formatDate(cycle.whelpingEstimate)}`,
+                message: `iDogs: ${dog.name} expected whelping date is ${formatDate(cycle.whelpingEstimate)} - about 7 days away. Review your whelping plan.`,
+                milestoneKey: 'whelping-7d',
+                reminderWindowDays: 7,
+              })
+            } else if (daysUntil <= 1 && daysUntil >= 0) {
+              await upsertBreedingReminderAndSms({
+                cycleId,
+                eventType: 'whelping',
+                dueDate: cycle.whelpingEstimate,
+                title: `Expected whelping — ${formatDate(cycle.whelpingEstimate)}`,
+                message: `iDogs: ${dog.name} expected whelping date is ${formatDate(cycle.whelpingEstimate)}. Please review your whelping plan today.`,
+                milestoneKey: 'whelping-1d',
+                reminderWindowDays: 1,
+              })
             }
           }
         }
@@ -483,13 +816,23 @@ export default async function handler(req, res) {
                   }
                 }
 
-                if (hasSmsAddon && phone) {
+                if (phone) {
                   try {
-                    const e164 = phone.replace(/\s/g, '').replace(/^0/, '+61')
-                    await sendSMS(e164, `🌸 iDogs: ${dog.name}'s Heat ${heatNum} expected ${dueLabel}. ${isFirstHeat ? 'Skip first heat (Dogs SA rule).' : isEligible ? '✓ Eligible to breed.' : `Not eligible yet — ${minBreedingMonths}mo min.`}`)
-                    smsSent++
-                  } catch (e) {
-                    console.error('Heat SMS error:', e)
+                    const heatDateIso = heatDate.toISOString().split('T')[0]
+                    const smsResult = await sendReminderSms({
+                      tenantId,
+                      phone,
+                      message: `iDogs: ${dog.name} heat cycle expected ${formatDate(heatDateIso)}. Review her breeding record and prepare if needed.`,
+                      dogId: dog.id,
+                      eventType: 'heat_cycle',
+                      sourceRecordId: `predicted-cycle-${heatNum}`,
+                      milestoneKey: heatDateIso,
+                      idempotencyKey: `heat_cycle:${tenantId}:${dog.id}:cycle${heatNum}:${heatDateIso}`,
+                      now: today,
+                    })
+                    if (smsResult.sent) smsSent++
+                  } catch {
+                    console.error('Heat SMS error')
                   }
                 }
 

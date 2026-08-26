@@ -2,10 +2,9 @@ import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
-import { createBillingSummaryHandler } from './_lib/billing-handler.js'
+import { createSmsAddonRemoveHandler } from './_lib/sms-checkout-handler.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
-
 if (!getApps().length) {
   initializeApp({
     credential: cert({
@@ -15,16 +14,14 @@ if (!getApps().length) {
     }),
   })
 }
-
 const db = getFirestore()
 
-export default createBillingSummaryHandler({
+export default createSmsAddonRemoveHandler({
   verifyIdToken: token => getAuth().verifyIdToken(token),
   getProfile: async uid => {
     const snap = await db.collection('users').doc(uid).get()
     return snap.exists ? snap.data() : null
   },
   retrieveSubscription: id => stripe.subscriptions.retrieve(id, { expand: ['items.data.price'] }),
-  listInvoices: params => stripe.invoices.list(params),
-  isSmsConfigured: () => Boolean(process.env.STRIPE_SMS_ADDON_PRICE_ID),
+  updateSubscription: (id, params) => stripe.subscriptions.update(id, params),
 })
