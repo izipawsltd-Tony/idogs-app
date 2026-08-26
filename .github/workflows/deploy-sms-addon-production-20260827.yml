@@ -1,0 +1,71 @@
+name: Deploy approved SMS Add-on release to production
+
+on:
+  push:
+    branches:
+      - ops/deploy-sms-addon-production-20260827
+    paths:
+      - .github/workflows/deploy-sms-addon-production-20260827.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact approved production SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 18e85aa71092f301c7c97fd4be0e5c0b28ba9f05
+          fetch-depth: 0
+
+      - name: Fail closed on source drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED='18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
+          git fetch origin master
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test "$(git rev-parse origin/master)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          echo "Deploying exact SHA $EXPECTED"
+
+      - name: Verify Vercel token is available
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+
+      - name: Link exact production project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull production project settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Build exact production release
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Re-verify source remains clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy prebuilt artifact to production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
