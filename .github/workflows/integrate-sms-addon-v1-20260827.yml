@@ -1,0 +1,96 @@
+name: Integrate SMS Add-on V1 into current master
+
+on:
+  push:
+    branches:
+      - ops/integrate-sms-addon-v1-20260827
+    paths:
+      - .github/workflows/integrate-sms-addon-v1-20260827.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify exact refs and cherry-pick SMS-only commit range
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_MASTER='8c4b715579ebaee5ce48d7869e8de833ff3463f3'
+          EXPECTED_FEATURE='b8a0d85371ce90fcdf6e197f6ff5a7b9748b7abf'
+          EXPECTED_BASELINE='42bd976dc89e881206f0738b1051897479b55258'
+          INTEGRATION_BRANCH='integration/sms-addon-v1-master-20260827'
+
+          git fetch origin master feature/sms-addon-v1 baseline/live-42bd-sms-clean "$INTEGRATION_BRANCH"
+
+          test "$(git rev-parse origin/master)" = "$EXPECTED_MASTER"
+          test "$(git rev-parse origin/feature/sms-addon-v1)" = "$EXPECTED_FEATURE"
+          test "$(git rev-parse origin/baseline/live-42bd-sms-clean)" = "$EXPECTED_BASELINE"
+          test "$(git rev-parse origin/$INTEGRATION_BRANCH)" = "$EXPECTED_MASTER"
+
+          test "$(git merge-base origin/baseline/live-42bd-sms-clean origin/feature/sms-addon-v1)" = "$EXPECTED_BASELINE"
+
+          mapfile -t COMMITS < <(git rev-list --reverse origin/baseline/live-42bd-sms-clean..origin/feature/sms-addon-v1)
+          echo "SMS commits to cherry-pick: ${#COMMITS[@]}"
+          test "${#COMMITS[@]}" -eq 49
+
+          git checkout -B "$INTEGRATION_BRANCH" "origin/$INTEGRATION_BRANCH"
+          git config user.name 'izipawsltd-Tony'
+          git config user.email 'izipawsltd@gmail.com'
+
+          for sha in "${COMMITS[@]}"; do
+            echo "Cherry-picking $sha"
+            if ! git cherry-pick "$sha"; then
+              echo 'Cherry-pick conflict detected; aborting without push.'
+              git status --short
+              git cherry-pick --abort || true
+              exit 1
+            fi
+          done
+
+          echo "INTEGRATION_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log --oneline --decorate -12
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: SMS regression
+        run: node scripts/test-sms-addon-v1.mjs
+
+      - name: Webhook regression
+        run: node scripts/test-webhook-handler.mjs
+
+      - name: Billing payment regression
+        run: node scripts/test-billing-payments-phase1.mjs
+
+      - name: Billing security regression
+        run: node scripts/test-billing-p0-security.mjs
+
+      - name: Billing navigation regression
+        run: node scripts/test-billing-navigation.mjs
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify diff scope against current master
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Changed files vs current master:'
+          git diff --name-status 8c4b715579ebaee5ce48d7869e8de833ff3463f3..HEAD
+          test -z "$(git diff --name-only 8c4b715579ebaee5ce48d7869e8de833ff3463f3..HEAD | grep -E '^(api/_lib/puppy-share-grants\.js|api/create-puppy-share-grant\.js|api/list-puppy-share-grants\.js|api/manage-puppy-share-grant\.js|api/puppy-share-view\.js|src/pages/PuppySharePublicPage\.tsx)$' || true)"
+
+      - name: Push integration branch only after all checks pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:integration/sms-addon-v1-master-20260827
+          echo "Pushed integration SHA: $(git rev-parse HEAD)"
