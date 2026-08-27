@@ -1,0 +1,60 @@
+name: Promote landing pricing to stable staging
+
+on:
+  push:
+    branches:
+      - ops/promote-landing-pricing-staging-20260827
+    paths:
+      - .github/workflows/promote-landing-pricing-staging-20260827.yml
+
+permissions:
+  contents: read
+
+jobs:
+  promote-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact approved product SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 4aa6e4b0ef7156efc0711d91eff3c824484beb59
+          fetch-depth: 0
+
+      - name: Fail closed on exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '4aa6e4b0ef7156efc0711d91eff3c824484beb59'
+          test -z "$(git status --porcelain)"
+          test "$(grep -c '20 SMS credits / month' src/pages/LandingPage.tsx)" -eq 1
+          test "$(grep -c 'Resets each billing month.' src/pages/LandingPage.tsx)" -eq 1
+          test "$(grep -c 'href=\"#pricing\"' src/pages/LandingPage.tsx)" -ge 3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Link exact staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+          grep -q 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o' .vercel/project.json
+          grep -q 'idogs-app-staging' .vercel/project.json
+
+      - name: Promote exact source to stable staging
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          test "$(git rev-parse HEAD)" = '4aa6e4b0ef7156efc0711d91eff3c824484beb59'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+          echo 'Stable staging only: project idogs-app-staging. Production idogs-app not touched.'
