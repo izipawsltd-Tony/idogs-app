@@ -1,0 +1,64 @@
+name: Configure live SMS price env
+
+on:
+  push:
+    branches:
+      - ops/configure-live-sms-price-prod-20260827
+    paths:
+      - .github/workflows/configure-live-sms-price-prod-20260827.yml
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact master baseline
+        uses: actions/checkout@v4
+        with:
+          ref: 18e85aa71092f301c7c97fd4be0e5c0b28ba9f05
+          fetch-depth: 0
+
+      - name: Fail closed on exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "18e85aa71092f301c7c97fd4be0e5c0b28ba9f05"
+          test -z "$(git status --porcelain)"
+
+      - name: Link exact production project only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+          grep -F '"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo"' .vercel/project.json >/dev/null
+          grep -F '"projectName":"idogs-app"' .vercel/project.json >/dev/null
+
+      - name: Configure exact live SMS price in production env
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          SMS_PRICE_ID: price_1TxMJ8GHgBd6ZgJEinCDSAGx
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SMS_PRICE_ID" | npx --yes vercel@latest env add STRIPE_SMS_ADDON_PRICE_ID production --force --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Verify production env key exists on exact project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$(npx --yes vercel@latest env ls production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects)"
+          printf '%s\n' "$OUT"
+          grep -F 'STRIPE_SMS_ADDON_PRICE_ID' <<<"$OUT" >/dev/null
+
+      - name: Guard against production deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Environment configured only. No vercel deploy command is present in this workflow.'
