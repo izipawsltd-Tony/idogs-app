@@ -51,6 +51,17 @@ function mapInvoice(invoice) {
   }
 }
 
+function classifyPortalFailure(error) {
+  const status = Number.isInteger(error?.statusCode) ? error.statusCode : Number.isInteger(error?.status) ? error.status : null
+  const code = typeof error?.code === 'string' ? error.code : ''
+  const type = typeof error?.type === 'string' ? error.type : ''
+  if (status === 403 || type === 'StripePermissionError') return { httpStatus: 521, diagnosticCode: 'PORTAL_PERMISSION_DENIED' }
+  if (status === 404 || code === 'resource_missing') return { httpStatus: 522, diagnosticCode: 'PORTAL_RESOURCE_MISSING' }
+  if (status === 400 || type === 'StripeInvalidRequestError') return { httpStatus: 523, diagnosticCode: 'PORTAL_INVALID_REQUEST' }
+  if (status === 401 || type === 'StripeAuthenticationError') return { httpStatus: 524, diagnosticCode: 'PORTAL_AUTHENTICATION_FAILED' }
+  return { httpStatus: 525, diagnosticCode: 'PORTAL_PROVIDER_FAILED' }
+}
+
 export function createBillingSummaryHandler({
   verifyIdToken,
   getProfile,
@@ -136,13 +147,14 @@ export function createBillingPortalHandler({
     } catch (error) {
       if (error?.message === 'Portal URL missing') {
         logSanitizedError('billing-portal', 'PORTAL_URL_MISSING')
-      } else {
-        logSanitizedError('billing-portal', 'PORTAL_SESSION_FAILED', {
-          message: typeof error?.message === 'string' ? error.message : undefined,
-          code: typeof error?.code === 'string' ? error.code : undefined,
-        })
+        return res.status(525).json({ error: 'Failed to open billing portal', diagnosticCode: 'PORTAL_URL_MISSING' })
       }
-      return res.status(500).json({ error: 'Failed to open billing portal' })
+      const failure = classifyPortalFailure(error)
+      logSanitizedError('billing-portal', failure.diagnosticCode, {
+        message: typeof error?.message === 'string' ? error.message : undefined,
+        code: typeof error?.code === 'string' ? error.code : undefined,
+      })
+      return res.status(failure.httpStatus).json({ error: 'Failed to open billing portal', diagnosticCode: failure.diagnosticCode })
     }
   }
 }
