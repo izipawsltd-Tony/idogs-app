@@ -137,7 +137,10 @@ export function createBillingPortalHandler({
       if (error?.message === 'Portal URL missing') {
         logSanitizedError('billing-portal', 'PORTAL_URL_MISSING')
       } else {
-        logSanitizedError('billing-portal', 'PORTAL_SESSION_FAILED')
+        logSanitizedError('billing-portal', 'PORTAL_SESSION_FAILED', {
+          message: typeof error?.message === 'string' ? error.message : undefined,
+          code: typeof error?.code === 'string' ? error.code : undefined,
+        })
       }
       return res.status(500).json({ error: 'Failed to open billing portal' })
     }
