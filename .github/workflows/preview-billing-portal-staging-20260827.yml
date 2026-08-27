@@ -17,14 +17,14 @@ jobs:
       - name: Checkout exact diagnostic SHA
         uses: actions/checkout@v4
         with:
-          ref: f7b27feafb697282d34e1e93854673a945a01358
+          ref: 3e8556f60555cdc29a12aa50d89bc26bcf7783e3
           fetch-depth: 0
 
       - name: Fail closed on exact source
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 'f7b27feafb697282d34e1e93854673a945a01358'
+          test "$(git rev-parse HEAD)" = '3e8556f60555cdc29a12aa50d89bc26bcf7783e3'
           test -z "$(git status --porcelain)"
 
       - name: Install dependencies
@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED='f7b27feafb697282d34e1e93854673a945a01358'
+          EXPECTED='3e8556f60555cdc29a12aa50d89bc26bcf7783e3'
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           test -z "$(git diff --cached --name-only)"
           mapfile -t changed < <(git diff --name-only)
