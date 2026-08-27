@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createBillingPortalHandler, createBillingSummaryHandler } from '../api/_lib/billing-handler.js'
+import { createBillingPortalHandler, createBillingSummaryHandler, resolveBillingReturnOrigin } from '../api/_lib/billing-handler.js'
 
 function response() {
   return {
@@ -115,6 +115,56 @@ assert.deepEqual(capturedPortalParams, {
   return_url: 'https://idogs-app-staging.vercel.app/app/billing',
 }, 'portal customer comes from server profile and returns to Billing')
 
+assert.equal(
+  resolveBillingReturnOrigin(() => null, {
+    VERCEL_ENV: 'preview',
+    FIREBASE_PROJECT_ID: 'idogs-app-staging',
+    VERCEL_URL: 'idogs-app-staging-abc123-izipawsltd-tonys-projects.vercel.app',
+  }),
+  'https://idogs-app-staging-abc123-izipawsltd-tonys-projects.vercel.app',
+  'verified staging Preview host is accepted only as a fallback return origin',
+)
+assert.equal(
+  resolveBillingReturnOrigin(() => null, {
+    VERCEL_ENV: 'preview',
+    FIREBASE_PROJECT_ID: 'idogs-app-staging',
+    VERCEL_URL: 'evil-example.vercel.app',
+  }),
+  null,
+  'arbitrary Preview-like hosts fail closed',
+)
+assert.equal(
+  resolveBillingReturnOrigin(() => null, {
+    VERCEL_ENV: 'production',
+    FIREBASE_PROJECT_ID: 'idogs-app-staging',
+    VERCEL_URL: 'idogs-app-staging-abc123-izipawsltd-tonys-projects.vercel.app',
+  }),
+  null,
+  'Preview fallback is never enabled for stable staging or production targets',
+)
+
+capturedPortalParams = null
+const previewPortal = createBillingPortalHandler({
+  verifyIdToken: auth,
+  getProfile: async () => ({ stripeCustomerId: 'cus_1' }),
+  createPortalSession: async params => {
+    capturedPortalParams = params
+    return { url: 'https://billing.stripe.com/session/preview' }
+  },
+  getAppUrl: () => null,
+  env: {
+    VERCEL_ENV: 'preview',
+    FIREBASE_PROJECT_ID: 'idogs-app-staging',
+    VERCEL_URL: 'idogs-app-staging-abc123-izipawsltd-tonys-projects.vercel.app',
+  },
+})
+res = await run(previewPortal, { method: 'POST', headers: { authorization: 'Bearer valid' } })
+assert.equal(res.statusCode, 200, 'Preview portal works when APP_URL is unavailable but Vercel identity is verified')
+assert.deepEqual(capturedPortalParams, {
+  customer: 'cus_1',
+  return_url: 'https://idogs-app-staging-abc123-izipawsltd-tonys-projects.vercel.app/app/billing',
+})
+
 const noCustomerPortal = createBillingPortalHandler({
   verifyIdToken: auth,
   getProfile: async () => ({ plan: 'free' }),
@@ -124,4 +174,4 @@ const noCustomerPortal = createBillingPortalHandler({
 res = await run(noCustomerPortal, { method: 'POST', headers: { authorization: 'Bearer valid' } })
 assert.equal(res.statusCode, 409, 'portal is unavailable without a linked Stripe customer')
 
-console.log('Billing & Payments Phase 1: 11/11 PASS')
+console.log('Billing & Payments Phase 1: 15/15 PASS')
