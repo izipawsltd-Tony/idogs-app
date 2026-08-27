@@ -338,7 +338,9 @@ await check('Remove SMS add-on is idempotency-safe when the SMS item is already 
   })
   const res=fakeRes()
   await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
-  assert.equal(res.statusCode,409)
+  assert.equal(res.statusCode,200)
+  assert.equal(res.body.success,true)
+  assert.equal(res.body.status,'already_removed')
   assert.equal(updated,false)
 })
 
