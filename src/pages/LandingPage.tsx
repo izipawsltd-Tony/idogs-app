@@ -281,7 +281,7 @@ export default function LandingPage() {
                 <h3>SMS Reminders</h3>
                 <p className="pricing-price"><span>+A$3</span><small>/month</small></p>
                 <p className="pricing-copy">Add SMS reminders to Plus when you need them.</p>
-                <div className="sms-credit"><strong>20 SMS credits</strong><span>included each month</span></div>
+                <div className="sms-credit"><strong>20 SMS credits / month</strong><span>Resets each billing month.</span></div>
               </article>
             </div>
             <p className="pricing-footnote">Less than the cost of a coffee each month.</p>
