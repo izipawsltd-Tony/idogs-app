@@ -1,0 +1,107 @@
+name: Build iDogs Scan landing Preview
+
+on:
+  push:
+    branches:
+      - feature/landing-idogs-scan-20260827
+    paths:
+      - .github/workflows/landing-idogs-scan-preview-20260827.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/landing-idogs-scan-20260827
+          fetch-depth: 0
+
+      - name: Fail closed on exact stable staging baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='4aa6e4b0ef7156efc0711d91eff3c824484beb59'
+          WF='.github/workflows/landing-idogs-scan-preview-20260827.yml'
+          test "$(git rev-parse HEAD^)" = "$BASE"
+          mapfile -t changed < <(git diff --name-only "$BASE"..HEAD)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = "$WF"
+
+      - name: Rename AI Scan label to iDogs Scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('src/pages/LandingPage.tsx')
+          s = p.read_text()
+          old = '<span className="tag">AI Scan lives here</span>'
+          new = '<span className="tag">iDogs SCAN LIVES HERE</span>'
+          count = s.count(old)
+          if count != 1:
+              raise SystemExit(f'expected exactly 1 AI Scan label, got {count}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          rm .github/workflows/landing-idogs-scan-preview-20260827.yml
+          grep -q 'iDogs SCAN LIVES HERE' src/pages/LandingPage.tsx
+          ! grep -q '<span className="tag">AI Scan lives here</span>' src/pages/LandingPage.tsx
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and focused regression check
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          test "$(grep -c 'iDogs SCAN LIVES HERE' src/pages/LandingPage.tsx)" -eq 1
+          test "$(grep -c '20 SMS credits / month' src/pages/LandingPage.tsx)" -eq 1
+          test "$(grep -c 'href=\"#pricing\"' src/pages/LandingPage.tsx)" -ge 3
+
+      - name: Commit exact product change and verify tree
+        id: product
+        shell: bash
+        env:
+          BASE: 4aa6e4b0ef7156efc0711d91eff3c824484beb59
+        run: |
+          set -euo pipefail
+          git config user.name 'izipawsltd-Tony'
+          git config user.email 'izipawsltd@gmail.com'
+          git add -A
+          git commit -m 'copy(landing): rename AI Scan label to iDogs SCAN'
+          PRODUCT_SHA="$(git rev-parse HEAD)"
+          echo "sha=$PRODUCT_SHA" >> "$GITHUB_OUTPUT"
+          mapfile -t net_changed < <(git diff --name-only "$BASE"..HEAD)
+          test "${#net_changed[@]}" -eq 1
+          test "${net_changed[0]}" = 'src/pages/LandingPage.tsx'
+          test -z "$(git status --porcelain)"
+          git push origin HEAD:feature/landing-idogs-scan-20260827
+          echo "Exact product SHA: $PRODUCT_SHA"
+
+      - name: Link exact staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+          grep -q 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o' .vercel/project.json
+          grep -q 'idogs-app-staging' .vercel/project.json
+
+      - name: Deploy exact product SHA to Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          EXPECTED='${{ steps.product.outputs.sha }}'
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects | tee /tmp/vercel-preview.log
+          echo 'Preview only: no --prod and no stable alias promotion.'
