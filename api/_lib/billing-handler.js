@@ -62,6 +62,19 @@ function classifyPortalFailure(error) {
   return { httpStatus: 525, diagnosticCode: 'PORTAL_PROVIDER_FAILED' }
 }
 
+function verifiedPreviewOrigin(env = process.env) {
+  if (env.VERCEL_ENV !== 'preview') return null
+  if (env.FIREBASE_PROJECT_ID !== 'idogs-app-staging') return null
+  const host = typeof env.VERCEL_URL === 'string' ? env.VERCEL_URL.trim().toLowerCase() : ''
+  if (!host) return null
+  if (!/^idogs-app-staging-[a-z0-9-]+-izipawsltd-tonys-projects\.vercel\.app$/.test(host)) return null
+  return `https://${host}`
+}
+
+export function resolveBillingReturnOrigin(getAppUrl = requireAppUrl, env = process.env) {
+  return getAppUrl() || verifiedPreviewOrigin(env)
+}
+
 export function createBillingSummaryHandler({
   verifyIdToken,
   getProfile,
@@ -123,6 +136,7 @@ export function createBillingPortalHandler({
   getProfile,
   createPortalSession,
   getAppUrl = requireAppUrl,
+  env = process.env,
 } = {}) {
   return async function billingPortalHandler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -130,7 +144,7 @@ export function createBillingPortalHandler({
     const auth = await authenticate(req, verifyIdToken)
     if (auth.error) return res.status(auth.error.status).json(auth.error.body)
 
-    const appUrl = getAppUrl()
+    const appUrl = resolveBillingReturnOrigin(getAppUrl, env)
     if (!appUrl) return res.status(500).json({ error: 'APP_URL not configured' })
 
     try {
