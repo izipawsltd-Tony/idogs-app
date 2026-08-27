@@ -1,0 +1,99 @@
+name: Prepare production-safe Stripe price routing fix
+
+on:
+  push:
+    branches:
+      - fix/sms-production-price-routing-20260827
+    paths:
+      - .github/workflows/fix-sms-production-price-routing-20260827.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/sms-production-price-routing-20260827
+          fetch-depth: 0
+
+      - name: Fail closed on branch baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = '18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
+          test -z "$(git status --porcelain)"
+
+      - name: Apply environment-safe Stripe price routing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('api/_lib/checkout-handler.js')
+          s = p.read_text()
+          old = """export const CHECKOUT_PRICE_IDS = Object.freeze({\n  plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',\n  plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',\n})\n"""
+          new = """const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({\n  plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58',\n  plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',\n})\n\nconst STAGING_CHECKOUT_PRICE_IDS = Object.freeze({\n  plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',\n  plus_annual: 'price_1TxaReGHgBd6ZgJETSXH6ICp',\n})\n\nfunction checkoutPricesForCurrentEnvironment() {\n  return process.env.VERCEL_ENV === 'preview' && process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging'\n    ? STAGING_CHECKOUT_PRICE_IDS\n    : LIVE_CHECKOUT_PRICE_IDS\n}\n\n// Keep the existing exported shape so checkout, webhook and SMS guards all\n// resolve the same allowlisted base Plus prices. Accessors deliberately\n// resolve at runtime so production can only use live prices while the\n// isolated Vercel Preview + staging Firebase environment uses test prices.\nexport const CHECKOUT_PRICE_IDS = Object.freeze({\n  get plus_monthly() { return checkoutPricesForCurrentEnvironment().plus_monthly },\n  get plus_annual() { return checkoutPricesForCurrentEnvironment().plus_annual },\n})\n"""
+          if old not in s:
+              raise SystemExit('checkout-handler expected price block not found')
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('scripts/test-billing-p0-security.mjs')
+          s = p.read_text()
+          s = s.replace("CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxaNJGHgBd6ZgJEpAhrWark'", "CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxMJ9GHgBd6ZgJEcwyahH58'", 1)
+          anchor = """check(\n  'exactly the two Plus price ids are allowlisted — no $40 launch-offer price, no legacy tiers',\n  Object.keys(CHECKOUT_PRICE_IDS).length === 2 &&\n    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxMJ9GHgBd6ZgJEcwyahH58' &&\n    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'\n)\n"""
+          extra = anchor + """\nconst originalVercelEnv = process.env.VERCEL_ENV\nconst originalFirebaseProjectId = process.env.FIREBASE_PROJECT_ID\nprocess.env.VERCEL_ENV = 'preview'\nprocess.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'\ncheck(\n  'isolated staging Preview resolves only verified iDogs test Plus prices',\n  CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxaNJGHgBd6ZgJEpAhrWark' &&\n    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxaReGHgBd6ZgJETSXH6ICp'\n)\nif (originalVercelEnv === undefined) delete process.env.VERCEL_ENV\nelse process.env.VERCEL_ENV = originalVercelEnv\nif (originalFirebaseProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID\nelse process.env.FIREBASE_PROJECT_ID = originalFirebaseProjectId\n"""
+          if anchor not in s:
+              raise SystemExit('billing security allowlist assertion block not found')
+          p.write_text(s.replace(anchor, extra, 1))
+
+          p = Path('scripts/test-sms-addon-v1.mjs')
+          s = p.read_text()
+          old_id = 'price_1TxaNJGHgBd6ZgJEpAhrWark'
+          new_id = 'price_1TxMJ9GHgBd6ZgJEcwyahH58'
+          count = s.count(old_id)
+          if count < 4:
+              raise SystemExit(f'expected >=4 SMS test Plus price literals, found {count}')
+          p.write_text(s.replace(old_id, new_id))
+          PY
+
+      - name: Verify intended diff only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          mapfile -t files < <(git diff --name-only)
+          printf 'Changed files:\n%s\n' "${files[*]}"
+          test "${#files[@]}" -eq 3
+          printf '%s\n' "${files[@]}" | sort > /tmp/actual
+          printf '%s\n' api/_lib/checkout-handler.js scripts/test-billing-p0-security.mjs scripts/test-sms-addon-v1.mjs | sort > /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run billing and SMS regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-billing-navigation.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-webhook-handler.mjs
+          npm run build
+
+      - name: Commit validated fix to branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'izipawsltd-Tony'
+          git config user.email 'izipawsltd@gmail.com'
+          git add api/_lib/checkout-handler.js scripts/test-billing-p0-security.mjs scripts/test-sms-addon-v1.mjs
+          git commit -m 'fix(billing): route live and staging Stripe prices safely'
+          git push origin HEAD:fix/sms-production-price-routing-20260827
+          echo "FIX_SHA=$(git rev-parse HEAD)"
