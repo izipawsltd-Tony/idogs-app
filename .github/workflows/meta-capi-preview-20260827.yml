@@ -1,0 +1,79 @@
+name: Meta CAPI Purchase Preview 20260827
+
+on:
+  push:
+    branches:
+      - feature/meta-capi-purchase-20260827
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/meta-capi-purchase-20260827
+          fetch-depth: 0
+
+      - name: Fail closed on production baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='e7085c35bc41e99ccbf24db640d7214fb04a78c9'
+          test "$(git rev-parse HEAD^)" = "$BASE"
+          test -z "$(git status --porcelain)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and focused billing regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          node scripts/test-meta-capi.mjs
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-sms-addon-v1.mjs
+
+      - name: Verify scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='e7085c35bc41e99ccbf24db640d7214fb04a78c9'
+          mapfile -t changed < <(git diff --name-only "$BASE"..HEAD | sort)
+          printf '%s\n' "${changed[@]}"
+          allowed=(
+            '.github/workflows/meta-capi-preview-20260827.yml'
+            'api/_lib/meta-capi.js'
+            'api/stripe-webhook.js'
+            'scripts/test-meta-capi.mjs'
+          )
+          test "${#changed[@]}" -eq "${#allowed[@]}"
+          for file in "${allowed[@]}"; do
+            printf '%s\n' "${changed[@]}" | grep -Fxq "$file"
+          done
+
+      - name: Link exact staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+          grep -q 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o' .vercel/project.json
+          grep -q 'idogs-app-staging' .vercel/project.json
+
+      - name: Deploy Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects | tee /tmp/vercel-preview.log
+          echo 'Preview only: no --prod and no stable alias promotion.'
