@@ -64,6 +64,7 @@ export default function LandingPage() {
               <a href="#features">Features</a>
               <a href="#for-owners">For Owners</a>
               <a href="#for-breeders">For Breeders</a>
+              <a href="#pricing">Pricing</a>
             </nav>
             <div className="nav-right">
               <Link className="nav-login" to="/login">Log In</Link>
@@ -92,6 +93,7 @@ export default function LandingPage() {
                 <Link className="btn btn-primary" to="/signup">Start Free</Link>
                 <a className="btn btn-ghost" href="#howitworks">See How It Works</a>
               </div>
+              <p className="price-note">Plans from A$5/month · No complicated pricing.</p>
             </div>
             {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
             <div className="hero-visual" aria-label="iDogs product preview">
@@ -252,7 +254,40 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* Pricing section intentionally absent — hidden until real prices/inclusions are verified (brief §2/§8) */}
+        <section className="block pricing-block" id="pricing">
+          <div className="wrap">
+            <p className="kicker">Simple pricing</p>
+            <h2>Everything you need, without complicated plans.</h2>
+            <p className="lead">Start free. Upgrade to iDogs Plus when you need more.</p>
+            <div className="pricing-grid">
+              <article className="pricing-card pricing-card-main">
+                <div className="pricing-card-head">
+                  <div>
+                    <p className="pricing-label">iDogs Plus</p>
+                    <p className="pricing-price"><span>A$5</span><small>/month</small></p>
+                  </div>
+                  <span className="pricing-badge">Most popular</span>
+                </div>
+                <p className="pricing-copy">Organise your dogs and breeding records in one connected workspace.</p>
+                <ul className="pricing-list">
+                  <li>Dog profiles, health records and documents</li>
+                  <li>Breeder tools for dogs, litters and puppies</li>
+                  <li>Digital Passport and QR sharing</li>
+                </ul>
+                <Link className="btn btn-primary pricing-cta" to="/signup">Start Free</Link>
+              </article>
+              <article className="pricing-card pricing-card-addon">
+                <p className="pricing-label">Optional add-on</p>
+                <h3>SMS Reminders</h3>
+                <p className="pricing-price"><span>+A$3</span><small>/month</small></p>
+                <p className="pricing-copy">Add SMS reminders to Plus when you need them.</p>
+                <div className="sms-credit"><strong>20 SMS credits</strong><span>included each month</span></div>
+              </article>
+            </div>
+            <p className="pricing-footnote">Less than the cost of a coffee each month.</p>
+          </div>
+        </section>
+
         {/* FAQ section intentionally absent — no answer verified against the real product yet (brief §13) */}
 
         <section className="final">
@@ -277,6 +312,7 @@ export default function LandingPage() {
                   <a href="#features">Features</a>
                   <a href="#for-owners">For Owners</a>
                   <a href="#for-breeders">For Breeders</a>
+                  <a href="#pricing">Pricing</a>
                 </div>
                 <div className="foot-col">
                   <h5>Account</h5>
@@ -355,6 +391,7 @@ function MobileMenu({ onClose }: { onClose: () => void }) {
         <a href="#features" onClick={onClose}>Features</a>
         <a href="#for-owners" onClick={onClose}>For Owners</a>
         <a href="#for-breeders" onClick={onClose}>For Breeders</a>
+        <a href="#pricing" onClick={onClose}>Pricing</a>
         <Link to="/login" style={{ border: 'none' }} onClick={onClose}>Log In</Link>
         <Link className="btn btn-primary" to="/signup" onClick={onClose}>Start Free</Link>
       </div>
@@ -460,6 +497,34 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
 // `.lv2-page .btn-primary` (two classes) always outranks a bare
 // `.btn-primary` (one class) in specificity regardless of source order.
 const LV2_CSS = `
+
+  .lv2-page .price-note { margin:14px 0 0; color:var(--on-forest-soft); font-size:13px; font-weight:650; }
+  .lv2-page .pricing-block { scroll-margin-top:76px; }
+  .lv2-page .pricing-grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:22px; margin-top:34px; align-items:stretch; }
+  .lv2-page .pricing-card { border:1px solid var(--line); border-radius:var(--radius); padding:30px; background:#fffdf8; box-shadow:0 16px 38px rgba(20,35,31,.07); }
+  .lv2-page .pricing-card-main { border-color:rgba(192,138,45,.6); }
+  .lv2-page .pricing-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
+  .lv2-page .pricing-label { margin:0 0 6px; color:var(--ink-soft); font-size:13px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; }
+  .lv2-page .pricing-price { display:flex; align-items:baseline; gap:6px; margin:0 0 16px; }
+  .lv2-page .pricing-price span { font-family:'Fraunces','Georgia',serif; font-size:46px; font-weight:650; line-height:1; color:var(--forest); }
+  .lv2-page .pricing-price small { color:var(--ink-soft); font-size:14px; font-weight:650; }
+  .lv2-page .pricing-badge { flex:0 0 auto; border-radius:999px; background:rgba(192,138,45,.14); color:var(--brass-lo); padding:7px 10px; font-size:12px; font-weight:800; }
+  .lv2-page .pricing-copy { margin:0 0 18px; color:var(--ink-soft); max-width:56ch; }
+  .lv2-page .pricing-list { list-style:none; padding:0; margin:0 0 24px; display:grid; gap:10px; }
+  .lv2-page .pricing-list li { position:relative; padding-left:25px; }
+  .lv2-page .pricing-list li::before { content:'✓'; position:absolute; left:0; color:var(--brass-lo); font-weight:900; }
+  .lv2-page .pricing-cta { padding:11px 22px; }
+  .lv2-page .pricing-card-addon h3 { margin:2px 0 14px; font-size:30px; }
+  .lv2-page .sms-credit { display:flex; flex-direction:column; gap:2px; padding:16px 18px; border-radius:12px; background:var(--bone); border:1px solid var(--line); }
+  .lv2-page .sms-credit strong { color:var(--forest); font-size:18px; }
+  .lv2-page .sms-credit span { color:var(--ink-soft); font-size:13px; }
+  .lv2-page .pricing-footnote { margin:18px 0 0; text-align:center; color:var(--ink-soft); font-size:13px; }
+  @media (max-width: 760px) {
+    .lv2-page .pricing-grid { grid-template-columns:1fr; }
+    .lv2-page .pricing-card { padding:24px; }
+    .lv2-page .pricing-card-head { flex-direction:column; gap:8px; }
+    .lv2-page .pricing-price span { font-size:42px; }
+  }
   .lv2-page {
     --forest:#16302B; --forest-2:#21453D; --bone:#F5F1E8; --bone-2:#EAE3D3;
     --brass:#C08A2D; --brass-lo:#9C6E1F;
