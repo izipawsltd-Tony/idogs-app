@@ -21,7 +21,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "e7085c35bc41e99ccbf24db640d7214fb04a78c9"
           test -z "$(git status --porcelain)"
-          grep -Fq 'iDogs SCAN lives here' src/pages/LandingPage.tsx
+          grep -Fq 'iDogs SCAN LIVES HERE' src/pages/LandingPage.tsx
           if grep -Fq 'AI Scan lives here' src/pages/LandingPage.tsx; then
             echo 'Old AI Scan label still present'
             exit 1
