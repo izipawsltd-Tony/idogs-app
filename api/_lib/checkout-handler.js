@@ -20,15 +20,20 @@ const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
 })
 
 function checkoutPricesForCurrentEnvironment() {
-  return process.env.VERCEL_ENV === 'preview' && process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+  // Route prices by Firebase project identity, not Vercel target. The stable
+  // staging alias is deployed with `vercel --prod` inside the staging Vercel
+  // project, so VERCEL_ENV is "production" there even though it must still
+  // use the isolated iDogs TEST Stripe prices. Production Firebase continues
+  // to resolve only LIVE prices.
+  return process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
     ? STAGING_CHECKOUT_PRICE_IDS
     : LIVE_CHECKOUT_PRICE_IDS
 }
 
 // Keep the existing exported shape so checkout, webhook and SMS guards all
 // resolve the same allowlisted base Plus prices. Accessors deliberately
-// resolve at runtime so production can only use live prices while the
-// isolated Vercel Preview + staging Firebase environment uses test prices.
+// resolve at runtime so staging Firebase always uses test prices while the
+// production Firebase project uses live prices.
 export const CHECKOUT_PRICE_IDS = Object.freeze({
   get plus_monthly() { return checkoutPricesForCurrentEnvironment().plus_monthly },
   get plus_annual() { return checkoutPricesForCurrentEnvironment().plus_annual },
