@@ -9,9 +9,29 @@ import { logSanitizedError } from './http-helpers.js'
 // "Trạng thái production"), never selectable through this endpoint again.
 // The $40 launch-offer price mentioned in §1.1 of the record is explicitly
 // NOT implemented per this round's scope.
-export const CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',
+const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
+  plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58',
   plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
+})
+
+const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
+  plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',
+  plus_annual: 'price_1TxaReGHgBd6ZgJETSXH6ICp',
+})
+
+function checkoutPricesForCurrentEnvironment() {
+  return process.env.VERCEL_ENV === 'preview' && process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+    ? STAGING_CHECKOUT_PRICE_IDS
+    : LIVE_CHECKOUT_PRICE_IDS
+}
+
+// Keep the existing exported shape so checkout, webhook and SMS guards all
+// resolve the same allowlisted base Plus prices. Accessors deliberately
+// resolve at runtime so production can only use live prices while the
+// isolated Vercel Preview + staging Firebase environment uses test prices.
+export const CHECKOUT_PRICE_IDS = Object.freeze({
+  get plus_monthly() { return checkoutPricesForCurrentEnvironment().plus_monthly },
+  get plus_annual() { return checkoutPricesForCurrentEnvironment().plus_annual },
 })
 
 // Both keys resolve to the same entitlement — Plus. The billing interval

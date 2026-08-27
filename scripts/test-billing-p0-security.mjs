@@ -100,9 +100,23 @@ for (const legacyPlan of ['basic', 'pro', 'kennel', 'sms_addon', 'starter']) {
 check(
   'exactly the two Plus price ids are allowlisted — no $40 launch-offer price, no legacy tiers',
   Object.keys(CHECKOUT_PRICE_IDS).length === 2 &&
-    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxaNJGHgBd6ZgJEpAhrWark' &&
+    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxMJ9GHgBd6ZgJEcwyahH58' &&
     CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'
 )
+
+const originalVercelEnv = process.env.VERCEL_ENV
+const originalFirebaseProjectId = process.env.FIREBASE_PROJECT_ID
+process.env.VERCEL_ENV = 'preview'
+process.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'
+check(
+  'isolated staging Preview resolves only verified iDogs test Plus prices',
+  CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxaNJGHgBd6ZgJEpAhrWark' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxaReGHgBd6ZgJETSXH6ICp'
+)
+if (originalVercelEnv === undefined) delete process.env.VERCEL_ENV
+else process.env.VERCEL_ENV = originalVercelEnv
+if (originalFirebaseProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID
+else process.env.FIREBASE_PROJECT_ID = originalFirebaseProjectId
 
 await checkAsync('authenticated Checkout (monthly) uses only server-derived customer and metadata identity, and grants no trial', async () => {
   const route = makeRoute()

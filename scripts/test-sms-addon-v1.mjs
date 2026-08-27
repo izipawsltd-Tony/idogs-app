@@ -265,7 +265,7 @@ await check('SMS add-on mutates only verified existing Plus subscription', async
     retrieveSubscription:async()=>({
       id:'sub_1',
       customer:'cus_1',
-      items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]},
+      items:{data:[{id:'si_plus',price:{id:'price_1TxMJ9GHgBd6ZgJEcwyahH58'}}]},
     }),
     updateSubscription:async(id,params)=>{
       called={id,params}
@@ -290,7 +290,7 @@ await check('pending SMS payment returns hosted invoice when Stripe provides one
     retrieveSubscription:async()=>({
       id:'sub_1',
       customer:'cus_1',
-      items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]},
+      items:{data:[{id:'si_plus',price:{id:'price_1TxMJ9GHgBd6ZgJEcwyahH58'}}]},
     }),
     updateSubscription:async()=>({
       id:'sub_1',
@@ -313,7 +313,7 @@ await check('Remove SMS add-on deletes only the verified SMS subscription item a
     verifyIdToken:async()=>({uid:'u1'}),
     getProfile:async()=>({plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'}),
     retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',items:{data:[
-      {id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}},
+      {id:'si_plus',price:{id:'price_1TxMJ9GHgBd6ZgJEcwyahH58'}},
       {id:'si_sms',price:{id:'price_sms'}},
     ]}}),
     updateSubscription:async(id,params)=>{ called={id,params}; return {id} },
@@ -332,7 +332,7 @@ await check('Remove SMS add-on is idempotency-safe when the SMS item is already 
   const handler=createSmsAddonRemoveHandler({
     verifyIdToken:async()=>({uid:'u1'}),
     getProfile:async()=>({plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'}),
-    retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]}}),
+    retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',items:{data:[{id:'si_plus',price:{id:'price_1TxMJ9GHgBd6ZgJEcwyahH58'}}]}}),
     updateSubscription:async()=>{ updated=true },
     getPriceId:()=> 'price_sms',
   })
