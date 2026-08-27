@@ -1,0 +1,136 @@
+name: Diagnose production SMS config read-only
+
+on:
+  push:
+    branches:
+      - ops/deploy-sms-addon-production-20260827
+    paths:
+      - .github/workflows/diagnose-sms-production-config-20260827.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact production release
+        uses: actions/checkout@v4
+        with:
+          ref: 18e85aa71092f301c7c97fd4be0e5c0b28ba9f05
+          fetch-depth: 0
+
+      - name: Verify exact production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED='18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
+          git fetch origin master
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test "$(git rev-parse origin/master)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          echo "SOURCE_SHA=$EXPECTED"
+
+      - name: Link exact production project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull production environment read-only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Inspect SMS and Stripe production config safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, urllib.parse, urllib.request
+          from pathlib import Path
+
+          env_path = Path('.vercel/.env.production.local')
+          if not env_path.exists():
+              raise SystemExit('FAIL: .vercel/.env.production.local not found')
+
+          env = {}
+          for raw in env_path.read_text().splitlines():
+              line = raw.strip()
+              if not line or line.startswith('#') or '=' not in line:
+                  continue
+              k, v = line.split('=', 1)
+              v = v.strip()
+              if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+                  v = v[1:-1]
+              env[k] = v
+
+          def present(name):
+              return bool(env.get(name, '').strip())
+
+          print('PROJECT=idogs-app')
+          print('ENVIRONMENT=production')
+          print('APP_URL_PRESENT=' + str(present('APP_URL')).lower())
+          print('FIREBASE_PROJECT_ID=' + (env.get('FIREBASE_PROJECT_ID','') or '<missing>'))
+          print('STRIPE_SECRET_KEY_PRESENT=' + str(present('STRIPE_SECRET_KEY')).lower())
+          key = env.get('STRIPE_SECRET_KEY','')
+          mode = 'live' if key.startswith('sk_live_') else 'test' if key.startswith('sk_test_') else 'unknown'
+          print('STRIPE_SECRET_MODE=' + mode)
+          sms_price = env.get('STRIPE_SMS_ADDON_PRICE_ID','').strip()
+          print('STRIPE_SMS_ADDON_PRICE_ID_PRESENT=' + str(bool(sms_price)).lower())
+          print('STRIPE_SMS_ADDON_PRICE_ID=' + (sms_price if re.fullmatch(r'price_[A-Za-z0-9]+', sms_price or '') else '<missing-or-invalid>'))
+          print('STRIPE_WEBHOOK_SECRET_PRESENT=' + str(present('STRIPE_WEBHOOK_SECRET')).lower())
+
+          if not key:
+              raise SystemExit(0)
+
+          def stripe_get(path):
+              req = urllib.request.Request('https://api.stripe.com' + path, headers={'Authorization': 'Bearer ' + key})
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  return json.load(r)
+
+          try:
+              acct = stripe_get('/v1/account')
+              print('STRIPE_ACCOUNT_ID=' + str(acct.get('id','<unknown>')))
+              print('STRIPE_ACCOUNT_LIVEMODE=' + str(bool(acct.get('livemode'))).lower())
+              print('STRIPE_ACCOUNT_COUNTRY=' + str(acct.get('country','<unknown>')))
+          except Exception as e:
+              print('STRIPE_ACCOUNT_LOOKUP=failed:' + type(e).__name__)
+
+          price_ids = [
+              ('PLUS_MONTHLY', 'price_1TxaNJGHgBd6ZgJEpAhrWark'),
+              ('PLUS_ANNUAL', 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'),
+          ]
+          if re.fullmatch(r'price_[A-Za-z0-9]+', sms_price or ''):
+              price_ids.append(('SMS_ADDON', sms_price))
+
+          for label, pid in price_ids:
+              try:
+                  p = stripe_get('/v1/prices/' + urllib.parse.quote(pid, safe=''))
+                  recurring = p.get('recurring') or {}
+                  print(f'{label}_PRICE_ID={pid}')
+                  print(f'{label}_ACTIVE={str(bool(p.get("active"))).lower()}')
+                  print(f'{label}_LIVEMODE={str(bool(p.get("livemode"))).lower()}')
+                  print(f'{label}_UNIT_AMOUNT={p.get("unit_amount")}')
+                  print(f'{label}_CURRENCY={p.get("currency")}')
+                  print(f'{label}_INTERVAL={recurring.get("interval")}')
+                  print(f'{label}_PRODUCT={p.get("product")}')
+              except Exception as e:
+                  print(f'{label}_LOOKUP=failed:{type(e).__name__}')
+          PY
+
+      - name: Confirm no source mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
+          CHANGED="$(git diff --name-only)"
+          if [ -n "$CHANGED" ]; then
+            echo "Unexpected tracked source changes:"
+            echo "$CHANGED"
+            exit 1
+          fi
+          echo 'READ_ONLY_DIAGNOSTIC=pass'
