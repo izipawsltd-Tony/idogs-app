@@ -183,7 +183,7 @@ export function createSmsAddonRemoveHandler({
 
       const smsItem = (subscription.items?.data || []).find(item => item?.price?.id === priceId)
       if (!smsItem?.id) {
-        return reject409(res, 'SMS_REMOVE_ALREADY_ABSENT', 'SMS add-on is already removed')
+        return res.status(200).json({ success: true, status: 'already_removed' })
       }
 
       await updateSubscription(subscription.id, {
