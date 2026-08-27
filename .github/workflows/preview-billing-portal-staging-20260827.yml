@@ -1,4 +1,4 @@
-name: Preview billing portal staging fix
+name: Promote billing portal fix to stable staging
 
 on:
   push:
@@ -11,10 +11,10 @@ permissions:
   contents: read
 
 jobs:
-  preview:
+  stable-staging:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact fix SHA
+      - name: Checkout exact approved fix SHA
         uses: actions/checkout@v4
         with:
           ref: 21c163d207a80081fd3587b912a0d38e6ebfd79c
@@ -24,7 +24,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = '21c163d207a80081fd3587b912a0d38e6ebfd79c'
+          EXPECTED='21c163d207a80081fd3587b912a0d38e6ebfd79c'
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
           test -z "$(git status --porcelain)"
 
       - name: Install dependencies
@@ -41,7 +42,7 @@ jobs:
           node scripts/test-webhook-handler.mjs
           npm run build
 
-      - name: Link exact staging project
+      - name: Link exact staging project only
         shell: bash
         run: |
           set -euo pipefail
@@ -50,17 +51,12 @@ jobs:
           {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
           JSON
 
-      - name: Pull Preview project settings
+      - name: Pull stable staging settings
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+        run: npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
 
-      - name: Build exact Preview release
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: npx --yes vercel@latest build --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
-
-      - name: Re-verify source and restore known lockfile side effect
+      - name: Re-verify exact source before deploy
         shell: bash
         run: |
           set -euo pipefail
@@ -71,12 +67,12 @@ jobs:
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
             git restore --source=HEAD -- package-lock.json
           elif (( ${#changed[@]} != 0 )); then
-            printf 'Unexpected tracked drift after build:\n%s\n' "${changed[@]}"
+            printf 'Unexpected tracked drift before stable staging deploy:\n%s\n' "${changed[@]}"
             exit 1
           fi
           test -z "$(git status --porcelain)"
 
-      - name: Deploy exact source to staging Preview with remote build
+      - name: Deploy exact source to stable staging
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+        run: npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
