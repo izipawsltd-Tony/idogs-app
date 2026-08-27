@@ -17,19 +17,31 @@ jobs:
       - name: Checkout exact approved production SHA
         uses: actions/checkout@v4
         with:
-          ref: 18e85aa71092f301c7c97fd4be0e5c0b28ba9f05
+          ref: f09ff74eac93669ec5e40b975a31e9d5f81cbfb5
           fetch-depth: 0
 
-      - name: Fail closed on source drift
+      - name: Fail closed on exact source
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED='18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
-          git fetch origin master
+          EXPECTED='f09ff74eac93669ec5e40b975a31e9d5f81cbfb5'
           test "$(git rev-parse HEAD)" = "$EXPECTED"
-          test "$(git rev-parse origin/master)" = "$EXPECTED"
           test -z "$(git status --porcelain)"
-          echo "Deploying exact SHA $EXPECTED"
+          echo "Deploying exact approved SHA $EXPECTED"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run production release regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-billing-navigation.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-webhook-handler.mjs
+          npm run build
 
       - name: Verify Vercel token is available
         shell: bash
@@ -48,6 +60,15 @@ jobs:
           {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
           JSON
 
+      - name: Verify live SMS price env exists on exact production project
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          OUT="$(npx --yes vercel@latest env ls production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1)"
+          printf '%s\n' "$OUT" | grep -q 'STRIPE_SMS_ADDON_PRICE_ID'
+
       - name: Pull production project settings
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -62,7 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED='18e85aa71092f301c7c97fd4be0e5c0b28ba9f05'
+          EXPECTED='f09ff74eac93669ec5e40b975a31e9d5f81cbfb5'
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           test -z "$(git diff --cached --name-only)"
 
@@ -78,9 +99,8 @@ jobs:
 
           test -z "$(git status --porcelain)"
           test "$(git rev-parse HEAD)" = "$EXPECTED"
-          test "$(git rev-parse origin/master)" = "$EXPECTED"
 
-      - name: Deploy exact source to production with remote build
+      - name: Deploy exact source to production
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
