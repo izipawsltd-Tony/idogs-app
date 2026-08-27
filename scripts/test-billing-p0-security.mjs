@@ -113,6 +113,20 @@ check(
   CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxaNJGHgBd6ZgJEpAhrWark' &&
     CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxaReGHgBd6ZgJETSXH6ICp'
 )
+process.env.VERCEL_ENV = 'production'
+process.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'
+check(
+  'stable staging production target still resolves only verified iDogs test Plus prices',
+  CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxaNJGHgBd6ZgJEpAhrWark' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxaReGHgBd6ZgJETSXH6ICp'
+)
+process.env.VERCEL_ENV = 'production'
+process.env.FIREBASE_PROJECT_ID = 'idogs-app'
+check(
+  'production Firebase resolves only verified iDogs live Plus prices',
+  CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxMJ9GHgBd6ZgJEcwyahH58' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'
+)
 if (originalVercelEnv === undefined) delete process.env.VERCEL_ENV
 else process.env.VERCEL_ENV = originalVercelEnv
 if (originalFirebaseProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID
