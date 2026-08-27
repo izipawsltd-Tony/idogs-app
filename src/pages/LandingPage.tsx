@@ -248,7 +248,7 @@ export default function LandingPage() {
             <h2>Three simple steps to keep each dog's records connected.</h2>
             <div className="steps steps-3">
               <div className="step"><div className="n">1</div><h4>Create the dog's profile</h4></div>
-              <div className="step ai-here"><div className="n">2</div><h4>Add records and documents</h4><span className="tag">AI Scan lives here</span></div>
+              <div className="step ai-here"><div className="n">2</div><h4>Add records and documents</h4><span className="tag">iDogs SCAN LIVES HERE</span></div>
               <div className="step"><div className="n">3</div><h4>Share selected information when needed</h4></div>
             </div>
           </div>
