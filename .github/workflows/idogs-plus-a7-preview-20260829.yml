@@ -1,0 +1,183 @@
+name: iDogs Plus A7 Pricing Preview 20260829
+
+on:
+  push:
+    branches:
+      - feature/idogs-plus-a7-pricing-20260829
+    paths:
+      - .github/workflows/idogs-plus-a7-preview-20260829.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/idogs-plus-a7-pricing-20260829
+          fetch-depth: 0
+
+      - name: Fail closed on exact production baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='e7085c35bc41e99ccbf24db640d7214fb04a78c9'
+          WF='.github/workflows/idogs-plus-a7-preview-20260829.yml'
+          test "$(git rev-parse HEAD^)" = "$BASE"
+          mapfile -t changed < <(git diff --name-only "$BASE"..HEAD)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = "$WF"
+
+      - name: Apply approved iDogs pricing change
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f'{path}: expected exactly 1 occurrence, found {n}: {old!r}')
+              p.write_text(s.replace(old, new, 1))
+
+          # Shared authenticated pricing display: monthly A$5 -> A$7.
+          replace_once(
+              'src/lib/pricingCopy.ts',
+              'export const PLUS_MONTHLY_PRICE_AUD = 5',
+              'export const PLUS_MONTHLY_PRICE_AUD = 7',
+          )
+
+          # Public landing pricing. Keep Free and SMS pricing unchanged.
+          replace_once(
+              'src/pages/LandingPage.tsx',
+              '<p className="pricing-price"><span>A$5</span><small>/month</small></p>',
+              '<p className="pricing-price"><span>A$7</span><small>/month</small></p>',
+          )
+          replace_once(
+              'src/pages/LandingPage.tsx',
+              '<p className="pricing-footnote">Less than the cost of a coffee each month.</p>',
+              '<p className="pricing-footnote">All paid prices are in AUD and include GST. Less than the cost of a coffee each month.</p>',
+          )
+
+          # Authenticated Billing page: make GST treatment explicit and remove
+          # the stale ~18% annual-saving claim. Annual A$49 remains unchanged
+          # pending a separate pricing decision.
+          replace_once(
+              'src/pages/BillingPage.tsx',
+              'Simple pricing — free forever for 1-2 dogs, upgrade when you need more.',
+              'Simple pricing — free forever for 1-2 dogs, upgrade when you need more. Paid prices are in AUD and include GST.',
+          )
+          replace_once(
+              'src/pages/BillingPage.tsx',
+              'SAVE ~18%',
+              'ANNUAL OPTION',
+          )
+
+          # Staging/test Checkout must really charge A$7. Production remains on
+          # the existing live A$5 Price until separate production approval.
+          replace_once(
+              'api/_lib/checkout-handler.js',
+              "plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark'",
+              "plus_monthly: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x'",
+          )
+          PY
+
+          rm .github/workflows/idogs-plus-a7-preview-20260829.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          node scripts/test-landing-pricing-ui.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-staging-isolation-fallbacks.mjs
+
+      - name: Verify approved pricing scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='e7085c35bc41e99ccbf24db640d7214fb04a78c9'
+
+          grep -q "export const PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
+          grep -q '<span>A$7</span><small>/month</small>' src/pages/LandingPage.tsx
+          grep -q '<span>+A$3</span><small>/month</small>' src/pages/LandingPage.tsx
+          grep -q 'All paid prices are in AUD and include GST' src/pages/LandingPage.tsx
+          grep -q 'Paid prices are in AUD and include GST' src/pages/BillingPage.tsx
+          grep -q 'ANNUAL OPTION' src/pages/BillingPage.tsx
+          ! grep -q 'SAVE ~18%' src/pages/BillingPage.tsx
+          grep -q "plus_monthly: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x'" api/_lib/checkout-handler.js
+
+          # Production price is deliberately unchanged in Preview-only phase.
+          grep -q "plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58'" api/_lib/checkout-handler.js
+          grep -q 'export const PLUS_ANNUAL_PRICE_AUD = 49' src/lib/pricingCopy.ts
+          grep -q 'iDogs SCAN LIVES HERE' src/pages/LandingPage.tsx
+
+          mapfile -t net_changed < <(git diff --name-only "$BASE"..HEAD)
+          # Before product commit HEAD is still the temporary workflow commit;
+          # product modifications are in the worktree. Check staged scope below.
+          mapfile -t work_changed < <(git status --short | awk '{print $2}' | sort)
+          printf '%s\n' "${work_changed[@]}"
+          allowed=(api/_lib/checkout-handler.js src/lib/pricingCopy.ts src/pages/BillingPage.tsx src/pages/LandingPage.tsx .github/workflows/idogs-plus-a7-preview-20260829.yml)
+          for f in "${work_changed[@]}"; do
+            ok=0
+            for a in "${allowed[@]}"; do [[ "$f" == "$a" ]] && ok=1; done
+            test "$ok" -eq 1
+          done
+
+      - name: Commit exact product change
+        id: product
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='e7085c35bc41e99ccbf24db640d7214fb04a78c9'
+          git config user.name 'izipawsltd-Tony'
+          git config user.email 'izipawsltd@gmail.com'
+          git add -A
+          git commit -m 'feat(pricing): set iDogs Plus monthly to A$7 incl GST'
+          PRODUCT_SHA="$(git rev-parse HEAD)"
+          echo "sha=$PRODUCT_SHA" >> "$GITHUB_OUTPUT"
+
+          mapfile -t net_changed < <(git diff --name-only "$BASE"..HEAD | sort)
+          printf '%s\n' "${net_changed[@]}"
+          expected=(api/_lib/checkout-handler.js src/lib/pricingCopy.ts src/pages/BillingPage.tsx src/pages/LandingPage.tsx)
+          test "${#net_changed[@]}" -eq "${#expected[@]}"
+          for f in "${expected[@]}"; do printf '%s\n' "${net_changed[@]}" | grep -Fxq "$f"; done
+          test -z "$(git status --porcelain)"
+          git push origin HEAD:feature/idogs-plus-a7-pricing-20260829
+          echo "Exact product SHA: $PRODUCT_SHA"
+
+      - name: Link exact staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+          grep -q 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o' .vercel/project.json
+          grep -q 'idogs-app-staging' .vercel/project.json
+
+      - name: Deploy exact product SHA to Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          EXPECTED='${{ steps.product.outputs.sha }}'
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects | tee /tmp/vercel-preview.log
+          echo 'Preview only: no --prod and no stable alias promotion.'
