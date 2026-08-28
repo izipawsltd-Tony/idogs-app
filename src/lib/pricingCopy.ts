@@ -10,7 +10,7 @@
 // Record_v1.1.md §1.1 is NOT implemented in checkout-handler.js (only two
 // Stripe prices exist: plus_monthly and plus_annual at the standard $49).
 // Do not display $40 as a purchasable price until that backend work lands.
-export const PLUS_MONTHLY_PRICE_AUD = 5
+export const PLUS_MONTHLY_PRICE_AUD = 7
 export const PLUS_ANNUAL_PRICE_AUD = 49
 export const DOG_CAP_FREE = 2
 export const DOG_CAP_PLUS = 5

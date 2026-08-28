@@ -15,7 +15,7 @@ const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
 })
 
 const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',
+  plus_monthly: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x',
   plus_annual: 'price_1TxaReGHgBd6ZgJETSXH6ICp',
 })
 

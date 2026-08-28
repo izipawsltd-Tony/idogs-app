@@ -264,7 +264,7 @@ export default function LandingPage() {
                 <div className="pricing-card-head">
                   <div>
                     <p className="pricing-label">iDogs Plus</p>
-                    <p className="pricing-price"><span>A$5</span><small>/month</small></p>
+                    <p className="pricing-price"><span>A$7</span><small>/month</small></p>
                   </div>
                   <span className="pricing-badge">Most popular</span>
                 </div>
@@ -284,7 +284,7 @@ export default function LandingPage() {
                 <div className="sms-credit"><strong>20 SMS credits / month</strong><span>Resets each billing month.</span></div>
               </article>
             </div>
-            <p className="pricing-footnote">Less than the cost of a coffee each month.</p>
+            <p className="pricing-footnote">All paid prices are in AUD and include GST. Less than the cost of a coffee each month.</p>
           </div>
         </section>
 
