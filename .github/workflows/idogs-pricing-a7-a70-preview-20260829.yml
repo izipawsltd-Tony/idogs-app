@@ -1,0 +1,71 @@
+name: iDogs Pricing A7 A70 Preview 20260829
+
+on:
+  push:
+    branches:
+      - feature/idogs-pricing-a7-a70-20260829
+    paths:
+      - .github/workflows/idogs-pricing-a7-a70-preview-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact product SHA
+        uses: actions/checkout@v4
+        with:
+          ref: d657d4213c6f78d837d4f9a29fb9035b665a7bc2
+          fetch-depth: 0
+
+      - name: Verify exact pricing diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "d657d4213c6f78d837d4f9a29fb9035b665a7bc2"
+          mapfile -t changed < <(git diff --name-only 77be2b46b386bd8ae5b35806afa30c0253137a0b..HEAD | sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 2
+          printf '%s\n' "${changed[@]}" | grep -Fxq 'api/_lib/checkout-handler.js'
+          printf '%s\n' "${changed[@]}" | grep -Fxq 'src/lib/pricingCopy.ts'
+          grep -q 'PLUS_MONTHLY_PRICE_AUD = 7' src/lib/pricingCopy.ts
+          grep -q 'PLUS_ANNUAL_PRICE_AUD = 70' src/lib/pricingCopy.ts
+          grep -q "plus_monthly: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x'" api/_lib/checkout-handler.js
+          grep -q "plus_annual: 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK'" api/_lib/checkout-handler.js
+          grep -q "plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58'" api/_lib/checkout-handler.js
+          grep -q "plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'" api/_lib/checkout-handler.js
+          test -z "$(git status --porcelain)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-webhook-handler.mjs
+
+      - name: Link exact staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+
+      - name: Deploy exact product SHA to Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          test "$(git rev-parse HEAD)" = "d657d4213c6f78d837d4f9a29fb9035b665a7bc2"
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+          echo 'Preview only: no --prod and no promotion.'
