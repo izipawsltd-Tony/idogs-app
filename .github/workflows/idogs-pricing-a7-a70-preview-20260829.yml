@@ -17,14 +17,14 @@ jobs:
       - name: Checkout exact product SHA
         uses: actions/checkout@v4
         with:
-          ref: d657d4213c6f78d837d4f9a29fb9035b665a7bc2
+          ref: 631c44e8f68d7ec0aba49ac1290489333f781e07
           fetch-depth: 0
 
-      - name: Verify exact pricing diff
+      - name: Verify exact pricing + preview-return diff
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "d657d4213c6f78d837d4f9a29fb9035b665a7bc2"
+          test "$(git rev-parse HEAD)" = "631c44e8f68d7ec0aba49ac1290489333f781e07"
           mapfile -t changed < <(git diff --name-only 77be2b46b386bd8ae5b35806afa30c0253137a0b..HEAD | sort)
           printf '%s\n' "${changed[@]}"
           test "${#changed[@]}" -eq 2
@@ -36,6 +36,8 @@ jobs:
           grep -q "plus_annual: 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK'" api/_lib/checkout-handler.js
           grep -q "plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58'" api/_lib/checkout-handler.js
           grep -q "plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'" api/_lib/checkout-handler.js
+          grep -q "process.env.VERCEL_ENV === 'preview'" api/_lib/checkout-handler.js
+          grep -q 'VERCEL_URL' api/_lib/checkout-handler.js
           test -z "$(git status --porcelain)"
 
       - name: Install dependencies
@@ -66,8 +68,8 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$VERCEL_TOKEN"
-          test "$(git rev-parse HEAD)" = "d657d4213c6f78d837d4f9a29fb9035b665a7bc2"
+          test "$(git rev-parse HEAD)" = "631c44e8f68d7ec0aba49ac1290489333f781e07"
           npx --yes vercel@latest deploy --yes --archive=tgz \
             --env APP_URL=https://idogs-app-staging.vercel.app \
             --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
-          echo 'Preview only: APP_URL injected for this Preview deployment; no --prod and no promotion.'
+          echo 'Preview only: canonical APP_URL remains validated, while checkout returns to exact VERCEL_URL on staging Preview.'
