@@ -17,19 +17,20 @@ jobs:
       - name: Checkout exact product SHA
         uses: actions/checkout@v4
         with:
-          ref: a31a6cd6f0cecee3ca6f25cc72e283a2a38d5003
+          ref: 552a7dd414aaa0c01d7bd1dde9a77be0523c112c
           fetch-depth: 0
 
       - name: Fail closed on exact source
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 'a31a6cd6f0cecee3ca6f25cc72e283a2a38d5003'
+          test "$(git rev-parse HEAD)" = '552a7dd414aaa0c01d7bd1dde9a77be0523c112c'
           test -z "$(git status --porcelain)"
           test "$(git diff --name-only 631c44e8f68d7ec0aba49ac1290489333f781e07..HEAD)" = 'index.html'
           grep -q "fbq('init', '2647777915638218');" index.html
           grep -q "fbq('track', 'PageView');" index.html
           grep -q 'https://connect.facebook.net/en_US/fbevents.js' index.html
+          grep -q '<noscript><img' index.html
 
       - name: Install dependencies and build
         run: |
@@ -55,7 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$VERCEL_TOKEN"
-          test "$(git rev-parse HEAD)" = 'a31a6cd6f0cecee3ca6f25cc72e283a2a38d5003'
+          test "$(git rev-parse HEAD)" = '552a7dd414aaa0c01d7bd1dde9a77be0523c112c'
           test -z "$(git status --porcelain --untracked-files=no)"
           npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
           echo 'Preview only: no --prod and no stable alias promotion.'
