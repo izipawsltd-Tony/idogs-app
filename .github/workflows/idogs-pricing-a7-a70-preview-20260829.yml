@@ -59,7 +59,7 @@ jobs:
           {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
           JSON
 
-      - name: Deploy exact product SHA to Preview only
+      - name: Deploy exact product SHA to Preview only with approved APP_URL
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -67,5 +67,7 @@ jobs:
           set -euo pipefail
           test -n "$VERCEL_TOKEN"
           test "$(git rev-parse HEAD)" = "d657d4213c6f78d837d4f9a29fb9035b665a7bc2"
-          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
-          echo 'Preview only: no --prod and no promotion.'
+          npx --yes vercel@latest deploy --yes --archive=tgz \
+            --env APP_URL=https://idogs-app-staging.vercel.app \
+            --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+          echo 'Preview only: APP_URL injected for this Preview deployment; no --prod and no promotion.'
