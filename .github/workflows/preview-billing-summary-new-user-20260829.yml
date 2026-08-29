@@ -1,0 +1,92 @@
+name: Preview billing summary new-user microfix 20260829
+
+on:
+  push:
+    branches:
+      - fix/billing-summary-new-user-20260829
+    paths:
+      - api/_lib/billing-handler.js
+      - scripts/test-billing-summary-new-user.mjs
+      - .github/workflows/preview-billing-summary-new-user-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact triggering SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Fail closed on exact branch source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "${GITHUB_REF_NAME}" = 'fix/billing-summary-new-user-20260829'
+          test -z "$(git status --porcelain)"
+          grep -q "if (!profile)" api/_lib/billing-handler.js
+          grep -q "canManageBilling: false" api/_lib/billing-handler.js
+          grep -q "price_1U9i9EGHgBd6ZgJEMoELFmE5" api/_lib/checkout-handler.js
+          grep -q "price_1U9i9LGHgBd6ZgJEdQWL2WTN" api/_lib/checkout-handler.js
+          grep -q "txr_1U9iaFGHgBd6ZgJE5FsztFar" api/_lib/checkout-handler.js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test missing new-user profile behavior
+        run: node scripts/test-billing-summary-new-user.mjs
+
+      - name: Run billing regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-billing-navigation.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-webhook-handler.mjs
+
+      - name: Recheck production Preview APP URL guard
+        run: node scripts/test-production-preview-app-url.mjs
+
+      - name: Build
+        run: npm run build
+
+      - name: Link production Vercel project for Preview only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull production-project Preview settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Re-verify exact source before Preview deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git diff --cached --name-only)"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift before Preview deploy:\n%s\n' "${changed[@]}"
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy exact source to production project Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
