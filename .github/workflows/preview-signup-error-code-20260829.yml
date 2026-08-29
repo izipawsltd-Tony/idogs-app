@@ -17,17 +17,18 @@ jobs:
       - name: Checkout exact product SHA
         uses: actions/checkout@v4
         with:
-          ref: 55833c891a5c1c54f5a4a9e2c520cd62bc0237c9
+          ref: b444e47fab23ad1dd9170eabd517ff920f9e3812
           fetch-depth: 0
 
       - name: Fail closed on exact source and scope
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED='55833c891a5c1c54f5a4a9e2c520cd62bc0237c9'
+          EXPECTED='b444e47fab23ad1dd9170eabd517ff920f9e3812'
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           test -z "$(git status --porcelain)"
           grep -q "Firebase error:" src/pages/SignupPage.tsx
+          grep -q "Firebase error:" src/pages/VerifyEmailPage.tsx
           grep -q "auth/email-already-in-use" src/pages/SignupPage.tsx
           grep -q "txr_1U9b6XGHgBd6ZgJEwaS4bfLx" api/_lib/checkout-handler.js
 
@@ -55,7 +56,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED='55833c891a5c1c54f5a4a9e2c520cd62bc0237c9'
+          EXPECTED='b444e47fab23ad1dd9170eabd517ff920f9e3812'
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           test -z "$(git diff --cached --name-only)"
           mapfile -t changed < <(git diff --name-only)
