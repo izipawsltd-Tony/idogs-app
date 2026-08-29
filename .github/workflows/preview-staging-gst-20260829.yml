@@ -1,0 +1,80 @@
+name: Preview staging GST 20260829
+
+on:
+  push:
+    branches:
+      - fix/staging-checkout-gst-20260829
+    paths:
+      - .github/workflows/preview-staging-gst-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preview-gst:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact GST product SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 7f60c1a025fe9028b58c1022b6a318f9da83bf5c
+          fetch-depth: 0
+
+      - name: Fail closed on exact source and GST scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED='7f60c1a025fe9028b58c1022b6a318f9da83bf5c'
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          grep -q "txr_1U9b6XGHgBd6ZgJEwaS4bfLx" api/_lib/checkout-handler.js
+          grep -q "default_tax_rates" api/_lib/checkout-handler.js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-billing-navigation.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-webhook-handler.mjs
+          npm run build
+
+      - name: Link iDogs staging project only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+
+      - name: Pull staging settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Re-verify exact source before Preview deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED='7f60c1a025fe9028b58c1022b6a318f9da83bf5c'
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git diff --cached --name-only)"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift before Preview deploy:\n%s\n' "${changed[@]}"
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy exact source to Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
