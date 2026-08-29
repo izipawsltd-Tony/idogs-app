@@ -37,6 +37,23 @@ function bodyOf(req) {
   }
 }
 
+function checkoutReturnOrigin(appUrl) {
+  const isStagingPreview =
+    process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging' &&
+    process.env.VERCEL_ENV === 'preview'
+
+  if (!isStagingPreview) return appUrl
+
+  const vercelUrl = process.env.VERCEL_URL
+  if (typeof vercelUrl !== 'string' || !vercelUrl) return appUrl
+
+  const hostname = vercelUrl.trim().toLowerCase()
+  if (hostname !== vercelUrl) return appUrl
+  if (!/^idogs-app-staging-[a-z0-9-]+\.vercel\.app$/.test(hostname)) return appUrl
+
+  return `https://${hostname}`
+}
+
 export function createCheckoutHandler({
   verifyIdToken,
   createSession,
@@ -52,6 +69,7 @@ export function createCheckoutHandler({
       logConfigError('create-checkout', 'APP_URL_NOT_CONFIGURED')
       return res.status(500).json({ error: 'APP_URL not configured' })
     }
+    const returnOrigin = checkoutReturnOrigin(appUrl)
 
     const authHeader = req.headers?.authorization || ''
     const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
@@ -96,8 +114,8 @@ export function createCheckoutHandler({
         payment_method_types: ['card'],
         customer_email: email,
         line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${appUrl}/app/billing?success=1`,
-        cancel_url: `${appUrl}/app/billing?cancelled=1`,
+        success_url: `${returnOrigin}/app/billing?success=1`,
+        cancel_url: `${returnOrigin}/app/billing?cancelled=1`,
         metadata: { userId: uid, plan: 'plus', interval, priceId },
         subscription_data: {
           metadata: { userId: uid, plan: 'plus', interval, priceId },
