@@ -1,0 +1,66 @@
+name: Promote 631c44e8 to stable staging 20260829
+
+on:
+  push:
+    branches:
+      - fix/preview-checkout-return-20260829
+    paths:
+      - .github/workflows/promote-631c44e8-stable-staging-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  promote-stable-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact approved product SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 631c44e8f68d7ec0aba49ac1290489333f781e07
+          fetch-depth: 0
+
+      - name: Verify exact approved SHA and scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "631c44e8f68d7ec0aba49ac1290489333f781e07"
+          grep -q "plus_monthly: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x'" api/_lib/checkout-handler.js
+          grep -q "plus_annual: 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK'" api/_lib/checkout-handler.js
+          grep -q 'PLUS_MONTHLY_PRICE_AUD = 7' src/lib/pricingCopy.ts
+          grep -q 'PLUS_ANNUAL_PRICE_AUD = 70' src/lib/pricingCopy.ts
+          test -z "$(git status --porcelain)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-webhook-handler.mjs
+
+      - name: Link stable staging project only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+
+      - name: Deploy exact approved SHA to stable staging only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          test "$(git rev-parse HEAD)" = "631c44e8f68d7ec0aba49ac1290489333f781e07"
+          npx --yes vercel@latest deploy --prod --yes --archive=tgz \
+            --env APP_URL=https://idogs-app-staging.vercel.app \
+            --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+          echo 'Stable staging only: project idogs-app-staging. Production project idogs-app was not targeted.'
