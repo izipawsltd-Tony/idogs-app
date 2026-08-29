@@ -1,0 +1,126 @@
+name: Configure iDogs Staging GST 20260829
+
+on:
+  push:
+    branches:
+      - feat/staging-gst-inclusive-20260829
+    paths:
+      - .github/workflows/configure-staging-gst-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  configure-gst:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact approved staging SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 631c44e8f68d7ec0aba49ac1290489333f781e07
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Link iDogs staging project only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+
+      - name: Pull stable staging environment securely
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          npx --yes vercel@latest env pull .env.staging --environment=production --yes \
+            --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/dev/null
+          grep -q '^STRIPE_SECRET_KEY=' .env.staging
+
+      - name: Configure AU GST 10 percent inclusive and create QA payment
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source .env.staging
+          set +a
+          node --input-type=module <<'NODE'
+          import Stripe from 'stripe'
+          const key = process.env.STRIPE_SECRET_KEY || ''
+          if (!key.startsWith('sk_test_')) throw new Error('Refusing non-test Stripe key')
+          const stripe = new Stripe(key)
+
+          const expectedAccount = 'acct_1TiU0IGHgBd6ZgJE'
+          const account = await stripe.accounts.retrieve()
+          if (account.id !== expectedAccount) throw new Error(`Wrong Stripe account: ${account.id}`)
+
+          const existing = await stripe.taxRates.list({ active: true, limit: 100 })
+          let gst = existing.data.find(r =>
+            r.inclusive === true && Number(r.percentage) === 10 &&
+            r.country === 'AU' && r.metadata?.product_scope === 'idogs' &&
+            r.metadata?.environment === 'staging_test'
+          )
+          if (!gst) {
+            gst = await stripe.taxRates.create({
+              display_name: 'GST',
+              description: 'Australian GST 10% - iDogs staging/test',
+              jurisdiction: 'AU',
+              country: 'AU',
+              percentage: 10,
+              inclusive: true,
+              metadata: { product_scope: 'idogs', environment: 'staging_test' },
+            })
+          }
+
+          const subscriptionId = 'sub_1U9aiAGHgBd6ZgJEVihmCtoz'
+          const sub = await stripe.subscriptions.retrieve(subscriptionId)
+          if (sub.customer !== 'cus_V9uXP8iHXkqatK') throw new Error('Unexpected QA customer')
+          await stripe.subscriptions.update(subscriptionId, {
+            default_tax_rates: [gst.id],
+            proration_behavior: 'none',
+          })
+
+          const qaItem = await stripe.invoiceItems.create({
+            customer: sub.customer,
+            amount: 700,
+            currency: 'aud',
+            description: 'QA GST Verification - iDogs Plus A$7 incl GST',
+            tax_rates: [gst.id],
+            metadata: { purpose: 'gst_qa_20260829', product_scope: 'idogs' },
+          })
+          const invoice = await stripe.invoices.create({
+            customer: sub.customer,
+            collection_method: 'charge_automatically',
+            auto_advance: false,
+            description: 'iDogs staging GST QA - test mode only',
+            metadata: { purpose: 'gst_qa_20260829', product_scope: 'idogs' },
+          })
+          const finalized = await stripe.invoices.finalizeInvoice(invoice.id)
+          const paid = await stripe.invoices.pay(finalized.id, {
+            payment_method: sub.default_payment_method,
+          })
+          const refreshedSub = await stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] })
+          const retrievedInvoice = await stripe.invoices.retrieve(paid.id)
+          const totalTax = (retrievedInvoice.total_taxes || []).reduce((sum, t) => sum + (t.amount || 0), 0)
+
+          console.log(`GST_TAX_RATE_ID=${gst.id}`)
+          console.log(`QA_INVOICE_ID=${paid.id}`)
+          console.log(`QA_INVOICE_STATUS=${paid.status}`)
+          console.log(`QA_TOTAL=${paid.total}`)
+          console.log(`QA_TOTAL_TAX=${totalTax}`)
+          console.log(`SUBSCRIPTION_DEFAULT_TAX_RATE=${refreshedSub.default_tax_rates?.[0]?.id || refreshedSub.default_tax_rates?.[0] || ''}`)
+
+          if (paid.status !== 'paid') throw new Error('QA invoice not paid')
+          if (paid.total !== 700) throw new Error(`Expected inclusive total 700, got ${paid.total}`)
+          if (totalTax !== 64) throw new Error(`Expected GST 64 cents on A$7 inclusive, got ${totalTax}`)
+          NODE
+
+      - name: Cleanup pulled environment
+        if: always()
+        shell: bash
+        run: rm -f .env.staging
