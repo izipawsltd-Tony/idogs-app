@@ -1,0 +1,153 @@
+name: Production-safe Preview A7 GST 20260829
+
+on:
+  push:
+    branches:
+      - fix/production-a7-gst-20260829
+    paths:
+      - .github/workflows/preview-production-a7-gst-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  production-safe-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact product SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 1c882eb0386d2ce735ecb8a1afd4a2a27560d46c
+          fetch-depth: 0
+
+      - name: Fail closed on exact product source
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED='1c882eb0386d2ce735ecb8a1afd4a2a27560d46c'
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          grep -q "price_1U9i9EGHgBd6ZgJEMoELFmE5" api/_lib/checkout-handler.js
+          grep -q "price_1U9i9LGHgBd6ZgJEdQWL2WTN" api/_lib/checkout-handler.js
+          grep -q "txr_1U9iaFGHgBd6ZgJE5FsztFar" api/_lib/checkout-handler.js
+          grep -q "price_1U9YwuGHgBd6ZgJEX1Bdjz5x" api/_lib/checkout-handler.js
+          grep -q "txr_1U9b6XGHgBd6ZgJEwaS4bfLx" api/_lib/checkout-handler.js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test live and staging routing without Stripe calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createCheckoutHandler } from './api/_lib/checkout-handler.js'
+
+          function recorder() {
+            return {
+              statusCode: 0,
+              body: null,
+              status(code) { this.statusCode = code; return this },
+              json(body) { this.body = body; return this },
+            }
+          }
+
+          async function runCase({ firebaseProjectId, vercelEnv, expectedPrice, expectedTaxRate, appUrl }) {
+            process.env.FIREBASE_PROJECT_ID = firebaseProjectId
+            process.env.VERCEL_ENV = vercelEnv
+            process.env.VERCEL_URL = 'idogs-app-preview-safe.vercel.app'
+            let args
+            const handler = createCheckoutHandler({
+              getAppUrl: () => appUrl,
+              verifyIdToken: async () => ({ uid: 'qa-user', email: 'qa@example.com' }),
+              createSession: async input => { args = input; return { url: 'https://checkout.stripe.com/mock' } },
+            })
+            const res = recorder()
+            await handler({
+              method: 'POST',
+              headers: { authorization: 'Bearer mock' },
+              body: { plan: 'plus_monthly', userId: 'qa-user', userEmail: 'qa@example.com' },
+            }, res)
+            if (res.statusCode !== 200) throw new Error(`Expected 200, got ${res.statusCode}`)
+            if (args?.line_items?.[0]?.price !== expectedPrice) throw new Error(`Wrong price: ${args?.line_items?.[0]?.price}`)
+            if (args?.subscription_data?.default_tax_rates?.[0] !== expectedTaxRate) throw new Error(`Wrong tax rate: ${args?.subscription_data?.default_tax_rates?.[0]}`)
+            if (args?.success_url !== `${appUrl}/app/billing?success=1`) throw new Error(`Wrong return URL: ${args?.success_url}`)
+          }
+
+          await runCase({
+            firebaseProjectId: 'idogs-app',
+            vercelEnv: 'preview',
+            expectedPrice: 'price_1U9i9EGHgBd6ZgJEMoELFmE5',
+            expectedTaxRate: 'txr_1U9iaFGHgBd6ZgJE5FsztFar',
+            appUrl: 'https://idogs.com.au',
+          })
+
+          await runCase({
+            firebaseProjectId: 'idogs-app-staging',
+            vercelEnv: 'production',
+            expectedPrice: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x',
+            expectedTaxRate: 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx',
+            appUrl: 'https://idogs-app-staging.vercel.app',
+          })
+
+          process.env.FIREBASE_PROJECT_ID = 'idogs-app'
+          process.env.VERCEL_ENV = 'production'
+          let called = false
+          const failClosed = createCheckoutHandler({
+            getAppUrl: () => null,
+            verifyIdToken: async () => ({ uid: 'qa-user', email: 'qa@example.com' }),
+            createSession: async () => { called = true; return { url: 'unexpected' } },
+          })
+          const res = recorder()
+          await failClosed({ method: 'POST', headers: {}, body: {} }, res)
+          if (res.statusCode !== 500) throw new Error(`Production APP_URL fail-closed regression: ${res.statusCode}`)
+          if (called) throw new Error('Stripe session must not be called when production APP_URL is missing')
+          NODE
+
+      - name: Run billing regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-billing-navigation.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-webhook-handler.mjs
+
+      - name: Build
+        run: npm run build
+
+      - name: Link production Vercel project for Preview only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull production-project Preview settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Re-verify exact source before Preview deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED='1c882eb0386d2ce735ecb8a1afd4a2a27560d46c'
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git diff --cached --name-only)"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift before production-project Preview deploy:\n%s\n' "${changed[@]}"
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy exact source to production project Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
