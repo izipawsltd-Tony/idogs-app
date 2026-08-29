@@ -1,4 +1,4 @@
-name: Preview billing summary new-user microfix 20260829
+name: Production approved billing new-user microfix 20260829
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  verify-and-preview:
+  verify-preview-and-production:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact triggering SHA
@@ -57,7 +57,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Link production Vercel project for Preview only
+      - name: Link exact production Vercel project
         shell: bash
         run: |
           set -euo pipefail
@@ -86,7 +86,19 @@ jobs:
           fi
           test -z "$(git status --porcelain)"
 
-      - name: Deploy exact source to production project Preview only
+      - name: Deploy exact source to production project Preview first
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Re-verify exact source before approved Production deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy exact source to Production — user approved 2026-08-29
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
