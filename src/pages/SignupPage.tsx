@@ -58,9 +58,17 @@ export default function SignupPage({ toast }: Props) {
       toast('Account created! Please check your email to verify your address.')
       navigate(`/verify-email?next=${encodeURIComponent(returnTo)}`)
     } catch (err: unknown) {
+      const firebaseCode =
+        typeof err === 'object' && err !== null && 'code' in err &&
+        typeof (err as { code?: unknown }).code === 'string'
+          ? (err as { code: string }).code
+          : ''
       const msg = err instanceof Error ? err.message : ''
-      if (msg.includes('email-already-in-use')) {
-        setError('This email is already registered. Try signing in.')
+
+      if (firebaseCode === 'auth/email-already-in-use' || msg.includes('email-already-in-use')) {
+        setError('This email is already registered. Try signing in. (auth/email-already-in-use)')
+      } else if (firebaseCode.startsWith('auth/')) {
+        setError(`Firebase error: ${firebaseCode}`)
       } else {
         setError('Something went wrong. Please try again.')
       }
