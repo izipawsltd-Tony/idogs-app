@@ -3,8 +3,8 @@ import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 
 const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58',
-  plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
+  plus_monthly: 'price_1U9i9EGHgBd6ZgJEMoELFmE5',
+  plus_annual: 'price_1U9i9LGHgBd6ZgJEdQWL2WTN',
 })
 
 const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
@@ -12,6 +12,7 @@ const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
   plus_annual: 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK',
 })
 
+const LIVE_GST_TAX_RATE_ID = 'txr_1U9iaFGHgBd6ZgJE5FsztFar'
 const STAGING_GST_TAX_RATE_ID = 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx'
 
 function checkoutPricesForCurrentEnvironment() {
@@ -23,7 +24,7 @@ function checkoutPricesForCurrentEnvironment() {
 function checkoutTaxRatesForCurrentEnvironment() {
   return process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
     ? [STAGING_GST_TAX_RATE_ID]
-    : []
+    : [LIVE_GST_TAX_RATE_ID]
 }
 
 export const CHECKOUT_PRICE_IDS = Object.freeze({
