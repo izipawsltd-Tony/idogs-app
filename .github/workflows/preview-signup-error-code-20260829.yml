@@ -17,23 +17,90 @@ jobs:
       - name: Checkout exact product SHA
         uses: actions/checkout@v4
         with:
-          ref: b444e47fab23ad1dd9170eabd517ff920f9e3812
+          ref: 7b1ddf970c3625bb4276bbb4ce20af3ef6c0d374
           fetch-depth: 0
 
       - name: Fail closed on exact source and scope
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED='b444e47fab23ad1dd9170eabd517ff920f9e3812'
+          EXPECTED='7b1ddf970c3625bb4276bbb4ce20af3ef6c0d374'
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           test -z "$(git status --porcelain)"
           grep -q "Firebase error:" src/pages/SignupPage.tsx
           grep -q "Firebase error:" src/pages/VerifyEmailPage.tsx
           grep -q "auth/email-already-in-use" src/pages/SignupPage.tsx
           grep -q "txr_1U9b6XGHgBd6ZgJEwaS4bfLx" api/_lib/checkout-handler.js
+          grep -q "stagingPreviewOrigin" api/_lib/checkout-handler.js
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Test Preview checkout APP_URL fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createCheckoutHandler } from './api/_lib/checkout-handler.js'
+
+          function responseRecorder() {
+            return {
+              statusCode: 0,
+              body: null,
+              status(code) { this.statusCode = code; return this },
+              json(body) { this.body = body; return this },
+            }
+          }
+
+          const saved = {
+            FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
+            VERCEL_ENV: process.env.VERCEL_ENV,
+            VERCEL_URL: process.env.VERCEL_URL,
+          }
+
+          try {
+            process.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'
+            process.env.VERCEL_ENV = 'preview'
+            process.env.VERCEL_URL = 'idogs-app-staging-abc123-izipawsltd-tonys-projects.vercel.app'
+
+            let sessionArgs
+            const handler = createCheckoutHandler({
+              getAppUrl: () => null,
+              verifyIdToken: async () => ({ uid: 'qa-user', email: 'qa@example.com' }),
+              createSession: async args => { sessionArgs = args; return { url: 'https://checkout.stripe.com/test' } },
+            })
+            const res = responseRecorder()
+            await handler({
+              method: 'POST',
+              headers: { authorization: 'Bearer qa-token' },
+              body: { plan: 'plus_monthly', userId: 'qa-user', userEmail: 'qa@example.com' },
+            }, res)
+
+            if (res.statusCode !== 200) throw new Error(`Expected Preview 200, got ${res.statusCode}`)
+            const expectedOrigin = 'https://idogs-app-staging-abc123-izipawsltd-tonys-projects.vercel.app'
+            if (sessionArgs?.success_url !== `${expectedOrigin}/app/billing?success=1`) throw new Error('Preview success_url fallback failed')
+            if (sessionArgs?.cancel_url !== `${expectedOrigin}/app/billing?cancelled=1`) throw new Error('Preview cancel_url fallback failed')
+
+            process.env.FIREBASE_PROJECT_ID = 'idogs-app'
+            process.env.VERCEL_ENV = 'production'
+            process.env.VERCEL_URL = 'idogs-app.vercel.app'
+            let prodSessionCalled = false
+            const prodHandler = createCheckoutHandler({
+              getAppUrl: () => null,
+              verifyIdToken: async () => ({ uid: 'qa-user', email: 'qa@example.com' }),
+              createSession: async () => { prodSessionCalled = true; return { url: 'unexpected' } },
+            })
+            const prodRes = responseRecorder()
+            await prodHandler({ method: 'POST', headers: {}, body: {} }, prodRes)
+            if (prodRes.statusCode !== 500) throw new Error(`Production fail-closed regression: ${prodRes.statusCode}`)
+            if (prodSessionCalled) throw new Error('Production checkout must not run without APP_URL')
+          } finally {
+            for (const [key, value] of Object.entries(saved)) {
+              if (value === undefined) delete process.env[key]
+              else process.env[key] = value
+            }
+          }
+          NODE
 
       - name: Build
         run: npm run build
@@ -56,7 +123,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED='b444e47fab23ad1dd9170eabd517ff920f9e3812'
+          EXPECTED='7b1ddf970c3625bb4276bbb4ce20af3ef6c0d374'
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           test -z "$(git diff --cached --name-only)"
           mapfile -t changed < <(git diff --name-only)
