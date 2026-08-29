@@ -1,4 +1,4 @@
-name: Preview signup Firebase error code 20260829
+name: Promote exact checkout fallback to stable staging 20260829
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  preview-signup-error:
+  promote-stable-staging:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact product SHA
@@ -114,12 +114,12 @@ jobs:
           {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
           JSON
 
-      - name: Pull staging settings
+      - name: Pull stable staging production settings
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
 
-      - name: Re-verify exact source before Preview deploy
+      - name: Re-verify exact source before stable staging deploy
         shell: bash
         run: |
           set -euo pipefail
@@ -130,12 +130,12 @@ jobs:
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
             git restore --source=HEAD -- package-lock.json
           elif (( ${#changed[@]} != 0 )); then
-            printf 'Unexpected tracked drift before Preview deploy:\n%s\n' "${changed[@]}"
+            printf 'Unexpected tracked drift before stable staging deploy:\n%s\n' "${changed[@]}"
             exit 1
           fi
           test -z "$(git status --porcelain)"
 
-      - name: Deploy exact source to Preview only
+      - name: Deploy exact source to stable staging only
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+        run: npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
