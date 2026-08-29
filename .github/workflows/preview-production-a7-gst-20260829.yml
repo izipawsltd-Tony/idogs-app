@@ -17,14 +17,14 @@ jobs:
       - name: Checkout exact product SHA
         uses: actions/checkout@v4
         with:
-          ref: 620a03ca03851c3943b9e6d29fa1dd27817a6af6
+          ref: 51cd301477c73e387853fd54a37dfa6f42f1dd37
           fetch-depth: 0
 
       - name: Fail closed on exact product source
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED='620a03ca03851c3943b9e6d29fa1dd27817a6af6'
+          EXPECTED='51cd301477c73e387853fd54a37dfa6f42f1dd37'
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           test -z "$(git status --porcelain)"
           grep -q "price_1U9i9EGHgBd6ZgJEMoELFmE5" api/_lib/checkout-handler.js
@@ -135,7 +135,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED='620a03ca03851c3943b9e6d29fa1dd27817a6af6'
+          EXPECTED='51cd301477c73e387853fd54a37dfa6f42f1dd37'
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           test -z "$(git diff --cached --name-only)"
           mapfile -t changed < <(git diff --name-only)
