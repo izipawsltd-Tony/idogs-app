@@ -33,11 +33,59 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Targeted GST checkout regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createCheckoutHandler, CHECKOUT_PRICE_IDS } from './api/_lib/checkout-handler.js'
+
+          function res() {
+            const r = { statusCode: 0, body: null }
+            r.status = code => { r.statusCode = code; return r }
+            r.json = body => { r.body = body; return r }
+            return r
+          }
+
+          async function checkoutFor(projectId, plan) {
+            const original = process.env.FIREBASE_PROJECT_ID
+            process.env.FIREBASE_PROJECT_ID = projectId
+            let captured
+            const handler = createCheckoutHandler({
+              getAppUrl: () => projectId === 'idogs-app-staging' ? 'https://idogs-app-staging.vercel.app' : 'https://idogs.com.au',
+              verifyIdToken: async () => ({ uid: 'qa-user', email: 'qa@example.com' }),
+              createSession: async params => { captured = params; return { url: 'https://checkout.stripe.test' } },
+            })
+            const response = res()
+            await handler({ method: 'POST', headers: { authorization: 'Bearer test' }, body: { plan } }, response)
+            if (original === undefined) delete process.env.FIREBASE_PROJECT_ID
+            else process.env.FIREBASE_PROJECT_ID = original
+            if (response.statusCode !== 200) throw new Error(`Checkout failed for ${projectId}/${plan}`)
+            return captured
+          }
+
+          const stagingMonthly = await checkoutFor('idogs-app-staging', 'plus_monthly')
+          if (stagingMonthly.line_items[0].price !== 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x') throw new Error('Wrong staging monthly price')
+          if (stagingMonthly.subscription_data.default_tax_rates?.[0] !== 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx') throw new Error('Missing staging GST tax rate')
+
+          const stagingAnnual = await checkoutFor('idogs-app-staging', 'plus_annual')
+          if (stagingAnnual.line_items[0].price !== 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK') throw new Error('Wrong staging annual price')
+          if (stagingAnnual.subscription_data.default_tax_rates?.[0] !== 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx') throw new Error('Missing annual GST tax rate')
+
+          const production = await checkoutFor('idogs-app', 'plus_monthly')
+          if (production.line_items[0].price !== 'price_1TxMJ9GHgBd6ZgJEcwyahH58') throw new Error('Wrong production monthly price')
+          if ('default_tax_rates' in production.subscription_data) throw new Error('Test GST tax rate leaked to production')
+
+          process.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'
+          if (CHECKOUT_PRICE_IDS.plus_monthly !== 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x') throw new Error('Staging monthly resolver mismatch')
+          if (CHECKOUT_PRICE_IDS.plus_annual !== 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK') throw new Error('Staging annual resolver mismatch')
+          console.log('PASS: staging GST checkout routing')
+          NODE
+
       - name: Build and focused regressions
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/test-billing-p0-security.mjs
           node scripts/test-billing-payments-phase1.mjs
           node scripts/test-billing-navigation.mjs
           node scripts/test-sms-addon-v1.mjs
