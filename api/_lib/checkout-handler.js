@@ -12,10 +12,18 @@ const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
   plus_annual: 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK',
 })
 
+const STAGING_GST_TAX_RATE_ID = 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx'
+
 function checkoutPricesForCurrentEnvironment() {
   return process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
     ? STAGING_CHECKOUT_PRICE_IDS
     : LIVE_CHECKOUT_PRICE_IDS
+}
+
+function checkoutTaxRatesForCurrentEnvironment() {
+  return process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+    ? [STAGING_GST_TAX_RATE_ID]
+    : []
 }
 
 export const CHECKOUT_PRICE_IDS = Object.freeze({
@@ -107,6 +115,7 @@ export function createCheckoutHandler({
       return res.status(400).json({ error: 'Invalid plan' })
     }
     const interval = INTERVAL_BY_PLAN_KEY[planKey]
+    const defaultTaxRates = checkoutTaxRatesForCurrentEnvironment()
 
     try {
       const session = await createSession({
@@ -119,6 +128,7 @@ export function createCheckoutHandler({
         metadata: { userId: uid, plan: 'plus', interval, priceId },
         subscription_data: {
           metadata: { userId: uid, plan: 'plus', interval, priceId },
+          ...(defaultTaxRates.length ? { default_tax_rates: defaultTaxRates } : {}),
         },
       })
       return res.status(200).json({ url: session.url })
