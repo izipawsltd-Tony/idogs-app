@@ -1,0 +1,102 @@
+name: Meta Tracking Reconcile Preview 20260830
+
+on:
+  push:
+    branches:
+      - automation/meta-tracking-reconcile-preview-20260830
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact product SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ed57e8b48f8bd10264d30798ceabeb6784ef790f
+          fetch-depth: 0
+
+      - name: Fail closed on exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "ed57e8b48f8bd10264d30798ceabeb6784ef790f"
+          test -z "$(git status --porcelain)"
+
+      - name: Install dependencies and build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-pricing-integration-checks.mjs
+          node scripts/test-staging-isolation-fallbacks.mjs
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { classifyPaidInvoice } from './api/_lib/meta-capi.js'
+          const invoice = {
+            amount_paid: 700,
+            currency: 'aud',
+            billing_reason: 'subscription_create',
+            lines: { data: [{ amount: 700, pricing: { price_details: { price: 'price_test_plus' } } }] },
+          }
+          const result = classifyPaidInvoice(invoice, { plusPriceIds: ['price_test_plus'], smsPriceId: 'price_sms' })
+          assert.deepEqual(result, { eventName: 'Purchase', kind: 'plus_initial', value: 7, currency: 'AUD' })
+          console.log('Meta CAPI classification smoke: PASS')
+          NODE
+
+      - name: Verify reconcile scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='7b1ddf970c3625bb4276bbb4ce20af3ef6c0d374'
+          mapfile -t changed < <(git diff --name-only "$BASE"..HEAD | sort)
+          printf '%s\n' "${changed[@]}"
+          expected=(
+            'api/_lib/meta-capi.js'
+            'api/stripe-webhook.js'
+            'index.html'
+            'src/lib/metaCheckoutTracking.ts'
+            'src/lib/metaPixel.ts'
+            'src/main.tsx'
+            'src/pages/SignupPage.tsx'
+          )
+          test "${#changed[@]}" -eq "${#expected[@]}"
+          for file in "${expected[@]}"; do
+            printf '%s\n' "${changed[@]}" | grep -Fxq "$file"
+          done
+          test "$(git rev-parse 7b1ddf970c3625bb4276bbb4ce20af3ef6c0d374:api/_lib/checkout-handler.js)" = "$(git rev-parse HEAD:api/_lib/checkout-handler.js)"
+
+      - name: Link exact staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+          grep -q 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o' .vercel/project.json
+          grep -q 'idogs-app-staging' .vercel/project.json
+
+      - name: Deploy exact product SHA to Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects | tee /tmp/vercel-preview.log
+          echo 'Preview only: no --prod and no stable alias promotion.'
+
+      - name: Post Checkout exact product SHA
+        if: always()
+        run: |
+          test "$(git rev-parse HEAD)" = "ed57e8b48f8bd10264d30798ceabeb6784ef790f"
