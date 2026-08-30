@@ -42,8 +42,8 @@ check(
   !/plan="Kennel"/.test(landingSource)
 )
 check(
-  'LandingPage.tsx pricing section has no SMS reminder upsell',
-  !/SMS remind/i.test(landingSource)
+  'LandingPage.tsx pricing section advertises the current SMS reminder add-on',
+  /SMS Reminders/i.test(landingSource) && /\+A\$3/.test(landingSource)
 )
 
 // ── Free, Plus Monthly, Plus Annual present ────────────────────────────
@@ -92,10 +92,10 @@ check(
   'LandingPage.tsx never shows $40 as a purchasable annual price (backend does not support it)',
   !/\$40/.test(landingSource)
 )
-skip('LandingPage.tsx shows the real $49/year standard annual price', 'Pricing section hidden on Landing V2 (staging) — brief §2/§8')
+skip('LandingPage.tsx shows the real $70/year standard annual price', 'Pricing section hidden on Landing V2 (staging) — brief §2/§8')
 check(
-  'pricingCopy.ts still defines the real $49/year standard annual price (independent of whether the landing page currently renders it)',
-  pricingCopySource.includes('export const PLUS_ANNUAL_PRICE_AUD = 49')
+  'pricingCopy.ts defines the real $70/year standard annual price (independent of whether the landing page currently renders it)',
+  pricingCopySource.includes('export const PLUS_ANNUAL_PRICE_AUD = 70')
 )
 
 // ── CTA routes correct — all three pricing cards route through the real signup flow ──
