@@ -3,7 +3,10 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from './hooks/useAuth'
 import App from './components/App'
+import { installMetaInitiateCheckoutTracking } from './lib/metaCheckoutTracking'
 import './index.css'
+
+installMetaInitiateCheckoutTracking()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
