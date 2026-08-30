@@ -33,6 +33,9 @@ jobs:
           node --check api/send-sms.js
           node --check api/qa-sms-black-boy.js
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Provider and SMS regressions
         shell: bash
         run: |
@@ -43,12 +46,8 @@ jobs:
           node scripts/test-cron-auth.mjs
           node scripts/test-webhook-handler.mjs
 
-      - name: Install and build
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm ci
-          npm run build
+      - name: Build
+        run: npm run build
 
       - name: Link idogs-app production project for Preview only
         shell: bash
