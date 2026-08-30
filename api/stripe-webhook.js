@@ -1,11 +1,11 @@
-// api/stripe-webhook.js — Stripe webhook entrypoint. All entitlement
-// logic lives in api/_lib/webhook-handler.js (testable without a live
-// Stripe account); this file only wires up real Stripe/Firestore clients
-// and the Vercel raw-body/req/res shape.
+// api/stripe-webhook.js — Stripe webhook entrypoint. Entitlement logic lives
+// in api/_lib/webhook-handler.js; this file also wires Stripe-confirmed paid
+// invoices to Meta Conversions API.
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { createWebhookHandler } from './_lib/webhook-handler.js'
+import { createMetaInvoiceProcessor } from './_lib/meta-capi.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 
@@ -30,17 +30,16 @@ async function getRawBody(req) {
   })
 }
 
+const db = getFirestore()
+const getSubscription = subscriptionId => stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] })
+
 const processWebhook = createWebhookHandler({
   constructEvent: (rawBody, sig) => stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET),
-  // Explicit expand — `items.data[].price` is not guaranteed present on a
-  // bare subscriptions.retrieve() call across every Stripe API version;
-  // resolveInterval() (webhook-handler.js) needs the real price id to
-  // allowlist-check against CHECKOUT_PRICE_IDS, and a missing price here
-  // would silently no-op the whole entitlement grant (a safe failure mode,
-  // but a real bug — found via live staging QA 2026-07-24).
-  getSubscription: subscriptionId => stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] }),
-  db: getFirestore(),
+  getSubscription,
+  db,
 })
+
+const processMetaInvoice = createMetaInvoiceProcessor({ db, getSubscription })
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -49,5 +48,24 @@ export default async function handler(req, res) {
   const rawBody = await getRawBody(req)
 
   const result = await processWebhook(rawBody, sig)
+  if (result.status !== 200) return res.status(result.status).json(result.body)
+
+  try {
+    const event = stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET)
+    if (event.type === 'invoice.payment_succeeded') {
+      const metaResult = await processMetaInvoice(event)
+      console.log('stripe-webhook: meta capi result', {
+        type: event.type,
+        sent: Boolean(metaResult?.sent),
+        skipped: Boolean(metaResult?.skipped),
+        reason: metaResult?.reason || null,
+        eventName: metaResult?.eventName || null,
+      })
+    }
+  } catch {
+    console.error('stripe-webhook: meta capi delivery failed', { type: 'invoice.payment_succeeded' })
+    return res.status(500).json({ error: 'Webhook downstream delivery failed' })
+  }
+
   return res.status(result.status).json(result.body)
 }
