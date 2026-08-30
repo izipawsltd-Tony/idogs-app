@@ -1,0 +1,302 @@
+name: Build ClickSend SMS provider 20260830
+
+on:
+  push:
+    branches:
+      - feature/clicksend-sms-provider-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  build-clicksend:
+    if: ${{ !contains(github.event.head_commit.message, '[clicksend-built]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Fail closed on source branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = "feature/clicksend-sms-provider-20260830"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD^)" = "d15f9467467c20c52b476cdf160930c4c0b4ab27"
+
+      - name: Apply ClickSend provider adapter
+        shell: python
+        run: |
+          from pathlib import Path
+
+          provider = r'''// api/_lib/sms-provider.js — server-only SMS provider adapter.
+// Provider selection is explicit via SMS_PROVIDER. Existing production remains
+// on AWS SNS until env is deliberately changed to clicksend.
+
+const PROVIDERS = new Set(['aws_sns', 'clicksend'])
+
+function providerError(code, message = code) {
+  const error = new Error(message)
+  error.code = code
+  return error
+}
+
+export function getSmsProviderName(env = process.env) {
+  const name = String(env.SMS_PROVIDER || 'aws_sns').trim().toLowerCase()
+  if (!PROVIDERS.has(name)) throw providerError('SMS_PROVIDER_UNSUPPORTED')
+  return name
+}
+
+export function smsProviderConfigStatus(env = process.env) {
+  let provider
+  try { provider = getSmsProviderName(env) } catch {
+    return { provider: 'unsupported', configured: false }
+  }
+
+  if (provider === 'clicksend') {
+    return {
+      provider,
+      configured: Boolean(env.CLICKSEND_USERNAME && env.CLICKSEND_API_KEY),
+      senderIdConfigured: Boolean(env.CLICKSEND_SENDER_ID),
+    }
+  }
+
+  return {
+    provider,
+    configured: Boolean(env.AWS_SNS_ACCESS_KEY_ID && env.AWS_SNS_SECRET_ACCESS_KEY),
+    senderIdConfigured: true,
+  }
+}
+
+async function sendClickSend(phone, message, { env, fetchImpl }) {
+  const username = String(env.CLICKSEND_USERNAME || '').trim()
+  const apiKey = String(env.CLICKSEND_API_KEY || '').trim()
+  if (!username || !apiKey) throw providerError('CLICKSEND_NOT_CONFIGURED')
+
+  const sms = {
+    source: String(env.CLICKSEND_SOURCE || 'iDogs').trim() || 'iDogs',
+    body: message,
+    to: phone,
+  }
+  const senderId = String(env.CLICKSEND_SENDER_ID || '').trim()
+  if (senderId) sms.from = senderId
+
+  const auth = Buffer.from(`${username}:${apiKey}`, 'utf8').toString('base64')
+  const response = await fetchImpl('https://rest.clicksend.com/v3/sms/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ messages: [sms] }),
+  })
+
+  let payload = null
+  try { payload = await response.json() } catch {}
+  if (!response.ok || payload?.response_code !== 'SUCCESS') {
+    throw providerError(`CLICKSEND_${response.status || 'ERROR'}`)
+  }
+
+  const messages = payload?.data?.messages
+  const first = Array.isArray(messages) ? messages[0] : null
+  const messageId = first?.message_id || first?.messageId || payload?.data?.message_id || null
+  if (!messageId) throw providerError('CLICKSEND_MESSAGE_ID_MISSING')
+
+  return {
+    MessageId: String(messageId),
+    provider: 'clicksend',
+    providerStatus: first?.status || null,
+  }
+}
+
+async function sendAwsSns(phone, message, { env }) {
+  const { SNSClient, PublishCommand } = await import('@aws-sdk/client-sns')
+  if (!env.AWS_SNS_ACCESS_KEY_ID || !env.AWS_SNS_SECRET_ACCESS_KEY) {
+    throw providerError('AWS_SNS_NOT_CONFIGURED')
+  }
+  const sns = new SNSClient({
+    region: env.AWS_SNS_REGION || 'ap-southeast-2',
+    credentials: {
+      accessKeyId: env.AWS_SNS_ACCESS_KEY_ID,
+      secretAccessKey: env.AWS_SNS_SECRET_ACCESS_KEY,
+    },
+  })
+  return sns.send(new PublishCommand({
+    Message: message,
+    PhoneNumber: phone,
+    MessageAttributes: {
+      'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: 'iDogs' },
+      'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },
+    },
+  }))
+}
+
+export async function sendSmsProvider(phone, message, options = {}) {
+  const env = options.env || process.env
+  const fetchImpl = options.fetchImpl || globalThis.fetch
+  const provider = getSmsProviderName(env)
+  if (provider === 'clicksend') {
+    if (typeof fetchImpl !== 'function') throw providerError('FETCH_UNAVAILABLE')
+    return sendClickSend(phone, message, { env, fetchImpl })
+  }
+  return sendAwsSns(phone, message, { env })
+}
+'''
+          Path('api/_lib/sms-provider.js').write_text(provider)
+
+          p = Path('api/send-reminders.js')
+          s = p.read_text()
+          s = s.replace("import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'\n", "import { sendSmsProvider as sendConfiguredSmsProvider } from './_lib/sms-provider.js'\n")
+          old = """const sns = new SNSClient({\n  region: process.env.AWS_SNS_REGION || 'ap-southeast-2',\n  credentials: {\n    accessKeyId: process.env.AWS_SNS_ACCESS_KEY_ID,\n    secretAccessKey: process.env.AWS_SNS_SECRET_ACCESS_KEY,\n  },\n})\n\n"""
+          assert old in s
+          s = s.replace(old, '')
+          old = """async function sendSmsProvider(phone, message) {\n  const command = new PublishCommand({\n    Message: message,\n    PhoneNumber: phone,\n    MessageAttributes: {\n      'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: 'iDogs' },\n      'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },\n    },\n  })\n  return sns.send(command)\n}\n"""
+          assert old in s
+          s = s.replace(old, "async function sendSmsProvider(phone, message) {\n  return sendConfiguredSmsProvider(phone, message)\n}\n")
+          p.write_text(s)
+
+          p = Path('api/_lib/sms-addon.js')
+          s = p.read_text()
+          old = "      provider: 'aws_sns',\n"
+          assert old in s
+          s = s.replace(old, "      provider: String(process.env.SMS_PROVIDER || 'aws_sns').trim().toLowerCase(),\n")
+          s = s.replace('// AWS already accepted the message. Keep the reservation charged and', '// Provider already accepted the message. Keep the reservation charged and')
+          p.write_text(s)
+
+          send_sms = r'''// api/send-sms.js — trusted internal SMS relay through the configured provider.
+// V1 deliberately rejects browser/user-originated arbitrary SMS sends.
+import { checkCronAuth } from './_lib/cron-auth.js'
+import { sendSmsProvider, getSmsProviderName } from './_lib/sms-provider.js'
+
+export default async function handler(req, res) {
+  const auth = checkCronAuth(req)
+  if (!auth.authorized) return res.status(auth.status).json(auth.body)
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+
+  const { phone, message } = typeof req.body === 'string'
+    ? (() => { try { return JSON.parse(req.body || '{}') } catch { return {} } })()
+    : (req.body || {})
+
+  if (typeof phone !== 'string' || typeof message !== 'string' || !phone || !message) {
+    return res.status(400).json({ error: 'Missing phone or message' })
+  }
+  if (!/^\+614\d{8}$/.test(phone)) {
+    return res.status(400).json({ error: 'Australian mobile number required' })
+  }
+  if (message.length > 459) {
+    return res.status(400).json({ error: 'Message too long' })
+  }
+
+  try {
+    const result = await sendSmsProvider(phone, message)
+    return res.status(200).json({
+      success: true,
+      provider: getSmsProviderName(),
+      messageId: result.MessageId,
+    })
+  } catch (error) {
+    console.error('send-sms: provider send failed', String(error?.code || 'PROVIDER_FAILED'))
+    return res.status(502).json({ error: 'Failed to send SMS' })
+  }
+}
+'''
+          Path('api/send-sms.js').write_text(send_sms)
+
+          p = Path('api/qa-sms-black-boy.js')
+          s = p.read_text()
+          marker = "} from './_lib/sms-addon.js'\n"
+          assert marker in s
+          s = s.replace(marker, marker + "import { getSmsProviderName, smsProviderConfigStatus, sendSmsProvider as sendConfiguredSmsProvider } from './_lib/sms-provider.js'\n", 1)
+          old = "    awsSnsConfigPresent: Boolean(process.env.AWS_SNS_ACCESS_KEY_ID && process.env.AWS_SNS_SECRET_ACCESS_KEY),\n"
+          assert old in s
+          s = s.replace(old, "    smsProviderIsClickSend: getSmsProviderName() === 'clicksend',\n    smsProviderConfigPresent: smsProviderConfigStatus().configured,\n")
+          start = s.index("    const { SNSClient, PublishCommand } = await import('@aws-sdk/client-sns')")
+          end_marker = "\n\n    const result = await sendSmsWithQuota({"
+          end = s.index(end_marker, start)
+          replacement = "    const sendProvider = (phone, message) => sendConfiguredSmsProvider(phone, message)"
+          s = s[:start] + replacement + s[end:]
+          p.write_text(s)
+
+          envp = Path('.env.example')
+          env = envp.read_text().rstrip() + "\n\n# SMS provider. Keep production on aws_sns until ClickSend Preview QA passes.\nSMS_PROVIDER=aws_sns\nCLICKSEND_USERNAME=\nCLICKSEND_API_KEY=\nCLICKSEND_SENDER_ID=\nCLICKSEND_SOURCE=iDogs\n"
+          envp.write_text(env)
+
+          test = r'''import assert from 'node:assert/strict'
+import { getSmsProviderName, smsProviderConfigStatus, sendSmsProvider } from '../api/_lib/sms-provider.js'
+
+let passed = 0
+async function check(name, fn) { await fn(); passed++; console.log('PASS', name) }
+
+await check('defaults to AWS SNS for backward-compatible production rollout', () => {
+  assert.equal(getSmsProviderName({}), 'aws_sns')
+})
+
+await check('ClickSend config requires username and API key', () => {
+  assert.deepEqual(smsProviderConfigStatus({ SMS_PROVIDER:'clicksend' }), {
+    provider:'clicksend', configured:false, senderIdConfigured:false,
+  })
+  assert.equal(smsProviderConfigStatus({SMS_PROVIDER:'clicksend',CLICKSEND_USERNAME:'u',CLICKSEND_API_KEY:'k'}).configured, true)
+})
+
+await check('ClickSend request uses Basic auth and AU recipient without leaking credentials', async () => {
+  let seen
+  const result = await sendSmsProvider('+61412345678', 'iDogs test', {
+    env:{SMS_PROVIDER:'clicksend',CLICKSEND_USERNAME:'api-user',CLICKSEND_API_KEY:'secret-key',CLICKSEND_SENDER_ID:'iDogs'},
+    fetchImpl: async (url, options) => {
+      seen={url,options}
+      return {ok:true,status:200,json:async()=>({response_code:'SUCCESS',data:{messages:[{message_id:'cs_123',status:'SUCCESS'}]}})}
+    },
+  })
+  assert.equal(seen.url, 'https://rest.clicksend.com/v3/sms/send')
+  assert.equal(seen.options.method, 'POST')
+  assert.equal(seen.options.headers.Authorization, 'Basic ' + Buffer.from('api-user:secret-key').toString('base64'))
+  assert.deepEqual(JSON.parse(seen.options.body), {messages:[{source:'iDogs',body:'iDogs test',to:'+61412345678',from:'iDogs'}]})
+  assert.equal(result.MessageId, 'cs_123')
+})
+
+await check('ClickSend provider failure throws and leaves quota helper to refund', async () => {
+  await assert.rejects(() => sendSmsProvider('+61412345678', 'test', {
+    env:{SMS_PROVIDER:'clicksend',CLICKSEND_USERNAME:'u',CLICKSEND_API_KEY:'k'},
+    fetchImpl: async () => ({ok:false,status:401,json:async()=>({response_code:'AUTH_FAILED'})}),
+  }), error => error.code === 'CLICKSEND_401')
+})
+
+await check('ClickSend success without message id fails closed', async () => {
+  await assert.rejects(() => sendSmsProvider('+61412345678', 'test', {
+    env:{SMS_PROVIDER:'clicksend',CLICKSEND_USERNAME:'u',CLICKSEND_API_KEY:'k'},
+    fetchImpl: async () => ({ok:true,status:200,json:async()=>({response_code:'SUCCESS',data:{messages:[{}]}})}),
+  }), error => error.code === 'CLICKSEND_MESSAGE_ID_MISSING')
+})
+
+console.log(`\nClickSend SMS provider: ${passed}/${passed} PASS`)
+'''
+          Path('scripts/test-sms-provider.mjs').write_text(test)
+
+      - name: Verify provider and regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check api/_lib/sms-provider.js
+          node --check api/_lib/sms-addon.js
+          node --check api/send-sms.js
+          node --check api/send-reminders.js
+          node --check api/qa-sms-black-boy.js
+          node scripts/test-sms-provider.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-reminders-batch-regression.mjs
+          node scripts/test-cron-auth.mjs
+          npm ci
+          npm run build
+
+      - name: Commit exact implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "izipawsltd-Tony"
+          git config user.email "izipawsltd@gmail.com"
+          git add api/_lib/sms-provider.js api/_lib/sms-addon.js api/send-reminders.js api/send-sms.js api/qa-sms-black-boy.js scripts/test-sms-provider.mjs .env.example
+          git diff --cached --check
+          git commit -m "feat(sms): add ClickSend provider adapter [clicksend-built]"
+          git push origin HEAD:feature/clicksend-sms-provider-20260830
