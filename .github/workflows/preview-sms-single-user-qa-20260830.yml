@@ -1,3 +1,4 @@
+# Clean follow-up run verifies the committed micro-fix and deploys Preview only.
 name: SMS single-user Preview QA 20260830
 
 on:
