@@ -114,7 +114,7 @@ export async function reserveSmsDelivery({
       idempotencyKey,
       segmentCount,
       status: 'reserved',
-      provider: 'aws_sns',
+      provider: String(process.env.SMS_PROVIDER || 'aws_sns').trim().toLowerCase(),
       periodStart: profile.smsPeriodStart,
       createdAt: deliverySnap.exists ? (deliverySnap.data().createdAt || nowIso) : nowIso,
       reservedAt: nowIso,
@@ -216,7 +216,7 @@ export async function sendSmsWithQuota({
     })
     return { sent: true, deliveryId: reservation.deliveryId, segmentCount, providerMessageId: providerResult?.MessageId || null }
   } catch {
-    // AWS already accepted the message. Keep the reservation charged and
+    // Provider already accepted the message. Keep the reservation charged and
     // unresolved rather than refunding/retrying and risking a duplicate SMS.
     return { sent: true, acceptedUnconfirmed: true, deliveryId: reservation.deliveryId, segmentCount }
   }
