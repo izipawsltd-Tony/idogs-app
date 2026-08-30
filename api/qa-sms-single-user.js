@@ -8,24 +8,12 @@ const QA_EMAIL = 'idogsbreeder@gmail.com'
 const QA_DOG_NAME = 'Black Boy'
 const QA_WORMING_DUE = '2026-08-31'
 
-if (!getApps().length) {
-  initializeApp({
-    credential: cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    }),
-  })
-}
-
-const db = getFirestore()
-
 function dateOnly(value) {
   if (!value) return null
   return String(value).slice(0, 10)
 }
 
-async function getOwnedDogs(uid) {
+async function getOwnedDogs(db, uid) {
   const [byTenant, byOwner] = await Promise.all([
     db.collection('dogs').where('tenantId', '==', uid).get(),
     db.collection('dogs').where('currentOwnerId', '==', uid).get(),
@@ -53,12 +41,45 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: 'Preview-only QA diagnostic' })
   }
 
+  const firebaseInfo = {
+    serverProjectId: process.env.FIREBASE_PROJECT_ID || null,
+    clientProjectId: process.env.VITE_FIREBASE_PROJECT_ID || null,
+    serverConfigPresent: Boolean(
+      process.env.FIREBASE_PROJECT_ID &&
+      process.env.FIREBASE_CLIENT_EMAIL &&
+      process.env.FIREBASE_PRIVATE_KEY
+    ),
+  }
+
+  if (!firebaseInfo.serverConfigPresent) {
+    return res.status(200).json({
+      safeToProceed: false,
+      firebase: firebaseInfo,
+      diagnosticError: { code: 'firebase-admin-config-missing' },
+      checks: {
+        previewEnvironment: true,
+        firebaseAdminConfigPresent: false,
+      },
+    })
+  }
+
   try {
+    if (!getApps().length) {
+      initializeApp({
+        credential: cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        }),
+      })
+    }
+
+    const db = getFirestore()
     const authUser = await getAuth().getUserByEmail(QA_EMAIL)
     const uid = authUser.uid
     const [userSnap, dogs, entitlementSnap] = await Promise.all([
       db.collection('users').doc(uid).get(),
-      getOwnedDogs(uid),
+      getOwnedDogs(db, uid),
       db.collection('smsEntitlements').doc(uid).get(),
     ])
 
@@ -77,7 +98,8 @@ export default async function handler(req, res) {
     const user = userSnap.exists ? userSnap.data() : null
     const entitlement = entitlementSnap.exists ? entitlementSnap.data() : null
     const checks = {
-      previewEnvironment: process.env.VERCEL_ENV === 'preview',
+      previewEnvironment: true,
+      firebaseAdminConfigPresent: true,
       authEmailMatches: authUser.email === QA_EMAIL,
       userDocumentExists: userSnap.exists,
       userEmailMatches: !user?.email || user.email === QA_EMAIL,
@@ -94,10 +116,7 @@ export default async function handler(req, res) {
     const safeToProceed = Object.values(checks).every(Boolean)
     return res.status(200).json({
       safeToProceed,
-      firebase: {
-        serverProjectId: process.env.FIREBASE_PROJECT_ID || null,
-        clientProjectId: process.env.VITE_FIREBASE_PROJECT_ID || null,
-      },
+      firebase: firebaseInfo,
       qa: {
         email: QA_EMAIL,
         uid,
@@ -127,7 +146,17 @@ export default async function handler(req, res) {
       checks,
     })
   } catch (error) {
-    console.error('single-user QA diagnostic failed', error?.code || error?.message || 'unknown')
-    return res.status(500).json({ error: 'QA diagnostic failed' })
+    const code = String(error?.code || 'qa-diagnostic-failed')
+    const message = String(error?.message || '').slice(0, 160)
+    console.error('single-user QA diagnostic failed', code)
+    return res.status(200).json({
+      safeToProceed: false,
+      firebase: firebaseInfo,
+      diagnosticError: { code, message },
+      checks: {
+        previewEnvironment: true,
+        firebaseAdminConfigPresent: true,
+      },
+    })
   }
 }
