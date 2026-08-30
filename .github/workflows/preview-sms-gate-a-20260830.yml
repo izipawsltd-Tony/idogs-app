@@ -1,0 +1,107 @@
+name: SMS Preview Gate A diagnostic 20260830
+
+on:
+  push:
+    branches:
+      - fix/sms-single-user-qa-pref-separation-20260830
+
+permissions:
+  contents: read
+
+jobs:
+  gate-a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact triggering SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Fail closed on exact clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "${GITHUB_REF_NAME}" = 'fix/sms-single-user-qa-pref-separation-20260830'
+          test -z "$(git status --porcelain)"
+          node --check api/qa-sms-single-user.js
+          grep -Fq "Preview-only QA diagnostic" api/qa-sms-single-user.js
+          grep -Fq "idogsbreeder@gmail.com" api/qa-sms-single-user.js
+          grep -Fq "Black Boy" api/qa-sms-single-user.js
+          grep -Fq "2026-08-31" api/qa-sms-single-user.js
+
+      - name: Link production Vercel project for Preview only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull production-project Preview settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Re-verify exact clean source before Preview deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git diff --cached --name-only)"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift before Preview deploy:\n%s\n' "${changed[@]}"
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy exact source to production project Preview only
+        id: deploy
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-deploy.log
+          PREVIEW_URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.vercel\.app' /tmp/vercel-deploy.log | tail -n 1)"
+          test -n "$PREVIEW_URL"
+          echo "url=$PREVIEW_URL" >> "$GITHUB_OUTPUT"
+          echo "Preview READY URL: $PREVIEW_URL"
+
+      - name: Gate A read-only Firebase UID ownership quota verification
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          DIAG="$(npx --yes vercel@latest curl /api/qa-sms-single-user --deployment "$PREVIEW_URL" --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects -sS -X POST -H "x-cron-secret: $CRON_SECRET")"
+          printf '%s' "$DIAG" > /tmp/qa-diagnostic.json
+          node - <<'NODE'
+          const fs = require('fs')
+          const d = JSON.parse(fs.readFileSync('/tmp/qa-diagnostic.json', 'utf8'))
+          const summary = {
+            safeToProceed: d.safeToProceed,
+            serverProjectId: d.firebase?.serverProjectId,
+            clientProjectId: d.firebase?.clientProjectId,
+            uid: d.qa?.uid,
+            ownedDogCount: d.qa?.ownedDogCount,
+            blackBoyId: d.qa?.blackBoy?.id,
+            blackBoyTenantId: d.qa?.blackBoy?.tenantId,
+            blackBoyCurrentOwnerId: d.qa?.blackBoy?.currentOwnerId,
+            wormingDue: d.qa?.activeWorming?.nextDue,
+            lastReminderSentAt: d.qa?.activeWorming?.lastReminderSentAt,
+            creditsUsed: d.qa?.smsEntitlement?.creditsUsed,
+            creditsIncluded: d.qa?.smsEntitlement?.creditsIncluded,
+            emailReminders: d.qa?.emailReminders,
+            checks: d.checks,
+          }
+          console.log('GATE_A_RESULT=' + JSON.stringify(summary))
+          if (!d.safeToProceed) process.exit(1)
+          NODE
