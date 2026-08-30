@@ -34,13 +34,12 @@ jobs:
       - name: Gate A read-only Firebase UID ownership quota verification
         shell: bash
         env:
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          PREVIEW_URL: https://idogs-ghcsvtw27-izipawsltd-tonys-projects.vercel.app
-          VERCEL_SHARE_URL: https://idogs-ghcsvtw27-izipawsltd-tonys-projects.vercel.app/?_vercel_share=2N7DRzqeO8Y2CAVB150s4ncYkX8F1EhL
+          PREVIEW_URL: https://idogs-1vprhcxkl-izipawsltd-tonys-projects.vercel.app
+          VERCEL_SHARE_URL: https://idogs-1vprhcxkl-izipawsltd-tonys-projects.vercel.app/?_vercel_share=8WVZkuxszxn7iKKdxYMWSiEougUWPw9Q
         run: |
           set -euo pipefail
           curl -fsSL -c /tmp/vercel-cookie "$VERCEL_SHARE_URL" -o /dev/null
-          DIAG="$(curl -fsS -b /tmp/vercel-cookie -X POST "$PREVIEW_URL/api/qa-sms-single-user" -H "x-cron-secret: $CRON_SECRET")"
+          DIAG="$(curl -fsS -b /tmp/vercel-cookie "$PREVIEW_URL/api/qa-sms-single-user")"
           printf '%s' "$DIAG" > /tmp/qa-diagnostic.json
           node - <<'NODE'
           const fs = require('fs')
@@ -50,6 +49,7 @@ jobs:
             serverProjectId: d.firebase?.serverProjectId,
             clientProjectId: d.firebase?.clientProjectId,
             serverConfigPresent: d.firebase?.serverConfigPresent,
+            cronSecretPresent: d.firebase?.cronSecretPresent,
             diagnosticError: d.diagnosticError,
             uid: d.qa?.uid,
             ownedDogCount: d.qa?.ownedDogCount,
