@@ -1,0 +1,93 @@
+name: Temporary ClickSend production cutover 20260830
+
+on:
+  push:
+    branches:
+      - automation/clicksend-production-cutover-20260830
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact approved production SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 9c4d3971860bd8744dbd8d8fac3857961911dab5
+          fetch-depth: 0
+
+      - name: Fail closed on exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "9c4d3971860bd8744dbd8d8fac3857961911dab5"
+          test -z "$(git status --porcelain)"
+          test ! -e api/qa-sms-black-boy.js
+          test ! -e api/qa-sms-single-user.js
+          grep -Fq "rest.clicksend.com/v3/sms/send" api/_lib/sms-provider.js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-sms-provider.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-reminders-batch-regression.mjs
+          node scripts/test-cron-auth.mjs
+          node scripts/test-webhook-handler.mjs
+          npm run build
+
+      - name: Link exact Vercel production project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull production settings
+        run: npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Reverify exact clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "9c4d3971860bd8744dbd8d8fac3857961911dab5"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy exact approved SHA to production
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROD_URL=$(npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-prod-deploy.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PROD_URL"
+          echo "PROD_URL=$PROD_URL" >> "$GITHUB_ENV"
+          echo "production_url=$PROD_URL" >> "$GITHUB_OUTPUT"
+          echo "PRODUCTION_DEPLOYED $PROD_URL"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Verify production source guard after deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "9c4d3971860bd8744dbd8d8fac3857961911dab5"
+          test -n "$PROD_URL"
+          echo "EXACT_SHA_DEPLOYED 9c4d3971860bd8744dbd8d8fac3857961911dab5"
+          echo "PROJECT idogs-app"
+          echo "TARGET production"
