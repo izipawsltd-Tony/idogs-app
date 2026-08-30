@@ -15,24 +15,23 @@ jobs:
       - name: Checkout exact runtime pricing SHA
         uses: actions/checkout@v4
         with:
-          ref: f5c6f9084e1357bcd62aec29b5763a47c266bc54
+          ref: 7d58f6c0d2bad009286e2e5d5a7d77a83c2a72ca
           fetch-depth: 0
 
       - name: Fail closed on exact source and scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "f5c6f9084e1357bcd62aec29b5763a47c266bc54"
+          test "$(git rev-parse HEAD)" = "7d58f6c0d2bad009286e2e5d5a7d77a83c2a72ca"
           test -z "$(git status --porcelain)"
           mapfile -t files < <(git diff --name-only d791dcf8bce3e57266115d75a13d9ddf82ae2323..HEAD)
           printf '%s\n' "${files[@]}"
-          test "${#files[@]}" -eq 6
+          test "${#files[@]}" -eq 5
           [[ " ${files[*]} " == *" api/_lib/checkout-handler.js "* ]]
           [[ " ${files[*]} " == *" src/lib/pricingCopy.ts "* ]]
           [[ " ${files[*]} " == *" src/pages/BillingPage.tsx "* ]]
           [[ " ${files[*]} " == *" src/pages/LandingPage.tsx "* ]]
           [[ " ${files[*]} " == *" scripts/test-billing-p0-security.mjs "* ]]
-          [[ " ${files[*]} " == *" scripts/test-billing-payments-phase1.mjs "* ]]
           grep -Fq "PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
           grep -Fq "PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
           grep -Fq "price_1TxMJ9GHgBd6ZgJEcwyahH58" api/_lib/checkout-handler.js
@@ -73,7 +72,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "f5c6f9084e1357bcd62aec29b5763a47c266bc54"
+          test "$(git rev-parse HEAD)" = "7d58f6c0d2bad009286e2e5d5a7d77a83c2a72ca"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
             git restore --source=HEAD -- package-lock.json
@@ -98,8 +97,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "f5c6f9084e1357bcd62aec29b5763a47c266bc54"
+          test "$(git rev-parse HEAD)" = "7d58f6c0d2bad009286e2e5d5a7d77a83c2a72ca"
           test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED f5c6f9084e1357bcd62aec29b5763a47c266bc54"
+          echo "EXACT_SHA_DEPLOYED 7d58f6c0d2bad009286e2e5d5a7d77a83c2a72ca"
           echo "PROJECT idogs-app"
           echo "TARGET preview"
