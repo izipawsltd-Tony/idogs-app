@@ -1,0 +1,57 @@
+name: ClickSend production regression gate
+
+on:
+  push:
+    branches:
+      - integration/clicksend-production-package-20260830
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact triggering SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Fail closed on exact clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git status --porcelain)"
+          test ! -e api/qa-sms-black-boy.js
+          test ! -e api/qa-sms-single-user.js
+          grep -Fq "rest.clicksend.com/v3/sms/send" api/_lib/sms-provider.js
+          grep -Fq "sendSmsProvider" api/send-sms.js
+          grep -Fq "sendConfiguredSmsProvider" api/send-reminders.js
+          node --check api/_lib/sms-provider.js
+          node --check api/send-sms.js
+          node --check api/send-reminders.js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run SMS and reminder regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-sms-provider.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-reminders-batch-regression.mjs
+          node scripts/test-cron-auth.mjs
+          node scripts/test-webhook-handler.mjs
+
+      - name: Build
+        run: npm run build
+
+      - name: Confirm gate is non-deploying
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Regression gate complete. No Vercel deploy or environment mutation is performed by this workflow."
