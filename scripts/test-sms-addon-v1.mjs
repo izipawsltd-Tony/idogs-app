@@ -265,7 +265,7 @@ await check('SMS add-on mutates only verified existing Plus subscription', async
     retrieveSubscription:async()=>({
       id:'sub_1',
       customer:'cus_1',
-      items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]},
+      items:{data:[{id:'si_plus',price:{id:'price_1U9i9EGHgBd6ZgJEMoELFmE5'}}]},
     }),
     updateSubscription:async(id,params)=>{
       called={id,params}
@@ -290,7 +290,7 @@ await check('pending SMS payment returns hosted invoice when Stripe provides one
     retrieveSubscription:async()=>({
       id:'sub_1',
       customer:'cus_1',
-      items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]},
+      items:{data:[{id:'si_plus',price:{id:'price_1U9i9EGHgBd6ZgJEMoELFmE5'}}]},
     }),
     updateSubscription:async()=>({
       id:'sub_1',
@@ -306,14 +306,13 @@ await check('pending SMS payment returns hosted invoice when Stripe provides one
   assert.equal(res.body.hostedInvoiceUrl,'https://invoice.test/pay')
 })
 
-
 await check('Remove SMS add-on deletes only the verified SMS subscription item and keeps Plus', async () => {
   let called=null
   const handler=createSmsAddonRemoveHandler({
     verifyIdToken:async()=>({uid:'u1'}),
     getProfile:async()=>({plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'}),
     retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',items:{data:[
-      {id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}},
+      {id:'si_plus',price:{id:'price_1U9i9EGHgBd6ZgJEMoELFmE5'}},
       {id:'si_sms',price:{id:'price_sms'}},
     ]}}),
     updateSubscription:async(id,params)=>{ called={id,params}; return {id} },
@@ -332,13 +331,15 @@ await check('Remove SMS add-on is idempotency-safe when the SMS item is already 
   const handler=createSmsAddonRemoveHandler({
     verifyIdToken:async()=>({uid:'u1'}),
     getProfile:async()=>({plan:'plus',subscriptionStatus:'active',stripeCustomerId:'cus_1',stripeSubscriptionId:'sub_1'}),
-    retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]}}),
+    retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',items:{data:[{id:'si_plus',price:{id:'price_1U9i9EGHgBd6ZgJEMoELFmE5'}}]}}),
     updateSubscription:async()=>{ updated=true },
     getPriceId:()=> 'price_sms',
   })
   const res=fakeRes()
   await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
-  assert.equal(res.statusCode,409)
+  assert.equal(res.statusCode,200)
+  assert.equal(res.body.success,true)
+  assert.equal(res.body.status,'already_removed')
   assert.equal(updated,false)
 })
 
