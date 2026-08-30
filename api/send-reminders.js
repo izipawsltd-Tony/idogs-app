@@ -185,14 +185,30 @@ export default async function handler(req, res) {
     let smsSent = 0
     let emailSent = 0
 
-    // Get all users — emailReminders check is done per-user below
-    // to avoid Firestore inequality query issues when the field is absent
-    const usersSnap = await db.collection('users').get()
+    // Preview-only single-user QA guard. Production rejects the QA selector
+    // so the normal scheduled cron can never be narrowed or redirected accidentally.
+    const requestedQaUserId = String(req.headers?.['x-qa-user-id'] || '').trim()
+    if (requestedQaUserId && process.env.VERCEL_ENV !== 'preview') {
+      return res.status(403).json({ error: 'QA user filter is Preview-only' })
+    }
 
-    for (const userDoc of usersSnap.docs) {
+    let userDocs
+    if (requestedQaUserId) {
+      const qaUserDoc = await db.collection('users').doc(requestedQaUserId).get()
+      if (!qaUserDoc.exists) {
+        return res.status(404).json({ error: 'QA user not found' })
+      }
+      userDocs = [qaUserDoc]
+    } else {
+      const usersSnap = await db.collection('users').get()
+      userDocs = usersSnap.docs
+    }
+
+    for (const userDoc of userDocs) {
       const user = userDoc.data()
-      // Skip users who have explicitly disabled email reminders
-      if (user.emailReminders === false) continue
+      // Email preference gates email only. SMS remains independently gated by
+      // SMS entitlement/quota and phone availability.
+      const emailRemindersEnabled = user.emailReminders !== false
       const tenantId = userDoc.id
       const reminderDays = user.reminderDays || 7
       const reminderFrequency = user.reminderFrequency || 'once' // 'once' | 'daily'
@@ -207,7 +223,7 @@ export default async function handler(req, res) {
         // Birthday / join-anniversary check — separate from the vaccine
         // due-date logic below, this fires at most once per dog per day
         // regardless of how many vaccine records exist.
-        if (user.email) {
+        if (emailRemindersEnabled && user.email) {
           const dogCreatedAt = dog.createdAt?.toDate ? dog.createdAt.toDate() : new Date(dog.createdAt)
           const milestone = getTodaysDogMilestone(dog.dateOfBirth, dogCreatedAt)
           if (milestone) {
@@ -351,7 +367,7 @@ export default async function handler(req, res) {
               const msg = `🐾 iDogs Reminder: ${dog.name}'s ${vaccine.name} is ${dueLabelShort} (${formatDate(vaccine.nextDue)}). Book your vet now.`
 
               // Send email reminder
-              if (user.email) {
+              if (emailRemindersEnabled && user.email) {
                 try {
                   await fetch(`${appUrl}/api/send-email`, {
                     method: 'POST',
@@ -488,7 +504,7 @@ export default async function handler(req, res) {
             const blockedByFrequencyPref = reminderFrequency === 'once' ? hasSentBefore : sentWithinLast20h
 
             if (!blockedByFrequencyPref) {
-              if (user.email) {
+              if (emailRemindersEnabled && user.email) {
                 try {
                   await fetch(`${appUrl}/api/send-email`, {
                     method: 'POST',
@@ -798,7 +814,7 @@ export default async function handler(req, res) {
                   ? `⚠️ She will be ${ageAtHeatMonths} months old — Dogs SA requires at least ${minBreedingMonths} months for ${breedSize} breeds.`
                   : `✓ She will be ${ageAtHeatMonths} months old — eligible to breed under Dogs SA rules.`
 
-                if (user.email) {
+                if (emailRemindersEnabled && user.email) {
                   try {
                     await fetch(`${appUrl}/api/send-email`, {
                       method: 'POST',
@@ -851,7 +867,7 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ success: true, smsSent, emailSent })
+    return res.status(200).json({ success: true, smsSent, emailSent, ...(requestedQaUserId ? { qaUserId: requestedQaUserId } : {}) })
   } catch (err) {
     console.error('Reminders error:', err)
     return res.status(500).json({ error: 'Failed to send reminders', message: String(err) })
