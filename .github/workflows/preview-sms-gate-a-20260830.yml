@@ -35,12 +35,10 @@ jobs:
         shell: bash
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          PREVIEW_URL: https://idogs-jt9ie3x3z-izipawsltd-tonys-projects.vercel.app
-          VERCEL_SHARE_URL: https://idogs-jt9ie3x3z-izipawsltd-tonys-projects.vercel.app/?_vercel_share=70LydCQc7SPwV16cRZjygybE537F0uqb
+          PREVIEW_URL: https://idogs-ghcsvtw27-izipawsltd-tonys-projects.vercel.app
+          VERCEL_SHARE_URL: https://idogs-ghcsvtw27-izipawsltd-tonys-projects.vercel.app/?_vercel_share=2N7DRzqeO8Y2CAVB150s4ncYkX8F1EhL
         run: |
           set -euo pipefail
-          # Authenticate to the protected Preview through Vercel's temporary share access.
-          # The diagnostic itself still requires x-cron-secret and is Preview-only/read-only.
           curl -fsSL -c /tmp/vercel-cookie "$VERCEL_SHARE_URL" -o /dev/null
           DIAG="$(curl -fsS -b /tmp/vercel-cookie -X POST "$PREVIEW_URL/api/qa-sms-single-user" -H "x-cron-secret: $CRON_SECRET")"
           printf '%s' "$DIAG" > /tmp/qa-diagnostic.json
@@ -51,6 +49,8 @@ jobs:
             safeToProceed: d.safeToProceed,
             serverProjectId: d.firebase?.serverProjectId,
             clientProjectId: d.firebase?.clientProjectId,
+            serverConfigPresent: d.firebase?.serverConfigPresent,
+            diagnosticError: d.diagnosticError,
             uid: d.qa?.uid,
             ownedDogCount: d.qa?.ownedDogCount,
             blackBoyId: d.qa?.blackBoy?.id,
