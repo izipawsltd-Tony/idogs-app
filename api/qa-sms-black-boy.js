@@ -155,10 +155,11 @@ export default async function handler(req, res) {
     const db = getFirestore()
     const before = await loadState(db)
     const details = publicState(before)
+    const failedDeliveryRetryable = before.delivery?.status === 'failed' && before.creditsUsed === 0
 
     if (req.method === 'GET') {
-      const safeToSend = before.baseSafe && before.creditsUsed === 0 && !before.delivery
-      return res.status(200).json({ safeToSend, ...details })
+      const safeToSend = before.baseSafe && before.creditsUsed === 0 && (!before.delivery || failedDeliveryRetryable)
+      return res.status(200).json({ safeToSend, failedDeliveryRetryable, ...details })
     }
 
     // A second POST with the exact same delivery must hit the quota helper's
@@ -167,7 +168,7 @@ export default async function handler(req, res) {
     if (!before.baseSafe) {
       return res.status(409).json({ sent: false, reason: 'QA_PRECONDITION_FAILED', ...details })
     }
-    if (!existingIsDuplicate && (before.delivery || before.creditsUsed !== 0)) {
+    if (!existingIsDuplicate && !failedDeliveryRetryable && (before.delivery || before.creditsUsed !== 0)) {
       return res.status(409).json({ sent: false, reason: 'QA_STATE_NOT_CLEAN', ...details })
     }
 
