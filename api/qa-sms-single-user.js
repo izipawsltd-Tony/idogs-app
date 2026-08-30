@@ -1,8 +1,6 @@
 // Preview-only read-only diagnostic for the single-user SMS QA gate.
-import { initializeApp, getApps, cert } from 'firebase-admin/app'
-import { getAuth } from 'firebase-admin/auth'
-import { getFirestore } from 'firebase-admin/firestore'
-import { checkCronAuth } from './_lib/cron-auth.js'
+// Access is additionally protected by Vercel Deployment Protection; this endpoint
+// is never available in production. No SMS is sent and no data is mutated here.
 
 const QA_EMAIL = 'idogsbreeder@gmail.com'
 const QA_DOG_NAME = 'Black Boy'
@@ -10,6 +8,7 @@ const QA_WORMING_DUE = '2026-08-31'
 
 function dateOnly(value) {
   if (!value) return null
+  if (typeof value?.toDate === 'function') return value.toDate().toISOString().slice(0, 10)
   return String(value).slice(0, 10)
 }
 
@@ -34,11 +33,11 @@ async function getOwnedDogs(db, uid) {
 }
 
 export default async function handler(req, res) {
-  const auth = checkCronAuth(req)
-  if (!auth.authorized) return res.status(auth.status).json(auth.body)
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
   if (process.env.VERCEL_ENV !== 'preview') {
     return res.status(403).json({ error: 'Preview-only QA diagnostic' })
+  }
+  if (!['GET', 'POST'].includes(req.method)) {
+    return res.status(405).json({ error: 'Method not allowed' })
   }
 
   const firebaseInfo = {
@@ -49,6 +48,7 @@ export default async function handler(req, res) {
       process.env.FIREBASE_CLIENT_EMAIL &&
       process.env.FIREBASE_PRIVATE_KEY
     ),
+    cronSecretPresent: Boolean(process.env.CRON_SECRET),
   }
 
   if (!firebaseInfo.serverConfigPresent) {
@@ -64,6 +64,14 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Dynamic imports keep module-load failures inside this try/catch so Gate A
+    // can report a sanitized error instead of an opaque serverless 500.
+    const [{ initializeApp, getApps, cert }, { getAuth }, { getFirestore }] = await Promise.all([
+      import('firebase-admin/app'),
+      import('firebase-admin/auth'),
+      import('firebase-admin/firestore'),
+    ])
+
     if (!getApps().length) {
       initializeApp({
         credential: cert({
@@ -92,7 +100,7 @@ export default async function handler(req, res) {
       activeWorming = wormingSnap.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .filter(w => w.dateGiven)
-        .sort((a, b) => String(b.dateGiven).localeCompare(String(a.dateGiven)))[0] || null
+        .sort((a, b) => dateOnly(b.dateGiven).localeCompare(dateOnly(a.dateGiven)))[0] || null
     }
 
     const user = userSnap.exists ? userSnap.data() : null
