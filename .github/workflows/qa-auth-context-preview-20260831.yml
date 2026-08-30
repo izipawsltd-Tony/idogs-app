@@ -1,0 +1,86 @@
+name: QA auth context Preview 20260831
+
+on:
+  push:
+    branches:
+      - fix/pricing-regression-20260830
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact QA SHA
+        uses: actions/checkout@v4
+        with:
+          ref: c53508fec17bca5c53fa0cb870f434ccd70f83a9
+          fetch-depth: 0
+
+      - name: Fail closed on exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "c53508fec17bca5c53fa0cb870f434ccd70f83a9"
+          test -z "$(git status --porcelain)"
+          grep -Fq "PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
+          grep -Fq "PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
+          grep -Fq "txr_1U9iaFGHgBd6ZgJE5FsztFar" api/_lib/checkout-handler.js
+          grep -Fq "default_tax_rates" api/_lib/checkout-handler.js
+          test -f api/qa-auth-context.js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Link exact Vercel project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull Preview settings
+        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Reverify exact clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "c53508fec17bca5c53fa0cb870f434ccd70f83a9"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy Preview only
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PREVIEW_URL"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_READY $PREVIEW_URL"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Verify Preview target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "c53508fec17bca5c53fa0cb870f434ccd70f83a9"
+          test -n "$PREVIEW_URL"
+          echo "EXACT_SHA_DEPLOYED c53508fec17bca5c53fa0cb870f434ccd70f83a9"
+          echo "PROJECT idogs-app"
+          echo "TARGET preview"
