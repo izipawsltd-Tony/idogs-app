@@ -9,6 +9,7 @@ import {
   sendSmsWithQuota,
   smsDeliveryId,
 } from './_lib/sms-addon.js'
+import { getSmsProviderName, smsProviderConfigStatus, sendSmsProvider as sendConfiguredSmsProvider } from './_lib/sms-provider.js'
 
 const QA_UID = 'MN9UKyfFqDQk9fbV1tqdvbiCr5C3'
 const QA_DOG_ID = 'CiafPl5XQQQ8gq1fNhd4'
@@ -80,7 +81,8 @@ async function loadState(db) {
     smsBillingPeriodValid: validSmsPeriod(user),
     validAustralianMobile: Boolean(phone),
     oneSmsSegment: segmentCount === 1,
-    awsSnsConfigPresent: Boolean(process.env.AWS_SNS_ACCESS_KEY_ID && process.env.AWS_SNS_SECRET_ACCESS_KEY),
+    smsProviderIsClickSend: getSmsProviderName() === 'clicksend',
+    smsProviderConfigPresent: smsProviderConfigStatus().configured,
   }
   const baseSafe = Object.values(baseChecks).every(Boolean)
 
@@ -169,22 +171,7 @@ export default async function handler(req, res) {
       return res.status(409).json({ sent: false, reason: 'QA_STATE_NOT_CLEAN', ...details })
     }
 
-    const { SNSClient, PublishCommand } = await import('@aws-sdk/client-sns')
-    const sns = new SNSClient({
-      region: process.env.AWS_SNS_REGION || 'ap-southeast-2',
-      credentials: {
-        accessKeyId: process.env.AWS_SNS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SNS_SECRET_ACCESS_KEY,
-      },
-    })
-    const sendProvider = (phone, message) => sns.send(new PublishCommand({
-      Message: message,
-      PhoneNumber: phone,
-      MessageAttributes: {
-        'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: 'iDogs' },
-        'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },
-      },
-    }))
+    const sendProvider = (phone, message) => sendConfiguredSmsProvider(phone, message)
 
     const result = await sendSmsWithQuota({
       db,
