@@ -26,43 +26,85 @@ jobs:
           test "${GITHUB_REF_NAME}" = 'fix/sms-single-user-qa-pref-separation-20260830'
           test -z "$(git status --porcelain)"
           node --check api/qa-sms-single-user.js
-          grep -Fq "Preview-only QA diagnostic" api/qa-sms-single-user.js
+          node --check api/qa-sms-black-boy.js
           grep -Fq "idogsbreeder@gmail.com" api/qa-sms-single-user.js
-          grep -Fq "Black Boy" api/qa-sms-single-user.js
-          grep -Fq "2026-08-31" api/qa-sms-single-user.js
+          grep -Fq "MN9UKyfFqDQk9fbV1tqdvbiCr5C3" api/qa-sms-black-boy.js
+          grep -Fq "CiafPl5XQQQ8gq1fNhd4" api/qa-sms-black-boy.js
+          grep -Fq "2026-08-31" api/qa-sms-black-boy.js
 
-      - name: Gate A read-only Firebase UID ownership quota verification
+      - name: Gate A and guarded one-SMS Black Boy QA
         shell: bash
         env:
-          PREVIEW_URL: https://idogs-1vprhcxkl-izipawsltd-tonys-projects.vercel.app
-          VERCEL_SHARE_URL: https://idogs-1vprhcxkl-izipawsltd-tonys-projects.vercel.app/?_vercel_share=8WVZkuxszxn7iKKdxYMWSiEougUWPw9Q
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PREVIEW_URL: https://idogs-8wf3gk1kx-izipawsltd-tonys-projects.vercel.app
         run: |
           set -euo pipefail
-          curl -fsSL -c /tmp/vercel-cookie "$VERCEL_SHARE_URL" -o /dev/null
-          DIAG="$(curl -fsS -b /tmp/vercel-cookie "$PREVIEW_URL/api/qa-sms-single-user")"
-          printf '%s' "$DIAG" > /tmp/qa-diagnostic.json
+
+          vcurl() {
+            npx --yes vercel@latest --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects curl "$@"
+          }
+
+          # Gate A: read-only Firebase / UID / ownership / entitlement verification.
+          vcurl "$PREVIEW_URL/api/qa-sms-single-user" > /tmp/gate-a.json
           node - <<'NODE'
           const fs = require('fs')
-          const d = JSON.parse(fs.readFileSync('/tmp/qa-diagnostic.json', 'utf8'))
+          const d = JSON.parse(fs.readFileSync('/tmp/gate-a.json', 'utf8'))
           const summary = {
             safeToProceed: d.safeToProceed,
             serverProjectId: d.firebase?.serverProjectId,
-            clientProjectId: d.firebase?.clientProjectId,
-            serverConfigPresent: d.firebase?.serverConfigPresent,
-            cronSecretPresent: d.firebase?.cronSecretPresent,
-            diagnosticError: d.diagnosticError,
             uid: d.qa?.uid,
-            ownedDogCount: d.qa?.ownedDogCount,
             blackBoyId: d.qa?.blackBoy?.id,
             blackBoyTenantId: d.qa?.blackBoy?.tenantId,
             blackBoyCurrentOwnerId: d.qa?.blackBoy?.currentOwnerId,
+            wormingRecordId: d.qa?.activeWorming?.id,
             wormingDue: d.qa?.activeWorming?.nextDue,
-            lastReminderSentAt: d.qa?.activeWorming?.lastReminderSentAt,
+            smsAddonStatus: d.qa?.smsEntitlement?.status,
             creditsUsed: d.qa?.smsEntitlement?.creditsUsed,
             creditsIncluded: d.qa?.smsEntitlement?.creditsIncluded,
-            emailReminders: d.qa?.emailReminders,
             checks: d.checks,
           }
           console.log('GATE_A_RESULT=' + JSON.stringify(summary))
           if (!d.safeToProceed) process.exit(1)
+          NODE
+
+          # Gate B dry-run: adds exact dog/record, billing period, AU mobile,
+          # one-segment and AWS SNS config guards. No data mutation.
+          vcurl "$PREVIEW_URL/api/qa-sms-black-boy" > /tmp/gate-b-before.json
+          node - <<'NODE'
+          const fs = require('fs')
+          const d = JSON.parse(fs.readFileSync('/tmp/gate-b-before.json', 'utf8'))
+          console.log('GATE_B_BEFORE=' + JSON.stringify({safeToSend:d.safeToSend,target:d.target,sms:d.sms,checks:d.checks}))
+          if (!d.safeToSend) process.exit(1)
+          if (d.sms?.creditsUsed !== 0 || d.sms?.creditsLimit !== 20 || d.sms?.deliveryStatus !== null) process.exit(1)
+          NODE
+
+          # Only reachable if both gates above passed. Sends exactly one idempotent SMS.
+          vcurl "$PREVIEW_URL/api/qa-sms-black-boy" -- --request POST > /tmp/send-one.json
+          node - <<'NODE'
+          const fs = require('fs')
+          const d = JSON.parse(fs.readFileSync('/tmp/send-one.json', 'utf8'))
+          console.log('SEND_ONE_RESULT=' + JSON.stringify(d))
+          if (d.sent !== true) process.exit(1)
+          if (d.creditsBefore !== 0 || d.creditsAfter !== 1) process.exit(1)
+          if (d.deliveryStatusAfter !== 'sent' && d.acceptedUnconfirmed !== true) process.exit(1)
+          NODE
+
+          # Read-after-write proof.
+          vcurl "$PREVIEW_URL/api/qa-sms-black-boy" > /tmp/gate-b-after.json
+          node - <<'NODE'
+          const fs = require('fs')
+          const d = JSON.parse(fs.readFileSync('/tmp/gate-b-after.json', 'utf8'))
+          console.log('GATE_B_AFTER=' + JSON.stringify({safeToSend:d.safeToSend,target:d.target,sms:d.sms,checks:d.checks}))
+          if (d.sms?.creditsUsed !== 1) process.exit(1)
+          if (!['sent','reserved'].includes(d.sms?.deliveryStatus)) process.exit(1)
+          NODE
+
+          # Same idempotency key again: must not send or charge again.
+          vcurl "$PREVIEW_URL/api/qa-sms-black-boy" -- --request POST > /tmp/send-duplicate.json
+          node - <<'NODE'
+          const fs = require('fs')
+          const d = JSON.parse(fs.readFileSync('/tmp/send-duplicate.json', 'utf8'))
+          console.log('DUPLICATE_RESULT=' + JSON.stringify(d))
+          if (d.sent !== false || d.reason !== 'DUPLICATE' || d.duplicateProtected !== true) process.exit(1)
+          if (d.creditsBefore !== 1 || d.creditsAfter !== 1) process.exit(1)
           NODE
