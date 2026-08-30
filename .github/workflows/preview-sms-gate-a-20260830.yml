@@ -81,7 +81,7 @@ jobs:
           PREVIEW_URL: ${{ steps.deploy.outputs.url }}
         run: |
           set -euo pipefail
-          DIAG="$(npx --yes vercel@latest curl /api/qa-sms-single-user --deployment "$PREVIEW_URL" --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects -sS -X POST -H "x-cron-secret: $CRON_SECRET")"
+          DIAG="$(npx --yes vercel@latest curl /api/qa-sms-single-user --deployment "$PREVIEW_URL" --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects -- -sS -X POST -H "x-cron-secret: $CRON_SECRET")"
           printf '%s' "$DIAG" > /tmp/qa-diagnostic.json
           node - <<'NODE'
           const fs = require('fs')
