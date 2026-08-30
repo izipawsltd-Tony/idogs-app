@@ -1,0 +1,155 @@
+name: SMS single-user Preview QA 20260830
+
+on:
+  push:
+    branches:
+      - fix/sms-single-user-qa-pref-separation-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  patch-verify-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact triggering SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Fail closed on branch identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "${GITHUB_REF_NAME}" = 'fix/sms-single-user-qa-pref-separation-20260830'
+          test -z "$(git status --porcelain)"
+
+      - name: Apply micro-fix if not yet committed
+        id: patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('api/send-reminders.js')
+          s = p.read_text()
+          marker = "const requestedQaUserId = String(req.headers?.['x-qa-user-id'] || '').trim()"
+          if marker in s:
+              print('Micro-fix already present')
+              raise SystemExit(0)
+
+          old = """    // Get all users — emailReminders check is done per-user below\n    // to avoid Firestore inequality query issues when the field is absent\n    const usersSnap = await db.collection('users').get()\n\n    for (const userDoc of usersSnap.docs) {\n      const user = userDoc.data()\n      // Skip users who have explicitly disabled email reminders\n      if (user.emailReminders === false) continue\n      const tenantId = userDoc.id\n"""
+          new = """    // Preview-only single-user QA guard. Production rejects the QA selector\n    // so the normal scheduled cron can never be narrowed or redirected accidentally.\n    const requestedQaUserId = String(req.headers?.['x-qa-user-id'] || '').trim()\n    if (requestedQaUserId && process.env.VERCEL_ENV !== 'preview') {\n      return res.status(403).json({ error: 'QA user filter is Preview-only' })\n    }\n\n    let userDocs\n    if (requestedQaUserId) {\n      const qaUserDoc = await db.collection('users').doc(requestedQaUserId).get()\n      if (!qaUserDoc.exists) {\n        return res.status(404).json({ error: 'QA user not found' })\n      }\n      userDocs = [qaUserDoc]\n    } else {\n      const usersSnap = await db.collection('users').get()\n      userDocs = usersSnap.docs\n    }\n\n    for (const userDoc of userDocs) {\n      const user = userDoc.data()\n      // Email preference gates email only. SMS remains independently gated by\n      // SMS entitlement/quota and phone availability.\n      const emailRemindersEnabled = user.emailReminders !== false\n      const tenantId = userDoc.id\n"""
+          if old not in s:
+              raise SystemExit('Expected users loop block not found; refusing to patch')
+          s = s.replace(old, new, 1)
+
+          count = s.count('if (user.email)')
+          if count != 4:
+              raise SystemExit(f'Expected exactly 4 email gates, found {count}; refusing to patch')
+          s = s.replace('if (user.email)', 'if (emailRemindersEnabled && user.email)')
+
+          old_return = "return res.status(200).json({ success: true, smsSent, emailSent })"
+          new_return = "return res.status(200).json({ success: true, smsSent, emailSent, ...(requestedQaUserId ? { qaUserId: requestedQaUserId } : {}) })"
+          if old_return not in s:
+              raise SystemExit('Expected response block not found; refusing to patch')
+          s = s.replace(old_return, new_return, 1)
+          p.write_text(s)
+          PY
+
+          if git diff --quiet -- api/send-reminders.js; then
+            echo "patched=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "patched=true" >> "$GITHUB_OUTPUT"
+            git diff --check
+          fi
+
+      - name: Commit micro-fix and stop this run
+        if: steps.patch.outputs.patched == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add api/send-reminders.js
+          git commit -m 'fix(reminders): isolate Preview QA and separate email preference'
+          git push origin HEAD:${GITHUB_REF_NAME}
+          echo 'Committed micro-fix. The follow-up push run will test and deploy the clean exact SHA.'
+
+      - name: Stop after patch commit
+        if: steps.patch.outputs.patched == 'true'
+        run: exit 0
+
+      - name: Verify micro-fix invariants
+        if: steps.patch.outputs.patched != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          grep -Fq "const requestedQaUserId = String(req.headers?.['x-qa-user-id'] || '').trim()" api/send-reminders.js
+          grep -Fq "process.env.VERCEL_ENV !== 'preview'" api/send-reminders.js
+          grep -Fq "const emailRemindersEnabled = user.emailReminders !== false" api/send-reminders.js
+          test "$(grep -Fc 'if (emailRemindersEnabled && user.email)' api/send-reminders.js)" = '4'
+          if grep -Fq 'if (user.emailReminders === false) continue' api/send-reminders.js; then
+            echo 'Old global email-reminders skip still present' >&2
+            exit 1
+          fi
+          node --check api/send-reminders.js
+
+      - name: Install dependencies
+        if: steps.patch.outputs.patched != 'true'
+        run: npm ci
+
+      - name: Run SMS and reminder regressions
+        if: steps.patch.outputs.patched != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-reminders-batch-regression.mjs
+          node scripts/test-cron-auth.mjs
+          node scripts/test-webhook-handler.mjs
+
+      - name: Build
+        if: steps.patch.outputs.patched != 'true'
+        run: npm run build
+
+      - name: Link production Vercel project for Preview only
+        if: steps.patch.outputs.patched != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull production-project Preview settings
+        if: steps.patch.outputs.patched != 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Re-verify exact clean source before Preview deploy
+        if: steps.patch.outputs.patched != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git diff --cached --name-only)"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift before Preview deploy:\n%s\n' "${changed[@]}"
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy exact source to production project Preview only
+        if: steps.patch.outputs.patched != 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
