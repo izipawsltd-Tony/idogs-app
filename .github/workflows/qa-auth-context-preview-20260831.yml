@@ -43,10 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes vercel@latest \
-            --token="$VERCEL_TOKEN" \
-            --scope=izipawsltd-tonys-projects \
-            curl /api/qa-auth-context \
+          npx --yes vercel@latest curl /api/qa-auth-context \
             --deployment idogs-k55761xd6-izipawsltd-tonys-projects.vercel.app
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
