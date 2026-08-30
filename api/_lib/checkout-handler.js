@@ -37,21 +37,25 @@ function bodyOf(req) {
   }
 }
 
-function checkoutReturnOrigin(appUrl) {
+function stagingPreviewOrigin() {
   const isStagingPreview =
     process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging' &&
     process.env.VERCEL_ENV === 'preview'
 
-  if (!isStagingPreview) return appUrl
+  if (!isStagingPreview) return null
 
   const vercelUrl = process.env.VERCEL_URL
-  if (typeof vercelUrl !== 'string' || !vercelUrl) return appUrl
+  if (typeof vercelUrl !== 'string' || !vercelUrl) return null
 
   const hostname = vercelUrl.trim().toLowerCase()
-  if (hostname !== vercelUrl) return appUrl
-  if (!/^idogs-app-staging-[a-z0-9-]+\.vercel\.app$/.test(hostname)) return appUrl
+  if (hostname !== vercelUrl) return null
+  if (!/^idogs-app-staging-[a-z0-9-]+\.vercel\.app$/.test(hostname)) return null
 
   return `https://${hostname}`
+}
+
+function checkoutReturnOrigin(appUrl) {
+  return stagingPreviewOrigin() || appUrl
 }
 
 export function createCheckoutHandler({
@@ -65,11 +69,11 @@ export function createCheckoutHandler({
     }
 
     const appUrl = getAppUrl()
-    if (!appUrl) {
+    const returnOrigin = checkoutReturnOrigin(appUrl)
+    if (!returnOrigin) {
       logConfigError('create-checkout', 'APP_URL_NOT_CONFIGURED')
       return res.status(500).json({ error: 'APP_URL not configured' })
     }
-    const returnOrigin = checkoutReturnOrigin(appUrl)
 
     const authHeader = req.headers?.authorization || ''
     const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
