@@ -1,0 +1,62 @@
+name: Deploy Meta InitiateCheckout Preview Fix
+
+on:
+  push:
+    branches:
+      - automation/meta-initiate-checkout-preview-fix-20260830
+    paths:
+      - .github/workflows/meta-initiate-checkout-preview-fix-20260830.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact product SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 00d3fbf1eb446ec4276e6c3c261508b21e4e2192
+          fetch-depth: 0
+
+      - name: Fail closed on exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '00d3fbf1eb446ec4276e6c3c261508b21e4e2192'
+          test -z "$(git status --porcelain)"
+          test "$(git diff --name-only d6602f999eda8b41b5477c094f76f9f7a409dd08..HEAD | sort)" = $'api/_lib/checkout-handler.js\nsrc/lib/metaCheckoutTracking.ts\nsrc/main.tsx'
+          grep -q "InitiateCheckout" src/lib/metaCheckoutTracking.ts
+          grep -q "installMetaInitiateCheckoutTracking" src/main.tsx
+          grep -q "stagingPreviewOrigin" api/_lib/checkout-handler.js
+          grep -q "return stagingPreviewOrigin() || appUrl" api/_lib/checkout-handler.js
+
+      - name: Install dependencies and build
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Link exact staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+          grep -q 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o' .vercel/project.json
+          grep -q 'idogs-app-staging' .vercel/project.json
+
+      - name: Deploy exact product SHA to Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN"
+          test "$(git rev-parse HEAD)" = '00d3fbf1eb446ec4276e6c3c261508b21e4e2192'
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+          echo 'Preview only: no --prod and no stable alias promotion.'
