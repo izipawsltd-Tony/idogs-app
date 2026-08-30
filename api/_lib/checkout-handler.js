@@ -14,6 +14,18 @@ export const CHECKOUT_PRICE_IDS = Object.freeze({
   plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
 })
 
+// These are the already-provisioned inclusive AU GST rates that were QA'd
+// on staging and prepared for live billing on 29 Aug 2026. Price selection
+// remains unchanged in this micro-fix; only the missing tax context is restored.
+export const LIVE_GST_TAX_RATE_ID = 'txr_1U9iaFGHgBd6ZgJE5FsztFar'
+export const STAGING_GST_TAX_RATE_ID = 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx'
+
+export function checkoutTaxRatesForCurrentEnvironment(env = process.env) {
+  return env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+    ? [STAGING_GST_TAX_RATE_ID]
+    : [LIVE_GST_TAX_RATE_ID]
+}
+
 // Both keys resolve to the same entitlement — Plus. The billing interval
 // (monthly vs annual) only matters for the Stripe price/checkout UI and for
 // computing the AI-scan reset anchor (api/stripe-webhook.js); it is never a
@@ -84,6 +96,7 @@ export function createCheckoutHandler({
       return res.status(400).json({ error: 'Invalid plan' })
     }
     const interval = INTERVAL_BY_PLAN_KEY[planKey]
+    const defaultTaxRates = checkoutTaxRatesForCurrentEnvironment()
 
     try {
       const session = await createSession({
@@ -96,6 +109,7 @@ export function createCheckoutHandler({
         metadata: { userId: uid, plan: 'plus', interval, priceId },
         subscription_data: {
           metadata: { userId: uid, plan: 'plus', interval, priceId },
+          default_tax_rates: defaultTaxRates,
         },
       })
       return res.status(200).json({ url: session.url })
