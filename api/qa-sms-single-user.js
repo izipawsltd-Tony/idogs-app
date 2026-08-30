@@ -5,11 +5,19 @@
 const QA_EMAIL = 'idogsbreeder@gmail.com'
 const QA_DOG_NAME = 'Black Boy'
 const QA_WORMING_DUE = '2026-08-31'
+const SMS_MONTHLY_CREDITS = 20
 
 function dateOnly(value) {
   if (!value) return null
   if (typeof value?.toDate === 'function') return value.toDate().toISOString().slice(0, 10)
   return String(value).slice(0, 10)
+}
+
+function validSmsPeriod(user, now = new Date()) {
+  const start = typeof user?.smsPeriodStart === 'string' ? new Date(user.smsPeriodStart) : null
+  const end = typeof user?.smsPeriodEnd === 'string' ? new Date(user.smsPeriodEnd) : null
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false
+  return now.getTime() >= start.getTime() && now.getTime() < end.getTime()
 }
 
 async function getOwnedDogs(db, uid) {
@@ -64,8 +72,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Dynamic imports keep module-load failures inside this try/catch so Gate A
-    // can report a sanitized error instead of an opaque serverless 500.
     const [{ initializeApp, getApps, cert }, { getAuth }, { getFirestore }] = await Promise.all([
       import('firebase-admin/app'),
       import('firebase-admin/auth'),
@@ -85,10 +91,9 @@ export default async function handler(req, res) {
     const db = getFirestore()
     const authUser = await getAuth().getUserByEmail(QA_EMAIL)
     const uid = authUser.uid
-    const [userSnap, dogs, entitlementSnap] = await Promise.all([
+    const [userSnap, dogs] = await Promise.all([
       db.collection('users').doc(uid).get(),
       getOwnedDogs(db, uid),
-      db.collection('smsEntitlements').doc(uid).get(),
     ])
 
     const blackBoyMatches = dogs.filter(d => d.name === QA_DOG_NAME)
@@ -104,7 +109,14 @@ export default async function handler(req, res) {
     }
 
     const user = userSnap.exists ? userSnap.data() : null
-    const entitlement = entitlementSnap.exists ? entitlementSnap.data() : null
+    const smsCreditsLimit = Number.isInteger(user?.smsCreditsLimit) && user.smsCreditsLimit >= 0
+      ? user.smsCreditsLimit
+      : SMS_MONTHLY_CREDITS
+    const smsCreditsUsed = Number.isInteger(user?.smsCreditsUsed) && user.smsCreditsUsed >= 0
+      ? user.smsCreditsUsed
+      : 0
+    const smsPeriodValid = validSmsPeriod(user)
+
     const checks = {
       previewEnvironment: true,
       firebaseAdminConfigPresent: true,
@@ -116,9 +128,10 @@ export default async function handler(req, res) {
       blackBoyOwnedByUid: Boolean(blackBoy && (blackBoy.currentOwnerId === uid || (!blackBoy.currentOwnerId && blackBoy.tenantId === uid))),
       wormingRecordExists: Boolean(activeWorming),
       wormingDueMatches: dateOnly(activeWorming?.nextDue) === QA_WORMING_DUE,
-      smsEntitlementActive: entitlement?.status === 'active',
-      smsCreditsIncluded20: Number(entitlement?.creditsIncluded) === 20,
-      smsCreditsUsed0: Number(entitlement?.creditsUsed) === 0,
+      smsEntitlementActive: user?.smsAddonStatus === 'active',
+      smsCreditsIncluded20: smsCreditsLimit === SMS_MONTHLY_CREDITS,
+      smsCreditsUsed0: smsCreditsUsed === 0,
+      smsBillingPeriodValid: smsPeriodValid,
     }
 
     const safeToProceed = Object.values(checks).every(Boolean)
@@ -129,6 +142,7 @@ export default async function handler(req, res) {
         email: QA_EMAIL,
         uid,
         emailReminders: user?.emailReminders ?? null,
+        reminderFrequency: user?.reminderFrequency || null,
         hasPhone: Boolean(user?.phone),
         ownedDogCount: dogs.length,
         blackBoy: blackBoy ? {
@@ -143,13 +157,14 @@ export default async function handler(req, res) {
           nextDue: dateOnly(activeWorming.nextDue),
           lastReminderSentAt: activeWorming.lastReminderSentAt || null,
         } : null,
-        smsEntitlement: entitlement ? {
-          status: entitlement.status || null,
-          creditsUsed: Number(entitlement.creditsUsed || 0),
-          creditsIncluded: Number(entitlement.creditsIncluded || 0),
-          currentPeriodStart: entitlement.currentPeriodStart || null,
-          currentPeriodEnd: entitlement.currentPeriodEnd || null,
-        } : null,
+        smsEntitlement: {
+          status: user?.smsAddonStatus || null,
+          creditsUsed: smsCreditsUsed,
+          creditsIncluded: smsCreditsLimit,
+          currentPeriodStart: user?.smsPeriodStart || null,
+          currentPeriodEnd: user?.smsPeriodEnd || null,
+          periodValid: smsPeriodValid,
+        },
       },
       checks,
     })
