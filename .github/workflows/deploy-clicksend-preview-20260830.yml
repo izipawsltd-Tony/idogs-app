@@ -1,0 +1,84 @@
+name: Deploy ClickSend provider Preview 20260830
+
+on:
+  push:
+    branches:
+      - feature/clicksend-sms-provider-20260830
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact runtime-clean SHA
+        uses: actions/checkout@v4
+        with:
+          ref: f36f53e76ef66b52e2a8121e82db343803b4c660
+          fetch-depth: 0
+
+      - name: Fail closed on exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "f36f53e76ef66b52e2a8121e82db343803b4c660"
+          test -z "$(git status --porcelain)"
+          test -f api/_lib/sms-provider.js
+          test -f scripts/test-sms-provider.mjs
+          grep -Fq "rest.clicksend.com/v3/sms/send" api/_lib/sms-provider.js
+          grep -Fq "SMS_PROVIDER || 'aws_sns'" api/_lib/sms-provider.js
+          node --check api/_lib/sms-provider.js
+          node --check api/send-reminders.js
+          node --check api/send-sms.js
+          node --check api/qa-sms-black-boy.js
+
+      - name: Provider and SMS regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-sms-provider.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-reminders-batch-regression.mjs
+          node scripts/test-cron-auth.mjs
+          node scripts/test-webhook-handler.mjs
+
+      - name: Install and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Link idogs-app production project for Preview only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull existing Preview settings read-only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+
+      - name: Reverify exact clean source before deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "f36f53e76ef66b52e2a8121e82db343803b4c660"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift before Preview deploy:\n%s\n' "${changed[@]}"
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy exact SHA to Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
