@@ -41,34 +41,18 @@ jobs:
           set -euo pipefail
 
           vcurl() {
-            npx --yes vercel@latest --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects curl "$@"
+            npx --yes vercel@latest --yes --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects curl "$@"
           }
 
-          # Gate A: read-only Firebase / UID / ownership / entitlement verification.
           vcurl "$PREVIEW_URL/api/qa-sms-single-user" > /tmp/gate-a.json
           node - <<'NODE'
           const fs = require('fs')
           const d = JSON.parse(fs.readFileSync('/tmp/gate-a.json', 'utf8'))
-          const summary = {
-            safeToProceed: d.safeToProceed,
-            serverProjectId: d.firebase?.serverProjectId,
-            uid: d.qa?.uid,
-            blackBoyId: d.qa?.blackBoy?.id,
-            blackBoyTenantId: d.qa?.blackBoy?.tenantId,
-            blackBoyCurrentOwnerId: d.qa?.blackBoy?.currentOwnerId,
-            wormingRecordId: d.qa?.activeWorming?.id,
-            wormingDue: d.qa?.activeWorming?.nextDue,
-            smsAddonStatus: d.qa?.smsEntitlement?.status,
-            creditsUsed: d.qa?.smsEntitlement?.creditsUsed,
-            creditsIncluded: d.qa?.smsEntitlement?.creditsIncluded,
-            checks: d.checks,
-          }
+          const summary = {safeToProceed:d.safeToProceed,serverProjectId:d.firebase?.serverProjectId,uid:d.qa?.uid,blackBoyId:d.qa?.blackBoy?.id,blackBoyTenantId:d.qa?.blackBoy?.tenantId,blackBoyCurrentOwnerId:d.qa?.blackBoy?.currentOwnerId,wormingRecordId:d.qa?.activeWorming?.id,wormingDue:d.qa?.activeWorming?.nextDue,smsAddonStatus:d.qa?.smsEntitlement?.status,creditsUsed:d.qa?.smsEntitlement?.creditsUsed,creditsIncluded:d.qa?.smsEntitlement?.creditsIncluded,checks:d.checks}
           console.log('GATE_A_RESULT=' + JSON.stringify(summary))
           if (!d.safeToProceed) process.exit(1)
           NODE
 
-          # Gate B dry-run: adds exact dog/record, billing period, AU mobile,
-          # one-segment and AWS SNS config guards. No data mutation.
           vcurl "$PREVIEW_URL/api/qa-sms-black-boy" > /tmp/gate-b-before.json
           node - <<'NODE'
           const fs = require('fs')
@@ -78,7 +62,6 @@ jobs:
           if (d.sms?.creditsUsed !== 0 || d.sms?.creditsLimit !== 20 || d.sms?.deliveryStatus !== null) process.exit(1)
           NODE
 
-          # Only reachable if both gates above passed. Sends exactly one idempotent SMS.
           vcurl "$PREVIEW_URL/api/qa-sms-black-boy" -- --request POST > /tmp/send-one.json
           node - <<'NODE'
           const fs = require('fs')
@@ -89,7 +72,6 @@ jobs:
           if (d.deliveryStatusAfter !== 'sent' && d.acceptedUnconfirmed !== true) process.exit(1)
           NODE
 
-          # Read-after-write proof.
           vcurl "$PREVIEW_URL/api/qa-sms-black-boy" > /tmp/gate-b-after.json
           node - <<'NODE'
           const fs = require('fs')
@@ -99,7 +81,6 @@ jobs:
           if (!['sent','reserved'].includes(d.sms?.deliveryStatus)) process.exit(1)
           NODE
 
-          # Same idempotency key again: must not send or charge again.
           vcurl "$PREVIEW_URL/api/qa-sms-black-boy" -- --request POST > /tmp/send-duplicate.json
           node - <<'NODE'
           const fs = require('fs')
