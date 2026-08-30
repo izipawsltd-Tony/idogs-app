@@ -1,7 +1,7 @@
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 import { computeEffectivePlan } from './entitlements.js'
-import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
+import { CHECKOUT_PRICE_IDS, checkoutTaxRatesForCurrentEnvironment } from './checkout-handler.js'
 
 // This is the verified iDogs Plus test-mode price in the iDogs Stripe Test mode
 // environment. It is accepted only on Vercel Preview for the isolated iDogs
@@ -106,6 +106,7 @@ export function createSmsAddonCheckoutHandler({
 
       const updated = await updateSubscription(subscription.id, {
         items: [{ price: priceId, quantity: 1 }],
+        default_tax_rates: checkoutTaxRatesForCurrentEnvironment(),
         proration_behavior: 'always_invoice',
         payment_behavior: 'pending_if_incomplete',
         expand: ['latest_invoice'],
@@ -188,6 +189,7 @@ export function createSmsAddonRemoveHandler({
 
       await updateSubscription(subscription.id, {
         items: [{ id: smsItem.id, deleted: true }],
+        default_tax_rates: checkoutTaxRatesForCurrentEnvironment(),
         proration_behavior: 'always_invoice',
       })
 
