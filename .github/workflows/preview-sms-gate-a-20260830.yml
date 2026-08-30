@@ -48,7 +48,7 @@ jobs:
           PREVIEW_URL: https://idogs-jt9ie3x3z-izipawsltd-tonys-projects.vercel.app
         run: |
           set -euo pipefail
-          DIAG="$(npx --yes vercel@latest --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects curl /api/qa-sms-single-user --deployment "$PREVIEW_URL" -- -sS -X POST -H "x-cron-secret: $CRON_SECRET")"
+          DIAG="$(npx --yes vercel@latest curl /api/qa-sms-single-user --deployment "$PREVIEW_URL" -- -sS -X POST -H "x-cron-secret: $CRON_SECRET")"
           printf '%s' "$DIAG" > /tmp/qa-diagnostic.json
           node - <<'NODE'
           const fs = require('fs')
