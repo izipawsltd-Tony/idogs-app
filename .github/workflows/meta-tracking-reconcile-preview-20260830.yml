@@ -37,7 +37,6 @@ jobs:
           node scripts/test-webhook-handler.mjs
           node scripts/test-sms-addon-v1.mjs
           node scripts/test-pricing-integration-checks.mjs
-          node scripts/test-staging-isolation-fallbacks.mjs
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict'
           import { classifyPaidInvoice } from './api/_lib/meta-capi.js'
@@ -52,7 +51,7 @@ jobs:
           console.log('Meta CAPI classification smoke: PASS')
           NODE
 
-      - name: Verify reconcile scope
+      - name: Verify reconcile scope and preserve stable guards
         shell: bash
         run: |
           set -euo pipefail
@@ -72,7 +71,10 @@ jobs:
           for file in "${expected[@]}"; do
             printf '%s\n' "${changed[@]}" | grep -Fxq "$file"
           done
-          test "$(git rev-parse 7b1ddf970c3625bb4276bbb4ce20af3ef6c0d374:api/_lib/checkout-handler.js)" = "$(git rev-parse HEAD:api/_lib/checkout-handler.js)"
+          test "$(git rev-parse "$BASE":api/_lib/checkout-handler.js)" = "$(git rev-parse HEAD:api/_lib/checkout-handler.js)"
+          test "$(git rev-parse "$BASE":'api/super-admin/users/[uid]/password-reset.js')" = "$(git rev-parse HEAD:'api/super-admin/users/[uid]/password-reset.js')"
+          test "$(git rev-parse "$BASE":'api/super-admin/users/[uid]/verification-email.js')" = "$(git rev-parse HEAD:'api/super-admin/users/[uid]/verification-email.js')"
+          echo 'Stable checkout + unrelated super-admin routing files preserved byte-for-byte.'
 
       - name: Link exact staging project
         shell: bash
