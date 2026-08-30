@@ -276,7 +276,7 @@ export default function BillingPage({ toast }: Props) {
           Billing & Plans
         </h1>
         <p style={{ fontSize: 14, color: 'var(--light)' }}>
-          Simple pricing — free forever for 1-2 dogs, upgrade when you need more.
+          Simple pricing — free forever for 1-2 dogs, upgrade when you need more. Paid prices are in AUD and include GST.
         </p>
       </div>
 
@@ -360,7 +360,7 @@ export default function BillingPage({ toast }: Props) {
           >
             Annual
             <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--green)', background: 'var(--green-light)', padding: '2px 6px', borderRadius: 20 }}>
-              SAVE ~18%
+              ANNUAL OPTION
             </span>
           </button>
         </div>

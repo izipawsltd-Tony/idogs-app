@@ -2,21 +2,27 @@ import { requireAppUrl } from './require-config.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 
-// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED). Only two
-// real Stripe Checkout price ids exist for iDogs — Plus Monthly and Plus
-// Annual. The legacy Basic/Pro/Kennel/SMS-addon four-tier prices are
-// retired here (no live customers referenced them — see CLAUDE.md
-// "Trạng thái production"), never selectable through this endpoint again.
-// The $40 launch-offer price mentioned in §1.1 of the record is explicitly
-// NOT implemented per this round's scope.
-export const CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',
+const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
+  plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58',
   plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
 })
 
-// These are the already-provisioned inclusive AU GST rates that were QA'd
-// on staging and prepared for live billing on 29 Aug 2026. Price selection
-// remains unchanged in this micro-fix; only the missing tax context is restored.
+const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
+  plus_monthly: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x',
+  plus_annual: 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK',
+})
+
+function checkoutPricesForCurrentEnvironment(env = process.env) {
+  return env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+    ? STAGING_CHECKOUT_PRICE_IDS
+    : LIVE_CHECKOUT_PRICE_IDS
+}
+
+export const CHECKOUT_PRICE_IDS = Object.freeze({
+  get plus_monthly() { return checkoutPricesForCurrentEnvironment().plus_monthly },
+  get plus_annual() { return checkoutPricesForCurrentEnvironment().plus_annual },
+})
+
 export const LIVE_GST_TAX_RATE_ID = 'txr_1U9iaFGHgBd6ZgJE5FsztFar'
 export const STAGING_GST_TAX_RATE_ID = 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx'
 
@@ -26,10 +32,6 @@ export function checkoutTaxRatesForCurrentEnvironment(env = process.env) {
     : [LIVE_GST_TAX_RATE_ID]
 }
 
-// Both keys resolve to the same entitlement — Plus. The billing interval
-// (monthly vs annual) only matters for the Stripe price/checkout UI and for
-// computing the AI-scan reset anchor (api/stripe-webhook.js); it is never a
-// separate entitlement tier.
 const INTERVAL_BY_PLAN_KEY = Object.freeze({
   plus_monthly: 'monthly',
   plus_annual: 'annual',
