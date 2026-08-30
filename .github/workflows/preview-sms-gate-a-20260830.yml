@@ -41,10 +41,12 @@ jobs:
           set -euo pipefail
 
           vcurl() {
-            npx --yes vercel@latest --yes --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects curl "$@"
+            local path="$1"
+            shift
+            npx --yes vercel@latest curl "$path" --deployment "$PREVIEW_URL" --yes "$@"
           }
 
-          vcurl "$PREVIEW_URL/api/qa-sms-single-user" > /tmp/gate-a.json
+          vcurl "/api/qa-sms-single-user" > /tmp/gate-a.json
           node - <<'NODE'
           const fs = require('fs')
           const d = JSON.parse(fs.readFileSync('/tmp/gate-a.json', 'utf8'))
@@ -53,7 +55,7 @@ jobs:
           if (!d.safeToProceed) process.exit(1)
           NODE
 
-          vcurl "$PREVIEW_URL/api/qa-sms-black-boy" > /tmp/gate-b-before.json
+          vcurl "/api/qa-sms-black-boy" > /tmp/gate-b-before.json
           node - <<'NODE'
           const fs = require('fs')
           const d = JSON.parse(fs.readFileSync('/tmp/gate-b-before.json', 'utf8'))
@@ -62,7 +64,7 @@ jobs:
           if (d.sms?.creditsUsed !== 0 || d.sms?.creditsLimit !== 20 || d.sms?.deliveryStatus !== null) process.exit(1)
           NODE
 
-          vcurl "$PREVIEW_URL/api/qa-sms-black-boy" -- --request POST > /tmp/send-one.json
+          vcurl "/api/qa-sms-black-boy" -- --request POST > /tmp/send-one.json
           node - <<'NODE'
           const fs = require('fs')
           const d = JSON.parse(fs.readFileSync('/tmp/send-one.json', 'utf8'))
@@ -72,7 +74,7 @@ jobs:
           if (d.deliveryStatusAfter !== 'sent' && d.acceptedUnconfirmed !== true) process.exit(1)
           NODE
 
-          vcurl "$PREVIEW_URL/api/qa-sms-black-boy" > /tmp/gate-b-after.json
+          vcurl "/api/qa-sms-black-boy" > /tmp/gate-b-after.json
           node - <<'NODE'
           const fs = require('fs')
           const d = JSON.parse(fs.readFileSync('/tmp/gate-b-after.json', 'utf8'))
@@ -81,7 +83,7 @@ jobs:
           if (!['sent','reserved'].includes(d.sms?.deliveryStatus)) process.exit(1)
           NODE
 
-          vcurl "$PREVIEW_URL/api/qa-sms-black-boy" -- --request POST > /tmp/send-duplicate.json
+          vcurl "/api/qa-sms-black-boy" -- --request POST > /tmp/send-duplicate.json
           node - <<'NODE'
           const fs = require('fs')
           const d = JSON.parse(fs.readFileSync('/tmp/send-duplicate.json', 'utf8'))
