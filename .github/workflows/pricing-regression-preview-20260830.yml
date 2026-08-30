@@ -15,14 +15,14 @@ jobs:
       - name: Checkout exact runtime pricing SHA
         uses: actions/checkout@v4
         with:
-          ref: 3a2aeacd36e98920dbb391c4dc42a0a16161973e
+          ref: f5c6f9084e1357bcd62aec29b5763a47c266bc54
           fetch-depth: 0
 
       - name: Fail closed on exact source and scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "3a2aeacd36e98920dbb391c4dc42a0a16161973e"
+          test "$(git rev-parse HEAD)" = "f5c6f9084e1357bcd62aec29b5763a47c266bc54"
           test -z "$(git status --porcelain)"
           mapfile -t files < <(git diff --name-only d791dcf8bce3e57266115d75a13d9ddf82ae2323..HEAD)
           printf '%s\n' "${files[@]}"
@@ -73,7 +73,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "3a2aeacd36e98920dbb391c4dc42a0a16161973e"
+          test "$(git rev-parse HEAD)" = "f5c6f9084e1357bcd62aec29b5763a47c266bc54"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
             git restore --source=HEAD -- package-lock.json
@@ -98,8 +98,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "3a2aeacd36e98920dbb391c4dc42a0a16161973e"
+          test "$(git rev-parse HEAD)" = "f5c6f9084e1357bcd62aec29b5763a47c266bc54"
           test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED 3a2aeacd36e98920dbb391c4dc42a0a16161973e"
+          echo "EXACT_SHA_DEPLOYED f5c6f9084e1357bcd62aec29b5763a47c266bc54"
           echo "PROJECT idogs-app"
           echo "TARGET preview"
