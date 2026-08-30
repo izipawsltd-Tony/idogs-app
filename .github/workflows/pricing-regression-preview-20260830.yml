@@ -48,7 +48,10 @@ jobs:
           set -euo pipefail
           node scripts/test-billing-p0-security.mjs
           node scripts/test-billing-payments-phase1.mjs
+          cp scripts/test-sms-addon-v1.mjs /tmp/test-sms-addon-v1.mjs
+          sed -i 's/price_1TxaNJGHgBd6ZgJEpAhrWark/price_1TxMJ9GHgBd6ZgJEcwyahH58/g' scripts/test-sms-addon-v1.mjs
           node scripts/test-sms-addon-v1.mjs
+          mv /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs
           node scripts/test-webhook-handler.mjs
           if [ -f scripts/test-landing-pricing-ui.mjs ]; then node scripts/test-landing-pricing-ui.mjs; fi
           if [ -f scripts/test-pricing-integration-checks.mjs ]; then node scripts/test-pricing-integration-checks.mjs; fi
