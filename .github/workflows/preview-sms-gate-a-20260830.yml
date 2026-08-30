@@ -31,24 +31,18 @@ jobs:
           grep -Fq "Black Boy" api/qa-sms-single-user.js
           grep -Fq "2026-08-31" api/qa-sms-single-user.js
 
-      - name: Link production Vercel project
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .vercel
-          cat > .vercel/project.json <<'JSON'
-          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
-          JSON
-
       - name: Gate A read-only Firebase UID ownership quota verification
         shell: bash
         env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           PREVIEW_URL: https://idogs-jt9ie3x3z-izipawsltd-tonys-projects.vercel.app
+          VERCEL_SHARE_URL: https://idogs-jt9ie3x3z-izipawsltd-tonys-projects.vercel.app/?_vercel_share=70LydCQc7SPwV16cRZjygybE537F0uqb
         run: |
           set -euo pipefail
-          DIAG="$(npx --yes vercel@latest curl /api/qa-sms-single-user --deployment "$PREVIEW_URL" -- -sS -X POST -H "x-cron-secret: $CRON_SECRET")"
+          # Authenticate to the protected Preview through Vercel's temporary share access.
+          # The diagnostic itself still requires x-cron-secret and is Preview-only/read-only.
+          curl -fsSL -c /tmp/vercel-cookie "$VERCEL_SHARE_URL" -o /dev/null
+          DIAG="$(curl -fsS -b /tmp/vercel-cookie -X POST "$PREVIEW_URL/api/qa-sms-single-user" -H "x-cron-secret: $CRON_SECRET")"
           printf '%s' "$DIAG" > /tmp/qa-diagnostic.json
           node - <<'NODE'
           const fs = require('fs')
