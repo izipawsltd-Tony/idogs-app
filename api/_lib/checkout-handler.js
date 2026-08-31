@@ -2,12 +2,12 @@ import { requireAppUrl } from './require-config.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 
-const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
+export const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
   plus_monthly: 'price_1UAInbGHgBd6ZgJE0NAikQgm',
   plus_annual: 'price_1UAIngGHgBd6ZgJEh3njs6hZ',
 })
 
-const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
+export const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
   plus_monthly: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x',
   plus_annual: 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK',
 })
@@ -16,6 +16,12 @@ function checkoutPricesForCurrentEnvironment(env = process.env) {
   return env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
     ? STAGING_CHECKOUT_PRICE_IDS
     : LIVE_CHECKOUT_PRICE_IDS
+}
+
+export function checkoutPriceIdsForStripeMode(livemode, env = process.env) {
+  if (livemode === true) return LIVE_CHECKOUT_PRICE_IDS
+  if (livemode === false) return STAGING_CHECKOUT_PRICE_IDS
+  return checkoutPricesForCurrentEnvironment(env)
 }
 
 export const CHECKOUT_PRICE_IDS = Object.freeze({
@@ -30,6 +36,12 @@ export function checkoutTaxRatesForCurrentEnvironment(env = process.env) {
   return env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
     ? [STAGING_GST_TAX_RATE_ID]
     : [LIVE_GST_TAX_RATE_ID]
+}
+
+export function checkoutTaxRatesForStripeMode(livemode, env = process.env) {
+  if (livemode === true) return [LIVE_GST_TAX_RATE_ID]
+  if (livemode === false) return [STAGING_GST_TAX_RATE_ID]
+  return checkoutTaxRatesForCurrentEnvironment(env)
 }
 
 const INTERVAL_BY_PLAN_KEY = Object.freeze({
