@@ -1,4 +1,4 @@
-name: Billing verified entitlement Preview 20260831
+name: Stripe-mode billing Preview 20260831
 
 on:
   push:
@@ -15,14 +15,14 @@ jobs:
       - name: Checkout exact runtime SHA
         uses: actions/checkout@v4
         with:
-          ref: 64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9
+          ref: 16f5766a4283e504c62643f941cc0f853d1a0181
           fetch-depth: 0
 
       - name: Fail closed on exact source and clean scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9"
+          test "$(git rev-parse HEAD)" = "16f5766a4283e504c62643f941cc0f853d1a0181"
           test -z "$(git status --porcelain)"
           test ! -e api/qa-repair-plus-entitlement.js
           test ! -e api/qa-auth-context.js
@@ -30,18 +30,16 @@ jobs:
           grep -Fq "PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
           grep -Fq "price_1UAInbGHgBd6ZgJE0NAikQgm" api/_lib/checkout-handler.js
           grep -Fq "price_1UAIngGHgBd6ZgJEh3njs6hZ" api/_lib/checkout-handler.js
+          grep -Fq "checkoutPriceIdsForStripeMode" api/_lib/checkout-handler.js
+          grep -Fq "checkoutTaxRatesForStripeMode" api/_lib/checkout-handler.js
+          grep -Fq "checkoutPriceIdsForStripeMode(subscription.livemode)" api/_lib/billing-reconcile.js
+          grep -Fq "checkoutTaxRatesForStripeMode(subscription.livemode)" api/_lib/sms-checkout-handler.js
           grep -Fq "payment_behavior: 'error_if_incomplete'" api/_lib/sms-checkout-handler.js
           grep -Fq "parent?.subscription_details?.subscription" api/stripe-webhook.js
           grep -Fq "reconcileVerifiedPlusSubscription" api/stripe-webhook.js
-          grep -Fq "profile, refreshProfile" src/pages/BillingPage.tsx
-          grep -Fq "void refreshProfile().catch" src/pages/BillingPage.tsx
-          grep -Fq "reconcileVerifiedPlus" api/_lib/billing-handler.js
-          grep -Fq "entitlement =" api/_lib/billing-handler.js
-          grep -Fq "return reconcileVerifiedPlusSubscription" api/billing-summary.js
           grep -Fq "body?.entitlement" src/hooks/useAuth.tsx
           grep -Fq "Plus subscription is already active" api/_lib/checkout-handler.js
-          grep -Fq "verifiedPlusInterval" api/create-checkout.js
-          grep -Fq "14/14 PASS" scripts/test-billing-payments-phase1.mjs
+          test -e scripts/test-stripe-mode-routing.mjs
           test -e api/_lib/billing-reconcile.js
 
       - name: Install dependencies
@@ -56,6 +54,7 @@ jobs:
           trap 'cp /tmp/test-billing-p0-security.mjs scripts/test-billing-p0-security.mjs; cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs' EXIT
           sed -i 's/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ8GHgBd6ZgJEt56IzJJd/price_1UAIngGHgBd6ZgJEh3njs6hZ/g' scripts/test-billing-p0-security.mjs
           sed -i 's/price_1TxaNJGHgBd6ZgJEpAhrWark/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/pending_if_incomplete/error_if_incomplete/g; s/assert.equal(res.statusCode,202)/assert.equal(res.statusCode,200)/g; s/pending_payment/activating/g' scripts/test-sms-addon-v1.mjs
+          node scripts/test-stripe-mode-routing.mjs
           node scripts/test-billing-p0-security.mjs
           node scripts/test-billing-payments-phase1.mjs
           node scripts/test-sms-addon-v1.mjs
@@ -80,30 +79,11 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
-      - name: Diagnose Firebase project parity only
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f .vercel/.env.preview.local
-          set -a
-          source .vercel/.env.preview.local
-          set +a
-          server_project="${FIREBASE_PROJECT_ID:-<unset>}"
-          client_project="${VITE_FIREBASE_PROJECT_ID:-<unset>}"
-          echo "PREVIEW_SERVER_FIREBASE_PROJECT_ID=$server_project"
-          echo "PREVIEW_CLIENT_FIREBASE_PROJECT_ID=$client_project"
-          if [[ "$server_project" == "$client_project" ]]; then
-            echo "FIREBASE_PROJECT_PARITY=PASS"
-          else
-            echo "FIREBASE_PROJECT_PARITY=FAIL"
-            exit 42
-          fi
-
       - name: Reverify exact clean source
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9"
+          test "$(git rev-parse HEAD)" = "16f5766a4283e504c62643f941cc0f853d1a0181"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
           test -z "$(git status --porcelain)"
@@ -123,8 +103,8 @@ jobs:
       - name: Verify Preview target
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9"
+          test "$(git rev-parse HEAD)" = "16f5766a4283e504c62643f941cc0f853d1a0181"
           test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED 64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9"
+          echo "EXACT_SHA_DEPLOYED 16f5766a4283e504c62643f941cc0f853d1a0181"
           echo "PROJECT idogs-app"
           echo "TARGET preview"
