@@ -1,11 +1,6 @@
-import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
+import { checkoutPriceIdsForStripeMode } from './checkout-handler.js'
 import { reactivateUpToCapTx } from './dog-cap.js'
 import { anchorDayFromDate } from './entitlements.js'
-
-const PRICE_INTERVAL = Object.freeze({
-  [CHECKOUT_PRICE_IDS.plus_monthly]: 'monthly',
-  [CHECKOUT_PRICE_IDS.plus_annual]: 'annual',
-})
 
 function customerIdOf(subscription) {
   if (typeof subscription?.customer === 'string') return subscription.customer
@@ -14,8 +9,13 @@ function customerIdOf(subscription) {
 
 export function verifiedPlusInterval(subscription) {
   if (!subscription || !['active', 'trialing'].includes(subscription.status)) return null
+  const prices = checkoutPriceIdsForStripeMode(subscription.livemode)
+  const priceInterval = new Map([
+    [prices.plus_monthly, 'monthly'],
+    [prices.plus_annual, 'annual'],
+  ])
   for (const item of subscription.items?.data || []) {
-    const interval = PRICE_INTERVAL[item?.price?.id]
+    const interval = priceInterval.get(item?.price?.id)
     if (interval) return interval
   }
   return null
