@@ -1,4 +1,4 @@
-name: Billing self-heal Preview 20260831
+name: Billing Firebase parity diagnostic 20260831
 
 on:
   push:
@@ -77,6 +77,25 @@ jobs:
         run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Diagnose Firebase project parity only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .vercel/.env.preview.local
+          set -a
+          source .vercel/.env.preview.local
+          set +a
+          server_project="${FIREBASE_PROJECT_ID:-<unset>}"
+          client_project="${VITE_FIREBASE_PROJECT_ID:-<unset>}"
+          echo "PREVIEW_SERVER_FIREBASE_PROJECT_ID=$server_project"
+          echo "PREVIEW_CLIENT_FIREBASE_PROJECT_ID=$client_project"
+          if [[ "$server_project" == "$client_project" ]]; then
+            echo "FIREBASE_PROJECT_PARITY=PASS"
+          else
+            echo "FIREBASE_PROJECT_PARITY=FAIL"
+            exit 42
+          fi
 
       - name: Reverify exact clean source
         shell: bash
