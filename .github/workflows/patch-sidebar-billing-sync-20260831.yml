@@ -1,0 +1,94 @@
+name: Patch sidebar billing sync 20260831
+
+on:
+  push:
+    branches:
+      - automation/pricing-regression-preview-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  patch-runtime:
+    if: contains(github.event.head_commit.message, 'ci: patch sidebar billing sync')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact recovery branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/pricing-regression-20260830
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail closed on exact base
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "28a5090d3024c3039ec24c8c93780a4dc277d9f5"
+          test -z "$(git status --porcelain)"
+
+      - name: Apply verified sidebar billing patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/components/layout/AppLayout.tsx')
+          s = p.read_text()
+
+          old = """  const [userMenuOpen, setUserMenuOpen] = useState(false)\n  const userMenuRef = useRef<HTMLDivElement>(null)\n"""
+          new = """  const [userMenuOpen, setUserMenuOpen] = useState(false)\n  const userMenuRef = useRef<HTMLDivElement>(null)\n  // Billing entitlement is server-owned. Keep a raw verified copy for the\n  // persistent sidebar instead of relying on a merged/cached profile value.\n  const [verifiedBillingPlan, setVerifiedBillingPlan] = useState<'free' | 'plus' | null>(null)\n  const [billingPlanResolved, setBillingPlanResolved] = useState(false)\n"""
+          if old not in s:
+              raise SystemExit('sidebar state anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = """  const { beginRequest: beginDogCountRequest } = useRequestGuard(user?.uid)\n  const { beginRequest: beginLitterCountRequest } = useRequestGuard(user?.uid)\n"""
+          new = """  const { beginRequest: beginDogCountRequest } = useRequestGuard(user?.uid)\n  const { beginRequest: beginLitterCountRequest } = useRequestGuard(user?.uid)\n  const { beginRequest: beginBillingPlanRequest } = useRequestGuard(user?.uid)\n\n  function loadVerifiedBillingPlan(showLoading = false) {\n    if (!user) return\n    const req = beginBillingPlanRequest()\n    if (showLoading) {\n      setVerifiedBillingPlan(null)\n      setBillingPlanResolved(false)\n    }\n\n    void (async () => {\n      try {\n        const idToken = await user.getIdToken()\n        const res = await fetch('/api/billing-summary', {\n          headers: { Authorization: `Bearer ${idToken}` },\n          cache: 'no-store',\n        })\n        const body = await res.json().catch(() => ({}))\n        if (!req.isCurrent()) return\n        const plan = body?.entitlement?.plan\n        if (!res.ok || (plan !== 'free' && plan !== 'plus')) {\n          if (showLoading) setVerifiedBillingPlan(null)\n          return\n        }\n        setVerifiedBillingPlan(plan)\n      } catch {\n        if (req.isCurrent() && showLoading) setVerifiedBillingPlan(null)\n      } finally {\n        if (req.isCurrent()) setBillingPlanResolved(true)\n      }\n    })()\n  }\n"""
+          if old not in s:
+              raise SystemExit('request guard anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = """  useEffect(() => {\n    const uid = user?.uid\n    if (!uid) return\n    return subscribeToDogUsageChanged(changedUid => {\n"""
+          new = """  useEffect(() => {\n    if (!user) {\n      setVerifiedBillingPlan(null)\n      setBillingPlanResolved(false)\n      return\n    }\n\n    loadVerifiedBillingPlan(true)\n    const refreshVerifiedBilling = () => {\n      if (document.visibilityState !== 'hidden') loadVerifiedBillingPlan(false)\n    }\n    window.addEventListener('focus', refreshVerifiedBilling)\n    window.addEventListener('pageshow', refreshVerifiedBilling)\n    document.addEventListener('visibilitychange', refreshVerifiedBilling)\n    return () => {\n      window.removeEventListener('focus', refreshVerifiedBilling)\n      window.removeEventListener('pageshow', refreshVerifiedBilling)\n      document.removeEventListener('visibilitychange', refreshVerifiedBilling)\n    }\n    // loadVerifiedBillingPlan is intentionally rebound per authenticated uid.\n    // eslint-disable-next-line react-hooks/exhaustive-deps\n  }, [user?.uid])\n\n  useEffect(() => {\n    const uid = user?.uid\n    if (!uid) return\n    return subscribeToDogUsageChanged(changedUid => {\n"""
+          if old not in s:
+              raise SystemExit('billing effect anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = """  const effectivePlan = getEffectivePlanClient(profile)\n  // Deliberately NOT named isSuperAdmin — that name is already taken above\n"""
+          new = """  // Deliberately NOT named isSuperAdmin — that name is already taken above\n"""
+          if old not in s:
+              raise SystemExit('effective plan anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = """  const hasAdminEntitlement = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())\n  const planCfg = getPlanCfg(effectivePlan)\n  const planLabel = profile?.plan === 'trial' ? 'Free Trial' : planCfg.label\n"""
+          new = """  const hasAdminEntitlement = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())\n  // Stripe-verified billing wins over the cached Firestore profile for normal\n  // accounts. Internal admin entitlement remains an explicit higher-level\n  // bypass. If billing cannot be verified, the cached plan is display fallback\n  // only; the Upgrade CTA below stays hidden until the server confirms Free.\n  const effectivePlan = hasAdminEntitlement\n    ? 'plus'\n    : verifiedBillingPlan ?? getEffectivePlanClient(profile)\n  const planCfg = getPlanCfg(effectivePlan)\n  const planLabel = !billingPlanResolved && !hasAdminEntitlement\n    ? 'Checking plan…'\n    : verifiedBillingPlan\n      ? planCfg.label\n      : profile?.plan === 'trial' ? 'Free Trial' : planCfg.label\n"""
+          if old not in s:
+              raise SystemExit('plan config anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = """            {planCfg.upgrade && (\n"""
+          new = """            {planCfg.upgrade && billingPlanResolved && verifiedBillingPlan === 'free' && !hasAdminEntitlement && (\n"""
+          if old not in s:
+              raise SystemExit('upgrade guard anchor missing')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+
+          t = Path('scripts/test-sidebar-billing-sync.mjs')
+          t.write_text("""import fs from 'node:fs'\n\nconst source = fs.readFileSync(new URL('../src/components/layout/AppLayout.tsx', import.meta.url), 'utf8')\nconst checks = [\n  ['sidebar fetches secure billing summary', source.includes(\"fetch('/api/billing-summary'\")],\n  ['sidebar reads verified entitlement plan', source.includes('body?.entitlement?.plan')],\n  ['billing request is uid/generation guarded', source.includes('beginBillingPlanRequest') && source.includes('req.isCurrent()')],\n  ['verified Stripe plan overrides cached profile', source.includes('verifiedBillingPlan ?? getEffectivePlanClient(profile)')],\n  ['admin entitlement keeps explicit precedence', source.includes(\"const effectivePlan = hasAdminEntitlement\")],\n  ['upgrade CTA requires server-confirmed Free', source.includes(\"planCfg.upgrade && billingPlanResolved && verifiedBillingPlan === 'free' && !hasAdminEntitlement\")],\n  ['unknown billing state does not present upgrade as verified', source.includes(\"'Checking plan…'\")],\n]\nlet passed = 0\nfor (const [name, ok] of checks) {\n  if (!ok) {\n    console.error(`FAIL: ${name}`)\n    process.exitCode = 1\n  } else {\n    passed += 1\n    console.log(`PASS: ${name}`)\n  }\n}\nconsole.log(`Sidebar billing sync: ${passed}/${checks.length} PASS`)\n""")
+          PY
+
+          node scripts/test-sidebar-billing-sync.mjs
+          git diff --check
+
+      - name: Commit runtime micro-fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "izipawsltd-Tony"
+          git config user.email "izipawsltd@gmail.com"
+          git add src/components/layout/AppLayout.tsx scripts/test-sidebar-billing-sync.mjs
+          git commit -m "fix(layout): use verified billing state in sidebar"
+          git push origin HEAD:fix/pricing-regression-20260830
+          echo "RUNTIME_SHA=$(git rev-parse HEAD)"
