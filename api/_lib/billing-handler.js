@@ -62,6 +62,14 @@ function smsSummary(profile, isSmsConfigured) {
   }
 }
 
+function profileEntitlement(profile) {
+  return {
+    plan: profile?.plan === 'plus' ? 'plus' : 'free',
+    billingInterval: profile?.billingInterval === 'annual' ? 'annual' : profile?.billingInterval === 'monthly' ? 'monthly' : null,
+    subscriptionStatus: typeof profile?.subscriptionStatus === 'string' ? profile.subscriptionStatus : null,
+  }
+}
+
 export function createBillingSummaryHandler({
   verifyIdToken,
   getProfile,
@@ -79,15 +87,16 @@ export function createBillingSummaryHandler({
     try {
       const profile = await getProfile(auth.uid)
       const sms = smsSummary(profile, isSmsConfigured)
+      let entitlement = profileEntitlement(profile)
 
       if (!profile) {
-        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms })
+        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms, entitlement })
       }
 
       const customerId = typeof profile.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
       const subscriptionId = typeof profile.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : null
       if (!customerId) {
-        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms })
+        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms, entitlement })
       }
 
       let subscription = null
@@ -98,13 +107,18 @@ export function createBillingSummaryHandler({
           return res.status(409).json({ error: 'Billing account mismatch' })
         }
 
-        // Stripe is authoritative for paid entitlement. If the stored profile
-        // drifted to Free while the exact linked subscription is still an
-        // allowlisted active Plus subscription, repair the profile before the
-        // browser refreshes its cached entitlement. The injected reconciler
-        // must independently verify status + price + user ownership and no-op
-        // for anything that is not verified Plus.
-        await reconcileVerifiedPlus({ subscription: stripeSubscription, userId: auth.uid })
+        // Stripe is authoritative for paid entitlement. Reconcile drifted
+        // Firestore state, then return the same verified entitlement in this
+        // response so Billing UI never mixes a fresh Stripe subscription with
+        // a stale browser-cached Free profile.
+        const reconciled = await reconcileVerifiedPlus({ subscription: stripeSubscription, userId: auth.uid })
+        if (reconciled && typeof reconciled === 'object') {
+          entitlement = {
+            plan: reconciled.plan === 'plus' ? 'plus' : 'free',
+            billingInterval: reconciled.billingInterval === 'annual' ? 'annual' : reconciled.billingInterval === 'monthly' ? 'monthly' : null,
+            subscriptionStatus: typeof reconciled.subscriptionStatus === 'string' ? reconciled.subscriptionStatus : null,
+          }
+        }
 
         subscription = {
           id: stripeSubscription.id,
@@ -116,7 +130,7 @@ export function createBillingSummaryHandler({
 
       const result = await listInvoices({ customer: customerId, limit: 12 })
       const invoices = (result?.data || []).map(mapInvoice).filter(invoice => invoice.id)
-      return res.status(200).json({ subscription, invoices, canManageBilling: true, sms })
+      return res.status(200).json({ subscription, invoices, canManageBilling: true, sms, entitlement })
     } catch {
       logSanitizedError('billing-summary', 'BILLING_SUMMARY_FAILED')
       return res.status(500).json({ error: 'Failed to load billing details' })
