@@ -1,12 +1,8 @@
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 import { computeEffectivePlan } from './entitlements.js'
-import { CHECKOUT_PRICE_IDS, checkoutTaxRatesForCurrentEnvironment } from './checkout-handler.js'
-
-// This is the verified iDogs Plus test-mode price in the iDogs Stripe Test mode
-// environment. It is accepted only on Vercel Preview for the isolated iDogs
-// staging Firebase project; production continues to accept only CHECKOUT_PRICE_IDS.
-const STAGING_PLUS_PRICE_ID = 'price_1TxaNJGHgBd6ZgJEpAhrWark'
+import { checkoutTaxRatesForStripeMode } from './checkout-handler.js'
+import { verifiedPlusInterval } from './billing-reconcile.js'
 
 function parseBody(req) {
   if (typeof req.body !== 'string') return req.body || {}
@@ -24,17 +20,8 @@ function subscriptionPriceIds(subscription) {
     .filter(id => typeof id === 'string' && id)
 }
 
-function allowedBasePlusPriceIds() {
-  const allowed = [...Object.values(CHECKOUT_PRICE_IDS)]
-  if (process.env.VERCEL_ENV === 'preview' && process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging') {
-    allowed.push(STAGING_PLUS_PRICE_ID)
-  }
-  return allowed
-}
-
 function hasBasePlusPrice(subscription) {
-  const allowed = new Set(allowedBasePlusPriceIds())
-  return subscriptionPriceIds(subscription).some(id => allowed.has(id))
+  return Boolean(verifiedPlusInterval(subscription))
 }
 
 function hasPrice(subscription, priceId) {
@@ -106,7 +93,7 @@ export function createSmsAddonCheckoutHandler({
 
       const updated = await updateSubscription(subscription.id, {
         items: [{ price: priceId, quantity: 1 }],
-        default_tax_rates: checkoutTaxRatesForCurrentEnvironment(),
+        default_tax_rates: checkoutTaxRatesForStripeMode(subscription.livemode),
         proration_behavior: 'always_invoice',
         payment_behavior: 'error_if_incomplete',
         expand: ['latest_invoice'],
@@ -127,7 +114,6 @@ export function createSmsAddonCheckoutHandler({
     }
   }
 }
-
 
 export function createSmsAddonRemoveHandler({
   verifyIdToken,
@@ -188,7 +174,7 @@ export function createSmsAddonRemoveHandler({
 
       await updateSubscription(subscription.id, {
         items: [{ id: smsItem.id, deleted: true }],
-        default_tax_rates: checkoutTaxRatesForCurrentEnvironment(),
+        default_tax_rates: checkoutTaxRatesForStripeMode(subscription.livemode),
         proration_behavior: 'always_invoice',
       })
 
