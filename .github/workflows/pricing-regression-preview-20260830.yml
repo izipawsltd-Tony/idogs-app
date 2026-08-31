@@ -1,4 +1,4 @@
-name: Cancel mismatched pricing production deployment 20260831
+name: Pricing recovery Preview 20260831
 
 on:
   push:
@@ -9,20 +9,93 @@ permissions:
   contents: read
 
 jobs:
-  cancel-mismatched-production:
+  validate-preview:
     runs-on: ubuntu-latest
     steps:
-      - name: Cancel exact Vercel deployment before READY
+      - name: Checkout exact runtime SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b
+          fetch-depth: 0
+
+      - name: Fail closed on exact source and pricing GST scope
         shell: bash
         run: |
           set -euo pipefail
-          DEPLOYMENT_ID="dpl_9c73nkX8svdEoywY2dzaShm9p711"
-          TEAM_ID="team_oZF1Z0BUEceb9fAXdmFV1Saz"
-          curl --fail-with-body --silent --show-error \
-            --request DELETE \
-            "https://api.vercel.com/v13/deployments/${DEPLOYMENT_ID}?teamId=${TEAM_ID}" \
-            --header "Authorization: Bearer ${VERCEL_TOKEN}"
-          echo "CANCELLED_DEPLOYMENT ${DEPLOYMENT_ID}"
-          echo "REASON live Stripe prices are A$5/month and A$49/year, not approved A$7/A$70"
+          test "$(git rev-parse HEAD)" = "9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b"
+          test -z "$(git status --porcelain)"
+          test ! -e noop.tmp
+          test ! -e api/qa-auth-context.js
+          grep -Fq "PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
+          grep -Fq "PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
+          grep -Fq "price_1UAInbGHgBd6ZgJE0NAikQgm" api/_lib/checkout-handler.js
+          grep -Fq "price_1UAIngGHgBd6ZgJEh3njs6hZ" api/_lib/checkout-handler.js
+          grep -Fq "txr_1U9iaFGHgBd6ZgJE5FsztFar" api/_lib/checkout-handler.js
+          grep -Fq "default_tax_rates" api/_lib/checkout-handler.js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp scripts/test-billing-p0-security.mjs /tmp/test-billing-p0-security.mjs
+          cp scripts/test-sms-addon-v1.mjs /tmp/test-sms-addon-v1.mjs
+          trap 'cp /tmp/test-billing-p0-security.mjs scripts/test-billing-p0-security.mjs; cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs' EXIT
+          sed -i 's/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ8GHgBd6ZgJEt56IzJJd/price_1UAIngGHgBd6ZgJEh3njs6hZ/g' scripts/test-billing-p0-security.mjs
+          sed -i 's/price_1TxaNJGHgBd6ZgJEpAhrWark/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g' scripts/test-sms-addon-v1.mjs
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-landing-pricing-ui.mjs
+          if [ -f scripts/test-pricing-integration-checks.mjs ]; then node scripts/test-pricing-integration-checks.mjs; fi
+          npm run build
+          cp /tmp/test-billing-p0-security.mjs scripts/test-billing-p0-security.mjs
+          cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs
+          trap - EXIT
+
+      - name: Link exact Vercel project
+        shell: bash
+        run: |
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull Preview settings
+        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Reverify exact clean runtime source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
+          test -z "$(git status --porcelain)"
+          test ! -e noop.tmp
+          test ! -e api/qa-auth-context.js
+
+      - name: Deploy Preview only
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PREVIEW_URL"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_READY $PREVIEW_URL"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Verify Preview target
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b"
+          test -n "$PREVIEW_URL"
+          echo "EXACT_SHA_DEPLOYED 9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b"
+          echo "PROJECT idogs-app"
+          echo "TARGET preview"
