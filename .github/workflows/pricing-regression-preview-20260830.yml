@@ -1,4 +1,4 @@
-name: Pricing recovery Preview 20260831
+name: Pricing recovery Production 20260831
 
 on:
   push:
@@ -9,10 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  validate-preview:
+  validate-production:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact runtime SHA
+      - name: Checkout exact approved runtime SHA
         uses: actions/checkout@v4
         with:
           ref: 504a516dac1fe51a08969b61f873b3998c4ac4c1
@@ -26,6 +26,7 @@ jobs:
           test -z "$(git status --porcelain)"
           test ! -e noop.tmp
           test ! -e api/qa-auth-context.js
+          test ! -e .github/workflows/pricing-regression-preview-20260830.yml || true
           grep -Fq "PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
           grep -Fq "PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
           grep -Fq "price_1UAInbGHgBd6ZgJE0NAikQgm" api/_lib/checkout-handler.js
@@ -60,7 +61,7 @@ jobs:
           cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs
           trap - EXIT
 
-      - name: Link exact Vercel project
+      - name: Link exact Vercel production project
         shell: bash
         run: |
           mkdir -p .vercel
@@ -68,12 +69,12 @@ jobs:
           {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
           JSON
 
-      - name: Pull Preview settings
-        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+      - name: Pull Production settings
+        run: npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
-      - name: Reverify exact clean runtime source
+      - name: Reverify exact clean approved runtime source
         shell: bash
         run: |
           set -euo pipefail
@@ -84,22 +85,24 @@ jobs:
           test ! -e noop.tmp
           test ! -e api/qa-auth-context.js
 
-      - name: Deploy Preview only
+      - name: Deploy Production exact SHA
         shell: bash
         run: |
           set -euo pipefail
-          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
-          test -n "$PREVIEW_URL"
-          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
-          echo "PREVIEW_READY $PREVIEW_URL"
+          PROD_URL=$(npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-production.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PROD_URL"
+          echo "PROD_URL=$PROD_URL" >> "$GITHUB_ENV"
+          echo "PRODUCTION_READY $PROD_URL"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
-      - name: Verify Preview target
+      - name: Verify Production target
         shell: bash
         run: |
+          set -euo pipefail
           test "$(git rev-parse HEAD)" = "504a516dac1fe51a08969b61f873b3998c4ac4c1"
-          test -n "$PREVIEW_URL"
+          test -n "$PROD_URL"
           echo "EXACT_SHA_DEPLOYED 504a516dac1fe51a08969b61f873b3998c4ac4c1"
           echo "PROJECT idogs-app"
-          echo "TARGET preview"
+          echo "PROJECT_ID prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo"
+          echo "TARGET production"
