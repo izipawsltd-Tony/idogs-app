@@ -1,4 +1,4 @@
-name: Billing Firebase parity diagnostic 20260831
+name: Billing verified entitlement Preview 20260831
 
 on:
   push:
@@ -15,14 +15,14 @@ jobs:
       - name: Checkout exact runtime SHA
         uses: actions/checkout@v4
         with:
-          ref: 3069b984b10a41bd0bcb9728837ba12e87bfb091
+          ref: 64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9
           fetch-depth: 0
 
       - name: Fail closed on exact source and clean scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "3069b984b10a41bd0bcb9728837ba12e87bfb091"
+          test "$(git rev-parse HEAD)" = "64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9"
           test -z "$(git status --porcelain)"
           test ! -e api/qa-repair-plus-entitlement.js
           test ! -e api/qa-auth-context.js
@@ -36,8 +36,10 @@ jobs:
           grep -Fq "profile, refreshProfile" src/pages/BillingPage.tsx
           grep -Fq "void refreshProfile().catch" src/pages/BillingPage.tsx
           grep -Fq "reconcileVerifiedPlus" api/_lib/billing-handler.js
+          grep -Fq "entitlement =" api/_lib/billing-handler.js
+          grep -Fq "return reconcileVerifiedPlusSubscription" api/billing-summary.js
+          grep -Fq "body?.entitlement" src/hooks/useAuth.tsx
           grep -Fq "Plus subscription is already active" api/_lib/checkout-handler.js
-          grep -Fq "verifiedPlusInterval" api/billing-summary.js
           grep -Fq "verifiedPlusInterval" api/create-checkout.js
           grep -Fq "14/14 PASS" scripts/test-billing-payments-phase1.mjs
           test -e api/_lib/billing-reconcile.js
@@ -101,7 +103,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "3069b984b10a41bd0bcb9728837ba12e87bfb091"
+          test "$(git rev-parse HEAD)" = "64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
           test -z "$(git status --porcelain)"
@@ -121,8 +123,8 @@ jobs:
       - name: Verify Preview target
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "3069b984b10a41bd0bcb9728837ba12e87bfb091"
+          test "$(git rev-parse HEAD)" = "64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9"
           test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED 3069b984b10a41bd0bcb9728837ba12e87bfb091"
+          echo "EXACT_SHA_DEPLOYED 64ebbc0e33bb57c8827d614c69e0172e0c1fb4f9"
           echo "PROJECT idogs-app"
           echo "TARGET preview"
