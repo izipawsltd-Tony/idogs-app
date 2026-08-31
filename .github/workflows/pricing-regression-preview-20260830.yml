@@ -1,4 +1,4 @@
-name: SMS add-on atomic payment Preview 20260831
+name: Plus entitlement self-heal Preview 20260831
 
 on:
   push:
@@ -15,26 +15,24 @@ jobs:
       - name: Checkout exact runtime SHA
         uses: actions/checkout@v4
         with:
-          ref: bcf8200cabc9e7668b5a05853fb9164d9e3c088c
+          ref: d5718e24914b3f7cbe1144612bdd43e099e43b1a
           fetch-depth: 0
 
-      - name: Fail closed on exact source and SMS GST scope
+      - name: Fail closed on exact source and billing scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "bcf8200cabc9e7668b5a05853fb9164d9e3c088c"
+          test "$(git rev-parse HEAD)" = "d5718e24914b3f7cbe1144612bdd43e099e43b1a"
           test -z "$(git status --porcelain)"
-          test ! -e noop.tmp
-          test ! -e api/qa-auth-context.js
           grep -Fq "PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
           grep -Fq "PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
           grep -Fq "price_1UAInbGHgBd6ZgJE0NAikQgm" api/_lib/checkout-handler.js
           grep -Fq "price_1UAIngGHgBd6ZgJEh3njs6hZ" api/_lib/checkout-handler.js
-          grep -Fq "txr_1U9iaFGHgBd6ZgJE5FsztFar" api/_lib/checkout-handler.js
-          grep -Fq "default_tax_rates" api/_lib/sms-checkout-handler.js
           grep -Fq "payment_behavior: 'error_if_incomplete'" api/_lib/sms-checkout-handler.js
-          grep -Fq "proration_behavior: 'always_invoice'" api/_lib/sms-checkout-handler.js
-          grep -Fq "if (!profile)" api/_lib/billing-handler.js
+          grep -Fq "parent?.subscription_details?.subscription" api/stripe-webhook.js
+          grep -Fq "reconcileVerifiedPlusSubscription" api/stripe-webhook.js
+          grep -Fq "VERCEL_ENV !== 'preview'" api/qa-repair-plus-entitlement.js
+          grep -Fq "sub_1UAN6VGHgBd6ZgJEe08VQQ9h" api/qa-repair-plus-entitlement.js
 
       - name: Install dependencies
         run: npm ci
@@ -53,7 +51,7 @@ jobs:
           node scripts/test-sms-addon-v1.mjs
           node scripts/test-webhook-handler.mjs
           node scripts/test-landing-pricing-ui.mjs
-          if [ -f scripts/test-pricing-integration-checks.mjs ]; then node scripts/test-pricing-integration-checks.mjs; fi
+          node scripts/test-pricing-integration-checks.mjs
           npm run build
           cp /tmp/test-billing-p0-security.mjs scripts/test-billing-p0-security.mjs
           cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs
@@ -72,16 +70,14 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
-      - name: Reverify exact clean runtime source
+      - name: Reverify exact clean source
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "bcf8200cabc9e7668b5a05853fb9164d9e3c088c"
+          test "$(git rev-parse HEAD)" = "d5718e24914b3f7cbe1144612bdd43e099e43b1a"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
           test -z "$(git status --porcelain)"
-          test ! -e noop.tmp
-          test ! -e api/qa-auth-context.js
 
       - name: Deploy Preview only
         shell: bash
@@ -97,8 +93,8 @@ jobs:
       - name: Verify Preview target
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "bcf8200cabc9e7668b5a05853fb9164d9e3c088c"
+          test "$(git rev-parse HEAD)" = "d5718e24914b3f7cbe1144612bdd43e099e43b1a"
           test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED bcf8200cabc9e7668b5a05853fb9164d9e3c088c"
+          echo "EXACT_SHA_DEPLOYED d5718e24914b3f7cbe1144612bdd43e099e43b1a"
           echo "PROJECT idogs-app"
           echo "TARGET preview"
