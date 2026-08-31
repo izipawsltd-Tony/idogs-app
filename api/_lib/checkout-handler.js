@@ -46,9 +46,18 @@ function bodyOf(req) {
   }
 }
 
+function customerIdOf(value) {
+  if (typeof value === 'string') return value
+  if (value && typeof value.id === 'string') return value.id
+  return null
+}
+
 export function createCheckoutHandler({
   verifyIdToken,
   createSession,
+  getProfile = async () => null,
+  retrieveSubscription = async () => null,
+  isVerifiedActivePlus = () => false,
   getAppUrl = requireAppUrl,
 } = {}) {
   return async function checkoutHandler(req, res) {
@@ -101,6 +110,25 @@ export function createCheckoutHandler({
     const defaultTaxRates = checkoutTaxRatesForCurrentEnvironment()
 
     try {
+      // Never trust profile.plan alone for duplicate prevention. A webhook
+      // ordering issue can leave plan stale while the server-owned Stripe
+      // linkage still points at a paid active subscription. If a linked
+      // subscription exists, verify it directly before creating any new
+      // Checkout session; fail closed on mismatches or verification errors.
+      const profile = await getProfile(uid)
+      const linkedSubscriptionId = typeof profile?.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : null
+      const linkedCustomerId = typeof profile?.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
+      if (linkedSubscriptionId) {
+        const linkedSubscription = await retrieveSubscription(linkedSubscriptionId)
+        if (linkedCustomerId && customerIdOf(linkedSubscription?.customer) !== linkedCustomerId) {
+          logSanitizedError('create-checkout', 'EXISTING_SUBSCRIPTION_CUSTOMER_MISMATCH')
+          return res.status(409).json({ error: 'Existing billing account mismatch' })
+        }
+        if (isVerifiedActivePlus(linkedSubscription)) {
+          return res.status(409).json({ error: 'Plus subscription is already active' })
+        }
+      }
+
       const session = await createSession({
         mode: 'subscription',
         payment_method_types: ['card'],
