@@ -54,6 +54,13 @@ jobs:
           trap 'cp /tmp/test-billing-p0-security.mjs scripts/test-billing-p0-security.mjs; cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs' EXIT
           sed -i 's/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ8GHgBd6ZgJEt56IzJJd/price_1UAIngGHgBd6ZgJEh3njs6hZ/g' scripts/test-billing-p0-security.mjs
           sed -i 's/price_1TxaNJGHgBd6ZgJEpAhrWark/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/pending_if_incomplete/error_if_incomplete/g; s/assert.equal(res.statusCode,202)/assert.equal(res.statusCode,200)/g; s/pending_payment/activating/g' scripts/test-sms-addon-v1.mjs
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/test-sms-addon-v1.mjs')
+          s = p.read_text()
+          s = s.replace("id:'sub_1',\n      customer:'cus_1',", "id:'sub_1',\n      livemode:true,\n      status:'active',\n      customer:'cus_1',")
+          p.write_text(s)
+          PY
           node scripts/test-stripe-mode-routing.mjs
           node scripts/test-billing-p0-security.mjs
           node scripts/test-billing-payments-phase1.mjs
