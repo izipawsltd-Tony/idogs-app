@@ -35,13 +35,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
+  async function loadProfileWithVerifiedBilling(u: User): Promise<UserProfile | null> {
+    const p = await getUserProfile(u.uid)
+    if (!p) return p
+
+    try {
+      const idToken = await u.getIdToken()
+      const res = await fetch('/api/billing-summary', {
+        headers: { Authorization: `Bearer ${idToken}` },
+        cache: 'no-store',
+      })
+      const body = await res.json().catch(() => ({}))
+      if (res.ok && body?.entitlement) {
+        return {
+          ...p,
+          plan: body.entitlement.plan === 'plus' ? 'plus' : p.plan,
+          ...(body.entitlement.billingInterval ? { billingInterval: body.entitlement.billingInterval } : {}),
+          ...(body.entitlement.subscriptionStatus ? { subscriptionStatus: body.entitlement.subscriptionStatus } : {}),
+        } as UserProfile
+      }
+    } catch (err) {
+      console.error('Failed to merge verified billing entitlement:', err)
+    }
+
+    return p
+  }
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setLoading(true)
       setUser(u)
       if (u) {
         try {
-          const p = await getUserProfile(u.uid)
+          const p = await loadProfileWithVerifiedBilling(u)
           setProfile(p)
         } catch (err) {
           console.error('Failed to load user profile:', err)
@@ -54,6 +80,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
     return unsub
   }, [])
+
+  useEffect(() => {
+    if (!user) return
+
+    const refreshVerifiedProfile = () => {
+      void loadProfileWithVerifiedBilling(user)
+        .then(setProfile)
+        .catch(err => console.error('Failed to refresh verified profile:', err))
+    }
+
+    window.addEventListener('focus', refreshVerifiedProfile)
+    window.addEventListener('pageshow', refreshVerifiedProfile)
+    return () => {
+      window.removeEventListener('focus', refreshVerifiedProfile)
+      window.removeEventListener('pageshow', refreshVerifiedProfile)
+    }
+  }, [user?.uid])
 
   async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber }: SignupFormData) {
     const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password)
@@ -69,7 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ...(state && { state: state as UserProfile['state'] }),
         ...(breederNumber?.trim() && { breederIdValue: breederNumber.trim() }),
       })
-      const p = await getUserProfile(newUser.uid)
+      const p = await loadProfileWithVerifiedBilling(newUser)
       setProfile(p)
     } catch (err) {
       try { await newUser.delete() } catch { /* best-effort; ignore if already gone */ }
@@ -93,37 +136,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function upgradeToBreeder() {
     if (!user) return
     await updateUserProfile(user.uid, { role: 'breeder' })
-    const p = await getUserProfile(user.uid)
+    const p = await loadProfileWithVerifiedBilling(user)
     setProfile(p)
   }
 
   async function refreshProfile() {
     if (!user) return
-    const p = await getUserProfile(user.uid)
-
-    // Billing is server-owned. When Billing refreshes after Stripe/webhook
-    // activity, merge the verified server entitlement into the client profile
-    // so the UI cannot remain stuck on a stale Firestore-cached Free plan.
-    try {
-      const idToken = await user.getIdToken()
-      const res = await fetch('/api/billing-summary', {
-        headers: { Authorization: `Bearer ${idToken}` },
-        cache: 'no-store',
-      })
-      const body = await res.json().catch(() => ({}))
-      if (res.ok && body?.entitlement && p) {
-        setProfile({
-          ...p,
-          plan: body.entitlement.plan === 'plus' ? 'plus' : p.plan,
-          ...(body.entitlement.billingInterval ? { billingInterval: body.entitlement.billingInterval } : {}),
-          ...(body.entitlement.subscriptionStatus ? { subscriptionStatus: body.entitlement.subscriptionStatus } : {}),
-        } as UserProfile)
-        return
-      }
-    } catch (err) {
-      console.error('Failed to merge verified billing entitlement:', err)
-    }
-
+    const p = await loadProfileWithVerifiedBilling(user)
     setProfile(p)
   }
 
