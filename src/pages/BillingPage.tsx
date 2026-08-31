@@ -79,7 +79,7 @@ const PLUS_FEATURES = [
 type IntervalKey = 'plus_monthly' | 'plus_annual'
 
 export default function BillingPage({ toast }: Props) {
-  const { user, profile } = useAuth()
+  const { user, profile, refreshProfile } = useAuth()
   const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [portalLoading, setPortalLoading] = useState(false)
@@ -134,6 +134,12 @@ export default function BillingPage({ toast }: Props) {
         if (!cancelled) {
           setBillingDetails(body as BillingSummary)
           setDetailsError(null)
+          // Billing/webhook updates happen server-side after login. useAuth keeps
+          // the profile read from the original auth-state event, so refresh the
+          // trusted Firestore entitlement whenever secure billing state refreshes.
+          // Keep this best-effort: a profile refresh failure must never turn a
+          // successful billing-summary response into a billing UI error.
+          void refreshProfile().catch(err => console.error('Failed to refresh billing entitlement profile:', err))
         }
       } catch {
         if (!cancelled && showLoading) setDetailsError('Billing details are temporarily unavailable.')
