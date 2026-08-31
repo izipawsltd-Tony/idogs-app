@@ -51,6 +51,17 @@ function mapInvoice(invoice) {
   }
 }
 
+function smsSummary(profile, isSmsConfigured) {
+  return {
+    configured: Boolean(isSmsConfigured()),
+    status: typeof profile?.smsAddonStatus === 'string' ? profile.smsAddonStatus : 'inactive',
+    creditsUsed: Number.isInteger(profile?.smsCreditsUsed) && profile.smsCreditsUsed >= 0 ? profile.smsCreditsUsed : 0,
+    creditsLimit: Number.isInteger(profile?.smsCreditsLimit) && profile.smsCreditsLimit > 0 ? profile.smsCreditsLimit : 20,
+    periodStart: typeof profile?.smsPeriodStart === 'string' ? profile.smsPeriodStart : null,
+    periodEnd: typeof profile?.smsPeriodEnd === 'string' ? profile.smsPeriodEnd : null,
+  }
+}
+
 export function createBillingSummaryHandler({
   verifyIdToken,
   getProfile,
@@ -66,16 +77,16 @@ export function createBillingSummaryHandler({
 
     try {
       const profile = await getProfile(auth.uid)
-      if (!profile) return res.status(404).json({ error: 'Profile not found' })
+      const sms = smsSummary(profile, isSmsConfigured)
 
-      const sms = {
-        configured: Boolean(isSmsConfigured()),
-        status: typeof profile.smsAddonStatus === 'string' ? profile.smsAddonStatus : 'inactive',
-        creditsUsed: Number.isInteger(profile.smsCreditsUsed) && profile.smsCreditsUsed >= 0 ? profile.smsCreditsUsed : 0,
-        creditsLimit: Number.isInteger(profile.smsCreditsLimit) && profile.smsCreditsLimit > 0 ? profile.smsCreditsLimit : 20,
-        periodStart: typeof profile.smsPeriodStart === 'string' ? profile.smsPeriodStart : null,
-        periodEnd: typeof profile.smsPeriodEnd === 'string' ? profile.smsPeriodEnd : null,
+      // A newly authenticated Free user may not have a Firestore users/{uid}
+      // profile yet. Billing is read-only here, so represent that state as an
+      // empty Free billing account instead of failing the whole Billing page.
+      // Do not create or mutate Firestore from this endpoint.
+      if (!profile) {
+        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms })
       }
+
       const customerId = typeof profile.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
       const subscriptionId = typeof profile.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : null
       if (!customerId) {
