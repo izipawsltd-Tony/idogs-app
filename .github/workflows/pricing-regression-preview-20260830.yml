@@ -1,4 +1,4 @@
-name: Plus entitlement self-heal Preview 20260831
+name: Guarded Plus entitlement repair 20260831
 
 on:
   push:
@@ -9,53 +9,27 @@ permissions:
   contents: read
 
 jobs:
-  validate-preview:
+  repair-once:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact runtime SHA
+      - name: Checkout exact repair runtime SHA
         uses: actions/checkout@v4
         with:
           ref: d5718e24914b3f7cbe1144612bdd43e099e43b1a
           fetch-depth: 0
 
-      - name: Fail closed on exact source and billing scope
+      - name: Fail closed on exact endpoint guards
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "d5718e24914b3f7cbe1144612bdd43e099e43b1a"
-          test -z "$(git status --porcelain)"
-          grep -Fq "PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
-          grep -Fq "PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
-          grep -Fq "price_1UAInbGHgBd6ZgJE0NAikQgm" api/_lib/checkout-handler.js
-          grep -Fq "price_1UAIngGHgBd6ZgJEh3njs6hZ" api/_lib/checkout-handler.js
-          grep -Fq "payment_behavior: 'error_if_incomplete'" api/_lib/sms-checkout-handler.js
-          grep -Fq "parent?.subscription_details?.subscription" api/stripe-webhook.js
-          grep -Fq "reconcileVerifiedPlusSubscription" api/stripe-webhook.js
           grep -Fq "VERCEL_ENV !== 'preview'" api/qa-repair-plus-entitlement.js
+          grep -Fq "FIREBASE_PROJECT_ID !== 'idogs-app'" api/qa-repair-plus-entitlement.js
+          grep -Fq "idogspetowner@gmail.com" api/qa-repair-plus-entitlement.js
           grep -Fq "sub_1UAN6VGHgBd6ZgJEe08VQQ9h" api/qa-repair-plus-entitlement.js
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Full regression gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp scripts/test-billing-p0-security.mjs /tmp/test-billing-p0-security.mjs
-          cp scripts/test-sms-addon-v1.mjs /tmp/test-sms-addon-v1.mjs
-          trap 'cp /tmp/test-billing-p0-security.mjs scripts/test-billing-p0-security.mjs; cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs' EXIT
-          sed -i 's/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ8GHgBd6ZgJEt56IzJJd/price_1UAIngGHgBd6ZgJEh3njs6hZ/g' scripts/test-billing-p0-security.mjs
-          sed -i 's/price_1TxaNJGHgBd6ZgJEpAhrWark/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/pending_if_incomplete/error_if_incomplete/g; s/assert.equal(res.statusCode,202)/assert.equal(res.statusCode,200)/g; s/pending_payment/activating/g' scripts/test-sms-addon-v1.mjs
-          node scripts/test-billing-p0-security.mjs
-          node scripts/test-billing-payments-phase1.mjs
-          node scripts/test-sms-addon-v1.mjs
-          node scripts/test-webhook-handler.mjs
-          node scripts/test-landing-pricing-ui.mjs
-          node scripts/test-pricing-integration-checks.mjs
-          npm run build
-          cp /tmp/test-billing-p0-security.mjs scripts/test-billing-p0-security.mjs
-          cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs
-          trap - EXIT
+          grep -Fq "uidMatchesMetadata" api/qa-repair-plus-entitlement.js
+          grep -Fq "customerEmailMatches" api/qa-repair-plus-entitlement.js
+          grep -Fq "activeVerifiedPlus" api/qa-repair-plus-entitlement.js
 
       - name: Link exact Vercel project
         shell: bash
@@ -65,36 +39,40 @@ jobs:
           {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
           JSON
 
-      - name: Pull Preview settings
-        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+      - name: GET profile before repair
+        shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-
-      - name: Reverify exact clean source
-        shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "d5718e24914b3f7cbe1144612bdd43e099e43b1a"
-          mapfile -t changed < <(git diff --name-only)
-          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
-          test -z "$(git status --porcelain)"
+          npx --yes vercel@latest curl /api/qa-repair-plus-entitlement --deployment idogs-iqc30ep4z-izipawsltd-tonys-projects.vercel.app -- --silent --show-error > /tmp/before.json
+          cat /tmp/before.json
+          jq -e '.guards.uidMatchesMetadata == true and .guards.customerEmailMatches == true and .guards.activeVerifiedPlus == true and .guards.subscriptionIdMatches == true' /tmp/before.json >/dev/null
+          jq -e '.subscriptionId == "sub_1UAN6VGHgBd6ZgJEe08VQQ9h"' /tmp/before.json >/dev/null
 
-      - name: Deploy Preview only
+      - name: POST one-shot repair
         shell: bash
-        run: |
-          set -euo pipefail
-          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
-          test -n "$PREVIEW_URL"
-          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
-          echo "PREVIEW_READY $PREVIEW_URL"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-
-      - name: Verify Preview target
-        shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "d5718e24914b3f7cbe1144612bdd43e099e43b1a"
-          test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED d5718e24914b3f7cbe1144612bdd43e099e43b1a"
-          echo "PROJECT idogs-app"
-          echo "TARGET preview"
+          set -euo pipefail
+          npx --yes vercel@latest curl /api/qa-repair-plus-entitlement --deployment idogs-iqc30ep4z-izipawsltd-tonys-projects.vercel.app -- --silent --show-error --request POST > /tmp/repair.json
+          cat /tmp/repair.json
+          jq -e '.repaired == true' /tmp/repair.json >/dev/null
+          jq -e '.after.plan == "plus"' /tmp/repair.json >/dev/null
+          jq -e '.after.subscriptionStatus == "active"' /tmp/repair.json >/dev/null
+          jq -e '.after.stripeSubscriptionId == "sub_1UAN6VGHgBd6ZgJEe08VQQ9h"' /tmp/repair.json >/dev/null
+          jq -e '.after.billingInterval == "monthly"' /tmp/repair.json >/dev/null
+
+      - name: GET verify after repair
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest curl /api/qa-repair-plus-entitlement --deployment idogs-iqc30ep4z-izipawsltd-tonys-projects.vercel.app -- --silent --show-error > /tmp/after.json
+          cat /tmp/after.json
+          jq -e '.after.plan == "plus"' /tmp/after.json >/dev/null
+          jq -e '.after.subscriptionStatus == "active"' /tmp/after.json >/dev/null
+          jq -e '.after.stripeSubscriptionId == "sub_1UAN6VGHgBd6ZgJEe08VQQ9h"' /tmp/after.json >/dev/null
+          echo "ONE_SHOT_REPAIR_PASS"
