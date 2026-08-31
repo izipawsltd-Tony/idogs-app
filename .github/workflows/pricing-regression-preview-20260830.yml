@@ -15,14 +15,14 @@ jobs:
       - name: Checkout exact runtime SHA
         uses: actions/checkout@v4
         with:
-          ref: 16f5766a4283e504c62643f941cc0f853d1a0181
+          ref: 39103bef869c70f070ecd18d16093fbf1ba03e7f
           fetch-depth: 0
 
       - name: Fail closed on exact source and clean scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "16f5766a4283e504c62643f941cc0f853d1a0181"
+          test "$(git rev-parse HEAD)" = "39103bef869c70f070ecd18d16093fbf1ba03e7f"
           test -z "$(git status --porcelain)"
           test ! -e api/qa-repair-plus-entitlement.js
           test ! -e api/qa-auth-context.js
@@ -38,6 +38,8 @@ jobs:
           grep -Fq "parent?.subscription_details?.subscription" api/stripe-webhook.js
           grep -Fq "reconcileVerifiedPlusSubscription" api/stripe-webhook.js
           grep -Fq "body?.entitlement" src/hooks/useAuth.tsx
+          grep -Fq "const verifiedEntitlement = billingDetails?.entitlement" src/pages/BillingPage.tsx
+          grep -Fq "const isPlus = verifiedEntitlement ? verifiedEntitlement.plan === 'plus'" src/pages/BillingPage.tsx
           grep -Fq "Plus subscription is already active" api/_lib/checkout-handler.js
           test -e scripts/test-stripe-mode-routing.mjs
           test -e api/_lib/billing-reconcile.js
@@ -91,7 +93,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "16f5766a4283e504c62643f941cc0f853d1a0181"
+          test "$(git rev-parse HEAD)" = "39103bef869c70f070ecd18d16093fbf1ba03e7f"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
           test -z "$(git status --porcelain)"
@@ -111,8 +113,8 @@ jobs:
       - name: Verify Preview target
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "16f5766a4283e504c62643f941cc0f853d1a0181"
+          test "$(git rev-parse HEAD)" = "39103bef869c70f070ecd18d16093fbf1ba03e7f"
           test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED 16f5766a4283e504c62643f941cc0f853d1a0181"
+          echo "EXACT_SHA_DEPLOYED 39103bef869c70f070ecd18d16093fbf1ba03e7f"
           echo "PROJECT idogs-app"
           echo "TARGET preview"
