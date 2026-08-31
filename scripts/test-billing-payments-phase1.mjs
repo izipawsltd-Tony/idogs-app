@@ -48,6 +48,7 @@ assert.deepEqual(res.body, {
     periodStart: null,
     periodEnd: null,
   },
+  entitlement: { plan: 'free', billingInterval: null, subscriptionStatus: null },
 }, 'free account has an empty safe billing summary plus inactive SMS status')
 
 summary = createBillingSummaryHandler({
@@ -74,6 +75,7 @@ assert.deepEqual(res.body, {
     periodStart: null,
     periodEnd: null,
   },
+  entitlement: { plan: 'free', billingInterval: null, subscriptionStatus: null },
 }, 'missing profile is represented as Free/no billing/no invoices without creating Firestore state')
 
 let reconciled = null
@@ -95,7 +97,7 @@ summary = createBillingSummaryHandler({
   },
   reconcileVerifiedPlus: async args => {
     reconciled = args
-    return true
+    return { plan: 'plus', billingInterval: 'monthly', subscriptionStatus: 'active', stripeSubscriptionId: 'sub_1' }
   },
   listInvoices: async params => {
     assert.deepEqual(params, { customer: 'cus_1', limit: 12 }, 'invoice query is scoped to server-owned customer id')
@@ -111,6 +113,11 @@ assert.equal(res.statusCode, 200)
 assert.equal(res.body.subscription.id, 'sub_1')
 assert.equal(reconciled.userId, 'user-1', 'linked active subscription is reconciled against authenticated uid before returning summary')
 assert.equal(reconciled.subscription.id, 'sub_1')
+assert.deepEqual(res.body.entitlement, {
+  plan: 'plus',
+  billingInterval: 'monthly',
+  subscriptionStatus: 'active',
+}, 'verified linked Stripe subscription overrides stale Free profile in Billing response')
 assert.equal(res.body.invoices[0].amountPaid, 500)
 assert.equal(res.body.canManageBilling, true)
 assert.deepEqual(res.body.sms, {
