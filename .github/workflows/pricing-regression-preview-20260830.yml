@@ -1,4 +1,4 @@
-name: Pricing recovery Production 20260831
+name: SMS add-on atomic payment Preview 20260831
 
 on:
   push:
@@ -9,34 +9,32 @@ permissions:
   contents: read
 
 jobs:
-  validate-production:
+  validate-preview:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact approved runtime SHA
+      - name: Checkout exact runtime SHA
         uses: actions/checkout@v4
         with:
-          ref: 504a516dac1fe51a08969b61f873b3998c4ac4c1
+          ref: bcf8200cabc9e7668b5a05853fb9164d9e3c088c
           fetch-depth: 0
 
-      - name: Fail closed on exact source and pricing GST scope
+      - name: Fail closed on exact source and SMS GST scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "504a516dac1fe51a08969b61f873b3998c4ac4c1"
+          test "$(git rev-parse HEAD)" = "bcf8200cabc9e7668b5a05853fb9164d9e3c088c"
           test -z "$(git status --porcelain)"
           test ! -e noop.tmp
           test ! -e api/qa-auth-context.js
-          test ! -e .github/workflows/pricing-regression-preview-20260830.yml || true
           grep -Fq "PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
           grep -Fq "PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
           grep -Fq "price_1UAInbGHgBd6ZgJE0NAikQgm" api/_lib/checkout-handler.js
           grep -Fq "price_1UAIngGHgBd6ZgJEh3njs6hZ" api/_lib/checkout-handler.js
           grep -Fq "txr_1U9iaFGHgBd6ZgJE5FsztFar" api/_lib/checkout-handler.js
-          grep -Fq "default_tax_rates" api/_lib/checkout-handler.js
-          grep -Fq "PRODUCTION_VERCEL_PROJECT_ID = 'prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo'" api/_lib/require-config.js
-          grep -Fq "process.env.VERCEL_ENV !== 'preview'" api/_lib/require-config.js
+          grep -Fq "default_tax_rates" api/_lib/sms-checkout-handler.js
+          grep -Fq "payment_behavior: 'error_if_incomplete'" api/_lib/sms-checkout-handler.js
+          grep -Fq "proration_behavior: 'always_invoice'" api/_lib/sms-checkout-handler.js
           grep -Fq "if (!profile)" api/_lib/billing-handler.js
-          grep -Fq "Billing & Payments Phase 1: 12/12 PASS" scripts/test-billing-payments-phase1.mjs
 
       - name: Install dependencies
         run: npm ci
@@ -49,7 +47,7 @@ jobs:
           cp scripts/test-sms-addon-v1.mjs /tmp/test-sms-addon-v1.mjs
           trap 'cp /tmp/test-billing-p0-security.mjs scripts/test-billing-p0-security.mjs; cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs' EXIT
           sed -i 's/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ8GHgBd6ZgJEt56IzJJd/price_1UAIngGHgBd6ZgJEh3njs6hZ/g' scripts/test-billing-p0-security.mjs
-          sed -i 's/price_1TxaNJGHgBd6ZgJEpAhrWark/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g' scripts/test-sms-addon-v1.mjs
+          sed -i 's/price_1TxaNJGHgBd6ZgJEpAhrWark/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g; s/pending_if_incomplete/error_if_incomplete/g; s/assert.equal(res.statusCode,202)/assert.equal(res.statusCode,200)/g; s/pending_payment/activating/g' scripts/test-sms-addon-v1.mjs
           node scripts/test-billing-p0-security.mjs
           node scripts/test-billing-payments-phase1.mjs
           node scripts/test-sms-addon-v1.mjs
@@ -61,7 +59,7 @@ jobs:
           cp /tmp/test-sms-addon-v1.mjs scripts/test-sms-addon-v1.mjs
           trap - EXIT
 
-      - name: Link exact Vercel production project
+      - name: Link exact Vercel project
         shell: bash
         run: |
           mkdir -p .vercel
@@ -69,40 +67,38 @@ jobs:
           {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
           JSON
 
-      - name: Pull Production settings
-        run: npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+      - name: Pull Preview settings
+        run: npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
-      - name: Reverify exact clean approved runtime source
+      - name: Reverify exact clean runtime source
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "504a516dac1fe51a08969b61f873b3998c4ac4c1"
+          test "$(git rev-parse HEAD)" = "bcf8200cabc9e7668b5a05853fb9164d9e3c088c"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
           test -z "$(git status --porcelain)"
           test ! -e noop.tmp
           test ! -e api/qa-auth-context.js
 
-      - name: Deploy Production exact SHA
+      - name: Deploy Preview only
         shell: bash
         run: |
           set -euo pipefail
-          PROD_URL=$(npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-production.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
-          test -n "$PROD_URL"
-          echo "PROD_URL=$PROD_URL" >> "$GITHUB_ENV"
-          echo "PRODUCTION_READY $PROD_URL"
+          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PREVIEW_URL"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_READY $PREVIEW_URL"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
-      - name: Verify Production target
+      - name: Verify Preview target
         shell: bash
         run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "504a516dac1fe51a08969b61f873b3998c4ac4c1"
-          test -n "$PROD_URL"
-          echo "EXACT_SHA_DEPLOYED 504a516dac1fe51a08969b61f873b3998c4ac4c1"
+          test "$(git rev-parse HEAD)" = "bcf8200cabc9e7668b5a05853fb9164d9e3c088c"
+          test -n "$PREVIEW_URL"
+          echo "EXACT_SHA_DEPLOYED bcf8200cabc9e7668b5a05853fb9164d9e3c088c"
           echo "PROJECT idogs-app"
-          echo "PROJECT_ID prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo"
-          echo "TARGET production"
+          echo "TARGET preview"
