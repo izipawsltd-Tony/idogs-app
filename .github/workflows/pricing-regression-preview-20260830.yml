@@ -15,14 +15,14 @@ jobs:
       - name: Checkout exact runtime SHA
         uses: actions/checkout@v4
         with:
-          ref: 39103bef869c70f070ecd18d16093fbf1ba03e7f
+          ref: 28a5090d3024c3039ec24c8c93780a4dc277d9f5
           fetch-depth: 0
 
       - name: Fail closed on exact source and clean scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "39103bef869c70f070ecd18d16093fbf1ba03e7f"
+          test "$(git rev-parse HEAD)" = "28a5090d3024c3039ec24c8c93780a4dc277d9f5"
           test -z "$(git status --porcelain)"
           test ! -e api/qa-repair-plus-entitlement.js
           test ! -e api/qa-auth-context.js
@@ -37,7 +37,8 @@ jobs:
           grep -Fq "payment_behavior: 'error_if_incomplete'" api/_lib/sms-checkout-handler.js
           grep -Fq "parent?.subscription_details?.subscription" api/stripe-webhook.js
           grep -Fq "reconcileVerifiedPlusSubscription" api/stripe-webhook.js
-          grep -Fq "body?.entitlement" src/hooks/useAuth.tsx
+          grep -Fq "loadProfileWithVerifiedBilling" src/hooks/useAuth.tsx
+          grep -Fq "window.addEventListener('focus', refreshVerifiedProfile)" src/hooks/useAuth.tsx
           grep -Fq "const verifiedEntitlement = billingDetails?.entitlement" src/pages/BillingPage.tsx
           grep -Fq "const isPlus = verifiedEntitlement ? verifiedEntitlement.plan === 'plus'" src/pages/BillingPage.tsx
           grep -Fq "Plus subscription is already active" api/_lib/checkout-handler.js
@@ -93,7 +94,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "39103bef869c70f070ecd18d16093fbf1ba03e7f"
+          test "$(git rev-parse HEAD)" = "28a5090d3024c3039ec24c8c93780a4dc277d9f5"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
           test -z "$(git status --porcelain)"
@@ -113,8 +114,8 @@ jobs:
       - name: Verify Preview target
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "39103bef869c70f070ecd18d16093fbf1ba03e7f"
+          test "$(git rev-parse HEAD)" = "28a5090d3024c3039ec24c8c93780a4dc277d9f5"
           test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED 39103bef869c70f070ecd18d16093fbf1ba03e7f"
+          echo "EXACT_SHA_DEPLOYED 28a5090d3024c3039ec24c8c93780a4dc277d9f5"
           echo "PROJECT idogs-app"
           echo "TARGET preview"
