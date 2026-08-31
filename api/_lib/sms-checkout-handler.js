@@ -108,18 +108,17 @@ export function createSmsAddonCheckoutHandler({
         items: [{ price: priceId, quantity: 1 }],
         default_tax_rates: checkoutTaxRatesForCurrentEnvironment(),
         proration_behavior: 'always_invoice',
-        payment_behavior: 'pending_if_incomplete',
+        payment_behavior: 'error_if_incomplete',
         expand: ['latest_invoice'],
       })
 
-      const pending = Boolean(updated?.pending_update)
       const hostedInvoiceUrl = typeof updated?.latest_invoice === 'object'
         ? updated.latest_invoice?.hosted_invoice_url || null
         : null
 
-      return res.status(pending ? 202 : 200).json({
+      return res.status(200).json({
         success: true,
-        status: pending ? 'pending_payment' : 'activating',
+        status: 'activating',
         hostedInvoiceUrl,
       })
     } catch (err) {
