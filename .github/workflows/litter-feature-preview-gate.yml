@@ -11,7 +11,7 @@ permissions:
 jobs:
   patch-test-commit:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout feature branch
         uses: actions/checkout@v4
@@ -88,10 +88,18 @@ jobs:
           node scripts/test-extra-litter-checkout.mjs
           node scripts/test-extra-litter-webhook.mjs
 
-      - name: Existing critical regressions
+      - name: Existing litter regressions
+        run: |
+          node scripts/test-litter-dob-policy.mjs
+          node scripts/test-litter-delete-cleanup.mjs
+          node scripts/test-h7-litter-delete-ledger-backfill.mjs
+          node scripts/test-litter-create-client-dto.mjs
+          node scripts/test-internal-entitlement.mjs
+
+      - name: Existing billing and pricing regressions
         run: |
           node scripts/test-webhook-handler.mjs
-          node scripts/test-billing-and-payments.mjs
+          node scripts/test-billing-payments-phase1.mjs
           node scripts/test-pricing-integration-checks.mjs
           node scripts/test-landing-pricing-ui.mjs
           node scripts/test-sidebar-billing-sync.mjs
