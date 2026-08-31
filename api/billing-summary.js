@@ -30,7 +30,6 @@ export default createBillingSummaryHandler({
   isSmsConfigured: () => Boolean(process.env.STRIPE_SMS_ADDON_PRICE_ID),
   reconcileVerifiedPlus: async ({ subscription, userId }) => {
     if (!verifiedPlusInterval(subscription)) return false
-    await reconcileVerifiedPlusSubscription({ db, subscription, userId })
-    return true
+    return reconcileVerifiedPlusSubscription({ db, subscription, userId })
   },
 })
