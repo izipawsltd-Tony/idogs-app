@@ -68,6 +68,7 @@ export function createBillingSummaryHandler({
   retrieveSubscription,
   listInvoices,
   isSmsConfigured = () => false,
+  reconcileVerifiedPlus = async () => false,
 } = {}) {
   return async function billingSummaryHandler(req, res) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
@@ -79,10 +80,6 @@ export function createBillingSummaryHandler({
       const profile = await getProfile(auth.uid)
       const sms = smsSummary(profile, isSmsConfigured)
 
-      // A newly authenticated Free user may not have a Firestore users/{uid}
-      // profile yet. Billing is read-only here, so represent that state as an
-      // empty Free billing account instead of failing the whole Billing page.
-      // Do not create or mutate Firestore from this endpoint.
       if (!profile) {
         return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms })
       }
@@ -100,6 +97,15 @@ export function createBillingSummaryHandler({
           logSanitizedError('billing-summary', 'SUBSCRIPTION_CUSTOMER_MISMATCH')
           return res.status(409).json({ error: 'Billing account mismatch' })
         }
+
+        // Stripe is authoritative for paid entitlement. If the stored profile
+        // drifted to Free while the exact linked subscription is still an
+        // allowlisted active Plus subscription, repair the profile before the
+        // browser refreshes its cached entitlement. The injected reconciler
+        // must independently verify status + price + user ownership and no-op
+        // for anything that is not verified Plus.
+        await reconcileVerifiedPlus({ subscription: stripeSubscription, userId: auth.uid })
+
         subscription = {
           id: stripeSubscription.id,
           status: stripeSubscription.status || profile.subscriptionStatus || 'unknown',
