@@ -1,11 +1,11 @@
-// api/stripe-webhook.js — Stripe webhook entrypoint. All entitlement
-// logic lives in api/_lib/webhook-handler.js (testable without a live
-// Stripe account); this file wires real Stripe/Firestore clients and adds
-// a narrow, idempotent reconciliation guard for current Stripe event shapes.
+// api/stripe-webhook.js — Stripe webhook entrypoint. All subscription
+// entitlement logic lives in api/_lib/webhook-handler.js; one-time Extra
+// Litter credit grants are verified/idempotent in extra-litter-webhook.js.
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { createWebhookHandler } from './_lib/webhook-handler.js'
+import { grantExtraLitterCreditFromVerifiedEvent } from './_lib/extra-litter-webhook.js'
 import { reconcileVerifiedPlusSubscription, verifiedPlusInterval } from './_lib/billing-reconcile.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
@@ -86,10 +86,16 @@ export default async function handler(req, res) {
   const result = await processWebhook(rawBody, sig)
   if (result.status === 200 && verifiedEvent) {
     try {
+      // No-op for every event except a fully-paid, server-created
+      // Extra Litter Checkout session. Deterministic session-id document
+      // makes Stripe redelivery safe and prevents double-credit.
+      await grantExtraLitterCreditFromVerifiedEvent({ db, event: verifiedEvent })
       await reconcileActivePlusFromVerifiedEvent(verifiedEvent)
     } catch (error) {
-      console.error('stripe-webhook: plus reconciliation failed', { code: error?.message || 'PLUS_RECONCILE_FAILED' })
-      return res.status(500).json({ error: 'Webhook entitlement reconciliation failed' })
+      console.error('stripe-webhook: verified post-processing failed', { code: error?.message || 'POST_PROCESSING_FAILED' })
+      // Return 500 so Stripe retries. Extra-litter grants are idempotent,
+      // and the subscription reconciler is already designed for retries.
+      return res.status(500).json({ error: 'Webhook entitlement post-processing failed' })
     }
   }
   return res.status(result.status).json(result.body)
