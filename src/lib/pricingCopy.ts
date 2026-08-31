@@ -7,3 +7,5 @@ export const DOG_CAP_FREE = 2
 export const DOG_CAP_PLUS = 5
 export const SCAN_QUOTA_FREE_LIFETIME = 2
 export const SCAN_QUOTA_PLUS_MONTHLY = 10
+export const LITTER_QUOTA_PLUS_ROLLING_12_MONTHS = 2
+export const EXTRA_LITTER_PRICE_AUD = 39
