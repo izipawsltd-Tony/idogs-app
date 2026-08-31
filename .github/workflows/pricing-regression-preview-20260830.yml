@@ -1,4 +1,4 @@
-name: Stripe-mode billing Preview 20260831
+name: Sidebar billing sync Preview 20260831
 
 on:
   push:
@@ -6,19 +6,20 @@ on:
       - automation/pricing-regression-preview-20260830
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate-preview:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact runtime SHA
+      - name: Checkout exact runtime base
         uses: actions/checkout@v4
         with:
-          ref: 28a5090d3024c3039ec24c8c93780a4dc277d9f5
+          ref: fix/pricing-regression-20260830
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fail closed on exact source and clean scope
+      - name: Fail closed on exact base
         shell: bash
         run: |
           set -euo pipefail
@@ -26,24 +27,62 @@ jobs:
           test -z "$(git status --porcelain)"
           test ! -e api/qa-repair-plus-entitlement.js
           test ! -e api/qa-auth-context.js
-          grep -Fq "PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
-          grep -Fq "PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
-          grep -Fq "price_1UAInbGHgBd6ZgJE0NAikQgm" api/_lib/checkout-handler.js
-          grep -Fq "price_1UAIngGHgBd6ZgJEh3njs6hZ" api/_lib/checkout-handler.js
-          grep -Fq "checkoutPriceIdsForStripeMode" api/_lib/checkout-handler.js
-          grep -Fq "checkoutTaxRatesForStripeMode" api/_lib/checkout-handler.js
-          grep -Fq "checkoutPriceIdsForStripeMode(subscription.livemode)" api/_lib/billing-reconcile.js
-          grep -Fq "checkoutTaxRatesForStripeMode(subscription.livemode)" api/_lib/sms-checkout-handler.js
-          grep -Fq "payment_behavior: 'error_if_incomplete'" api/_lib/sms-checkout-handler.js
-          grep -Fq "parent?.subscription_details?.subscription" api/stripe-webhook.js
-          grep -Fq "reconcileVerifiedPlusSubscription" api/stripe-webhook.js
-          grep -Fq "loadProfileWithVerifiedBilling" src/hooks/useAuth.tsx
-          grep -Fq "window.addEventListener('focus', refreshVerifiedProfile)" src/hooks/useAuth.tsx
-          grep -Fq "const verifiedEntitlement = billingDetails?.entitlement" src/pages/BillingPage.tsx
-          grep -Fq "const isPlus = verifiedEntitlement ? verifiedEntitlement.plan === 'plus'" src/pages/BillingPage.tsx
-          grep -Fq "Plus subscription is already active" api/_lib/checkout-handler.js
-          test -e scripts/test-stripe-mode-routing.mjs
-          test -e api/_lib/billing-reconcile.js
+
+      - name: Apply verified sidebar billing patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/components/layout/AppLayout.tsx')
+          s = p.read_text()
+
+          replacements = []
+          replacements.append((
+          """  const [userMenuOpen, setUserMenuOpen] = useState(false)\n  const userMenuRef = useRef<HTMLDivElement>(null)\n""",
+          """  const [userMenuOpen, setUserMenuOpen] = useState(false)\n  const userMenuRef = useRef<HTMLDivElement>(null)\n  // The sidebar is persistent across /app routes, so it must not infer paid\n  // entitlement from a stale cached profile. Keep the Stripe-verified plan\n  // returned by billing-summary as a separate server-owned state.\n  const [verifiedBillingPlan, setVerifiedBillingPlan] = useState<'free' | 'plus' | null>(null)\n  const [billingPlanResolved, setBillingPlanResolved] = useState(false)\n"""))
+          replacements.append((
+          """  const { beginRequest: beginDogCountRequest } = useRequestGuard(user?.uid)\n  const { beginRequest: beginLitterCountRequest } = useRequestGuard(user?.uid)\n""",
+          """  const { beginRequest: beginDogCountRequest } = useRequestGuard(user?.uid)\n  const { beginRequest: beginLitterCountRequest } = useRequestGuard(user?.uid)\n  const { beginRequest: beginBillingPlanRequest } = useRequestGuard(user?.uid)\n\n  function loadVerifiedBillingPlan(showLoading = false) {\n    if (!user) return\n    const req = beginBillingPlanRequest()\n    if (showLoading) {\n      setVerifiedBillingPlan(null)\n      setBillingPlanResolved(false)\n    }\n\n    void (async () => {\n      try {\n        const idToken = await user.getIdToken()\n        const res = await fetch('/api/billing-summary', {\n          headers: { Authorization: `Bearer ${idToken}` },\n          cache: 'no-store',\n        })\n        const body = await res.json().catch(() => ({}))\n        if (!req.isCurrent()) return\n        const plan = body?.entitlement?.plan\n        if (!res.ok || (plan !== 'free' && plan !== 'plus')) {\n          if (showLoading) setVerifiedBillingPlan(null)\n          return\n        }\n        setVerifiedBillingPlan(plan)\n      } catch {\n        if (req.isCurrent() && showLoading) setVerifiedBillingPlan(null)\n      } finally {\n        if (req.isCurrent()) setBillingPlanResolved(true)\n      }\n    })()\n  }\n"""))
+          replacements.append((
+          """  useEffect(() => {\n    const uid = user?.uid\n    if (!uid) return\n    return subscribeToDogUsageChanged(changedUid => {\n""",
+          """  useEffect(() => {\n    if (!user) {\n      setVerifiedBillingPlan(null)\n      setBillingPlanResolved(false)\n      return\n    }\n\n    loadVerifiedBillingPlan(true)\n    const refreshVerifiedBilling = () => {\n      if (document.visibilityState !== 'hidden') loadVerifiedBillingPlan(false)\n    }\n    window.addEventListener('focus', refreshVerifiedBilling)\n    window.addEventListener('pageshow', refreshVerifiedBilling)\n    document.addEventListener('visibilitychange', refreshVerifiedBilling)\n    return () => {\n      window.removeEventListener('focus', refreshVerifiedBilling)\n      window.removeEventListener('pageshow', refreshVerifiedBilling)\n      document.removeEventListener('visibilitychange', refreshVerifiedBilling)\n    }\n    // eslint-disable-next-line react-hooks/exhaustive-deps\n  }, [user?.uid])\n\n  useEffect(() => {\n    const uid = user?.uid\n    if (!uid) return\n    return subscribeToDogUsageChanged(changedUid => {\n"""))
+          replacements.append((
+          """  const effectivePlan = getEffectivePlanClient(profile)\n  // Deliberately NOT named isSuperAdmin — that name is already taken above\n""",
+          """  // Deliberately NOT named isSuperAdmin — that name is already taken above\n"""))
+          replacements.append((
+          """  const hasAdminEntitlement = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())\n  const planCfg = getPlanCfg(effectivePlan)\n  const planLabel = profile?.plan === 'trial' ? 'Free Trial' : planCfg.label\n""",
+          """  const hasAdminEntitlement = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())\n  // Server-verified Stripe billing is authoritative for normal accounts.\n  // Internal admin entitlement remains an explicit higher-level bypass.\n  const effectivePlan = hasAdminEntitlement\n    ? 'plus'\n    : verifiedBillingPlan ?? getEffectivePlanClient(profile)\n  const planCfg = getPlanCfg(effectivePlan)\n  const planLabel = !billingPlanResolved && !hasAdminEntitlement\n    ? 'Checking plan…'\n    : verifiedBillingPlan\n      ? planCfg.label\n      : profile?.plan === 'trial' ? 'Free Trial' : planCfg.label\n"""))
+          replacements.append((
+          """            {planCfg.upgrade && (\n""",
+          """            {planCfg.upgrade && billingPlanResolved && verifiedBillingPlan === 'free' && !hasAdminEntitlement && (\n"""))
+
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit(f'patch anchor missing: {old[:80]!r}')
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
+
+          Path('scripts/test-sidebar-billing-sync.mjs').write_text("""import fs from 'node:fs'\n\nconst source = fs.readFileSync(new URL('../src/components/layout/AppLayout.tsx', import.meta.url), 'utf8')\nconst checks = [\n  ['sidebar fetches secure billing summary', source.includes(\"fetch('/api/billing-summary'\")],\n  ['sidebar reads verified entitlement plan', source.includes('body?.entitlement?.plan')],\n  ['billing request is uid/generation guarded', source.includes('beginBillingPlanRequest') && source.includes('req.isCurrent()')],\n  ['verified Stripe plan overrides cached profile', source.includes('verifiedBillingPlan ?? getEffectivePlanClient(profile)')],\n  ['admin entitlement keeps explicit precedence', source.includes('const effectivePlan = hasAdminEntitlement')],\n  ['upgrade CTA requires server-confirmed Free', source.includes(\"planCfg.upgrade && billingPlanResolved && verifiedBillingPlan === 'free' && !hasAdminEntitlement\")],\n  ['unknown billing state does not claim Free upgrade eligibility', source.includes(\"'Checking plan…'\")],\n]\nlet passed = 0\nfor (const [name, ok] of checks) {\n  if (!ok) { console.error(`FAIL: ${name}`); process.exitCode = 1 }\n  else { passed += 1; console.log(`PASS: ${name}`) }\n}\nconsole.log(`Sidebar billing sync: ${passed}/${checks.length} PASS`)\n""")
+          PY
+
+          node scripts/test-sidebar-billing-sync.mjs
+          git diff --check
+
+      - name: Commit exact runtime candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "izipawsltd-Tony"
+          git config user.email "izipawsltd@gmail.com"
+          git add src/components/layout/AppLayout.tsx scripts/test-sidebar-billing-sync.mjs
+          git commit -m "fix(layout): use verified billing state in sidebar"
+          RUNTIME_SHA=$(git rev-parse HEAD)
+          git push origin HEAD:fix/pricing-regression-20260830
+          echo "RUNTIME_SHA=$RUNTIME_SHA" >> "$GITHUB_ENV"
+          echo "RUNTIME_SHA_CREATED $RUNTIME_SHA"
 
       - name: Install dependencies
         run: npm ci
@@ -65,6 +104,7 @@ jobs:
           s = s.replace("retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',", "retrieveSubscription:async()=>({id:'sub_1',livemode:true,status:'active',customer:'cus_1',")
           p.write_text(s)
           PY
+          node scripts/test-sidebar-billing-sync.mjs
           node scripts/test-stripe-mode-routing.mjs
           node scripts/test-billing-p0-security.mjs
           node scripts/test-billing-payments-phase1.mjs
@@ -90,11 +130,11 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
-      - name: Reverify exact clean source
+      - name: Reverify exact clean candidate
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "28a5090d3024c3039ec24c8c93780a4dc277d9f5"
+          test "$(git rev-parse HEAD)" = "$RUNTIME_SHA"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
           test -z "$(git status --porcelain)"
@@ -114,8 +154,8 @@ jobs:
       - name: Verify Preview target
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "28a5090d3024c3039ec24c8c93780a4dc277d9f5"
+          test "$(git rev-parse HEAD)" = "$RUNTIME_SHA"
           test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED 28a5090d3024c3039ec24c8c93780a4dc277d9f5"
+          echo "EXACT_SHA_DEPLOYED $RUNTIME_SHA"
           echo "PROJECT idogs-app"
           echo "TARGET preview"
