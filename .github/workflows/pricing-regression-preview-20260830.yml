@@ -59,6 +59,7 @@ jobs:
           p = Path('scripts/test-sms-addon-v1.mjs')
           s = p.read_text()
           s = s.replace("id:'sub_1',\n      customer:'cus_1',", "id:'sub_1',\n      livemode:true,\n      status:'active',\n      customer:'cus_1',")
+          s = s.replace("retrieveSubscription:async()=>({id:'sub_1',customer:'cus_1',", "retrieveSubscription:async()=>({id:'sub_1',livemode:true,status:'active',customer:'cus_1',")
           p.write_text(s)
           PY
           node scripts/test-stripe-mode-routing.mjs
