@@ -1,30 +1,27 @@
-// api/_lib/litter-quota.js — rolling-365-day litter quota enforcement for
-// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §3.4/§4.1, LOCKED).
+// api/_lib/litter-quota.js — breeder-profile rolling-365-day litter quota.
 //
-// "whelpingDate" in the pricing record maps to the Litter.actualBirthDate
-// field already in this codebase's schema (api/_lib/litter-schema.js) —
-// there is no separate whelpingDate field; a litter "whelps" the day it's
-// actually born, which is exactly what actualBirthDate records. A litter
-// without actualBirthDate is the record's "planned litter without a
-// whelpingDate" (§4.1) — not yet counted.
+// Commercial policy (2026-09-01):
+// - Free: no litter creation.
+// - Plus: 2 INCLUDED whelped litters per rolling 365 days.
+// - Additional litters require one purchased Extra Litter credit each.
+// - Quota belongs to the Breeder Profile, not the login/subscription.
+// - Cancel, downgrade, resubscribe, archive, delete, or re-date attempts
+//   never restore a consumed included slot or Extra Litter credit.
 //
-// litterQuotaLedger is an append-only, permanent record of every litter
-// that has ever counted against the rolling window — written once, the
-// first time a litter's actualBirthDate is set, and never deleted or
-// rewritten afterward (not even when the litter document itself is later
-// hard-deleted by api/delete-litter.js, or its date is edited again — see
-// api/update-litter.js, which now rejects changing an already-activated
-// actualBirthDate outright, the simplest fully-correct reading of
-// "prevent whelpingDate edits from evading quota"). This decouples quota
-// tracking from the litter document's own lifecycle entirely, which is
-// what makes "delete/archive must not restore quota" hold even for a
-// litter that gets fully hard-deleted.
+// The permanent litterQuotaLedger remains the historical source of truth.
+// Existing pre-feature rows only have tenantId; new rows ALSO carry a
+// deterministic breederProfileId and quotaSource. Live litter fallback
+// remains for pre-ledger historical litters.
+
+export const LITTER_INCLUDED_QUOTA = 2
+export const EXTRA_LITTER_PRICE_AUD = 39
+export const EXTRA_LITTER_PRICE_CENTS = 3900
 
 export const LITTER_QUOTA_BLOCK_MESSAGE =
-  "You've reached your iDogs litter allowance of one litter in a rolling 12-month period. Breeding more regularly? Explore iziPaws."
+  "You've used the 2 litters included with iDogs Plus in this rolling 12-month period. Add another litter for A$39."
 
 export const LITTER_PLAN_GATE_MESSAGE =
-  'Litters are an iDogs Plus feature. Upgrade to Plus to record litters — one every 12 months.'
+  'Litters are an iDogs Plus feature. Upgrade to Plus to record up to 2 litters per rolling 12 months.'
 
 export const LITTER_PLANNED_DUPLICATE_MESSAGE =
   'You already have a planned litter without a whelping date. Add its whelping date, or delete it, before starting another.'
@@ -35,101 +32,226 @@ export const LITTER_DATE_LOCKED_MESSAGE =
 const DAY_MS = 24 * 60 * 60 * 1000
 const WINDOW_MS = 365 * DAY_MS
 
-// Both dates are 'YYYY-MM-DD' strings (already validated calendar dates
-// by litter-schema.js). Symmetric, timezone-safe (UTC midnight anchored)
-// absolute-distance check — two litter dates within 365 days of EACH
-// OTHER conflict, regardless of which was recorded first or which is
-// chronologically earlier.
-//
-// Codex H6: the original wording ("within the 365 days preceding")
-// implemented a one-directional check (existing <= proposed only), which
-// missed backdating — creating a LATER litter first, then adding an
-// EARLIER one within the same 365-day window, compared the existing
-// entry as being "after" the new date and let the new one through
-// uncontested. Two litters less than 365 days apart must conflict no
-// matter which one was entered into the ledger first.
 export function isWithinRollingWindow(existingDate, newDate) {
   const existing = new Date(`${existingDate}T00:00:00Z`).getTime()
   const proposed = new Date(`${newDate}T00:00:00Z`).getTime()
   return Math.abs(existing - proposed) <= WINDOW_MS
 }
 
-// Reads every ledger entry for this tenant (single where(), filtered/
-// compared client-side per this repo's no-orderBy/composite-index
-// convention — see CLAUDE.md) and returns true if any falls within the
-// rolling window of `newDate`. Must be called with a transaction (`tx`)
-// so the read is part of the same atomic operation as the litter write
-// and ledger entry that follow — closes the race where two concurrent
-// litter creations could otherwise both pass the check before either
-// commits.
-//
-// Codex H7 — the ledger alone is blind to litters created before this
-// quota system existed: they have a real, dated `actualBirthDate` on the
-// live litters/{id} document but no litterQuotaLedger entry, so checking
-// the ledger only would silently ignore a genuine recent whelping and let
-// a second litter through within the same rolling window. As a safe
-// fallback, this also scans the live `litters` collection for any dated
-// litter within the window — not limited to ledger-less ones (a
-// ledger-backed litter already matches above; re-matching it here via the
-// live collection is redundant, never a source of double-blocking, since
-// this function only ever returns a boolean). See
-// docs/LITTER_QUOTA_HISTORICAL_BACKFILL_PLAN.md for the production plan
-// to eventually ledger-back every historical litter so this fallback scan
-// becomes purely defensive rather than load-bearing — NOT executed by
-// this code, and NOT required for correctness today (this fallback
-// already covers it).
-export async function hasLitterWithinRollingWindow(tx, db, tenantId, newDate, excludeLitterId = null) {
-  const ledgerSnap = await tx.get(db.collection('litterQuotaLedger').where('tenantId', '==', tenantId))
-  const ledgerHit = ledgerSnap.docs.some(d => {
-    const entry = d.data()
-    return typeof entry.whelpingDate === 'string' && isWithinRollingWindow(entry.whelpingDate, newDate)
-  })
-  if (ledgerHit) return true
+function isDatedWithin(entryDate, newDate) {
+  return typeof entryDate === 'string' && entryDate.length > 0 && isWithinRollingWindow(entryDate, newDate)
+}
 
-  const liveSnap = await tx.get(db.collection('litters').where('tenantId', '==', tenantId))
-  return liveSnap.docs.some(d => {
-    if (excludeLitterId && d.id === excludeLitterId) return false
-    const litter = d.data()
-    return typeof litter.actualBirthDate === 'string' && litter.actualBirthDate.length > 0 &&
-      isWithinRollingWindow(litter.actualBirthDate, newDate)
+function ledgerKey(entry, docId) {
+  return typeof entry?.litterId === 'string' && entry.litterId ? entry.litterId : `ledger:${docId}`
+}
+
+async function addLedgerQuery(tx, query, rows, newDate, excludeLitterId = null) {
+  const snap = await tx.get(query)
+  for (const doc of snap.docs) {
+    const entry = doc.data()
+    if (excludeLitterId && entry.litterId === excludeLitterId) continue
+    if (!isDatedWithin(entry.whelpingDate, newDate)) continue
+    rows.set(ledgerKey(entry, doc.id), {
+      litterId: entry.litterId || null,
+      whelpingDate: entry.whelpingDate,
+      quotaSource: entry.quotaSource === 'extra' ? 'extra' : (entry.quotaSource || 'included'),
+      extraCreditId: entry.extraCreditId || null,
+      source: 'ledger',
+    })
+  }
+}
+
+// Returns every distinct litter that must be considered in the proposed
+// date's rolling window. New rows are found by breederProfileId. Legacy
+// rows and pre-ledger live litters are bridged through related tenant UIDs.
+// Ledger rows win over the live fallback so quotaSource:'extra' is kept.
+export async function litterUsageWithinRollingWindow(
+  tx,
+  db,
+  { breederProfileId, tenantIds, newDate, excludeLitterId = null },
+) {
+  const rows = new Map()
+  const seenQueries = new Set()
+
+  if (breederProfileId) {
+    await addLedgerQuery(
+      tx,
+      db.collection('litterQuotaLedger').where('breederProfileId', '==', breederProfileId),
+      rows,
+      newDate,
+      excludeLitterId,
+    )
+  }
+
+  for (const tenantId of new Set(tenantIds || [])) {
+    if (!tenantId || seenQueries.has(tenantId)) continue
+    seenQueries.add(tenantId)
+    await addLedgerQuery(
+      tx,
+      db.collection('litterQuotaLedger').where('tenantId', '==', tenantId),
+      rows,
+      newDate,
+      excludeLitterId,
+    )
+  }
+
+  // Historical live-litter fallback. Only add a live row when no ledger
+  // row for the same litter already exists.
+  for (const tenantId of new Set(tenantIds || [])) {
+    if (!tenantId) continue
+    const liveSnap = await tx.get(db.collection('litters').where('tenantId', '==', tenantId))
+    for (const doc of liveSnap.docs) {
+      if (excludeLitterId && doc.id === excludeLitterId) continue
+      if (rows.has(doc.id)) continue
+      const litter = doc.data()
+      if (!isDatedWithin(litter.actualBirthDate, newDate)) continue
+      rows.set(doc.id, {
+        litterId: doc.id,
+        whelpingDate: litter.actualBirthDate,
+        quotaSource: 'included',
+        extraCreditId: null,
+        source: 'live-fallback',
+      })
+    }
+  }
+
+  const entries = [...rows.values()]
+  const includedUsed = entries.filter(entry => entry.quotaSource !== 'extra').length
+  const extraUsed = entries.filter(entry => entry.quotaSource === 'extra').length
+  return { entries, includedUsed, extraUsed, includedLimit: LITTER_INCLUDED_QUOTA }
+}
+
+async function addCreditQuery(tx, query, byId) {
+  const snap = await tx.get(query)
+  for (const doc of snap.docs) {
+    if (!byId.has(doc.id)) byId.set(doc.id, { id: doc.id, ref: doc.ref, ...doc.data() })
+  }
+}
+
+export async function listExtraLitterCreditsTx(
+  tx,
+  db,
+  { breederProfileId, purchasedByUid = null },
+) {
+  const byId = new Map()
+
+  if (breederProfileId) {
+    await addCreditQuery(
+      tx,
+      db.collection('litterQuotaCredits').where('breederProfileId', '==', breederProfileId),
+      byId,
+    )
+  }
+  // Same-account fallback protects a legitimate breeder who changes the
+  // identity field used to derive breederProfileId after buying a credit.
+  if (purchasedByUid) {
+    await addCreditQuery(
+      tx,
+      db.collection('litterQuotaCredits').where('purchasedByUid', '==', purchasedByUid),
+      byId,
+    )
+  }
+
+  return [...byId.values()]
+}
+
+// Read-only selection. Caller performs the update only AFTER every other
+// Firestore read in its transaction has completed.
+export async function findAvailableExtraLitterCreditTx(
+  tx,
+  db,
+  { breederProfileId, purchasedByUid = null },
+) {
+  const credits = await listExtraLitterCreditsTx(tx, db, { breederProfileId, purchasedByUid })
+  return credits
+    .filter(credit => credit.status === 'available')
+    .sort((a, b) => String(a.purchasedAt || '').localeCompare(String(b.purchasedAt || '')) || a.id.localeCompare(b.id))[0] || null
+}
+
+export async function decideLitterQuotaTx(
+  tx,
+  db,
+  { breederProfileId, tenantIds, purchasedByUid, newDate, excludeLitterId = null },
+) {
+  const usage = await litterUsageWithinRollingWindow(tx, db, {
+    breederProfileId,
+    tenantIds,
+    newDate,
+    excludeLitterId,
+  })
+
+  if (usage.includedUsed < LITTER_INCLUDED_QUOTA) {
+    return { allowed: true, quotaSource: 'included', credit: null, usage }
+  }
+
+  const credit = await findAvailableExtraLitterCreditTx(tx, db, { breederProfileId, purchasedByUid })
+  if (credit) {
+    return { allowed: true, quotaSource: 'extra', credit, usage }
+  }
+
+  return { allowed: false, quotaSource: null, credit: null, usage }
+}
+
+export function consumeExtraLitterCredit(tx, credit, { litterId, consumedAt }) {
+  if (!credit?.ref || credit.status !== 'available') {
+    throw new Error('EXTRA_LITTER_CREDIT_NOT_AVAILABLE')
+  }
+  tx.update(credit.ref, {
+    status: 'consumed',
+    consumedByLitterId: litterId,
+    consumedAt,
   })
 }
 
-export function writeLitterQuotaLedgerEntry(tx, db, { tenantId, litterId, whelpingDate }) {
+export function writeLitterQuotaLedgerEntry(
+  tx,
+  db,
+  { tenantId, breederProfileId, litterId, whelpingDate, quotaSource = 'included', extraCreditId = null },
+) {
   const ref = db.collection('litterQuotaLedger').doc()
-  tx.set(ref, { tenantId, litterId, whelpingDate, recordedAt: new Date().toISOString() })
+  tx.set(ref, {
+    tenantId,
+    breederProfileId: breederProfileId || null,
+    litterId,
+    whelpingDate,
+    quotaSource,
+    extraCreditId: extraCreditId || null,
+    recordedAt: new Date().toISOString(),
+  })
 }
 
-// Codex H7 (round 2) — before a pre-ledger litter's LIVE document is hard-
-// deleted (api/delete-litter.js), its quota evidence must be preserved
-// permanently. hasLitterWithinRollingWindow's live-collection fallback
-// (above) only works while the litter document still exists; once it's
-// gone, a litter that whelped without ever having a ledger entry (created
-// before the ledger system existed, or before this specific backfill
-// existed) leaves no trace at all, silently freeing up its rolling-window
-// slot. Used to decide whether a delete needs to backfill a ledger entry
-// — and, independently, to guard against ever writing a SECOND entry for
-// a litter that already has one (a litter created after the ledger
-// system existed already got one from create-litter.js/update-litter.js
-// at whelping-date-set time; backfilling again here would double-count
-// it in hasLitterWithinRollingWindow, though that function is itself a
-// boolean OR-scan so a duplicate wouldn't cause a false negative — this
-// guard keeps the ledger clean and auditable regardless).
 export async function hasLedgerEntryForLitter(tx, db, litterId) {
   const snap = await tx.get(db.collection('litterQuotaLedger').where('litterId', '==', litterId))
   return !snap.empty
 }
 
-// §4.1 — "A Plus account may hold at most one un-dated planned litter at
-// a time." Checked against the LIVE litters collection (not the ledger —
-// an un-dated litter was never counted, so it isn't and shouldn't be
-// ledgered), excluding archived litters and, when re-checking an existing
-// litter, itself.
-export async function hasOtherUndatedPlannedLitter(tx, db, tenantId, excludeLitterId = null) {
-  const snap = await tx.get(db.collection('litters').where('tenantId', '==', tenantId))
-  return snap.docs.some(d => {
-    if (excludeLitterId && d.id === excludeLitterId) return false
-    const litter = d.data()
-    return !litter.archived && !litter.actualBirthDate
+// Backward-compatible helper retained for any old tests/callers that only
+// need to know whether there is at least one litter in a window.
+export async function hasLitterWithinRollingWindow(tx, db, tenantId, newDate, excludeLitterId = null) {
+  const usage = await litterUsageWithinRollingWindow(tx, db, {
+    breederProfileId: null,
+    tenantIds: [tenantId],
+    newDate,
+    excludeLitterId,
   })
+  return usage.entries.length > 0
+}
+
+// A breeder may keep at most one undated planned litter at a time. The
+// check spans all known tenant UIDs for the same Breeder Profile, closing
+// the account-recreation loophole for planned litters as well.
+export async function hasOtherUndatedPlannedLitter(tx, db, tenantIdsOrId, excludeLitterId = null) {
+  const tenantIds = Array.isArray(tenantIdsOrId) ? tenantIdsOrId : [tenantIdsOrId]
+  for (const tenantId of new Set(tenantIds)) {
+    if (!tenantId) continue
+    const snap = await tx.get(db.collection('litters').where('tenantId', '==', tenantId))
+    const hit = snap.docs.some(doc => {
+      if (excludeLitterId && doc.id === excludeLitterId) return false
+      const litter = doc.data()
+      return !litter.archived && !litter.actualBirthDate
+    })
+    if (hit) return true
+  }
+  return false
 }
