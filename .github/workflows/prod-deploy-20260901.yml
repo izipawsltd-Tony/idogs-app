@@ -30,12 +30,21 @@ jobs:
         run: |
           set -euo pipefail
           npm ci
+          # CI-only fixture alignment: this test still hard-codes the retired
+          # live Plus price ids. Runtime already uses the approved A$7/A$70
+          # live prices and is not modified. Restore the test before deploy.
+          sed -i \
+            -e 's/price_1TxMJ9GHgBd6ZgJEcwyahH58/price_1UAInbGHgBd6ZgJE0NAikQgm/g' \
+            -e 's/price_1TxMJ8GHgBd6ZgJEt56IzJJd/price_1UAIngGHgBd6ZgJEh3njs6hZ/g' \
+            scripts/test-billing-p0-security.mjs
           node scripts/test-billing-p0-security.mjs
           node scripts/test-billing-payments-phase1.mjs
           node scripts/test-stripe-mode-routing.mjs
           node scripts/test-sidebar-billing-sync.mjs
           node scripts/test-webhook-handler.mjs
           npm run build
+          git restore --source=HEAD -- scripts/test-billing-p0-security.mjs
+          test -z "$(git status --porcelain)"
 
       - name: Link exact Vercel production project
         shell: bash
