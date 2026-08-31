@@ -15,14 +15,14 @@ jobs:
       - name: Checkout exact runtime SHA
         uses: actions/checkout@v4
         with:
-          ref: 9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b
+          ref: 8f57a584b8d08794e25439359eebbfefb0ee0b23
           fetch-depth: 0
 
       - name: Fail closed on exact source and pricing GST scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b"
+          test "$(git rev-parse HEAD)" = "8f57a584b8d08794e25439359eebbfefb0ee0b23"
           test -z "$(git status --porcelain)"
           test ! -e noop.tmp
           test ! -e api/qa-auth-context.js
@@ -32,6 +32,8 @@ jobs:
           grep -Fq "price_1UAIngGHgBd6ZgJEh3njs6hZ" api/_lib/checkout-handler.js
           grep -Fq "txr_1U9iaFGHgBd6ZgJE5FsztFar" api/_lib/checkout-handler.js
           grep -Fq "default_tax_rates" api/_lib/checkout-handler.js
+          grep -Fq "PRODUCTION_VERCEL_PROJECT_ID = 'prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo'" api/_lib/require-config.js
+          grep -Fq "process.env.VERCEL_ENV !== 'preview'" api/_lib/require-config.js
 
       - name: Install dependencies
         run: npm ci
@@ -73,7 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b"
+          test "$(git rev-parse HEAD)" = "8f57a584b8d08794e25439359eebbfefb0ee0b23"
           mapfile -t changed < <(git diff --name-only)
           if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then git restore --source=HEAD -- package-lock.json; elif (( ${#changed[@]} != 0 )); then printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"; exit 1; fi
           test -z "$(git status --porcelain)"
@@ -94,8 +96,8 @@ jobs:
       - name: Verify Preview target
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b"
+          test "$(git rev-parse HEAD)" = "8f57a584b8d08794e25439359eebbfefb0ee0b23"
           test -n "$PREVIEW_URL"
-          echo "EXACT_SHA_DEPLOYED 9e7add9c088a505533ed73c7c2c3eb2d8cf78f6b"
+          echo "EXACT_SHA_DEPLOYED 8f57a584b8d08794e25439359eebbfefb0ee0b23"
           echo "PROJECT idogs-app"
           echo "TARGET preview"
