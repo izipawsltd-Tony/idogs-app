@@ -3,8 +3,8 @@ import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 
 const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58',
-  plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
+  plus_monthly: 'price_1UAInbGHgBd6ZgJE0NAikQgm',
+  plus_annual: 'price_1UAIngGHgBd6ZgJEh3njs6hZ',
 })
 
 const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
