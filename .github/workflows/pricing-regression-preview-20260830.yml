@@ -1,4 +1,4 @@
-name: SMS Preview env audit 20260901
+name: SMS Preview config and deploy 20260901
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  audit-sms-preview-env:
+  configure-sms-preview:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact runtime
@@ -24,6 +24,8 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "70a357c0bf0223dbacf9f0c724124d53c9d978ad"
           test -z "$(git status --porcelain)"
+          test ! -e api/qa-repair-plus-entitlement.js
+          test ! -e api/qa-auth-context.js
 
       - name: Link exact Vercel project
         shell: bash
@@ -33,15 +35,64 @@ jobs:
           {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
           JSON
 
-      - name: Audit Preview SMS key only
+      - name: Configure SMS price in Preview only
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
-          npx --yes vercel@latest env ls preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects > /tmp/env-list.txt 2>&1
-          if grep -q 'STRIPE_SMS_ADDON_PRICE_ID' /tmp/env-list.txt; then
-            echo 'SMS_PREVIEW_ENV_PRESENT'
+          npx --yes vercel@latest env ls preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects > /tmp/env-before.txt 2>&1
+          if grep -q 'STRIPE_SMS_ADDON_PRICE_ID' /tmp/env-before.txt; then
+            echo 'SMS_PREVIEW_ENV_ALREADY_PRESENT'
           else
-            echo 'SMS_PREVIEW_ENV_MISSING'
+            printf '%s\n' 'price_1TxMJ8GHgBd6ZgJEinCDSAGx' | npx --yes vercel@latest env add STRIPE_SMS_ADDON_PRICE_ID preview --yes --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+            echo 'SMS_PREVIEW_ENV_ADDED'
           fi
+          npx --yes vercel@latest env ls preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects > /tmp/env-after.txt 2>&1
+          grep -q 'STRIPE_SMS_ADDON_PRICE_ID' /tmp/env-after.txt
+          echo 'SMS_PREVIEW_ENV_VERIFIED'
+
+      - name: Pull updated Preview settings
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+          grep -q '^STRIPE_SMS_ADDON_PRICE_ID=' .vercel/.env.preview.local
+          echo 'SMS_PREVIEW_PULL_VERIFIED'
+
+      - name: Reverify exact clean runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "70a357c0bf0223dbacf9f0c724124d53c9d978ad"
+          mapfile -t changed < <(git diff --name-only)
+          if (( ${#changed[@]} == 1 )) && [[ "${changed[0]}" == "package-lock.json" ]]; then
+            git restore --source=HEAD -- package-lock.json
+          elif (( ${#changed[@]} != 0 )); then
+            printf 'Unexpected tracked drift:\n%s\n' "${changed[@]}"
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Deploy exact runtime to Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PREVIEW_URL"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_READY $PREVIEW_URL"
+
+      - name: Verify Preview target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "70a357c0bf0223dbacf9f0c724124d53c9d978ad"
+          test -n "$PREVIEW_URL"
+          echo 'EXACT_SHA_DEPLOYED 70a357c0bf0223dbacf9f0c724124d53c9d978ad'
+          echo 'PROJECT idogs-app'
+          echo 'TARGET preview'
