@@ -53,6 +53,32 @@ summary = createBillingSummaryHandler({
   verifyIdToken: auth,
   getProfile: async uid => {
     assert.equal(uid, 'user-1')
+    return null
+  },
+  retrieveSubscription: async () => { throw new Error('must not run') },
+  listInvoices: async () => { throw new Error('must not run') },
+  isSmsConfigured: () => true,
+})
+res = await run(summary, { method: 'GET', headers: { authorization: 'Bearer valid' } })
+assert.equal(res.statusCode, 200, 'new authenticated user without profile gets a safe empty billing summary')
+assert.deepEqual(res.body, {
+  subscription: null,
+  invoices: [],
+  canManageBilling: false,
+  sms: {
+    configured: true,
+    status: 'inactive',
+    creditsUsed: 0,
+    creditsLimit: 20,
+    periodStart: null,
+    periodEnd: null,
+  },
+}, 'missing profile is represented as Free/no billing/no invoices without creating Firestore state')
+
+summary = createBillingSummaryHandler({
+  verifyIdToken: auth,
+  getProfile: async uid => {
+    assert.equal(uid, 'user-1')
     return { stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', subscriptionStatus: 'active' }
   },
   retrieveSubscription: async id => {
@@ -124,4 +150,4 @@ const noCustomerPortal = createBillingPortalHandler({
 res = await run(noCustomerPortal, { method: 'POST', headers: { authorization: 'Bearer valid' } })
 assert.equal(res.statusCode, 409, 'portal is unavailable without a linked Stripe customer')
 
-console.log('Billing & Payments Phase 1: 11/11 PASS')
+console.log('Billing & Payments Phase 1: 12/12 PASS')
