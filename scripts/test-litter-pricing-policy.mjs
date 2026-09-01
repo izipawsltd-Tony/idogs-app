@@ -14,6 +14,7 @@ const landing = fs.readFileSync(new URL('../src/pages/LandingPage.tsx', import.m
 const terms = fs.readFileSync(new URL('../src/pages/TermsPage.tsx', import.meta.url), 'utf8')
 const cta = fs.readFileSync(new URL('../src/components/ExtraLitterButton.tsx', import.meta.url), 'utf8')
 const littersPage = fs.readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
+const createLitterApi = fs.readFileSync(new URL('../api/create-litter.js', import.meta.url), 'utf8')
 const checkout = fs.readFileSync(new URL('../api/_lib/extra-litter-checkout-handler.js', import.meta.url), 'utf8')
 
 check('Plus monthly policy is A$7', pricing.includes('PLUS_MONTHLY_PRICE_AUD = 7'))
@@ -42,6 +43,11 @@ check('legacy first-litter empty-state wording is absent', !littersPage.includes
 check('customer UI never exposes safe-QA checkout copy', !cta.includes('checkout disabled for safe QA') && !cta.includes('Payment is disabled until separately approved.'))
 check('quota summary controls litter-create availability', cta.includes('onCreateAvailabilityChange?.(allowed)') && littersPage.includes('onCreateAvailabilityChange={setCanCreateLitterFromQuota}'))
 check('quota summary refreshes after litter-count changes', cta.includes('refreshKey = 0') && cta.includes('[user, onCreateAvailabilityChange, refreshKey]') && littersPage.includes('refreshKey={litters.length}'))
-check('new-litter CTAs are disabled when quota requires an Extra Litter credit', (littersPage.match(/disabled=\{canCreateLitterFromQuota === false\}/g) || []).length >= 2 && littersPage.includes('Purchase an Extra Litter credit to create another litter.'))
+check('new-litter CTAs fail closed until quota explicitly permits creation', (littersPage.match(/disabled=\{canCreateLitterFromQuota !== true\}/g) || []).length >= 2)
+check('Free quota summary cannot authorize litter creation', cta.includes("parsed.plan === 'plus'") && !cta.includes("parsed.plan !== 'plus' ||"))
+check('Free litter UX tells the breeder to upgrade', cta.includes('Free plan — upgrade to Plus to create litters'))
+check('create handler fails closed before calling the API', littersPage.includes('if (canCreateLitterFromQuota !== true)') && littersPage.includes('Your current plan does not allow creating another litter.'))
+check('blocked quota automatically closes any stale create form', littersPage.includes('if (canCreateLitterFromQuota === false) setShowCreate(false)'))
+check('server still blocks Free litter creation with 403 plan gate', createLitterApi.includes("if (plan !== 'plus')") && createLitterApi.includes('status: 403') && createLitterApi.includes("reason: 'LITTER_PLAN_GATE'"))
 
 await summary()

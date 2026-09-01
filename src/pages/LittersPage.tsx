@@ -293,6 +293,12 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     return () => { mountedRef.current = false }
   }, [])
 
+  // Fail closed if authoritative quota resolves to blocked after a form
+  // was opened from stale UI state or during an account/plan transition.
+  useEffect(() => {
+    if (canCreateLitterFromQuota === false) setShowCreate(false)
+  }, [canCreateLitterFromQuota])
+
   function startLoad() {
     if (!user) return
     const token = ++loadTokenRef.current
@@ -598,6 +604,10 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   }
 
   async function handleCreateLitter() {
+    if (canCreateLitterFromQuota !== true) {
+      toast('Your current plan does not allow creating another litter.', 'error')
+      return
+    }
     if (!form.damId) { toast('Please select a dam', 'error'); return }
     const dam = dogs.find(d => d.id === form.damId)
     if (!dam) { toast('Dam not found — please refresh', 'error'); return }
@@ -1080,8 +1090,8 @@ export default function LittersPage({ toast, dismissAll }: Props) {
           <button
             className="btn btn-primary"
             onClick={() => setShowCreate(!showCreate)}
-            disabled={canCreateLitterFromQuota === false}
-            title={canCreateLitterFromQuota === false ? 'Purchase an Extra Litter credit to create another litter.' : undefined}
+            disabled={canCreateLitterFromQuota !== true}
+            title={canCreateLitterFromQuota === null ? 'Checking litter availability…' : canCreateLitterFromQuota === false ? 'Your current plan does not allow creating another litter.' : undefined}
           >+ New litter</button>
         </div>
       </div>
@@ -1181,8 +1191,8 @@ export default function LittersPage({ toast, dismissAll }: Props) {
               className="btn btn-primary"
               style={{ marginTop: 8 }}
               onClick={() => setShowCreate(true)}
-              disabled={canCreateLitterFromQuota === false}
-              title={canCreateLitterFromQuota === false ? 'Purchase an Extra Litter credit to create another litter.' : undefined}
+              disabled={canCreateLitterFromQuota !== true}
+              title={canCreateLitterFromQuota === null ? 'Checking litter availability…' : canCreateLitterFromQuota === false ? 'Your current plan does not allow creating another litter.' : undefined}
             >Create litter</button>
           </div>
         </div>

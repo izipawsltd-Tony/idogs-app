@@ -54,7 +54,7 @@ export default function ExtraLitterButton({ toast, onCreateAvailabilityChange, r
           const parsed = body as LitterQuotaSummary
           setSummary(parsed)
           const used = Math.min(parsed.includedUsed, parsed.includedLimit)
-          const allowed = parsed.plan !== 'plus' || parsed.unlimited || used < parsed.includedLimit || parsed.extraCreditsAvailable > 0
+          const allowed = parsed.unlimited || (parsed.plan === 'plus' && (used < parsed.includedLimit || parsed.extraCreditsAvailable > 0))
           onCreateAvailabilityChange?.(allowed)
         } else if (!cancelled) {
           setSummary(null)
@@ -70,7 +70,15 @@ export default function ExtraLitterButton({ toast, onCreateAvailabilityChange, r
     return () => { cancelled = true }
   }, [user, onCreateAvailabilityChange, refreshKey])
 
-  if (!summary || summary.plan !== 'plus' || summary.unlimited) return null
+  if (!summary) return null
+  if (summary.plan === 'free') {
+    return (
+      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--light)' }}>
+        Free plan — upgrade to Plus to create litters
+      </span>
+    )
+  }
+  if (summary.unlimited) return null
 
   async function handleCheckout() {
     if (!user || !summary?.checkoutEnabled || loading) return
