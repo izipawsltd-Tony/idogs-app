@@ -121,6 +121,25 @@ async function handler(req, res) {
     }
   })
 
+  if (process.env.VERCEL_ENV === 'preview') {
+    console.info('LITTER_QUOTA_QA', {
+      plan: summary.plan,
+      unlimited: summary.unlimited,
+      includedUsed: summary.includedUsed,
+      includedLimit: summary.includedLimit,
+      identityKind: summary.qaDiagnostic?.identityKind || summary.identityKind || 'unknown',
+      relatedTenantCount: summary.qaDiagnostic?.relatedTenantCount ?? 0,
+      sources: Array.isArray(summary.qaDiagnostic?.entries)
+        ? summary.qaDiagnostic.entries.map(entry => ({
+            source: entry.source,
+            liveState: entry.liveState,
+            relation: entry.relation,
+            whelpingDate: entry.whelpingDate,
+          }))
+        : [],
+    })
+  }
+
   return res.status(200).json(summary)
 }
 
