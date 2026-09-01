@@ -1,0 +1,158 @@
+name: Free Litter Gate Staging Preview 20260902
+
+on:
+  push:
+    branches:
+      - automation/free-litter-preview-20260902
+    paths:
+      - .github/workflows/free-litter-gate-preview-20260902.yml
+
+permissions:
+  contents: read
+
+jobs:
+  qa-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CANDIDATE_SHA: a5cb3105f10b3653d30cdd8b1d08fdaed57eac6f
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+
+    steps:
+      - name: Checkout exact Free litter gate candidate
+        uses: actions/checkout@v4
+        with:
+          ref: a5cb3105f10b3653d30cdd8b1d08fdaed57eac6f
+          fetch-depth: 1
+
+      - name: Verify exact source and diff scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA"
+          echo SOURCE_LOCK=PASS
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install and run litter regression gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-litter-pricing-policy.mjs
+          node scripts/test-litter-quota.mjs
+          node scripts/test-extra-litter-checkout.mjs
+          npm run build
+          echo LITTER_REGRESSION_GATES=PASS
+
+      - name: Hard-lock Vercel staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK=PASS')
+          PY
+
+      - name: Confirm Preview financial safety and remove local env cache
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          test -f .vercel/.env.preview.local
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.vercel/.env.preview.local')
+          vals={}
+          for raw in p.read_text(errors='replace').splitlines():
+              line=raw.strip()
+              if not line or line.startswith('#') or '=' not in line:
+                  continue
+              k,v=line.split('=',1)
+              v=v.strip()
+              if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"):
+                  v=v[1:-1]
+              vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
+          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
+              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          print('EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=' + ('missing' if not vals.get('EXTRA_LITTER_CHECKOUT_ENABLED') else 'not_true'))
+          PY
+          rm -f .vercel/.env.preview.local
+          test ! -e .vercel/.env.preview.local
+          echo LOCAL_PREVIEW_ENV_CACHE=REMOVED
+
+      - name: Deploy exact candidate to staging Preview via remote build
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test ! -e .vercel/.env.preview.local
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK_BEFORE_REMOTE_DEPLOY=PASS')
+          PY
+          npx --yes vercel@latest deploy --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          cat /tmp/vercel-deploy.stderr
+          cat /tmp/vercel-deploy.stdout
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
+          test -n "$DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "STAGING_PREVIEW_URL=$DEPLOY_URL"
+          echo REMOTE_PREVIEW_DEPLOY=PASS
+
+      - name: Verify Preview bundle safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_URL:-}"
+          curl -fsSL --retry 5 --retry-delay 2 "$DEPLOY_URL/" -o /tmp/index.html
+          python3 - <<'PY'
+          import pathlib, re, subprocess, sys, os
+          base=os.environ['DEPLOY_URL']
+          html=pathlib.Path('/tmp/index.html').read_text(errors='replace')
+          assets=sorted(set(re.findall(r'/assets/[^"\']+\.js', html)))
+          print(f'JS_ASSET_COUNT={len(assets)}')
+          if not assets:
+              raise SystemExit('JS_ASSETS_NONE')
+          combined=b''
+          for i,a in enumerate(assets):
+              out=pathlib.Path(f'/tmp/asset-{i}.js')
+              subprocess.run(['curl','-fsSL','--retry','5','--retry-delay','2',base+a,'-o',str(out)],check=True)
+              data=out.read_bytes()
+              combined += data
+              print(f'ASSET_{i}={a} BYTES={len(data)}')
+          if b'[SENSITIVE]' in combined:
+              print('BUNDLE_SENSITIVE_PLACEHOLDER=FOUND')
+              sys.exit(61)
+          print('BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT')
+          text=combined.decode('utf-8', errors='ignore')
+          hosts=sorted(set(re.findall(r'[A-Za-z0-9.-]+\.firebaseapp\.com', text)))
+          print('FIREBASE_AUTH_DOMAINS=' + (','.join(hosts) if hosts else 'NONE'))
+          if 'idogs-app-staging.firebaseapp.com' not in hosts:
+              raise SystemExit('WRONG_FIREBASE_AUTH_DOMAIN')
+          print('FIREBASE_STAGING_TARGET=PASS')
+          PY
+          echo FREE_LITTER_GATE_PREVIEW=PASS
