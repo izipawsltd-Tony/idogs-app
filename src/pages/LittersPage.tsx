@@ -12,6 +12,7 @@ import { db } from '../lib/firebase'
 import { formatDate, formatDateTime, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
 import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability, ShowcaseEnquiry, MediaItem } from '../types'
 import { useAuth } from '../hooks/useAuth'
+import ExtraLitterButton from '../components/ExtraLitterButton'
 import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
 import { sendTransferEmail } from '../lib/email'
 import { describeTransferFailure } from '../lib/transferError'
@@ -1069,7 +1070,10 @@ export default function LittersPage({ toast, dismissAll }: Props) {
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>Litters</h1>
           <p style={{ fontSize: 14, color: 'var(--light)' }}>{litters.length} litter{litters.length !== 1 ? 's' : ''} recorded</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>+ New litter</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <ExtraLitterButton toast={toast} />
+          <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>+ New litter</button>
+        </div>
       </div>
 
       {/* ── CREATE LITTER FORM ── */}

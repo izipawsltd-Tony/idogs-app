@@ -77,7 +77,8 @@ const PLUS_FEATURES = [
   'Up to 5 dogs',
   'Everything in Free',
   '10 AI Document Scans / month',
-  '1 litter per 12 months',
+  '2 litters per rolling 12 months',
+  'Extra litters A$39 each',
   'PDF & CSV report export',
 ]
 
