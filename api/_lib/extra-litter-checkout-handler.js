@@ -22,6 +22,7 @@ export function createExtraLitterCheckoutHandler({
   verifyIdToken,
   getProfile,
   retrieveSubscription,
+  getPurchaseEligibility,
   createSession,
   getAppUrl = requireAppUrl,
   isEnabled = () => process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true',
@@ -90,6 +91,27 @@ export function createExtraLitterCheckoutHandler({
       }
       if (!verifiedPlusInterval(subscription)) {
         return res.status(409).json({ error: 'Verified iDogs Plus price not found on subscription' })
+      }
+
+      // Never charge for an extra litter before the two included slots are
+      // exhausted, and never sell another credit while one is still unused.
+      // This server check mirrors the CTA UX so a crafted client request
+      // cannot create an unnecessary financial transaction.
+      if (typeof getPurchaseEligibility !== 'function') {
+        throw new Error('EXTRA_LITTER_ELIGIBILITY_NOT_CONFIGURED')
+      }
+      const eligibility = await getPurchaseEligibility({ uid, profile, authEmail: email })
+      if (!eligibility?.includedExhausted) {
+        return res.status(409).json({
+          error: 'Use the 2 litters included with Plus before buying an Extra Litter credit',
+          code: 'INCLUDED_LITTERS_REMAIN',
+        })
+      }
+      if ((eligibility.availableCredits || 0) > 0) {
+        return res.status(409).json({
+          error: 'You already have an unused Extra Litter credit',
+          code: 'EXTRA_LITTER_CREDIT_AVAILABLE',
+        })
       }
 
       const { breederProfileId } = breederIdentity(profile, { uid, authEmail: email })
