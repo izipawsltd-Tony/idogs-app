@@ -1,4 +1,4 @@
-name: Free Litter UI Gate Preview 20260902
+name: Free Litter Patch Test 20260902
 
 on:
   push:
@@ -11,110 +11,29 @@ permissions:
   contents: write
 
 jobs:
-  patch-test-deploy-preview:
+  patch-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
       BASE_SHA: a0f5868962e21f36846aa220dd06a4a6aa2ceb56
       FIX_BRANCH: fix/free-litter-ui-gate-preview-20260902
-      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
-      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
-      VERCEL_SCOPE: izipawsltd-tonys-projects
 
     steps:
-      - name: Checkout exact fix branch base
+      - name: Checkout automation helper
         uses: actions/checkout@v4
         with:
-          ref: fix/free-litter-ui-gate-preview-20260902
           fetch-depth: 2
 
-      - name: Verify exact base and apply deterministic micro-fix
+      - name: Prepare exact fix branch and patch
         shell: bash
         run: |
           set -euo pipefail
+          cp scripts/ci/patch-free-litter-ui-gate-20260902.py /tmp/patch-free-litter-ui-gate.py
+          git fetch origin "$FIX_BRANCH"
+          git checkout "$FIX_BRANCH"
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
           test -z "$(git status --porcelain)"
-          python3 - <<'PY'
-          from pathlib import Path
-
-          cta_path = Path('src/components/ExtraLitterButton.tsx')
-          cta = cta_path.read_text()
-          old_allowed = "const allowed = parsed.plan !== 'plus' || parsed.unlimited || used < parsed.includedLimit || parsed.extraCreditsAvailable > 0"
-          new_allowed = "const allowed = parsed.unlimited || (parsed.plan === 'plus' && (used < parsed.includedLimit || parsed.extraCreditsAvailable > 0))"
-          assert cta.count(old_allowed) == 1, 'unexpected allowed expression count'
-          cta = cta.replace(old_allowed, new_allowed)
-          old_render = "  if (!summary || summary.plan !== 'plus' || summary.unlimited) return null"
-          new_render = """  if (!summary) return null
-  if (summary.plan === 'free') {
-    return (
-      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--light)' }}>
-        Free plan — upgrade to Plus to create litters
-      </span>
-    )
-  }
-  if (summary.unlimited) return null"""
-          assert cta.count(old_render) == 1, 'unexpected Free render gate count'
-          cta = cta.replace(old_render, new_render)
-          cta_path.write_text(cta)
-
-          page_path = Path('src/pages/LittersPage.tsx')
-          page = page_path.read_text()
-          old_disabled = 'disabled={canCreateLitterFromQuota === false}'
-          assert page.count(old_disabled) == 2, 'unexpected new-litter disabled gate count'
-          page = page.replace(old_disabled, 'disabled={canCreateLitterFromQuota !== true}')
-          old_title = "title={canCreateLitterFromQuota === false ? 'Purchase an Extra Litter credit to create another litter.' : undefined}"
-          new_title = "title={canCreateLitterFromQuota === null ? 'Checking litter availability…' : canCreateLitterFromQuota === false ? 'Your current plan does not allow creating another litter.' : undefined}"
-          assert page.count(old_title) == 2, 'unexpected CTA title count'
-          page = page.replace(old_title, new_title)
-          old_mounted = """  useEffect(() => {
-    mountedRef.current = true
-    return () => { mountedRef.current = false }
-  }, [])
-
-  function startLoad() {"""
-          new_mounted = """  useEffect(() => {
-    mountedRef.current = true
-    return () => { mountedRef.current = false }
-  }, [])
-
-  // Fail closed if authoritative quota resolves to blocked after a form
-  // was opened from stale UI state or during an account/plan transition.
-  useEffect(() => {
-    if (canCreateLitterFromQuota === false) setShowCreate(false)
-  }, [canCreateLitterFromQuota])
-
-  function startLoad() {"""
-          assert page.count(old_mounted) == 1, 'unexpected mounted effect anchor count'
-          page = page.replace(old_mounted, new_mounted)
-          old_handler = """  async function handleCreateLitter() {
-    if (!form.damId) { toast('Please select a dam', 'error'); return }"""
-          new_handler = """  async function handleCreateLitter() {
-    if (canCreateLitterFromQuota !== true) {
-      toast('Your current plan does not allow creating another litter.', 'error')
-      return
-    }
-    if (!form.damId) { toast('Please select a dam', 'error'); return }"""
-          assert page.count(old_handler) == 1, 'unexpected create handler anchor count'
-          page = page.replace(old_handler, new_handler)
-          page_path.write_text(page)
-
-          test_path = Path('scripts/test-litter-pricing-policy.mjs')
-          test = test_path.read_text()
-          old_decl = "const littersPage = fs.readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')"
-          new_decl = old_decl + "\nconst createLitterApi = fs.readFileSync(new URL('../api/create-litter.js', import.meta.url), 'utf8')"
-          assert test.count(old_decl) == 1, 'unexpected test declaration anchor count'
-          test = test.replace(old_decl, new_decl)
-          old_check = "check('new-litter CTAs are disabled when quota requires an Extra Litter credit', (littersPage.match(/disabled=\\{canCreateLitterFromQuota === false\\}/g) || []).length >= 2 && littersPage.includes('Purchase an Extra Litter credit to create another litter.'))"
-          new_checks = """check('new-litter CTAs fail closed until quota explicitly permits creation', (littersPage.match(/disabled=\\{canCreateLitterFromQuota !== true\\}/g) || []).length >= 2)
-check('Free quota summary cannot authorize litter creation', cta.includes("parsed.plan === 'plus'") && !cta.includes("parsed.plan !== 'plus' ||"))
-check('Free litter UX tells the breeder to upgrade', cta.includes('Free plan — upgrade to Plus to create litters'))
-check('create handler fails closed before calling the API', littersPage.includes('if (canCreateLitterFromQuota !== true)') && littersPage.includes('Your current plan does not allow creating another litter.'))
-check('blocked quota automatically closes any stale create form', littersPage.includes('if (canCreateLitterFromQuota === false) setShowCreate(false)'))
-check('server still blocks Free litter creation with 403 plan gate', createLitterApi.includes("if (plan !== 'plus')") && createLitterApi.includes('status: 403') && createLitterApi.includes("reason: 'LITTER_PLAN_GATE'"))"""
-          assert test.count(old_check) == 1, 'unexpected old CTA regression check count'
-          test = test.replace(old_check, new_checks)
-          test_path.write_text(test)
-          PY
+          python3 /tmp/patch-free-litter-ui-gate.py
           git diff --check
           changed=$(git diff --name-only | sort)
           printf '%s\n' "$changed"
@@ -138,7 +57,7 @@ check('server still blocks Free litter creation with 403 plan gate', createLitte
           npm run build
           echo FOCUSED_REGRESSION_AND_BUILD=PASS
 
-      - name: Commit exact Preview candidate to fix branch
+      - name: Commit exact Preview candidate
         shell: bash
         run: |
           set -euo pipefail
@@ -148,108 +67,7 @@ check('server still blocks Free litter creation with 403 plan gate', createLitte
           test "$(git diff --cached --name-only | sort)" = $'scripts/test-litter-pricing-policy.mjs\nsrc/components/ExtraLitterButton.tsx\nsrc/pages/LittersPage.tsx'
           git commit -m 'fix(litters): block Free create UI fail-closed'
           CANDIDATE_SHA=$(git rev-parse HEAD)
-          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
           git push origin HEAD:"$FIX_BRANCH"
           test -z "$(git status --porcelain)"
           echo "EXACT_PREVIEW_CANDIDATE_SHA=$CANDIDATE_SHA"
-
-      - name: Hard-lock Vercel staging project
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .vercel
-          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
-          python3 - <<'PY'
-          import json, os
-          d=json.load(open('.vercel/project.json'))
-          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
-          assert d['orgId']==os.environ['STAGING_TEAM_ID']
-          assert d['projectName']=='idogs-app-staging'
-          print('PROJECT_LOCK=PASS')
-          PY
-
-      - name: Confirm Preview financial safety gate
-        shell: bash
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          set -euo pipefail
-          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
-          python3 - <<'PY'
-          from pathlib import Path
-          files=list(Path('.vercel').glob('.env.*.local'))
-          vals={}
-          for p in files:
-              for raw in p.read_text(errors='replace').splitlines():
-                  line=raw.strip()
-                  if not line or line.startswith('#') or '=' not in line:
-                      continue
-                  k,v=line.split('=',1)
-                  v=v.strip()
-                  if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"):
-                      v=v[1:-1]
-                  vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
-          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
-              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
-          print('FINANCIAL_SAFETY_GATE=PASS')
-          print('EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=' + ('missing' if not vals.get('EXTRA_LITTER_CHECKOUT_ENABLED') else 'not_true'))
-          PY
-          rm -f .vercel/.env.*.local
-          python3 - <<'PY'
-          import json, os
-          d=json.load(open('.vercel/project.json'))
-          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
-          assert d['orgId']==os.environ['STAGING_TEAM_ID']
-          print('PROJECT_LOCK_AFTER_PULL=PASS')
-          PY
-
-      - name: Deploy exact candidate to staging Preview only
-        shell: bash
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test -z "$(git status --porcelain --untracked-files=no)"
-          set +e
-          npx --yes vercel@latest deploy --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
-          status=$?
-          set -e
-          echo "VERCEL_PREVIEW_DEPLOY_EXIT=$status"
-          sed -n '1,180p' /tmp/vercel-deploy.stderr
-          sed -n '1,100p' /tmp/vercel-deploy.stdout
-          if [ "$status" -ne 0 ]; then exit "$status"; fi
-          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
-          test -n "$DEPLOY_URL"
-          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
-          echo "PREVIEW_URL=$DEPLOY_URL"
-          echo STAGING_PREVIEW_DEPLOY=PASS
-
-      - name: Verify Preview bundle and safety markers
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${DEPLOY_URL:-}"
-          curl -fsSL --retry 5 --retry-delay 2 "$DEPLOY_URL/" -o /tmp/index.html
-          python3 - <<'PY'
-          from pathlib import Path
-          import os, re, subprocess
-          base=os.environ['DEPLOY_URL']
-          html=Path('/tmp/index.html').read_text(errors='replace')
-          assets=sorted(set(re.findall(r'src=["\'](/assets/[^"\']+\.js)["\']', html)))
-          if not assets: raise SystemExit('JS_ASSETS_NONE')
-          combined=b''
-          for i,a in enumerate(assets):
-              out=Path(f'/tmp/asset-{i}.js')
-              subprocess.run(['curl','-fsSL','--retry','5','--retry-delay','2',base+a,'-o',str(out)],check=True)
-              combined += out.read_bytes()
-          if b'[SENSITIVE]' in combined: raise SystemExit('BUNDLE_SENSITIVE_PLACEHOLDER_FOUND')
-          text=combined.decode('utf-8',errors='ignore')
-          if 'idogs-app-staging.firebaseapp.com' not in text: raise SystemExit('WRONG_FIREBASE_TARGET')
-          if 'Free plan — upgrade to Plus to create litters' not in text: raise SystemExit('FREE_GATE_COPY_MISSING')
-          if 'Your current plan does not allow creating another litter.' not in text: raise SystemExit('FAIL_CLOSED_COPY_MISSING')
-          print('BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT')
-          print('FIREBASE_STAGING_TARGET=PASS')
-          print('FREE_LITTER_UI_GATE_MARKERS=PASS')
-          print('PREVIEW_BUNDLE_CHECK=PASS')
-          PY
+          echo PATCH_TEST_COMMIT=PASS
