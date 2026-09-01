@@ -18,15 +18,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout clean feature branch
+      - name: Checkout QA-approved clean feature lineage
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin fix/litter-extra-credit-ux-preview-20260901
-          git checkout -B fix/litter-extra-credit-ux-preview-20260901 origin/fix/litter-extra-credit-ux-preview-20260901
-          test "$(git rev-parse HEAD)" = "2662c22ac1bded78f1e7fd3d9667830cb512afeb"
+          git fetch origin fix/litter-extra-credit-ux-clean-preview-20260901
+          git checkout -B fix/litter-extra-credit-ux-clean-preview-20260901 origin/fix/litter-extra-credit-ux-clean-preview-20260901
+          test "$(git rev-parse HEAD)" = "9439efcf09b79cce587ec8ed19d30f5d4b87524b"
           test -z "$(git status --porcelain)"
           test -f api/_lib/billing-reconcile.js
+          grep -q "checkoutPriceIdsForStripeMode" api/_lib/checkout-handler.js
+          grep -q "checkoutTaxRatesForStripeMode" api/_lib/checkout-handler.js
           test ! -e .github/workflows/litter-extra-ux-preview-20260901.yml
           echo CLEAN_BASE_OK
 
@@ -151,7 +153,7 @@ jobs:
           git add src/components/ExtraLitterButton.tsx src/pages/LittersPage.tsx scripts/test-litter-pricing-policy.mjs
           git diff --cached --check
           git commit -m "fix(litters): gate new litter CTA on extra credit"
-          git push origin HEAD:fix/litter-extra-credit-ux-preview-20260901
+          git push origin HEAD:fix/litter-extra-credit-ux-clean-preview-20260901
           CANDIDATE_SHA=$(git rev-parse HEAD)
           echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
           echo "CANDIDATE_SHA $CANDIDATE_SHA"
@@ -164,6 +166,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain)"
           test -f api/_lib/billing-reconcile.js
+          grep -q "checkoutPriceIdsForStripeMode" api/_lib/checkout-handler.js
+          grep -q "checkoutTaxRatesForStripeMode" api/_lib/checkout-handler.js
           test ! -e .github/workflows/litter-extra-ux-preview-20260901.yml
           ! grep -R "checkout disabled for safe QA" src api
           ! grep -R "QA source:" src api
