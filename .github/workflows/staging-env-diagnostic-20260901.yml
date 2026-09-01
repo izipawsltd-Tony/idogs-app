@@ -10,77 +10,86 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout exact integration candidate
+      - name: Checkout exact approved candidate
         uses: actions/checkout@v4
         with:
-          ref: 0d862888c17dafc3311ae2d8127f199fb6fe9945
+          ref: 8b51dbc004b3676969d3091f3f1fd04f2b46e12b
           fetch-depth: 1
 
       - name: Link stable staging project only
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "0d862888c17dafc3311ae2d8127f199fb6fe9945"
+          test "$(git rev-parse HEAD)" = "8b51dbc004b3676969d3091f3f1fd04f2b46e12b"
           mkdir -p .vercel
           printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
           echo PROJECT_CLASS=stable-staging
+          echo CANDIDATE_SHA=8b51dbc004b3676969d3091f3f1fd04f2b46e12b
 
-      - name: Pull env read-only and classify escaped patterns
+      - name: Pull staging production env read-only
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
           npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/staging-pull.log 2>&1
-          ENV_FILE=.vercel/.env.production.local
-          test -f "$ENV_FILE"
+          test -f .vercel/.env.production.local
           echo VERCEL_PULL_CLASS=success
           echo ENV_FILE_CLASS=present
 
-          line_for() { grep -E "^$1=" "$ENV_FILE" | tail -1 || true; }
+      - name: Classify staging env without exposing values
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
 
-          firebase_line=$(line_for FIREBASE_PROJECT_ID)
-          if [ -z "$firebase_line" ]; then
-            echo FIREBASE_PROJECT_ID_CLASS=missing
-          elif printf '%s' "$firebase_line" | grep -Fq 'idogs-app-staging'; then
-            echo FIREBASE_PROJECT_ID_CLASS=staging
-          elif printf '%s' "$firebase_line" | grep -Eq 'idogs-app([^a-zA-Z0-9_-]|$)'; then
-            echo FIREBASE_PROJECT_ID_CLASS=production
-          else
-            echo FIREBASE_PROJECT_ID_CLASS=other
-          fi
+          env_file = Path('.vercel/.env.production.local')
+          values = {}
+          for raw in env_file.read_text(errors='replace').splitlines():
+              line = raw.strip()
+              if not line or line.startswith('#') or '=' not in line:
+                  continue
+              key, value = line.split('=', 1)
+              values[key.strip()] = value.strip()
 
-          extra_line=$(line_for EXTRA_LITTER_CHECKOUT_ENABLED)
-          if [ -z "$extra_line" ]; then
-            echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=missing
-          elif printf '%s' "$extra_line" | grep -Eiq '=(["'"']?)(true)(\\n)?\1$'; then
-            echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=true
-          elif printf '%s' "$extra_line" | grep -Eiq '=(["'"']?)(false)(\\n)?\1$'; then
-            echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=false
-          else
-            echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=other
-          fi
+          def clean(value):
+              value = (value or '').strip()
+              if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                  value = value[1:-1]
+              return value.replace('\\n', '').replace('\\r', '').strip()
 
-          stripe_line=$(line_for STRIPE_SECRET_KEY)
-          if [ -z "$stripe_line" ]; then
-            echo STRIPE_SECRET_KEY_CLASS=missing
-          elif printf '%s' "$stripe_line" | grep -Fq 'sk_test_'; then
-            echo STRIPE_SECRET_KEY_CLASS=test
-          elif printf '%s' "$stripe_line" | grep -Fq 'sk_live_'; then
-            echo STRIPE_SECRET_KEY_CLASS=live
-          else
-            echo STRIPE_SECRET_KEY_CLASS=other
-          fi
+          firebase = clean(values.get('FIREBASE_PROJECT_ID'))
+          extra = clean(values.get('EXTRA_LITTER_CHECKOUT_ENABLED')).lower()
+          stripe = clean(values.get('STRIPE_SECRET_KEY'))
+          app = clean(values.get('APP_URL')).rstrip('/')
 
-          app_line=$(line_for APP_URL)
-          if [ -z "$app_line" ]; then
-            echo APP_URL_CLASS=missing
-          elif printf '%s' "$app_line" | grep -Fq 'idogs-app-staging.vercel.app'; then
-            echo APP_URL_CLASS=stable-staging
-          elif printf '%s' "$app_line" | grep -Fq 'idogs.com.au'; then
-            echo APP_URL_CLASS=production
-          else
-            echo APP_URL_CLASS=other
-          fi
+          firebase_class = 'missing' if not firebase else ('staging' if firebase == 'idogs-app-staging' else ('production' if firebase == 'idogs-app' else 'other'))
+          extra_class = 'missing' if not extra else ('true' if extra == 'true' else ('false' if extra == 'false' else 'other'))
+          stripe_class = 'missing' if not stripe else ('test' if stripe.startswith('sk_test_') else ('live' if stripe.startswith('sk_live_') else 'other'))
+          app_class = 'missing' if not app else ('stable-staging' if app == 'https://idogs-app-staging.vercel.app' else ('production' if app in ('https://idogs.com.au', 'https://www.idogs.com.au') else 'other'))
 
-          echo DIAGNOSTIC_READ_ONLY=PASS
+          print(f'FIREBASE_PROJECT_ID_CLASS={firebase_class}')
+          print(f'EXTRA_LITTER_CHECKOUT_ENABLED_CLASS={extra_class}')
+          print(f'STRIPE_SECRET_KEY_CLASS={stripe_class}')
+          print(f'APP_URL_CLASS={app_class}')
+
+          failed = False
+          if extra_class == 'true':
+              print('SAFETY_GATE=FAIL_EXTRA_LITTER_CHECKOUT_ENABLED_TRUE')
+              failed = True
+          if firebase_class == 'production':
+              print('SAFETY_GATE=FAIL_FIREBASE_PRODUCTION')
+              failed = True
+          if stripe_class == 'live':
+              print('SAFETY_GATE=FAIL_STRIPE_LIVE')
+              failed = True
+          if app_class == 'production':
+              print('SAFETY_GATE=FAIL_APP_URL_PRODUCTION')
+              failed = True
+          if failed:
+              sys.exit(31)
+          print('SAFETY_GATE=PASS')
+          print('DIAGNOSTIC_READ_ONLY=PASS')
+          PY
