@@ -6,6 +6,14 @@ interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
+interface QuotaDiagnosticEntry {
+  source: 'ledger' | 'live-fallback'
+  quotaSource: string
+  whelpingDate: string
+  liveState: 'live' | 'archived' | 'ledger-only' | 'missing'
+  relation: 'current-account' | 'related-account' | 'outside-scope' | 'unknown'
+}
+
 interface LitterQuotaSummary {
   plan: 'free' | 'plus'
   unlimited: boolean
@@ -16,11 +24,30 @@ interface LitterQuotaSummary {
   extraCreditsConsumed: number
   extraLitterPriceAud: number
   checkoutEnabled: boolean
+  qaDiagnostic?: {
+    identityKind: string
+    relatedTenantCount: number
+    entries: QuotaDiagnosticEntry[]
+  }
 }
 
 function requestId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`
+}
+
+function diagnosticLabel(summary: LitterQuotaSummary): string {
+  const entry = summary.qaDiagnostic?.entries?.[0]
+  if (!entry) return ''
+
+  let source = 'quota history'
+  if (entry.relation === 'related-account') source = 'related breeder account'
+  else if (entry.liveState === 'archived') source = 'archived litter on this account'
+  else if (entry.liveState === 'ledger-only') source = 'deleted litter retained in quota ledger'
+  else if (entry.source === 'live-fallback') source = 'historical live litter'
+  else if (entry.source === 'ledger') source = 'quota ledger record'
+
+  return `QA source: ${source}${entry.whelpingDate ? ` · ${entry.whelpingDate}` : ''}`
 }
 
 export default function ExtraLitterButton({ toast }: Props) {
@@ -78,6 +105,7 @@ export default function ExtraLitterButton({ toast }: Props) {
   const includedUsed = Math.min(summary.includedUsed, summary.includedLimit)
   const includedExhausted = includedUsed >= summary.includedLimit
   const hasUnusedExtraCredit = summary.extraCreditsAvailable > 0
+  const qaHint = diagnosticLabel(summary)
 
   // Before 2/2 is exhausted, show only usage. Do not advertise a purchase
   // the breeder does not need yet. If a paid credit is already available,
@@ -93,6 +121,7 @@ export default function ExtraLitterButton({ toast }: Props) {
             ? `${summary.extraCreditsAvailable} extra litter credit${summary.extraCreditsAvailable === 1 ? '' : 's'} available`
             : 'Included in your current rolling 12 months'}
         </span>
+        {qaHint && <span style={{ fontSize: 10, color: 'var(--light)' }}>{qaHint}</span>}
       </div>
     )
   }
@@ -113,6 +142,7 @@ export default function ExtraLitterButton({ toast }: Props) {
         {includedUsed}/{summary.includedLimit} included litters used
         {!summary.checkoutEnabled ? ' · checkout disabled for safe QA' : ''}
       </span>
+      {qaHint && <span style={{ fontSize: 10, color: 'var(--light)' }}>{qaHint}</span>}
     </div>
   )
 }
