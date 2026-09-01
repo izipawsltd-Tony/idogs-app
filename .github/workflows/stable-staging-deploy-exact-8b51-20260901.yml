@@ -164,7 +164,21 @@ jobs:
               sys.exit('PROJECT_NAME_LOCK_FAIL_BEFORE_DEPLOY')
           print('PROJECT_LOCK_BEFORE_DEPLOY=PASS')
           PY
-          DEPLOY_URL=$(npx --yes vercel@latest deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" 2>/tmp/vercel-deploy.stderr | tail -1)
-          printf '%s\n' "$DEPLOY_URL" | grep -E '^https://idogs-app-staging-[A-Za-z0-9-]+\.vercel\.app$'
+
+          set +e
+          npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          DEPLOY_STATUS=$?
+          set -e
+
+          echo "VERCEL_DEPLOY_EXIT=$DEPLOY_STATUS"
+          sed -n '1,160p' /tmp/vercel-deploy.stderr
+          sed -n '1,80p' /tmp/vercel-deploy.stdout
+          if [ "$DEPLOY_STATUS" -ne 0 ]; then
+            echo STABLE_STAGING_DEPLOY=FAIL
+            exit "$DEPLOY_STATUS"
+          fi
+
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
+          test -n "$DEPLOY_URL"
           echo "STAGING_DEPLOY_URL=$DEPLOY_URL"
           echo STABLE_STAGING_DEPLOY=SUBMITTED
