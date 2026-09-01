@@ -1,4 +1,4 @@
-name: Litter remaining-copy Preview 20260901
+name: Litter production preflight 20260901
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - automation/litter-remaining-preview-20260901
 
 jobs:
-  verify-and-preview:
+  preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -15,26 +15,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout exact clean feature candidate
+      - name: Checkout exact clean production candidate
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin feat/litter-quota-extra-credit-20260901
-          git checkout -B feat/litter-quota-extra-credit-20260901 origin/feat/litter-quota-extra-credit-20260901
-          test "$(git rev-parse HEAD)" = "d24abeef7709250bcfb58170f6e7ec3a7f94537b"
+          git checkout --detach 9439efcf09b79cce587ec8ed19d30f5d4b87524b
+          test "$(git rev-parse HEAD)" = "9439efcf09b79cce587ec8ed19d30f5d4b87524b"
           test -z "$(git status --porcelain)"
-          test ! -e .github/workflows/litter-remaining-preview-20260901.yml
+          test ! -e .github/workflows/litter-feature-preview-gate.yml
+          test ! -e api/qa-repair-plus-entitlement.js
+          test ! -e api/qa-auth-context.js
           ! grep -R "QA source:" src api
           ! grep -R "LITTER_QUOTA_QA" src api
           grep -q "included litters remaining" scripts/test-litter-pricing-policy.mjs
           grep -q "Based on your breeder profile’s rolling 12-month litter history" src/components/ExtraLitterButton.tsx
           ! grep -q "litter allowances used" src/components/ExtraLitterButton.tsx
-          echo CLEAN_CANDIDATE_OK
+          grep -q "process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true'" api/_lib/extra-litter-checkout-handler.js
+          echo CANDIDATE_BOUNDARY_OK
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run full feature regressions and build
+      - name: Run full regression and build gate
         shell: bash
         run: |
           set -euo pipefail
@@ -62,18 +65,15 @@ jobs:
           node scripts/test-sidebar-billing-sync.mjs
           npm run build
 
-      - name: Reverify exact candidate
+      - name: Reverify exact candidate after tests
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "d24abeef7709250bcfb58170f6e7ec3a7f94537b"
+          test "$(git rev-parse HEAD)" = "9439efcf09b79cce587ec8ed19d30f5d4b87524b"
           test -z "$(git status --porcelain)"
-          ! grep -R "QA source:" src api
-          ! grep -R "LITTER_QUOTA_QA" src api
-          grep -q "process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true'" api/_lib/extra-litter-checkout-handler.js
-          echo EXACT_SHA_REVERIFIED
+          echo REGRESSION_BUILD_OK
 
-      - name: Link exact Vercel Preview project
+      - name: Link exact Vercel production project
         shell: bash
         run: |
           set -euo pipefail
@@ -82,47 +82,33 @@ jobs:
           {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
           JSON
 
-      - name: Pull Preview settings and enforce payment OFF
+      - name: Read production environment and assert finance gate OFF
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
-          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-pull.log 2>&1
-          ENV_FILE=.vercel/.env.preview.local
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-prod-pull.log 2>&1
+          ENV_FILE=.vercel/.env.production.local
           test -f "$ENV_FILE"
           if grep -Eq '^EXTRA_LITTER_CHECKOUT_ENABLED=("?true"?)$' "$ENV_FILE"; then
-            echo 'FAIL: Preview Extra Litter payment gate is enabled'
+            echo 'FAIL: production Extra Litter checkout is already enabled'
             exit 1
           fi
-          echo PREVIEW_PAYMENT_OFF_OK
+          if grep -Eq '^EXTRA_LITTER_CHECKOUT_ENABLED=' "$ENV_FILE"; then
+            echo PROD_EXTRA_LITTER_GATE_PRESENT_BUT_OFF
+          else
+            echo PROD_EXTRA_LITTER_GATE_ABSENT_FAIL_CLOSED
+          fi
+          echo PRODUCTION_ENV_READ_ONLY_OK
 
-      - name: Reverify runtime before deploy
+      - name: Final preflight boundary
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "d24abeef7709250bcfb58170f6e7ec3a7f94537b"
+          test "$(git rev-parse HEAD)" = "9439efcf09b79cce587ec8ed19d30f5d4b87524b"
           test -z "$(git status --porcelain)"
-
-      - name: Deploy exact clean candidate to Preview only
-        shell: bash
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          set -euo pipefail
-          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
-          test -n "$PREVIEW_URL"
-          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
-          echo "PREVIEW_READY $PREVIEW_URL"
-
-      - name: Verify final boundary
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "d24abeef7709250bcfb58170f6e7ec3a7f94537b"
-          test -n "$PREVIEW_URL"
-          echo 'FINAL_SHA d24abeef7709250bcfb58170f6e7ec3a7f94537b'
-          echo 'PROJECT idogs-app'
-          echo 'TARGET preview'
-          echo 'PAYMENT_GATE off'
-          echo 'DIAGNOSTIC absent'
+          echo PREFLIGHT_PASS
+          echo NO_PRODUCTION_DEPLOY_PERFORMED
+          echo NO_ENV_CHANGE_PERFORMED
+          echo NO_STRIPE_WRITE_PERFORMED
