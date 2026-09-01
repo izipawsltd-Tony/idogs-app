@@ -1,0 +1,170 @@
+name: Stable Staging Deploy Exact 8b51 20260901
+
+on:
+  push:
+    branches:
+      - automation/staging-env-diagnostic-20260901
+
+jobs:
+  exact-regression-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: 8b51dbc004b3676969d3091f3f1fd04f2b46e12b
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+
+    steps:
+      - name: Checkout exact QA-approved candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 8b51dbc004b3676969d3091f3f1fd04f2b46e12b
+          fetch-depth: 1
+
+      - name: Exact SHA and staging project lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          python3 - <<'PY'
+          import json, os, sys
+          data = json.load(open('.vercel/project.json'))
+          if data.get('projectId') != os.environ['STAGING_PROJECT_ID']:
+              sys.exit('PROJECT_LOCK_FAIL')
+          if data.get('orgId') != os.environ['STAGING_TEAM_ID']:
+              sys.exit('TEAM_LOCK_FAIL')
+          if data.get('projectName') != 'idogs-app-staging':
+              sys.exit('PROJECT_NAME_LOCK_FAIL')
+          print('PROJECT_LOCK=PASS')
+          print('PROJECT_CLASS=stable-staging')
+          print('CANDIDATE_SHA=' + os.environ['CANDIDATE_SHA'])
+          PY
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Pull stable staging production env read-only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          test -f .vercel/.env.production.local
+          echo VERCEL_PULL=PASS
+
+      - name: Financial safety gate — Extra Litter payment must remain OFF
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          p = Path('.vercel/.env.production.local')
+          values = {}
+          for raw in p.read_text(errors='replace').splitlines():
+              line = raw.strip()
+              if not line or line.startswith('#') or '=' not in line:
+                  continue
+              key, value = line.split('=', 1)
+              values[key.strip()] = value.strip()
+          value = values.get('EXTRA_LITTER_CHECKOUT_ENABLED', '').strip()
+          if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+              value = value[1:-1]
+          value = value.replace('\\n', '').replace('\\r', '').strip().lower()
+          classification = 'missing' if not value else ('true' if value == 'true' else ('false' if value == 'false' else 'other'))
+          print('EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=' + classification)
+          if classification == 'true':
+              print('FINANCIAL_SAFETY_GATE=FAIL')
+              sys.exit(31)
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          PY
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Essential litter and billing regression gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=(
+            scripts/test-breeder-profile-identity.mjs
+            scripts/test-litter-quota.mjs
+            scripts/test-extra-litter-checkout.mjs
+            scripts/test-extra-litter-webhook.mjs
+            scripts/test-litter-pricing-policy.mjs
+            scripts/test-litter-dob-policy.mjs
+            scripts/test-litter-create-client-dto.mjs
+            scripts/test-internal-entitlement.mjs
+            scripts/test-webhook-handler.mjs
+            scripts/test-billing-payments-phase1.mjs
+            scripts/test-pricing-integration-checks.mjs
+            scripts/test-landing-pricing-ui.mjs
+            scripts/test-sidebar-billing-sync.mjs
+          )
+          for test_file in "${tests[@]}"; do
+            test -f "$test_file"
+            echo "RUN=$test_file"
+            node "$test_file"
+          done
+          echo ESSENTIAL_REGRESSION=PASS
+
+      - name: TypeScript and Vite build gate
+        run: npm run build
+
+      - name: Confirm candidate source remained exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          git diff --exit-code -- . ':(exclude).vercel/**'
+          echo EXACT_SOURCE_AFTER_GATES=PASS
+
+      - name: Vercel prebuilt production build for stable staging project
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys
+          data = json.load(open('.vercel/project.json'))
+          if data.get('projectId') != os.environ['STAGING_PROJECT_ID'] or data.get('orgId') != os.environ['STAGING_TEAM_ID']:
+              sys.exit('PROJECT_LOCK_FAIL_BEFORE_BUILD')
+          print('PROJECT_LOCK_BEFORE_BUILD=PASS')
+          PY
+          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE"
+          test -d .vercel/output
+          echo VERCEL_PREBUILT=PASS
+
+      - name: Deploy exact candidate to stable staging only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          python3 - <<'PY'
+          import json, os, sys
+          data = json.load(open('.vercel/project.json'))
+          if data.get('projectId') != os.environ['STAGING_PROJECT_ID']:
+              sys.exit('PROJECT_LOCK_FAIL_BEFORE_DEPLOY')
+          if data.get('orgId') != os.environ['STAGING_TEAM_ID']:
+              sys.exit('TEAM_LOCK_FAIL_BEFORE_DEPLOY')
+          if data.get('projectName') != 'idogs-app-staging':
+              sys.exit('PROJECT_NAME_LOCK_FAIL_BEFORE_DEPLOY')
+          print('PROJECT_LOCK_BEFORE_DEPLOY=PASS')
+          PY
+          DEPLOY_URL=$(npx --yes vercel@latest deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" 2>/tmp/vercel-deploy.stderr | tail -1)
+          printf '%s\n' "$DEPLOY_URL" | grep -E '^https://idogs-app-staging-[A-Za-z0-9-]+\.vercel\.app$'
+          echo "STAGING_DEPLOY_URL=$DEPLOY_URL"
+          echo STABLE_STAGING_DEPLOY=SUBMITTED
