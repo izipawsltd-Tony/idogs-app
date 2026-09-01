@@ -129,6 +129,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   const [dogs, setDogs] = useState<Dog[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  const [canCreateLitterFromQuota, setCanCreateLitterFromQuota] = useState<boolean | null>(null)
   const [expandedLitter, setExpandedLitter] = useState<string | null>(null)
 
   // ── Litter Showcase (Slice 1) ──
@@ -1071,8 +1072,17 @@ export default function LittersPage({ toast, dismissAll }: Props) {
           <p style={{ fontSize: 14, color: 'var(--light)' }}>{litters.length} litter{litters.length !== 1 ? 's' : ''} recorded</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <ExtraLitterButton toast={toast} />
-          <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>+ New litter</button>
+          <ExtraLitterButton
+            toast={toast}
+            refreshKey={litters.length}
+            onCreateAvailabilityChange={setCanCreateLitterFromQuota}
+          />
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowCreate(!showCreate)}
+            disabled={canCreateLitterFromQuota === false}
+            title={canCreateLitterFromQuota === false ? 'Purchase an Extra Litter credit to create another litter.' : undefined}
+          >+ New litter</button>
         </div>
       </div>
 
@@ -1167,7 +1177,13 @@ export default function LittersPage({ toast, dismissAll }: Props) {
             <div className="empty-state-icon">🐣</div>
             <div className="empty-state-title">No litters in this account yet</div>
             <div className="empty-state-desc">Create a litter here to start tracking puppies from birth to new homes.</div>
-            <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={() => setShowCreate(true)}>Create litter</button>
+            <button
+              className="btn btn-primary"
+              style={{ marginTop: 8 }}
+              onClick={() => setShowCreate(true)}
+              disabled={canCreateLitterFromQuota === false}
+              title={canCreateLitterFromQuota === false ? 'Purchase an Extra Litter credit to create another litter.' : undefined}
+            >Create litter</button>
           </div>
         </div>
       ) : (

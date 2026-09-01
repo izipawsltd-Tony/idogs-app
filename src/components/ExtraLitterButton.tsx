@@ -4,6 +4,8 @@ import type { ToastMessage } from '../types'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
+  onCreateAvailabilityChange?: (allowed: boolean | null) => void
+  refreshKey?: number
 }
 
 interface LitterQuotaSummary {
@@ -28,7 +30,7 @@ function includedRemainingLabel(remaining: number): string {
   return `${remaining} included litter${remaining === 1 ? '' : 's'} remaining`
 }
 
-export default function ExtraLitterButton({ toast }: Props) {
+export default function ExtraLitterButton({ toast, onCreateAvailabilityChange, refreshKey = 0 }: Props) {
   const { user } = useAuth()
   const [summary, setSummary] = useState<LitterQuotaSummary | null>(null)
   const [loading, setLoading] = useState(false)
@@ -36,6 +38,7 @@ export default function ExtraLitterButton({ toast }: Props) {
   useEffect(() => {
     if (!user) {
       setSummary(null)
+      onCreateAvailabilityChange?.(null)
       return
     }
     let cancelled = false
@@ -47,13 +50,25 @@ export default function ExtraLitterButton({ toast }: Props) {
           cache: 'no-store',
         })
         const body = await res.json().catch(() => ({}))
-        if (!cancelled && res.ok) setSummary(body as LitterQuotaSummary)
+        if (!cancelled && res.ok) {
+          const parsed = body as LitterQuotaSummary
+          setSummary(parsed)
+          const used = Math.min(parsed.includedUsed, parsed.includedLimit)
+          const allowed = parsed.plan !== 'plus' || parsed.unlimited || used < parsed.includedLimit || parsed.extraCreditsAvailable > 0
+          onCreateAvailabilityChange?.(allowed)
+        } else if (!cancelled) {
+          setSummary(null)
+          onCreateAvailabilityChange?.(null)
+        }
       } catch {
-        if (!cancelled) setSummary(null)
+        if (!cancelled) {
+          setSummary(null)
+          onCreateAvailabilityChange?.(null)
+        }
       }
     })()
     return () => { cancelled = true }
-  }, [user])
+  }, [user, onCreateAvailabilityChange, refreshKey])
 
   if (!summary || summary.plan !== 'plus' || summary.unlimited) return null
 
@@ -115,13 +130,11 @@ export default function ExtraLitterButton({ toast }: Props) {
         className="btn btn-secondary"
         onClick={handleCheckout}
         disabled={disabled}
-        title={!summary.checkoutEnabled ? 'Payment is disabled until separately approved.' : undefined}
       >
         {loading ? 'Opening…' : `Add another litter — A$${summary.extraLitterPriceAud}`}
       </button>
       <span style={{ fontSize: 11, color: 'var(--light)' }}>
         {remainingLabel}
-        {!summary.checkoutEnabled ? ' · checkout disabled for safe QA' : ''}
       </span>
       <span style={{ fontSize: 11, color: 'var(--light)' }}>
         {breederHistoryLabel}

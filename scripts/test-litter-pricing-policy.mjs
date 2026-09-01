@@ -39,5 +39,9 @@ check('finance gate remains opt-in only', checkout.includes("process.env.EXTRA_L
 check('empty-state clarifies current-account scope', littersPage.includes('No litters in this account yet'))
 check('empty-state CTA avoids misleading first-litter wording', littersPage.includes('Create a litter here to start tracking puppies from birth to new homes.') && littersPage.includes('>Create litter</button>'))
 check('legacy first-litter empty-state wording is absent', !littersPage.includes('No litters yet') && !littersPage.includes('Create your first litter to track puppies from birth to new homes.') && !littersPage.includes('>Create first litter</button>'))
+check('customer UI never exposes safe-QA checkout copy', !cta.includes('checkout disabled for safe QA') && !cta.includes('Payment is disabled until separately approved.'))
+check('quota summary controls litter-create availability', cta.includes('onCreateAvailabilityChange?.(allowed)') && littersPage.includes('onCreateAvailabilityChange={setCanCreateLitterFromQuota}'))
+check('quota summary refreshes after litter-count changes', cta.includes('refreshKey = 0') && cta.includes('[user, onCreateAvailabilityChange, refreshKey]') && littersPage.includes('refreshKey={litters.length}'))
+check('new-litter CTAs are disabled when quota requires an Extra Litter credit', (littersPage.match(/disabled=\{canCreateLitterFromQuota === false\}/g) || []).length >= 2 && littersPage.includes('Purchase an Extra Litter credit to create another litter.'))
 
 await summary()
