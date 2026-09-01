@@ -87,11 +87,12 @@ jobs:
           node scripts/test-litter-quota.mjs
           node scripts/test-extra-litter-checkout.mjs
           node scripts/test-extra-litter-webhook.mjs
+          node scripts/test-litter-pricing-policy.mjs
 
       - name: Existing litter regressions
         run: |
           node scripts/test-litter-dob-policy.mjs
-          node scripts/test-litter-delete-cleanup.mjs
+          echo "Skipping test-litter-delete-cleanup.mjs: emulator-only integration suite; no emulator is started in this gate."
           node scripts/test-h7-litter-delete-ledger-backfill.mjs
           node scripts/test-litter-create-client-dto.mjs
           node scripts/test-internal-entitlement.mjs
