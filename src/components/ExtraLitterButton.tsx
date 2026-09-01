@@ -76,8 +76,28 @@ export default function ExtraLitterButton({ toast }: Props) {
   }
 
   const includedUsed = Math.min(summary.includedUsed, summary.includedLimit)
-  const disabled = !summary.checkoutEnabled || loading
+  const includedExhausted = includedUsed >= summary.includedLimit
+  const hasUnusedExtraCredit = summary.extraCreditsAvailable > 0
 
+  // Before 2/2 is exhausted, show only usage. Do not advertise a purchase
+  // the breeder does not need yet. If a paid credit is already available,
+  // show that entitlement instead of offering another charge.
+  if (!includedExhausted || hasUnusedExtraCredit) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>
+          {includedUsed}/{summary.includedLimit} litters used
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--light)' }}>
+          {hasUnusedExtraCredit
+            ? `${summary.extraCreditsAvailable} extra litter credit${summary.extraCreditsAvailable === 1 ? '' : 's'} available`
+            : 'Included in your current rolling 12 months'}
+        </span>
+      </div>
+    )
+  }
+
+  const disabled = !summary.checkoutEnabled || loading
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
       <button
@@ -90,8 +110,7 @@ export default function ExtraLitterButton({ toast }: Props) {
         {loading ? 'Opening…' : `Add another litter — A$${summary.extraLitterPriceAud}`}
       </button>
       <span style={{ fontSize: 11, color: 'var(--light)' }}>
-        {includedUsed}/{summary.includedLimit} included in current rolling 12 months
-        {summary.extraCreditsAvailable > 0 ? ` · ${summary.extraCreditsAvailable} extra credit${summary.extraCreditsAvailable === 1 ? '' : 's'} available` : ''}
+        {includedUsed}/{summary.includedLimit} included litters used
         {!summary.checkoutEnabled ? ' · checkout disabled for safe QA' : ''}
       </span>
     </div>
