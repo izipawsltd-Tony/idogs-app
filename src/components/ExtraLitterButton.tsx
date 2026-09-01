@@ -41,6 +41,12 @@ export default function ExtraLitterButton({ toast, onCreateAvailabilityChange, r
       onCreateAvailabilityChange?.(null)
       return
     }
+
+    // Fail closed while the authoritative server quota is loading. This
+    // prevents Free users (and transient quota-summary failures) from seeing
+    // an enabled Create litter CTA before plan/quota has been confirmed.
+    onCreateAvailabilityChange?.(false)
+
     let cancelled = false
     void (async () => {
       try {
@@ -54,16 +60,20 @@ export default function ExtraLitterButton({ toast, onCreateAvailabilityChange, r
           const parsed = body as LitterQuotaSummary
           setSummary(parsed)
           const used = Math.min(parsed.includedUsed, parsed.includedLimit)
-          const allowed = parsed.plan !== 'plus' || parsed.unlimited || used < parsed.includedLimit || parsed.extraCreditsAvailable > 0
+          const allowed = parsed.plan === 'plus' && (
+            parsed.unlimited ||
+            used < parsed.includedLimit ||
+            parsed.extraCreditsAvailable > 0
+          )
           onCreateAvailabilityChange?.(allowed)
         } else if (!cancelled) {
           setSummary(null)
-          onCreateAvailabilityChange?.(null)
+          onCreateAvailabilityChange?.(false)
         }
       } catch {
         if (!cancelled) {
           setSummary(null)
-          onCreateAvailabilityChange?.(null)
+          onCreateAvailabilityChange?.(false)
         }
       }
     })()
