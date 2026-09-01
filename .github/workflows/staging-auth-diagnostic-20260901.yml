@@ -1,0 +1,129 @@
+name: Stable Staging Firebase Auth Diagnostic 20260901
+
+on:
+  push:
+    branches:
+      - automation/auth-diagnostic-staging-20260901
+
+jobs:
+  diagnose-auth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: 8b51dbc004b3676969d3091f3f1fd04f2b46e12b
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+      STAGING_ORIGIN: https://idogs-app-staging.vercel.app
+
+    steps:
+      - name: Checkout exact staging candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 8b51dbc004b3676969d3091f3f1fd04f2b46e12b
+          fetch-depth: 1
+
+      - name: Hard-lock stable staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          echo PROJECT_LOCK=PASS
+
+      - name: Pull stable staging production env read-only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          test -f .vercel/.env.production.local
+          echo VERCEL_PULL=PASS
+
+      - name: Validate Firebase browser config without exposing values
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source .vercel/.env.production.local
+          set +a
+          node <<'NODE'
+          const crypto = require('crypto');
+          const required = [
+            'VITE_FIREBASE_API_KEY',
+            'VITE_FIREBASE_AUTH_DOMAIN',
+            'VITE_FIREBASE_PROJECT_ID',
+            'VITE_FIREBASE_STORAGE_BUCKET',
+            'VITE_FIREBASE_MESSAGING_SENDER_ID',
+            'VITE_FIREBASE_APP_ID',
+          ];
+          let ok = true;
+          for (const key of required) {
+            const v = (process.env[key] || '').trim();
+            const placeholder = !v || /your_|example|placeholder/i.test(v);
+            const fp = v ? crypto.createHash('sha256').update(v).digest('hex').slice(0, 12) : 'none';
+            console.log(`${key}_STATE=${placeholder ? 'invalid_or_missing' : 'present'};LEN=${v.length};FP=${fp}`);
+            if (placeholder) ok = false;
+          }
+          const project = (process.env.VITE_FIREBASE_PROJECT_ID || '').trim();
+          const domain = (process.env.VITE_FIREBASE_AUTH_DOMAIN || '').trim();
+          const relation = domain === `${project}.firebaseapp.com` ? 'standard_match' : (domain.includes(project) ? 'contains_project' : 'nonstandard');
+          console.log(`FIREBASE_PROJECT_AUTHDOMAIN_RELATION=${relation}`);
+          if (!ok) process.exit(41);
+          console.log('FIREBASE_BROWSER_CONFIG=PASS');
+          NODE
+
+      - name: Probe Firebase Auth REST using nonexistent QA account
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source .vercel/.env.production.local
+          set +a
+          node <<'NODE'
+          const key = (process.env.VITE_FIREBASE_API_KEY || '').trim();
+          const origin = process.env.STAGING_ORIGIN;
+          const email = `qa-auth-probe-${Date.now()}@example.com`;
+          const headers = {
+            'content-type': 'application/json',
+            'origin': origin,
+            'referer': origin + '/',
+          };
+          const classify = async (url, body) => {
+            const res = await fetch(url, {method:'POST', headers, body:JSON.stringify(body)});
+            let data = {};
+            try { data = await res.json(); } catch {}
+            let msg = data?.error?.message || (res.ok ? 'OK' : `HTTP_${res.status}`);
+            msg = String(msg).split(' : ')[0].split(':')[0].replace(/[^A-Z0-9_\-]/gi,'_').slice(0,80);
+            return {status:res.status, msg};
+          };
+          const login = await classify(
+            `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(key)}`,
+            {email, password:'QA_NotARealPassword_20260901!', returnSecureToken:true}
+          );
+          console.log(`AUTH_LOGIN_PROBE_HTTP=${login.status}`);
+          console.log(`AUTH_LOGIN_PROBE_RESULT=${login.msg}`);
+          const fatal = new Set(['API_KEY_INVALID','CONFIGURATION_NOT_FOUND','OPERATION_NOT_ALLOWED','API_KEY_HTTP_REFERRER_BLOCKED']);
+          if (fatal.has(login.msg)) {
+            console.log('AUTH_LOGIN_ENDPOINT=FAIL');
+            process.exit(51);
+          }
+          console.log('AUTH_LOGIN_ENDPOINT=REACHABLE');
+
+          const reset = await classify(
+            `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(key)}`,
+            {requestType:'PASSWORD_RESET', email}
+          );
+          console.log(`AUTH_RESET_PROBE_HTTP=${reset.status}`);
+          console.log(`AUTH_RESET_PROBE_RESULT=${reset.msg}`);
+          if (fatal.has(reset.msg)) {
+            console.log('AUTH_RESET_ENDPOINT=FAIL');
+            process.exit(52);
+          }
+          console.log('AUTH_RESET_ENDPOINT=REACHABLE');
+          console.log('AUTH_DIAGNOSTIC=PASS');
+          NODE
