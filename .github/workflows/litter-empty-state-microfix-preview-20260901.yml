@@ -1,0 +1,189 @@
+name: Litter empty-state micro-fix Preview 20260901
+
+on:
+  push:
+    branches:
+      - automation/litter-preview-final-20260901
+
+permissions:
+  contents: write
+
+jobs:
+  patch-verify-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout automation branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout exact clean feature head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feat/litter-quota-extra-credit-20260901
+          git checkout -B feat/litter-quota-extra-credit-20260901 origin/feat/litter-quota-extra-credit-20260901
+          test "$(git rev-parse HEAD)" = "bacd923af6360554a51818c8e71fb5fddfe6bbc7"
+          test -z "$(git status --porcelain)"
+          test ! -e .github/workflows/litter-empty-state-microfix-preview-20260901.yml
+          ! grep -R "QA source:" src api
+          ! grep -R "LITTER_QUOTA_QA" src api
+          echo CLEAN_BASE_OK
+
+      - name: Apply UX micro-fix and regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          page = Path('src/pages/LittersPage.tsx')
+          s = page.read_text()
+          replacements = {
+              '<div className="empty-state-title">No litters yet</div>': '<div className="empty-state-title">No litters in this account yet</div>',
+              '<div className="empty-state-desc">Create your first litter to track puppies from birth to new homes.</div>': '<div className="empty-state-desc">Create a litter here to start tracking puppies from birth to new homes.</div>',
+              '>Create first litter</button>': '>Create litter</button>',
+          }
+          for old, new in replacements.items():
+              if s.count(old) != 1:
+                  raise SystemExit(f'Expected exactly one occurrence: {old!r}; found {s.count(old)}')
+              s = s.replace(old, new)
+          page.write_text(s)
+
+          test = Path('scripts/test-litter-pricing-policy.mjs')
+          t = test.read_text()
+          anchor = "const cta = fs.readFileSync(new URL('../src/components/ExtraLitterButton.tsx', import.meta.url), 'utf8')\n"
+          insert = anchor + "const littersPage = fs.readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')\n"
+          if anchor not in t or "const littersPage =" in t:
+              raise SystemExit('Unexpected litter pricing test shape before import insertion')
+          t = t.replace(anchor, insert, 1)
+          checks_anchor = "check('finance gate remains opt-in only', checkout.includes(\"process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true'\"))\n"
+          checks = checks_anchor + "check('empty-state clarifies current-account scope', littersPage.includes('No litters in this account yet'))\ncheck('empty-state CTA avoids misleading first-litter wording', littersPage.includes('Create a litter here to start tracking puppies from birth to new homes.') && littersPage.includes('>Create litter</button>'))\ncheck('legacy first-litter empty-state wording is absent', !littersPage.includes('No litters yet') && !littersPage.includes('Create your first litter to track puppies from birth to new homes.') && !littersPage.includes('>Create first litter</button>'))\n"
+          if checks_anchor not in t:
+              raise SystemExit('Unexpected litter pricing test shape before check insertion')
+          t = t.replace(checks_anchor, checks, 1)
+          test.write_text(t)
+          PY
+          git diff --check
+          grep -q 'No litters in this account yet' src/pages/LittersPage.tsx
+          grep -q 'Create a litter here to start tracking puppies from birth to new homes.' src/pages/LittersPage.tsx
+          ! grep -q '>Create first litter</button>' src/pages/LittersPage.tsx
+          ! grep -R "QA source:" src api
+          ! grep -R "LITTER_QUOTA_QA" src api
+          echo MICROFIX_APPLIED_OK
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full feature regressions and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check api/_lib/breeder-profile.js
+          node --check api/_lib/litter-quota.js
+          node --check api/_lib/extra-litter-checkout-handler.js
+          node --check api/_lib/extra-litter-webhook.js
+          node --check api/create-litter.js
+          node --check api/update-litter.js
+          node --check api/create-extra-litter-checkout.js
+          node --check api/litter-quota-summary.js
+          node --check api/stripe-webhook.js
+          node scripts/test-breeder-profile-identity.mjs
+          node scripts/test-litter-quota.mjs
+          node scripts/test-extra-litter-checkout.mjs
+          node scripts/test-extra-litter-webhook.mjs
+          node scripts/test-litter-pricing-policy.mjs
+          node scripts/test-litter-dob-policy.mjs
+          node scripts/test-litter-create-client-dto.mjs
+          node scripts/test-internal-entitlement.mjs
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-pricing-integration-checks.mjs
+          node scripts/test-landing-pricing-ui.mjs
+          node scripts/test-sidebar-billing-sync.mjs
+          npm run build
+
+      - name: Commit exact runtime candidate to feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/LittersPage.tsx scripts/test-litter-pricing-policy.mjs
+          test "$(git diff --cached --name-only | sort | tr '\n' ' ')" = "scripts/test-litter-pricing-policy.mjs src/pages/LittersPage.tsx "
+          git commit -m "fix(litters): clarify account-scoped empty state"
+          git push origin HEAD:feat/litter-quota-extra-credit-20260901
+          CANDIDATE_SHA=$(git rev-parse HEAD)
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
+          test -z "$(git status --porcelain)"
+          echo "CANDIDATE_SHA $CANDIDATE_SHA"
+
+      - name: Verify clean candidate boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test ! -e .github/workflows/litter-empty-state-microfix-preview-20260901.yml
+          test ! -e api/qa-repair-plus-entitlement.js
+          test ! -e api/qa-auth-context.js
+          ! grep -R "QA source:" src api
+          ! grep -R "LITTER_QUOTA_QA" src api
+          grep -q "process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true'" api/_lib/extra-litter-checkout-handler.js
+          test -z "$(git status --porcelain)"
+          echo CLEAN_CANDIDATE_OK
+
+      - name: Link exact Vercel Preview project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull Preview settings and enforce payment OFF
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-pull.log 2>&1
+          ENV_FILE=.vercel/.env.preview.local
+          test -f "$ENV_FILE"
+          if grep -Eq '^EXTRA_LITTER_CHECKOUT_ENABLED=("?true"?)$' "$ENV_FILE"; then
+            echo 'FAIL: Preview Extra Litter payment gate is enabled'
+            exit 1
+          fi
+          echo PREVIEW_PAYMENT_OFF_OK
+
+      - name: Reverify exact SHA before Preview deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          echo EXACT_SHA_REVERIFIED
+
+      - name: Deploy exact clean candidate to Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PREVIEW_URL"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_READY $PREVIEW_URL"
+
+      - name: Verify final boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -n "$PREVIEW_URL"
+          echo "FINAL_SHA $CANDIDATE_SHA"
+          echo 'PROJECT idogs-app'
+          echo 'TARGET preview'
+          echo 'PAYMENT_GATE off'
+          echo 'DIAGNOSTIC absent'
