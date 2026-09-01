@@ -1,0 +1,138 @@
+name: Stable Staging Auth Repair Remote Build 20260901
+
+on:
+  push:
+    branches:
+      - automation/staging-auth-repair-remote-build-20260901
+
+jobs:
+  remote-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: 8b51dbc004b3676969d3091f3f1fd04f2b46e12b
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+      STAGING_ALIAS: https://idogs-app-staging.vercel.app
+
+    steps:
+      - name: Checkout exact QA-approved candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 8b51dbc004b3676969d3091f3f1fd04f2b46e12b
+          fetch-depth: 1
+
+      - name: Hard-lock stable staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          echo PROJECT_LOCK=PASS
+          echo CANDIDATE_SHA="$CANDIDATE_SHA"
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Confirm financial gate and sensitive Firebase condition read-only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          test -f .vercel/.env.production.local
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.vercel/.env.production.local')
+          vals = {}
+          for raw in p.read_text(errors='replace').splitlines():
+              line = raw.strip()
+              if not line or line.startswith('#') or '=' not in line:
+                  continue
+              k,v = line.split('=',1)
+              v=v.strip()
+              if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"):
+                  v=v[1:-1]
+              vals[k.strip()] = v.replace('\\n','').replace('\\r','').strip()
+          flag = vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower()
+          if flag == 'true':
+              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          keys = [
+              'VITE_FIREBASE_API_KEY','VITE_FIREBASE_AUTH_DOMAIN','VITE_FIREBASE_PROJECT_ID',
+              'VITE_FIREBASE_STORAGE_BUCKET','VITE_FIREBASE_MESSAGING_SENDER_ID','VITE_FIREBASE_APP_ID'
+          ]
+          states = ['sensitive_placeholder' if vals.get(k) == '[SENSITIVE]' else ('missing' if not vals.get(k) else 'readable') for k in keys]
+          print('FIREBASE_PULL_STATES=' + ','.join(states))
+          if not all(s == 'sensitive_placeholder' for s in states):
+              raise SystemExit('EXPECTED_SENSITIVE_PLACEHOLDER_CONDITION_NOT_CONFIRMED')
+          print('SENSITIVE_PLACEHOLDER_ROOT_CAUSE=CONFIRMED')
+          PY
+          rm -f .vercel/.env.production.local
+          test ! -e .vercel/.env.production.local
+          echo LOCAL_SENSITIVE_ENV_CACHE=REMOVED
+
+      - name: Deploy exact source using Vercel remote build
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test ! -e .vercel/.env.production.local
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK_BEFORE_REMOTE_DEPLOY=PASS')
+          PY
+          set +e
+          npx --yes vercel@latest deploy --prod --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          status=$?
+          set -e
+          echo "VERCEL_REMOTE_DEPLOY_EXIT=$status"
+          sed -n '1,160p' /tmp/vercel-deploy.stderr
+          sed -n '1,80p' /tmp/vercel-deploy.stdout
+          if [ "$status" -ne 0 ]; then
+            echo REMOTE_BUILD_DEPLOY=FAIL
+            exit "$status"
+          fi
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
+          test -n "$DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "STAGING_DEPLOY_URL=$DEPLOY_URL"
+          echo REMOTE_BUILD_DEPLOY=PASS
+
+      - name: Verify deployed bundle no longer contains Sensitive placeholder
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_URL:-}"
+          html=$(curl -fsSL --retry 5 --retry-delay 2 "$DEPLOY_URL/")
+          printf '%s' "$html" > /tmp/index.html
+          assets=$(grep -Eo '/assets/[^"'"' ]+\.js' /tmp/index.html | sort -u)
+          test -n "$assets"
+          found=0
+          for a in $assets; do
+            curl -fsSL --retry 5 --retry-delay 2 "$DEPLOY_URL$a" -o /tmp/asset.js
+            if grep -Fq '[SENSITIVE]' /tmp/asset.js; then
+              found=1
+              break
+            fi
+          done
+          if [ "$found" -ne 0 ]; then
+            echo BUNDLE_SENSITIVE_PLACEHOLDER=FOUND
+            exit 61
+          fi
+          echo BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT
+          echo AUTH_REPAIR_REMOTE_BUILD=PASS
