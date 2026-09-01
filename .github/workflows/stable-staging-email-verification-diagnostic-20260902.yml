@@ -1,0 +1,153 @@
+name: Stable Staging Email Verification Diagnostic 20260902
+
+on:
+  push:
+    branches:
+      - automation/staging-email-verification-diagnostic-20260902
+    paths:
+      - .github/workflows/stable-staging-email-verification-diagnostic-20260902.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CANDIDATE_SHA: a0f5868962e21f36846aa220dd06a4a6aa2ceb56
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+      STAGING_ALIAS: https://idogs-app-staging.vercel.app
+
+    steps:
+      - name: Checkout exact diagnostic candidate
+        uses: actions/checkout@v4
+        with:
+          ref: a0f5868962e21f36846aa220dd06a4a6aa2ceb56
+          fetch-depth: 1
+
+      - name: Hard-lock stable staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK=PASS')
+          print('CANDIDATE_SHA=' + os.environ['CANDIDATE_SHA'])
+          PY
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Confirm staging safety gates read-only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          test -f .vercel/.env.production.local
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.vercel/.env.production.local')
+          vals={}
+          for raw in p.read_text(errors='replace').splitlines():
+              line=raw.strip()
+              if not line or line.startswith('#') or '=' not in line:
+                  continue
+              k,v=line.split('=',1)
+              v=v.strip()
+              if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"):
+                  v=v[1:-1]
+              vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
+          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
+              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          keys=['VITE_FIREBASE_API_KEY','VITE_FIREBASE_AUTH_DOMAIN','VITE_FIREBASE_PROJECT_ID','VITE_FIREBASE_STORAGE_BUCKET','VITE_FIREBASE_MESSAGING_SENDER_ID','VITE_FIREBASE_APP_ID']
+          states=['sensitive_placeholder' if vals.get(k)=='[SENSITIVE]' else ('missing' if not vals.get(k) else 'readable') for k in keys]
+          print('FIREBASE_PULL_STATES=' + ','.join(states))
+          if not all(s == 'sensitive_placeholder' for s in states):
+              raise SystemExit('EXPECTED_SENSITIVE_PLACEHOLDER_CONDITION_NOT_CONFIRMED')
+          print('SENSITIVE_PLACEHOLDER_CONDITION=CONFIRMED')
+          PY
+          rm -f .vercel/.env.production.local
+          test ! -e .vercel/.env.production.local
+          echo LOCAL_SENSITIVE_ENV_CACHE=REMOVED
+
+      - name: Deploy exact diagnostic source using Vercel remote build
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test ! -e .vercel/.env.production.local
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK_BEFORE_REMOTE_DEPLOY=PASS')
+          PY
+          set +e
+          npx --yes vercel@latest deploy --prod --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          status=$?
+          set -e
+          echo "VERCEL_REMOTE_DEPLOY_EXIT=$status"
+          sed -n '1,180p' /tmp/vercel-deploy.stderr
+          sed -n '1,100p' /tmp/vercel-deploy.stdout
+          if [ "$status" -ne 0 ]; then
+            echo REMOTE_BUILD_DEPLOY=FAIL
+            exit "$status"
+          fi
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
+          test -n "$DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "STAGING_DEPLOY_URL=$DEPLOY_URL"
+          echo REMOTE_BUILD_DEPLOY=PASS
+
+      - name: Verify live diagnostic bundle safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_URL:-}"
+          curl -fsSL --retry 5 --retry-delay 2 "$DEPLOY_URL/" -o /tmp/index.html
+          python3 - <<'PY'
+          import pathlib, re, subprocess, sys, os
+          base=os.environ['DEPLOY_URL']
+          html=pathlib.Path('/tmp/index.html').read_text(errors='replace')
+          assets=sorted(set(re.findall(r'/assets/[^"\']+\.js', html)))
+          print(f'JS_ASSET_COUNT={len(assets)}')
+          if not assets:
+              raise SystemExit('JS_ASSETS_NONE')
+          combined=b''
+          for i,a in enumerate(assets):
+              out=pathlib.Path(f'/tmp/asset-{i}.js')
+              subprocess.run(['curl','-fsSL','--retry','5','--retry-delay','2',base+a,'-o',str(out)],check=True)
+              data=out.read_bytes()
+              combined += data
+              if b'[SENSITIVE]' in data:
+                  print('BUNDLE_SENSITIVE_PLACEHOLDER=FOUND')
+                  sys.exit(61)
+          print('BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT')
+          text=combined.decode('utf-8', errors='ignore')
+          hosts=sorted(set(re.findall(r'[A-Za-z0-9.-]+\.firebaseapp\.com', text)))
+          print('FIREBASE_AUTH_DOMAINS=' + (','.join(hosts) if hosts else 'NONE'))
+          if 'idogs-app-staging.firebaseapp.com' not in hosts:
+              raise SystemExit('WRONG_FIREBASE_AUTH_DOMAIN')
+          print('FIREBASE_STAGING_TARGET=PASS')
+          PY
+          echo DIAGNOSTIC_STABLE_STAGING=PASS
