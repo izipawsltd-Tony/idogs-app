@@ -29,6 +29,8 @@ check('Terms state breeder-profile quota does not reset', terms.includes('Cancel
 check('Terms describe one-time Extra Litter A$39 policy', terms.includes('Extra Litter Credit — A${EXTRA_LITTER_PRICE_AUD} each'))
 check('CTA text is Add another litter — A$39', cta.includes('Add another litter — A$${summary.extraLitterPriceAud}'))
 check('CTA is gated on included exhaustion', cta.includes('includedExhausted') && cta.includes('if (!includedExhausted || hasUnusedExtraCredit)'))
+check('quota UX says allowances used, not visible litter count', cta.includes('litter allowances used'))
+check('quota UX explains breeder-profile history', cta.includes('Includes litter history linked to your breeder profile'))
 check('server blocks purchase while included slots remain', checkout.includes("code: 'INCLUDED_LITTERS_REMAIN'"))
 check('server blocks purchase while unused credit exists', checkout.includes("code: 'EXTRA_LITTER_CREDIT_AVAILABLE'"))
 check('finance gate remains opt-in only', checkout.includes("process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true'"))
