@@ -43,7 +43,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
-          npx --yes vercel@latest curl "$PREVIEW_URL/" --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/index.html
+          npx --yes vercel@latest --scope="$VERCEL_SCOPE" --no-color curl "$PREVIEW_URL/" > /tmp/index.html
           python3 - <<'PY'
           from pathlib import Path
           import re, subprocess, os, sys
@@ -54,13 +54,12 @@ jobs:
               print(html[:300].replace('\n',' '))
               raise SystemExit('JS_ASSETS_NONE_AUTHENTICATED')
           base=os.environ['PREVIEW_URL']
-          token=os.environ['VERCEL_TOKEN']
           scope=os.environ['VERCEL_SCOPE']
           combined=b''
           for i,a in enumerate(assets):
               out=f'/tmp/asset-{i}.js'
               with open(out,'wb') as f:
-                  p=subprocess.run(['npx','--yes','vercel@latest','curl',base+a,'--token='+token,'--scope='+scope,'--no-color'],stdout=f,stderr=subprocess.PIPE)
+                  p=subprocess.run(['npx','--yes','vercel@latest','--scope='+scope,'--no-color','curl',base+a],stdout=f,stderr=subprocess.PIPE,env=os.environ.copy())
               if p.returncode:
                   sys.stderr.write(p.stderr.decode(errors='replace'))
                   raise SystemExit(p.returncode)
