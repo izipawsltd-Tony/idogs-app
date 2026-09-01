@@ -217,6 +217,7 @@ export interface Document {
 export interface Litter {
   id: string
   tenantId: string
+  breederProfileId?: string
   name: string
   sireId?: string | null
   sireName?: string | null

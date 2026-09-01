@@ -1,8 +1,15 @@
 import { Link } from 'react-router-dom'
-import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD, DOG_CAP_FREE, DOG_CAP_PLUS } from '../lib/pricingCopy'
+import {
+  PLUS_MONTHLY_PRICE_AUD,
+  PLUS_ANNUAL_PRICE_AUD,
+  DOG_CAP_FREE,
+  DOG_CAP_PLUS,
+  LITTER_QUOTA_PLUS_ROLLING_12_MONTHS,
+  EXTRA_LITTER_PRICE_AUD,
+} from '../lib/pricingCopy'
 
 export default function TermsPage() {
-  const lastUpdated = '15 June 2026'
+  const lastUpdated = '1 September 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
       {/* Nav */}
@@ -43,12 +50,15 @@ export default function TermsPage() {
           </LegalSection>
 
           <LegalSection title="4. Subscription Plans and Billing">
-            <p>iDogs offers the following plans (AUD):</p>
+            <p>iDogs offers the following plans and add-ons in Australian dollars. Displayed prices include GST where applicable:</p>
             <ul>
               <li><strong>Free:</strong> Up to {DOG_CAP_FREE} dogs, QR passport, health records, email reminders — free forever</li>
-              <li><strong>Plus Monthly — ${PLUS_MONTHLY_PRICE_AUD}/month:</strong> Up to {DOG_CAP_PLUS} dogs, AI Document Scans, document storage, PDF/CSV export</li>
-              <li><strong>Plus Annual — ${PLUS_ANNUAL_PRICE_AUD}/year:</strong> Same Plus features as Plus Monthly, billed annually</li>
+              <li><strong>Plus Monthly — A${PLUS_MONTHLY_PRICE_AUD}/month:</strong> Up to {DOG_CAP_PLUS} dogs, AI Document Scans, document storage, PDF/CSV export, and up to {LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} included litters per rolling 365-day period</li>
+              <li><strong>Plus Annual — A${PLUS_ANNUAL_PRICE_AUD}/year:</strong> Same Plus features as Plus Monthly, billed annually</li>
+              <li><strong>Extra Litter Credit — A${EXTRA_LITTER_PRICE_AUD} each:</strong> A one-time add-on that permits one additional litter after the included litter allowance has been used</li>
             </ul>
+            <p>The included litter allowance is linked to your breeder profile rather than to a particular login or subscription period. Cancelling, downgrading, or resubscribing does not reset litter usage within the rolling 365-day period. Changing your login email or using another login linked to the same breeder profile also does not create a new allowance.</p>
+            <p>An Extra Litter Credit is linked to the breeder profile that purchased it and is consumed when it is used to activate one additional litter. An unused Extra Litter Credit does not reset the included litter allowance.</p>
             <p>Payments are processed by Stripe. We do not store your payment card details. Subscriptions renew automatically at the end of each billing period unless cancelled.</p>
             <p>You may cancel at any time. Cancellation takes effect at the end of the current billing period. No refunds are provided for partial months.</p>
           </LegalSection>

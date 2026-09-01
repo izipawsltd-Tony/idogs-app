@@ -1,23 +1,5 @@
 // api/update-litter.js — trusted server-side litter field edits, with
-// DOB propagation to still-owned puppies (Codex round 4, Blocker 3;
-// hardened Codex round 5, Blockers 6 + 9).
-//
-// WHY THIS EXISTS: round 3's handleSaveLitter() (LittersPage.tsx) wrote
-// directly to litters/{id} via a client writeBatch, relying on
-// firestore.rules' litters.update rule (tenantId ownership +
-// damId/sireId/tenantId immutability + actualBirthDate format-when-
-// puppies-exist) to keep it safe. Codex round 4, Blocker 3 requires
-// denying ALL direct client litters update — there is no longer a rule
-// path for this write at all, so it moves here (Admin SDK, bypasses
-// Rules — this endpoint alone owns the safety of the operation).
-//
-// Codex round 5, Blocker 6: the patch is now validated through
-// api/_lib/litter-schema.js — an explicit field allowlist (rejecting any
-// unknown key outright, not just silently ignoring it) plus real
-// calendar-date and length validation, rather than trusting whatever
-// shape the client happened to send. damId/sireId/tenantId are never
-// part of UPDATE_FIELDS, so there is no field to even attempt
-// reassigning through this endpoint.
+// DOB propagation to still-owned puppies and Breeder Profile quota enforcement.
 //
 // POST /api/update-litter
 // Headers: Authorization: Bearer <Firebase ID token>
@@ -31,9 +13,11 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { partitionLitterCandidatesServer } from './_lib/litter-eligibility.js'
 import { sanitizeLitterInput, LitterValidationError, UPDATE_FIELDS } from './_lib/litter-schema.js'
-import { computeEffectivePlan } from './_lib/entitlements.js'
+import { computeEffectivePlan, hasValidInternalEntitlement } from './_lib/entitlements.js'
+import { relatedTenantIdsForBreederTx } from './_lib/breeder-profile.js'
 import {
-  hasLitterWithinRollingWindow,
+  decideLitterQuotaTx,
+  consumeExtraLitterCredit,
   writeLitterQuotaLedgerEntry,
   LITTER_QUOTA_BLOCK_MESSAGE,
   LITTER_PLAN_GATE_MESSAGE,
@@ -62,9 +46,11 @@ async function handler(req, res) {
   }
 
   let uid
+  let authEmail = ''
   try {
     const decoded = await getAuth().verifyIdToken(idToken)
     uid = decoded.uid
+    authEmail = typeof decoded.email === 'string' ? decoded.email : ''
   } catch {
     throw new ApiError(401, 'Invalid or expired token')
   }
@@ -108,15 +94,8 @@ async function handler(req, res) {
     const dobChanged = Object.prototype.hasOwnProperty.call(safePatch, 'actualBirthDate') &&
       safePatch.actualBirthDate !== previousActualBirthDate
 
-    // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §3.4/§4.1,
-    // LOCKED) — "Prevent whelpingDate edits from evading quota." The
-    // simplest fully-correct enforcement: once a litter has been
-    // activated (actualBirthDate already set, meaning a litterQuotaLedger
-    // entry already exists for it), that date is locked — no further
-    // change, including clearing it back to un-dated. Only the FIRST
-    // transition from un-dated to dated (the §4.1 "activation" moment) is
-    // allowed, and that path re-runs the same rolling-window check
-    // api/create-litter.js applies at creation.
+    // Once activated, the whelping date remains locked. This preserves the
+    // permanent quota ledger and prevents re-dating to evade the window.
     if (dobChanged && previousActualBirthDate) {
       return { ok: false, status: 409, body: { error: LITTER_DATE_LOCKED_MESSAGE, reason: 'LITTER_DATE_LOCKED' } }
     }
@@ -126,33 +105,71 @@ async function handler(req, res) {
     }
 
     const isActivating = dobChanged && !previousActualBirthDate && !!safePatch.actualBirthDate
+    let breederScope = null
+    let quotaDecision = null
+    let isUnlimited = false
+    const nowIso = new Date().toISOString()
+
     if (isActivating) {
       const userSnap = await tx.get(db.collection('users').doc(uid))
-      const plan = computeEffectivePlan(userSnap.exists ? userSnap.data() : {})
+      const profile = userSnap.exists ? userSnap.data() : {}
+      const plan = computeEffectivePlan(profile)
       if (plan !== 'plus') {
         return { ok: false, status: 403, body: { error: LITTER_PLAN_GATE_MESSAGE, reason: 'LITTER_PLAN_GATE' } }
       }
-      const withinWindow = await hasLitterWithinRollingWindow(tx, db, uid, safePatch.actualBirthDate, litterId)
-      if (withinWindow) {
-        return { ok: false, status: 409, body: { error: LITTER_QUOTA_BLOCK_MESSAGE, reason: 'LITTER_QUOTA_EXCEEDED' } }
+
+      breederScope = await relatedTenantIdsForBreederTx(tx, db, { uid, profile, authEmail })
+      isUnlimited = hasValidInternalEntitlement(profile)
+
+      if (!isUnlimited) {
+        quotaDecision = await decideLitterQuotaTx(tx, db, {
+          breederProfileId: breederScope.breederProfileId,
+          tenantIds: breederScope.tenantIds,
+          purchasedByUid: uid,
+          newDate: safePatch.actualBirthDate,
+          excludeLitterId: litterId,
+        })
+        if (!quotaDecision.allowed) {
+          return { ok: false, status: 409, body: { error: LITTER_QUOTA_BLOCK_MESSAGE, reason: 'LITTER_QUOTA_EXCEEDED' } }
+        }
       }
     }
 
+    // These are the final transaction reads. Extra-credit consumption and
+    // all litter/puppy writes happen only after these reads complete.
     let updatedPuppyCount = 0
+    let eligiblePuppies = []
     if (dobChanged && safePatch.actualBirthDate && hasPuppies) {
       const candidateSnaps = await Promise.all(puppyIds.map(id => tx.get(db.collection('dogs').doc(id))))
       const fetched = candidateSnaps.filter(s => s.exists).map(s => ({ id: s.id, ...s.data() }))
       const { eligible } = partitionLitterCandidatesServer(litterId, fetched, uid)
-      const nowIso = new Date().toISOString()
-      for (const puppy of eligible) {
-        tx.update(db.collection('dogs').doc(puppy.id), { dateOfBirth: safePatch.actualBirthDate, updatedAt: nowIso })
-      }
+      eligiblePuppies = eligible
       updatedPuppyCount = eligible.length
     }
 
-    tx.update(litterRef, safePatch)
-    if (isActivating) {
-      writeLitterQuotaLedgerEntry(tx, db, { tenantId: uid, litterId, whelpingDate: safePatch.actualBirthDate })
+    if (quotaDecision?.credit) {
+      consumeExtraLitterCredit(tx, quotaDecision.credit, { litterId, consumedAt: nowIso })
+    }
+
+    for (const puppy of eligiblePuppies) {
+      tx.update(db.collection('dogs').doc(puppy.id), { dateOfBirth: safePatch.actualBirthDate, updatedAt: nowIso })
+    }
+
+    const patchWithProfile = isActivating && breederScope
+      ? { ...safePatch, breederProfileId: breederScope.breederProfileId }
+      : safePatch
+    tx.update(litterRef, patchWithProfile)
+
+    if (isActivating && breederScope) {
+      const quotaSource = isUnlimited ? 'internal' : quotaDecision?.quotaSource || 'included'
+      writeLitterQuotaLedgerEntry(tx, db, {
+        tenantId: uid,
+        breederProfileId: breederScope.breederProfileId,
+        litterId,
+        whelpingDate: safePatch.actualBirthDate,
+        quotaSource,
+        extraCreditId: quotaDecision?.credit?.id || null,
+      })
     }
     return { ok: true, updatedPuppyCount }
   })

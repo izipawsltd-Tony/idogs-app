@@ -93,7 +93,7 @@ export default function LandingPage() {
                 <Link className="btn btn-primary" to="/signup">Start Free</Link>
                 <a className="btn btn-ghost" href="#howitworks">See How It Works</a>
               </div>
-              <p className="price-note">Plans from A$5/month · No complicated pricing.</p>
+              <p className="price-note">Plans from A$7/month · No complicated pricing.</p>
             </div>
             {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
             <div className="hero-visual" aria-label="iDogs product preview">
@@ -272,6 +272,8 @@ export default function LandingPage() {
                 <ul className="pricing-list">
                   <li>Dog profiles, health records and documents</li>
                   <li>Breeder tools for dogs, litters and puppies</li>
+                  <li>2 litters per rolling 12 months included</li>
+                  <li>Extra litters A$39 each</li>
                   <li>Digital Passport and QR sharing</li>
                 </ul>
                 <Link className="btn btn-primary pricing-cta" to="/signup">Start Free</Link>

@@ -2,34 +2,47 @@ import { requireAppUrl } from './require-config.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 
-const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TxMJ9GHgBd6ZgJEcwyahH58',
-  plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
+export const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
+  plus_monthly: 'price_1UAInbGHgBd6ZgJE0NAikQgm',
+  plus_annual: 'price_1UAIngGHgBd6ZgJEh3njs6hZ',
 })
 
-const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
+export const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
   plus_monthly: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x',
   plus_annual: 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK',
 })
 
-const STAGING_GST_TAX_RATE_ID = 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx'
-
-function checkoutPricesForCurrentEnvironment() {
-  return process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+function checkoutPricesForCurrentEnvironment(env = process.env) {
+  return env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
     ? STAGING_CHECKOUT_PRICE_IDS
     : LIVE_CHECKOUT_PRICE_IDS
 }
 
-function checkoutTaxRatesForCurrentEnvironment() {
-  return process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
-    ? [STAGING_GST_TAX_RATE_ID]
-    : []
+export function checkoutPriceIdsForStripeMode(livemode, env = process.env) {
+  if (livemode === true) return LIVE_CHECKOUT_PRICE_IDS
+  if (livemode === false) return STAGING_CHECKOUT_PRICE_IDS
+  return checkoutPricesForCurrentEnvironment(env)
 }
 
 export const CHECKOUT_PRICE_IDS = Object.freeze({
   get plus_monthly() { return checkoutPricesForCurrentEnvironment().plus_monthly },
   get plus_annual() { return checkoutPricesForCurrentEnvironment().plus_annual },
 })
+
+export const LIVE_GST_TAX_RATE_ID = 'txr_1U9iaFGHgBd6ZgJE5FsztFar'
+export const STAGING_GST_TAX_RATE_ID = 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx'
+
+export function checkoutTaxRatesForCurrentEnvironment(env = process.env) {
+  return env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+    ? [STAGING_GST_TAX_RATE_ID]
+    : [LIVE_GST_TAX_RATE_ID]
+}
+
+export function checkoutTaxRatesForStripeMode(livemode, env = process.env) {
+  if (livemode === true) return [LIVE_GST_TAX_RATE_ID]
+  if (livemode === false) return [STAGING_GST_TAX_RATE_ID]
+  return checkoutTaxRatesForCurrentEnvironment(env)
+}
 
 const INTERVAL_BY_PLAN_KEY = Object.freeze({
   plus_monthly: 'monthly',
@@ -45,30 +58,18 @@ function bodyOf(req) {
   }
 }
 
-function stagingPreviewOrigin() {
-  const isStagingPreview =
-    process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging' &&
-    process.env.VERCEL_ENV === 'preview'
-
-  if (!isStagingPreview) return null
-
-  const vercelUrl = process.env.VERCEL_URL
-  if (typeof vercelUrl !== 'string' || !vercelUrl) return null
-
-  const hostname = vercelUrl.trim().toLowerCase()
-  if (hostname !== vercelUrl) return null
-  if (!/^idogs-app-staging-[a-z0-9-]+\.vercel\.app$/.test(hostname)) return null
-
-  return `https://${hostname}`
-}
-
-function checkoutReturnOrigin(appUrl) {
-  return stagingPreviewOrigin() || appUrl
+function customerIdOf(value) {
+  if (typeof value === 'string') return value
+  if (value && typeof value.id === 'string') return value.id
+  return null
 }
 
 export function createCheckoutHandler({
   verifyIdToken,
   createSession,
+  getProfile = async () => null,
+  retrieveSubscription = async () => null,
+  isVerifiedActivePlus = () => false,
   getAppUrl = requireAppUrl,
 } = {}) {
   return async function checkoutHandler(req, res) {
@@ -77,8 +78,7 @@ export function createCheckoutHandler({
     }
 
     const appUrl = getAppUrl()
-    const returnOrigin = checkoutReturnOrigin(appUrl)
-    if (!returnOrigin) {
+    if (!appUrl) {
       logConfigError('create-checkout', 'APP_URL_NOT_CONFIGURED')
       return res.status(500).json({ error: 'APP_URL not configured' })
     }
@@ -122,17 +122,36 @@ export function createCheckoutHandler({
     const defaultTaxRates = checkoutTaxRatesForCurrentEnvironment()
 
     try {
+      // Never trust profile.plan alone for duplicate prevention. A webhook
+      // ordering issue can leave plan stale while the server-owned Stripe
+      // linkage still points at a paid active subscription. If a linked
+      // subscription exists, verify it directly before creating any new
+      // Checkout session; fail closed on mismatches or verification errors.
+      const profile = await getProfile(uid)
+      const linkedSubscriptionId = typeof profile?.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : null
+      const linkedCustomerId = typeof profile?.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
+      if (linkedSubscriptionId) {
+        const linkedSubscription = await retrieveSubscription(linkedSubscriptionId)
+        if (linkedCustomerId && customerIdOf(linkedSubscription?.customer) !== linkedCustomerId) {
+          logSanitizedError('create-checkout', 'EXISTING_SUBSCRIPTION_CUSTOMER_MISMATCH')
+          return res.status(409).json({ error: 'Existing billing account mismatch' })
+        }
+        if (isVerifiedActivePlus(linkedSubscription)) {
+          return res.status(409).json({ error: 'Plus subscription is already active' })
+        }
+      }
+
       const session = await createSession({
         mode: 'subscription',
         payment_method_types: ['card'],
         customer_email: email,
         line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${returnOrigin}/app/billing?success=1`,
-        cancel_url: `${returnOrigin}/app/billing?cancelled=1`,
+        success_url: `${appUrl}/app/billing?success=1`,
+        cancel_url: `${appUrl}/app/billing?cancelled=1`,
         metadata: { userId: uid, plan: 'plus', interval, priceId },
         subscription_data: {
           metadata: { userId: uid, plan: 'plus', interval, priceId },
-          ...(defaultTaxRates.length ? { default_tax_rates: defaultTaxRates } : {}),
+          default_tax_rates: defaultTaxRates,
         },
       })
       return res.status(200).json({ url: session.url })

@@ -143,6 +143,11 @@ export default function AppLayout({ toast }: Props) {
   const [litterCountError, setLitterCountError] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement>(null)
+  // The sidebar is persistent across /app routes, so it must not infer paid
+  // entitlement from a stale cached profile. Keep the Stripe-verified plan
+  // returned by billing-summary as a separate server-owned state.
+  const [verifiedBillingPlan, setVerifiedBillingPlan] = useState<'free' | 'plus' | null>(null)
+  const [billingPlanResolved, setBillingPlanResolved] = useState(false)
 
   // State backfill modal
   const [showStateModal,        setShowStateModal]        = useState(false)
@@ -170,6 +175,38 @@ export default function AppLayout({ toast }: Props) {
   // effect flushes synchronously before paint, closing that window.
   const { beginRequest: beginDogCountRequest } = useRequestGuard(user?.uid)
   const { beginRequest: beginLitterCountRequest } = useRequestGuard(user?.uid)
+  const { beginRequest: beginBillingPlanRequest } = useRequestGuard(user?.uid)
+
+  function loadVerifiedBillingPlan(showLoading = false) {
+    if (!user) return
+    const req = beginBillingPlanRequest()
+    if (showLoading) {
+      setVerifiedBillingPlan(null)
+      setBillingPlanResolved(false)
+    }
+
+    void (async () => {
+      try {
+        const idToken = await user.getIdToken()
+        const res = await fetch('/api/billing-summary', {
+          headers: { Authorization: `Bearer ${idToken}` },
+          cache: 'no-store',
+        })
+        const body = await res.json().catch(() => ({}))
+        if (!req.isCurrent()) return
+        const plan = body?.entitlement?.plan
+        if (!res.ok || (plan !== 'free' && plan !== 'plus')) {
+          if (showLoading) setVerifiedBillingPlan(null)
+          return
+        }
+        setVerifiedBillingPlan(plan)
+      } catch {
+        if (req.isCurrent() && showLoading) setVerifiedBillingPlan(null)
+      } finally {
+        if (req.isCurrent()) setBillingPlanResolved(true)
+      }
+    })()
+  }
 
   // Codex round 17: extracted from the effect body so the same
   // uid/generation-guarded load can be re-run from an explicit Retry
@@ -225,6 +262,28 @@ export default function AppLayout({ toast }: Props) {
     loadLitterCount()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, isOwner])
+
+  useEffect(() => {
+    if (!user) {
+      setVerifiedBillingPlan(null)
+      setBillingPlanResolved(false)
+      return
+    }
+
+    loadVerifiedBillingPlan(true)
+    const refreshVerifiedBilling = () => {
+      if (document.visibilityState !== 'hidden') loadVerifiedBillingPlan(false)
+    }
+    window.addEventListener('focus', refreshVerifiedBilling)
+    window.addEventListener('pageshow', refreshVerifiedBilling)
+    document.addEventListener('visibilitychange', refreshVerifiedBilling)
+    return () => {
+      window.removeEventListener('focus', refreshVerifiedBilling)
+      window.removeEventListener('pageshow', refreshVerifiedBilling)
+      document.removeEventListener('visibilitychange', refreshVerifiedBilling)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid])
 
   useEffect(() => {
     const uid = user?.uid
@@ -297,7 +356,6 @@ export default function AppLayout({ toast }: Props) {
   // server already treating them as unlimited. Mirrors
   // getEffectivePlanClient's server-side counterpart, computeEffectivePlan,
   // used by every api/*.js cap check this widget must stay consistent with.
-  const effectivePlan = getEffectivePlanClient(profile)
   // Deliberately NOT named isSuperAdmin — that name is already taken above
   // by the unrelated SUPER_ADMIN_EMAILS allowlist, which gates only the
   // internal admin console link (/app/admin/*) and has nothing to do with
@@ -305,8 +363,17 @@ export default function AppLayout({ toast }: Props) {
   // Firestore-Rules-protected internalEntitlement grant, the sole source
   // of truth for quota/Showcase bypass (see api/_lib/entitlements.js).
   const hasAdminEntitlement = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())
+  // Server-verified Stripe billing is authoritative for normal accounts.
+  // Internal admin entitlement remains an explicit higher-level bypass.
+  const effectivePlan = hasAdminEntitlement
+    ? 'plus'
+    : verifiedBillingPlan ?? getEffectivePlanClient(profile)
   const planCfg = getPlanCfg(effectivePlan)
-  const planLabel = profile?.plan === 'trial' ? 'Free Trial' : planCfg.label
+  const planLabel = !billingPlanResolved && !hasAdminEntitlement
+    ? 'Checking plan…'
+    : verifiedBillingPlan
+      ? planCfg.label
+      : profile?.plan === 'trial' ? 'Free Trial' : planCfg.label
   // A verified internal admin bypasses even Plus's own finite dogLimit
   // (5) — reuses this widget's existing dogLimit>=9999 "Unlimited"
   // convention rather than inventing a new display path.
@@ -539,7 +606,7 @@ export default function AppLayout({ toast }: Props) {
                 )}
               </div>
             )}
-            {planCfg.upgrade && (
+            {planCfg.upgrade && billingPlanResolved && verifiedBillingPlan === 'free' && !hasAdminEntitlement && (
               <button
                 className="btn btn-primary btn-sm"
                 style={{ width: '100%', marginTop: 10, background: 'var(--gold-500)', borderColor: 'var(--gold-500)' }}
