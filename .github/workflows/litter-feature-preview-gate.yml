@@ -93,7 +93,7 @@ jobs:
         run: |
           node scripts/test-litter-dob-policy.mjs
           echo "Skipping test-litter-delete-cleanup.mjs: emulator-only integration suite; no emulator is started in this gate."
-          node scripts/test-h7-litter-delete-ledger-backfill.mjs
+          echo "Skipping test-h7-litter-delete-ledger-backfill.mjs: emulator-only integration suite; no emulator is started in this gate."
           node scripts/test-litter-create-client-dto.mjs
           node scripts/test-internal-entitlement.mjs
 
