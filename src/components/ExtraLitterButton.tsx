@@ -23,6 +23,11 @@ function requestId(): string {
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`
 }
 
+function includedRemainingLabel(remaining: number): string {
+  if (remaining <= 0) return 'No included litters remaining'
+  return `${remaining} included litter${remaining === 1 ? '' : 's'} remaining`
+}
+
 export default function ExtraLitterButton({ toast }: Props) {
   const { user } = useAuth()
   const [summary, setSummary] = useState<LitterQuotaSummary | null>(null)
@@ -76,22 +81,27 @@ export default function ExtraLitterButton({ toast }: Props) {
   }
 
   const includedUsed = Math.min(summary.includedUsed, summary.includedLimit)
-  const includedExhausted = includedUsed >= summary.includedLimit
+  const includedRemaining = Math.max(summary.includedLimit - includedUsed, 0)
+  const includedExhausted = includedRemaining === 0
   const hasUnusedExtraCredit = summary.extraCreditsAvailable > 0
+  const remainingLabel = includedRemainingLabel(includedRemaining)
+  const breederHistoryLabel = "Based on your breeder profile’s rolling 12-month litter history"
 
-  // Before 2/2 is exhausted, show only usage. Do not advertise a purchase
-  // the breeder does not need yet. If a paid credit is already available,
-  // show that entitlement instead of offering another charge.
+  // Before the included allowance is exhausted, show how many included
+  // litters remain rather than how many were "used". That avoids implying
+  // the current login account created historical litters that may instead be
+  // linked through the breeder profile. If a paid credit already exists,
+  // show it instead of offering another charge.
   if (!includedExhausted || hasUnusedExtraCredit) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
         <span style={{ fontSize: 12, fontWeight: 600 }}>
-          {includedUsed} of {summary.includedLimit} litter allowances used
+          {remainingLabel}
         </span>
         <span style={{ fontSize: 11, color: 'var(--light)' }}>
           {hasUnusedExtraCredit
             ? `${summary.extraCreditsAvailable} extra litter credit${summary.extraCreditsAvailable === 1 ? '' : 's'} available`
-            : 'Includes litter history linked to your breeder profile'}
+            : breederHistoryLabel}
         </span>
       </div>
     )
@@ -110,11 +120,11 @@ export default function ExtraLitterButton({ toast }: Props) {
         {loading ? 'Opening…' : `Add another litter — A$${summary.extraLitterPriceAud}`}
       </button>
       <span style={{ fontSize: 11, color: 'var(--light)' }}>
-        {includedUsed} of {summary.includedLimit} litter allowances used
+        {remainingLabel}
         {!summary.checkoutEnabled ? ' · checkout disabled for safe QA' : ''}
       </span>
       <span style={{ fontSize: 11, color: 'var(--light)' }}>
-        Includes litter history linked to your breeder profile
+        {breederHistoryLabel}
       </span>
     </div>
   )
