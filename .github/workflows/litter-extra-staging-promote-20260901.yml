@@ -18,7 +18,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build integration merge from exact inputs
+      - name: Build and resolve integration merge from exact inputs
         shell: bash
         run: |
           set -euo pipefail
@@ -30,20 +30,183 @@ jobs:
           test -z "$(git status --porcelain)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git merge --no-ff "$LITTER_CANDIDATE" -m "merge(litters): integrate extra litter UX into stable staging"; then
-            echo 'FAIL: merge conflict; stable staging not changed'
-            git diff --name-only --diff-filter=U || true
-            exit 1
+
+          set +e
+          git merge --no-ff --no-commit "$LITTER_CANDIDATE"
+          MERGE_RC=$?
+          set -e
+
+          if [ "$MERGE_RC" -ne 0 ]; then
+            ACTUAL=$(git diff --name-only --diff-filter=U | sort)
+            EXPECTED=$(printf '%s\n' \
+              api/_lib/billing-handler.js \
+              api/_lib/checkout-handler.js \
+              api/stripe-webhook.js \
+              scripts/test-billing-p0-security.mjs \
+              scripts/test-billing-payments-phase1.mjs \
+              src/pages/BillingPage.tsx \
+              src/pages/LandingPage.tsx | sort)
+            if [ "$ACTUAL" != "$EXPECTED" ]; then
+              echo 'FAIL: unexpected merge conflict set'
+              printf 'Actual:\n%s\nExpected:\n%s\n' "$ACTUAL" "$EXPECTED"
+              exit 1
+            fi
+
+            # Runtime/UI conflicts: use the already-QA'd litter candidate.
+            git checkout --theirs -- \
+              api/_lib/billing-handler.js \
+              api/_lib/checkout-handler.js \
+              src/pages/BillingPage.tsx \
+              src/pages/LandingPage.tsx
+
+            # Preserve existing staging billing regression expectations.
+            git checkout --ours -- \
+              scripts/test-billing-p0-security.mjs \
+              scripts/test-billing-payments-phase1.mjs
+
+            # Stripe webhook must preserve BOTH staging Meta Purchase/CAPI and
+            # the QA'd Extra Litter + Plus reconciliation post-processing.
+            cat > api/stripe-webhook.js <<'EOF'
+          // api/stripe-webhook.js — Stripe webhook entrypoint. Subscription
+          // entitlement logic lives in api/_lib/webhook-handler.js. This entrypoint
+          // also grants verified Extra Litter credits and preserves Meta Purchase CAPI.
+          import Stripe from 'stripe'
+          import { initializeApp, getApps, cert } from 'firebase-admin/app'
+          import { getFirestore } from 'firebase-admin/firestore'
+          import { createWebhookHandler } from './_lib/webhook-handler.js'
+          import { grantExtraLitterCreditFromVerifiedEvent } from './_lib/extra-litter-webhook.js'
+          import { reconcileVerifiedPlusSubscription, verifiedPlusInterval } from './_lib/billing-reconcile.js'
+          import { createMetaInvoiceProcessor } from './_lib/meta-capi.js'
+
+          const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+
+          if (!getApps().length) {
+            initializeApp({
+              credential: cert({
+                projectId: process.env.FIREBASE_PROJECT_ID,
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+              }),
+            })
+          }
+
+          export const config = { api: { bodyParser: false } }
+
+          async function getRawBody(req) {
+            return new Promise((resolve, reject) => {
+              const chunks = []
+              req.on('data', chunk => chunks.push(chunk))
+              req.on('end', () => resolve(Buffer.concat(chunks)))
+              req.on('error', reject)
+            })
+          }
+
+          const db = getFirestore()
+          const getSubscription = subscriptionId => stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] })
+
+          const processWebhook = createWebhookHandler({
+            constructEvent: (rawBody, sig) => stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET),
+            getSubscription,
+            db,
+          })
+
+          const processMetaInvoice = createMetaInvoiceProcessor({ db, getSubscription })
+
+          function subscriptionIdFromVerifiedEvent(event) {
+            const object = event?.data?.object
+            if (!object) return null
+            if (event.type === 'checkout.session.completed') {
+              return typeof object.subscription === 'string' ? object.subscription : object.subscription?.id || null
+            }
+            if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated') {
+              return object.id || null
+            }
+            if (event.type === 'invoice.payment_succeeded' || event.type === 'invoice.paid') {
+              const legacy = typeof object.subscription === 'string' ? object.subscription : object.subscription?.id
+              if (legacy) return legacy
+              const current = object.parent?.subscription_details?.subscription
+              return typeof current === 'string' ? current : current?.id || null
+            }
+            return null
+          }
+
+          async function reconcileActivePlusFromVerifiedEvent(event) {
+            const subscriptionId = subscriptionIdFromVerifiedEvent(event)
+            if (!subscriptionId) return
+            const subscription = event.type.startsWith('customer.subscription.')
+              ? event.data.object
+              : await getSubscription(subscriptionId)
+            if (!verifiedPlusInterval(subscription)) return
+            const userId = subscription?.metadata?.userId
+            if (!userId) return
+            await reconcileVerifiedPlusSubscription({ db, subscription, userId, eventCreated: event.created })
+          }
+
+          export default async function handler(req, res) {
+            if (req.method !== 'POST') return res.status(405).end()
+
+            const sig = req.headers['stripe-signature']
+            const rawBody = await getRawBody(req)
+
+            let verifiedEvent = null
+            try {
+              verifiedEvent = stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET)
+            } catch {
+              // The core handler owns the canonical invalid-signature response.
+            }
+
+            const result = await processWebhook(rawBody, sig)
+            if (result.status !== 200 || !verifiedEvent) return res.status(result.status).json(result.body)
+
+            try {
+              await grantExtraLitterCreditFromVerifiedEvent({ db, event: verifiedEvent })
+              await reconcileActivePlusFromVerifiedEvent(verifiedEvent)
+
+              if (verifiedEvent.type === 'invoice.payment_succeeded') {
+                const metaResult = await processMetaInvoice(verifiedEvent)
+                console.log('stripe-webhook: meta capi result', {
+                  type: verifiedEvent.type,
+                  sent: Boolean(metaResult?.sent),
+                  skipped: Boolean(metaResult?.skipped),
+                  reason: metaResult?.reason || null,
+                  eventName: metaResult?.eventName || null,
+                })
+              }
+            } catch (error) {
+              console.error('stripe-webhook: verified downstream processing failed', {
+                code: error?.message || 'POST_PROCESSING_FAILED',
+              })
+              // Return 500 so Stripe retries. Extra-litter grants and Purchase CAPI
+              // processing are designed to be idempotent on redelivery.
+              return res.status(500).json({ error: 'Webhook downstream processing failed' })
+            }
+
+            return res.status(result.status).json(result.body)
+          }
+          EOF
+            # Strip YAML heredoc indentation introduced above.
+            sed -i 's/^          //' api/stripe-webhook.js
+
+            git add \
+              api/_lib/billing-handler.js \
+              api/_lib/checkout-handler.js \
+              api/stripe-webhook.js \
+              scripts/test-billing-p0-security.mjs \
+              scripts/test-billing-payments-phase1.mjs \
+              src/pages/BillingPage.tsx \
+              src/pages/LandingPage.tsx
           fi
+
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git commit -m "merge(litters): integrate extra litter UX into stable staging"
           PARENTS=$(git rev-list --parents -n 1 HEAD)
-          echo "$PARENTS"
           echo "$PARENTS" | grep -q "$STAGING_BASE"
           echo "$PARENTS" | grep -q "$LITTER_CANDIDATE"
           test ! -e .github/workflows/litter-extra-ux-preview-20260901.yml
           test ! -e api/qa-repair-plus-entitlement.js
           test ! -e api/qa-auth-context.js
           echo "INTEGRATION_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          echo INTEGRATION_MERGE_OK
+          echo INTEGRATION_MERGE_RESOLVED_OK
 
       - name: Install dependencies
         run: npm ci
@@ -71,6 +234,7 @@ jobs:
           node scripts/test-litter-create-client-dto.mjs
           node scripts/test-internal-entitlement.mjs
           node scripts/test-webhook-handler.mjs
+          node scripts/test-billing-p0-security.mjs
           node scripts/test-billing-payments-phase1.mjs
           node scripts/test-pricing-integration-checks.mjs
           node scripts/test-landing-pricing-ui.mjs
