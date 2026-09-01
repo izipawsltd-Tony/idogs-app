@@ -30,6 +30,7 @@ const subscription = {
   id: 'sub_1', status: 'active', customer: 'cus_1', livemode: true,
   items: { data: [{ price: { id: LIVE_CHECKOUT_PRICE_IDS.plus_monthly } }] },
 }
+const eligible = async () => ({ includedExhausted: true, availableCredits: 0 })
 
 await checkAsync('finance gate returns 503 and never creates Stripe session', async () => {
   let createCalls = 0
@@ -37,6 +38,7 @@ await checkAsync('finance gate returns 503 and never creates Stripe session', as
     verifyIdToken: async () => ({ uid: 'u1', email: 'breeder@example.com' }),
     getProfile: async () => profile,
     retrieveSubscription: async () => subscription,
+    getPurchaseEligibility: eligible,
     createSession: async () => { createCalls += 1; return { url: 'https://stripe.example' } },
     getAppUrl: () => 'https://preview.example',
     isEnabled: () => false,
@@ -51,6 +53,7 @@ await checkAsync('client cannot override price/user/profile fields', async () =>
     verifyIdToken: async () => ({ uid: 'u1', email: 'breeder@example.com' }),
     getProfile: async () => profile,
     retrieveSubscription: async () => subscription,
+    getPurchaseEligibility: eligible,
     createSession: async () => ({ url: 'https://stripe.example' }),
     getAppUrl: () => 'https://preview.example',
     isEnabled: () => true,
@@ -65,6 +68,7 @@ await checkAsync('Free account cannot buy Extra Litter credit', async () => {
     verifyIdToken: async () => ({ uid: 'u1', email: 'breeder@example.com' }),
     getProfile: async () => ({ ...profile, plan: 'free' }),
     retrieveSubscription: async () => subscription,
+    getPurchaseEligibility: eligible,
     createSession: async () => ({ url: 'https://stripe.example' }),
     getAppUrl: () => 'https://preview.example',
     isEnabled: () => true,
@@ -74,13 +78,46 @@ await checkAsync('Free account cannot buy Extra Litter credit', async () => {
   return res.result.statusCode === 403
 })
 
-await checkAsync('valid request creates fixed A$39 AUD GST-inclusive one-time Checkout', async () => {
+await checkAsync('cannot buy while an included litter slot remains', async () => {
+  let createCalls = 0
+  const handler = createExtraLitterCheckoutHandler({
+    verifyIdToken: async () => ({ uid: 'u1', email: 'breeder@example.com' }),
+    getProfile: async () => profile,
+    retrieveSubscription: async () => subscription,
+    getPurchaseEligibility: async () => ({ includedExhausted: false, availableCredits: 0 }),
+    createSession: async () => { createCalls += 1; return { url: 'https://stripe.example' } },
+    getAppUrl: () => 'https://preview.example',
+    isEnabled: () => true,
+  })
+  const res = resCapture()
+  await handler(req({ requestId: '1234567890123456' }), res)
+  return res.result.statusCode === 409 && res.result.body?.code === 'INCLUDED_LITTERS_REMAIN' && createCalls === 0
+})
+
+await checkAsync('cannot buy another credit while one is unused', async () => {
+  let createCalls = 0
+  const handler = createExtraLitterCheckoutHandler({
+    verifyIdToken: async () => ({ uid: 'u1', email: 'breeder@example.com' }),
+    getProfile: async () => profile,
+    retrieveSubscription: async () => subscription,
+    getPurchaseEligibility: async () => ({ includedExhausted: true, availableCredits: 1 }),
+    createSession: async () => { createCalls += 1; return { url: 'https://stripe.example' } },
+    getAppUrl: () => 'https://preview.example',
+    isEnabled: () => true,
+  })
+  const res = resCapture()
+  await handler(req({ requestId: '1234567890123456' }), res)
+  return res.result.statusCode === 409 && res.result.body?.code === 'EXTRA_LITTER_CREDIT_AVAILABLE' && createCalls === 0
+})
+
+await checkAsync('valid exhausted-quota request creates fixed A$39 AUD GST-inclusive one-time Checkout', async () => {
   let capturedParams = null
   let capturedOptions = null
   const handler = createExtraLitterCheckoutHandler({
     verifyIdToken: async () => ({ uid: 'u1', email: 'breeder@example.com' }),
     getProfile: async () => profile,
     retrieveSubscription: async () => subscription,
+    getPurchaseEligibility: eligible,
     createSession: async (params, options) => {
       capturedParams = params
       capturedOptions = options
