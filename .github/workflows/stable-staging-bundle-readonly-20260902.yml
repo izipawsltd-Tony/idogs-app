@@ -14,7 +14,7 @@ jobs:
   verify-live-bundle:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch current stable staging and reject Sensitive placeholders
+      - name: Fetch current stable staging and inspect Firebase target safely
         shell: bash
         run: |
           set -euo pipefail
@@ -29,13 +29,20 @@ jobs:
           if not assets:
               print('JS_ASSETS=NONE')
               sys.exit(2)
+          combined = b''
           for i, asset in enumerate(assets):
               out = pathlib.Path(f'/tmp/asset-{i}.js')
               subprocess.run(['curl','-fsSL','--retry','5','--retry-delay','2',base + asset,'-o',str(out)], check=True)
               data = out.read_bytes()
+              combined += data
               print(f'ASSET_{i}={asset} BYTES={len(data)}')
               if b'[SENSITIVE]' in data:
                   print('BUNDLE_SENSITIVE_PLACEHOLDER=FOUND')
                   sys.exit(3)
           print('BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT')
+          text = combined.decode('utf-8', errors='ignore')
+          hosts = sorted(set(re.findall(r'[A-Za-z0-9.-]+\.firebaseapp\.com', text)))
+          print('FIREBASE_AUTH_DOMAINS=' + (','.join(hosts) if hosts else 'NONE'))
+          print('HAS_IDOGS_APP_STAGING_TOKEN=' + ('YES' if 'idogs-app-staging' in text else 'NO'))
+          print('HAS_IDOGS_APP_PROD_TOKEN=' + ('YES' if 'idogs-app' in text else 'NO'))
           PY
