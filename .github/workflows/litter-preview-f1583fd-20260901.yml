@@ -1,0 +1,121 @@
+name: Litter exact candidate Preview f1583fd
+
+on:
+  push:
+    branches:
+      - automation/litter-preview-f1583fd-20260901
+
+jobs:
+  verify-and-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: f1583fdb794eb417e0dca8efefef1101cc3bd3e8
+          fetch-depth: 1
+
+      - name: Verify exact clean candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "f1583fdb794eb417e0dca8efefef1101cc3bd3e8"
+          test -z "$(git status --porcelain)"
+          test ! -e api/qa-repair-plus-entitlement.js
+          test ! -e api/qa-auth-context.js
+          grep -q "process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true'" api/_lib/extra-litter-checkout-handler.js
+          echo 'EXACT_CANDIDATE_CLEAN_OK'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run exact candidate regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check api/_lib/breeder-profile.js
+          node --check api/_lib/litter-quota.js
+          node --check api/_lib/extra-litter-checkout-handler.js
+          node --check api/_lib/extra-litter-webhook.js
+          node --check api/create-litter.js
+          node --check api/update-litter.js
+          node --check api/create-extra-litter-checkout.js
+          node --check api/litter-quota-summary.js
+          node --check api/stripe-webhook.js
+          node scripts/test-breeder-profile-identity.mjs
+          node scripts/test-litter-quota.mjs
+          node scripts/test-extra-litter-checkout.mjs
+          node scripts/test-extra-litter-webhook.mjs
+          node scripts/test-litter-pricing-policy.mjs
+          node scripts/test-litter-dob-policy.mjs
+          node scripts/test-litter-create-client-dto.mjs
+          node scripts/test-internal-entitlement.mjs
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-pricing-integration-checks.mjs
+          node scripts/test-landing-pricing-ui.mjs
+          node scripts/test-sidebar-billing-sync.mjs
+          npm run build
+
+      - name: Reverify clean exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "f1583fdb794eb417e0dca8efefef1101cc3bd3e8"
+          test -z "$(git status --porcelain)"
+          echo 'EXACT_CANDIDATE_REGRESSION_OK'
+
+      - name: Link exact Vercel Preview project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull Preview settings and enforce payment OFF
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-pull.log 2>&1
+          ENV_FILE=.vercel/.env.preview.local
+          test -f "$ENV_FILE"
+          if grep -Eq '^EXTRA_LITTER_CHECKOUT_ENABLED=("?true"?)$' "$ENV_FILE"; then
+            echo 'FAIL: Preview Extra Litter payment gate is enabled'
+            exit 1
+          fi
+          echo 'PREVIEW_EXTRA_LITTER_PAYMENT_OFF_OK'
+
+      - name: Reverify runtime before Preview deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "f1583fdb794eb417e0dca8efefef1101cc3bd3e8"
+          test -z "$(git status --porcelain)"
+          echo 'CLEAN_RUNTIME_REVERIFIED'
+
+      - name: Deploy exact candidate to Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PREVIEW_URL"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_READY $PREVIEW_URL"
+
+      - name: Verify Preview boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "f1583fdb794eb417e0dca8efefef1101cc3bd3e8"
+          test -n "$PREVIEW_URL"
+          echo 'EXACT_SHA_DEPLOYED f1583fdb794eb417e0dca8efefef1101cc3bd3e8'
+          echo 'PROJECT idogs-app'
+          echo 'TARGET preview'
+          echo 'PAYMENT_GATE off'
