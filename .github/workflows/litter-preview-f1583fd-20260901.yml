@@ -1,4 +1,4 @@
-name: Litter exact candidate Preview f1583fd
+name: Litter QA diagnostic Preview
 
 on:
   push:
@@ -10,27 +10,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout exact candidate SHA
+      - name: Checkout exact triggering QA SHA
         uses: actions/checkout@v4
         with:
-          ref: f1583fdb794eb417e0dca8efefef1101cc3bd3e8
+          ref: ${{ github.sha }}
           fetch-depth: 1
 
-      - name: Verify exact clean candidate
+      - name: Verify clean QA branch runtime
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "f1583fdb794eb417e0dca8efefef1101cc3bd3e8"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain)"
           test ! -e api/qa-repair-plus-entitlement.js
           test ! -e api/qa-auth-context.js
           grep -q "process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true'" api/_lib/extra-litter-checkout-handler.js
-          echo 'EXACT_CANDIDATE_CLEAN_OK'
+          grep -q "process.env.VERCEL_ENV !== 'preview'" api/litter-quota-summary.js
+          echo 'QA_RUNTIME_CLEAN_OK'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run exact candidate regressions
+      - name: Run QA candidate regressions
         shell: bash
         run: |
           set -euo pipefail
@@ -58,13 +59,13 @@ jobs:
           node scripts/test-sidebar-billing-sync.mjs
           npm run build
 
-      - name: Reverify clean exact candidate
+      - name: Reverify clean QA runtime
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "f1583fdb794eb417e0dca8efefef1101cc3bd3e8"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain)"
-          echo 'EXACT_CANDIDATE_REGRESSION_OK'
+          echo 'QA_REGRESSION_OK'
 
       - name: Link exact Vercel Preview project
         shell: bash
@@ -94,11 +95,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "f1583fdb794eb417e0dca8efefef1101cc3bd3e8"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain)"
           echo 'CLEAN_RUNTIME_REVERIFIED'
 
-      - name: Deploy exact candidate to Preview only
+      - name: Deploy QA diagnostic to Preview only
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -113,9 +114,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "f1583fdb794eb417e0dca8efefef1101cc3bd3e8"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -n "$PREVIEW_URL"
-          echo 'EXACT_SHA_DEPLOYED f1583fdb794eb417e0dca8efefef1101cc3bd3e8'
+          echo "QA_SHA_DEPLOYED $GITHUB_SHA"
           echo 'PROJECT idogs-app'
           echo 'TARGET preview'
           echo 'PAYMENT_GATE off'
+          echo 'DIAGNOSTIC preview-only authenticated summary'
