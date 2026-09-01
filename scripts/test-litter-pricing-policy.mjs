@@ -43,5 +43,7 @@ check('customer UI never exposes safe-QA checkout copy', !cta.includes('checkout
 check('quota summary controls litter-create availability', cta.includes('onCreateAvailabilityChange?.(allowed)') && littersPage.includes('onCreateAvailabilityChange={setCanCreateLitterFromQuota}'))
 check('quota summary refreshes after litter-count changes', cta.includes('refreshKey = 0') && cta.includes('[user, onCreateAvailabilityChange, refreshKey]') && littersPage.includes('refreshKey={litters.length}'))
 check('new-litter CTAs are disabled when quota requires an Extra Litter credit', (littersPage.match(/disabled=\{canCreateLitterFromQuota === false\}/g) || []).length >= 2 && littersPage.includes('Purchase an Extra Litter credit to create another litter.'))
+check('Free plan never receives litter-create permission', cta.includes("parsed.plan === 'plus'") && !cta.includes("parsed.plan !== 'plus'"))
+check('quota loading and fetch failures fail closed', (cta.match(/onCreateAvailabilityChange\?\.\(false\)/g) || []).length >= 3)
 
 await summary()
