@@ -86,12 +86,12 @@ export default function ExtraLitterButton({ toast }: Props) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
         <span style={{ fontSize: 12, fontWeight: 600 }}>
-          {includedUsed}/{summary.includedLimit} litters used
+          {includedUsed} of {summary.includedLimit} litter allowances used
         </span>
         <span style={{ fontSize: 11, color: 'var(--light)' }}>
           {hasUnusedExtraCredit
             ? `${summary.extraCreditsAvailable} extra litter credit${summary.extraCreditsAvailable === 1 ? '' : 's'} available`
-            : 'Included in your current rolling 12 months'}
+            : 'Includes litter history linked to your breeder profile'}
         </span>
       </div>
     )
@@ -110,8 +110,11 @@ export default function ExtraLitterButton({ toast }: Props) {
         {loading ? 'Opening…' : `Add another litter — A$${summary.extraLitterPriceAud}`}
       </button>
       <span style={{ fontSize: 11, color: 'var(--light)' }}>
-        {includedUsed}/{summary.includedLimit} included litters used
+        {includedUsed} of {summary.includedLimit} litter allowances used
         {!summary.checkoutEnabled ? ' · checkout disabled for safe QA' : ''}
+      </span>
+      <span style={{ fontSize: 11, color: 'var(--light)' }}>
+        Includes litter history linked to your breeder profile
       </span>
     </div>
   )
