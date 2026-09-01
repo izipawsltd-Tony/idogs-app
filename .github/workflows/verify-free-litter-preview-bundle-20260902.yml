@@ -1,0 +1,54 @@
+name: Verify Free Litter Preview Bundle 20260902
+
+on:
+  push:
+    branches:
+      - automation/free-litter-ui-preview-20260902
+    paths:
+      - .github/workflows/verify-free-litter-preview-bundle-20260902.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PREVIEW_URL: https://idogs-app-staging-pcnm197gt-izipawsltd-tonys-projects.vercel.app
+      MAIN_ASSET: /assets/index-RMRbtiFA.js
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+
+    steps:
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Fetch protected Preview asset read-only and verify
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest curl "$PREVIEW_URL$MAIN_ASSET" --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/main.js
+          python3 - <<'PY'
+          from pathlib import Path
+          data=Path('/tmp/main.js').read_bytes()
+          print('MAIN_ASSET_BYTES=' + str(len(data)))
+          if len(data) < 500000:
+              raise SystemExit('MAIN_ASSET_TOO_SMALL')
+          if b'[SENSITIVE]' in data:
+              raise SystemExit('BUNDLE_SENSITIVE_PLACEHOLDER_FOUND')
+          text=data.decode('utf-8', errors='ignore')
+          if 'idogs-app-staging.firebaseapp.com' not in text:
+              raise SystemExit('WRONG_FIREBASE_TARGET')
+          if 'Free plan — upgrade to Plus to create litters' not in text:
+              raise SystemExit('FREE_GATE_COPY_MISSING')
+          if 'Your current plan does not allow creating another litter.' not in text:
+              raise SystemExit('FAIL_CLOSED_COPY_MISSING')
+          print('BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT')
+          print('FIREBASE_STAGING_TARGET=PASS')
+          print('FREE_LITTER_UI_GATE_MARKERS=PASS')
+          print('PROTECTED_PREVIEW_BUNDLE_CHECK=PASS')
+          PY
