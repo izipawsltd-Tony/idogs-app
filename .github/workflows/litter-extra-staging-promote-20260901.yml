@@ -1,0 +1,162 @@
+name: Litter Extra Stable Staging 20260901
+
+on:
+  push:
+    branches:
+      - automation/litter-extra-staging-promote-20260901
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-test-promote-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout automation branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build integration merge from exact inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGING_BASE=ed57e8b48f8bd10264d30798ceabeb6784ef790f
+          LITTER_CANDIDATE=8b51dbc004b3676969d3091f3f1fd04f2b46e12b
+          git fetch origin integration/litter-extra-staging-20260901
+          git checkout -B integration/litter-extra-staging-20260901 origin/integration/litter-extra-staging-20260901
+          test "$(git rev-parse HEAD)" = "$STAGING_BASE"
+          test -z "$(git status --porcelain)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git merge --no-ff "$LITTER_CANDIDATE" -m "merge(litters): integrate extra litter UX into stable staging"; then
+            echo 'FAIL: merge conflict; stable staging not changed'
+            git diff --name-only --diff-filter=U || true
+            exit 1
+          fi
+          PARENTS=$(git rev-list --parents -n 1 HEAD)
+          echo "$PARENTS"
+          echo "$PARENTS" | grep -q "$STAGING_BASE"
+          echo "$PARENTS" | grep -q "$LITTER_CANDIDATE"
+          test ! -e .github/workflows/litter-extra-ux-preview-20260901.yml
+          test ! -e api/qa-repair-plus-entitlement.js
+          test ! -e api/qa-auth-context.js
+          echo "INTEGRATION_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo INTEGRATION_MERGE_OK
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run litter, billing, Meta regression gates and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check api/_lib/billing-reconcile.js
+          node --check api/_lib/breeder-profile.js
+          node --check api/_lib/litter-quota.js
+          node --check api/_lib/extra-litter-checkout-handler.js
+          node --check api/_lib/extra-litter-webhook.js
+          node --check api/create-litter.js
+          node --check api/update-litter.js
+          node --check api/create-extra-litter-checkout.js
+          node --check api/litter-quota-summary.js
+          node --check api/stripe-webhook.js
+          node scripts/test-breeder-profile-identity.mjs
+          node scripts/test-litter-quota.mjs
+          node scripts/test-extra-litter-checkout.mjs
+          node scripts/test-extra-litter-webhook.mjs
+          node scripts/test-litter-pricing-policy.mjs
+          node scripts/test-litter-dob-policy.mjs
+          node scripts/test-litter-create-client-dto.mjs
+          node scripts/test-internal-entitlement.mjs
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-pricing-integration-checks.mjs
+          node scripts/test-landing-pricing-ui.mjs
+          node scripts/test-sidebar-billing-sync.mjs
+          shopt -s nullglob
+          for f in scripts/test-*meta*.mjs scripts/test-*pixel*.mjs scripts/test-*purchase*.mjs scripts/test-*registration*.mjs; do
+            echo "Running preserved staging regression: $f"
+            node "$f"
+          done
+          npm run build
+          test -z "$(git status --porcelain)"
+          echo FULL_INTEGRATION_GATE_OK
+
+      - name: Push integration merge only after PASS
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INTEGRATION_SHA"
+          git push origin HEAD:integration/litter-extra-staging-20260901
+          echo INTEGRATION_PUSH_OK
+
+      - name: Link exact stable staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}
+          JSON
+          grep -q 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o' .vercel/project.json
+          echo STAGING_PROJECT_LINK_OK
+
+      - name: Pull stable staging env and enforce financial boundary
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/staging-pull.log 2>&1
+          ENV_FILE=.vercel/.env.production.local
+          test -f "$ENV_FILE"
+          grep -Eq '^FIREBASE_PROJECT_ID="?idogs-app-staging"?$' "$ENV_FILE"
+          if grep -Eq '^EXTRA_LITTER_CHECKOUT_ENABLED="?true"?$' "$ENV_FILE"; then
+            echo 'FAIL: Extra Litter payment is enabled on stable staging'
+            exit 1
+          fi
+          if grep -q '^STRIPE_SECRET_KEY=' "$ENV_FILE"; then
+            grep -Eq '^STRIPE_SECRET_KEY="?sk_test_' "$ENV_FILE"
+          fi
+          echo STAGING_ENV_SAFE_PAYMENT_OFF_OK
+
+      - name: Reverify exact integration source before stable staging deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INTEGRATION_SHA"
+          test -z "$(git status --porcelain)"
+          test ! -e .github/workflows/litter-extra-staging-promote-20260901.yml
+          echo EXACT_INTEGRATION_SOURCE_OK
+
+      - name: Deploy to stable staging project only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          STAGING_URL=$(npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/staging-deploy.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$STAGING_URL"
+          echo "STAGING_URL=$STAGING_URL" >> "$GITHUB_ENV"
+          echo "STABLE_STAGING_DEPLOYED $STAGING_URL"
+
+      - name: Stable staging smoke and final boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {1..30}; do
+            CODE=$(curl -sS -o /tmp/home.out -w '%{http_code}' https://idogs-app-staging.vercel.app || true)
+            if [ "$CODE" = "200" ]; then break; fi
+            sleep 5
+          done
+          test "$CODE" = "200"
+          API_CODE=$(curl -sS -o /tmp/quota.out -w '%{http_code}' https://idogs-app-staging.vercel.app/api/litter-quota-summary || true)
+          test "$API_CODE" = "401"
+          test "$(git rev-parse HEAD)" = "$INTEGRATION_SHA"
+          echo "STABLE_STAGING_SHA $INTEGRATION_SHA"
+          echo 'PROJECT idogs-app-staging'
+          echo 'ALIAS https://idogs-app-staging.vercel.app'
+          echo 'EXTRA_LITTER_PAYMENT off'
+          echo 'PRODUCTION_IDOGS untouched by this workflow'
