@@ -24,8 +24,9 @@ jobs:
           set -euo pipefail
           git fetch origin fix/litter-extra-credit-ux-preview-20260901
           git checkout -B fix/litter-extra-credit-ux-preview-20260901 origin/fix/litter-extra-credit-ux-preview-20260901
-          test "$(git rev-parse HEAD)" = "28cf50ec05ee683f60c088d404a6def1cfdf2216"
+          test "$(git rev-parse HEAD)" = "2662c22ac1bded78f1e7fd3d9667830cb512afeb"
           test -z "$(git status --porcelain)"
+          test -f api/_lib/billing-reconcile.js
           test ! -e .github/workflows/litter-extra-ux-preview-20260901.yml
           echo CLEAN_BASE_OK
 
@@ -45,12 +46,12 @@ jobs:
           replace_once(
               'src/components/ExtraLitterButton.tsx',
               "interface Props {\n  toast: (msg: string, type?: ToastMessage['type']) => void\n}\n",
-              "interface Props {\n  toast: (msg: string, type?: ToastMessage['type']) => void\n  onCreateAvailabilityChange?: (allowed: boolean | null) => void\n}\n",
+              "interface Props {\n  toast: (msg: string, type?: ToastMessage['type']) => void\n  onCreateAvailabilityChange?: (allowed: boolean | null) => void\n  refreshKey?: number\n}\n",
           )
           replace_once(
               'src/components/ExtraLitterButton.tsx',
               "export default function ExtraLitterButton({ toast }: Props) {",
-              "export default function ExtraLitterButton({ toast, onCreateAvailabilityChange }: Props) {",
+              "export default function ExtraLitterButton({ toast, onCreateAvailabilityChange, refreshKey = 0 }: Props) {",
           )
           replace_once(
               'src/components/ExtraLitterButton.tsx',
@@ -70,7 +71,7 @@ jobs:
           replace_once(
               'src/components/ExtraLitterButton.tsx',
               "  }, [user])",
-              "  }, [user, onCreateAvailabilityChange])",
+              "  }, [user, onCreateAvailabilityChange, refreshKey])",
           )
           replace_once(
               'src/components/ExtraLitterButton.tsx',
@@ -91,7 +92,7 @@ jobs:
           replace_once(
               'src/pages/LittersPage.tsx',
               "          <ExtraLitterButton toast={toast} />\n          <button className=\"btn btn-primary\" onClick={() => setShowCreate(!showCreate)}>+ New litter</button>",
-              "          <ExtraLitterButton toast={toast} onCreateAvailabilityChange={setCanCreateLitterFromQuota} />\n          <button\n            className=\"btn btn-primary\"\n            onClick={() => setShowCreate(!showCreate)}\n            disabled={canCreateLitterFromQuota === false}\n            title={canCreateLitterFromQuota === false ? 'Purchase an Extra Litter credit to create another litter.' : undefined}\n          >+ New litter</button>",
+              "          <ExtraLitterButton\n            toast={toast}\n            refreshKey={litters.length}\n            onCreateAvailabilityChange={setCanCreateLitterFromQuota}\n          />\n          <button\n            className=\"btn btn-primary\"\n            onClick={() => setShowCreate(!showCreate)}\n            disabled={canCreateLitterFromQuota === false}\n            title={canCreateLitterFromQuota === false ? 'Purchase an Extra Litter credit to create another litter.' : undefined}\n          >+ New litter</button>",
           )
           replace_once(
               'src/pages/LittersPage.tsx',
@@ -102,7 +103,7 @@ jobs:
           test_path = Path('scripts/test-litter-pricing-policy.mjs')
           text = test_path.read_text()
           marker = "check('legacy first-litter empty-state wording is absent', !littersPage.includes('No litters yet') && !littersPage.includes('Create your first litter to track puppies from birth to new homes.') && !littersPage.includes('>Create first litter</button>'))\n"
-          addition = marker + "check('customer UI never exposes safe-QA checkout copy', !cta.includes('checkout disabled for safe QA') && !cta.includes('Payment is disabled until separately approved.'))\ncheck('quota summary controls litter-create availability', cta.includes('onCreateAvailabilityChange?.(allowed)') && littersPage.includes('onCreateAvailabilityChange={setCanCreateLitterFromQuota}'))\ncheck('new-litter CTAs are disabled when quota requires an Extra Litter credit', (littersPage.match(/disabled=\\{canCreateLitterFromQuota === false\\}/g) || []).length >= 2 && littersPage.includes('Purchase an Extra Litter credit to create another litter.'))\n"
+          addition = marker + "check('customer UI never exposes safe-QA checkout copy', !cta.includes('checkout disabled for safe QA') && !cta.includes('Payment is disabled until separately approved.'))\ncheck('quota summary controls litter-create availability', cta.includes('onCreateAvailabilityChange?.(allowed)') && littersPage.includes('onCreateAvailabilityChange={setCanCreateLitterFromQuota}'))\ncheck('quota summary refreshes after litter-count changes', cta.includes('refreshKey = 0') && cta.includes('[user, onCreateAvailabilityChange, refreshKey]') && littersPage.includes('refreshKey={litters.length}'))\ncheck('new-litter CTAs are disabled when quota requires an Extra Litter credit', (littersPage.match(/disabled=\\{canCreateLitterFromQuota === false\\}/g) || []).length >= 2 && littersPage.includes('Purchase an Extra Litter credit to create another litter.'))\n"
           if marker not in text:
               raise SystemExit('test-litter-pricing-policy.mjs: insertion marker not found')
           if "customer UI never exposes safe-QA checkout copy" in text:
@@ -116,6 +117,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node --check api/_lib/billing-reconcile.js
           node --check api/_lib/breeder-profile.js
           node --check api/_lib/litter-quota.js
           node --check api/_lib/extra-litter-checkout-handler.js
@@ -161,6 +163,7 @@ jobs:
           test -n "$CANDIDATE_SHA"
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain)"
+          test -f api/_lib/billing-reconcile.js
           test ! -e .github/workflows/litter-extra-ux-preview-20260901.yml
           ! grep -R "checkout disabled for safe QA" src api
           ! grep -R "QA source:" src api
