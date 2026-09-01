@@ -166,7 +166,7 @@ jobs:
           PY
 
           set +e
-          npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          npx --yes vercel@latest deploy --prebuilt --archive=tgz --prod --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
           DEPLOY_STATUS=$?
           set -e
 
