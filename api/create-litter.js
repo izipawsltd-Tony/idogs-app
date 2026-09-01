@@ -1,31 +1,4 @@
-// api/create-litter.js — trusted server-side litter creation (Codex
-// round 3, Blocker 1; hardened Codex round 4, Blocker 1; hardened Codex
-// round 5, Blocker 6).
-//
-// WHY THIS EXISTS: firestore.rules can verify a Sire/Dam reference's
-// ownership/sex/deceased/DOB-format, but has no date-arithmetic
-// functions to compute an age from a DOB string — so "meets actual
-// minimum breeding maturity" can't be enforced there. Per the explicit
-// instruction to move any mutation Rules can't fully validate to a
-// trusted server endpoint, litter creation now happens here: the Dam
-// (and Sire, if an in-account dog was selected) are re-read fresh from
-// Firestore via the Admin SDK and validated against the single canonical
-// policy in _lib/parent-eligibility.js, never trusting anything the
-// client submitted about them. firestore.rules denies direct client
-// writes to litters/{id} create entirely — this endpoint is now the
-// only path.
-//
-// Codex round 4, Blocker 1: the Dam/Sire reads and the litter write now
-// happen inside ONE db.runTransaction — see that round's own note on why
-// a plain get()-then-set() sequence has a stale-read race window a
-// transaction closes.
-//
-// Codex round 5, Blocker 6: name/sireName/notes/dates are now validated
-// through api/_lib/litter-schema.js — an explicit field allowlist
-// (unknown keys rejected outright) plus real calendar-date and length
-// checks, rather than the previous `field || ''` fallbacks that accepted
-// any string (including an impossible or future-dated actualBirthDate)
-// as long as the client's own UI happened not to send one.
+// api/create-litter.js — trusted server-side litter creation.
 //
 // POST /api/create-litter
 // Headers: Authorization: Bearer <Firebase ID token>
@@ -40,8 +13,10 @@ import { validateBreedingParent } from './_lib/parent-eligibility.js'
 import { ApiError, parseJsonBody, withApiErrorHandling } from './_lib/http-helpers.js'
 import { sanitizeLitterInput, LitterValidationError, CREATE_FIELDS } from './_lib/litter-schema.js'
 import { computeEffectivePlan, hasValidInternalEntitlement } from './_lib/entitlements.js'
+import { relatedTenantIdsForBreederTx } from './_lib/breeder-profile.js'
 import {
-  hasLitterWithinRollingWindow,
+  decideLitterQuotaTx,
+  consumeExtraLitterCredit,
   hasOtherUndatedPlannedLitter,
   writeLitterQuotaLedgerEntry,
   LITTER_QUOTA_BLOCK_MESSAGE,
@@ -71,9 +46,11 @@ async function handler(req, res) {
   }
 
   let uid
+  let authEmail = ''
   try {
     const decoded = await getAuth().verifyIdToken(idToken)
     uid = decoded.uid
+    authEmail = typeof decoded.email === 'string' ? decoded.email : ''
   } catch {
     throw new ApiError(401, 'Invalid or expired token')
   }
@@ -84,9 +61,6 @@ async function handler(req, res) {
   if (!damId || typeof damId !== 'string') {
     throw new ApiError(400, 'damId is required')
   }
-  // Codex Medium item: a client omitting the sire safely sends `sireId:
-  // null` (e.g. JSON.stringify of an unset form field), not `undefined` —
-  // treat both the same as "no sire", not a validation error.
   if (sireId !== undefined && sireId !== null && typeof sireId !== 'string') {
     throw new ApiError(400, 'sireId must be a string')
   }
@@ -107,12 +81,7 @@ async function handler(req, res) {
   const litterRef = db.collection('litters').doc()
 
   const result = await db.runTransaction(async (tx) => {
-    // Reads must precede writes in a transaction — both parent reads
-    // happen first, then validation, then (only if both pass) the
-    // single write. If either read's document changes before this
-    // transaction commits, Firestore retries this whole callback
-    // against the fresh state rather than committing against data
-    // that was true a moment ago but no longer is.
+    // All reads intentionally precede every write.
     const damSnap = await tx.get(damRef)
     const sireSnap = sireRef ? await tx.get(sireRef) : null
 
@@ -127,11 +96,6 @@ async function handler(req, res) {
       }
     }
 
-    // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md §1.1/§3.4/§4.1,
-    // LOCKED): Free has 0 litter allowance; Plus is capped at one
-    // whelped litter per rolling 365 days, plus at most one un-dated
-    // planned litter at a time. All reads happen here, before the single
-    // write below, per transaction rules.
     const userSnap = await tx.get(db.collection('users').doc(uid))
     const profile = userSnap.exists ? userSnap.data() : {}
     const plan = computeEffectivePlan(profile)
@@ -139,34 +103,43 @@ async function handler(req, res) {
       return { ok: false, status: 403, body: { error: LITTER_PLAN_GATE_MESSAGE, reason: 'LITTER_PLAN_GATE' } }
     }
 
-    // Super Admin fix round: a verified internal entitlement bypasses the
-    // rolling-window/one-planned-litter limits entirely (QA needs to
-    // create more than one test litter without waiting a year) — it does
-    // NOT bypass the plan gate above, which internalEntitlement already
-    // satisfies via computeEffectivePlan() resolving to 'plus'. The
-    // ledger entry is still written below for a dated litter either way,
-    // so historical quota accounting stays accurate even if the override
-    // is later revoked.
+    // Breeder Profile is the quota owner. Breeder ID is strongest;
+    // phone/email are fallbacks; uid is only the final fallback.
+    const breederScope = await relatedTenantIdsForBreederTx(tx, db, { uid, profile, authEmail })
     const isUnlimited = hasValidInternalEntitlement(profile)
-
     const whelpingDate = safeFields.actualBirthDate || ''
+    const nowIso = new Date().toISOString()
+    let quotaDecision = null
+
     if (whelpingDate) {
       if (!isUnlimited) {
-        const withinWindow = await hasLitterWithinRollingWindow(tx, db, uid, whelpingDate)
-        if (withinWindow) {
+        quotaDecision = await decideLitterQuotaTx(tx, db, {
+          breederProfileId: breederScope.breederProfileId,
+          tenantIds: breederScope.tenantIds,
+          purchasedByUid: uid,
+          newDate: whelpingDate,
+        })
+        if (!quotaDecision.allowed) {
           return { ok: false, status: 409, body: { error: LITTER_QUOTA_BLOCK_MESSAGE, reason: 'LITTER_QUOTA_EXCEEDED' } }
         }
       }
     } else if (!isUnlimited) {
-      const hasPlanned = await hasOtherUndatedPlannedLitter(tx, db, uid)
+      const hasPlanned = await hasOtherUndatedPlannedLitter(tx, db, breederScope.tenantIds)
       if (hasPlanned) {
         return { ok: false, status: 409, body: { error: LITTER_PLANNED_DUPLICATE_MESSAGE, reason: 'LITTER_PLANNED_DUPLICATE' } }
       }
     }
 
     const dam = damSnap.data()
+
+    // No transaction reads after this point.
+    if (quotaDecision?.credit) {
+      consumeExtraLitterCredit(tx, quotaDecision.credit, { litterId: litterRef.id, consumedAt: nowIso })
+    }
+
     tx.set(litterRef, {
       tenantId: uid,
+      breederProfileId: breederScope.breederProfileId,
       name: safeFields.name?.trim() || `${dam.name} Litter`,
       damId,
       sireId: useInAccountSire ? sireId : null,
@@ -176,10 +149,19 @@ async function handler(req, res) {
       actualBirthDate: safeFields.actualBirthDate || '',
       notes: safeFields.notes || '',
       puppyIds: [],
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     })
+
     if (whelpingDate) {
-      writeLitterQuotaLedgerEntry(tx, db, { tenantId: uid, litterId: litterRef.id, whelpingDate })
+      const quotaSource = isUnlimited ? 'internal' : quotaDecision?.quotaSource || 'included'
+      writeLitterQuotaLedgerEntry(tx, db, {
+        tenantId: uid,
+        breederProfileId: breederScope.breederProfileId,
+        litterId: litterRef.id,
+        whelpingDate,
+        quotaSource,
+        extraCreditId: quotaDecision?.credit?.id || null,
+      })
     }
     return { ok: true }
   })

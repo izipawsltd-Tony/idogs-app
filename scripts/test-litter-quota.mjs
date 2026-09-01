@@ -1,176 +1,161 @@
-// scripts/test-litter-quota.mjs — tests for api/_lib/litter-quota.js
-// (iDogs Pricing v1.1 §3.4/§4.1, LOCKED) against the in-memory Firestore
-// fake. Exercises the real exported functions.
-//
-// Usage: node scripts/test-litter-quota.mjs
-
+// Regression tests for Plus 2-litter rolling quota + one-time Extra Litter credits.
 import { makeChecker } from './_lib/test-check.mjs'
 import { createFakeFirestore } from './test-helpers/fake-firestore.mjs'
 import {
+  LITTER_INCLUDED_QUOTA,
   isWithinRollingWindow,
-  hasLitterWithinRollingWindow,
-  hasOtherUndatedPlannedLitter,
+  litterUsageWithinRollingWindow,
+  decideLitterQuotaTx,
+  consumeExtraLitterCredit,
   writeLitterQuotaLedgerEntry,
+  hasOtherUndatedPlannedLitter,
 } from '../api/_lib/litter-quota.js'
 
 const { check, checkAsync, summary } = makeChecker()
 
-// ── isWithinRollingWindow — symmetric, bidirectional (Codex H6) ──────
+check('Plus included litter limit is 2', LITTER_INCLUDED_QUOTA === 2)
+check('same date is inside rolling window', isWithinRollingWindow('2026-07-24', '2026-07-24'))
+check('365-day boundary is inclusive', isWithinRollingWindow('2025-07-24', '2026-07-24'))
+check('366 days is outside rolling window', !isWithinRollingWindow('2025-07-23', '2026-07-24'))
+check('backdating cannot evade symmetric window', isWithinRollingWindow('2027-03-01', '2027-01-10'))
 
-check('a date exactly on the new date is within the window (0 days apart)', isWithinRollingWindow('2026-07-24', '2026-07-24'))
-check('364 days before is within the window', isWithinRollingWindow('2025-07-25', '2026-07-24'))
-check('exactly 365 days before is within the window (inclusive boundary)', isWithinRollingWindow('2025-07-24', '2026-07-24'))
-check('366 days before is OUTSIDE the window', !isWithinRollingWindow('2025-07-23', '2026-07-24'))
-
-// Codex H6 regression: the existing entry being chronologically AFTER
-// the new date must conflict just as much as the reverse — backdating a
-// litter must not evade the check by exploiting direction.
-check('a date 8 days AFTER the new date conflicts (H6: symmetric, not just "preceding")', isWithinRollingWindow('2026-08-01', '2026-07-24'))
-check('364 days AFTER the new date conflicts', isWithinRollingWindow('2027-07-23', '2026-07-24'))
-check('exactly 365 days AFTER the new date conflicts (inclusive boundary, both directions)', isWithinRollingWindow('2027-07-24', '2026-07-24'))
-check('366 days AFTER the new date is OUTSIDE the window', !isWithinRollingWindow('2027-07-25', '2026-07-24'))
-
-// ── hasLitterWithinRollingWindow — reads litterQuotaLedger only ──────
-
-await checkAsync('no ledger entries -> no block', async () => {
+await checkAsync('0 recent litters -> first included litter allowed', async () => {
   const db = createFakeFirestore({})
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-07-24'))
-  return blocked === false
+  const decision = await db.runTransaction(tx => decideLitterQuotaTx(tx, db, {
+    breederProfileId: 'bp_a', tenantIds: ['u1'], purchasedByUid: 'u1', newDate: '2026-09-01',
+  }))
+  return decision.allowed && decision.quotaSource === 'included' && decision.usage.includedUsed === 0
 })
 
-await checkAsync('a ledger entry 200 days earlier blocks a new litter (within the rolling window)', async () => {
+await checkAsync('1 recent included litter -> second included litter allowed', async () => {
+  const db = createFakeFirestore({ litterQuotaLedger: {
+    e1: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l1', whelpingDate: '2026-03-01', quotaSource: 'included' },
+  } })
+  const decision = await db.runTransaction(tx => decideLitterQuotaTx(tx, db, {
+    breederProfileId: 'bp_a', tenantIds: ['u1'], purchasedByUid: 'u1', newDate: '2026-09-01',
+  }))
+  return decision.allowed && decision.quotaSource === 'included' && decision.usage.includedUsed === 1
+})
+
+await checkAsync('2 recent included litters -> third blocked without credit', async () => {
+  const db = createFakeFirestore({ litterQuotaLedger: {
+    e1: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l1', whelpingDate: '2026-02-01', quotaSource: 'included' },
+    e2: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l2', whelpingDate: '2026-05-01', quotaSource: 'included' },
+  } })
+  const decision = await db.runTransaction(tx => decideLitterQuotaTx(tx, db, {
+    breederProfileId: 'bp_a', tenantIds: ['u1'], purchasedByUid: 'u1', newDate: '2026-09-01',
+  }))
+  return !decision.allowed && decision.usage.includedUsed === 2
+})
+
+await checkAsync('available A$39 credit allows third litter and is selected', async () => {
   const db = createFakeFirestore({
-    litterQuotaLedger: { e1: { tenantId: 'tenant-1', litterId: 'litter-old', whelpingDate: '2026-01-01' } },
+    litterQuotaLedger: {
+      e1: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l1', whelpingDate: '2026-02-01', quotaSource: 'included' },
+      e2: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l2', whelpingDate: '2026-05-01', quotaSource: 'included' },
+    },
+    litterQuotaCredits: {
+      cs_1: { breederProfileId: 'bp_a', purchasedByUid: 'u1', status: 'available', purchasedAt: '2026-08-31T00:00:00.000Z' },
+    },
   })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-07-24'))
-  return blocked === true
+  const decision = await db.runTransaction(tx => decideLitterQuotaTx(tx, db, {
+    breederProfileId: 'bp_a', tenantIds: ['u1'], purchasedByUid: 'u1', newDate: '2026-09-01',
+  }))
+  return decision.allowed && decision.quotaSource === 'extra' && decision.credit?.id === 'cs_1'
 })
 
-await checkAsync('a ledger entry 400 days earlier does NOT block (outside the rolling window)', async () => {
+await checkAsync('credit consumption + extra ledger are atomic from caller perspective', async () => {
   const db = createFakeFirestore({
-    litterQuotaLedger: { e1: { tenantId: 'tenant-1', litterId: 'litter-old', whelpingDate: '2024-06-01' } },
+    litterQuotaLedger: {
+      e1: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l1', whelpingDate: '2026-02-01', quotaSource: 'included' },
+      e2: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l2', whelpingDate: '2026-05-01', quotaSource: 'included' },
+    },
+    litterQuotaCredits: {
+      cs_1: { breederProfileId: 'bp_a', purchasedByUid: 'u1', status: 'available', purchasedAt: '2026-08-31T00:00:00.000Z' },
+    },
   })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-07-24'))
-  return blocked === false
-})
-
-await checkAsync('Codex H6 regression: BACKDATING — a litter recorded with a LATER date first still blocks a subsequently-added EARLIER date within 365 days, regardless of creation order', async () => {
-  const db = createFakeFirestore({
-    // The ledger entry's whelpingDate (2027-03-01) is chronologically
-    // AFTER the new litter being checked (2027-01-10) — exactly the
-    // direction the pre-fix one-directional check missed.
-    litterQuotaLedger: { e1: { tenantId: 'tenant-1', litterId: 'litter-later', whelpingDate: '2027-03-01' } },
-  })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2027-01-10'))
-  return blocked === true
-})
-
-await checkAsync('a ledger entry belonging to a DIFFERENT tenant never blocks (tenant isolation)', async () => {
-  const db = createFakeFirestore({
-    litterQuotaLedger: { e1: { tenantId: 'someone-else', litterId: 'litter-x', whelpingDate: '2026-07-01' } },
-  })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-07-24'))
-  return blocked === false
-})
-
-// ── Tombstone: a ledger entry survives its litter being hard-deleted —
-// the whole point of decoupling quota from the live litters collection.
-await checkAsync('deleting the underlying litter document does not remove its ledger entry — quota still enforced (tombstone)', async () => {
-  const db = createFakeFirestore({})
   await db.runTransaction(async tx => {
-    writeLitterQuotaLedgerEntry(tx, db, { tenantId: 'tenant-1', litterId: 'litter-1', whelpingDate: '2026-06-01' })
+    const decision = await decideLitterQuotaTx(tx, db, {
+      breederProfileId: 'bp_a', tenantIds: ['u1'], purchasedByUid: 'u1', newDate: '2026-09-01',
+    })
+    if (!decision.allowed || !decision.credit) throw new Error('expected credit')
+    consumeExtraLitterCredit(tx, decision.credit, { litterId: 'l3', consumedAt: '2026-09-01T00:00:00.000Z' })
+    writeLitterQuotaLedgerEntry(tx, db, {
+      tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l3', whelpingDate: '2026-09-01', quotaSource: 'extra', extraCreditId: decision.credit.id,
+    })
   })
-  // Simulate api/delete-litter.js hard-deleting the litter document — the
-  // ledger is a SEPARATE collection this fake never had a litters/litter-1
-  // doc in to begin with, so this proves the ledger check works with no
-  // dependency on the litter document existing at all.
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
-  return blocked === true
+  const credit = db._dump('litterQuotaCredits').cs_1
+  const ledger = Object.values(db._dump('litterQuotaLedger')).find(x => x.litterId === 'l3')
+  return credit.status === 'consumed' && credit.consumedByLitterId === 'l3' && ledger?.quotaSource === 'extra' && ledger?.extraCreditId === 'cs_1'
 })
 
-// ── Codex H7: pre-ledger historical litters must still count ─────────
-
-await checkAsync('a HISTORICAL litter (dated, live document, NO ledger entry — created before this quota system existed) blocks a new litter within its window', async () => {
+await checkAsync('one consumed credit cannot fund a fourth litter', async () => {
   const db = createFakeFirestore({
-    litters: { legacyLitter: { tenantId: 'tenant-1', actualBirthDate: '2026-06-01', archived: false } },
+    litterQuotaLedger: {
+      e1: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l1', whelpingDate: '2026-02-01', quotaSource: 'included' },
+      e2: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l2', whelpingDate: '2026-05-01', quotaSource: 'included' },
+      e3: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l3', whelpingDate: '2026-07-01', quotaSource: 'extra', extraCreditId: 'cs_1' },
+    },
+    litterQuotaCredits: {
+      cs_1: { breederProfileId: 'bp_a', purchasedByUid: 'u1', status: 'consumed', consumedByLitterId: 'l3' },
+    },
   })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
-  return blocked === true
+  const decision = await db.runTransaction(tx => decideLitterQuotaTx(tx, db, {
+    breederProfileId: 'bp_a', tenantIds: ['u1'], purchasedByUid: 'u1', newDate: '2026-09-01',
+  }))
+  return !decision.allowed && decision.usage.includedUsed === 2 && decision.usage.extraUsed === 1
 })
 
-await checkAsync('an ARCHIVED historical litter (no ledger entry) still counts — archiving must not restore quota, even for pre-ledger records', async () => {
-  const db = createFakeFirestore({
-    litters: { legacyArchived: { tenantId: 'tenant-1', actualBirthDate: '2026-06-01', archived: true } },
-  })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
-  return blocked === true
+await checkAsync('extra litter does not steal either of the two included slots', async () => {
+  const db = createFakeFirestore({ litterQuotaLedger: {
+    e1: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'l1', whelpingDate: '2026-03-01', quotaSource: 'included' },
+    e2: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'lX', whelpingDate: '2026-04-01', quotaSource: 'extra', extraCreditId: 'cs_x' },
+  } })
+  const decision = await db.runTransaction(tx => decideLitterQuotaTx(tx, db, {
+    breederProfileId: 'bp_a', tenantIds: ['u1'], purchasedByUid: 'u1', newDate: '2026-09-01',
+  }))
+  return decision.allowed && decision.quotaSource === 'included' && decision.usage.includedUsed === 1 && decision.usage.extraUsed === 1
 })
 
-await checkAsync('a historical litter outside the window (400 days) does not block', async () => {
-  const db = createFakeFirestore({
-    litters: { legacyOld: { tenantId: 'tenant-1', actualBirthDate: '2024-06-01', archived: false } },
-  })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-07-24'))
-  return blocked === false
+await checkAsync('new account with same breederProfileId sees old account ledger', async () => {
+  const db = createFakeFirestore({ litterQuotaLedger: {
+    e1: { tenantId: 'oldUid', breederProfileId: 'bp_shared', litterId: 'l1', whelpingDate: '2026-02-01', quotaSource: 'included' },
+    e2: { tenantId: 'oldUid', breederProfileId: 'bp_shared', litterId: 'l2', whelpingDate: '2026-05-01', quotaSource: 'included' },
+  } })
+  const usage = await db.runTransaction(tx => litterUsageWithinRollingWindow(tx, db, {
+    breederProfileId: 'bp_shared', tenantIds: ['newUid'], newDate: '2026-09-01',
+  }))
+  return usage.includedUsed === 2
 })
 
-await checkAsync('a historical litter belonging to a different tenant never blocks', async () => {
-  const db = createFakeFirestore({
-    litters: { otherTenant: { tenantId: 'someone-else', actualBirthDate: '2026-06-01', archived: false } },
-  })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
-  return blocked === false
+await checkAsync('legacy pre-ledger live litters still count', async () => {
+  const db = createFakeFirestore({ litters: {
+    legacy1: { tenantId: 'oldUid', actualBirthDate: '2026-02-01', archived: true },
+    legacy2: { tenantId: 'oldUid', actualBirthDate: '2026-05-01', archived: false },
+  } })
+  const usage = await db.runTransaction(tx => litterUsageWithinRollingWindow(tx, db, {
+    breederProfileId: 'bp_shared', tenantIds: ['oldUid', 'newUid'], newDate: '2026-09-01',
+  }))
+  return usage.includedUsed === 2
 })
 
-await checkAsync('excludeLitterId excludes a litter from the live-collection fallback scan too (self-check during activation)', async () => {
-  const db = createFakeFirestore({
-    litters: { self: { tenantId: 'tenant-1', actualBirthDate: '2026-06-01', archived: false } },
-  })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01', 'self'))
-  return blocked === false
+await checkAsync('litter outside 365-day window releases included capacity', async () => {
+  const db = createFakeFirestore({ litterQuotaLedger: {
+    old: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'old', whelpingDate: '2025-08-30', quotaSource: 'included' },
+    recent: { tenantId: 'u1', breederProfileId: 'bp_a', litterId: 'recent', whelpingDate: '2026-06-01', quotaSource: 'included' },
+  } })
+  const usage = await db.runTransaction(tx => litterUsageWithinRollingWindow(tx, db, {
+    breederProfileId: 'bp_a', tenantIds: ['u1'], newDate: '2026-09-01',
+  }))
+  return usage.includedUsed === 1
 })
 
-await checkAsync('a ledger-backed litter is not double-scanned into a false negative — still blocks correctly when also present live', async () => {
-  const db = createFakeFirestore({
-    litterQuotaLedger: { e1: { tenantId: 'tenant-1', litterId: 'litter-1', whelpingDate: '2026-06-01' } },
-    litters: { 'litter-1': { tenantId: 'tenant-1', actualBirthDate: '2026-06-01', archived: false } },
-  })
-  const blocked = await db.runTransaction(tx => hasLitterWithinRollingWindow(tx, db, 'tenant-1', '2026-08-01'))
-  return blocked === true
-})
-
-// ── hasOtherUndatedPlannedLitter — §4.1, live `litters` collection ────
-
-await checkAsync('one un-dated planned litter blocks a second planned litter for the same tenant', async () => {
-  const db = createFakeFirestore({
-    litters: { planned1: { tenantId: 'tenant-1', actualBirthDate: '' } },
-  })
-  const hasPlanned = await db.runTransaction(tx => hasOtherUndatedPlannedLitter(tx, db, 'tenant-1'))
-  return hasPlanned === true
-})
-
-await checkAsync('an ACTIVATED litter (actualBirthDate set) does not count as a "planned" duplicate', async () => {
-  const db = createFakeFirestore({
-    litters: { dated1: { tenantId: 'tenant-1', actualBirthDate: '2026-01-01' } },
-  })
-  const hasPlanned = await db.runTransaction(tx => hasOtherUndatedPlannedLitter(tx, db, 'tenant-1'))
-  return hasPlanned === false
-})
-
-await checkAsync('an ARCHIVED un-dated litter does not block a new planned litter', async () => {
-  const db = createFakeFirestore({
-    litters: { archivedPlanned: { tenantId: 'tenant-1', actualBirthDate: '', archived: true } },
-  })
-  const hasPlanned = await db.runTransaction(tx => hasOtherUndatedPlannedLitter(tx, db, 'tenant-1'))
-  return hasPlanned === false
-})
-
-await checkAsync('excludeLitterId lets a litter re-check itself without self-blocking', async () => {
-  const db = createFakeFirestore({
-    litters: { self: { tenantId: 'tenant-1', actualBirthDate: '' } },
-  })
-  const hasPlanned = await db.runTransaction(tx => hasOtherUndatedPlannedLitter(tx, db, 'tenant-1', 'self'))
-  return hasPlanned === false
+await checkAsync('planned litter cap spans related tenant UIDs', async () => {
+  const db = createFakeFirestore({ litters: {
+    planned: { tenantId: 'oldUid', actualBirthDate: '', archived: false },
+  } })
+  const hit = await db.runTransaction(tx => hasOtherUndatedPlannedLitter(tx, db, ['oldUid', 'newUid']))
+  return hit === true
 })
 
 await summary()
