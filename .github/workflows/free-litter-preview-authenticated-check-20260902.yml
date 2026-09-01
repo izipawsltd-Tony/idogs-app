@@ -19,7 +19,6 @@ jobs:
       PREVIEW_URL: https://idogs-app-staging-lql9mck3d-izipawsltd-tonys-projects.vercel.app
       STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
-      VERCEL_SCOPE: izipawsltd-tonys-projects
 
     steps:
       - name: Checkout exact candidate
@@ -43,7 +42,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
-          npx --yes vercel@latest --scope="$VERCEL_SCOPE" --no-color curl "$PREVIEW_URL/" > /tmp/index.html
+          npx --yes vercel@latest curl "$PREVIEW_URL/" > /tmp/index.html
           python3 - <<'PY'
           from pathlib import Path
           import re, subprocess, os, sys
@@ -54,12 +53,11 @@ jobs:
               print(html[:300].replace('\n',' '))
               raise SystemExit('JS_ASSETS_NONE_AUTHENTICATED')
           base=os.environ['PREVIEW_URL']
-          scope=os.environ['VERCEL_SCOPE']
           combined=b''
           for i,a in enumerate(assets):
               out=f'/tmp/asset-{i}.js'
               with open(out,'wb') as f:
-                  p=subprocess.run(['npx','--yes','vercel@latest','--scope='+scope,'--no-color','curl',base+a],stdout=f,stderr=subprocess.PIPE,env=os.environ.copy())
+                  p=subprocess.run(['npx','--yes','vercel@latest','curl',base+a],stdout=f,stderr=subprocess.PIPE,env=os.environ.copy())
               if p.returncode:
                   sys.stderr.write(p.stderr.decode(errors='replace'))
                   raise SystemExit(p.returncode)
