@@ -25,59 +25,62 @@ jobs:
           printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
           echo PROJECT_CLASS=stable-staging
 
-      - name: Pull env read-only and classify without exposing values
+      - name: Pull env read-only and classify escaped patterns
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
-          if ! npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/staging-pull.log 2>&1; then
-            echo VERCEL_PULL_CLASS=failed
-            sed -E 's/(token|secret|key|password)=[^ ]+/\1=[REDACTED]/Ig' /tmp/staging-pull.log | tail -20
-            exit 1
-          fi
-          echo VERCEL_PULL_CLASS=success
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/staging-pull.log 2>&1
           ENV_FILE=.vercel/.env.production.local
-          if [ ! -f "$ENV_FILE" ]; then echo ENV_FILE_CLASS=missing; exit 1; fi
+          test -f "$ENV_FILE"
+          echo VERCEL_PULL_CLASS=success
           echo ENV_FILE_CLASS=present
 
-          classify_value() {
-            local key="$1" raw
-            raw=$(grep -E "^${key}=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true)
-            raw=${raw#\"}; raw=${raw%\"}
-            raw=${raw#\'}; raw=${raw%\'}
-            printf '%s' "$raw"
-          }
+          line_for() { grep -E "^$1=" "$ENV_FILE" | tail -1 || true; }
 
-          firebase=$(classify_value FIREBASE_PROJECT_ID)
-          case "$firebase" in
-            idogs-app-staging) echo FIREBASE_PROJECT_ID_CLASS=staging ;;
-            idogs-app) echo FIREBASE_PROJECT_ID_CLASS=production ;;
-            '') echo FIREBASE_PROJECT_ID_CLASS=missing ;;
-            *) echo FIREBASE_PROJECT_ID_CLASS=other ;;
-          esac
+          firebase_line=$(line_for FIREBASE_PROJECT_ID)
+          if [ -z "$firebase_line" ]; then
+            echo FIREBASE_PROJECT_ID_CLASS=missing
+          elif printf '%s' "$firebase_line" | grep -Fq 'idogs-app-staging'; then
+            echo FIREBASE_PROJECT_ID_CLASS=staging
+          elif printf '%s' "$firebase_line" | grep -Eq 'idogs-app([^a-zA-Z0-9_-]|$)'; then
+            echo FIREBASE_PROJECT_ID_CLASS=production
+          else
+            echo FIREBASE_PROJECT_ID_CLASS=other
+          fi
 
-          extra=$(classify_value EXTRA_LITTER_CHECKOUT_ENABLED | tr '[:upper:]' '[:lower:]')
-          case "$extra" in
-            true) echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=true ;;
-            false) echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=false ;;
-            '') echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=missing ;;
-            *) echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=other ;;
-          esac
+          extra_line=$(line_for EXTRA_LITTER_CHECKOUT_ENABLED)
+          if [ -z "$extra_line" ]; then
+            echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=missing
+          elif printf '%s' "$extra_line" | grep -Eiq '=(["'"']?)(true)(\\n)?\1$'; then
+            echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=true
+          elif printf '%s' "$extra_line" | grep -Eiq '=(["'"']?)(false)(\\n)?\1$'; then
+            echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=false
+          else
+            echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=other
+          fi
 
-          stripe=$(classify_value STRIPE_SECRET_KEY)
-          case "$stripe" in
-            sk_test_*) echo STRIPE_SECRET_KEY_CLASS=test ;;
-            sk_live_*) echo STRIPE_SECRET_KEY_CLASS=live ;;
-            '') echo STRIPE_SECRET_KEY_CLASS=missing ;;
-            *) echo STRIPE_SECRET_KEY_CLASS=other ;;
-          esac
+          stripe_line=$(line_for STRIPE_SECRET_KEY)
+          if [ -z "$stripe_line" ]; then
+            echo STRIPE_SECRET_KEY_CLASS=missing
+          elif printf '%s' "$stripe_line" | grep -Fq 'sk_test_'; then
+            echo STRIPE_SECRET_KEY_CLASS=test
+          elif printf '%s' "$stripe_line" | grep -Fq 'sk_live_'; then
+            echo STRIPE_SECRET_KEY_CLASS=live
+          else
+            echo STRIPE_SECRET_KEY_CLASS=other
+          fi
 
-          app=$(classify_value APP_URL)
-          case "$app" in
-            https://idogs-app-staging.vercel.app|https://idogs-app-staging.vercel.app/) echo APP_URL_CLASS=stable-staging ;;
-            '') echo APP_URL_CLASS=missing ;;
-            *) echo APP_URL_CLASS=other ;;
-          esac
+          app_line=$(line_for APP_URL)
+          if [ -z "$app_line" ]; then
+            echo APP_URL_CLASS=missing
+          elif printf '%s' "$app_line" | grep -Fq 'idogs-app-staging.vercel.app'; then
+            echo APP_URL_CLASS=stable-staging
+          elif printf '%s' "$app_line" | grep -Fq 'idogs.com.au'; then
+            echo APP_URL_CLASS=production
+          else
+            echo APP_URL_CLASS=other
+          fi
 
           echo DIAGNOSTIC_READ_ONLY=PASS
