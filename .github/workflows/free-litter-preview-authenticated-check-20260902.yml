@@ -1,0 +1,80 @@
+name: Free Litter Preview Authenticated Check 20260902
+
+on:
+  push:
+    branches:
+      - automation/free-litter-preview-20260902
+    paths:
+      - .github/workflows/free-litter-preview-authenticated-check-20260902.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-protected-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CANDIDATE_SHA: a5cb3105f10b3653d30cdd8b1d08fdaed57eac6f
+      PREVIEW_URL: https://idogs-app-staging-lql9mck3d-izipawsltd-tonys-projects.vercel.app
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: a5cb3105f10b3653d30cdd8b1d08fdaed57eac6f
+          fetch-depth: 1
+
+      - name: Lock exact source and staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          echo SOURCE_AND_PROJECT_LOCK=PASS
+
+      - name: Fetch protected Preview via Vercel auth and verify bundle
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest curl "$PREVIEW_URL/" --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/index.html
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess, os, sys
+          html=Path('/tmp/index.html').read_text(errors='replace')
+          assets=sorted(set(re.findall(r'/assets/[^"\']+\.js', html)))
+          print('JS_ASSET_COUNT=' + str(len(assets)))
+          if not assets:
+              print(html[:300].replace('\n',' '))
+              raise SystemExit('JS_ASSETS_NONE_AUTHENTICATED')
+          base=os.environ['PREVIEW_URL']
+          token=os.environ['VERCEL_TOKEN']
+          scope=os.environ['VERCEL_SCOPE']
+          combined=b''
+          for i,a in enumerate(assets):
+              out=f'/tmp/asset-{i}.js'
+              with open(out,'wb') as f:
+                  p=subprocess.run(['npx','--yes','vercel@latest','curl',base+a,'--token='+token,'--scope='+scope,'--no-color'],stdout=f,stderr=subprocess.PIPE)
+              if p.returncode:
+                  sys.stderr.write(p.stderr.decode(errors='replace'))
+                  raise SystemExit(p.returncode)
+              data=Path(out).read_bytes()
+              combined += data
+              print(f'ASSET_{i}={a} BYTES={len(data)}')
+          if b'[SENSITIVE]' in combined:
+              raise SystemExit('BUNDLE_SENSITIVE_PLACEHOLDER_FOUND')
+          print('BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT')
+          text=combined.decode('utf-8', errors='ignore')
+          hosts=sorted(set(re.findall(r'[A-Za-z0-9.-]+\.firebaseapp\.com', text)))
+          print('FIREBASE_AUTH_DOMAINS=' + (','.join(hosts) if hosts else 'NONE'))
+          if 'idogs-app-staging.firebaseapp.com' not in hosts:
+              raise SystemExit('WRONG_FIREBASE_AUTH_DOMAIN')
+          print('FIREBASE_STAGING_TARGET=PASS')
+          PY
+          echo PROTECTED_PREVIEW_BUNDLE_CHECK=PASS
