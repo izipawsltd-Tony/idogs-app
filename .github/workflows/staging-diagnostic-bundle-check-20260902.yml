@@ -1,0 +1,50 @@
+name: Stable Staging Diagnostic Bundle Check 20260902
+
+on:
+  push:
+    branches:
+      - automation/staging-email-verification-diagnostic-20260902
+    paths:
+      - .github/workflows/staging-diagnostic-bundle-check-20260902.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify current stable staging bundle read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://idogs-app-staging.vercel.app'
+          curl -fsSL --retry 5 --retry-delay 2 "$BASE/" -o /tmp/index.html
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess, sys
+          base='https://idogs-app-staging.vercel.app'
+          html=Path('/tmp/index.html').read_text(errors='replace')
+          assets=sorted(set(re.findall(r'src=["\'](/assets/[^"\']+\.js)["\']', html)))
+          print('JS_ASSET_COUNT=' + str(len(assets)))
+          if not assets:
+              print('JS_ASSETS=NONE')
+              sys.exit(60)
+          combined=b''
+          for i,a in enumerate(assets):
+              out=f'/tmp/asset-{i}.js'
+              subprocess.run(['curl','-fsSL','--retry','5','--retry-delay','2',base+a,'-o',out],check=True)
+              d=Path(out).read_bytes()
+              combined += d
+              print(f'ASSET_{i}={a} BYTES={len(d)}')
+          sensitive = b'[SENSITIVE]' in combined
+          staging_domain = b'idogs-app-staging.firebaseapp.com' in combined
+          marker = (b'unknown_error' in combined or b'Failed to resend verification email' in combined or b'Verification email sent' in combined)
+          print('BUNDLE_SENSITIVE_PLACEHOLDER=' + ('FOUND' if sensitive else 'ABSENT'))
+          print('FIREBASE_STAGING_DOMAIN=' + ('PASS' if staging_domain else 'FAIL'))
+          print('VERIFY_DIAGNOSTIC_MARKER=' + ('PASS' if marker else 'FAIL'))
+          if sensitive: sys.exit(61)
+          if not staging_domain: sys.exit(62)
+          if not marker: sys.exit(63)
+          print('DIAGNOSTIC_BUNDLE_CHECK=PASS')
+          PY
