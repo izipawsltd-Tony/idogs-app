@@ -25,6 +25,52 @@ function todayUtc() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function tenantRelation(tenantId, uid, relatedTenantIds) {
+  if (!tenantId) return 'unknown'
+  if (tenantId === uid) return 'current-account'
+  if (relatedTenantIds.includes(tenantId)) return 'related-account'
+  return 'outside-scope'
+}
+
+async function buildPreviewDiagnostic(tx, db, { usage, breederScope, uid }) {
+  if (process.env.VERCEL_ENV !== 'preview') return undefined
+
+  const entries = []
+  for (const entry of usage.entries) {
+    let liveState = 'missing'
+    let relation = 'unknown'
+
+    if (entry.litterId) {
+      const liveSnap = await tx.get(db.collection('litters').doc(entry.litterId))
+      if (liveSnap.exists) {
+        const live = liveSnap.data() || {}
+        liveState = live.archived ? 'archived' : 'live'
+        relation = tenantRelation(live.tenantId, uid, breederScope.tenantIds)
+      } else {
+        const ledgerSnap = await tx.get(db.collection('litterQuotaLedger').where('litterId', '==', entry.litterId))
+        if (!ledgerSnap.empty) {
+          liveState = 'ledger-only'
+          relation = tenantRelation((ledgerSnap.docs[0].data() || {}).tenantId, uid, breederScope.tenantIds)
+        }
+      }
+    }
+
+    entries.push({
+      source: entry.source,
+      quotaSource: entry.quotaSource,
+      whelpingDate: entry.whelpingDate,
+      liveState,
+      relation,
+    })
+  }
+
+  return {
+    identityKind: breederScope.identityKind,
+    relatedTenantCount: breederScope.tenantIds.length,
+    entries,
+  }
+}
+
 async function handler(req, res) {
   if (req.method !== 'GET') throw new ApiError(405, 'Method not allowed')
 
@@ -58,6 +104,7 @@ async function handler(req, res) {
       breederProfileId: breederScope.breederProfileId,
       purchasedByUid: uid,
     })
+    const qaDiagnostic = await buildPreviewDiagnostic(tx, db, { usage, breederScope, uid })
 
     return {
       plan,
@@ -70,6 +117,7 @@ async function handler(req, res) {
       extraLitterPriceAud: EXTRA_LITTER_PRICE_AUD,
       checkoutEnabled: process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true',
       identityKind: breederScope.identityKind,
+      ...(qaDiagnostic ? { qaDiagnostic } : {}),
     }
   })
 
