@@ -1165,9 +1165,9 @@ export default function LittersPage({ toast, dismissAll }: Props) {
         <div className="card">
           <div className="empty-state">
             <div className="empty-state-icon">🐣</div>
-            <div className="empty-state-title">No litters yet</div>
-            <div className="empty-state-desc">Create your first litter to track puppies from birth to new homes.</div>
-            <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={() => setShowCreate(true)}>Create first litter</button>
+            <div className="empty-state-title">No litters in this account yet</div>
+            <div className="empty-state-desc">Create a litter here to start tracking puppies from birth to new homes.</div>
+            <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={() => setShowCreate(true)}>Create litter</button>
           </div>
         </div>
       ) : (

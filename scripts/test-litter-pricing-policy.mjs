@@ -13,6 +13,7 @@ const billing = fs.readFileSync(new URL('../src/pages/BillingPage.tsx', import.m
 const landing = fs.readFileSync(new URL('../src/pages/LandingPage.tsx', import.meta.url), 'utf8')
 const terms = fs.readFileSync(new URL('../src/pages/TermsPage.tsx', import.meta.url), 'utf8')
 const cta = fs.readFileSync(new URL('../src/components/ExtraLitterButton.tsx', import.meta.url), 'utf8')
+const littersPage = fs.readFileSync(new URL('../src/pages/LittersPage.tsx', import.meta.url), 'utf8')
 const checkout = fs.readFileSync(new URL('../api/_lib/extra-litter-checkout-handler.js', import.meta.url), 'utf8')
 
 check('Plus monthly policy is A$7', pricing.includes('PLUS_MONTHLY_PRICE_AUD = 7'))
@@ -34,5 +35,8 @@ check('quota UX explains breeder-profile history', cta.includes('Includes litter
 check('server blocks purchase while included slots remain', checkout.includes("code: 'INCLUDED_LITTERS_REMAIN'"))
 check('server blocks purchase while unused credit exists', checkout.includes("code: 'EXTRA_LITTER_CREDIT_AVAILABLE'"))
 check('finance gate remains opt-in only', checkout.includes("process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true'"))
+check('empty-state clarifies current-account scope', littersPage.includes('No litters in this account yet'))
+check('empty-state CTA avoids misleading first-litter wording', littersPage.includes('Create a litter here to start tracking puppies from birth to new homes.') && littersPage.includes('>Create litter</button>'))
+check('legacy first-litter empty-state wording is absent', !littersPage.includes('No litters yet') && !littersPage.includes('Create your first litter to track puppies from birth to new homes.') && !littersPage.includes('>Create first litter</button>'))
 
 await summary()
