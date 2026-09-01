@@ -1,0 +1,218 @@
+name: Litter Extra UX Preview 20260901
+
+on:
+  push:
+    branches:
+      - automation/litter-extra-ux-preview-20260901
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout automation branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout clean feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fix/litter-extra-credit-ux-preview-20260901
+          git checkout -B fix/litter-extra-credit-ux-preview-20260901 origin/fix/litter-extra-credit-ux-preview-20260901
+          test "$(git rev-parse HEAD)" = "28cf50ec05ee683f60c088d404a6def1cfdf2216"
+          test -z "$(git status --porcelain)"
+          test ! -e .github/workflows/litter-extra-ux-preview-20260901.yml
+          echo CLEAN_BASE_OK
+
+      - name: Apply UX micro-fix and regression
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, got {count}: {old[:100]!r}')
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'src/components/ExtraLitterButton.tsx',
+              "interface Props {\n  toast: (msg: string, type?: ToastMessage['type']) => void\n}\n",
+              "interface Props {\n  toast: (msg: string, type?: ToastMessage['type']) => void\n  onCreateAvailabilityChange?: (allowed: boolean | null) => void\n}\n",
+          )
+          replace_once(
+              'src/components/ExtraLitterButton.tsx',
+              "export default function ExtraLitterButton({ toast }: Props) {",
+              "export default function ExtraLitterButton({ toast, onCreateAvailabilityChange }: Props) {",
+          )
+          replace_once(
+              'src/components/ExtraLitterButton.tsx',
+              "    if (!user) {\n      setSummary(null)\n      return\n    }",
+              "    if (!user) {\n      setSummary(null)\n      onCreateAvailabilityChange?.(null)\n      return\n    }",
+          )
+          replace_once(
+              'src/components/ExtraLitterButton.tsx',
+              "        if (!cancelled && res.ok) setSummary(body as LitterQuotaSummary)",
+              "        if (!cancelled && res.ok) {\n          const parsed = body as LitterQuotaSummary\n          setSummary(parsed)\n          const used = Math.min(parsed.includedUsed, parsed.includedLimit)\n          const allowed = parsed.plan !== 'plus' || parsed.unlimited || used < parsed.includedLimit || parsed.extraCreditsAvailable > 0\n          onCreateAvailabilityChange?.(allowed)\n        } else if (!cancelled) {\n          setSummary(null)\n          onCreateAvailabilityChange?.(null)\n        }",
+          )
+          replace_once(
+              'src/components/ExtraLitterButton.tsx',
+              "      } catch {\n        if (!cancelled) setSummary(null)\n      }",
+              "      } catch {\n        if (!cancelled) {\n          setSummary(null)\n          onCreateAvailabilityChange?.(null)\n        }\n      }",
+          )
+          replace_once(
+              'src/components/ExtraLitterButton.tsx',
+              "  }, [user])",
+              "  }, [user, onCreateAvailabilityChange])",
+          )
+          replace_once(
+              'src/components/ExtraLitterButton.tsx',
+              "        disabled={disabled}\n        title={!summary.checkoutEnabled ? 'Payment is disabled until separately approved.' : undefined}\n",
+              "        disabled={disabled}\n",
+          )
+          replace_once(
+              'src/components/ExtraLitterButton.tsx',
+              "        {remainingLabel}\n        {!summary.checkoutEnabled ? ' · checkout disabled for safe QA' : ''}\n",
+              "        {remainingLabel}\n",
+          )
+
+          replace_once(
+              'src/pages/LittersPage.tsx',
+              "  const [showCreate, setShowCreate] = useState(false)\n",
+              "  const [showCreate, setShowCreate] = useState(false)\n  const [canCreateLitterFromQuota, setCanCreateLitterFromQuota] = useState<boolean | null>(null)\n",
+          )
+          replace_once(
+              'src/pages/LittersPage.tsx',
+              "          <ExtraLitterButton toast={toast} />\n          <button className=\"btn btn-primary\" onClick={() => setShowCreate(!showCreate)}>+ New litter</button>",
+              "          <ExtraLitterButton toast={toast} onCreateAvailabilityChange={setCanCreateLitterFromQuota} />\n          <button\n            className=\"btn btn-primary\"\n            onClick={() => setShowCreate(!showCreate)}\n            disabled={canCreateLitterFromQuota === false}\n            title={canCreateLitterFromQuota === false ? 'Purchase an Extra Litter credit to create another litter.' : undefined}\n          >+ New litter</button>",
+          )
+          replace_once(
+              'src/pages/LittersPage.tsx',
+              "            <button className=\"btn btn-primary\" style={{ marginTop: 8 }} onClick={() => setShowCreate(true)}>Create litter</button>",
+              "            <button\n              className=\"btn btn-primary\"\n              style={{ marginTop: 8 }}\n              onClick={() => setShowCreate(true)}\n              disabled={canCreateLitterFromQuota === false}\n              title={canCreateLitterFromQuota === false ? 'Purchase an Extra Litter credit to create another litter.' : undefined}\n            >Create litter</button>",
+          )
+
+          test_path = Path('scripts/test-litter-pricing-policy.mjs')
+          text = test_path.read_text()
+          marker = "check('legacy first-litter empty-state wording is absent', !littersPage.includes('No litters yet') && !littersPage.includes('Create your first litter to track puppies from birth to new homes.') && !littersPage.includes('>Create first litter</button>'))\n"
+          addition = marker + "check('customer UI never exposes safe-QA checkout copy', !cta.includes('checkout disabled for safe QA') && !cta.includes('Payment is disabled until separately approved.'))\ncheck('quota summary controls litter-create availability', cta.includes('onCreateAvailabilityChange?.(allowed)') && littersPage.includes('onCreateAvailabilityChange={setCanCreateLitterFromQuota}'))\ncheck('new-litter CTAs are disabled when quota requires an Extra Litter credit', (littersPage.match(/disabled=\\{canCreateLitterFromQuota === false\\}/g) || []).length >= 2 && littersPage.includes('Purchase an Extra Litter credit to create another litter.'))\n"
+          if marker not in text:
+              raise SystemExit('test-litter-pricing-policy.mjs: insertion marker not found')
+          if "customer UI never exposes safe-QA checkout copy" in text:
+              raise SystemExit('test-litter-pricing-policy.mjs: regression already present unexpectedly')
+          test_path.write_text(text.replace(marker, addition, 1))
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run feature regressions and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check api/_lib/breeder-profile.js
+          node --check api/_lib/litter-quota.js
+          node --check api/_lib/extra-litter-checkout-handler.js
+          node --check api/_lib/extra-litter-webhook.js
+          node --check api/create-litter.js
+          node --check api/update-litter.js
+          node --check api/create-extra-litter-checkout.js
+          node --check api/litter-quota-summary.js
+          node --check api/stripe-webhook.js
+          node scripts/test-breeder-profile-identity.mjs
+          node scripts/test-litter-quota.mjs
+          node scripts/test-extra-litter-checkout.mjs
+          node scripts/test-extra-litter-webhook.mjs
+          node scripts/test-litter-pricing-policy.mjs
+          node scripts/test-litter-dob-policy.mjs
+          node scripts/test-litter-create-client-dto.mjs
+          node scripts/test-internal-entitlement.mjs
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-pricing-integration-checks.mjs
+          node scripts/test-landing-pricing-ui.mjs
+          node scripts/test-sidebar-billing-sync.mjs
+          npm run build
+
+      - name: Commit candidate only after PASS
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/ExtraLitterButton.tsx src/pages/LittersPage.tsx scripts/test-litter-pricing-policy.mjs
+          git diff --cached --check
+          git commit -m "fix(litters): gate new litter CTA on extra credit"
+          git push origin HEAD:fix/litter-extra-credit-ux-preview-20260901
+          CANDIDATE_SHA=$(git rev-parse HEAD)
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
+          echo "CANDIDATE_SHA $CANDIDATE_SHA"
+
+      - name: Verify clean candidate boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test ! -e .github/workflows/litter-extra-ux-preview-20260901.yml
+          ! grep -R "checkout disabled for safe QA" src api
+          ! grep -R "QA source:" src api
+          grep -q "process.env.EXTRA_LITTER_CHECKOUT_ENABLED === 'true'" api/_lib/extra-litter-checkout-handler.js
+          echo CLEAN_CANDIDATE_OK
+
+      - name: Link exact Vercel Preview project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          cat > .vercel/project.json <<'JSON'
+          {"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}
+          JSON
+
+      - name: Pull Preview settings and enforce payment OFF
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-pull.log 2>&1
+          ENV_FILE=.vercel/.env.preview.local
+          test -f "$ENV_FILE"
+          if grep -Eq '^EXTRA_LITTER_CHECKOUT_ENABLED=("?true"?)$' "$ENV_FILE"; then
+            echo 'FAIL: Preview Extra Litter payment gate is enabled'
+            exit 1
+          fi
+          echo PREVIEW_PAYMENT_OFF_OK
+
+      - name: Deploy exact candidate to Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          PREVIEW_URL=$(npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects 2>&1 | tee /tmp/vercel-preview.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PREVIEW_URL"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_READY $PREVIEW_URL"
+
+      - name: Final safety boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -n "$PREVIEW_URL"
+          echo "FINAL_SHA $CANDIDATE_SHA"
+          echo 'TARGET preview'
+          echo 'PAYMENT_GATE off'
+          echo 'NO_PRODUCTION_DEPLOY'
+          echo 'NO_ENV_WRITE'
+          echo 'NO_STRIPE_WRITE'
