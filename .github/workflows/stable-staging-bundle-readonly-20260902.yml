@@ -1,0 +1,41 @@
+name: Stable staging bundle read-only check
+
+on:
+  push:
+    branches:
+      - diag/email-verification-error-20260902
+    paths:
+      - .github/workflows/stable-staging-bundle-readonly-20260902.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-live-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch current stable staging and reject Sensitive placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://idogs-app-staging.vercel.app'
+          curl -fsSL --retry 5 --retry-delay 2 "$BASE/" -o /tmp/index.html
+          python3 - <<'PY'
+          import pathlib, re, subprocess, sys
+          base = 'https://idogs-app-staging.vercel.app'
+          html = pathlib.Path('/tmp/index.html').read_text(errors='replace')
+          assets = sorted(set(re.findall(r'/assets/[^"\']+\.js', html)))
+          print(f'JS_ASSET_COUNT={len(assets)}')
+          if not assets:
+              print('JS_ASSETS=NONE')
+              sys.exit(2)
+          for i, asset in enumerate(assets):
+              out = pathlib.Path(f'/tmp/asset-{i}.js')
+              subprocess.run(['curl','-fsSL','--retry','5','--retry-delay','2',base + asset,'-o',str(out)], check=True)
+              data = out.read_bytes()
+              print(f'ASSET_{i}={asset} BYTES={len(data)}')
+              if b'[SENSITIVE]' in data:
+                  print('BUNDLE_SENSITIVE_PLACEHOLDER=FOUND')
+                  sys.exit(3)
+          print('BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT')
+          PY
