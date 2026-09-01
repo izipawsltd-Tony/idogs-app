@@ -103,9 +103,9 @@ check(
 // ── §3.4/§4.1 Litter quota wired into BOTH create and activate-on-update paths ──
 
 check('create-litter.js gates Free accounts (0 litter allowance) before any write', createLitterSource.includes('LITTER_PLAN_GATE_MESSAGE'))
-check('create-litter.js enforces the rolling-window check against the immutable ledger, not the live litters collection', createLitterSource.includes('hasLitterWithinRollingWindow(tx, db, uid, whelpingDate)'))
+check('create-litter.js enforces Breeder Profile rolling-window quota via the shared 2-litter/credit decision and permanent ledger', createLitterSource.includes('decideLitterQuotaTx(tx, db, {') && createLitterSource.includes('writeLitterQuotaLedgerEntry(tx, db, {'))
 check('update-litter.js locks actualBirthDate once activated — no re-dating evasion path', updateLitterSource.includes('LITTER_DATE_LOCKED_MESSAGE'))
-check('update-litter.js re-runs the SAME rolling-window check on first-time activation via update (not just at create), self-excluded (Codex H7)', updateLitterSource.includes('hasLitterWithinRollingWindow(tx, db, uid, safePatch.actualBirthDate, litterId)'))
+check('update-litter.js re-runs the SAME Breeder Profile quota decision on first-time activation via update, self-excluded', updateLitterSource.includes('decideLitterQuotaTx(tx, db, {') && updateLitterSource.includes('excludeLitterId: litterId') && updateLitterSource.includes('writeLitterQuotaLedgerEntry(tx, db, {'))
 
 // ── Dog creation is server-enforced and cap-aware; never blocked (Codex H2) ──
 
