@@ -1,0 +1,83 @@
+name: Stable Staging Env Diagnostic 20260901
+
+on:
+  push:
+    branches:
+      - automation/staging-env-diagnostic-20260901
+
+jobs:
+  classify-staging-env:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact integration candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 0d862888c17dafc3311ae2d8127f199fb6fe9945
+          fetch-depth: 1
+
+      - name: Link stable staging project only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "0d862888c17dafc3311ae2d8127f199fb6fe9945"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          echo PROJECT_CLASS=stable-staging
+
+      - name: Pull env read-only and classify without exposing values
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/staging-pull.log 2>&1; then
+            echo VERCEL_PULL_CLASS=failed
+            sed -E 's/(token|secret|key|password)=[^ ]+/\1=[REDACTED]/Ig' /tmp/staging-pull.log | tail -20
+            exit 1
+          fi
+          echo VERCEL_PULL_CLASS=success
+          ENV_FILE=.vercel/.env.production.local
+          if [ ! -f "$ENV_FILE" ]; then echo ENV_FILE_CLASS=missing; exit 1; fi
+          echo ENV_FILE_CLASS=present
+
+          classify_value() {
+            local key="$1" raw
+            raw=$(grep -E "^${key}=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true)
+            raw=${raw#\"}; raw=${raw%\"}
+            raw=${raw#\'}; raw=${raw%\'}
+            printf '%s' "$raw"
+          }
+
+          firebase=$(classify_value FIREBASE_PROJECT_ID)
+          case "$firebase" in
+            idogs-app-staging) echo FIREBASE_PROJECT_ID_CLASS=staging ;;
+            idogs-app) echo FIREBASE_PROJECT_ID_CLASS=production ;;
+            '') echo FIREBASE_PROJECT_ID_CLASS=missing ;;
+            *) echo FIREBASE_PROJECT_ID_CLASS=other ;;
+          esac
+
+          extra=$(classify_value EXTRA_LITTER_CHECKOUT_ENABLED | tr '[:upper:]' '[:lower:]')
+          case "$extra" in
+            true) echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=true ;;
+            false) echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=false ;;
+            '') echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=missing ;;
+            *) echo EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=other ;;
+          esac
+
+          stripe=$(classify_value STRIPE_SECRET_KEY)
+          case "$stripe" in
+            sk_test_*) echo STRIPE_SECRET_KEY_CLASS=test ;;
+            sk_live_*) echo STRIPE_SECRET_KEY_CLASS=live ;;
+            '') echo STRIPE_SECRET_KEY_CLASS=missing ;;
+            *) echo STRIPE_SECRET_KEY_CLASS=other ;;
+          esac
+
+          app=$(classify_value APP_URL)
+          case "$app" in
+            https://idogs-app-staging.vercel.app|https://idogs-app-staging.vercel.app/) echo APP_URL_CLASS=stable-staging ;;
+            '') echo APP_URL_CLASS=missing ;;
+            *) echo APP_URL_CLASS=other ;;
+          esac
+
+          echo DIAGNOSTIC_READ_ONLY=PASS
