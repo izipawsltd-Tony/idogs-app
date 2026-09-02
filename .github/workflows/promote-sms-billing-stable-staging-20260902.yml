@@ -1,0 +1,144 @@
+name: Promote SMS Billing Stable Staging 20260902
+
+on:
+  push:
+    branches:
+      - automation/promote-sms-billing-stable-staging-20260902
+
+permissions:
+  contents: read
+
+jobs:
+  promote-stable-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CANDIDATE_SHA: 5b5f43205f4d0fd2f082270bea3b4eb062c4485c
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+    steps:
+      - name: Checkout exact approved candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 2
+
+      - name: Verify exact candidate and clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD~1)" = "a792f762331684bbea5596b83996a41825aa9232"
+          changed=$(git diff --name-only HEAD~1..HEAD)
+          test "$changed" = 'src/pages/BillingPage.tsx'
+          git diff --check HEAD~1..HEAD
+          echo APPROVED_CANDIDATE_LOCK=PASS
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Re-run billing regression and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-stripe-mode-routing.mjs
+          npm run build
+          echo STABLE_STAGING_PREPROMOTE_TESTS=PASS
+
+      - name: Hard-lock Vercel staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('STAGING_PROJECT_LOCK=PASS')
+          PY
+
+      - name: Pull stable-staging environment and enforce financial safety
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          vals={}
+          for p in Path('.vercel').glob('.env.*.local'):
+              for raw in p.read_text(errors='replace').splitlines():
+                  line=raw.strip()
+                  if not line or line.startswith('#') or '=' not in line:
+                      continue
+                  k,v=line.split('=',1)
+                  v=v.strip()
+                  if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"):
+                      v=v[1:-1]
+                  vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
+          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
+              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
+          print('STABLE_STAGING_ENV_LOCK=PASS')
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          PY
+          rm -f .vercel/.env.*.local
+
+      - name: Promote exact candidate to stable staging only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          DEPLOY_URL=$(npx --yes vercel@latest deploy --prod --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color 2>&1 | tee /tmp/vercel-promote.log | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1)
+          test -n "$DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "STABLE_STAGING_URL=$DEPLOY_URL"
+          echo STABLE_STAGING_PROMOTION=PASS
+
+      - name: Probe stable staging auth gate
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          HTTP_CODE=$(npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl /api/billing-summary --deployment "$DEPLOY_URL" -- --silent --show-error --output /tmp/billing-probe.json --write-out '%{http_code}')
+          echo "BILLING_PROBE_HTTP=$HTTP_CODE"
+          cat /tmp/billing-probe.json
+          test "$HTTP_CODE" = "401"
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/billing-probe.json'))
+          assert body.get('error') == 'Missing Authorization header', body
+          print('STABLE_STAGING_BILLING_AUTH_GATE=PASS')
+          print('STRIPE_MUTATION_NOT_CREATED=PASS')
+          PY
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo STABLE_STAGING_PROJECT=idogs-app-staging
+          echo STABLE_STAGING_CANDIDATE_SHA=$CANDIDATE_SHA
+          echo PRODUCTION_IDOGS_APP_DEPLOY=NOT_PERFORMED
+          echo PRODUCTION_DOMAIN_IDOGS_COM_AU=HOLD
+          echo EXTRA_LITTER_REAL_CHECKOUT=OFF
+          echo STABLE_STAGING_RELEASE=PASS
