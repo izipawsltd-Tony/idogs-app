@@ -1,0 +1,50 @@
+name: Probe Account Billing Compare V2 20260903
+
+on:
+  push:
+    branches:
+      - automation/probe-account-billing-v2-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+      DEPLOY_URL: https://idogs-app-staging-al0v3oa4i-izipawsltd-tonys-projects.vercel.app
+    steps:
+      - name: Probe petowner and breeder read-only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl '/api/qa-billing-account?label=petowner' --deployment "$DEPLOY_URL" -- --silent --show-error --output /tmp/petowner.json
+          npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl '/api/qa-billing-account?label=breeder' --deployment "$DEPLOY_URL" -- --silent --show-error --output /tmp/breeder.json
+          echo 'PETOWNER_RESULT_BEGIN'
+          cat /tmp/petowner.json
+          echo
+          echo 'PETOWNER_RESULT_END'
+          echo 'BREEDER_RESULT_BEGIN'
+          cat /tmp/breeder.json
+          echo
+          echo 'BREEDER_RESULT_END'
+          node - <<'NODE'
+          const fs=require('fs')
+          for (const name of ['petowner','breeder']) {
+            const data=JSON.parse(fs.readFileSync(`/tmp/${name}.json`,'utf8'))
+            if (data.label !== name) throw new Error(`${name}: label mismatch`)
+          }
+          console.log('ACCOUNT_BILLING_COMPARE_READ_ONLY=PASS')
+          NODE
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          echo APP_DEPLOY=NOT_PERFORMED
+          echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo FIRESTORE_WRITE=NOT_PERFORMED
+          echo STRIPE_WRITE=NOT_PERFORMED
