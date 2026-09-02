@@ -6,10 +6,10 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { verifiedPlusInterval } from './_lib/billing-reconcile.js'
 
 const STAGING_PROJECT_ID = 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o'
-const ALLOWED = new Map([
-  ['edb3deb42b3a310b28c1c5741b7a85b360997ae1f3c3907cbfe19484d168c8a5', 'petowner'],
-  ['8d0cf092cff34afc9eaef1293719519ef9d8d0f836f5e4ac666949110d373fc4', 'breeder'],
-])
+const ALLOWED_DIGESTS = {
+  petowner: 'edb3deb42b3a310b28c1c5741b7a85b360997ae1f3c3907cbfe19484d168c8a5',
+  breeder: '8d0cf092cff34afc9eaef1293719519ef9d8d0f836f5e4ac666949110d373fc4',
+}
 
 if (!getApps().length) {
   initializeApp({
@@ -24,6 +24,23 @@ if (!getApps().length) {
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 const auth = getAuth()
 const db = getFirestore()
+
+function digest(value) {
+  return crypto.createHash('sha256').update(value).digest('hex')
+}
+
+async function findAuthUser(targetDigest) {
+  let pageToken
+  do {
+    const page = await auth.listUsers(1000, pageToken)
+    for (const user of page.users || []) {
+      const email = typeof user.email === 'string' ? user.email.trim().toLowerCase() : ''
+      if (email && digest(email) === targetDigest) return user
+    }
+    pageToken = page.pageToken
+  } while (pageToken)
+  return null
+}
 
 function fail(stage, error) {
   return {
@@ -40,13 +57,14 @@ export default async function handler(req, res) {
     return res.status(404).json({ error: 'Not found' })
   }
 
-  const email = typeof req.query?.email === 'string' ? req.query.email.trim().toLowerCase() : ''
-  const digest = crypto.createHash('sha256').update(email).digest('hex')
-  const label = ALLOWED.get(digest)
-  if (!label) return res.status(404).json({ error: 'Not found' })
+  const label = typeof req.query?.label === 'string' ? req.query.label.trim().toLowerCase() : ''
+  const targetDigest = ALLOWED_DIGESTS[label]
+  if (!targetDigest) return res.status(404).json({ error: 'Not found' })
 
   try {
-    const user = await auth.getUserByEmail(email)
+    const user = await findAuthUser(targetDigest)
+    if (!user) return res.status(200).json({ label, authUserFound: false })
+
     const snap = await db.collection('users').doc(user.uid).get()
     const profile = snap.exists ? snap.data() : null
     if (!profile) return res.status(200).json({ label, authUserFound: true, profileFound: false })
