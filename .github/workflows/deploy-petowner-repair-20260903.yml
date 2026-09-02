@@ -1,0 +1,133 @@
+name: Deploy Petowner One-Shot Repair Preview 20260903
+
+on:
+  push:
+    branches:
+      - automation/deploy-petowner-repair-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  test-deploy-preview:
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA: 5b5f43205f4d0fd2f082270bea3b4eb062c4485c
+      CANDIDATE_SHA: 54b425f994ae3550922e01be3d5ae21103060e02
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+    steps:
+      - name: Checkout exact repair candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 2
+
+      - name: Verify source and one-shot scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD~1)" = "$BASE_SHA"
+          test -z "$(git status --porcelain)"
+          changed=$(git diff --name-only "$BASE_SHA".."$CANDIDATE_SHA")
+          test "$changed" = 'api/qa-repair-petowner-billing.js'
+          grep -q "VERCEL_ENV !== 'preview'" api/qa-repair-petowner-billing.js
+          grep -q "FIREBASE_PROJECT_ID !== STAGING_FIREBASE_PROJECT_ID" api/qa-repair-petowner-billing.js
+          grep -q "startsWith('sk_test_')" api/qa-repair-petowner-billing.js
+          grep -q "TARGET_EMAIL_SHA256" api/qa-repair-petowner-billing.js
+          grep -q "resource_missing" api/qa-repair-petowner-billing.js
+          grep -q "dogsTouched: false" api/qa-repair-petowner-billing.js
+          grep -q "littersTouched: false" api/qa-repair-petowner-billing.js
+          git diff --check "$BASE_SHA".."$CANDIDATE_SHA"
+          echo ONE_SHOT_REPAIR_SCOPE=PASS
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Run billing regression and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-stripe-mode-routing.mjs
+          npm run build
+          echo ONE_SHOT_REPAIR_REGRESSION_AND_BUILD=PASS
+
+      - name: Hard-lock Vercel staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.STAGING_PROJECT_ID||d.orgId!==process.env.STAGING_TEAM_ID||d.projectName!=='idogs-app-staging') process.exit(1)"
+          echo PROJECT_LOCK=PASS
+
+      - name: Confirm Preview financial safety
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          vals={}
+          for p in Path('.vercel').glob('.env.*.local'):
+              for raw in p.read_text(errors='replace').splitlines():
+                  line=raw.strip()
+                  if not line or line.startswith('#') or '=' not in line: continue
+                  k,v=line.split('=',1)
+                  v=v.strip()
+                  if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"): v=v[1:-1]
+                  vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
+          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
+              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          PY
+          rm -f .vercel/.env.*.local
+
+      - name: Deploy exact candidate to staging Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
+          test -n "$DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_URL=$DEPLOY_URL"
+          echo STAGING_PREVIEW_DEPLOY=PASS
+
+      - name: Probe repair endpoint without mutation
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          HTTP_CODE=$(npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl /api/qa-repair-petowner-billing --deployment "$DEPLOY_URL" -- --silent --show-error --request GET --output /tmp/repair-probe.json --write-out '%{http_code}')
+          echo "REPAIR_GET_PROBE_HTTP=$HTTP_CODE"
+          cat /tmp/repair-probe.json
+          test "$HTTP_CODE" = "405"
+          node -e "const b=require('/tmp/repair-probe.json'); if(b.error!=='Method not allowed') process.exit(1)"
+          echo REPAIR_ENDPOINT_FAIL_CLOSED=PASS
+          echo FIRESTORE_WRITE_NOT_PERFORMED=PASS
+          echo STRIPE_WRITE_NOT_PERFORMED=PASS
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo EXTRA_LITTER_REAL_CHECKOUT=OFF
+          echo PETOWNER_REPAIR_PREVIEW_AUTOMATION=PASS
