@@ -11,6 +11,22 @@ const TEST_TOKENS = /(^|[^a-z0-9])(qa|test|testing|staging|preview|demo|sandbox)
 const TEST_DOMAINS = new Set(['example.com', 'example.org', 'example.net', 'test.com', 'invalid'])
 const CONFIDENCE_WEIGHT = Object.freeze({ HIGH: 1, MEDIUM: 0.75, LOW: 0.5 })
 
+// v1.2.1: explicit business-known classification overrides win over every
+// heuristic, including LIVE Stripe. LIVE mode proves billing activity only;
+// it does not prove that the account is a genuine external customer.
+const ACCOUNT_CLASSIFICATION_OVERRIDES = Object.freeze({
+  'idogsbreeder@gmail.com': Object.freeze({
+    classification: 'TEST_QA',
+    confidence: 'HIGH',
+    reason: 'Explicit QA override: known iDogs breeder QA account',
+  }),
+  'idogspetowner@gmail.com': Object.freeze({
+    classification: 'TEST_QA',
+    confidence: 'HIGH',
+    reason: 'Explicit QA override: known iDogs pet-owner QA account',
+  }),
+})
+
 function toDate(value) {
   if (!value) return new Date(0)
   if (typeof value.toDate === 'function') return value.toDate()
@@ -106,8 +122,11 @@ async function compileRevenueTruth(users) {
     uniqueStoredSubscriptionIds: 0,
     retrievedSubscriptions: 0,
     failedSubscriptionReads: 0,
+    failedSubscriptionIds: [],
     nonAudRecurring: [],
     canonicalPrices: { monthly: null, annual: null },
+    canonicalPriceStatus: { monthly: 'UNVERIFIED', annual: 'UNVERIFIED' },
+    observedLivePrices: [],
     legacyStoredEstimateAud: roundMoney(legacyStoredEstimateAud),
     legacyDeltaAud: null,
     note: '',
@@ -124,17 +143,33 @@ async function compileRevenueTruth(users) {
   const uniqueSubscriptionIds = [...new Set(users.map(user => user.stripeSubscriptionId).filter(Boolean))]
   result.uniqueStoredSubscriptionIds = uniqueSubscriptionIds.length
 
-  let canonicalReads = 0
-  try {
-    const [monthly, annual] = await Promise.all([
-      stripe.prices.retrieve(CHECKOUT_PRICE_IDS.plus_monthly),
-      stripe.prices.retrieve(CHECKOUT_PRICE_IDS.plus_annual),
-    ])
-    result.canonicalPrices = { monthly: priceSummary(monthly), annual: priceSummary(annual) }
-    result.stripeMode = monthly.livemode && annual.livemode ? 'LIVE' : (!monthly.livemode && !annual.livemode ? 'TEST' : 'MIXED')
-    canonicalReads = 2
-  } catch {
-    result.note = 'Canonical Stripe Plus prices could not both be verified in this environment.'
+  const canonicalResults = await Promise.allSettled([
+    stripe.prices.retrieve(CHECKOUT_PRICE_IDS.plus_monthly),
+    stripe.prices.retrieve(CHECKOUT_PRICE_IDS.plus_annual),
+  ])
+  const [monthlyResult, annualResult] = canonicalResults
+  if (monthlyResult.status === 'fulfilled') {
+    result.canonicalPrices.monthly = priceSummary(monthlyResult.value)
+    result.canonicalPriceStatus.monthly = 'VERIFIED'
+  } else {
+    result.canonicalPriceStatus.monthly = 'FAILED'
+  }
+  if (annualResult.status === 'fulfilled') {
+    result.canonicalPrices.annual = priceSummary(annualResult.value)
+    result.canonicalPriceStatus.annual = 'VERIFIED'
+  } else {
+    result.canonicalPriceStatus.annual = 'FAILED'
+  }
+
+  const verifiedCanonical = [monthlyResult, annualResult]
+    .filter(item => item.status === 'fulfilled')
+    .map(item => item.value)
+  if (verifiedCanonical.length === 2) {
+    result.stripeMode = verifiedCanonical.every(price => price.livemode)
+      ? 'LIVE'
+      : verifiedCanonical.every(price => !price.livemode) ? 'TEST' : 'MIXED'
+  } else if (verifiedCanonical.length === 1) {
+    result.stripeMode = verifiedCanonical[0].livemode ? 'LIVE' : 'TEST'
   }
 
   const reads = await Promise.all(uniqueSubscriptionIds.map(async id => {
@@ -147,17 +182,21 @@ async function compileRevenueTruth(users) {
   }))
 
   const currencyTotals = new Map()
+  const observedLivePriceMap = new Map()
   for (const read of reads) {
     if (!read.ok || !read.subscription) {
       result.failedSubscriptionReads++
+      result.failedSubscriptionIds.push(read.id)
       continue
     }
+
     result.retrievedSubscriptions++
     const subscription = read.subscription
     const monthly = subscriptionMonthlyTruth(subscription)
     const audCents = monthly.totals.get('aud') || 0
-    const otherCurrencies = [...monthly.totals.entries()].filter(([currency]) => currency !== 'aud')
-    for (const [currency, cents] of otherCurrencies) mapIncrement(currencyTotals, currency, cents)
+    for (const [currency, cents] of [...monthly.totals.entries()].filter(([currency]) => currency !== 'aud')) {
+      mapIncrement(currencyTotals, currency, cents)
+    }
 
     const isActive = subscription.status === 'active'
     if (subscription.status === 'trialing') result.trialingSubscriptions++
@@ -167,6 +206,9 @@ async function compileRevenueTruth(users) {
     if (isActive && subscription.livemode) {
       result.verifiedLiveActiveSubscriptions++
       result.verifiedLiveMrrAud += audCents / 100
+      for (const line of monthly.lines) {
+        if (!observedLivePriceMap.has(line.priceId)) observedLivePriceMap.set(line.priceId, line)
+      }
     }
     if (isActive && !subscription.livemode) {
       result.verifiedTestActiveSubscriptions++
@@ -184,18 +226,27 @@ async function compileRevenueTruth(users) {
 
   result.verifiedLiveMrrAud = roundMoney(result.verifiedLiveMrrAud)
   result.verifiedTestMrrAud = roundMoney(result.verifiedTestMrrAud)
-  result.nonAudRecurring = [...currencyTotals.entries()].map(([currency, cents]) => ({ currency: currency.toUpperCase(), monthlyAmount: roundMoney(cents / 100) }))
+  result.observedLivePrices = [...observedLivePriceMap.values()]
+  result.nonAudRecurring = [...currencyTotals.entries()].map(([currency, cents]) => ({
+    currency: currency.toUpperCase(),
+    monthlyAmount: roundMoney(cents / 100),
+  }))
   result.legacyDeltaAud = roundMoney(result.verifiedLiveMrrAud - result.legacyStoredEstimateAud)
 
-  if (canonicalReads === 2 && result.failedSubscriptionReads === 0) result.status = 'VERIFIED'
-  else if (canonicalReads > 0 || result.retrievedSubscriptions > 0) result.status = 'PARTIAL'
+  const canonicalVerifiedCount = Object.values(result.canonicalPriceStatus).filter(status => status === 'VERIFIED').length
+  if (canonicalVerifiedCount === 2 && result.failedSubscriptionReads === 0) result.status = 'VERIFIED'
+  else if (canonicalVerifiedCount > 0 || result.retrievedSubscriptions > 0) result.status = 'PARTIAL'
   else result.status = 'UNAVAILABLE'
 
-  if (!result.note) {
-    result.note = result.status === 'VERIFIED'
-      ? 'Read-only Stripe verification completed. LIVE and TEST subscriptions are separated; no Stripe write was performed.'
-      : 'Stripe verification is partial. Unverified values are excluded from LIVE revenue truth.'
+  if (result.status === 'VERIFIED') {
+    result.note = 'Read-only Stripe verification completed. Gross LIVE and TEST recurring revenue are separated; no Stripe write was performed.'
+  } else {
+    const reasons = []
+    if (canonicalVerifiedCount < 2) reasons.push('canonical Plus price verification is incomplete')
+    if (result.failedSubscriptionReads > 0) reasons.push(`${result.failedSubscriptionReads} stored subscription read(s) failed`)
+    result.note = `Stripe verification is partial: ${reasons.join('; ') || 'some Stripe truth is unavailable'}. Unretrieved values are never invented.`
   }
+
   return result
 }
 
@@ -212,21 +263,42 @@ function testSignal(email, profile) {
 
 function classifyAccount({ user, email, dogCount, litterCount, stripeTruth, now }) {
   const normalizedEmail = String(email || '').trim().toLowerCase()
+  const explicitOverride = ACCOUNT_CLASSIFICATION_OVERRIDES[normalizedEmail]
+  if (explicitOverride) return explicitOverride
+
   const internalEntitlement = hasValidInternalEntitlement(user, now)
   if (ALLOWED_ADMINS.includes(normalizedEmail) || internalEntitlement) {
-    return { classification: 'INTERNAL', confidence: 'HIGH', reason: internalEntitlement ? 'Valid internal entitlement' : 'Super Admin allowlist' }
+    return {
+      classification: 'INTERNAL',
+      confidence: 'HIGH',
+      reason: internalEntitlement ? 'Valid internal entitlement' : 'Super Admin allowlist',
+    }
   }
 
   const testReason = testSignal(normalizedEmail, user)
   if (testReason) return { classification: 'TEST_QA', confidence: 'HIGH', reason: testReason }
 
   if (stripeTruth?.status === 'active' && stripeTruth?.livemode === true) {
-    return { classification: 'LIKELY_REAL', confidence: 'HIGH', reason: 'Active LIVE Stripe subscription and no internal/test signal' }
+    return {
+      classification: 'UNCLASSIFIED',
+      confidence: 'MEDIUM',
+      reason: 'Active LIVE Stripe proves billing activity only; explicit/customer-quality evidence is still required before counting customer revenue',
+    }
   }
+
   if (dogCount > 0 || litterCount > 0) {
-    return { classification: 'LIKELY_REAL', confidence: 'MEDIUM', reason: 'Meaningful product activity and no internal/test signal' }
+    return {
+      classification: 'LIKELY_REAL',
+      confidence: 'MEDIUM',
+      reason: 'Meaningful product activity and no internal/test signal; not yet explicit customer proof',
+    }
   }
-  return { classification: 'UNCLASSIFIED', confidence: 'LOW', reason: 'Insufficient evidence to distinguish real user from QA/test/internal use' }
+
+  return {
+    classification: 'UNCLASSIFIED',
+    confidence: 'LOW',
+    reason: 'Insufficient evidence to distinguish real customer from QA/test/internal use',
+  }
 }
 
 async function compileAccountClassification({ users, dogs, activeLitters, revenueTruth, now }) {
@@ -248,23 +320,53 @@ async function compileAccountClassification({ users, dogs, activeLitters, revenu
     authStatus = 'PARTIAL'
   }
 
-  const counts = { internal: 0, testQa: 0, likelyReal: 0, unclassified: 0, likelyRealBreeders: 0, paidLikelyReal: 0, paidInternalOrTest: 0 }
+  const failedSubscriptionIds = new Set(revenueTruth.failedSubscriptionIds || [])
+  const counts = {
+    realCustomer: 0,
+    internal: 0,
+    testQa: 0,
+    likelyReal: 0,
+    unclassified: 0,
+    realCustomerBreeders: 0,
+    likelyRealBreeders: 0,
+    paidRealCustomer: 0,
+    paidLikelyReal: 0,
+    paidInternalOrTest: 0,
+    paidUnclassified: 0,
+    failedSubscriptionProfiles: 0,
+  }
+
   const accounts = users.map(user => {
     const email = authEmails.get(user.id) || ''
     const dogCount = dogCounts.get(user.id) || 0
     const activeLitterCount = litterCounts.get(user.id) || 0
     const stripeTruth = user.stripeSubscriptionId ? revenueTruth.subscriptionsById[user.stripeSubscriptionId] : null
+    const subscriptionReadFailed = Boolean(user.stripeSubscriptionId && failedSubscriptionIds.has(user.stripeSubscriptionId))
     const classification = classifyAccount({ user, email, dogCount, litterCount: activeLitterCount, stripeTruth, now })
     const storedPaid = user.subscriptionStatus === 'active' && Boolean(user.stripeSubscriptionId) && user.plan === 'plus'
     const role = user.role || 'unknown'
 
+    if (classification.classification === 'REAL_CUSTOMER') counts.realCustomer++
     if (classification.classification === 'INTERNAL') counts.internal++
     if (classification.classification === 'TEST_QA') counts.testQa++
     if (classification.classification === 'LIKELY_REAL') counts.likelyReal++
     if (classification.classification === 'UNCLASSIFIED') counts.unclassified++
+    if (classification.classification === 'REAL_CUSTOMER' && role === 'breeder') counts.realCustomerBreeders++
     if (classification.classification === 'LIKELY_REAL' && role === 'breeder') counts.likelyRealBreeders++
+    if (storedPaid && classification.classification === 'REAL_CUSTOMER') counts.paidRealCustomer++
     if (storedPaid && classification.classification === 'LIKELY_REAL') counts.paidLikelyReal++
     if (storedPaid && (classification.classification === 'INTERNAL' || classification.classification === 'TEST_QA')) counts.paidInternalOrTest++
+    if (storedPaid && classification.classification === 'UNCLASSIFIED') counts.paidUnclassified++
+    if (subscriptionReadFailed) counts.failedSubscriptionProfiles++
+
+    let revenueBucket = 'NONE'
+    if (stripeTruth?.status === 'active' && stripeTruth?.livemode === true) {
+      if (classification.classification === 'REAL_CUSTOMER') revenueBucket = 'VERIFIED_CUSTOMER'
+      else if (classification.classification === 'INTERNAL' || classification.classification === 'TEST_QA') revenueBucket = 'QA_INTERNAL'
+      else revenueBucket = 'UNRESOLVED'
+    } else if (subscriptionReadFailed) {
+      revenueBucket = 'READ_FAILED'
+    }
 
     return {
       uid: user.id,
@@ -276,12 +378,14 @@ async function compileAccountClassification({ users, dogs, activeLitters, revenu
       dogCount,
       activeLitterCount,
       storedPaid: Boolean(storedPaid),
-      stripeStatus: stripeTruth?.status || null,
+      stripeStatus: subscriptionReadFailed ? 'READ_FAILED' : (stripeTruth?.status || null),
       stripeMode: stripeTruth ? (stripeTruth.livemode ? 'LIVE' : 'TEST') : null,
       stripeMrrAud: stripeTruth?.mrrAud ?? null,
+      subscriptionReadFailed,
+      revenueBucket,
     }
   }).sort((a, b) => {
-    const order = { INTERNAL: 0, TEST_QA: 1, UNCLASSIFIED: 2, LIKELY_REAL: 3 }
+    const order = { REAL_CUSTOMER: 0, INTERNAL: 1, TEST_QA: 2, UNCLASSIFIED: 3, LIKELY_REAL: 4 }
     return (order[a.classification] ?? 9) - (order[b.classification] ?? 9) || String(a.email || a.uid).localeCompare(String(b.email || b.uid))
   })
 
@@ -289,9 +393,67 @@ async function compileAccountClassification({ users, dogs, activeLitters, revenu
     status: authStatus,
     ...counts,
     accounts,
+    overrideCount: Object.keys(ACCOUNT_CLASSIFICATION_OVERRIDES).length,
     note: authStatus === 'VERIFIED'
-      ? 'Classification uses Super Admin/internal entitlement, explicit QA/test signals, LIVE Stripe evidence and product activity. LIKELY_REAL is a business signal, not identity proof.'
-      : 'Firebase Auth email lookup was partial; some accounts remain deliberately UNCLASSIFIED.',
+      ? 'Explicit business-known overrides win first. Super Admin/internal entitlement and QA signals follow. LIVE Stripe proves billing only; ambiguous accounts remain UNCLASSIFIED. LIKELY_REAL is product-activity evidence, not customer proof.'
+      : 'Firebase Auth email lookup was partial; ambiguous accounts remain deliberately UNCLASSIFIED and are excluded from verified customer revenue.',
+  }
+}
+
+function compileCustomerRevenueTruth(revenueTruth, classification) {
+  let verifiedCustomerMrrAud = 0
+  let qaInternalLiveMrrAud = 0
+  let unresolvedLiveMrrAud = 0
+  let verifiedCustomerActiveSubscriptions = 0
+  let qaInternalLiveActiveSubscriptions = 0
+  let unresolvedLiveActiveSubscriptions = 0
+
+  for (const account of classification.accounts) {
+    const isLiveActive = account.stripeMode === 'LIVE' && account.stripeStatus === 'active' && typeof account.stripeMrrAud === 'number'
+    if (!isLiveActive) continue
+
+    if (account.revenueBucket === 'VERIFIED_CUSTOMER') {
+      verifiedCustomerMrrAud += account.stripeMrrAud
+      verifiedCustomerActiveSubscriptions++
+    } else if (account.revenueBucket === 'QA_INTERNAL') {
+      qaInternalLiveMrrAud += account.stripeMrrAud
+      qaInternalLiveActiveSubscriptions++
+    } else {
+      unresolvedLiveMrrAud += account.stripeMrrAud
+      unresolvedLiveActiveSubscriptions++
+    }
+  }
+
+  const failedRevenueAccounts = classification.accounts
+    .filter(account => account.subscriptionReadFailed)
+    .map(account => ({ account: account.email || account.uid, role: account.role }))
+
+  const grossLiveStripeMrrAud = roundMoney(revenueTruth.verifiedLiveMrrAud)
+  verifiedCustomerMrrAud = roundMoney(verifiedCustomerMrrAud)
+  qaInternalLiveMrrAud = roundMoney(qaInternalLiveMrrAud)
+  unresolvedLiveMrrAud = roundMoney(unresolvedLiveMrrAud)
+  const allocatedLiveMrrAud = roundMoney(verifiedCustomerMrrAud + qaInternalLiveMrrAud + unresolvedLiveMrrAud)
+  const allocationDeltaAud = roundMoney(grossLiveStripeMrrAud - allocatedLiveMrrAud)
+
+  const status = revenueTruth.failedSubscriptionReads === 0 && unresolvedLiveMrrAud === 0 && allocationDeltaAud === 0
+    ? 'VERIFIED'
+    : 'PARTIAL'
+
+  return {
+    status,
+    grossLiveStripeMrrAud,
+    verifiedCustomerMrrAud,
+    qaInternalLiveMrrAud,
+    unresolvedLiveMrrAud,
+    allocationDeltaAud,
+    verifiedCustomerActiveSubscriptions,
+    qaInternalLiveActiveSubscriptions,
+    unresolvedLiveActiveSubscriptions,
+    failedSubscriptionProfiles: failedRevenueAccounts.length,
+    failedRevenueAccounts,
+    note: status === 'VERIFIED'
+      ? 'Every retrieved LIVE recurring dollar is classified as verified customer, QA/internal, or deliberately unresolved; no stored subscription read failed.'
+      : 'Customer revenue truth is partial. Unresolved LIVE revenue and failed stored subscription reads are excluded from Verified Customer MRR.',
   }
 }
 
@@ -315,16 +477,17 @@ function localDateParts(date) {
   return { date: `${parts.year}-${parts.month}-${parts.day}`, weekday: parts.weekday }
 }
 
-function buildSevenDayPlan({ now, revenueTruth, classification, supportNeedsAction, supportOldestOpenDays, rawBreeders, breedersWithDogs, breedersWithLitters, livePaidBreeders }) {
+function buildSevenDayPlan({ now, revenueTruth, customerRevenueTruth, classification, supportNeedsAction, supportOldestOpenDays, rawBreeders, breedersWithDogs, breedersWithLitters, verifiedCustomerPaidBreeders }) {
   const days = [
     {
       focus: 'Revenue truth + account truth', owner: 'AI CEO / Finance + Ops', lane: 'AUTO',
       actions: [
-        `Reconcile ${revenueTruth.uniqueStoredSubscriptionIds} stored subscription ID(s) against read-only Stripe truth.`,
-        `Review ${classification.unclassified} UNCLASSIFIED and ${classification.testQa} TEST_QA account(s); do not count them as customers until evidence supports it.`,
+        `Reconcile ${revenueTruth.uniqueStoredSubscriptionIds} stored subscription ID(s); ${revenueTruth.failedSubscriptionReads} read(s) currently fail.`,
+        `Separate A$${customerRevenueTruth.grossLiveStripeMrrAud} gross LIVE MRR into verified customer, QA/internal and unresolved buckets.`,
+        `Review ${classification.unclassified} UNCLASSIFIED account(s); explicit QA/internal overrides are never customer revenue.`,
       ],
-      kpi: 'LIVE MRR and customer counts have explicit source truth',
-      successCondition: 'No revenue KPI relies on the stale A$5/A$49 Super Admin catalogue.',
+      kpi: 'Verified Customer MRR has explicit customer-quality source truth',
+      successCondition: 'No QA/internal LIVE revenue is counted as customer MRR; unresolved revenue remains visibly excluded.',
     },
     {
       focus: 'Clear support debt', owner: 'AI CEO / Customer', lane: 'AUTO',
@@ -340,8 +503,8 @@ function buildSevenDayPlan({ now, revenueTruth, classification, supportNeedsActi
     },
     {
       focus: 'Litter + Plus conversion audit', owner: 'AI CEO / Product + Growth', lane: 'AUTO',
-      actions: [`Audit why only ${breedersWithLitters}/${Math.max(breedersWithDogs, 1)} dog-active breeder-shaped accounts have active litters.`, `Review Plus upgrade moments against ${livePaidBreeders} verified LIVE paid breeder(s).`],
-      kpi: 'Dog→litter progression and LIVE paid breeder share',
+      actions: [`Audit why only ${breedersWithLitters}/${Math.max(breedersWithDogs, 1)} dog-active breeder-shaped accounts have active litters.`, `Review Plus upgrade moments against ${verifiedCustomerPaidBreeders} verified customer paid breeder(s).`],
+      kpi: 'Dog→litter progression and verified customer paid breeder share',
       successCondition: 'One smallest conversion experiment is selected for Preview.',
     },
     {
@@ -395,6 +558,7 @@ export async function buildAiCeoV12() {
 
   const revenueTruth = await compileRevenueTruth(users)
   const accountClassification = await compileAccountClassification({ users, dogs, activeLitters, revenueTruth, now })
+  const customerRevenueTruth = compileCustomerRevenueTruth(revenueTruth, accountClassification)
 
   const breederIds = new Set(users.filter(user => user.role !== 'owner').map(user => user.id))
   const dogTenantIds = new Set(dogs.map(dog => dog.tenantId).filter(Boolean))
@@ -425,8 +589,8 @@ export async function buildAiCeoV12() {
     }
   })
 
-  const livePaidBreederIds = new Set(accountClassification.accounts
-    .filter(account => account.role === 'breeder' && account.stripeStatus === 'active' && account.stripeMode === 'LIVE' && account.classification === 'LIKELY_REAL')
+  const verifiedCustomerPaidBreederIds = new Set(accountClassification.accounts
+    .filter(account => account.role === 'breeder' && account.stripeStatus === 'active' && account.stripeMode === 'LIVE' && account.classification === 'REAL_CUSTOMER')
     .map(account => account.uid))
 
   const supportNeedsActionItems = supportConversations.filter(item => SUPPORT_NEEDS_ACTION.has(item.status))
@@ -470,16 +634,27 @@ export async function buildAiCeoV12() {
   })
 
   const decisions = []
-  const revenueAmbiguous = revenueTruth.status !== 'VERIFIED' || revenueTruth.legacyDeltaAud !== 0 || accountClassification.paidInternalOrTest > 0 || accountClassification.unclassified > 0
-  if (revenueAmbiguous) {
+  const revenueAmbiguous = customerRevenueTruth.status !== 'VERIFIED'
+    || customerRevenueTruth.unresolvedLiveMrrAud > 0
+    || customerRevenueTruth.failedSubscriptionProfiles > 0
+    || accountClassification.unclassified > 0
+
+  if (revenueAmbiguous || customerRevenueTruth.qaInternalLiveMrrAud > 0) {
     decisions.push(scoredDecision({
-      id: 'establish-revenue-and-customer-truth', title: 'Establish revenue truth and customer truth',
-      decision: 'Use LIVE Stripe subscription line items and conservative account classification as the only CEO revenue/customer baseline; keep legacy stored-price estimates diagnostic only.',
-      rationale: 'The previous A$10 MRR came from stale A$5/A$49 display math, and raw account counts can include internal, QA or unclassified accounts.',
-      owner: 'AI CEO / Finance + Ops', kpi: 'Verified LIVE MRR + classified customer base',
-      evidence: [`Stripe truth status: ${revenueTruth.status}`, `LIVE MRR: A$${revenueTruth.verifiedLiveMrrAud}; legacy stored estimate: A$${revenueTruth.legacyStoredEstimateAud}`, `${accountClassification.internal} INTERNAL, ${accountClassification.testQa} TEST_QA, ${accountClassification.unclassified} UNCLASSIFIED account(s)`],
-      nextAction: 'Review the Revenue Truth and Account Classification panels; resolve only the ambiguous accounts that materially affect revenue or funnel denominators.',
-      checkpoint: 'Revenue and customer KPIs no longer depend on stale price math or knowingly internal/test accounts.',
+      id: 'establish-revenue-and-customer-truth',
+      title: 'Establish customer revenue truth',
+      decision: 'Use Verified Customer MRR after account classification as the CEO revenue baseline. Gross LIVE Stripe MRR remains a billing signal; QA/internal and unresolved LIVE revenue are excluded from customer revenue.',
+      rationale: 'LIVE Stripe does not prove customer status. Known QA accounts can legitimately hold LIVE subscriptions during production QA.',
+      owner: 'AI CEO / Finance + Ops',
+      kpi: 'Verified Customer MRR + zero hidden QA/internal revenue',
+      evidence: [
+        `Gross LIVE Stripe MRR: A$${customerRevenueTruth.grossLiveStripeMrrAud}`,
+        `Verified Customer MRR: A$${customerRevenueTruth.verifiedCustomerMrrAud}`,
+        `QA/Internal LIVE MRR: A$${customerRevenueTruth.qaInternalLiveMrrAud}; unresolved LIVE MRR: A$${customerRevenueTruth.unresolvedLiveMrrAud}`,
+        `${revenueTruth.failedSubscriptionReads} stored subscription read(s) failed`,
+      ],
+      nextAction: 'Resolve failed Stripe reads and only promote an account to REAL_CUSTOMER using explicit business evidence. Do not infer customer status from LIVE Stripe alone.',
+      checkpoint: 'Every LIVE recurring dollar is allocated to REAL_CUSTOMER, QA/INTERNAL, or visibly UNRESOLVED; failed reads remain explicit.',
       confidence: 'HIGH', impact: 5, urgency: 5, reversibility: 5, cost: 1,
     }))
   }
@@ -503,7 +678,7 @@ export async function buildAiCeoV12() {
       decision: 'Audit the shortest breeder signup → first useful dog path, but separate true product friction from internal/test/unclassified account noise.',
       rationale: 'Without a dog record a breeder cannot reach the core litter, reports or puppy workflow.',
       owner: 'AI CEO / Product', kpi: 'First-dog activation among customer-quality breeder accounts',
-      evidence: [`Raw breeder-shaped activation is ${breedersWithDogs}/${breeders} (${breederDogActivationPct}%)`, `${accountClassification.likelyRealBreeders} breeder account(s) are currently LIKELY_REAL`],
+      evidence: [`Raw breeder-shaped activation is ${breedersWithDogs}/${breeders} (${breederDogActivationPct}%)`, `${accountClassification.realCustomerBreeders} REAL_CUSTOMER and ${accountClassification.likelyRealBreeders} LIKELY_REAL breeder account(s)`],
       nextAction: 'Audit the no-dog accounts by classification first, then inspect signup/dashboard/Add Dog friction only for credible customer accounts.',
       checkpoint: 'One or two evidence-backed activation blockers are selected for a reversible Preview experiment.',
       confidence: accountClassification.unclassified > 0 ? 'MEDIUM' : 'HIGH', impact: 5, urgency: 4, reversibility: 5, cost: 2,
@@ -524,14 +699,14 @@ export async function buildAiCeoV12() {
   }
 
   decisions.push(scoredDecision({
-    id: 'improve-paid-breeder-share', title: 'Increase verified LIVE paid breeder share',
+    id: 'improve-paid-breeder-share', title: 'Increase verified customer paid breeder share',
     decision: 'Use verified customer-quality activated accounts to diagnose Plus value communication and upgrade friction before adding material paid acquisition.',
     rationale: 'Conversion efficiency is cheaper to learn from existing product usage than from buying more traffic prematurely.',
-    owner: 'AI CEO / Growth + Product', kpi: 'Verified LIVE paid breeder share',
-    evidence: [`${livePaidBreederIds.size} LIKELY_REAL breeder account(s) currently have an active LIVE Stripe subscription`, `LIVE verified MRR: A$${revenueTruth.verifiedLiveMrrAud}`],
+    owner: 'AI CEO / Growth + Product', kpi: 'Verified customer paid breeder share',
+    evidence: [`${verifiedCustomerPaidBreederIds.size} REAL_CUSTOMER breeder account(s) currently have an active LIVE Stripe subscription`, `Verified Customer MRR: A$${customerRevenueTruth.verifiedCustomerMrrAud}`],
     nextAction: 'Identify the strongest Plus-only value moment and highest-friction upgrade surface among customer-quality accounts.',
     checkpoint: 'One reversible conversion experiment is ready for Preview with a defined success threshold.',
-    confidence: revenueTruth.status === 'VERIFIED' ? 'HIGH' : 'MEDIUM', impact: 5, urgency: 3, reversibility: 5, cost: 2,
+    confidence: customerRevenueTruth.status === 'VERIFIED' ? 'HIGH' : 'MEDIUM', impact: 5, urgency: 3, reversibility: 5, cost: 2,
   }))
 
   decisions.push(scoredDecision({
@@ -550,36 +725,45 @@ export async function buildAiCeoV12() {
   const priorityDecision = decisions[0]
 
   const actionPlan7d = buildSevenDayPlan({
-    now, revenueTruth, classification: accountClassification,
-    supportNeedsAction: supportNeedsActionItems.length, supportOldestOpenDays,
-    rawBreeders: breeders, breedersWithDogs, breedersWithLitters,
-    livePaidBreeders: livePaidBreederIds.size,
+    now,
+    revenueTruth,
+    customerRevenueTruth,
+    classification: accountClassification,
+    supportNeedsAction: supportNeedsActionItems.length,
+    supportOldestOpenDays,
+    rawBreeders: breeders,
+    breedersWithDogs,
+    breedersWithLitters,
+    verifiedCustomerPaidBreeders: verifiedCustomerPaidBreederIds.size,
   })
 
   return {
     generatedAt: now.toISOString(),
-    osVersion: '1.2.0-read-only',
+    osVersion: '1.2.1-read-only',
     operatingMode: {
-      name: 'READ_ONLY_REALITY_DECISION_KERNEL', autonomousWritesEnabled: false, modelReasoningEnabled: false,
+      name: 'READ_ONLY_CUSTOMER_REVENUE_TRUTH_KERNEL',
+      autonomousWritesEnabled: false,
+      modelReasoningEnabled: false,
       stripeReadOnlyVerification: true,
-      description: 'V1.2 verifies revenue through read-only Stripe calls, classifies account-quality signals conservatively, scores decisions dynamically and produces a 7-day CEO action plan. It performs no Stripe/Firebase/product write.',
+      description: 'V1.2.1 separates gross LIVE Stripe billing from verified customer revenue. Explicit account overrides win over heuristics; Stripe remains read-only and no Firebase/product write is performed.',
     },
     objective: {
       northStar: 'Grow sustainable iDogs enterprise value and recurring free cash flow',
       constraints: ['Customer trust', 'Security', 'Liquidity', 'Legal/compliance', 'Tony approval rights'],
     },
     brief: {
-      status: revenueTruth.status === 'VERIFIED' ? 'REALITY_BASELINE_ACTIVE' : 'REALITY_BASELINE_PARTIAL',
-      summary: `iDogs has A$${revenueTruth.verifiedLiveMrrAud} verified LIVE MRR, ${accountClassification.likelyReal} LIKELY_REAL account(s), ${accountClassification.unclassified} UNCLASSIFIED account(s), ${supportNeedsActionItems.length} support item(s) requiring action, ${breederDogActivationPct}% raw breeder dog activation and ${breederLitterActivationPct}% raw breeder litter activation. The highest-scored CEO action is ${priorityDecision.title.toLowerCase()} (${priorityDecision.score}/100).`,
+      status: customerRevenueTruth.status === 'VERIFIED' ? 'CUSTOMER_REVENUE_BASELINE_ACTIVE' : 'CUSTOMER_REVENUE_BASELINE_PARTIAL',
+      summary: `iDogs has A$${customerRevenueTruth.verifiedCustomerMrrAud} Verified Customer MRR from A$${customerRevenueTruth.grossLiveStripeMrrAud} gross LIVE Stripe MRR. A$${customerRevenueTruth.qaInternalLiveMrrAud} is QA/internal LIVE revenue and A$${customerRevenueTruth.unresolvedLiveMrrAud} remains unresolved. ${accountClassification.realCustomer} REAL_CUSTOMER, ${accountClassification.likelyReal} LIKELY_REAL and ${accountClassification.unclassified} UNCLASSIFIED account(s) are currently visible. The highest-scored CEO action is ${priorityDecision.title.toLowerCase()} (${priorityDecision.score}/100).`,
       priorityDecisionId: priorityDecision.id,
     },
     revenueTruth,
+    customerRevenueTruth,
     accountClassification,
     facts: {
       totalUsers: users.length, breeders, owners, newUsers7d, newUsers30d,
       plusEntitledAccounts, internalEntitlementAccounts,
       storedActivePaidSubscriptions, storedActivePaidBreeders,
-      verifiedLivePaidBreeders: livePaidBreederIds.size,
+      verifiedCustomerPaidBreeders: verifiedCustomerPaidBreederIds.size,
       totalDogs: dogs.length, activeDogs, transferredDogs, restrictedDogs, archivedDogs,
       breedersWithDogs, breederDogActivationPct,
       totalLitters: litters.length, activeLitters: activeLitters.length, breedersWithLitters,
@@ -602,19 +786,20 @@ export async function buildAiCeoV12() {
       ],
     },
     watchItems: [
-      { id: 'classification-is-signal', severity: 'TRUTH_GUARD', title: 'LIKELY_REAL is not identity proof', reason: 'Classification is intentionally conservative and must not be used for legal/identity decisions.' },
-      { id: 'stripe-read-only', severity: 'TRUTH_GUARD', title: 'Stripe is read-only in v1.2', reason: 'Revenue verification retrieves prices/subscriptions only; no Stripe mutation is implemented.' },
+      { id: 'live-is-not-customer', severity: 'TRUTH_GUARD', title: 'LIVE Stripe is not customer proof', reason: 'A production QA account can hold a LIVE subscription. Verified Customer MRR is calculated only after customer-quality classification.' },
+      { id: 'likely-real-is-signal', severity: 'TRUTH_GUARD', title: 'LIKELY_REAL is not customer proof', reason: 'Product activity is a useful signal but does not enter Verified Customer MRR without explicit business evidence.' },
+      { id: 'stripe-read-only', severity: 'TRUTH_GUARD', title: 'Stripe is read-only in v1.2.1', reason: 'Revenue verification retrieves prices/subscriptions only; no Stripe mutation is implemented.' },
       { id: 'cohort-history', severity: 'DATA_GAP', title: 'Historical retention/churn cohorts are not yet durable', reason: 'The minimum measurement contract must accumulate before cohort claims are valid.' },
       { id: 'puppy-current-state', severity: 'DATA_GAP', title: 'Puppy commercial fields are current state, not sales history', reason: 'Do not infer historical sales conversion from current available/reserved/sold flags.' },
-      { id: 'aggregation-scale', severity: 'SCALE_WATCH', title: 'Materialise aggregates when data scale requires it', reason: 'V1.2 keeps read-time scans to avoid migration risk at the current small dataset size.' },
+      { id: 'aggregation-scale', severity: 'SCALE_WATCH', title: 'Materialise aggregates when data scale requires it', reason: 'V1.2.1 keeps read-time scans to avoid migration risk at the current small dataset size.' },
     ],
     approvalPolicy: {
       auto: ['Research', 'Read-only Stripe verification', 'Account-quality analysis', 'KPI reporting', 'Customer/funnel diagnosis', 'Backlog prioritisation', 'Experiment design', 'Preview-safe implementation preparation'],
       approvalRequired: ['Production deployment', 'Material new spend', 'Contracts', 'Legal/tax/payroll decisions', 'Material pricing changes', 'Stripe/Firebase production writes', 'Banking or money movement', 'Destructive production data actions'],
     },
     sourceNotes: {
-      revenue: 'LIVE Stripe recurring line items are the v1.2 revenue truth. TEST Stripe is separated. Legacy A$5/A$49 display math is diagnostic only.',
-      classification: 'Super Admin/internal entitlement + explicit QA/test signals + LIVE Stripe + product activity; ambiguous accounts remain UNCLASSIFIED.',
+      revenue: 'Verified Customer MRR is the CEO revenue baseline. Gross LIVE Stripe MRR is billing truth before account classification; QA/internal and unresolved LIVE revenue are excluded.',
+      classification: 'Explicit business-known overrides win first, then Super Admin/internal and QA signals. LIVE Stripe alone never proves customer status.',
       activation: 'Current users/dogs/litters state; raw account-state indicators are not historical cohort rates.',
       support: 'Up to 100 current support conversations, matching the existing Super Admin inbox read limit.',
     },
