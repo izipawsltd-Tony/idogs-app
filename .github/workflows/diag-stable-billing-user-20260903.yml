@@ -1,0 +1,126 @@
+name: Diagnose Stable Staging Billing User 20260903
+
+on:
+  push:
+    branches:
+      - automation/diag-stable-billing-env-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-user:
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_SHA: 5b5f43205f4d0fd2f082270bea3b4eb062c4485c
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+      QA_EMAIL: idogsbreeder+0209@gmail.com
+    steps:
+      - name: Checkout exact approved candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+
+      - name: Pull stable-staging env
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/pull.log 2>&1
+          cp .vercel/.env.production.local /tmp/stable.env
+          echo STABLE_ENV_SNAPSHOT=READY
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Read-only billing account diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source /tmp/stable.env
+          set +a
+          node --input-type=module <<'NODE'
+          import Stripe from 'stripe'
+          import { initializeApp, cert, getApps } from 'firebase-admin/app'
+          import { getAuth } from 'firebase-admin/auth'
+          import { getFirestore } from 'firebase-admin/firestore'
+          import { verifiedPlusInterval } from './api/_lib/billing-reconcile.js'
+
+          const qaEmail = process.env.QA_EMAIL
+          const projectId = process.env.FIREBASE_PROJECT_ID
+          const clientEmail = process.env.FIREBASE_CLIENT_EMAIL
+          const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n')
+          if (!projectId || !clientEmail || !privateKey) throw new Error('FIREBASE_ADMIN_CONFIG_MISSING')
+          if (!getApps().length) initializeApp({ credential: cert({ projectId, clientEmail, privateKey }), projectId })
+          const auth = getAuth()
+          const db = getFirestore()
+          const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+
+          let user
+          try {
+            user = await auth.getUserByEmail(qaEmail)
+            console.log('AUTH_USER_FOUND=YES')
+          } catch (err) {
+            console.log(`AUTH_USER_FOUND=NO code=${err?.code || 'unknown'}`)
+            process.exit(2)
+          }
+
+          const snap = await db.collection('users').doc(user.uid).get()
+          console.log(`PROFILE_FOUND=${snap.exists ? 'YES' : 'NO'}`)
+          const profile = snap.exists ? snap.data() : {}
+          console.log(`PROFILE_PLAN=${profile?.plan || 'missing'}`)
+          console.log(`PROFILE_SUBSCRIPTION_STATUS=${profile?.subscriptionStatus || 'missing'}`)
+          console.log(`PROFILE_BILLING_INTERVAL=${profile?.billingInterval || 'missing'}`)
+          console.log(`HAS_STRIPE_SUBSCRIPTION_ID=${typeof profile?.stripeSubscriptionId === 'string' && profile.stripeSubscriptionId ? 'YES' : 'NO'}`)
+          console.log(`HAS_STRIPE_CUSTOMER_ID=${typeof profile?.stripeCustomerId === 'string' && profile.stripeCustomerId ? 'YES' : 'NO'}`)
+          console.log(`PROFILE_SMS_STATUS=${profile?.smsAddonStatus || 'missing'}`)
+
+          const subscriptionId = typeof profile?.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : ''
+          const customerId = typeof profile?.stripeCustomerId === 'string' ? profile.stripeCustomerId : ''
+          if (!subscriptionId) {
+            console.log('SUBSCRIPTION_RETRIEVE=SKIP_NO_ID')
+            process.exit(0)
+          }
+
+          let subscription
+          try {
+            subscription = await stripe.subscriptions.retrieve(subscriptionId)
+            console.log('SUBSCRIPTION_RETRIEVE=PASS')
+            console.log(`SUBSCRIPTION_STATUS=${subscription.status || 'missing'}`)
+            console.log(`SUBSCRIPTION_LIVEMODE=${subscription.livemode === true ? 'LIVE' : subscription.livemode === false ? 'TEST' : 'UNKNOWN'}`)
+            console.log(`VERIFIED_PLUS_INTERVAL=${verifiedPlusInterval(subscription) || 'NONE'}`)
+            const stripeCustomerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id
+            console.log(`CUSTOMER_MATCH=${customerId && stripeCustomerId === customerId ? 'YES' : 'NO'}`)
+            const smsPriceId = process.env.STRIPE_SMS_ADDON_PRICE_ID || ''
+            const smsPresent = (subscription.items?.data || []).some(item => item?.price?.id === smsPriceId)
+            console.log(`SMS_ITEM_PRESENT=${smsPresent ? 'YES' : 'NO'}`)
+          } catch (err) {
+            console.log(`SUBSCRIPTION_RETRIEVE=FAIL code=${err?.code || 'unknown'} type=${err?.type || err?.name || 'unknown'}`)
+            process.exit(3)
+          }
+
+          try {
+            const invoices = await stripe.invoices.list({ customer: customerId, limit: 12 })
+            console.log(`INVOICE_LIST=PASS count=${Array.isArray(invoices?.data) ? invoices.data.length : 0}`)
+          } catch (err) {
+            console.log(`INVOICE_LIST=FAIL code=${err?.code || 'unknown'} type=${err?.type || err?.name || 'unknown'}`)
+          }
+
+          try {
+            const dogs = await db.collection('dogs').where('currentOwnerId', '==', user.uid).get()
+            console.log(`DOG_QUERY=PASS count=${dogs.size}`)
+          } catch (err) {
+            console.log(`DOG_QUERY=FAIL code=${err?.code || 'unknown'}`)
+          }
+
+          console.log('READ_ONLY_BILLING_ACCOUNT_DIAGNOSTIC=DONE')
+          NODE
