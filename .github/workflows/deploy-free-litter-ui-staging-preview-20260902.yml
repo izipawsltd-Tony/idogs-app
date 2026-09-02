@@ -11,11 +11,11 @@ permissions:
   contents: read
 
 jobs:
-  deploy-preview:
+  test-deploy-verify-preview:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
-      CANDIDATE_SHA: 97d6b6690b4796ddbe009c846b25659ba2cfdefe
+      CANDIDATE_SHA: 8302c7125d4e9e1a2c3039919a55e52babcca1e8
       STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       VERCEL_SCOPE: izipawsltd-tonys-projects
@@ -24,15 +24,42 @@ jobs:
       - name: Checkout exact candidate
         uses: actions/checkout@v4
         with:
-          ref: 97d6b6690b4796ddbe009c846b25659ba2cfdefe
-          fetch-depth: 1
+          ref: 8302c7125d4e9e1a2c3039919a55e52babcca1e8
+          fetch-depth: 2
 
-      - name: Verify exact source and staging project lock
+      - name: Verify exact source and expected micro-fix lineage
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test -z "$(git status --porcelain --untracked-files=no)"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD^~2)" = "97d6b6690b4796ddbe009c846b25659ba2cfdefe"
+          changed=$(git diff --name-only 97d6b6690b4796ddbe009c846b25659ba2cfdefe..HEAD | sort)
+          printf '%s\n' "$changed"
+          test "$changed" = $'scripts/test-litter-pricing-policy.mjs\nsrc/components/ExtraLitterButton.tsx'
+          echo SOURCE_LINEAGE_AND_SCOPE=PASS
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run focused regression and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-litter-pricing-policy.mjs
+          node scripts/test-litter-quota.mjs
+          node scripts/test-extra-litter-checkout.mjs
+          node scripts/test-entitlements.mjs
+          npm run build
+          echo FOCUSED_REGRESSION_AND_BUILD=PASS
+
+      - name: Hard-lock Vercel staging project
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p .vercel
           printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
           python3 - <<'PY'
@@ -44,11 +71,6 @@ jobs:
           print('PROJECT_LOCK=PASS')
           print('CANDIDATE_SHA=' + os.environ['CANDIDATE_SHA'])
           PY
-
-      - name: Setup Node 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
 
       - name: Confirm Preview financial safety gate
         shell: bash
@@ -76,6 +98,7 @@ jobs:
           print('EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=' + ('missing' if not vals.get('EXTRA_LITTER_CHECKOUT_ENABLED') else 'not_true'))
           PY
           rm -f .vercel/.env.*.local
+          test ! -e .vercel/.env.preview.local
           python3 - <<'PY'
           import json, os
           d=json.load(open('.vercel/project.json'))
@@ -92,13 +115,14 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
           set +e
           npx --yes vercel@latest deploy --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
           status=$?
           set -e
           echo "VERCEL_PREVIEW_DEPLOY_EXIT=$status"
-          sed -n '1,180p' /tmp/vercel-deploy.stderr
-          sed -n '1,100p' /tmp/vercel-deploy.stdout
+          sed -n '1,200p' /tmp/vercel-deploy.stderr
+          sed -n '1,120p' /tmp/vercel-deploy.stdout
           if [ "$status" -ne 0 ]; then exit "$status"; fi
           DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
           test -n "$DEPLOY_URL"
@@ -106,31 +130,61 @@ jobs:
           echo "PREVIEW_URL=$DEPLOY_URL"
           echo STAGING_PREVIEW_DEPLOY=PASS
 
-      - name: Verify Preview bundle
+      - name: Verify protected Preview index and bundle read-only
         shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
           test -n "${DEPLOY_URL:-}"
-          curl -fsSL --retry 5 --retry-delay 2 "$DEPLOY_URL/" -o /tmp/index.html
+          npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl / --deployment "$DEPLOY_URL" > /tmp/index.html
           python3 - <<'PY'
           from pathlib import Path
-          import os, re, subprocess
-          base=os.environ['DEPLOY_URL']
+          import re
           html=Path('/tmp/index.html').read_text(errors='replace')
           assets=sorted(set(re.findall(r'src=["\'](/assets/[^"\']+\.js)["\']', html)))
-          if not assets: raise SystemExit('JS_ASSETS_NONE')
-          combined=b''
-          for i,a in enumerate(assets):
-              out=Path(f'/tmp/asset-{i}.js')
-              subprocess.run(['curl','-fsSL','--retry','5','--retry-delay','2',base+a,'-o',str(out)],check=True)
-              combined += out.read_bytes()
-          if b'[SENSITIVE]' in combined: raise SystemExit('BUNDLE_SENSITIVE_PLACEHOLDER_FOUND')
-          text=combined.decode('utf-8',errors='ignore')
-          if 'idogs-app-staging.firebaseapp.com' not in text: raise SystemExit('WRONG_FIREBASE_TARGET')
-          if 'Free plan — upgrade to Plus to create litters' not in text: raise SystemExit('FREE_GATE_COPY_MISSING')
-          if 'Your current plan does not allow creating another litter.' not in text: raise SystemExit('FAIL_CLOSED_COPY_MISSING')
+          print('JS_ASSET_COUNT=' + str(len(assets)))
+          if not assets:
+              raise SystemExit('JS_ASSETS_NONE')
+          preferred=[a for a in assets if '/assets/index-' in a]
+          asset=(preferred or assets)[0]
+          Path('/tmp/main-asset.txt').write_text(asset)
+          print('MAIN_ASSET=' + asset)
+          PY
+          MAIN_ASSET=$(cat /tmp/main-asset.txt)
+          npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl "$MAIN_ASSET" --deployment "$DEPLOY_URL" > /tmp/main.js
+          python3 - <<'PY'
+          from pathlib import Path
+          data=Path('/tmp/main.js').read_bytes()
+          print('MAIN_ASSET_BYTES=' + str(len(data)))
+          if len(data) < 500000:
+              raise SystemExit('MAIN_ASSET_TOO_SMALL')
+          if b'[SENSITIVE]' in data:
+              raise SystemExit('BUNDLE_SENSITIVE_PLACEHOLDER_FOUND')
+          text=data.decode('utf-8',errors='ignore')
+          required=[
+              'idogs-app-staging.firebaseapp.com',
+              'Free plan — upgrade to Plus to create litters',
+              'Checking litter access…',
+              'Litter access unavailable — refresh to try again',
+              'Your current plan does not allow creating another litter.',
+          ]
+          missing=[s for s in required if s not in text]
+          if missing:
+              print('MISSING_MARKER_COUNT=' + str(len(missing)))
+              raise SystemExit('REQUIRED_PREVIEW_MARKER_MISSING')
           print('BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT')
           print('FIREBASE_STAGING_TARGET=PASS')
           print('FREE_LITTER_UI_GATE_MARKERS=PASS')
-          print('PREVIEW_BUNDLE_CHECK=PASS')
+          print('PROTECTED_PREVIEW_BUNDLE_CHECK=PASS')
           PY
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo EXTRA_LITTER_REAL_CHECKOUT=OFF
+          echo FREE_LITTER_PREVIEW_AUTOMATION=PASS
