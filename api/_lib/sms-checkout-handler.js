@@ -91,7 +91,7 @@ export function createSmsAddonCheckoutHandler({
         return reject409(res, 'SMS_GUARD_ALREADY_PRESENT', 'SMS add-on already exists; manage it in Billing')
       }
 
-      const updated = await updateSubscription(subscription.id, {
+      await updateSubscription(subscription.id, {
         items: [{ price: priceId, quantity: 1 }],
         default_tax_rates: checkoutTaxRatesForStripeMode(subscription.livemode),
         proration_behavior: 'always_invoice',
@@ -99,14 +99,16 @@ export function createSmsAddonCheckoutHandler({
         expand: ['latest_invoice'],
       })
 
-      const hostedInvoiceUrl = typeof updated?.latest_invoice === 'object'
-        ? updated.latest_invoice?.hosted_invoice_url || null
-        : null
-
+      // With error_if_incomplete, a payment that cannot complete causes the
+      // Stripe update to throw and we stay in-app on the error path. A 200
+      // therefore must not send the browser to Stripe's hosted invoice page.
+      // Keeping the successful response in-app also preserves the exact
+      // staging Preview origin instead of allowing an external Stripe page to
+      // return the user to the production business URL.
       return res.status(200).json({
         success: true,
         status: 'activating',
-        hostedInvoiceUrl,
+        hostedInvoiceUrl: null,
       })
     } catch (err) {
       logSanitizedError('create-sms-addon-checkout', 'SMS_ADDON_UPDATE_FAILED', { code: err?.code })
