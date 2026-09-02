@@ -33,9 +33,11 @@ jobs:
           test -z "$(git status --porcelain)"
           changed=$(git diff --name-only "$BASE_SHA".."$CANDIDATE_SHA")
           test "$changed" = 'api/billing-summary.js'
-          grep -q "BILLING_SUMMARY_SUBSCRIPTION_RETRIEVE_FAILED" api/billing-summary.js
-          grep -q "BILLING_SUMMARY_PLUS_RECONCILE_FAILED" api/billing-summary.js
-          grep -q "BILLING_SUMMARY_INVOICE_LIST_FAILED" api/billing-summary.js
+          grep -q 'logBillingStageFailure' api/billing-summary.js
+          grep -q "'SUBSCRIPTION_RETRIEVE'" api/billing-summary.js
+          grep -q "'PLUS_RECONCILE'" api/billing-summary.js
+          grep -q "'INVOICE_LIST'" api/billing-summary.js
+          grep -q 'BILLING_SUMMARY_${stage}_FAILED' api/billing-summary.js
           git diff --check "$BASE_SHA".."$CANDIDATE_SHA"
           echo BILLING_STAGE_DIAGNOSTIC_SCOPE=PASS
 
