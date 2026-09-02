@@ -75,6 +75,7 @@ jobs:
             retrieveSubscription: async () => ({
               id: 'sub_test',
               customer: 'cus_test',
+              status: 'active',
               livemode: false,
               items: { data: [{ id: 'si_plus', price: { id: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x' } }] },
             }),
