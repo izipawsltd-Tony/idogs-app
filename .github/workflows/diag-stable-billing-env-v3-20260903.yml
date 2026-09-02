@@ -1,0 +1,60 @@
+name: Diagnose Stable Staging Billing Environment V3 20260903
+
+on:
+  push:
+    branches:
+      - automation/diag-stable-billing-env-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  env-metadata:
+    runs-on: ubuntu-latest
+    env:
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+    steps:
+      - name: Inspect relevant Vercel env metadata without printing values
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token = process.env.VERCEL_TOKEN
+          const projectId = process.env.STAGING_PROJECT_ID
+          const teamId = process.env.STAGING_TEAM_ID
+          const res = await fetch(`https://api.vercel.com/v9/projects/${projectId}/env?teamId=${teamId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          const body = await res.json().catch(() => ({}))
+          if (!res.ok) {
+            console.error(`VERCEL_ENV_METADATA_HTTP=${res.status}`)
+            process.exit(1)
+          }
+          const wanted = new Set(['STRIPE_SECRET_KEY','FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','STRIPE_SMS_ADDON_PRICE_ID','APP_URL'])
+          const envs = Array.isArray(body.envs) ? body.envs.filter(e => wanted.has(e.key)) : []
+          for (const key of [...wanted]) {
+            const rows = envs.filter(e => e.key === key)
+            console.log(`${key}_ENTRY_COUNT=${rows.length}`)
+            for (const row of rows) {
+              const targets = Array.isArray(row.target) ? row.target.join(',') : String(row.target || '')
+              console.log(`${key}_ENTRY id=${row.id || 'none'} target=${targets || 'none'} type=${row.type || 'unknown'} branch=${row.gitBranch || 'none'}`)
+            }
+            const preview = rows.filter(r => Array.isArray(r.target) && r.target.includes('preview'))
+            const production = rows.filter(r => Array.isArray(r.target) && r.target.includes('production'))
+            if (preview.length && production.length) {
+              let result = 'UNKNOWN'
+              const pv = preview[0]?.value
+              const sv = production[0]?.value
+              if (typeof pv === 'string' && typeof sv === 'string' && pv !== '[SENSITIVE]' && sv !== '[SENSITIVE]') {
+                result = pv === sv ? 'YES' : 'NO'
+              } else if (preview[0]?.id === production[0]?.id) {
+                result = 'YES_SAME_ENTRY'
+              }
+              console.log(`${key}_PREVIEW_PRODUCTION_VALUE_MATCH=${result}`)
+            }
+          }
+          console.log('VERCEL_ENV_METADATA_DIAGNOSTIC=PASS')
+          NODE
