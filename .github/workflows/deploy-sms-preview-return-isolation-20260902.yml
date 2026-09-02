@@ -1,0 +1,201 @@
+name: Deploy SMS Preview Return Isolation 20260902
+
+on:
+  push:
+    branches:
+      - automation/sms-preview-return-isolation-20260902
+    paths:
+      - .github/workflows/deploy-sms-preview-return-isolation-20260902.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test-deploy-verify-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CANDIDATE_SHA: 2924991cee38f723f47bc48664c78bfd6ab64932
+      BASE_SHA: 6c7ca35aff18ca97d3c503c45c424222caee37bd
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 2924991cee38f723f47bc48664c78bfd6ab64932
+          fetch-depth: 2
+
+      - name: Verify exact source and bounded SMS scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD~1)" = "$BASE_SHA"
+          changed=$(git diff --name-only "$BASE_SHA"..HEAD | sort)
+          printf '%s\n' "$changed"
+          test "$changed" = 'api/_lib/sms-checkout-handler.js'
+          echo SOURCE_LINEAGE_AND_SMS_SCOPE=PASS
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run bounded SMS return-isolation regression and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { createSmsAddonCheckoutHandler } from './api/_lib/sms-checkout-handler.js'
+
+          function fakeRes() {
+            return {
+              statusCode: 200,
+              body: null,
+              status(n) { this.statusCode = n; return this },
+              json(v) { this.body = v; return this },
+            }
+          }
+
+          let updateArgs = null
+          const handler = createSmsAddonCheckoutHandler({
+            verifyIdToken: async () => ({ uid: 'u1' }),
+            getProfile: async () => ({
+              plan: 'plus',
+              subscriptionStatus: 'active',
+              stripeCustomerId: 'cus_test',
+              stripeSubscriptionId: 'sub_test',
+            }),
+            retrieveSubscription: async () => ({
+              id: 'sub_test',
+              customer: 'cus_test',
+              livemode: false,
+              items: { data: [{ id: 'si_plus', price: { id: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x' } }] },
+            }),
+            updateSubscription: async (id, params) => {
+              updateArgs = { id, params }
+              return {
+                id,
+                latest_invoice: {
+                  status: 'paid',
+                  hosted_invoice_url: 'https://invoice.stripe.test/should-not-be-exposed',
+                },
+              }
+            },
+            getPriceId: () => 'price_sms_test',
+          })
+
+          const res = fakeRes()
+          await handler({ method: 'POST', headers: { authorization: 'Bearer ok' }, body: {} }, res)
+          assert.equal(res.statusCode, 200)
+          assert.equal(res.body.success, true)
+          assert.equal(res.body.status, 'activating')
+          assert.equal(res.body.hostedInvoiceUrl, null)
+          assert.equal(updateArgs.id, 'sub_test')
+          assert.equal(updateArgs.params.payment_behavior, 'error_if_incomplete')
+          assert.equal(updateArgs.params.proration_behavior, 'always_invoice')
+          assert.deepEqual(updateArgs.params.items, [{ price: 'price_sms_test', quantity: 1 }])
+          console.log('SMS_SUCCESS_STAYS_IN_APP=PASS')
+          console.log('HOSTED_INVOICE_REDIRECT_SUPPRESSED=PASS')
+          NODE
+
+          node scripts/test-stripe-mode-routing.mjs
+          node scripts/test-billing-p0-security.mjs
+          npm run build
+          echo SMS_RETURN_ISOLATION_REGRESSION_AND_BUILD=PASS
+
+      - name: Hard-lock Vercel staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK=PASS')
+          print('CANDIDATE_SHA=' + os.environ['CANDIDATE_SHA'])
+          PY
+
+      - name: Confirm Preview financial safety
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          vals={}
+          for p in Path('.vercel').glob('.env.*.local'):
+              for raw in p.read_text(errors='replace').splitlines():
+                  line=raw.strip()
+                  if not line or line.startswith('#') or '=' not in line:
+                      continue
+                  k,v=line.split('=',1)
+                  v=v.strip()
+                  if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"):
+                      v=v[1:-1]
+                  vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
+          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
+              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          PY
+          rm -f .vercel/.env.*.local
+
+      - name: Deploy exact candidate to staging Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
+          test -n "$DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_URL=$DEPLOY_URL"
+          echo STAGING_PREVIEW_DEPLOY=PASS
+
+      - name: Probe SMS route without authentication or payment
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_URL:-}"
+          HTTP_CODE=$(npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl /api/create-sms-addon-checkout --deployment "$DEPLOY_URL" -- \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --data '{}' \
+            --silent --show-error --output /tmp/sms-probe.json --write-out '%{http_code}')
+          echo "SMS_PROBE_HTTP=$HTTP_CODE"
+          cat /tmp/sms-probe.json
+          test "$HTTP_CODE" = "401"
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/sms-probe.json'))
+          assert body.get('error') == 'Missing Authorization header', body
+          print('SMS_AUTH_GATE=PASS')
+          print('STRIPE_MUTATION_NOT_CREATED=PASS')
+          PY
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo EXTRA_LITTER_REAL_CHECKOUT=OFF
+          echo SMS_PREVIEW_RETURN_ISOLATION_AUTOMATION=PASS
