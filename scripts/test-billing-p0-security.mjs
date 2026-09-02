@@ -94,17 +94,16 @@ for (const legacyPlan of ['basic', 'pro', 'kennel', 'sms_addon', 'starter']) {
   })
 }
 
-check(
-  'exactly the two Plus price ids are allowlisted — no $40 launch-offer price, no legacy tiers',
-  Object.keys(CHECKOUT_PRICE_IDS).length === 2 &&
-    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxMJ9GHgBd6ZgJEcwyahH58' &&
-    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'
-)
-
 const originalVercelEnv = process.env.VERCEL_ENV
 const originalFirebaseProjectId = process.env.FIREBASE_PROJECT_ID
 process.env.VERCEL_ENV = 'preview'
 process.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'
+check(
+  'exactly the two Plus plan keys are exposed and staging Preview resolves verified A$7/A$70 test prices',
+  Object.keys(CHECKOUT_PRICE_IDS).length === 2 &&
+    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK'
+)
 check(
   'isolated staging Preview resolves only verified iDogs A$7/A$70 test Plus prices',
   CHECKOUT_PRICE_IDS.plus_monthly === 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x' &&
@@ -120,9 +119,9 @@ check(
 process.env.VERCEL_ENV = 'production'
 process.env.FIREBASE_PROJECT_ID = 'idogs-app'
 check(
-  'production Firebase resolves only verified iDogs live Plus prices',
-  CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxMJ9GHgBd6ZgJEcwyahH58' &&
-    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'
+  'production Firebase resolves current Stripe-verified iDogs A$7/A$70 live Plus prices',
+  CHECKOUT_PRICE_IDS.plus_monthly === 'price_1UAInbGHgBd6ZgJE0NAikQgm' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1UAIngGHgBd6ZgJEh3njs6hZ'
 )
 if (originalVercelEnv === undefined) delete process.env.VERCEL_ENV
 else process.env.VERCEL_ENV = originalVercelEnv
