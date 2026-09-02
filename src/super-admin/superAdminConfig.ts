@@ -26,6 +26,16 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
     ],
   },
   {
+    label: 'AI CEO',
+    items: [
+      {
+        label: 'Control Center',
+        path: `${SUPER_ADMIN_BASE_PATH}/ai-ceo`,
+        description: 'Decision queue, KPI brief and approval gates',
+      },
+    ],
+  },
+  {
     label: 'Management',
     items: [
       {
