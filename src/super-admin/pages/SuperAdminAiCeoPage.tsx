@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth'
 type DecisionLane = 'AUTO' | 'APPROVAL'
 type Confidence = 'HIGH' | 'MEDIUM' | 'LOW'
 type Horizon = 'NOW' | 'THIS_WEEK' | 'NEXT_BUILD' | 'WATCH'
-type Classification = 'INTERNAL' | 'TEST_QA' | 'LIKELY_REAL' | 'UNCLASSIFIED'
+type Classification = 'REAL_CUSTOMER' | 'INTERNAL' | 'TEST_QA' | 'LIKELY_REAL' | 'UNCLASSIFIED'
 
 type PriceTruth = {
   id: string
@@ -15,6 +15,15 @@ type PriceTruth = {
   interval: string | null
   intervalCount: number
 } | null
+
+type ObservedPrice = {
+  priceId: string
+  currency: string
+  monthlyAmount: number
+  interval: string | null
+  intervalCount: number
+  quantity: number
+}
 
 type AccountSignal = {
   uid: string
@@ -29,6 +38,8 @@ type AccountSignal = {
   stripeStatus: string | null
   stripeMode: string | null
   stripeMrrAud: number | null
+  subscriptionReadFailed: boolean
+  revenueBucket: 'VERIFIED_CUSTOMER' | 'QA_INTERNAL' | 'UNRESOLVED' | 'READ_FAILED' | 'NONE'
 }
 
 type Decision = {
@@ -83,21 +94,44 @@ type AiCeoPayload = {
     uniqueStoredSubscriptionIds: number
     retrievedSubscriptions: number
     failedSubscriptionReads: number
+    failedSubscriptionIds: string[]
     nonAudRecurring: Array<{ currency: string; monthlyAmount: number }>
     canonicalPrices: { monthly: PriceTruth; annual: PriceTruth }
+    canonicalPriceStatus: { monthly: string; annual: string }
+    observedLivePrices: ObservedPrice[]
     legacyStoredEstimateAud: number
     legacyDeltaAud: number | null
     note: string
   }
+  customerRevenueTruth: {
+    status: 'VERIFIED' | 'PARTIAL'
+    grossLiveStripeMrrAud: number
+    verifiedCustomerMrrAud: number
+    qaInternalLiveMrrAud: number
+    unresolvedLiveMrrAud: number
+    allocationDeltaAud: number
+    verifiedCustomerActiveSubscriptions: number
+    qaInternalLiveActiveSubscriptions: number
+    unresolvedLiveActiveSubscriptions: number
+    failedSubscriptionProfiles: number
+    failedRevenueAccounts: Array<{ account: string; role: string }>
+    note: string
+  }
   accountClassification: {
     status: string
+    realCustomer: number
     internal: number
     testQa: number
     likelyReal: number
     unclassified: number
+    realCustomerBreeders: number
     likelyRealBreeders: number
+    paidRealCustomer: number
     paidLikelyReal: number
     paidInternalOrTest: number
+    paidUnclassified: number
+    failedSubscriptionProfiles: number
+    overrideCount: number
     accounts: AccountSignal[]
     note: string
   }
@@ -111,7 +145,7 @@ type AiCeoPayload = {
     internalEntitlementAccounts: number
     storedActivePaidSubscriptions: number
     storedActivePaidBreeders: number
-    verifiedLivePaidBreeders: number
+    verifiedCustomerPaidBreeders: number
     totalDogs: number
     activeDogs: number
     transferredDogs: number
@@ -187,9 +221,10 @@ function Pill({ children, tone = 'neutral' }: { children: React.ReactNode; tone?
 }
 
 function truthTone(status: string) {
-  if (status === 'VERIFIED' || status === 'LIKELY_REAL') return 'good' as const
-  if (status === 'UNAVAILABLE' || status === 'UNCLASSIFIED') return 'bad' as const
-  return 'warn' as const
+  if (status === 'VERIFIED' || status === 'REAL_CUSTOMER') return 'good' as const
+  if (status === 'UNAVAILABLE' || status === 'UNCLASSIFIED' || status === 'READ_FAILED') return 'bad' as const
+  if (status === 'TEST_QA' || status === 'INTERNAL') return 'warn' as const
+  return 'neutral' as const
 }
 
 function horizonTone(horizon: Horizon) {
@@ -202,6 +237,13 @@ function horizonTone(horizon: Horizon) {
 function formatPrice(price: PriceTruth) {
   if (!price || price.amount === null) return 'Unavailable'
   return `${price.currency === 'AUD' ? 'A$' : `${price.currency} `}${price.amount}/${price.interval || 'period'}`
+}
+
+function revenueBucketTone(bucket: AccountSignal['revenueBucket']) {
+  if (bucket === 'VERIFIED_CUSTOMER') return 'good' as const
+  if (bucket === 'QA_INTERNAL') return 'warn' as const
+  if (bucket === 'UNRESOLVED' || bucket === 'READ_FAILED') return 'bad' as const
+  return 'neutral' as const
 }
 
 export default function SuperAdminAiCeoPage() {
@@ -229,7 +271,7 @@ export default function SuperAdminAiCeoPage() {
 
   useEffect(() => { load() }, [user])
 
-  if (loading) return <div className="super-admin-page"><p>Loading AI CEO reality brief...</p></div>
+  if (loading) return <div className="super-admin-page"><p>Loading AI CEO customer revenue truth...</p></div>
   if (error || !data) return (
     <div className="super-admin-page"><section className="super-admin-panel" style={panel}>
       <h2>AI CEO Control Center unavailable</h2><p style={{ color: '#a52828' }}>{error || 'No data returned.'}</p>
@@ -239,11 +281,11 @@ export default function SuperAdminAiCeoPage() {
 
   const priorityDecision = data.decisions.find(item => item.id === data.brief.priorityDecisionId) || data.decisions[0]
   const headline = [
-    ['Verified LIVE MRR', `A$${data.revenueTruth.verifiedLiveMrrAud}`, `${data.revenueTruth.verifiedLiveActiveSubscriptions} active LIVE subscription(s)`],
-    ['Likely real accounts', data.accountClassification.likelyReal, `${data.accountClassification.unclassified} still unclassified`],
-    ['Likely real breeders', data.accountClassification.likelyRealBreeders, `${data.facts.verifiedLivePaidBreeders} verified LIVE paid breeder(s)`],
-    ['Raw dog activation', `${data.facts.breederDogActivationPct}%`, `${data.facts.breedersWithDogs}/${data.facts.breeders} breeder-shaped accounts`],
-    ['Raw litter activation', `${data.facts.breederLitterActivationPct}%`, `${data.facts.breedersWithLitters}/${data.facts.breeders} breeder-shaped accounts`],
+    ['Verified Customer MRR', `A$${data.customerRevenueTruth.verifiedCustomerMrrAud}`, `${data.customerRevenueTruth.verifiedCustomerActiveSubscriptions} verified customer LIVE subscription(s)`],
+    ['Gross LIVE Stripe MRR', `A$${data.customerRevenueTruth.grossLiveStripeMrrAud}`, 'Billing truth before customer classification'],
+    ['QA / Internal LIVE MRR', `A$${data.customerRevenueTruth.qaInternalLiveMrrAud}`, `${data.customerRevenueTruth.qaInternalLiveActiveSubscriptions} excluded LIVE subscription(s)`],
+    ['Unresolved LIVE MRR', `A$${data.customerRevenueTruth.unresolvedLiveMrrAud}`, `${data.customerRevenueTruth.failedSubscriptionProfiles} failed subscription profile(s)`],
+    ['REAL_CUSTOMER', data.accountClassification.realCustomer, `${data.accountClassification.likelyReal} likely-real signal(s)`],
     ['Support needs action', data.facts.supportNeedsAction, `oldest ${data.facts.supportOldestOpenDays} day(s)`],
   ] as const
 
@@ -253,9 +295,9 @@ export default function SuperAdminAiCeoPage() {
         <div>
           <p className="super-admin-kicker">AI CEO OS · {data.osVersion}</p>
           <h2>Control Center</h2>
-          <p style={{ maxWidth: 900, color: '#53635a', lineHeight: 1.55 }}>{data.objective.northStar}. V1.2 prioritises reality before optimisation: LIVE revenue truth, customer-quality signals, dynamic decision scores and a concrete 7-day operating plan.</p>
+          <p style={{ maxWidth: 900, color: '#53635a', lineHeight: 1.55 }}>{data.objective.northStar}. V1.2.1 separates Stripe billing truth from customer revenue truth so production QA subscriptions cannot inflate CEO MRR.</p>
         </div>
-        <button type="button" className="btn btn-secondary" onClick={load}>Refresh reality brief</button>
+        <button type="button" className="btn btn-secondary" onClick={load}>Refresh customer revenue truth</button>
       </section>
 
       <section className="super-admin-panel" style={panel}>
@@ -284,41 +326,67 @@ export default function SuperAdminAiCeoPage() {
       </section>
 
       <section className="super-admin-panel" style={panel}>
-        <p className="super-admin-kicker">Revenue Truth</p>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><h3 style={{ margin: 0 }}>Stripe-verified recurring revenue</h3><Pill tone={truthTone(data.revenueTruth.status)}>{data.revenueTruth.status}</Pill><Pill>{data.revenueTruth.stripeMode}</Pill></div>
+        <p className="super-admin-kicker">Customer Revenue Truth</p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><h3 style={{ margin: 0 }}>Business MRR after account classification</h3><Pill tone={truthTone(data.customerRevenueTruth.status)}>{data.customerRevenueTruth.status}</Pill></div>
+        <p style={{ fontSize: 13, color: '#53635a', lineHeight: 1.6 }}>{data.customerRevenueTruth.note}</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          <MetricCard label="Verified Customer MRR" value={`A$${data.customerRevenueTruth.verifiedCustomerMrrAud}`} note="CEO revenue baseline" />
+          <MetricCard label="Gross LIVE Stripe MRR" value={`A$${data.customerRevenueTruth.grossLiveStripeMrrAud}`} note="Before customer classification" />
+          <MetricCard label="QA / Internal LIVE MRR" value={`A$${data.customerRevenueTruth.qaInternalLiveMrrAud}`} note="Excluded from customer revenue" />
+          <MetricCard label="Unresolved LIVE MRR" value={`A$${data.customerRevenueTruth.unresolvedLiveMrrAud}`} note="Excluded until customer evidence exists" />
+          <MetricCard label="Failed subscription profiles" value={data.customerRevenueTruth.failedSubscriptionProfiles} note="Never silently counted" />
+          <MetricCard label="Allocation delta" value={`A$${data.customerRevenueTruth.allocationDeltaAud}`} note="Gross LIVE minus classified retrieved LIVE MRR" />
+        </div>
+        {data.customerRevenueTruth.failedRevenueAccounts.length > 0 && <div style={{ marginTop: 12, padding: 12, border: '1px solid #f0c6c6', background: '#fff8f8', borderRadius: 8 }}>
+          <strong style={{ fontSize: 12 }}>Failed Stripe read account(s)</strong>
+          <ul style={{ marginBottom: 0 }}>{data.customerRevenueTruth.failedRevenueAccounts.map(item => <li key={`${item.account}-${item.role}`} style={{ fontSize: 12 }}>{item.account} · {item.role}</li>)}</ul>
+        </div>}
+      </section>
+
+      <section className="super-admin-panel" style={panel}>
+        <p className="super-admin-kicker">Stripe Billing Truth</p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><h3 style={{ margin: 0 }}>Read-only recurring billing verification</h3><Pill tone={truthTone(data.revenueTruth.status)}>{data.revenueTruth.status}</Pill><Pill>{data.revenueTruth.stripeMode}</Pill></div>
         <p style={{ fontSize: 13, color: '#53635a', lineHeight: 1.6 }}>{data.revenueTruth.note}</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <MetricCard label="LIVE MRR" value={`A$${data.revenueTruth.verifiedLiveMrrAud}`} note="Active LIVE recurring Stripe line items only" />
-          <MetricCard label="TEST MRR" value={`A$${data.revenueTruth.verifiedTestMrrAud}`} note="Never counted as business revenue" />
-          <MetricCard label="Plus Monthly truth" value={formatPrice(data.revenueTruth.canonicalPrices.monthly)} note="Canonical checkout price" />
-          <MetricCard label="Plus Annual truth" value={formatPrice(data.revenueTruth.canonicalPrices.annual)} note="Canonical checkout price" />
+          <MetricCard label="Gross LIVE MRR" value={`A$${data.revenueTruth.verifiedLiveMrrAud}`} note={`${data.revenueTruth.verifiedLiveActiveSubscriptions} retrieved active LIVE subscription(s)`} />
+          <MetricCard label="TEST MRR" value={`A$${data.revenueTruth.verifiedTestMrrAud}`} note="Never counted as customer revenue" />
+          <MetricCard label="Plus Monthly truth" value={formatPrice(data.revenueTruth.canonicalPrices.monthly)} note={`Canonical price · ${data.revenueTruth.canonicalPriceStatus.monthly}`} />
+          <MetricCard label="Plus Annual truth" value={formatPrice(data.revenueTruth.canonicalPrices.annual)} note={`Canonical price · ${data.revenueTruth.canonicalPriceStatus.annual}`} />
           <MetricCard label="Legacy estimate" value={`A$${data.revenueTruth.legacyStoredEstimateAud}`} note="Old A$5/A$49 display math — diagnostic only" />
-          <MetricCard label="Legacy → LIVE delta" value={data.revenueTruth.legacyDeltaAud === null ? 'Unknown' : `A$${data.revenueTruth.legacyDeltaAud}`} note={`${data.revenueTruth.failedSubscriptionReads} failed Stripe subscription read(s)`} />
+          <MetricCard label="Failed Stripe reads" value={data.revenueTruth.failedSubscriptionReads} note={`${data.revenueTruth.retrievedSubscriptions}/${data.revenueTruth.uniqueStoredSubscriptionIds} subscription IDs retrieved`} />
         </div>
-        <p style={{ marginBottom: 0, marginTop: 12, fontSize: 12, color: '#6c7a70' }}>Stored profiles with subscription IDs: {data.revenueTruth.storedSubscriptionProfiles} · unique IDs: {data.revenueTruth.uniqueStoredSubscriptionIds} · retrieved: {data.revenueTruth.retrievedSubscriptions} · trialing: {data.revenueTruth.trialingSubscriptions} · past due: {data.revenueTruth.pastDueSubscriptions}.</p>
+        {data.revenueTruth.observedLivePrices.length > 0 && <div style={{ marginTop: 14 }}>
+          <strong style={{ fontSize: 12 }}>Observed LIVE recurring price lines</strong>
+          <div style={{ overflowX: 'auto', marginTop: 6 }}><table style={{ width: '100%', minWidth: 620, borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead><tr style={{ textAlign: 'left', borderBottom: '1px solid #dfe5df' }}><th style={{ padding: 8 }}>Price ID</th><th>Monthly equivalent</th><th>Interval</th><th>Qty</th></tr></thead>
+            <tbody>{data.revenueTruth.observedLivePrices.map(price => <tr key={price.priceId} style={{ borderBottom: '1px solid #edf1ee' }}><td style={{ padding: 8 }}><code>{price.priceId}</code></td><td>{price.currency === 'AUD' ? 'A$' : `${price.currency} `}{price.monthlyAmount}</td><td>{price.intervalCount > 1 ? `${price.intervalCount} ` : ''}{price.interval || '—'}</td><td>{price.quantity}</td></tr>)}</tbody>
+          </table></div>
+        </div>}
       </section>
 
       <section className="super-admin-panel" style={panel}>
         <p className="super-admin-kicker">Account reality</p>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><h3 style={{ margin: 0 }}>Real / test / internal classification signals</h3><Pill tone={truthTone(data.accountClassification.status)}>{data.accountClassification.status}</Pill></div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><h3 style={{ margin: 0 }}>Customer / QA / internal classification</h3><Pill tone={truthTone(data.accountClassification.status)}>{data.accountClassification.status}</Pill></div>
         <p style={{ fontSize: 13, color: '#53635a', lineHeight: 1.6 }}>{data.accountClassification.note}</p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 12, marginBottom: 16 }}>
+          <MetricCard label="REAL_CUSTOMER" value={data.accountClassification.realCustomer} />
           <MetricCard label="LIKELY_REAL" value={data.accountClassification.likelyReal} />
           <MetricCard label="UNCLASSIFIED" value={data.accountClassification.unclassified} />
           <MetricCard label="INTERNAL" value={data.accountClassification.internal} />
-          <MetricCard label="TEST_QA" value={data.accountClassification.testQa} />
-          <MetricCard label="Paid likely-real" value={data.accountClassification.paidLikelyReal} />
-          <MetricCard label="Paid internal/test" value={data.accountClassification.paidInternalOrTest} />
+          <MetricCard label="TEST_QA" value={data.accountClassification.testQa} note={`${data.accountClassification.overrideCount} explicit override(s)`} />
+          <MetricCard label="Failed Stripe profiles" value={data.accountClassification.failedSubscriptionProfiles} />
         </div>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860, fontSize: 12 }}>
-            <thead><tr style={{ textAlign: 'left', borderBottom: '1px solid #dfe5df' }}><th style={{ padding: 9 }}>Account</th><th>Role</th><th>Classification</th><th>Evidence</th><th>Dogs</th><th>Litters</th><th>Stripe</th><th>MRR</th></tr></thead>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1020, fontSize: 12 }}>
+            <thead><tr style={{ textAlign: 'left', borderBottom: '1px solid #dfe5df' }}><th style={{ padding: 9 }}>Account</th><th>Role</th><th>Classification</th><th>Evidence</th><th>Dogs</th><th>Litters</th><th>Stripe</th><th>MRR</th><th>Revenue bucket</th></tr></thead>
             <tbody>{data.accountClassification.accounts.map(account => <tr key={account.uid} style={{ borderBottom: '1px solid #edf1ee' }}>
               <td style={{ padding: 9, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }} title={account.email || account.uid}>{account.email || account.uid}</td>
               <td>{account.role}</td>
               <td><div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}><Pill tone={truthTone(account.classification)}>{account.classification}</Pill><Pill>{account.confidence}</Pill></div></td>
-              <td style={{ maxWidth: 290, color: '#53635a' }}>{account.reason}</td><td>{account.dogCount}</td><td>{account.activeLitterCount}</td>
-              <td>{account.stripeStatus ? `${account.stripeMode || ''} ${account.stripeStatus}` : '—'}</td><td>{account.stripeMrrAud === null ? '—' : `A$${account.stripeMrrAud}`}</td>
+              <td style={{ maxWidth: 300, color: '#53635a' }}>{account.reason}</td><td>{account.dogCount}</td><td>{account.activeLitterCount}</td>
+              <td><Pill tone={truthTone(account.stripeStatus || '')}>{account.stripeStatus ? `${account.stripeMode || ''} ${account.stripeStatus}` : '—'}</Pill></td>
+              <td>{account.stripeMrrAud === null ? '—' : `A$${account.stripeMrrAud}`}</td>
+              <td><Pill tone={revenueBucketTone(account.revenueBucket)}>{account.revenueBucket.replaceAll('_', ' ')}</Pill></td>
             </tr>)}</tbody>
           </table>
         </div>
@@ -334,7 +402,7 @@ export default function SuperAdminAiCeoPage() {
 
       <section className="super-admin-panel" style={panel}>
         <p className="super-admin-kicker">Decision scoring</p><h3>Ranked by business leverage, not hard-coded priority</h3>
-        <p style={{ fontSize: 13, color: '#53635a' }}>Formula: <strong>Impact × Urgency × Confidence × Reversibility ÷ Cost</strong>, normalized to 0–100. High score + high urgency moves work toward NOW.</p>
+        <p style={{ fontSize: 13, color: '#53635a' }}>Formula: <strong>Impact × Urgency × Confidence × Reversibility ÷ Cost</strong>, normalized to 0–100.</p>
         <div style={{ display: 'grid', gap: 14 }}>{data.decisions.map(item => <article key={item.id} style={{ border: '1px solid #dfe5df', borderRadius: 10, padding: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}><div><div style={{ fontSize: 12, color: '#6c7a70' }}>Priority #{item.priority} · {item.owner}</div><h4 style={{ margin: '4px 0', fontSize: 17, color: '#10291d' }}>{item.title}</h4></div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'flex-start' }}><Pill tone={horizonTone(item.horizon)}>{item.horizon.replaceAll('_', ' ')}</Pill><Pill>Score {item.score}/100</Pill><Pill>{item.confidence}</Pill><Pill tone={item.lane === 'APPROVAL' ? 'warn' : 'good'}>{item.lane === 'APPROVAL' ? 'TONY APPROVAL' : 'AUTO'}</Pill></div></div>
           <p style={{ lineHeight: 1.6 }}><strong>Decision:</strong> {item.decision}</p><p style={{ lineHeight: 1.6, color: '#53635a' }}><strong>Why:</strong> {item.rationale}</p>
@@ -350,7 +418,7 @@ export default function SuperAdminAiCeoPage() {
       </section>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 20, marginBottom: 20 }}>
-        <section className="super-admin-panel" style={{ padding: 20, margin: 0 }}><p className="super-admin-kicker">Current operations</p><h3>Activation + market signals</h3><p style={{ fontSize: 13, lineHeight: 1.6 }}>Raw breeder-shaped funnel: {data.facts.breeders} registered → {data.facts.breedersWithDogs} with dogs → {data.facts.breedersWithLitters} with active litters → {data.facts.verifiedLivePaidBreeders} LIKELY_REAL LIVE paid breeder(s).</p><p style={{ fontSize: 12, color: '#6c7a70' }}>Dogs: {data.facts.totalDogs} total · {data.facts.activeDogs} active · {data.facts.archivedDogs} archived · {data.facts.transferredDogs} transferred. Litters: {data.facts.activeLitters}/{data.facts.totalLitters} active.</p><p style={{ fontSize: 12, color: '#6c7a70' }}>Showcase enquiries: {data.facts.showcaseEnquiries7d} in 7d · {data.facts.showcaseEnquiries30d} in 30d · {data.facts.showcaseEnquiriesTotal} total. Puppy state: {data.facts.puppyFunnel.available} available · {data.facts.puppyFunnel.reserved} reserved · {data.facts.puppyFunnel.depositReceived} deposit received · {data.facts.puppyFunnel.transferred} transferred.</p></section>
+        <section className="super-admin-panel" style={{ padding: 20, margin: 0 }}><p className="super-admin-kicker">Current operations</p><h3>Activation + market signals</h3><p style={{ fontSize: 13, lineHeight: 1.6 }}>Raw breeder-shaped funnel: {data.facts.breeders} registered → {data.facts.breedersWithDogs} with dogs → {data.facts.breedersWithLitters} with active litters → {data.facts.verifiedCustomerPaidBreeders} verified customer paid breeder(s).</p><p style={{ fontSize: 12, color: '#6c7a70' }}>Dogs: {data.facts.totalDogs} total · {data.facts.activeDogs} active · {data.facts.archivedDogs} archived · {data.facts.transferredDogs} transferred. Litters: {data.facts.activeLitters}/{data.facts.totalLitters} active.</p><p style={{ fontSize: 12, color: '#6c7a70' }}>Showcase enquiries: {data.facts.showcaseEnquiries7d} in 7d · {data.facts.showcaseEnquiries30d} in 30d · {data.facts.showcaseEnquiriesTotal} total. Puppy state: {data.facts.puppyFunnel.available} available · {data.facts.puppyFunnel.reserved} reserved · {data.facts.puppyFunnel.depositReceived} deposit received · {data.facts.puppyFunnel.transferred} transferred.</p></section>
         <section className="super-admin-panel" style={{ padding: 20, margin: 0 }}><p className="super-admin-kicker">Watch</p><h3>Truth guards / data gaps</h3>{data.watchItems.map(item => <div key={item.id} style={{ padding: '10px 0', borderBottom: '1px solid #edf1ee' }}><div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}><strong>{item.title}</strong><Pill>{item.severity}</Pill></div><p style={{ fontSize: 12, color: '#53635a', lineHeight: 1.5, marginBottom: 0 }}>{item.reason}</p></div>)}</section>
       </div>
 
@@ -359,7 +427,7 @@ export default function SuperAdminAiCeoPage() {
         <section className="super-admin-panel" style={{ padding: 20, margin: 0 }}><p className="super-admin-kicker">Source truth</p><h3>What each KPI means</h3>{Object.entries(data.sourceNotes).map(([key, value]) => <p key={key} style={{ fontSize: 12, lineHeight: 1.55 }}><strong>{key}:</strong> {value}</p>)}</section>
       </div>
 
-      <p style={{ marginTop: 18, fontSize: 11, color: '#78867d' }}>Generated {new Date(data.generatedAt).toLocaleString('en-AU', { timeZone: 'Australia/Adelaide' })} · Stripe verification is read-only · No autonomous writes or model-provider calls in v1.2.</p>
+      <p style={{ marginTop: 18, fontSize: 11, color: '#78867d' }}>Generated {new Date(data.generatedAt).toLocaleString('en-AU', { timeZone: 'Australia/Adelaide' })} · Stripe verification is read-only · No autonomous writes or model-provider calls in v1.2.1.</p>
     </div>
   )
 }
