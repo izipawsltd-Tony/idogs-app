@@ -1,0 +1,216 @@
+name: Deploy Plus Checkout Preview Fix 20260902
+
+on:
+  push:
+    branches:
+      - automation/plus-checkout-preview-fix-20260902
+    paths:
+      - .github/workflows/deploy-plus-checkout-preview-fix-20260902.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test-deploy-verify-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CANDIDATE_SHA: 4701c1de847ce6b94868a8d7cf4a8483dbf88c0f
+      BASE_SHA: 8302c7125d4e9e1a2c3039919a55e52babcca1e8
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 4701c1de847ce6b94868a8d7cf4a8483dbf88c0f
+          fetch-depth: 3
+
+      - name: Verify exact source and bounded billing scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD~2)" = "$BASE_SHA"
+          changed=$(git diff --name-only "$BASE_SHA"..HEAD | sort)
+          printf '%s\n' "$changed"
+          test "$changed" = $'api/_lib/checkout-handler.js\nscripts/test-checkout-preview-origin.mjs'
+          echo SOURCE_LINEAGE_AND_BILLING_SCOPE=PASS
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run billing regression and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-checkout-preview-origin.mjs
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-pricing-integration-checks.mjs
+          node scripts/test-staging-isolation-fallbacks.mjs
+          node scripts/test-stripe-mode-routing.mjs
+          node scripts/test-litter-pricing-policy.mjs
+          node scripts/test-extra-litter-checkout.mjs
+          node scripts/test-entitlements.mjs
+          npm run build
+          echo BILLING_REGRESSION_AND_BUILD=PASS
+
+      - name: Hard-lock Vercel staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK=PASS')
+          print('CANDIDATE_SHA=' + os.environ['CANDIDATE_SHA'])
+          PY
+
+      - name: Confirm Preview financial safety and remote-build env handling
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          vals={}
+          for p in Path('.vercel').glob('.env.*.local'):
+              for raw in p.read_text(errors='replace').splitlines():
+                  line=raw.strip()
+                  if not line or line.startswith('#') or '=' not in line:
+                      continue
+                  k,v=line.split('=',1)
+                  v=v.strip()
+                  if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"):
+                      v=v[1:-1]
+                  vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
+          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
+              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          print('EXTRA_LITTER_CHECKOUT_ENABLED_CLASS=' + ('missing' if not vals.get('EXTRA_LITTER_CHECKOUT_ENABLED') else 'not_true'))
+          PY
+          rm -f .vercel/.env.*.local
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK_AFTER_PULL=PASS')
+          PY
+
+      - name: Deploy exact candidate to staging Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          set +e
+          npx --yes vercel@latest deploy --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          status=$?
+          set -e
+          echo "VERCEL_PREVIEW_DEPLOY_EXIT=$status"
+          sed -n '1,220p' /tmp/vercel-deploy.stderr
+          sed -n '1,120p' /tmp/vercel-deploy.stdout
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
+          test -n "$DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_URL=$DEPLOY_URL"
+          echo STAGING_PREVIEW_DEPLOY=PASS
+
+      - name: Verify protected Preview bundle
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_URL:-}"
+          npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl / --deployment "$DEPLOY_URL" > /tmp/index.html
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html=Path('/tmp/index.html').read_text(errors='replace')
+          assets=sorted(set(re.findall(r'src=["\'](/assets/[^"\']+\.js)["\']', html)))
+          if not assets: raise SystemExit('JS_ASSETS_NONE')
+          preferred=[a for a in assets if '/assets/index-' in a]
+          asset=(preferred or assets)[0]
+          Path('/tmp/main-asset.txt').write_text(asset)
+          print('MAIN_ASSET=' + asset)
+          PY
+          MAIN_ASSET=$(cat /tmp/main-asset.txt)
+          npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl "$MAIN_ASSET" --deployment "$DEPLOY_URL" > /tmp/main.js
+          python3 - <<'PY'
+          from pathlib import Path
+          data=Path('/tmp/main.js').read_bytes()
+          print('MAIN_ASSET_BYTES=' + str(len(data)))
+          if len(data) < 500000: raise SystemExit('MAIN_ASSET_TOO_SMALL')
+          if b'[SENSITIVE]' in data: raise SystemExit('BUNDLE_SENSITIVE_PLACEHOLDER_FOUND')
+          text=data.decode('utf-8',errors='ignore')
+          required=[
+              'idogs-app-staging.firebaseapp.com',
+              'Free plan — upgrade to Plus to create litters',
+              'Checking litter access…',
+              'Litter access unavailable — refresh to try again',
+          ]
+          missing=[s for s in required if s not in text]
+          if missing: raise SystemExit('REGRESSION_MARKER_MISSING')
+          print('BUNDLE_SENSITIVE_PLACEHOLDER=ABSENT')
+          print('FIREBASE_STAGING_TARGET=PASS')
+          print('FREE_LITTER_UI_REGRESSION_MARKERS=PASS')
+          print('PROTECTED_PREVIEW_BUNDLE_CHECK=PASS')
+          PY
+
+      - name: Probe Plus checkout route without authentication or payment
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_URL:-}"
+          set +e
+          HTTP_CODE=$(npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl /api/create-checkout --deployment "$DEPLOY_URL" -- \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --data '{"plan":"plus_monthly"}' \
+            --silent --show-error --output /tmp/checkout-probe.json --write-out '%{http_code}')
+          status=$?
+          set -e
+          echo "CHECKOUT_PROBE_CLI_EXIT=$status"
+          test "$status" -eq 0
+          echo "CHECKOUT_PROBE_HTTP=$HTTP_CODE"
+          cat /tmp/checkout-probe.json
+          test "$HTTP_CODE" = "401"
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/checkout-probe.json'))
+          assert body.get('error') == 'Missing Authorization header', body
+          print('APP_URL_GATE_BYPASSED_SAFELY=PASS')
+          print('STRIPE_SESSION_NOT_CREATED=PASS')
+          PY
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo EXTRA_LITTER_REAL_CHECKOUT=OFF
+          echo PLUS_CHECKOUT_PREVIEW_AUTOMATION=PASS
