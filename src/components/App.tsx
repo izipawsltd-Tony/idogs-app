@@ -39,6 +39,7 @@ import PrivateDogPage from '../pages/PrivateDogPage'
 import SuperAdminRoute from '../super-admin/SuperAdminRoute'
 import SuperAdminLayout from '../super-admin/SuperAdminLayout'
 import SuperAdminOverviewPage from '../super-admin/pages/SuperAdminOverviewPage'
+import SuperAdminAiCeoPage from '../super-admin/pages/SuperAdminAiCeoPage'
 import SuperAdminOrganisationsPage from '../super-admin/pages/SuperAdminOrganisationsPage'
 import SuperAdminOrganisationDetailPage from '../super-admin/pages/SuperAdminOrganisationDetailPage'
 import SuperAdminUsersPage from '../super-admin/pages/SuperAdminUsersPage'
@@ -116,6 +117,7 @@ export default function App() {
         }>
           <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
           <Route path="dashboard" element={<SuperAdminOverviewPage />} />
+          <Route path="ai-ceo" element={<SuperAdminAiCeoPage />} />
           <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
           <Route path="organisations/:id" element={<SuperAdminOrganisationDetailPage />} />
           <Route path="users" element={<SuperAdminUsersPage />} />
