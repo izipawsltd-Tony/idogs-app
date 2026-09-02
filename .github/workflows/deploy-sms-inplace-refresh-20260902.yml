@@ -1,0 +1,179 @@
+name: Deploy SMS In-place Refresh 20260902
+
+on:
+  push:
+    branches:
+      - automation/sms-inplace-refresh-20260902
+    paths:
+      - .github/workflows/deploy-sms-inplace-refresh-20260902.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-deploy-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_SHA: a792f762331684bbea5596b83996a41825aa9232
+      FIX_BRANCH: fix/sms-add-inplace-refresh-20260902
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+
+    steps:
+      - name: Checkout exact fix branch base
+        uses: actions/checkout@v4
+        with:
+          ref: fix/sms-add-inplace-refresh-20260902
+          fetch-depth: 2
+
+      - name: Patch only SMS success reload
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          test -z "$(git status --porcelain)"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/pages/BillingPage.tsx')
+          s = p.read_text()
+          old = "      window.location.href = '/app/billing?sms_success=1'\n"
+          new = """      // Stay on the current Preview/app origin after a successful SMS update.\n      // Refresh Stripe-verified Billing state in-place instead of forcing a\n      // full document navigation, which caused a visible 2-3 second flash.\n      const billingRes = await fetch('/api/billing-summary', {\n        headers: { Authorization: `Bearer ${idToken}` },\n        cache: 'no-store',\n      })\n      const billingBody = await billingRes.json().catch(() => ({}))\n      if (billingRes.ok) {\n        setBillingDetails(billingBody as BillingSummary)\n        setDetailsError(null)\n        void refreshProfile().catch(err => console.error('Failed to refresh billing entitlement profile:', err))\n      } else {\n        // The SMS mutation already succeeded with error_if_incomplete, so keep\n        // the UI responsive even if the immediate summary refresh transiently fails.\n        setBillingDetails(current => current ? {\n          ...current,\n          sms: { ...current.sms, status: 'active' },\n        } : current)\n      }\n"""
+          if s.count(old) != 1:
+              raise SystemExit(f'expected exactly one SMS success reload, found {s.count(old)}')
+          p.write_text(s.replace(old, new))
+          PY
+          changed=$(git diff --name-only)
+          test "$changed" = 'src/pages/BillingPage.tsx'
+          git diff --check
+          echo SMS_INPLACE_PATCH_SCOPE=PASS
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run targeted regression and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import fs from 'node:fs'
+          const src = fs.readFileSync('src/pages/BillingPage.tsx', 'utf8')
+          assert.equal(src.includes("window.location.href = '/app/billing?sms_success=1'"), false)
+          assert.equal(src.includes("const billingRes = await fetch('/api/billing-summary'"), true)
+          assert.equal(src.includes('setBillingDetails(billingBody as BillingSummary)'), true)
+          assert.equal(src.includes("status: 'active'"), true)
+          console.log('SMS_SUCCESS_FULL_PAGE_RELOAD_REMOVED=PASS')
+          console.log('SMS_SUCCESS_INPLACE_BILLING_REFRESH=PASS')
+          NODE
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-stripe-mode-routing.mjs
+          npm run build
+          echo SMS_INPLACE_REFRESH_REGRESSION_AND_BUILD=PASS
+
+      - name: Commit exact candidate and fast-forward fix branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/pages/BillingPage.tsx
+          git commit -m 'fix(billing): refresh SMS status without page reload'
+          CANDIDATE_SHA=$(git rev-parse HEAD)
+          test "$(git rev-parse HEAD~1)" = "$BASE_SHA"
+          changed=$(git diff --name-only "$BASE_SHA"..HEAD)
+          test "$changed" = 'src/pages/BillingPage.tsx'
+          git push origin HEAD:"$FIX_BRANCH"
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA"
+          echo FIX_BRANCH_FAST_FORWARD=PASS
+
+      - name: Hard-lock Vercel staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK=PASS')
+          PY
+
+      - name: Confirm Preview financial safety
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          vals={}
+          for p in Path('.vercel').glob('.env.*.local'):
+              for raw in p.read_text(errors='replace').splitlines():
+                  line=raw.strip()
+                  if not line or line.startswith('#') or '=' not in line:
+                      continue
+                  k,v=line.split('=',1)
+                  v=v.strip()
+                  if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"):
+                      v=v[1:-1]
+                  vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
+          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
+              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          PY
+          rm -f .vercel/.env.*.local
+
+      - name: Deploy exact candidate to staging Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${CANDIDATE_SHA:-}"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
+          test -n "$DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_URL=$DEPLOY_URL"
+          echo STAGING_PREVIEW_DEPLOY=PASS
+
+      - name: Probe billing auth gate
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          HTTP_CODE=$(npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl /api/billing-summary --deployment "$DEPLOY_URL" -- --silent --show-error --output /tmp/billing-probe.json --write-out '%{http_code}')
+          echo "BILLING_PROBE_HTTP=$HTTP_CODE"
+          cat /tmp/billing-probe.json
+          test "$HTTP_CODE" = "401"
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/billing-probe.json'))
+          assert body.get('error') == 'Missing Authorization header', body
+          print('BILLING_AUTH_GATE=PASS')
+          print('STRIPE_MUTATION_NOT_CREATED=PASS')
+          PY
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo EXTRA_LITTER_REAL_CHECKOUT=OFF
+          echo SMS_INPLACE_REFRESH_AUTOMATION=PASS
