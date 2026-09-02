@@ -28,6 +28,7 @@ export default createBillingSummaryHandler({
   retrieveSubscription: id => stripe.subscriptions.retrieve(id, { expand: ['items.data.price'] }),
   listInvoices: params => stripe.invoices.list(params),
   isSmsConfigured: () => Boolean(process.env.STRIPE_SMS_ADDON_PRICE_ID),
+  getSmsPriceId: () => process.env.STRIPE_SMS_ADDON_PRICE_ID || null,
   reconcileVerifiedPlus: async ({ subscription, userId }) => {
     if (!verifiedPlusInterval(subscription)) return false
     return reconcileVerifiedPlusSubscription({ db, subscription, userId })
