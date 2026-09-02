@@ -1,0 +1,97 @@
+name: Diagnose Stable Staging Billing Environment V2 20260903
+
+on:
+  push:
+    branches:
+      - automation/diag-stable-billing-env-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-v2:
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_SHA: 5b5f43205f4d0fd2f082270bea3b4eb062c4485c
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+    steps:
+      - name: Checkout exact approved candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+
+      - name: Lock project and pull both envs
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/pull-preview.log 2>&1
+          cp .vercel/.env.preview.local /tmp/preview.env
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/pull-production.log 2>&1
+          cp .vercel/.env.production.local /tmp/production.env
+          echo ENV_SNAPSHOTS=READY
+
+      - name: Classify Preview env safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source /tmp/preview.env
+          set +a
+          node --input-type=module <<'NODE'
+          const key = process.env.STRIPE_SECRET_KEY || ''
+          const mode = key.startsWith('sk_test_') || key.startsWith('rk_test_') ? 'test' : key.startsWith('sk_live_') || key.startsWith('rk_live_') ? 'live' : key ? 'unknown' : 'missing'
+          let account = 'missing'
+          if (key) {
+            const res = await fetch('https://api.stripe.com/v1/account', { headers: { Authorization: `Bearer ${key}` } })
+            const body = await res.json().catch(() => ({}))
+            account = res.ok && typeof body.id === 'string' ? body.id : `http_${res.status}`
+          }
+          console.log(`PREVIEW_STRIPE_MODE=${mode}`)
+          console.log(`PREVIEW_STRIPE_ACCOUNT=${account}`)
+          console.log(`PREVIEW_SMS_PRICE_ID=${process.env.STRIPE_SMS_ADDON_PRICE_ID || 'missing'}`)
+          console.log(`PREVIEW_FIREBASE_PRESENT=${Boolean(process.env.FIREBASE_PROJECT_ID)}`)
+          NODE
+
+      - name: Classify stable-staging env safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source /tmp/production.env
+          set +a
+          node --input-type=module <<'NODE'
+          const key = process.env.STRIPE_SECRET_KEY || ''
+          const mode = key.startsWith('sk_test_') || key.startsWith('rk_test_') ? 'test' : key.startsWith('sk_live_') || key.startsWith('rk_live_') ? 'live' : key ? 'unknown' : 'missing'
+          let account = 'missing'
+          if (key) {
+            const res = await fetch('https://api.stripe.com/v1/account', { headers: { Authorization: `Bearer ${key}` } })
+            const body = await res.json().catch(() => ({}))
+            account = res.ok && typeof body.id === 'string' ? body.id : `http_${res.status}`
+          }
+          console.log(`STABLE_STRIPE_MODE=${mode}`)
+          console.log(`STABLE_STRIPE_ACCOUNT=${account}`)
+          console.log(`STABLE_SMS_PRICE_ID=${process.env.STRIPE_SMS_ADDON_PRICE_ID || 'missing'}`)
+          console.log(`STABLE_FIREBASE_PRESENT=${Boolean(process.env.FIREBASE_PROJECT_ID)}`)
+          NODE
+
+      - name: Compare safe fingerprints
+        shell: bash
+        run: |
+          set -euo pipefail
+          preview_key=$(bash -c 'set -a; source /tmp/preview.env; printf %s "$STRIPE_SECRET_KEY"' | sha256sum | cut -d' ' -f1)
+          stable_key=$(bash -c 'set -a; source /tmp/production.env; printf %s "$STRIPE_SECRET_KEY"' | sha256sum | cut -d' ' -f1)
+          preview_fb=$(bash -c 'set -a; source /tmp/preview.env; printf %s "$FIREBASE_PROJECT_ID"' | sha256sum | cut -d' ' -f1)
+          stable_fb=$(bash -c 'set -a; source /tmp/production.env; printf %s "$FIREBASE_PROJECT_ID"' | sha256sum | cut -d' ' -f1)
+          preview_sms=$(bash -c 'set -a; source /tmp/preview.env; printf %s "$STRIPE_SMS_ADDON_PRICE_ID"' | sha256sum | cut -d' ' -f1)
+          stable_sms=$(bash -c 'set -a; source /tmp/production.env; printf %s "$STRIPE_SMS_ADDON_PRICE_ID"' | sha256sum | cut -d' ' -f1)
+          test "$preview_key" = "$stable_key" && echo STRIPE_KEY_MATCH=YES || echo STRIPE_KEY_MATCH=NO
+          test "$preview_fb" = "$stable_fb" && echo FIREBASE_PROJECT_MATCH=YES || echo FIREBASE_PROJECT_MATCH=NO
+          test "$preview_sms" = "$stable_sms" && echo SMS_PRICE_MATCH=YES || echo SMS_PRICE_MATCH=NO
