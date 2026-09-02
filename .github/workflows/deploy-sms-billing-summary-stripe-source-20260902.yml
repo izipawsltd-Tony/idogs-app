@@ -1,0 +1,223 @@
+name: Deploy SMS Billing Summary Stripe Source 20260902
+
+on:
+  push:
+    branches:
+      - automation/sms-billing-summary-stripe-source-20260902
+    paths:
+      - .github/workflows/deploy-sms-billing-summary-stripe-source-20260902.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test-deploy-verify-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CANDIDATE_SHA: a792f762331684bbea5596b83996a41825aa9232
+      BASE_SHA: 2924991cee38f723f47bc48664c78bfd6ab64932
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: a792f762331684bbea5596b83996a41825aa9232
+          fetch-depth: 4
+
+      - name: Verify exact source and bounded billing scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          changed=$(git diff --name-only "$BASE_SHA"..HEAD | sort)
+          printf '%s\n' "$changed"
+          expected=$(printf '%s\n' 'api/_lib/billing-handler.js' 'api/billing-summary.js')
+          test "$changed" = "$expected"
+          echo SOURCE_LINEAGE_AND_SMS_BILLING_SCOPE=PASS
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run SMS billing source regression and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { createBillingSummaryHandler } from './api/_lib/billing-handler.js'
+
+          function fakeRes() {
+            return {
+              statusCode: 200,
+              body: null,
+              status(n) { this.statusCode = n; return this },
+              json(v) { this.body = v; return this },
+            }
+          }
+
+          const baseProfile = {
+            plan: 'plus',
+            billingInterval: 'monthly',
+            subscriptionStatus: 'active',
+            stripeCustomerId: 'cus_test',
+            stripeSubscriptionId: 'sub_test',
+            smsAddonStatus: 'active',
+            smsCreditsUsed: 0,
+            smsCreditsLimit: 20,
+            smsPeriodStart: '2026-09-01T00:00:00.000Z',
+            smsPeriodEnd: '2026-10-01T00:00:00.000Z',
+          }
+
+          const common = {
+            verifyIdToken: async () => ({ uid: 'u1' }),
+            listInvoices: async () => ({ data: [] }),
+            isSmsConfigured: () => true,
+            getSmsPriceId: () => 'price_sms_test',
+            reconcileVerifiedPlus: async () => ({ plan: 'plus', billingInterval: 'monthly', subscriptionStatus: 'active' }),
+          }
+
+          {
+            const handler = createBillingSummaryHandler({
+              ...common,
+              getProfile: async () => ({ ...baseProfile, smsAddonStatus: 'active' }),
+              retrieveSubscription: async () => ({
+                id: 'sub_test',
+                customer: 'cus_test',
+                status: 'active',
+                items: { data: [{ id: 'si_plus', price: { id: 'price_plus_test' } }] },
+              }),
+            })
+            const res = fakeRes()
+            await handler({ method: 'GET', headers: { authorization: 'Bearer ok' } }, res)
+            assert.equal(res.statusCode, 200)
+            assert.equal(res.body.sms.status, 'inactive')
+            assert.equal(res.body.sms.periodStart, null)
+            assert.equal(res.body.sms.periodEnd, null)
+            console.log('STALE_FIRESTORE_ACTIVE_CANNOT_OVERRIDE_STRIPE_REMOVAL=PASS')
+          }
+
+          {
+            const handler = createBillingSummaryHandler({
+              ...common,
+              getProfile: async () => ({ ...baseProfile, smsAddonStatus: 'inactive', smsPeriodStart: null, smsPeriodEnd: null }),
+              retrieveSubscription: async () => ({
+                id: 'sub_test',
+                customer: 'cus_test',
+                status: 'active',
+                items: { data: [
+                  { id: 'si_plus', price: { id: 'price_plus_test' } },
+                  { id: 'si_sms', price: { id: 'price_sms_test' }, current_period_start: 1788192000, current_period_end: 1790784000 },
+                ] },
+              }),
+            })
+            const res = fakeRes()
+            await handler({ method: 'GET', headers: { authorization: 'Bearer ok' } }, res)
+            assert.equal(res.statusCode, 200)
+            assert.equal(res.body.sms.status, 'active')
+            assert.ok(res.body.sms.periodStart)
+            assert.ok(res.body.sms.periodEnd)
+            console.log('STRIPE_SMS_ITEM_OVERRIDES_STALE_FIRESTORE_INACTIVE=PASS')
+          }
+          NODE
+
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-sms-addon-v1.mjs
+          node scripts/test-stripe-mode-routing.mjs
+          npm run build
+          echo SMS_BILLING_SOURCE_REGRESSION_AND_BUILD=PASS
+
+      - name: Hard-lock Vercel staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('.vercel/project.json'))
+          assert d['projectId']==os.environ['STAGING_PROJECT_ID']
+          assert d['orgId']==os.environ['STAGING_TEAM_ID']
+          assert d['projectName']=='idogs-app-staging'
+          print('PROJECT_LOCK=PASS')
+          print('CANDIDATE_SHA=' + os.environ['CANDIDATE_SHA'])
+          PY
+
+      - name: Confirm Preview financial safety
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          vals={}
+          for p in Path('.vercel').glob('.env.*.local'):
+              for raw in p.read_text(errors='replace').splitlines():
+                  line=raw.strip()
+                  if not line or line.startswith('#') or '=' not in line:
+                      continue
+                  k,v=line.split('=',1)
+                  v=v.strip()
+                  if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"):
+                      v=v[1:-1]
+                  vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
+          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
+              raise SystemExit('FINANCIAL_SAFETY_GATE_FAIL')
+          print('FINANCIAL_SAFETY_GATE=PASS')
+          PY
+          rm -f .vercel/.env.*.local
+
+      - name: Deploy exact candidate to staging Preview only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep 'idogs-app-staging-' | tail -1 || true)
+          test -n "$DEPLOY_URL"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_URL=$DEPLOY_URL"
+          echo STAGING_PREVIEW_DEPLOY=PASS
+
+      - name: Probe billing summary auth gate
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_URL:-}"
+          HTTP_CODE=$(npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl /api/billing-summary --deployment "$DEPLOY_URL" -- \
+            --silent --show-error --output /tmp/billing-probe.json --write-out '%{http_code}')
+          echo "BILLING_PROBE_HTTP=$HTTP_CODE"
+          cat /tmp/billing-probe.json
+          test "$HTTP_CODE" = "401"
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/billing-probe.json'))
+          assert body.get('error') == 'Missing Authorization header', body
+          print('BILLING_AUTH_GATE=PASS')
+          print('STRIPE_MUTATION_NOT_CREATED=PASS')
+          PY
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo EXTRA_LITTER_REAL_CHECKOUT=OFF
+          echo SMS_BILLING_SUMMARY_STRIPE_SOURCE_AUTOMATION=PASS
