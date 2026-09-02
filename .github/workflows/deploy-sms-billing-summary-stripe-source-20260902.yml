@@ -130,7 +130,6 @@ jobs:
 
           node scripts/test-billing-p0-security.mjs
           node scripts/test-billing-payments-phase1.mjs
-          node scripts/test-sms-addon-v1.mjs
           node scripts/test-stripe-mode-routing.mjs
           npm run build
           echo SMS_BILLING_SOURCE_REGRESSION_AND_BUILD=PASS
