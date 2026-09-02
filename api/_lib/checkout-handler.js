@@ -49,6 +49,10 @@ const INTERVAL_BY_PLAN_KEY = Object.freeze({
   plus_annual: 'annual',
 })
 
+const STAGING_FIREBASE_PROJECT_ID = 'idogs-app-staging'
+const STAGING_VERCEL_PROJECT_ID = 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o'
+const STAGING_PREVIEW_HOST_PATTERN = /^idogs-app-staging-[a-z0-9-]+-izipawsltd-tonys-projects\.vercel\.app$/
+
 function bodyOf(req) {
   if (typeof req.body !== 'string') return req.body || {}
   try {
@@ -62,6 +66,31 @@ function customerIdOf(value) {
   if (typeof value === 'string') return value
   if (value && typeof value.id === 'string') return value.id
   return null
+}
+
+function verifiedStagingPreviewOrigin(env = process.env) {
+  // APP_URL is the canonical configuration whenever it is present. This
+  // Preview-only fallback exists solely because APP_URL is intentionally not
+  // configured on ephemeral staging Preview deployments. If APP_URL is
+  // present but invalid, requireAppUrl() returns null and we must stay closed.
+  if (env.APP_URL !== undefined) return null
+  if (env.FIREBASE_PROJECT_ID !== STAGING_FIREBASE_PROJECT_ID) return null
+  if (env.VERCEL_ENV !== 'preview') return null
+  if (env.VERCEL_PROJECT_ID !== STAGING_VERCEL_PROJECT_ID) return null
+
+  const rawHost = env.VERCEL_URL
+  if (typeof rawHost !== 'string' || !rawHost || rawHost.trim() !== rawHost) return null
+  if (rawHost.includes('://') || rawHost.includes('/') || rawHost.includes('?') || rawHost.includes('#') || rawHost.includes(':')) return null
+
+  const hostname = rawHost.toLowerCase()
+  if (hostname !== rawHost) return null
+  if (!STAGING_PREVIEW_HOST_PATTERN.test(hostname)) return null
+
+  return `https://${hostname}`
+}
+
+export function checkoutReturnOrigin(appUrl, env = process.env) {
+  return appUrl || verifiedStagingPreviewOrigin(env)
 }
 
 export function createCheckoutHandler({
@@ -78,7 +107,8 @@ export function createCheckoutHandler({
     }
 
     const appUrl = getAppUrl()
-    if (!appUrl) {
+    const returnOrigin = checkoutReturnOrigin(appUrl)
+    if (!returnOrigin) {
       logConfigError('create-checkout', 'APP_URL_NOT_CONFIGURED')
       return res.status(500).json({ error: 'APP_URL not configured' })
     }
@@ -146,8 +176,8 @@ export function createCheckoutHandler({
         payment_method_types: ['card'],
         customer_email: email,
         line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${appUrl}/app/billing?success=1`,
-        cancel_url: `${appUrl}/app/billing?cancelled=1`,
+        success_url: `${returnOrigin}/app/billing?success=1`,
+        cancel_url: `${returnOrigin}/app/billing?cancelled=1`,
         metadata: { userId: uid, plan: 'plus', interval, priceId },
         subscription_data: {
           metadata: { userId: uid, plan: 'plus', interval, priceId },
