@@ -20,6 +20,8 @@ interface LitterQuotaSummary {
   checkoutEnabled: boolean
 }
 
+type QuotaLoadState = 'loading' | 'ready' | 'error'
+
 function requestId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`
@@ -33,15 +35,20 @@ function includedRemainingLabel(remaining: number): string {
 export default function ExtraLitterButton({ toast, onCreateAvailabilityChange, refreshKey = 0 }: Props) {
   const { user } = useAuth()
   const [summary, setSummary] = useState<LitterQuotaSummary | null>(null)
+  const [quotaLoadState, setQuotaLoadState] = useState<QuotaLoadState>('loading')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (!user) {
       setSummary(null)
+      setQuotaLoadState('loading')
       onCreateAvailabilityChange?.(null)
       return
     }
     let cancelled = false
+    setSummary(null)
+    setQuotaLoadState('loading')
+    onCreateAvailabilityChange?.(null)
     void (async () => {
       try {
         const idToken = await user.getIdToken()
@@ -53,16 +60,19 @@ export default function ExtraLitterButton({ toast, onCreateAvailabilityChange, r
         if (!cancelled && res.ok) {
           const parsed = body as LitterQuotaSummary
           setSummary(parsed)
+          setQuotaLoadState('ready')
           const used = Math.min(parsed.includedUsed, parsed.includedLimit)
           const allowed = parsed.unlimited || (parsed.plan === 'plus' && (used < parsed.includedLimit || parsed.extraCreditsAvailable > 0))
           onCreateAvailabilityChange?.(allowed)
         } else if (!cancelled) {
           setSummary(null)
+          setQuotaLoadState('error')
           onCreateAvailabilityChange?.(null)
         }
       } catch {
         if (!cancelled) {
           setSummary(null)
+          setQuotaLoadState('error')
           onCreateAvailabilityChange?.(null)
         }
       }
@@ -70,10 +80,16 @@ export default function ExtraLitterButton({ toast, onCreateAvailabilityChange, r
     return () => { cancelled = true }
   }, [user, onCreateAvailabilityChange, refreshKey])
 
-  if (!summary) return null
+  if (!summary) {
+    return (
+      <span aria-live="polite" style={{ fontSize: 12, fontWeight: 600, color: 'var(--light)' }}>
+        {quotaLoadState === 'error' ? 'Litter access unavailable — refresh to try again' : 'Checking litter access…'}
+      </span>
+    )
+  }
   if (summary.plan === 'free') {
     return (
-      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--light)' }}>
+      <span aria-live="polite" style={{ fontSize: 12, fontWeight: 600, color: 'var(--light)' }}>
         Free plan — upgrade to Plus to create litters
       </span>
     )
