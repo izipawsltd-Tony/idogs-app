@@ -1,0 +1,119 @@
+name: Diagnose Stable Staging Billing Environment 20260903
+
+on:
+  push:
+    branches:
+      - automation/diag-stable-billing-env-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_SHA: 5b5f43205f4d0fd2f082270bea3b4eb062c4485c
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      STAGING_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+      EXPECTED_FIREBASE_PROJECT_ID: idogs-staging
+    steps:
+      - name: Checkout exact approved candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+
+      - name: Hard-lock staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          echo PROJECT_LOCK=PASS
+
+      - name: Pull Preview and stable-staging env snapshots
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/pull-preview.log 2>&1
+          cp .vercel/.env.preview.local /tmp/preview.env
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/pull-production.log 2>&1
+          cp .vercel/.env.production.local /tmp/production.env
+          echo ENV_SNAPSHOTS=READY
+
+      - name: Compare billing environment classification without exposing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+
+          function parseEnv(path) {
+            const out = {}
+            for (const raw of fs.readFileSync(path, 'utf8').split(/\r?\n/)) {
+              const line = raw.trim()
+              if (!line || line.startsWith('#') || !line.includes('=')) continue
+              const idx = line.indexOf('=')
+              const key = line.slice(0, idx).trim()
+              let value = line.slice(idx + 1).trim()
+              if (value.length >= 2 && ((value[0] === '"' && value.at(-1) === '"') || (value[0] === "'" && value.at(-1) === "'"))) {
+                value = value.slice(1, -1)
+              }
+              out[key] = value.replace(/\\n/g, '\n').replace(/\\r/g, '\r')
+            }
+            return out
+          }
+
+          function stripeMode(key = '') {
+            if (key.startsWith('sk_test_') || key.startsWith('rk_test_')) return 'test'
+            if (key.startsWith('sk_live_') || key.startsWith('rk_live_')) return 'live'
+            return key ? 'unknown' : 'missing'
+          }
+
+          async function safeStripeAccount(key) {
+            if (!key) return 'missing'
+            try {
+              const res = await fetch('https://api.stripe.com/v1/account', {
+                headers: { Authorization: `Bearer ${key}` },
+              })
+              const body = await res.json().catch(() => ({}))
+              return res.ok && typeof body.id === 'string' ? body.id : `http_${res.status}`
+            } catch {
+              return 'request_failed'
+            }
+          }
+
+          const preview = parseEnv('/tmp/preview.env')
+          const stable = parseEnv('/tmp/production.env')
+          const previewMode = stripeMode(preview.STRIPE_SECRET_KEY)
+          const stableMode = stripeMode(stable.STRIPE_SECRET_KEY)
+          const previewAccount = await safeStripeAccount(preview.STRIPE_SECRET_KEY)
+          const stableAccount = await safeStripeAccount(stable.STRIPE_SECRET_KEY)
+
+          console.log(`PREVIEW_FIREBASE_PROJECT_ID=${preview.FIREBASE_PROJECT_ID || 'missing'}`)
+          console.log(`STABLE_FIREBASE_PROJECT_ID=${stable.FIREBASE_PROJECT_ID || 'missing'}`)
+          console.log(`PREVIEW_STRIPE_MODE=${previewMode}`)
+          console.log(`STABLE_STRIPE_MODE=${stableMode}`)
+          console.log(`PREVIEW_STRIPE_ACCOUNT=${previewAccount}`)
+          console.log(`STABLE_STRIPE_ACCOUNT=${stableAccount}`)
+          console.log(`PREVIEW_SMS_PRICE_ID=${preview.STRIPE_SMS_ADDON_PRICE_ID || 'missing'}`)
+          console.log(`STABLE_SMS_PRICE_ID=${stable.STRIPE_SMS_ADDON_PRICE_ID || 'missing'}`)
+
+          const failures = []
+          if (previewMode !== 'test') failures.push(`preview_stripe_mode_${previewMode}`)
+          if (stableMode !== 'test') failures.push(`stable_stripe_mode_${stableMode}`)
+          if (previewAccount !== stableAccount) failures.push('stripe_account_mismatch')
+          if ((preview.FIREBASE_PROJECT_ID || '') !== (stable.FIREBASE_PROJECT_ID || '')) failures.push('firebase_project_mismatch')
+          if ((preview.STRIPE_SMS_ADDON_PRICE_ID || '') !== (stable.STRIPE_SMS_ADDON_PRICE_ID || '')) failures.push('sms_price_mismatch')
+
+          if (failures.length) {
+            console.error(`STABLE_BILLING_ENV_ISOLATION=FAIL:${failures.join(',')}`)
+            process.exit(1)
+          }
+          console.log('STABLE_BILLING_ENV_ISOLATION=PASS')
+          NODE
