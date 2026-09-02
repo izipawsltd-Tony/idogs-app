@@ -51,14 +51,42 @@ function mapInvoice(invoice) {
   }
 }
 
-function smsSummary(profile, isSmsConfigured) {
+function smsSummary(profile, isSmsConfigured, { subscription = null, smsPriceId = null } = {}) {
+  const configured = Boolean(isSmsConfigured())
+  let status = typeof profile?.smsAddonStatus === 'string' ? profile.smsAddonStatus : 'inactive'
+  let periodStart = typeof profile?.smsPeriodStart === 'string' ? profile.smsPeriodStart : null
+  let periodEnd = typeof profile?.smsPeriodEnd === 'string' ? profile.smsPeriodEnd : null
+
+  // Stripe subscription items are authoritative for whether the paid SMS
+  // add-on is currently attached. This prevents a stale Firestore profile
+  // from flipping Billing back to Active immediately after a successful
+  // remove (or hiding a successful add) while webhook reconciliation is
+  // still pending or unavailable on an isolated Preview deployment.
+  if (configured && subscription && typeof smsPriceId === 'string' && smsPriceId) {
+    const smsItem = (subscription.items?.data || []).find(item => item?.price?.id === smsPriceId)
+    if (!smsItem) {
+      status = 'inactive'
+      periodStart = null
+      periodEnd = null
+    } else {
+      const subscriptionStatus = subscription?.status
+      status =
+        subscriptionStatus === 'active' || subscriptionStatus === 'trialing' ? 'active' :
+        subscriptionStatus === 'past_due' ? 'past_due' :
+        subscriptionStatus === 'canceled' || subscriptionStatus === 'unpaid' || subscriptionStatus === 'incomplete_expired' ? 'cancelled' :
+        'inactive'
+      periodStart = isoFromSeconds(smsItem?.current_period_start) || isoFromSeconds(subscription?.current_period_start) || periodStart
+      periodEnd = isoFromSeconds(smsItem?.current_period_end) || isoFromSeconds(subscription?.current_period_end) || periodEnd
+    }
+  }
+
   return {
-    configured: Boolean(isSmsConfigured()),
-    status: typeof profile?.smsAddonStatus === 'string' ? profile.smsAddonStatus : 'inactive',
+    configured,
+    status,
     creditsUsed: Number.isInteger(profile?.smsCreditsUsed) && profile.smsCreditsUsed >= 0 ? profile.smsCreditsUsed : 0,
     creditsLimit: Number.isInteger(profile?.smsCreditsLimit) && profile.smsCreditsLimit > 0 ? profile.smsCreditsLimit : 20,
-    periodStart: typeof profile?.smsPeriodStart === 'string' ? profile.smsPeriodStart : null,
-    periodEnd: typeof profile?.smsPeriodEnd === 'string' ? profile.smsPeriodEnd : null,
+    periodStart,
+    periodEnd,
   }
 }
 
@@ -76,6 +104,7 @@ export function createBillingSummaryHandler({
   retrieveSubscription,
   listInvoices,
   isSmsConfigured = () => false,
+  getSmsPriceId = () => null,
   reconcileVerifiedPlus = async () => false,
 } = {}) {
   return async function billingSummaryHandler(req, res) {
@@ -86,7 +115,7 @@ export function createBillingSummaryHandler({
 
     try {
       const profile = await getProfile(auth.uid)
-      const sms = smsSummary(profile, isSmsConfigured)
+      let sms = smsSummary(profile, isSmsConfigured)
       let entitlement = profileEntitlement(profile)
 
       if (!profile) {
@@ -119,6 +148,11 @@ export function createBillingSummaryHandler({
             subscriptionStatus: typeof reconciled.subscriptionStatus === 'string' ? reconciled.subscriptionStatus : null,
           }
         }
+
+        sms = smsSummary(profile, isSmsConfigured, {
+          subscription: stripeSubscription,
+          smsPriceId: getSmsPriceId(),
+        })
 
         subscription = {
           id: stripeSubscription.id,
