@@ -1,0 +1,52 @@
+name: Execute Petowner One-Shot Repair 20260903
+
+on:
+  push:
+    branches:
+      - automation/execute-petowner-repair-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+      DEPLOY_URL: https://idogs-app-staging-l648c98lq-izipawsltd-tonys-projects.vercel.app
+      EXPECTED_SHA: 54b425f994ae3550922e01be3d5ae21103060e02
+    steps:
+      - name: Execute approved repair exactly once
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl /api/qa-repair-petowner-billing --deployment "$DEPLOY_URL" -- --silent --show-error --request POST --output /tmp/repair.json
+          cat /tmp/repair.json
+          node - <<'NODE'
+          const fs=require('fs')
+          const b=JSON.parse(fs.readFileSync('/tmp/repair.json','utf8'))
+          if (b.ok !== true) throw new Error('repair not ok')
+          if (b.repaired !== true) throw new Error('repair did not execute')
+          if (b.stripeMissingVerified?.customer !== true || b.stripeMissingVerified?.subscription !== true) throw new Error('stale Stripe linkage was not re-verified')
+          if (b.billingQa?.status !== 200) throw new Error('billing QA status')
+          if (b.billingQa?.plan !== 'free') throw new Error('billing QA plan')
+          if (b.billingQa?.canManageBilling !== false) throw new Error('billing QA manage state')
+          if (b.billingQa?.smsStatus !== 'inactive') throw new Error('billing QA SMS state')
+          if (b.dogsTouched !== false || b.littersTouched !== false) throw new Error('scope violation')
+          console.log('PETOWNER_ONE_SHOT_REPAIR=PASS')
+          console.log('POST_REPAIR_BILLING_QA=PASS')
+          NODE
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo FIRESTORE_WRITE=TARGET_USER_BILLING_FIELDS_ONLY
+          echo STRIPE_WRITE=NOT_PERFORMED
+          echo DOGS_WRITE=NOT_PERFORMED
+          echo LITTERS_WRITE=NOT_PERFORMED
+          echo STABLE_STAGING_DEPLOY=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo EXTRA_LITTER_REAL_CHECKOUT=OFF
