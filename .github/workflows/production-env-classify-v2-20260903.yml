@@ -1,0 +1,90 @@
+name: Production Env Classification V2 20260903
+
+on:
+  push:
+    branches:
+      - automation/production-env-classify-v2-20260903
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: 70c696b768f08942d9885abdfea90ee9aaad5fea
+  CANDIDATE_TREE: 87aee038e1b9109ec381ffb91dd3136fb3f0ae6c
+  PROD_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+  PROD_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+  VERCEL_SCOPE: izipawsltd-tonys-projects
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+
+      - name: Hard-lock production project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          echo PROJECT_LOCK=PASS
+
+      - name: Pull and source production env safely
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull-prod.log 2>&1
+          ENV_FILE=$(find .vercel -maxdepth 1 -type f -name '.env.*.local' | head -1)
+          test -n "$ENV_FILE"
+          set -a
+          # Vercel writes shell-compatible dotenv values; sourcing preserves quoted/escaped secrets correctly.
+          source "$ENV_FILE"
+          set +a
+
+          stripe_class=opaque
+          case "${STRIPE_SECRET_KEY:-}" in
+            sk_live_*) stripe_class=live ;;
+            sk_test_*) stripe_class=test ;;
+            '') stripe_class=missing ;;
+          esac
+          firebase_class=production
+          if [ -z "${FIREBASE_PROJECT_ID:-}" ]; then firebase_class=missing; fi
+          if [ "${FIREBASE_PROJECT_ID:-}" = "idogs-app-staging" ]; then firebase_class=staging; fi
+          app_class=other
+          if [ "${APP_URL:-}" = "https://idogs.com.au" ]; then app_class=idogs_com_au; fi
+          extra_class=off
+          if [ "${EXTRA_LITTER_CHECKOUT_ENABLED:-}" = "true" ]; then extra_class=on; fi
+          sms_class=missing
+          case "${STRIPE_SMS_ADDON_PRICE_ID:-}" in price_*) sms_class=configured ;; esac
+
+          echo "STRIPE_KEY_CLASS=$stripe_class"
+          echo "STRIPE_KEY_LENGTH=${#STRIPE_SECRET_KEY}"
+          echo "FIREBASE_CLASS=$firebase_class"
+          echo "APP_URL_CLASS=$app_class"
+          echo "EXTRA_LITTER_CLASS=$extra_class"
+          echo "SMS_PRICE_CLASS=$sms_class"
+
+          # Fail only on truly unsafe/missing classifications.
+          test "$stripe_class" = live
+          test "$firebase_class" = production
+          test "$app_class" = idogs_com_au
+          test "$extra_class" = off
+          test "$sms_class" = configured
+          rm -f .vercel/.env.*.local
+          echo PRODUCTION_ENV_CLASSIFICATION_V2=PASS
+
+      - name: No-side-effect assertion
+        shell: bash
+        run: |
+          echo DEPLOY=NOT_PERFORMED
+          echo ENV_WRITE=NOT_PERFORMED
+          echo STRIPE_WRITE=NOT_PERFORMED
+          echo FIRESTORE_WRITE=NOT_PERFORMED
