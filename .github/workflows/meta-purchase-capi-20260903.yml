@@ -1,0 +1,223 @@
+name: Deploy Meta Purchase CAPI 2026 Preview
+
+on:
+  push:
+    branches:
+      - automation/meta-purchase-capi-2026-20260903
+    paths:
+      - .github/workflows/meta-purchase-capi-20260903.yml
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: 8078aa3cbf6b0132f066687c8e1643a6635ebc3a
+  CANDIDATE_SHA: b34eae1a5561b82d9de6a18a14d6df926e1114ee
+  PIXEL_ID: "1648101183992434"
+  STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+  TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+  VERCEL_SCOPE: izipawsltd-tonys-projects
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+
+      - name: Exact scope and Purchase semantics gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA"..HEAD)
+          test "${#changed[@]}" -eq 2
+          printf '%s\n' "${changed[@]}" | grep -qx 'api/_lib/meta-capi.js'
+          printf '%s\n' "${changed[@]}" | grep -qx 'api/stripe-webhook.js'
+          grep -q "META_DATASET_ID = '$PIXEL_ID'" api/_lib/meta-capi.js
+          ! grep -q '2647777915638218' api/_lib/meta-capi.js api/stripe-webhook.js
+          grep -q "billing_reason === 'subscription_create'" api/_lib/meta-capi.js
+          grep -q "Number(invoice.amount_paid) <= 0" api/_lib/meta-capi.js
+          grep -q 'event_id: `idogs:${invoice.id}:${classification.eventName}`' api/_lib/meta-capi.js
+          grep -q "stripeEvent?.type !== 'invoice.payment_succeeded'" api/_lib/meta-capi.js
+          grep -q "verifiedEvent.type === 'invoice.payment_succeeded'" api/stripe-webhook.js
+          grep -q 'createMetaInvoiceProcessor' api/stripe-webhook.js
+          ! grep -R -q "fbq('track', 'Purchase'" src
+          echo META_PURCHASE_SCOPE=PASS
+          echo META_PURCHASE_STRIPE_CONFIRMED_ONLY=PASS
+
+      - name: Purchase value, sender and idempotency unit gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          process.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'
+          process.env.VERCEL_ENV = 'preview'
+          process.env.VERCEL_URL = 'idogs-app-staging-purchase-qa-izipawsltd-tonys-projects.vercel.app'
+
+          const meta = await import('./api/_lib/meta-capi.js')
+          const checkout = await import('./api/_lib/checkout-handler.js')
+          const monthly = checkout.STAGING_CHECKOUT_PRICE_IDS.plus_monthly
+          const annual = checkout.STAGING_CHECKOUT_PRICE_IDS.plus_annual
+
+          const invoice = (overrides = {}) => ({
+            id: 'in_purchase_1',
+            amount_paid: 700,
+            currency: 'aud',
+            billing_reason: 'subscription_create',
+            subscription: 'sub_1',
+            customer_email: 'Buyer@Example.com',
+            status_transitions: { paid_at: 1788420000 },
+            lines: { data: [{ amount: 700, pricing: { price_details: { price: { id: monthly } } } }] },
+            ...overrides,
+          })
+
+          const monthlyClass = meta.classifyPaidInvoice(invoice())
+          assert.deepEqual(monthlyClass, { eventName: 'Purchase', kind: 'plus_initial', value: 7, currency: 'AUD' })
+          const annualClass = meta.classifyPaidInvoice(invoice({
+            amount_paid: 7000,
+            lines: { data: [{ amount: 7000, price: { id: annual } }] },
+          }))
+          assert.equal(annualClass.eventName, 'Purchase')
+          assert.equal(annualClass.value, 70)
+          assert.equal(meta.classifyPaidInvoice(invoice({ billing_reason: 'subscription_cycle' })), null)
+          assert.equal(meta.classifyPaidInvoice(invoice({ amount_paid: 0 })), null)
+
+          const serverEvent = meta.buildMetaServerEvent({
+            stripeEvent: { id: 'evt_1', created: 1788420000 },
+            invoice: invoice(),
+            subscription: { metadata: { userId: 'uid_123' } },
+            classification: monthlyClass,
+          })
+          assert.equal(serverEvent.event_name, 'Purchase')
+          assert.equal(serverEvent.event_id, 'idogs:in_purchase_1:Purchase')
+          assert.equal(serverEvent.custom_data.currency, 'AUD')
+          assert.equal(serverEvent.custom_data.value, 7)
+          assert.equal(serverEvent.action_source, 'website')
+          assert.match(serverEvent.event_source_url, /^https:\/\/idogs-app-staging-/)
+          assert.equal(serverEvent.user_data.external_id.length, 1)
+          assert.equal(serverEvent.user_data.external_id[0].length, 64)
+          assert.equal(serverEvent.user_data.em.length, 1)
+          assert.equal(serverEvent.user_data.em[0].length, 64)
+          assert.notEqual(serverEvent.user_data.em[0], 'Buyer@Example.com')
+
+          let sentUrl = ''
+          let sentBody = null
+          const httpSender = meta.createMetaHttpSender({
+            accessToken: 'test-token',
+            datasetId: meta.META_DATASET_ID,
+            testEventCode: 'TEST_NEW_DATASET',
+            fetchImpl: async (url, options) => {
+              sentUrl = url
+              sentBody = JSON.parse(options.body)
+              return { ok: true, status: 200, json: async () => ({ events_received: 1 }) }
+            },
+          })
+          await httpSender.send(serverEvent)
+          assert.match(sentUrl, /1648101183992434\/events/)
+          assert.equal(sentBody.test_event_code, 'TEST_NEW_DATASET')
+          assert.equal(sentBody.data[0].event_name, 'Purchase')
+
+          const docs = new Map()
+          const makeRef = id => ({
+            id,
+            async set(data, options = {}) {
+              const prev = docs.get(id) || {}
+              docs.set(id, options.merge ? { ...prev, ...data } : { ...data })
+            },
+          })
+          const db = {
+            collection(name) {
+              return { doc: id => makeRef(`${name}/${id}`) }
+            },
+            async runTransaction(fn) {
+              return fn({
+                async get(ref) {
+                  const data = docs.get(ref.id)
+                  return { exists: Boolean(data), data: () => data }
+                },
+                set(ref, data, options = {}) {
+                  const prev = docs.get(ref.id) || {}
+                  docs.set(ref.id, options.merge ? { ...prev, ...data } : { ...data })
+                },
+              })
+            },
+          }
+          let sendCount = 0
+          const sender = {
+            enabled: true,
+            async send(event) {
+              sendCount += 1
+              assert.equal(event.event_name, 'Purchase')
+              return { skipped: false, payload: { events_received: 1 } }
+            },
+          }
+          const processor = meta.createMetaInvoiceProcessor({
+            db,
+            getSubscription: async id => {
+              assert.equal(id, 'sub_1')
+              return { metadata: { userId: 'uid_123' } }
+            },
+            sender,
+            getSmsPriceId: () => 'price_sms_test',
+            now: () => new Date('2026-09-03T09:00:00Z'),
+          })
+          const stripeEvent = { id: 'evt_purchase_1', type: 'invoice.payment_succeeded', created: 1788420000, data: { object: invoice() } }
+          const first = await processor(stripeEvent)
+          const second = await processor(stripeEvent)
+          assert.equal(first.sent, true)
+          assert.equal(second.skipped, true)
+          assert.equal(second.reason, 'ALREADY_SENT')
+          assert.equal(sendCount, 1)
+
+          console.log('META_PURCHASE_VALUE_MONTHLY_ANNUAL=PASS')
+          console.log('META_PURCHASE_RENEWAL_ZERO_EXCLUDED=PASS')
+          console.log('META_PURCHASE_NEW_DATASET_SENDER=PASS')
+          console.log('META_PURCHASE_IDEMPOTENCY=PASS')
+          NODE
+
+      - name: Install dependencies and regression build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-billing-p0-security.mjs
+          npm run build
+          echo META_PURCHASE_REGRESSION_BUILD=PASS
+
+      - name: Hard-lock staging Vercel project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.STAGING_PROJECT_ID||d.orgId!==process.env.TEAM_ID||d.projectName!=='idogs-app-staging') process.exit(1)"
+          echo STAGING_PROJECT_LOCK=PASS
+
+      - name: Deploy exact candidate to Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel.stdout 2> /tmp/vercel.stderr
+          PREVIEW_URL=$(cat /tmp/vercel.stdout /tmp/vercel.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | tail -1 || true)
+          test -n "$PREVIEW_URL"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "META_PURCHASE_PREVIEW_URL=$PREVIEW_URL"
+          echo META_PURCHASE_PREVIEW_DEPLOY=PASS
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo META_PURCHASE_CAPI_AUTOMATION=PASS
