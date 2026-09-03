@@ -14,6 +14,7 @@ env:
   BASE_SHA: 8078aa3cbf6b0132f066687c8e1643a6635ebc3a
   CANDIDATE_SHA: b34eae1a5561b82d9de6a18a14d6df926e1114ee
   PIXEL_ID: "1648101183992434"
+  TEST_EVENT_CODE: "TEST21451"
   STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
   TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
   VERCEL_SCOPE: izipawsltd-tonys-projects
@@ -112,7 +113,7 @@ jobs:
           const httpSender = meta.createMetaHttpSender({
             accessToken: 'test-token',
             datasetId: meta.META_DATASET_ID,
-            testEventCode: 'TEST_NEW_DATASET',
+            testEventCode: process.env.TEST_EVENT_CODE,
             fetchImpl: async (url, options) => {
               sentUrl = url
               sentBody = JSON.parse(options.body)
@@ -121,7 +122,7 @@ jobs:
           })
           await httpSender.send(serverEvent)
           assert.match(sentUrl, /1648101183992434\/events/)
-          assert.equal(sentBody.test_event_code, 'TEST_NEW_DATASET')
+          assert.equal(sentBody.test_event_code, process.env.TEST_EVENT_CODE)
           assert.equal(sentBody.data[0].event_name, 'Purchase')
 
           const docs = new Map()
@@ -180,6 +181,7 @@ jobs:
           console.log('META_PURCHASE_RENEWAL_ZERO_EXCLUDED=PASS')
           console.log('META_PURCHASE_NEW_DATASET_SENDER=PASS')
           console.log('META_PURCHASE_IDEMPOTENCY=PASS')
+          console.log('META_PURCHASE_TEST_EVENT_CODE=PASS')
           NODE
 
       - name: Install dependencies and regression build
@@ -200,7 +202,7 @@ jobs:
           node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.STAGING_PROJECT_ID||d.orgId!==process.env.TEAM_ID||d.projectName!=='idogs-app-staging') process.exit(1)"
           echo STAGING_PROJECT_LOCK=PASS
 
-      - name: Deploy exact candidate to Preview only
+      - name: Deploy exact candidate to Preview only with Meta test-event code
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         shell: bash
@@ -208,11 +210,12 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain --untracked-files=no)"
-          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel.stdout 2> /tmp/vercel.stderr
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --env "META_CAPI_TEST_EVENT_CODE=$TEST_EVENT_CODE" --no-color > /tmp/vercel.stdout 2> /tmp/vercel.stderr
           PREVIEW_URL=$(cat /tmp/vercel.stdout /tmp/vercel.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | tail -1 || true)
           test -n "$PREVIEW_URL"
           echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
           echo "META_PURCHASE_PREVIEW_URL=$PREVIEW_URL"
+          echo META_PURCHASE_TEST_EVENT_CODE_PREVIEW_ONLY=PASS
           echo META_PURCHASE_PREVIEW_DEPLOY=PASS
 
       - name: Terminal safety assertion
@@ -220,4 +223,5 @@ jobs:
         run: |
           echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
           echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo VERCEL_PROJECT_ENV_MUTATION=NOT_PERFORMED
           echo META_PURCHASE_CAPI_AUTOMATION=PASS
