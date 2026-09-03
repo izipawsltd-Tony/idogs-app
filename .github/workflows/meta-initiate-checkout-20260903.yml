@@ -1,0 +1,96 @@
+name: Deploy Meta InitiateCheckout 2026 Preview
+
+on:
+  push:
+    branches:
+      - automation/meta-pixel-2026-preview-20260903
+    paths:
+      - .github/workflows/meta-initiate-checkout-20260903.yml
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: '20553339fa3ad92d9c7fee2d763921f4c71e4535'
+  CANDIDATE_SHA: '8078aa3cbf6b0132f066687c8e1643a6635ebc3a'
+  PIXEL_ID: '1648101183992434'
+  STAGING_PROJECT_ID: 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o'
+  TEAM_ID: 'team_oZF1Z0BUEceb9fAXdmFV1Saz'
+  VERCEL_SCOPE: 'izipawsltd-tonys-projects'
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+
+      - name: Exact scope and checkout semantics gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA"..HEAD)
+          test "${#changed[@]}" -eq 2
+          printf '%s\n' "${changed[@]}" | grep -qx 'src/lib/metaCheckoutTracking.ts'
+          printf '%s\n' "${changed[@]}" | grep -qx 'src/main.tsx'
+          ! printf '%s\n' "${changed[@]}" | grep -q '^api/'
+          grep -q "requestUrl === '/api/create-checkout'" src/lib/metaCheckoutTracking.ts
+          grep -q "init?.method === 'POST' && response.ok" src/lib/metaCheckoutTracking.ts
+          grep -q "typeof body?.url === 'string'" src/lib/metaCheckoutTracking.ts
+          grep -q "fbq('track', 'InitiateCheckout'" src/lib/metaCheckoutTracking.ts
+          grep -q "currency: 'AUD'" src/lib/metaCheckoutTracking.ts
+          grep -q "PLUS_MONTHLY_PRICE_AUD" src/lib/metaCheckoutTracking.ts
+          grep -q "PLUS_ANNUAL_PRICE_AUD" src/lib/metaCheckoutTracking.ts
+          grep -q "installMetaInitiateCheckoutTracking()" src/main.tsx
+          grep -q "fbq('init', '$PIXEL_ID');" index.html
+          grep -q "fbq('track', 'PageView');" index.html
+          grep -q "trackCompleteRegistration(accountType)" src/pages/SignupPage.tsx
+          grep -q "export const PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
+          grep -q "export const PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
+          echo META_INITIATE_CHECKOUT_SCOPE=PASS
+          echo META_INITIATE_CHECKOUT_SEMANTICS=PASS
+
+      - name: Install dependencies and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo META_INITIATE_CHECKOUT_BUILD=PASS
+
+      - name: Hard-lock staging Vercel project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.STAGING_PROJECT_ID||d.orgId!==process.env.TEAM_ID||d.projectName!=='idogs-app-staging') process.exit(1)"
+          echo STAGING_PROJECT_LOCK=PASS
+
+      - name: Deploy exact candidate to Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel.stdout 2> /tmp/vercel.stderr
+          PREVIEW_URL=$(cat /tmp/vercel.stdout /tmp/vercel.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | tail -1 || true)
+          test -n "$PREVIEW_URL"
+          echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
+          echo "META_INITIATE_CHECKOUT_PREVIEW_URL=$PREVIEW_URL"
+          echo META_INITIATE_CHECKOUT_PREVIEW_DEPLOY=PASS
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo META_INITIATE_CHECKOUT_AUTOMATION=PASS
