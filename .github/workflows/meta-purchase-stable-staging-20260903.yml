@@ -1,0 +1,91 @@
+name: Promote Meta Purchase 2026 Stable Staging
+
+on:
+  push:
+    branches:
+      - automation/meta-purchase-stable-staging-20260903
+    paths:
+      - .github/workflows/meta-purchase-stable-staging-20260903.yml
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: 8078aa3cbf6b0132f066687c8e1643a6635ebc3a
+  CANDIDATE_SHA: b34eae1a5561b82d9de6a18a14d6df926e1114ee
+  PIXEL_ID: "1648101183992434"
+  TEST_EVENT_CODE: "TEST21451"
+  STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+  TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+  VERCEL_SCOPE: izipawsltd-tonys-projects
+
+jobs:
+  promote-stable-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+
+      - name: Exact candidate and Purchase safety gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA"..HEAD)
+          test "${#changed[@]}" -eq 2
+          printf '%s\n' "${changed[@]}" | grep -qx 'api/_lib/meta-capi.js'
+          printf '%s\n' "${changed[@]}" | grep -qx 'api/stripe-webhook.js'
+          grep -q "META_DATASET_ID = '$PIXEL_ID'" api/_lib/meta-capi.js
+          ! grep -q '2647777915638218' api/_lib/meta-capi.js api/stripe-webhook.js
+          grep -q "billing_reason === 'subscription_create'" api/_lib/meta-capi.js
+          grep -q "Number(invoice.amount_paid) <= 0" api/_lib/meta-capi.js
+          grep -q "verifiedEvent.type === 'invoice.payment_succeeded'" api/stripe-webhook.js
+          ! grep -R -q "fbq('track', 'Purchase'" src
+          echo META_PURCHASE_STABLE_SCOPE=PASS
+
+      - name: Regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-billing-p0-security.mjs
+          npm run build
+          echo META_PURCHASE_STABLE_REGRESSION_BUILD=PASS
+
+      - name: Hard-lock staging Vercel project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.STAGING_PROJECT_ID||d.orgId!==process.env.TEAM_ID||d.projectName!=='idogs-app-staging') process.exit(1)"
+          echo STAGING_PROJECT_LOCK=PASS
+
+      - name: Promote exact candidate to stable staging only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --env "META_CAPI_TEST_EVENT_CODE=$TEST_EVENT_CODE" --no-color > /tmp/vercel.stdout 2> /tmp/vercel.stderr
+          STABLE_URL=$(cat /tmp/vercel.stdout /tmp/vercel.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | tail -1 || true)
+          test -n "$STABLE_URL"
+          echo "STABLE_URL=$STABLE_URL" >> "$GITHUB_ENV"
+          echo "META_PURCHASE_STABLE_URL=$STABLE_URL"
+          echo META_PURCHASE_TEST_EVENT_CODE_STAGING_ONLY=PASS
+          echo META_PURCHASE_STABLE_DEPLOY=PASS
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          echo STABLE_STAGING_PROMOTION=PERFORMED_APPROVED
+          echo PRODUCTION_IDOGS_DEPLOY=NOT_PERFORMED
+          echo VERCEL_PROJECT_ENV_MUTATION=NOT_PERFORMED
+          echo META_PURCHASE_STABLE_STAGING_AUTOMATION=PASS
