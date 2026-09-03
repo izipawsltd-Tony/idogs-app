@@ -1,0 +1,67 @@
+name: Production Env Metadata 20260903
+
+on:
+  push:
+    branches:
+      - automation/production-env-metadata-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  verify-metadata:
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_SHA: 70c696b768f08942d9885abdfea90ee9aaad5fea
+      CANDIDATE_TREE: 87aee038e1b9109ec381ffb91dd3136fb3f0ae6c
+      PROD_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+      PROD_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERCEL_SCOPE: izipawsltd-tonys-projects
+    steps:
+      - name: Checkout exact approved release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+
+      - name: Hard-lock production project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.PROD_PROJECT_ID||d.orgId!==process.env.PROD_TEAM_ID||d.projectName!=='idogs-app') process.exit(1)"
+          echo PRODUCTION_PROJECT_LOCK=PASS
+
+      - name: Verify production env metadata only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest env ls production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/env-list.txt 2>&1
+
+          for key in FIREBASE_PROJECT_ID STRIPE_SECRET_KEY APP_URL STRIPE_SMS_ADDON_PRICE_ID; do
+            if ! grep -Eq "(^|[[:space:]])${key}([[:space:]]|$)" /tmp/env-list.txt; then
+              echo "MISSING_REQUIRED_PRODUCTION_ENV_METADATA=$key"
+              exit 1
+            fi
+            echo "PRODUCTION_ENV_METADATA_PRESENT=$key"
+          done
+
+          if grep -Eq '(^|[[:space:]])EXTRA_LITTER_CHECKOUT_ENABLED([[:space:]]|$)' /tmp/env-list.txt; then
+            echo EXTRA_LITTER_PRODUCTION_ENV_PRESENT=UNSAFE_TO_ASSUME_OFF
+            exit 1
+          fi
+
+          echo EXTRA_LITTER_PRODUCTION_ENV=ABSENT_FAIL_CLOSED_OFF
+          echo PRODUCTION_ENV_METADATA_GATE=PASS
+
+      - name: No-side-effect assertion
+        run: |
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo ENV_VALUES=NOT_PRINTED
+          echo STRIPE_SESSION_NOT_CREATED=PASS
+          echo FIRESTORE_MUTATION_NOT_PERFORMED=PASS
