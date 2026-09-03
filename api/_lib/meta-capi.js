@@ -142,45 +142,6 @@ export function createMetaHttpSender({
   return { enabled, send }
 }
 
-function stagingQaReplayConfig(stripeEvent) {
-  const testEventCode = process.env.META_CAPI_TEST_EVENT_CODE
-  const targetStripeEventId = process.env.META_CAPI_QA_REPLAY_STRIPE_EVENT_ID
-  const isStableStaging = process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging' && process.env.VERCEL_ENV === 'production'
-  const enabled = Boolean(
-    isStableStaging &&
-    testEventCode &&
-    targetStripeEventId &&
-    stripeEvent?.id === targetStripeEventId
-  )
-  return { enabled, testEventCode }
-}
-
-async function sendStagingQaReplay({ sender, serverEvent, stripeEvent }) {
-  const qa = stagingQaReplayConfig(stripeEvent)
-  if (!qa.enabled) return null
-
-  const qaEvent = {
-    ...serverEvent,
-    event_id: `${serverEvent.event_id}:qa:${qa.testEventCode}`,
-    event_source_url: 'https://idogs-app-staging.vercel.app/',
-  }
-  const result = await sender.send(qaEvent)
-  const payload = result?.payload || null
-  console.log('meta-capi: staging QA replay result', {
-    eventName: qaEvent.event_name,
-    eventsReceived: Number(payload?.events_received || 0),
-    messageCount: Array.isArray(payload?.messages) ? payload.messages.length : 0,
-    fbtraceId: payload?.fbtrace_id || null,
-  })
-  return {
-    sent: true,
-    qaReplay: true,
-    eventName: qaEvent.event_name,
-    eventId: qaEvent.event_id,
-    result,
-  }
-}
-
 export function createMetaInvoiceProcessor({
   db,
   getSubscription,
@@ -230,13 +191,7 @@ export function createMetaInvoiceProcessor({
       return { claimed: true }
     })
 
-    if (!claim.claimed) {
-      if (claim.completed) {
-        const qaReplay = await sendStagingQaReplay({ sender, serverEvent, stripeEvent })
-        if (qaReplay) return qaReplay
-      }
-      return { skipped: true, reason: claim.completed ? 'ALREADY_SENT' : 'IN_FLIGHT' }
-    }
+    if (!claim.claimed) return { skipped: true, reason: claim.completed ? 'ALREADY_SENT' : 'IN_FLIGHT' }
 
     try {
       const result = await sender.send(serverEvent)
