@@ -9,6 +9,12 @@ interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
 
+function getFirebaseErrorCode(err: unknown): string | null {
+  if (!err || typeof err !== 'object' || !('code' in err)) return null
+  const code = (err as { code?: unknown }).code
+  return typeof code === 'string' && code.startsWith('auth/') ? code : null
+}
+
 export default function VerifyEmailPage({ toast }: Props) {
   const { user, loading, logout, resendVerificationEmail, checkEmailVerified } = useAuth()
   const navigate = useNavigate()
@@ -45,8 +51,9 @@ export default function VerifyEmailPage({ toast }: Props) {
       } else {
         toast('Not verified yet. Please click the link in your email first.', 'error')
       }
-    } catch {
-      toast('Could not check verification status. Please try again.', 'error')
+    } catch (err) {
+      const code = getFirebaseErrorCode(err)
+      toast(code ? `Could not check verification status (${code}).` : 'Could not check verification status. Please try again.', 'error')
     } finally {
       setChecking(false)
     }
@@ -56,10 +63,11 @@ export default function VerifyEmailPage({ toast }: Props) {
     setResending(true)
     try {
       await resendVerificationEmail()
-      toast('Verification email sent!')
+      toast('Verification email request accepted by Firebase.')
       setCooldown(60)
-    } catch {
-      toast('Failed to resend. Please try again shortly.', 'error')
+    } catch (err) {
+      const code = getFirebaseErrorCode(err)
+      toast(code ? `Verification email failed (${code}).` : 'Verification email failed. Please try again shortly.', 'error')
     } finally {
       setResending(false)
     }

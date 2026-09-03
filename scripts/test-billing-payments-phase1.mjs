@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createBillingPortalHandler, createBillingSummaryHandler } from '../api/_lib/billing-handler.js'
+import { createCheckoutHandler } from '../api/_lib/checkout-handler.js'
 
 function response() {
   return {
@@ -47,13 +48,42 @@ assert.deepEqual(res.body, {
     periodStart: null,
     periodEnd: null,
   },
+  entitlement: { plan: 'free', billingInterval: null, subscriptionStatus: null },
 }, 'free account has an empty safe billing summary plus inactive SMS status')
 
 summary = createBillingSummaryHandler({
   verifyIdToken: auth,
   getProfile: async uid => {
     assert.equal(uid, 'user-1')
-    return { stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', subscriptionStatus: 'active' }
+    return null
+  },
+  retrieveSubscription: async () => { throw new Error('must not run') },
+  listInvoices: async () => { throw new Error('must not run') },
+  isSmsConfigured: () => true,
+})
+res = await run(summary, { method: 'GET', headers: { authorization: 'Bearer valid' } })
+assert.equal(res.statusCode, 200, 'new authenticated user without profile gets a safe empty billing summary')
+assert.deepEqual(res.body, {
+  subscription: null,
+  invoices: [],
+  canManageBilling: false,
+  sms: {
+    configured: true,
+    status: 'inactive',
+    creditsUsed: 0,
+    creditsLimit: 20,
+    periodStart: null,
+    periodEnd: null,
+  },
+  entitlement: { plan: 'free', billingInterval: null, subscriptionStatus: null },
+}, 'missing profile is represented as Free/no billing/no invoices without creating Firestore state')
+
+let reconciled = null
+summary = createBillingSummaryHandler({
+  verifyIdToken: auth,
+  getProfile: async uid => {
+    assert.equal(uid, 'user-1')
+    return { plan: 'free', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', subscriptionStatus: 'active' }
   },
   retrieveSubscription: async id => {
     assert.equal(id, 'sub_1')
@@ -64,6 +94,10 @@ summary = createBillingSummaryHandler({
       cancel_at_period_end: false,
       items: { data: [{ current_period_end: 1_800_000_000 }] },
     }
+  },
+  reconcileVerifiedPlus: async args => {
+    reconciled = args
+    return { plan: 'plus', billingInterval: 'monthly', subscriptionStatus: 'active', stripeSubscriptionId: 'sub_1' }
   },
   listInvoices: async params => {
     assert.deepEqual(params, { customer: 'cus_1', limit: 12 }, 'invoice query is scoped to server-owned customer id')
@@ -77,6 +111,13 @@ summary = createBillingSummaryHandler({
 res = await run(summary, { method: 'GET', headers: { authorization: 'Bearer valid' } })
 assert.equal(res.statusCode, 200)
 assert.equal(res.body.subscription.id, 'sub_1')
+assert.equal(reconciled.userId, 'user-1', 'linked active subscription is reconciled against authenticated uid before returning summary')
+assert.equal(reconciled.subscription.id, 'sub_1')
+assert.deepEqual(res.body.entitlement, {
+  plan: 'plus',
+  billingInterval: 'monthly',
+  subscriptionStatus: 'active',
+}, 'verified linked Stripe subscription overrides stale Free profile in Billing response')
 assert.equal(res.body.invoices[0].amountPaid, 500)
 assert.equal(res.body.canManageBilling, true)
 assert.deepEqual(res.body.sms, {
@@ -93,9 +134,10 @@ summary = createBillingSummaryHandler({
   getProfile: async () => ({ stripeCustomerId: 'cus_owner', stripeSubscriptionId: 'sub_wrong' }),
   retrieveSubscription: async () => ({ id: 'sub_wrong', customer: 'cus_other', status: 'active' }),
   listInvoices: async () => ({ data: [] }),
+  reconcileVerifiedPlus: async () => { throw new Error('must not reconcile mismatch') },
 })
 res = await run(summary, { method: 'GET', headers: { authorization: 'Bearer valid' } })
-assert.equal(res.statusCode, 409, 'customer mismatch fails closed')
+assert.equal(res.statusCode, 409, 'customer mismatch fails closed before reconciliation')
 
 let capturedPortalParams = null
 const portal = createBillingPortalHandler({
@@ -124,4 +166,21 @@ const noCustomerPortal = createBillingPortalHandler({
 res = await run(noCustomerPortal, { method: 'POST', headers: { authorization: 'Bearer valid' } })
 assert.equal(res.statusCode, 409, 'portal is unavailable without a linked Stripe customer')
 
-console.log('Billing & Payments Phase 1: 11/11 PASS')
+let checkoutCreated = false
+const duplicateCheckout = createCheckoutHandler({
+  verifyIdToken: auth,
+  getProfile: async () => ({ stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', plan: 'free' }),
+  retrieveSubscription: async id => ({ id, customer: 'cus_1', status: 'active' }),
+  isVerifiedActivePlus: sub => sub.status === 'active',
+  createSession: async () => { checkoutCreated = true; return { url: 'https://checkout.example' } },
+  getAppUrl: () => 'https://idogs.com.au',
+})
+res = await run(duplicateCheckout, {
+  method: 'POST',
+  headers: { authorization: 'Bearer valid' },
+  body: { plan: 'plus_monthly' },
+})
+assert.equal(res.statusCode, 409, 'active linked Plus blocks duplicate checkout even when profile.plan is stale Free')
+assert.equal(checkoutCreated, false, 'duplicate guard prevents creation of a second Stripe Checkout session')
+
+console.log('Billing & Payments Phase 1: 14/14 PASS')

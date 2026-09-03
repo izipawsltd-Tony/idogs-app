@@ -2,26 +2,56 @@ import { requireAppUrl } from './require-config.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 
-// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED). Only two
-// real Stripe Checkout price ids exist for iDogs — Plus Monthly and Plus
-// Annual. The legacy Basic/Pro/Kennel/SMS-addon four-tier prices are
-// retired here (no live customers referenced them — see CLAUDE.md
-// "Trạng thái production"), never selectable through this endpoint again.
-// The $40 launch-offer price mentioned in §1.1 of the record is explicitly
-// NOT implemented per this round's scope.
-export const CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',
-  plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
+export const LIVE_CHECKOUT_PRICE_IDS = Object.freeze({
+  plus_monthly: 'price_1UAInbGHgBd6ZgJE0NAikQgm',
+  plus_annual: 'price_1UAIngGHgBd6ZgJEh3njs6hZ',
 })
 
-// Both keys resolve to the same entitlement — Plus. The billing interval
-// (monthly vs annual) only matters for the Stripe price/checkout UI and for
-// computing the AI-scan reset anchor (api/stripe-webhook.js); it is never a
-// separate entitlement tier.
+export const STAGING_CHECKOUT_PRICE_IDS = Object.freeze({
+  plus_monthly: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x',
+  plus_annual: 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK',
+})
+
+function checkoutPricesForCurrentEnvironment(env = process.env) {
+  return env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+    ? STAGING_CHECKOUT_PRICE_IDS
+    : LIVE_CHECKOUT_PRICE_IDS
+}
+
+export function checkoutPriceIdsForStripeMode(livemode, env = process.env) {
+  if (livemode === true) return LIVE_CHECKOUT_PRICE_IDS
+  if (livemode === false) return STAGING_CHECKOUT_PRICE_IDS
+  return checkoutPricesForCurrentEnvironment(env)
+}
+
+export const CHECKOUT_PRICE_IDS = Object.freeze({
+  get plus_monthly() { return checkoutPricesForCurrentEnvironment().plus_monthly },
+  get plus_annual() { return checkoutPricesForCurrentEnvironment().plus_annual },
+})
+
+export const LIVE_GST_TAX_RATE_ID = 'txr_1U9iaFGHgBd6ZgJE5FsztFar'
+export const STAGING_GST_TAX_RATE_ID = 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx'
+
+export function checkoutTaxRatesForCurrentEnvironment(env = process.env) {
+  return env.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+    ? [STAGING_GST_TAX_RATE_ID]
+    : [LIVE_GST_TAX_RATE_ID]
+}
+
+export function checkoutTaxRatesForStripeMode(livemode, env = process.env) {
+  if (livemode === true) return [LIVE_GST_TAX_RATE_ID]
+  if (livemode === false) return [STAGING_GST_TAX_RATE_ID]
+  return checkoutTaxRatesForCurrentEnvironment(env)
+}
+
 const INTERVAL_BY_PLAN_KEY = Object.freeze({
   plus_monthly: 'monthly',
   plus_annual: 'annual',
 })
+
+const STAGING_FIREBASE_PROJECT_ID = 'idogs-app-staging'
+const STAGING_VERCEL_PROJECT_ID = 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o'
+const STAGING_PREVIEW_HOST_PATTERN = /^idogs-app-staging-[a-z0-9-]+-izipawsltd-tonys-projects\.vercel\.app$/
 
 function bodyOf(req) {
   if (typeof req.body !== 'string') return req.body || {}
@@ -32,9 +62,43 @@ function bodyOf(req) {
   }
 }
 
+function customerIdOf(value) {
+  if (typeof value === 'string') return value
+  if (value && typeof value.id === 'string') return value.id
+  return null
+}
+
+function verifiedStagingPreviewOrigin(env = process.env) {
+  // APP_URL is the canonical configuration whenever it is present. This
+  // Preview-only fallback exists solely because APP_URL is intentionally not
+  // configured on ephemeral staging Preview deployments. If APP_URL is
+  // present but invalid, requireAppUrl() returns null and we must stay closed.
+  if (env.APP_URL !== undefined) return null
+  if (env.FIREBASE_PROJECT_ID !== STAGING_FIREBASE_PROJECT_ID) return null
+  if (env.VERCEL_ENV !== 'preview') return null
+  if (env.VERCEL_PROJECT_ID !== STAGING_VERCEL_PROJECT_ID) return null
+
+  const rawHost = env.VERCEL_URL
+  if (typeof rawHost !== 'string' || !rawHost || rawHost.trim() !== rawHost) return null
+  if (rawHost.includes('://') || rawHost.includes('/') || rawHost.includes('?') || rawHost.includes('#') || rawHost.includes(':')) return null
+
+  const hostname = rawHost.toLowerCase()
+  if (hostname !== rawHost) return null
+  if (!STAGING_PREVIEW_HOST_PATTERN.test(hostname)) return null
+
+  return `https://${hostname}`
+}
+
+export function checkoutReturnOrigin(appUrl, env = process.env) {
+  return appUrl || verifiedStagingPreviewOrigin(env)
+}
+
 export function createCheckoutHandler({
   verifyIdToken,
   createSession,
+  getProfile = async () => null,
+  retrieveSubscription = async () => null,
+  isVerifiedActivePlus = () => false,
   getAppUrl = requireAppUrl,
 } = {}) {
   return async function checkoutHandler(req, res) {
@@ -43,7 +107,8 @@ export function createCheckoutHandler({
     }
 
     const appUrl = getAppUrl()
-    if (!appUrl) {
+    const returnOrigin = checkoutReturnOrigin(appUrl)
+    if (!returnOrigin) {
       logConfigError('create-checkout', 'APP_URL_NOT_CONFIGURED')
       return res.status(500).json({ error: 'APP_URL not configured' })
     }
@@ -84,18 +149,39 @@ export function createCheckoutHandler({
       return res.status(400).json({ error: 'Invalid plan' })
     }
     const interval = INTERVAL_BY_PLAN_KEY[planKey]
+    const defaultTaxRates = checkoutTaxRatesForCurrentEnvironment()
 
     try {
+      // Never trust profile.plan alone for duplicate prevention. A webhook
+      // ordering issue can leave plan stale while the server-owned Stripe
+      // linkage still points at a paid active subscription. If a linked
+      // subscription exists, verify it directly before creating any new
+      // Checkout session; fail closed on mismatches or verification errors.
+      const profile = await getProfile(uid)
+      const linkedSubscriptionId = typeof profile?.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : null
+      const linkedCustomerId = typeof profile?.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
+      if (linkedSubscriptionId) {
+        const linkedSubscription = await retrieveSubscription(linkedSubscriptionId)
+        if (linkedCustomerId && customerIdOf(linkedSubscription?.customer) !== linkedCustomerId) {
+          logSanitizedError('create-checkout', 'EXISTING_SUBSCRIPTION_CUSTOMER_MISMATCH')
+          return res.status(409).json({ error: 'Existing billing account mismatch' })
+        }
+        if (isVerifiedActivePlus(linkedSubscription)) {
+          return res.status(409).json({ error: 'Plus subscription is already active' })
+        }
+      }
+
       const session = await createSession({
         mode: 'subscription',
         payment_method_types: ['card'],
         customer_email: email,
         line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${appUrl}/app/billing?success=1`,
-        cancel_url: `${appUrl}/app/billing?cancelled=1`,
+        success_url: `${returnOrigin}/app/billing?success=1`,
+        cancel_url: `${returnOrigin}/app/billing?cancelled=1`,
         metadata: { userId: uid, plan: 'plus', interval, priceId },
         subscription_data: {
           metadata: { userId: uid, plan: 'plus', interval, priceId },
+          default_tax_rates: defaultTaxRates,
         },
       })
       return res.status(200).json({ url: session.url })

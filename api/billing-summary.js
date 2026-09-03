@@ -3,6 +3,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { createBillingSummaryHandler } from './_lib/billing-handler.js'
+import { reconcileVerifiedPlusSubscription, verifiedPlusInterval } from './_lib/billing-reconcile.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 
@@ -27,4 +28,9 @@ export default createBillingSummaryHandler({
   retrieveSubscription: id => stripe.subscriptions.retrieve(id, { expand: ['items.data.price'] }),
   listInvoices: params => stripe.invoices.list(params),
   isSmsConfigured: () => Boolean(process.env.STRIPE_SMS_ADDON_PRICE_ID),
+  getSmsPriceId: () => process.env.STRIPE_SMS_ADDON_PRICE_ID || null,
+  reconcileVerifiedPlus: async ({ subscription, userId }) => {
+    if (!verifiedPlusInterval(subscription)) return false
+    return reconcileVerifiedPlusSubscription({ db, subscription, userId })
+  },
 })

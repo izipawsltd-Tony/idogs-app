@@ -86,9 +86,6 @@ await checkAsync('unsupported plan remains rejected', async () => {
   return res.statusCode === 400 && route.calls.sessions.length === 0
 })
 
-// iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED): the
-// legacy basic/pro/kennel/sms_addon four-tier prices are retired — none
-// of them should be selectable through this endpoint anymore.
 for (const legacyPlan of ['basic', 'pro', 'kennel', 'sms_addon', 'starter']) {
   await checkAsync(`retired legacy plan '${legacyPlan}' is rejected, not silently accepted`, async () => {
     const route = makeRoute()
@@ -97,12 +94,39 @@ for (const legacyPlan of ['basic', 'pro', 'kennel', 'sms_addon', 'starter']) {
   })
 }
 
+const originalVercelEnv = process.env.VERCEL_ENV
+const originalFirebaseProjectId = process.env.FIREBASE_PROJECT_ID
+process.env.VERCEL_ENV = 'preview'
+process.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'
 check(
-  'exactly the two Plus price ids are allowlisted — no $40 launch-offer price, no legacy tiers',
+  'exactly the two Plus plan keys are exposed and staging Preview resolves verified A$7/A$70 test prices',
   Object.keys(CHECKOUT_PRICE_IDS).length === 2 &&
-    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxaNJGHgBd6ZgJEpAhrWark' &&
-    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'
+    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK'
 )
+check(
+  'isolated staging Preview resolves only verified iDogs A$7/A$70 test Plus prices',
+  CHECKOUT_PRICE_IDS.plus_monthly === 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK'
+)
+process.env.VERCEL_ENV = 'production'
+process.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'
+check(
+  'stable staging production target still resolves only verified iDogs A$7/A$70 test Plus prices',
+  CHECKOUT_PRICE_IDS.plus_monthly === 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1U9ZPRGHgBd6ZgJEzFCtnfEK'
+)
+process.env.VERCEL_ENV = 'production'
+process.env.FIREBASE_PROJECT_ID = 'idogs-app'
+check(
+  'production Firebase resolves current Stripe-verified iDogs A$7/A$70 live Plus prices',
+  CHECKOUT_PRICE_IDS.plus_monthly === 'price_1UAInbGHgBd6ZgJE0NAikQgm' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1UAIngGHgBd6ZgJEh3njs6hZ'
+)
+if (originalVercelEnv === undefined) delete process.env.VERCEL_ENV
+else process.env.VERCEL_ENV = originalVercelEnv
+if (originalFirebaseProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID
+else process.env.FIREBASE_PROJECT_ID = originalFirebaseProjectId
 
 await checkAsync('authenticated Checkout (monthly) uses only server-derived customer and metadata identity, and grants no trial', async () => {
   const route = makeRoute()
@@ -134,7 +158,7 @@ await checkAsync('authenticated Checkout (annual) selects the annual price and i
   return res.statusCode === 200 &&
     params.metadata.interval === 'annual' &&
     params.line_items[0].price === CHECKOUT_PRICE_IDS.plus_annual &&
-    params.line_items.length === 1 // no sms_addon line item exists anymore
+    params.line_items.length === 1
 })
 
 const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
@@ -147,27 +171,15 @@ const protectedFields = [
   'stripeSubscriptionId',
   'trialEndsAt',
   'planActivatedAt',
-  // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md) additions —
-  // server-owned by api/stripe-webhook.js / api/enforce-billing-grace.js /
-  // api/scan.js. A client that could set freeScansUsed/plusScansUsed
-  // downward, or plan to 'plus' directly, would defeat quota enforcement
-  // entirely.
   'pastDueSince',
   'billingInterval',
   'scanPeriodAnchorDay',
   'plusScansUsed',
   'plusScansPeriodStart',
   'freeScansUsed',
-  // Codex H5 — out-of-order Stripe event ownership tracking.
   'lastKnownSubscriptionId',
   'subscriptionEventTimestamps',
-  // Codex H1 (round 4) — quota-initialization ownership marker.
   'plusScansSubscriptionId',
-  // Internal Super Admin entitlement (api/_lib/entitlements.js) — an
-  // admin-granted Plus override independent of Stripe. See
-  // scripts/test-internal-entitlement.mjs for the full behavioral suite;
-  // this file only needs the same protected-field/strip checks every
-  // other billing field already gets below.
   'internalEntitlement',
 ]
 

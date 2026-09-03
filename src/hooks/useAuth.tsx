@@ -35,18 +35,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
+  async function loadProfileWithVerifiedBilling(u: User): Promise<UserProfile | null> {
+    const p = await getUserProfile(u.uid)
+    if (!p) return p
+
+    try {
+      const idToken = await u.getIdToken()
+      const res = await fetch('/api/billing-summary', {
+        headers: { Authorization: `Bearer ${idToken}` },
+        cache: 'no-store',
+      })
+      const body = await res.json().catch(() => ({}))
+      if (res.ok && body?.entitlement) {
+        return {
+          ...p,
+          plan: body.entitlement.plan === 'plus' ? 'plus' : p.plan,
+          ...(body.entitlement.billingInterval ? { billingInterval: body.entitlement.billingInterval } : {}),
+          ...(body.entitlement.subscriptionStatus ? { subscriptionStatus: body.entitlement.subscriptionStatus } : {}),
+        } as UserProfile
+      }
+    } catch (err) {
+      console.error('Failed to merge verified billing entitlement:', err)
+    }
+
+    return p
+  }
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setLoading(true)
       setUser(u)
       if (u) {
         try {
-          const p = await getUserProfile(u.uid)
+          const p = await loadProfileWithVerifiedBilling(u)
           setProfile(p)
         } catch (err) {
-          // Super Admin routing depends on the verified Firebase identity,
-          // not on a Firestore profile read succeeding. Fail closed for the
-          // normal profile while still allowing the route guards to settle.
           console.error('Failed to load user profile:', err)
           setProfile(null)
         }
@@ -57,6 +80,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
     return unsub
   }, [])
+
+  useEffect(() => {
+    if (!user) return
+
+    const refreshVerifiedProfile = () => {
+      void loadProfileWithVerifiedBilling(user)
+        .then(setProfile)
+        .catch(err => console.error('Failed to refresh verified profile:', err))
+    }
+
+    window.addEventListener('focus', refreshVerifiedProfile)
+    window.addEventListener('pageshow', refreshVerifiedProfile)
+    return () => {
+      window.removeEventListener('focus', refreshVerifiedProfile)
+      window.removeEventListener('pageshow', refreshVerifiedProfile)
+    }
+  }, [user?.uid])
 
   async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber }: SignupFormData) {
     const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password)
@@ -72,11 +112,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ...(state && { state: state as UserProfile['state'] }),
         ...(breederNumber?.trim() && { breederIdValue: breederNumber.trim() }),
       })
-      const p = await getUserProfile(newUser.uid)
+      const p = await loadProfileWithVerifiedBilling(newUser)
       setProfile(p)
     } catch (err) {
-      // Rollback: remove the Auth user so the email isn't permanently locked
-      // behind a half-created account the user can never log into.
       try { await newUser.delete() } catch { /* best-effort; ignore if already gone */ }
       throw err
     }
@@ -98,13 +136,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function upgradeToBreeder() {
     if (!user) return
     await updateUserProfile(user.uid, { role: 'breeder' })
-    const p = await getUserProfile(user.uid)
+    const p = await loadProfileWithVerifiedBilling(user)
     setProfile(p)
   }
 
   async function refreshProfile() {
     if (!user) return
-    const p = await getUserProfile(user.uid)
+    const p = await loadProfileWithVerifiedBilling(user)
     setProfile(p)
   }
 
@@ -120,29 +158,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(null)
   }
 
-  // Reloads the Firebase user and reports whether email is now verified.
-  // Also forces a state update so ProtectedRoute re-evaluates immediately.
-  //
-  // Staging QA finding: reload() only refreshes the LOCAL profile flag
-  // (auth.currentUser.emailVerified) — it never refreshes the cached ID
-  // TOKEN's own embedded email_verified claim, which is what every
-  // server-side check (e.g. api/private-dog-view.js's
-  // `decoded.email_verified !== true`) actually authorizes against.
-  // Without forcing a fresh token here, a buyer redirected straight into
-  // a protected page (e.g. /app/shared-dogs/:dogId) immediately after
-  // verifying got a false 403 on their very first fetch — their token
-  // wouldn't naturally refresh for up to ~1h. getIdToken(true) is called
-  // BEFORE setUser() deliberately: setUser() is what makes
-  // `user.emailVerified` visible to ProtectedRoute and to
-  // VerifyEmailPage's own "already verified, redirect" effect, so
-  // gating it behind a SUCCESSFUL forced refresh means neither can ever
-  // navigate the caller into a page backed by a still-stale token. If
-  // the forced refresh itself fails, this throws (never silently
-  // returns false) — VerifyEmailPage's existing catch block already
-  // reports that accurately ("Could not check verification status"),
-  // and — critically — never redirects as if verification had
-  // succeeded, per the "don't treat a token-refresh failure as
-  // verification failure" requirement.
   async function checkEmailVerified(): Promise<boolean> {
     if (!auth.currentUser) return false
     await reload(auth.currentUser)

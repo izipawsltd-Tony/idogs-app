@@ -1,12 +1,8 @@
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 import { computeEffectivePlan } from './entitlements.js'
-import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
-
-// This is the verified iDogs Plus test-mode price in the iDogs Stripe Test mode
-// environment. It is accepted only on Vercel Preview for the isolated iDogs
-// staging Firebase project; production continues to accept only CHECKOUT_PRICE_IDS.
-const STAGING_PLUS_PRICE_ID = 'price_1TxaNJGHgBd6ZgJEpAhrWark'
+import { checkoutTaxRatesForStripeMode } from './checkout-handler.js'
+import { verifiedPlusInterval } from './billing-reconcile.js'
 
 function parseBody(req) {
   if (typeof req.body !== 'string') return req.body || {}
@@ -24,17 +20,8 @@ function subscriptionPriceIds(subscription) {
     .filter(id => typeof id === 'string' && id)
 }
 
-function allowedBasePlusPriceIds() {
-  const allowed = [...Object.values(CHECKOUT_PRICE_IDS)]
-  if (process.env.VERCEL_ENV === 'preview' && process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging') {
-    allowed.push(STAGING_PLUS_PRICE_ID)
-  }
-  return allowed
-}
-
 function hasBasePlusPrice(subscription) {
-  const allowed = new Set(allowedBasePlusPriceIds())
-  return subscriptionPriceIds(subscription).some(id => allowed.has(id))
+  return Boolean(verifiedPlusInterval(subscription))
 }
 
 function hasPrice(subscription, priceId) {
@@ -104,22 +91,24 @@ export function createSmsAddonCheckoutHandler({
         return reject409(res, 'SMS_GUARD_ALREADY_PRESENT', 'SMS add-on already exists; manage it in Billing')
       }
 
-      const updated = await updateSubscription(subscription.id, {
+      await updateSubscription(subscription.id, {
         items: [{ price: priceId, quantity: 1 }],
+        default_tax_rates: checkoutTaxRatesForStripeMode(subscription.livemode),
         proration_behavior: 'always_invoice',
-        payment_behavior: 'pending_if_incomplete',
+        payment_behavior: 'error_if_incomplete',
         expand: ['latest_invoice'],
       })
 
-      const pending = Boolean(updated?.pending_update)
-      const hostedInvoiceUrl = typeof updated?.latest_invoice === 'object'
-        ? updated.latest_invoice?.hosted_invoice_url || null
-        : null
-
-      return res.status(pending ? 202 : 200).json({
+      // With error_if_incomplete, a payment that cannot complete causes the
+      // Stripe update to throw and we stay in-app on the error path. A 200
+      // therefore must not send the browser to Stripe's hosted invoice page.
+      // Keeping the successful response in-app also preserves the exact
+      // staging Preview origin instead of allowing an external Stripe page to
+      // return the user to the production business URL.
+      return res.status(200).json({
         success: true,
-        status: pending ? 'pending_payment' : 'activating',
-        hostedInvoiceUrl,
+        status: 'activating',
+        hostedInvoiceUrl: null,
       })
     } catch (err) {
       logSanitizedError('create-sms-addon-checkout', 'SMS_ADDON_UPDATE_FAILED', { code: err?.code })
@@ -127,7 +116,6 @@ export function createSmsAddonCheckoutHandler({
     }
   }
 }
-
 
 export function createSmsAddonRemoveHandler({
   verifyIdToken,
@@ -188,6 +176,7 @@ export function createSmsAddonRemoveHandler({
 
       await updateSubscription(subscription.id, {
         items: [{ id: smsItem.id, deleted: true }],
+        default_tax_rates: checkoutTaxRatesForStripeMode(subscription.livemode),
         proration_behavior: 'always_invoice',
       })
 

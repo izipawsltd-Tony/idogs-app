@@ -240,7 +240,26 @@ export default function BillingPage({ toast }: Props) {
           : 'SMS add-on update submitted. Activation will appear after Stripe confirms it.',
         'success',
       )
-      window.location.href = '/app/billing?sms_success=1'
+      // Stay on the current Preview/app origin after a successful SMS update.
+      // Refresh Stripe-verified Billing state in-place instead of forcing a
+      // full document navigation, which caused a visible 2-3 second flash.
+      const billingRes = await fetch('/api/billing-summary', {
+        headers: { Authorization: `Bearer ${idToken}` },
+        cache: 'no-store',
+      })
+      const billingBody = await billingRes.json().catch(() => ({}))
+      if (billingRes.ok) {
+        setBillingDetails(billingBody as BillingSummary)
+        setDetailsError(null)
+        void refreshProfile().catch(err => console.error('Failed to refresh billing entitlement profile:', err))
+      } else {
+        // The SMS mutation already succeeded with error_if_incomplete, so keep
+        // the UI responsive even if the immediate summary refresh transiently fails.
+        setBillingDetails(current => current ? {
+          ...current,
+          sms: { ...current.sms, status: 'active' },
+        } : current)
+      }
     } catch {
       toast('SMS add-on is unavailable. Please check Billing or try again later.', 'error')
     } finally {
