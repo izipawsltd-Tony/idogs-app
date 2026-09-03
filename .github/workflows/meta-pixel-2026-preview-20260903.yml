@@ -1,4 +1,4 @@
-name: Deploy Meta Pixel 2026 staging Preview
+name: Deploy Meta InitiateCheckout 2026 Preview
 
 on:
   push:
@@ -11,12 +11,12 @@ permissions:
   contents: read
 
 env:
-  BASE_SHA: 70c696b768f08942d9885abdfea90ee9aaad5fea
-  CANDIDATE_SHA: 5c8831e89ec2b8faff776260c4472b82d2a3b994
-  PIXEL_ID: "1648101183992434"
-  STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
-  TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
-  VERCEL_SCOPE: izipawsltd-tonys-projects
+  BASE_SHA: '20553339fa3ad92d9c7fee2d763921f4c71e4535'
+  CANDIDATE_SHA: '8078aa3cbf6b0132f066687c8e1643a6635ebc3a'
+  PIXEL_ID: '1648101183992434'
+  STAGING_PROJECT_ID: 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o'
+  TEAM_ID: 'team_oZF1Z0BUEceb9fAXdmFV1Saz'
+  VERCEL_SCOPE: 'izipawsltd-tonys-projects'
 
 jobs:
   deploy-preview:
@@ -29,29 +29,32 @@ jobs:
           ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
 
-      - name: Exact source and Pixel scope gate
+      - name: Exact scope and checkout semantics gate
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain)"
-          test "$(git diff --name-only "$BASE_SHA"..HEAD)" = 'index.html'
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA"..HEAD)
+          test "${#changed[@]}" -eq 2
+          printf '%s\n' "${changed[@]}" | grep -qx 'src/lib/metaCheckoutTracking.ts'
+          printf '%s\n' "${changed[@]}" | grep -qx 'src/main.tsx'
+          ! printf '%s\n' "${changed[@]}" | grep -q '^api/'
+          grep -q "requestUrl === '/api/create-checkout'" src/lib/metaCheckoutTracking.ts
+          grep -q "init?.method === 'POST' && response.ok" src/lib/metaCheckoutTracking.ts
+          grep -q "typeof body?.url === 'string'" src/lib/metaCheckoutTracking.ts
+          grep -q "fbq('track', 'InitiateCheckout'" src/lib/metaCheckoutTracking.ts
+          grep -q "currency: 'AUD'" src/lib/metaCheckoutTracking.ts
+          grep -q "PLUS_MONTHLY_PRICE_AUD" src/lib/metaCheckoutTracking.ts
+          grep -q "PLUS_ANNUAL_PRICE_AUD" src/lib/metaCheckoutTracking.ts
+          grep -q "installMetaInitiateCheckoutTracking()" src/main.tsx
           grep -q "fbq('init', '$PIXEL_ID');" index.html
           grep -q "fbq('track', 'PageView');" index.html
-          grep -q 'https://connect.facebook.net/en_US/fbevents.js' index.html
-          grep -q "tr?id=$PIXEL_ID&ev=PageView&noscript=1" index.html
-          ! grep -q '2647777915638218' index.html
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('index.html').read_text()
-          assert s.count("fbq('init', '1648101183992434');") == 1
-          assert s.count('1648101183992434') == 2
-          assert s.index('<!-- Meta Pixel Code -->') < s.index('</head>')
-          ns=s.index('<noscript><img')
-          assert s.index('<body>') < ns < s.index('</body>')
-          print('META_PIXEL_HTML_PLACEMENT=PASS')
-          PY
-          echo META_PIXEL_SCOPE=PASS
+          grep -q "trackCompleteRegistration(accountType)" src/pages/SignupPage.tsx
+          grep -q "export const PLUS_MONTHLY_PRICE_AUD = 7" src/lib/pricingCopy.ts
+          grep -q "export const PLUS_ANNUAL_PRICE_AUD = 70" src/lib/pricingCopy.ts
+          echo META_INITIATE_CHECKOUT_SCOPE=PASS
+          echo META_INITIATE_CHECKOUT_SEMANTICS=PASS
 
       - name: Install dependencies and build
         shell: bash
@@ -59,7 +62,7 @@ jobs:
           set -euo pipefail
           npm ci
           npm run build
-          echo META_PIXEL_BUILD=PASS
+          echo META_INITIATE_CHECKOUT_BUILD=PASS
 
       - name: Hard-lock staging Vercel project
         shell: bash
@@ -82,12 +85,12 @@ jobs:
           PREVIEW_URL=$(cat /tmp/vercel.stdout /tmp/vercel.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | tail -1 || true)
           test -n "$PREVIEW_URL"
           echo "PREVIEW_URL=$PREVIEW_URL" >> "$GITHUB_ENV"
-          echo "META_PIXEL_PREVIEW_URL=$PREVIEW_URL"
-          echo META_PIXEL_PREVIEW_DEPLOY=PASS
+          echo "META_INITIATE_CHECKOUT_PREVIEW_URL=$PREVIEW_URL"
+          echo META_INITIATE_CHECKOUT_PREVIEW_DEPLOY=PASS
 
       - name: Terminal safety assertion
         shell: bash
         run: |
           echo STABLE_STAGING_PROMOTION=NOT_PERFORMED
           echo PRODUCTION_DEPLOY=NOT_PERFORMED
-          echo META_PIXEL_PAGEVIEW_AUTOMATION=PASS
+          echo META_INITIATE_CHECKOUT_AUTOMATION=PASS
