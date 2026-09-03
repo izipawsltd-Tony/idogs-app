@@ -21,8 +21,14 @@ function subscriptionIdOf(invoice) {
   return null
 }
 
+function idOf(value) {
+  if (typeof value === 'string') return value
+  if (value && typeof value.id === 'string') return value.id
+  return null
+}
+
 function linePriceId(line) {
-  return line?.pricing?.price_details?.price || line?.price?.id || line?.plan?.id || null
+  return idOf(line?.pricing?.price_details?.price) || idOf(line?.price) || idOf(line?.plan) || null
 }
 
 function positivePriceIds(invoice) {
