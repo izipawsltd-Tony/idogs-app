@@ -1,0 +1,102 @@
+name: Deploy Meta Purchase Production 20260903
+
+on:
+  push:
+    branches:
+      - automation/meta-purchase-production-deploy-20260903
+    paths:
+      - .github/workflows/meta-purchase-production-deploy-20260903.yml
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: 5f8dde2113c74811d2fdd1a2e51c535e662f7a5a
+  PURCHASE_QA_BASE_SHA: b34eae1a5561b82d9de6a18a14d6df926e1114ee
+  PIXEL_ID: "1648101183992434"
+  OLD_PIXEL_ID: "2647777915638218"
+  PROD_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+  TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+  VERCEL_SCOPE: izipawsltd-tonys-projects
+
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact approved candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+
+      - name: Exact source safety gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test -z "$(git diff --name-only "$PURCHASE_QA_BASE_SHA"..HEAD)"
+          grep -q "META_DATASET_ID = '$PIXEL_ID'" api/_lib/meta-capi.js
+          ! grep -R -q "$OLD_PIXEL_ID" api index.html src
+          ! grep -R -q 'stagingQaReplayConfig\|sendStagingQaReplay\|META_CAPI_QA_REPLAY_STRIPE_EVENT_ID\|TEST21451' api src index.html
+          grep -q "billing_reason === 'subscription_create'" api/_lib/meta-capi.js
+          grep -q "Number(invoice.amount_paid) <= 0" api/_lib/meta-capi.js
+          grep -q "verifiedEvent.type === 'invoice.payment_succeeded'" api/stripe-webhook.js
+          ! grep -R -q "fbq('track', 'Purchase'" src
+          grep -q "event_source_url: previewSource || 'https://idogs.com.au/'" api/_lib/meta-capi.js
+          echo PROD_EXACT_SOURCE_GATE=PASS
+
+      - name: Regression and build gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-billing-p0-security.mjs
+          npm run build
+          echo PROD_REGRESSION_BUILD_GATE=PASS
+
+      - name: Hard-lock production project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.PROD_PROJECT_ID||d.orgId!==process.env.TEAM_ID||d.projectName!=='idogs-app') process.exit(1)"
+          echo PROD_PROJECT_LOCK=PASS
+
+      - name: Reconfirm production Meta env
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest env ls production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/prod-env.txt 2>&1
+          grep -q 'META_CAPI_ACCESS_TOKEN' /tmp/prod-env.txt
+          ! grep -q 'META_CAPI_TEST_EVENT_CODE' /tmp/prod-env.txt
+          ! grep -q 'META_CAPI_QA_REPLAY_STRIPE_EVENT_ID' /tmp/prod-env.txt
+          ! grep -q 'META_DATASET_ID' /tmp/prod-env.txt
+          echo PROD_META_ENV_GATE=PASS
+
+      - name: Deploy exact approved SHA to production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-prod.stdout 2> /tmp/vercel-prod.stderr
+          PROD_URL=$(cat /tmp/vercel-prod.stdout /tmp/vercel-prod.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | tail -1 || true)
+          test -n "$PROD_URL"
+          echo "PROD_URL=$PROD_URL" >> "$GITHUB_ENV"
+          echo "META_PURCHASE_PRODUCTION_URL=$PROD_URL"
+          echo PRODUCTION_DEPLOY_EXECUTED=YES
+
+      - name: Terminal deployment assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${PROD_URL:-}"
+          echo APPROVED_SHA_DEPLOYED="$CANDIDATE_SHA"
+          echo PRODUCTION_ENV_MUTATION_BY_WORKFLOW=NO
+          echo PRODUCTION_DEPLOY_WORKFLOW=PASS
