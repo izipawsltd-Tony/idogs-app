@@ -1,12 +1,14 @@
 // api/stripe-webhook.js — Stripe webhook entrypoint. All subscription
 // entitlement logic lives in api/_lib/webhook-handler.js; one-time Extra
 // Litter credit grants are verified/idempotent in extra-litter-webhook.js.
+// Stripe-confirmed initial Plus revenue is also delivered to Meta CAPI.
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { createWebhookHandler } from './_lib/webhook-handler.js'
 import { grantExtraLitterCreditFromVerifiedEvent } from './_lib/extra-litter-webhook.js'
 import { reconcileVerifiedPlusSubscription, verifiedPlusInterval } from './_lib/billing-reconcile.js'
+import { createMetaInvoiceProcessor } from './_lib/meta-capi.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 
@@ -39,6 +41,8 @@ const processWebhook = createWebhookHandler({
   getSubscription,
   db,
 })
+
+const processMetaInvoice = createMetaInvoiceProcessor({ db, getSubscription })
 
 function subscriptionIdFromVerifiedEvent(event) {
   const object = event?.data?.object
@@ -91,11 +95,25 @@ export default async function handler(req, res) {
       // makes Stripe redelivery safe and prevents double-credit.
       await grantExtraLitterCreditFromVerifiedEvent({ db, event: verifiedEvent })
       await reconcileActivePlusFromVerifiedEvent(verifiedEvent)
+
+      // Meta Purchase is emitted only from Stripe's signed, paid invoice event.
+      // The processor classifies initial Plus acquisition only, persists a
+      // deterministic invoice/event claim, and is safe under Stripe retries.
+      if (verifiedEvent.type === 'invoice.payment_succeeded') {
+        const metaResult = await processMetaInvoice(verifiedEvent)
+        console.log('stripe-webhook: meta capi result', {
+          sent: Boolean(metaResult?.sent),
+          skipped: Boolean(metaResult?.skipped),
+          reason: metaResult?.reason || null,
+          eventName: metaResult?.eventName || null,
+        })
+      }
     } catch (error) {
       console.error('stripe-webhook: verified post-processing failed', { code: error?.message || 'POST_PROCESSING_FAILED' })
-      // Return 500 so Stripe retries. Extra-litter grants are idempotent,
-      // and the subscription reconciler is already designed for retries.
-      return res.status(500).json({ error: 'Webhook entitlement post-processing failed' })
+      // Return 500 so Stripe retries. All post-processors are idempotent or
+      // claim-guarded, so a successful payment cannot create duplicate credit
+      // or duplicate Meta Purchase events on redelivery.
+      return res.status(500).json({ error: 'Webhook verified post-processing failed' })
     }
   }
   return res.status(result.status).json(result.body)
