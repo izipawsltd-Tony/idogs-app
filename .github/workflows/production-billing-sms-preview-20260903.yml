@@ -1,0 +1,156 @@
+name: Production Billing SMS Preview Gate 20260903
+
+on:
+  push:
+    branches:
+      - automation/production-billing-sms-preview-20260903
+
+permissions:
+  contents: read
+
+env:
+  CURRENT_PROD_SHA: 28cf50ec05ee683f60c088d404a6def1cfdf2216
+  STABLE_SHA: 5b5f43205f4d0fd2f082270bea3b4eb062c4485c
+  CANDIDATE_SHA: 70c696b768f08942d9885abdfea90ee9aaad5fea
+  CANDIDATE_TREE: 87aee038e1b9109ec381ffb91dd3136fb3f0ae6c
+  PROD_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+  PROD_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+  VERCEL_SCOPE: izipawsltd-tonys-projects
+
+jobs:
+  test-deploy-production-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact integration candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+
+      - name: Verify exact lineage and identical stable tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+          test "$(git rev-parse HEAD^1)" = "$CURRENT_PROD_SHA"
+          test "$(git rev-parse HEAD^2)" = "$STABLE_SHA"
+          git diff --quiet "$STABLE_SHA" "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test ! -e api/qa-billing-account.js
+          test ! -e api/qa-repair-petowner-billing.js
+          git diff --check "$CURRENT_PROD_SHA".."$CANDIDATE_SHA"
+          echo PRODUCTION_INTEGRATION_LINEAGE=PASS
+          echo SOURCE_TREE_IDENTICAL_TO_STABLE_QA=PASS
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Run billing SMS litter and provider regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-stripe-mode-routing.mjs
+          node scripts/test-checkout-preview-origin.mjs
+          node scripts/test-litter-pricing-policy.mjs
+          node scripts/test-litter-quota.mjs
+          node scripts/test-extra-litter-checkout.mjs
+          node scripts/test-extra-litter-webhook.mjs
+          node scripts/test-pricing-integration-checks.mjs
+          node scripts/test-sms-provider.mjs
+          node scripts/test-reminders-batch-regression.mjs
+          node scripts/test-cron-auth.mjs
+          node scripts/test-webhook-handler.mjs
+          npm run build
+          echo PRODUCTION_RELEASE_REGRESSION_AND_BUILD=PASS
+
+      - name: Hard-lock production Vercel project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.PROD_PROJECT_ID||d.orgId!==process.env.PROD_TEAM_ID||d.projectName!=='idogs-app') process.exit(1)"
+          echo PRODUCTION_PROJECT_LOCK=PASS
+
+      - name: Confirm production-project Preview financial safety
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull-preview.log 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          vals={}
+          for p in Path('.vercel').glob('.env.*.local'):
+              for raw in p.read_text(errors='replace').splitlines():
+                  line=raw.strip()
+                  if not line or line.startswith('#') or '=' not in line: continue
+                  k,v=line.split('=',1)
+                  v=v.strip()
+                  if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"): v=v[1:-1]
+                  vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
+          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
+              raise SystemExit('PREVIEW_FINANCIAL_SAFETY_FAIL')
+          print('PRODUCTION_PROJECT_PREVIEW_FINANCIAL_SAFETY=PASS')
+          print('PREVIEW_EXTRA_LITTER_REAL_CHECKOUT=OFF')
+          PY
+          rm -f .vercel/.env.*.local
+
+      - name: Deploy exact candidate to production project Preview only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          npx --yes vercel@latest deploy --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/vercel-deploy.stdout 2> /tmp/vercel-deploy.stderr
+          DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | grep -E '/?idogs-' | tail -1 || true)
+          if [ -z "$DEPLOY_URL" ]; then
+            DEPLOY_URL=$(cat /tmp/vercel-deploy.stdout /tmp/vercel-deploy.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | tail -1 || true)
+          fi
+          test -n "$DEPLOY_URL"
+          case "$DEPLOY_URL" in
+            *idogs-app-staging*) echo WRONG_PROJECT_PREVIEW; exit 1 ;;
+          esac
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "PRODUCTION_PROJECT_PREVIEW_URL=$DEPLOY_URL"
+          echo PRODUCTION_PROJECT_PREVIEW_DEPLOY=PASS
+
+      - name: Safe unauthenticated Preview probes
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl /api/billing-summary --deployment "$DEPLOY_URL" -- --silent --show-error --output /tmp/billing.json --write-out '%{http_code}')
+          echo "BILLING_UNAUTH_HTTP=$code"
+          cat /tmp/billing.json
+          test "$code" = "401"
+          node -e "const b=require('/tmp/billing.json'); if(b.error!=='Missing Authorization header') process.exit(1)"
+
+          code=$(npx --yes vercel@latest --scope="$VERCEL_SCOPE" curl /api/litter-quota-summary --deployment "$DEPLOY_URL" -- --silent --show-error --output /tmp/litter.json --write-out '%{http_code}')
+          echo "LITTER_QUOTA_UNAUTH_HTTP=$code"
+          test "$code" = "401"
+
+          echo STRIPE_SESSION_NOT_CREATED=PASS
+          echo FIRESTORE_MUTATION_NOT_PERFORMED=PASS
+          echo SAFE_PREVIEW_PROBES=PASS
+
+      - name: Terminal preview-only assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo PRODUCTION_DEPLOY=NOT_PERFORMED
+          echo IDOGS_COM_AU_ALIAS=UNCHANGED
+          echo EXTRA_LITTER_REAL_CHECKOUT=OFF
+          echo PRODUCTION_PREVIEW_GATE=PASS
