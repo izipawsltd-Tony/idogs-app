@@ -1,0 +1,158 @@
+name: Meta Purchase QA Replay Stable Staging 20260903
+
+on:
+  push:
+    branches:
+      - automation/meta-purchase-qa-replay-staging-20260903
+    paths:
+      - .github/workflows/meta-purchase-qa-replay-staging-20260903.yml
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: b34eae1a5561b82d9de6a18a14d6df926e1114ee
+  CANDIDATE_SHA: f4f157ed3d4c400b632c645f106d925d20281e62
+  PIXEL_ID: "1648101183992434"
+  TEST_EVENT_CODE: "TEST21451"
+  QA_STRIPE_EVENT_ID: "evt_1UBYHQGHgBd6ZgJEpxPAaRw4"
+  STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+  TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+  VERCEL_SCOPE: izipawsltd-tonys-projects
+
+jobs:
+  qa-replay-stable-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+
+      - name: Exact scope and fail-closed gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA"..HEAD)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = 'api/_lib/meta-capi.js'
+          grep -q "META_DATASET_ID = '$PIXEL_ID'" api/_lib/meta-capi.js
+          grep -q "META_CAPI_QA_REPLAY_STRIPE_EVENT_ID" api/_lib/meta-capi.js
+          grep -q "FIREBASE_PROJECT_ID === 'idogs-app-staging'" api/_lib/meta-capi.js
+          grep -q "VERCEL_ENV === 'production'" api/_lib/meta-capi.js
+          grep -q "event_source_url: 'https://idogs-app-staging.vercel.app/'" api/_lib/meta-capi.js
+          grep -q "meta-capi: staging QA replay result" api/_lib/meta-capi.js
+          ! grep -q '2647777915638218' api/_lib/meta-capi.js
+          echo META_QA_REPLAY_SCOPE=PASS
+
+      - name: Unit test staging-only QA replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          process.env.FIREBASE_PROJECT_ID = 'idogs-app-staging'
+          process.env.VERCEL_ENV = 'production'
+          process.env.META_CAPI_TEST_EVENT_CODE = 'TEST21451'
+          process.env.META_CAPI_QA_REPLAY_STRIPE_EVENT_ID = 'evt_1UBYHQGHgBd6ZgJEpxPAaRw4'
+
+          const { createMetaInvoiceProcessor } = await import('./api/_lib/meta-capi.js')
+          const sent = []
+          const sender = {
+            enabled: true,
+            send: async event => {
+              sent.push(event)
+              return { skipped: false, payload: { events_received: 1, messages: [], fbtrace_id: 'QA_TRACE' } }
+            },
+          }
+          const completedSnap = { exists: true, data: () => ({ status: 'completed' }) }
+          const db = {
+            collection: () => ({ doc: () => ({ set: async () => { throw new Error('QA_REPLAY_MUST_NOT_MUTATE_MAIN_CLAIM') } }) }),
+            runTransaction: async fn => fn({ get: async () => completedSnap, set: () => { throw new Error('QA_REPLAY_MUST_NOT_REWRITE_MAIN_CLAIM') } }),
+          }
+          const getSubscription = async () => ({ metadata: { userId: 'qa-user' } })
+          const processInvoice = createMetaInvoiceProcessor({ db, getSubscription, sender })
+          const event = {
+            id: 'evt_1UBYHQGHgBd6ZgJEpxPAaRw4',
+            type: 'invoice.payment_succeeded',
+            created: 1788432852,
+            data: { object: {
+              id: 'in_qa_purchase_7',
+              subscription: 'sub_qa',
+              amount_paid: 700,
+              currency: 'aud',
+              billing_reason: 'subscription_create',
+              status_transitions: { paid_at: 1788432852 },
+              lines: { data: [{ amount: 700, pricing: { price_details: { price: 'price_1U9YwuGHgBd6ZgJEX1Bdjz5x' } } }] },
+            } },
+          }
+
+          const replay = await processInvoice(event)
+          if (!replay?.qaReplay || !replay?.sent) throw new Error('QA replay did not fire')
+          if (sent.length !== 1) throw new Error('Expected exactly one QA send')
+          if (sent[0].event_name !== 'Purchase') throw new Error('Wrong QA event name')
+          if (sent[0].custom_data?.currency !== 'AUD' || sent[0].custom_data?.value !== 7) throw new Error('Wrong QA Purchase value')
+          if (!sent[0].event_id.endsWith(':qa:TEST21451')) throw new Error('QA event id not isolated')
+          if (sent[0].event_source_url !== 'https://idogs-app-staging.vercel.app/') throw new Error('QA source URL not staging')
+
+          const mismatch = await processInvoice({ ...event, id: 'evt_other' })
+          if (mismatch?.qaReplay || sent.length !== 1) throw new Error('Mismatched Stripe event replayed')
+
+          delete process.env.META_CAPI_TEST_EVENT_CODE
+          const noCode = await processInvoice(event)
+          if (noCode?.qaReplay || sent.length !== 1) throw new Error('Replay fired without test code')
+
+          process.env.META_CAPI_TEST_EVENT_CODE = 'TEST21451'
+          process.env.FIREBASE_PROJECT_ID = 'idogs-app-production'
+          const prodBlocked = await processInvoice(event)
+          if (prodBlocked?.qaReplay || sent.length !== 1) throw new Error('Replay fired outside staging Firebase')
+
+          console.log('META_QA_REPLAY_UNIT=PASS')
+          NODE
+
+      - name: Regression and build gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/test-billing-p0-security.mjs
+          npm run build
+          echo META_QA_REPLAY_REGRESSION_BUILD=PASS
+
+      - name: Hard-lock staging Vercel project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.STAGING_PROJECT_ID||d.orgId!==process.env.TEAM_ID||d.projectName!=='idogs-app-staging') process.exit(1)"
+          echo STAGING_PROJECT_LOCK=PASS
+
+      - name: Deploy QA replay to stable staging only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" \
+            --env "META_DATASET_ID=$PIXEL_ID" \
+            --env "META_CAPI_TEST_EVENT_CODE=$TEST_EVENT_CODE" \
+            --env "META_CAPI_QA_REPLAY_STRIPE_EVENT_ID=$QA_STRIPE_EVENT_ID" \
+            --no-color > /tmp/vercel.stdout 2> /tmp/vercel.stderr
+          cat /tmp/vercel.stdout /tmp/vercel.stderr
+          STABLE_URL=$(cat /tmp/vercel.stdout /tmp/vercel.stderr | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | tail -1 || true)
+          test -n "$STABLE_URL"
+          echo "STABLE_URL=$STABLE_URL" >> "$GITHUB_ENV"
+          echo META_QA_REPLAY_STABLE_DEPLOY=PASS
+
+      - name: Terminal safety assertion
+        shell: bash
+        run: |
+          echo STABLE_STAGING_QA_REPLAY=DEPLOYED_APPROVED
+          echo PRODUCTION_IDOGS_DEPLOY=NOT_PERFORMED
+          echo PROJECT_ENV_MUTATION=NOT_PERFORMED
+          echo META_QA_REPLAY_READY_FOR_SINGLE_RESEND=PASS
