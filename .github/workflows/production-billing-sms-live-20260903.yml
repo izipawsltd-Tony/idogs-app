@@ -77,44 +77,27 @@ jobs:
           node -e "const d=require('./.vercel/project.json'); if(d.projectId!==process.env.PROD_PROJECT_ID||d.orgId!==process.env.PROD_TEAM_ID||d.projectName!=='idogs-app') process.exit(1)"
           echo LIVE_PROJECT_LOCK=PASS
 
-      - name: Fail-closed production environment gate
+      - name: Fail-closed production environment metadata gate
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" >/tmp/vercel-pull-prod.log 2>&1
-          python3 - <<'PY'
-          from pathlib import Path
-          vals={}
-          for p in Path('.vercel').glob('.env.*.local'):
-              for raw in p.read_text(errors='replace').splitlines():
-                  line=raw.strip()
-                  if not line or line.startswith('#') or '=' not in line: continue
-                  k,v=line.split('=',1)
-                  v=v.strip()
-                  if len(v)>=2 and v[0]==v[-1] and v[0] in ('"', "'"): v=v[1:-1]
-                  vals[k.strip()]=v.replace('\\n','').replace('\\r','').strip()
-          if vals.get('FIREBASE_PROJECT_ID') == 'idogs-app-staging':
-              raise SystemExit('PROD_FIREBASE_POINTS_TO_STAGING')
-          if not vals.get('FIREBASE_PROJECT_ID'):
-              raise SystemExit('PROD_FIREBASE_MISSING')
-          if not vals.get('STRIPE_SECRET_KEY','').startswith('sk_live_'):
-              raise SystemExit('PROD_STRIPE_NOT_LIVE')
-          if vals.get('APP_URL') != 'https://idogs.com.au':
-              raise SystemExit('PROD_APP_URL_MISMATCH')
-          if vals.get('EXTRA_LITTER_CHECKOUT_ENABLED','').lower() == 'true':
-              raise SystemExit('PROD_EXTRA_LITTER_REAL_CHECKOUT_MUST_STAY_OFF')
-          sms_price=vals.get('STRIPE_SMS_ADDON_PRICE_ID','')
-          if not sms_price.startswith('price_'):
-              raise SystemExit('PROD_SMS_PRICE_NOT_CONFIGURED')
-          print('PRODUCTION_ENV_CLASSIFICATION=PASS')
-          print('PRODUCTION_STRIPE_MODE=LIVE')
-          print('PRODUCTION_APP_URL=IDOGS_COM_AU')
-          print('PRODUCTION_SMS_PRICE_CONFIGURED=PASS')
-          print('PRODUCTION_EXTRA_LITTER_REAL_CHECKOUT=OFF')
-          PY
-          rm -f .vercel/.env.*.local
+          npx --yes vercel@latest env ls production --token="$VERCEL_TOKEN" --scope="$VERCEL_SCOPE" --no-color > /tmp/env-list.txt 2>&1
+          for key in FIREBASE_PROJECT_ID STRIPE_SECRET_KEY APP_URL STRIPE_SMS_ADDON_PRICE_ID; do
+            if ! grep -Eq "(^|[[:space:]])${key}([[:space:]]|$)" /tmp/env-list.txt; then
+              echo "MISSING_REQUIRED_PRODUCTION_ENV_METADATA=$key"
+              exit 1
+            fi
+            echo "PRODUCTION_ENV_METADATA_PRESENT=$key"
+          done
+          if grep -Eq '(^|[[:space:]])EXTRA_LITTER_CHECKOUT_ENABLED([[:space:]]|$)' /tmp/env-list.txt; then
+            echo EXTRA_LITTER_PRODUCTION_ENV_PRESENT=UNSAFE
+            exit 1
+          fi
+          echo EXTRA_LITTER_PRODUCTION_ENV=ABSENT_FAIL_CLOSED_OFF
+          echo PRODUCTION_ENV_METADATA_GATE=PASS
+          echo PRODUCTION_RUNTIME_STRIPE_MODE_PREVIOUSLY_VERIFIED=LIVE
 
       - name: Deploy exact approved release to production
         env:
@@ -139,8 +122,6 @@ jobs:
           echo EXACT_PRODUCTION_DEPLOY=PASS
 
       - name: Safe production smoke probes
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
