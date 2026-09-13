@@ -1348,7 +1348,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                             return (
                               <div key={puppy.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--white)' }}>
                                 {/* Puppy row */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px' }}>
+                                <div className="puppy-list-row">
                                   <div style={{
                                     width: 36, height: 36, borderRadius: '50%',
                                     background: puppy.profilePhoto ? `url(${puppy.profilePhoto}) center/cover` : 'var(--brand-50)',
@@ -1356,7 +1356,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                   }}>
                                     {!puppy.profilePhoto && (collarMatch ? COLLAR_EMOJI[collarMatch[1]] || '🐶' : '🐶')}
                                   </div>
-                                  <div style={{ flex: 1 }}>
+                                  <div className="puppy-list-info">
                                     <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{puppy.name}</div>
                                     <div style={{ fontSize: 12, color: 'var(--light)' }}>
                                       {puppy.sex === 'female' ? '♀' : '♂'}
@@ -1366,13 +1366,17 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                       {puppy.microchip ? ` · Chip: ${puppy.microchip}` : ''}
                                     </div>
                                   </div>
-                                  {isPuppyRestricted && (
-                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)', whiteSpace: 'nowrap' }}>🔒 Restricted</span>
+                                  {(isPuppyRestricted || isPuppyPromoted) && (
+                                    <div className="puppy-list-badges">
+                                      {isPuppyRestricted && (
+                                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)', whiteSpace: 'nowrap' }}>🔒 Restricted</span>
+                                      )}
+                                      {isPuppyPromoted && (
+                                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', border: '1px solid rgba(8,80,65,.16)', whiteSpace: 'nowrap' }}>✓ In My Dogs</span>
+                                      )}
+                                    </div>
                                   )}
-                                  {isPuppyPromoted && (
-                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', border: '1px solid rgba(8,80,65,.16)', whiteSpace: 'nowrap' }}>✓ In My Dogs</span>
-                                  )}
-                                  <div style={{ display: 'flex', gap: 6 }}>
+                                  <div className="puppy-list-actions">
                                     <button
                                       className="btn btn-secondary btn-sm"
                                       onClick={() => isEditingThisPuppy ? setEditingPuppy(null) : startEditPuppy(puppy)}
