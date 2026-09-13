@@ -1065,12 +1065,12 @@ export default function LittersPage({ toast, dismissAll }: Props) {
 
   return (
     <div style={{ padding: 32 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+      <div className="litters-page-header">
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>Litters</h1>
           <p style={{ fontSize: 14, color: 'var(--light)' }}>{litters.length} litter{litters.length !== 1 ? 's' : ''} recorded</p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div className="litters-page-actions">
           <ExtraLitterButton toast={toast} />
           <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>+ New litter</button>
         </div>
@@ -1182,20 +1182,20 @@ export default function LittersPage({ toast, dismissAll }: Props) {
               <div key={litter.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
 
                 {/* Litter header */}
-                <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div className="litter-card-header">
                   <div
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}
+                    className="litter-card-summary"
                     onClick={() => setExpandedLitter(isExpanded ? null : litter.id)}
                   >
                     <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>🐣</div>
-                    <div>
+                    <div className="litter-card-heading">
                       <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{litter.name}</div>
                       <div style={{ fontSize: 13, color: 'var(--light)', marginTop: 2 }}>
                         Dam: {dam?.name || '—'} · {litter.actualBirthDate ? `Born ${formatDate(litter.actualBirthDate)}` : litter.expectedDueDate ? `Due ${formatDate(litter.expectedDueDate)}` : 'Date TBC'}
                       </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="litter-card-actions">
                     <span className="badge badge-green">{litter.puppyIds?.length || 0} puppies</span>
                     <button
                       className="btn btn-sm"
@@ -1299,7 +1299,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
 
                     {/* ── PUPPIES ── */}
                     <div style={{ padding: '14px 20px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                      <div className="puppy-section-header">
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)' }}>Puppies ({puppyDogs.length})</div>
                         {litter.actualBirthDate ? (
                           <button className="btn btn-primary btn-sm" onClick={() => { pendingPuppyOperationRef.current = null; setShowAddPuppy(showAddPuppy === litter.id ? null : litter.id) }}>

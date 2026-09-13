@@ -233,7 +233,11 @@ export default function SupportChatWidget() {
   const closed = activeConversation?.status === 'closed'
 
   return <div className="support-chat-root">
-    <button className="support-chat-launcher" type="button" aria-expanded={open} aria-controls="support-chat-panel" onClick={() => setOpen(value => !value)}>Support{unread > 0 && <span aria-label={`${unread} unread replies`}>{unread}</span>}</button>
+    <button className="support-chat-launcher" type="button" aria-label="Support" aria-expanded={open} aria-controls="support-chat-panel" onClick={() => setOpen(value => !value)}>
+      <span className="support-chat-launcher-icon" aria-hidden="true">?</span>
+      <span className="support-chat-launcher-label">Support</span>
+      {unread > 0 && <span className="support-chat-unread" aria-label={`${unread} unread replies`}>{unread}</span>}
+    </button>
     {open && <div id="support-chat-panel" className="support-chat-panel" role="dialog" aria-modal="false" aria-label="iDogs Support" tabIndex={-1} ref={panel}>
       <header><div><strong>iDogs Support</strong><small>We usually reply within 1 business day.</small></div><button type="button" aria-label="Close support" onClick={() => setOpen(false)}>×</button></header>
       <p className="support-privacy">Do not share passwords, card details or sensitive medical information.</p>

@@ -152,6 +152,43 @@ h1, h2, h3, h4, h5, h6 {
 .puppy-list-badges { flex-wrap: wrap; }
 .puppy-list-actions { justify-content: flex-end; }
 
+.litters-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.litters-page-actions,
+.litter-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.litters-page-actions { gap: 10px; }
+.litter-card-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+}
+.litter-card-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+}
+.litter-card-heading { min-width: 0; }
+.puppy-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
 /* ── FORM ELEMENTS ── */
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-label { font-size: 13px; font-weight: 500; color: var(--mid); }
@@ -355,6 +392,24 @@ h1, h2, h3, h4, h5, h6 {
     width: 100%;
     min-width: 0;
   }
+
+  .litters-page-header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .litters-page-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .litter-card-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 14px 12px;
+  }
+  .litter-card-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .litter-card-actions .badge { margin-right: auto; }
+  .puppy-section-header { flex-wrap: wrap; }
 
   /* Page padding */
   div[style*="padding: 32"] { padding: 16px !important; }
