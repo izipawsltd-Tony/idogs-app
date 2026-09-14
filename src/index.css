@@ -279,6 +279,61 @@ h1, h2, h3, h4, h5, h6 {
 .bottom-nav-item.active { color: var(--green); }
 .bottom-nav-icon { font-size: 20px; line-height: 1; }
 
+/* ── LITTER CARDS ── */
+.litters-page,
+.litter-card { width: 100%; max-width: 100%; min-width: 0; }
+.litter-card-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  padding: 16px 20px;
+}
+.litter-card-header-readonly {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+.litter-card-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.litter-card-toggle { flex: 1 1 auto; cursor: pointer; }
+.litter-card-copy { min-width: 0; overflow-wrap: anywhere; }
+.litter-card-title {
+  color: var(--dark);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.litter-card-meta {
+  margin-top: 2px;
+  color: var(--light);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.litter-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+.litter-card-count { flex: 0 0 auto; white-space: nowrap; }
+.litter-puppies-section { min-width: 0; padding: 14px 20px; }
+.litter-puppies-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  margin-bottom: 14px;
+}
+.litter-add-puppy { flex: 0 0 auto; min-height: 44px; }
+
 /* ── MOBILE RESPONSIVE ── */
 @media (max-width: 768px) {
   /* Hide desktop sidebar */
@@ -304,6 +359,23 @@ h1, h2, h3, h4, h5, h6 {
 
   /* Show bottom nav */
   .bottom-nav { display: flex !important; }
+
+  .litters-page { min-width: 0; }
+  .litter-card-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+  .litter-card-identity { flex: 1 1 180px; }
+  .litter-card-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .litter-card-header-readonly .litter-card-count { margin-left: auto; }
+  .litter-puppies-section { padding: 14px 16px; }
+  .litter-puppies-header { flex-wrap: wrap; }
 
   /* Toast position */
   .toast-container { bottom: 76px; right: 16px; left: 16px; }
@@ -353,6 +425,19 @@ h1, h2, h3, h4, h5, h6 {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
+}
+
+@media (max-width: 360px) {
+  .bottom-nav { justify-content: space-between; }
+  .bottom-nav-item {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 2px;
+  }
+  .litter-card-identity { flex-basis: 100%; }
+  .litter-card-actions { justify-content: space-between; }
+  .litter-puppies-header { align-items: stretch; flex-direction: column; }
+  .litter-add-puppy { width: 100%; }
 }
 
 /* ── TABLET (769–1024px) ── */
