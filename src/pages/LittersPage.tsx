@@ -991,7 +991,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   // failure means the same thing regardless of role.
   if (loadError) {
     return (
-      <div style={{ padding: 32 }}>
+      <div className="litters-page" style={{ padding: 32 }}>
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
           <div className="empty-state-title">Couldn't load your litters</div>
@@ -1028,16 +1028,16 @@ export default function LittersPage({ toast, dismissAll }: Props) {
           {litters.map(litter => {
             const puppies = dogs.filter(d => litter.puppyIds?.includes(d.id))
             return (
-              <div key={litter.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div key={litter.id} className="card litter-card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div className="litter-card-header litter-card-header-readonly">
+                  <div className="litter-card-identity">
                     <span style={{ fontSize: 28 }}>🐣</span>
-                    <div>
-                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{litter.name}</div>
-                      {litter.actualBirthDate && <div style={{ fontSize: 13, color: 'var(--light)' }}>Born {litter.actualBirthDate}</div>}
+                    <div className="litter-card-copy">
+                      <div className="litter-card-title">{litter.name}</div>
+                      {litter.actualBirthDate && <div className="litter-card-meta">Born {litter.actualBirthDate}</div>}
                     </div>
                   </div>
-                  <span className="badge badge-gray">{puppies.length} puppies</span>
+                  <span className="badge badge-gray litter-card-count">{puppies.length} puppies</span>
                 </div>
                 {puppies.length > 0 && (
                   <div style={{ padding: '12px 20px' }}>
@@ -1064,7 +1064,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   }
 
   return (
-    <div style={{ padding: 32 }}>
+    <div className="litters-page" style={{ padding: 32 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>Litters</h1>
@@ -1179,24 +1179,24 @@ export default function LittersPage({ toast, dismissAll }: Props) {
             const isEditingThisLitter = editingLitter === litter.id
 
             return (
-              <div key={litter.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div key={litter.id} className="card litter-card" style={{ padding: 0, overflow: 'hidden' }}>
 
                 {/* Litter header */}
-                <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div className="litter-card-header">
                   <div
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}
+                    className="litter-card-identity litter-card-toggle"
                     onClick={() => setExpandedLitter(isExpanded ? null : litter.id)}
                   >
                     <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>🐣</div>
-                    <div>
-                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{litter.name}</div>
-                      <div style={{ fontSize: 13, color: 'var(--light)', marginTop: 2 }}>
+                    <div className="litter-card-copy">
+                      <div className="litter-card-title">{litter.name}</div>
+                      <div className="litter-card-meta">
                         Dam: {dam?.name || '—'} · {litter.actualBirthDate ? `Born ${formatDate(litter.actualBirthDate)}` : litter.expectedDueDate ? `Due ${formatDate(litter.expectedDueDate)}` : 'Date TBC'}
                       </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="badge badge-green">{litter.puppyIds?.length || 0} puppies</span>
+                  <div className="litter-card-actions">
+                    <span className="badge badge-green litter-card-count">{litter.puppyIds?.length || 0} puppies</span>
                     <button
                       className="btn btn-sm"
                       style={{ background: '#FDEDED', color: 'var(--danger)', border: '1px solid #F3B0B0' }}
@@ -1298,11 +1298,11 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                     )}
 
                     {/* ── PUPPIES ── */}
-                    <div style={{ padding: '14px 20px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                    <div className="litter-puppies-section">
+                      <div className="litter-puppies-header">
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)' }}>Puppies ({puppyDogs.length})</div>
                         {litter.actualBirthDate ? (
-                          <button className="btn btn-primary btn-sm" onClick={() => { pendingPuppyOperationRef.current = null; setShowAddPuppy(showAddPuppy === litter.id ? null : litter.id) }}>
+                          <button className="btn btn-primary btn-sm litter-add-puppy" onClick={() => { pendingPuppyOperationRef.current = null; setShowAddPuppy(showAddPuppy === litter.id ? null : litter.id) }}>
                             + Add puppy
                           </button>
                         ) : (
