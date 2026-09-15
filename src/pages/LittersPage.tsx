@@ -991,7 +991,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   // failure means the same thing regardless of role.
   if (loadError) {
     return (
-      <div style={{ padding: 32 }}>
+      <div className="litters-page" style={{ padding: 32 }}>
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
           <div className="empty-state-title">Couldn't load your litters</div>
@@ -1028,16 +1028,16 @@ export default function LittersPage({ toast, dismissAll }: Props) {
           {litters.map(litter => {
             const puppies = dogs.filter(d => litter.puppyIds?.includes(d.id))
             return (
-              <div key={litter.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div key={litter.id} className="card litter-card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div className="litter-card-header litter-card-header-readonly">
+                  <div className="litter-card-identity">
                     <span style={{ fontSize: 28 }}>🐣</span>
-                    <div>
-                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{litter.name}</div>
-                      {litter.actualBirthDate && <div style={{ fontSize: 13, color: 'var(--light)' }}>Born {litter.actualBirthDate}</div>}
+                    <div className="litter-card-copy">
+                      <div className="litter-card-title">{litter.name}</div>
+                      {litter.actualBirthDate && <div className="litter-card-meta">Born {litter.actualBirthDate}</div>}
                     </div>
                   </div>
-                  <span className="badge badge-gray">{puppies.length} puppies</span>
+                  <span className="badge badge-gray litter-card-count">{puppies.length} puppies</span>
                 </div>
                 {puppies.length > 0 && (
                   <div style={{ padding: '12px 20px' }}>
@@ -1064,7 +1064,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   }
 
   return (
-    <div style={{ padding: 32 }}>
+    <div className="litters-page" style={{ padding: 32 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>Litters</h1>
@@ -1179,24 +1179,24 @@ export default function LittersPage({ toast, dismissAll }: Props) {
             const isEditingThisLitter = editingLitter === litter.id
 
             return (
-              <div key={litter.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div key={litter.id} className="card litter-card" style={{ padding: 0, overflow: 'hidden' }}>
 
                 {/* Litter header */}
-                <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div className="litter-card-header">
                   <div
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}
+                    className="litter-card-identity litter-card-toggle"
                     onClick={() => setExpandedLitter(isExpanded ? null : litter.id)}
                   >
                     <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>🐣</div>
-                    <div>
-                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{litter.name}</div>
-                      <div style={{ fontSize: 13, color: 'var(--light)', marginTop: 2 }}>
+                    <div className="litter-card-copy">
+                      <div className="litter-card-title">{litter.name}</div>
+                      <div className="litter-card-meta">
                         Dam: {dam?.name || '—'} · {litter.actualBirthDate ? `Born ${formatDate(litter.actualBirthDate)}` : litter.expectedDueDate ? `Due ${formatDate(litter.expectedDueDate)}` : 'Date TBC'}
                       </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="badge badge-green">{litter.puppyIds?.length || 0} puppies</span>
+                  <div className="litter-card-actions">
+                    <span className="badge badge-green litter-card-count">{litter.puppyIds?.length || 0} puppies</span>
                     <button
                       className="btn btn-sm"
                       style={{ background: '#FDEDED', color: 'var(--danger)', border: '1px solid #F3B0B0' }}
@@ -1298,11 +1298,11 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                     )}
 
                     {/* ── PUPPIES ── */}
-                    <div style={{ padding: '14px 20px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                    <div className="litter-puppies-section">
+                      <div className="litter-puppies-header">
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)' }}>Puppies ({puppyDogs.length})</div>
                         {litter.actualBirthDate ? (
-                          <button className="btn btn-primary btn-sm" onClick={() => { pendingPuppyOperationRef.current = null; setShowAddPuppy(showAddPuppy === litter.id ? null : litter.id) }}>
+                          <button className="btn btn-primary btn-sm litter-add-puppy" onClick={() => { pendingPuppyOperationRef.current = null; setShowAddPuppy(showAddPuppy === litter.id ? null : litter.id) }}>
                             + Add puppy
                           </button>
                         ) : (
@@ -1346,9 +1346,9 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                             const isPuppyPromoted = puppy.retainedByBreeder === true
 
                             return (
-                              <div key={puppy.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--white)' }}>
+                              <div key={puppy.id} className="puppy-list-card" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--white)' }}>
                                 {/* Puppy row */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px' }}>
+                                <div className="puppy-list-row">
                                   <div style={{
                                     width: 36, height: 36, borderRadius: '50%',
                                     background: puppy.profilePhoto ? `url(${puppy.profilePhoto}) center/cover` : 'var(--brand-50)',
@@ -1356,9 +1356,9 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                   }}>
                                     {!puppy.profilePhoto && (collarMatch ? COLLAR_EMOJI[collarMatch[1]] || '🐶' : '🐶')}
                                   </div>
-                                  <div style={{ flex: 1 }}>
-                                    <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{puppy.name}</div>
-                                    <div style={{ fontSize: 12, color: 'var(--light)' }}>
+                                  <div className="puppy-list-info">
+                                    <div className="puppy-list-name">{puppy.name}</div>
+                                    <div className="puppy-list-meta">
                                       {puppy.sex === 'female' ? '♀' : '♂'}
                                       {puppy.colour ? ` · ${puppy.colour}` : ''}
                                       {collarMatch ? ` · ${COLLAR_EMOJI[collarMatch[1]] || ''} ${collarMatch[1]} collar` : ''}
@@ -1366,13 +1366,17 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                       {puppy.microchip ? ` · Chip: ${puppy.microchip}` : ''}
                                     </div>
                                   </div>
-                                  {isPuppyRestricted && (
-                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)', whiteSpace: 'nowrap' }}>🔒 Restricted</span>
+                                  {(isPuppyRestricted || isPuppyPromoted) && (
+                                    <div className="puppy-list-badges">
+                                      {isPuppyRestricted && (
+                                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)', whiteSpace: 'nowrap' }}>🔒 Restricted</span>
+                                      )}
+                                      {isPuppyPromoted && (
+                                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', border: '1px solid rgba(8,80,65,.16)', whiteSpace: 'nowrap' }}>✓ In My Dogs</span>
+                                      )}
+                                    </div>
                                   )}
-                                  {isPuppyPromoted && (
-                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--green-light)', color: 'var(--green)', border: '1px solid rgba(8,80,65,.16)', whiteSpace: 'nowrap' }}>✓ In My Dogs</span>
-                                  )}
-                                  <div style={{ display: 'flex', gap: 6 }}>
+                                  <div className="puppy-list-actions">
                                     <button
                                       className="btn btn-secondary btn-sm"
                                       onClick={() => isEditingThisPuppy ? setEditingPuppy(null) : startEditPuppy(puppy)}
