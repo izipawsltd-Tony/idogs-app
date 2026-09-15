@@ -334,6 +334,33 @@ h1, h2, h3, h4, h5, h6 {
 }
 .litter-add-puppy { flex: 0 0 auto; min-height: 44px; }
 
+/* ── MOBILE-SAFE DOG CARDS / SHOWCASE EDITOR ── */
+.dog-list-card-link,
+.dog-list-card,
+.showcase-puppy-card,
+.showcase-puppy-summary,
+.showcase-puppy-fields { min-width: 0; max-width: 100%; }
+.dog-list-card-link { display: block; }
+.dog-card-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.dog-card-age { flex: 0 0 auto; }
+.dog-card-badges {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.dog-card-badges > * { max-width: 100%; overflow-wrap: anywhere; }
+.showcase-puppy-fields > .form-group,
+.showcase-puppy-fields .form-input { min-width: 0; max-width: 100%; width: 100%; }
+
 /* ── LITTER PUPPY ROWS ── */
 .puppy-list-card { width: 100%; max-width: 100%; min-width: 0; }
 .puppy-list-row {
@@ -481,6 +508,16 @@ h1, h2, h3, h4, h5, h6 {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
+
+  .dog-card-meta-row { align-items: flex-start; flex-direction: column; }
+  .dog-card-badges { width: 100%; justify-content: flex-start; }
+  .showcase-puppy-summary { align-items: stretch !important; }
+  .showcase-puppy-availability { flex: 1 1 100%; width: 100%; max-width: 100%; }
+  .showcase-puppy-fields {
+    grid-template-columns: minmax(0, 1fr) !important;
+    padding-left: 0 !important;
+  }
+  .showcase-puppy-fields > .form-group { grid-column: 1 !important; }
 }
 
 @media (max-width: 360px) {
