@@ -344,8 +344,8 @@ function DogCard({ dog }: { dog: Dog }) {
   const isRestricted = dog.status === 'restricted'
   const actualStage = dog.isDeceased ? 'remembered' : calculateLifeStage(dog.dateOfBirth, dog.breed)
   return (
-    <Link to={`/app/dogs/${dog.id}`} style={{ textDecoration: 'none' }}>
-      <div className="card" style={{
+    <Link className="dog-list-card-link" to={`/app/dogs/${dog.id}`} style={{ textDecoration: 'none' }}>
+      <div className="card dog-list-card" style={{
         padding: 0, overflow: 'hidden', cursor: 'pointer',
         transition: 'border-color 0.15s, transform 0.15s',
         opacity: 1,
@@ -387,9 +387,9 @@ function DogCard({ dog }: { dog: Dog }) {
             <span style={{ fontSize: 13, color: 'var(--mid)' }}>{dog.sex === 'female' ? '♀' : '♂'}</span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ fontSize: 12, color: 'var(--light)' }}>{getDogAge(dog.dateOfBirth)}</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <div className="dog-card-meta-row">
+            <div className="dog-card-age" style={{ fontSize: 12, color: 'var(--light)' }}>{getDogAge(dog.dateOfBirth)}</div>
+            <div className="dog-card-badges">
               {isTransferred ? (
                 <span className="badge badge-gray" style={{ fontSize: 10 }}>→ {(dog as any).buyerName}</span>
               ) : isRestricted ? (
