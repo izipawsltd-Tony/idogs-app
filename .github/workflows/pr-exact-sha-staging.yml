@@ -129,11 +129,13 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           vercel inspect "$url" --wait --timeout=10m --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
       - name: Install Chromium for browser QA
-        run: npx --yes @playwright/test@1.55.0 install --with-deps chromium
+        run: |
+          npm install --no-save --ignore-scripts @playwright/test@1.55.0
+          npx playwright install --with-deps chromium
       - name: Authenticated responsive QA on immutable Preview
         env:
           BASE_URL: ${{ steps.deploy.outputs.url }}
-        run: npx --yes @playwright/test@1.55.0 test e2e/mobile-overflow.spec.mjs --reporter=line
+        run: npx playwright test e2e/mobile-overflow.spec.mjs --reporter=line
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -192,15 +194,17 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           vercel inspect "$url" --wait --timeout=10m --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
       - name: Install Chromium for staging QA
-        run: npx --yes @playwright/test@1.55.0 install --with-deps chromium
+        run: |
+          npm install --no-save --ignore-scripts @playwright/test@1.55.0
+          npx playwright install --with-deps chromium
       - name: Authenticated QA on immutable staging deployment
         env:
           BASE_URL: ${{ steps.deploy.outputs.url }}
-        run: npx --yes @playwright/test@1.55.0 test e2e/mobile-overflow.spec.mjs --reporter=line
+        run: npx playwright test e2e/mobile-overflow.spec.mjs --reporter=line
       - name: Authenticated QA on canonical staging alias
         env:
           BASE_URL: ${{ env.STAGING_ALIAS }}
-        run: npx --yes @playwright/test@1.55.0 test e2e/mobile-overflow.spec.mjs --reporter=line
+        run: npx playwright test e2e/mobile-overflow.spec.mjs --reporter=line
       - name: Publish immutable evidence summary
         run: |
           {
