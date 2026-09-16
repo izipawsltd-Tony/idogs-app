@@ -2473,9 +2473,10 @@ function ShowcaseManager({
               return (
                 <div
                   key={puppy.id}
+                  className="showcase-puppy-card"
                   style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', border: puppyErrors[puppy.id] ? '1px solid var(--danger)' : '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--white)' }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div className="showcase-puppy-summary" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                     <input
                       id={checkboxId}
                       type="checkbox"
@@ -2492,7 +2493,7 @@ function ShowcaseManager({
                       <span style={{ display: 'block', fontSize: 11, fontWeight: 400, color: 'var(--light)' }}>Show this puppy publicly</span>
                     </label>
                     <select
-                      className="form-select"
+                      className="form-select showcase-puppy-availability"
                       value={puppyFields.availability === 'on_hold' ? 'reserved' : puppyFields.availability === 'unavailable' ? 'sold' : puppyFields.availability}
                       onChange={e => updateField(puppy.id, 'availability', e.target.value as ShowcaseAvailability)}
                       style={{ fontSize: 12, padding: '4px 8px', minWidth: 120 }}
@@ -2516,7 +2517,7 @@ function ShowcaseManager({
                       ⚠ This puppy is public but has no published photo or video — it will show the iDogs placeholder. Publish at least one item below.
                     </div>
                   )}
-                  <div style={{ paddingLeft: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+                  <div className="showcase-puppy-fields" style={{ paddingLeft: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
                     <label className="form-group" style={{ margin: 0 }}>
                       <span className="form-label">Public colour</span>
                       <input className="form-input" value={puppyFields.colour ?? ''} maxLength={80}

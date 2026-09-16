@@ -1,0 +1,225 @@
+name: iDogs PR exact-SHA staging
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: idogs-pr-staging-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # firebase-admin@14 requires Node >=22, and the repository's source-level
+  # regression scripts import TypeScript directly (supported by Node 24).
+  NODE_VERSION: '24'
+  VERCEL_CLI_VERSION: '59.20.0'
+  VERCEL_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+  PREVIEW_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+  STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+  STAGING_ALIAS: https://idogs-app-staging.vercel.app
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+jobs:
+  controlled-base:
+    name: Controlled base / build and regression
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (contains(github.event.pull_request.title, '[WorkGPT]') ||
+       contains(github.event.pull_request.body || '', 'WorkGPT'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Prove controlled base identity
+        run: test "$(git rev-parse HEAD)" = "$BASE_SHA"
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/test-litter-showcase.mjs
+      - run: node scripts/test-showcase-v2.mjs
+      - name: Critical production dependency audit
+        run: npm audit --omit=dev --audit-level=critical
+
+  candidate:
+    name: Candidate / build and regression
+    needs: controlled-base
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Prove candidate identity and ancestry
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$CANDIDATE_SHA"
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/test-litter-showcase.mjs
+      - run: node scripts/test-showcase-v2.mjs
+      - name: Critical production dependency audit
+        run: npm audit --omit=dev --audit-level=critical
+
+  preview-qa:
+    name: Exact-SHA Preview / browser QA
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      preview_url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      IDOGS_QA_EMAIL: ${{ secrets.IDOGS_QA_EMAIL }}
+      IDOGS_QA_PASSWORD: ${{ secrets.IDOGS_QA_PASSWORD }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Fail closed if deployment or QA authority is absent
+        run: |
+          test -n "$VERCEL_TOKEN"
+          test -n "$IDOGS_QA_EMAIL"
+          test -n "$IDOGS_QA_PASSWORD"
+          test "$PREVIEW_PROJECT_ID" = "prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - run: npm ci
+      - name: Install pinned Vercel CLI
+        run: npm install --global "vercel@$VERCEL_CLI_VERSION"
+      - name: Link only the authorised Preview project
+        env:
+          VERCEL_ORG_ID: ${{ env.VERCEL_TEAM_ID }}
+          VERCEL_PROJECT_ID: ${{ env.PREVIEW_PROJECT_ID }}
+        run: vercel pull --yes --environment=preview --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
+      - name: Build exact candidate with Preview configuration
+        env:
+          VERCEL_ORG_ID: ${{ env.VERCEL_TEAM_ID }}
+          VERCEL_PROJECT_ID: ${{ env.PREVIEW_PROJECT_ID }}
+        run: vercel build --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
+      - name: Deploy immutable exact-SHA Preview
+        id: deploy
+        env:
+          VERCEL_ORG_ID: ${{ env.VERCEL_TEAM_ID }}
+          VERCEL_PROJECT_ID: ${{ env.PREVIEW_PROJECT_ID }}
+        run: |
+          url="$(vercel deploy --prebuilt --archive=tgz --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID" --meta githubCommitSha="$CANDIDATE_SHA" --meta githubCommitRef="${{ github.head_ref }}" --meta workgptPr="${{ github.event.pull_request.number }}")"
+          test -n "$url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          vercel inspect "$url" --wait --timeout=10m --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
+      - name: Install Chromium for browser QA
+        run: |
+          npm install --no-save --ignore-scripts @playwright/test@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Authenticated responsive QA on immutable Preview
+        env:
+          BASE_URL: ${{ steps.deploy.outputs.url }}
+        run: npx playwright test e2e/mobile-overflow.spec.mjs --reporter=line
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-browser-evidence-${{ env.CANDIDATE_SHA }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  staging-qa:
+    name: Staging / deploy and browser QA
+    needs: preview-qa
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      IDOGS_QA_EMAIL: ${{ secrets.IDOGS_QA_EMAIL }}
+      IDOGS_QA_PASSWORD: ${{ secrets.IDOGS_QA_PASSWORD }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Revalidate current PR head immediately before staging
+        run: |
+          test "$STAGING_PROJECT_ID" = "prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          current="$(gh api "repos/$GITHUB_REPOSITORY/pulls/${{ github.event.pull_request.number }}" --jq .head.sha)"
+          test "$current" = "$CANDIDATE_SHA"
+      - run: npm ci
+      - name: Install pinned Vercel CLI
+        run: npm install --global "vercel@$VERCEL_CLI_VERSION"
+      - name: Link only the authorised staging project
+        env:
+          VERCEL_ORG_ID: ${{ env.VERCEL_TEAM_ID }}
+          VERCEL_PROJECT_ID: ${{ env.STAGING_PROJECT_ID }}
+        run: vercel pull --yes --environment=production --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
+      - name: Build exact candidate with canonical staging configuration
+        env:
+          VERCEL_ORG_ID: ${{ env.VERCEL_TEAM_ID }}
+          VERCEL_PROJECT_ID: ${{ env.STAGING_PROJECT_ID }}
+        run: vercel build --prod --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
+      - name: Deploy only the staging project
+        id: deploy
+        env:
+          VERCEL_ORG_ID: ${{ env.VERCEL_TEAM_ID }}
+          VERCEL_PROJECT_ID: ${{ env.STAGING_PROJECT_ID }}
+        run: |
+          url="$(vercel deploy --prebuilt --prod --archive=tgz --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID" --meta githubCommitSha="$CANDIDATE_SHA" --meta githubCommitRef="${{ github.head_ref }}" --meta workgptPr="${{ github.event.pull_request.number }}")"
+          test -n "$url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          vercel inspect "$url" --wait --timeout=10m --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
+      - name: Install Chromium for staging QA
+        run: |
+          npm install --no-save --ignore-scripts @playwright/test@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Authenticated QA on immutable staging deployment
+        env:
+          BASE_URL: ${{ steps.deploy.outputs.url }}
+        run: npx playwright test e2e/mobile-overflow.spec.mjs --reporter=line
+      - name: Authenticated QA on canonical staging alias
+        env:
+          BASE_URL: ${{ env.STAGING_ALIAS }}
+        run: npx playwright test e2e/mobile-overflow.spec.mjs --reporter=line
+      - name: Publish immutable evidence summary
+        run: |
+          {
+            echo "## Stable staging candidate"
+            echo "- PR: #${{ github.event.pull_request.number }}"
+            echo "- Exact SHA: \`$CANDIDATE_SHA\`"
+            echo "- Preview: ${{ needs.preview-qa.outputs.preview_url }}"
+            echo "- Staging deployment: ${{ steps.deploy.outputs.url }}"
+            echo "- Staging alias: $STAGING_ALIAS"
+            echo "- Production project/domain: unchanged by this workflow"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-browser-evidence-${{ env.CANDIDATE_SHA }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
