@@ -124,7 +124,7 @@ jobs:
           VERCEL_ORG_ID: ${{ env.VERCEL_TEAM_ID }}
           VERCEL_PROJECT_ID: ${{ env.PREVIEW_PROJECT_ID }}
         run: |
-          url="$(vercel deploy --prebuilt --archive=tgz --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID" --meta githubCommitSha="$CANDIDATE_SHA" --meta githubCommitRef="${{ github.head_ref }}" --meta workgptPr="${{ github.event.pull_request.number }}")"
+          url="$(vercel deploy --archive=tgz --prebuilt --archive=tgz --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID" --meta githubCommitSha="$CANDIDATE_SHA" --meta githubCommitRef="${{ github.head_ref }}" --meta workgptPr="${{ github.event.pull_request.number }}")"
           test -n "$url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           vercel inspect "$url" --wait --timeout=10m --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
@@ -187,7 +187,7 @@ jobs:
           VERCEL_ORG_ID: ${{ env.VERCEL_TEAM_ID }}
           VERCEL_PROJECT_ID: ${{ env.STAGING_PROJECT_ID }}
         run: |
-          url="$(vercel deploy --prebuilt --prod --archive=tgz --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID" --meta githubCommitSha="$CANDIDATE_SHA" --meta githubCommitRef="${{ github.head_ref }}" --meta workgptPr="${{ github.event.pull_request.number }}")"
+          url="$(vercel deploy --archive=tgz --prebuilt --prod --archive=tgz --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID" --meta githubCommitSha="$CANDIDATE_SHA" --meta githubCommitRef="${{ github.head_ref }}" --meta workgptPr="${{ github.event.pull_request.number }}")"
           test -n "$url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           vercel inspect "$url" --wait --timeout=10m --token "$VERCEL_TOKEN" --scope "$VERCEL_TEAM_ID"
