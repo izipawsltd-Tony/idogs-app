@@ -16,7 +16,7 @@ env:
   # firebase-admin@14 requires Node >=22, and the repository's source-level
   # regression scripts import TypeScript directly (supported by Node 24).
   NODE_VERSION: '24'
-  VERCEL_CLI_VERSION: '48.8.0'
+  VERCEL_CLI_VERSION: '59.20.0'
   VERCEL_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
   PREVIEW_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
   STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
