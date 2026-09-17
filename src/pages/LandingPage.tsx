@@ -100,10 +100,10 @@ export default function LandingPage() {
               <div className="hv-poster">
                                 <img
                   className="hv-shot"
-                  src="/hero-idogs-cooper.avif"
+                  src="/hero-idogs-cooper.jpg"
                   alt="iDogs Digital Passport and dog record preview"
                   width={720}
-                  height={946}
+                  height={720}
                   fetchPriority="high"
                   decoding="async"
                   style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
