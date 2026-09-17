@@ -98,11 +98,15 @@ export default function LandingPage() {
             {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
             <div className="hero-visual" aria-label="iDogs product preview">
               <div className="hv-poster">
-                <LandingMediaSlot
-                  slotId="hero"
+                                <img
                   className="hv-shot"
-                  ariaLabel="iDogs product preview"
-                  fallback={<div className="hv-shot">Dog Profile — product screenshot</div>}
+                  src="/hero-idogs-cooper.avif"
+                  alt="iDogs Digital Passport and dog record preview"
+                  width={720}
+                  height={946}
+                  fetchPriority="high"
+                  decoding="async"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                 />
               </div>
             </div>
