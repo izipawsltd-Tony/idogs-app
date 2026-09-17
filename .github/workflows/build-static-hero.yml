@@ -1,0 +1,100 @@
+name: Build static landing hero
+
+on:
+  push:
+    branches:
+      - feature/landing-static-hero-cooper
+    paths:
+      - '.github/workflows/build-static-hero.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-static-hero:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/landing-static-hero-cooper
+          fetch-depth: 0
+
+      - name: Reconstruct optimized hero asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .hero-parts/part* | base64 --decode > public/hero-idogs-cooper.avif
+          test "$(wc -c < public/hero-idogs-cooper.avif)" -eq 28597
+
+      - name: Make Hero static and preload it
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          landing = Path('src/pages/LandingPage.tsx')
+          text = landing.read_text()
+          old = '''                <LandingMediaSlot
+                  slotId="hero"
+                  className="hv-shot"
+                  ariaLabel="iDogs product preview"
+                  fallback={<div className="hv-shot">Dog Profile — product screenshot</div>}
+                />'''
+          new = '''                <img
+                  className="hv-shot"
+                  src="/hero-idogs-cooper.avif"
+                  alt="iDogs Digital Passport and dog record preview"
+                  width={720}
+                  height={946}
+                  fetchPriority="high"
+                  decoding="async"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                />'''
+          if old not in text:
+              raise SystemExit('Hero target block not found')
+          landing.write_text(text.replace(old, new, 1))
+
+          index = Path('index.html')
+          html = index.read_text()
+          preload = '    <link rel="preload" as="image" href="/hero-idogs-cooper.avif" type="image/avif" />\n'
+          if preload not in html:
+              anchor = '    <link rel="apple-touch-icon" href="/02_idogs_icon_transparent.png" />\n'
+              if anchor not in html:
+                  raise SystemExit('index preload anchor not found')
+              html = html.replace(anchor, anchor + preload, 1)
+              index.write_text(html)
+          PY
+
+      - name: Verify Hero source path
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'src="/hero-idogs-cooper.avif"' src/pages/LandingPage.tsx
+          grep -q 'fetchPriority="high"' src/pages/LandingPage.tsx
+          if grep -q 'slotId="hero"' src/pages/LandingPage.tsx; then
+            echo 'Dynamic Hero slot still present' >&2
+            exit 1
+          fi
+          grep -q 'rel="preload" as="image" href="/hero-idogs-cooper.avif"' index.html
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Clean temporary assembly files
+        shell: bash
+        run: |
+          rm -rf .hero-parts
+          rm -f .github/workflows/build-static-hero.yml
+
+      - name: Commit static Hero candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "perf(landing): use static preloaded Hero image"
+          git push origin HEAD:feature/landing-static-hero-cooper
