@@ -1,0 +1,46 @@
+name: Fast repair landing hero
+
+on:
+  push:
+    branches:
+      - feature/landing-static-hero-cooper
+    paths:
+      - '.github/workflows/fix-static-hero-jpg-fast.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/landing-static-hero-cooper
+          fetch-depth: 0
+      - name: Repair Hero references and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/pages/LandingPage.tsx')
+          s = p.read_text()
+          s = s.replace('/hero-idogs-cooper.avif', '/hero-idogs-cooper.jpg')
+          s = s.replace('height={946}', 'height={720}')
+          p.write_text(s)
+          p = Path('index.html')
+          s = p.read_text().replace('href="/hero-idogs-cooper.avif" type="image/avif"','href="/hero-idogs-cooper.jpg" type="image/jpeg"')
+          p.write_text(s)
+          PY
+          rm -f public/hero-idogs-cooper.avif
+          rm -f .github/workflows/fix-static-hero-jpg.yml
+          rm -f .github/workflows/fix-static-hero-jpg-fast.yml
+          grep -q 'src="/hero-idogs-cooper.jpg"' src/pages/LandingPage.tsx
+          grep -q 'height={720}' src/pages/LandingPage.tsx
+          test -s public/hero-idogs-cooper.jpg
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(landing): serve Hero as stable JPEG"
+          git push origin HEAD:feature/landing-static-hero-cooper
