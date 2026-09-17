@@ -3,6 +3,7 @@ import {
   resolvePedigreeRegister,
   resolveBreedingEligibility,
   nextPedigreeRegisterUpdate,
+  initialTransferPedigreeRegister,
   checkBreedingCompliance,
 } from './breedingCompliance'
 
@@ -14,16 +15,28 @@ import {
 // breed". These tests pin the corrected behaviour: missing data resolves to
 // NOT_RECORDED, and MAIN never implies ELIGIBLE without an explicit flag.
 //
-// transferDogOwnership() (src/lib/db.ts) and the claim-transferred-dogs API
-// route both write via Firestore partial updates (updateDoc/tx.update) that
-// never touch `pedigreeRegister`/`breedingEligibility` — so a real transfer
-// preserves whatever was already on the dog document. TRANSFER_PATCH below
-// mirrors that exact field set (kept in sync with db.ts's
-// transferDogOwnership) so "transfer" scenarios can be exercised as a plain
-// object merge, without needing a Firestore emulator.
+// Follow-up round: neither ownership-transfer modal (LittersPage.tsx's
+// inline modal, DogDetailPage.tsx's TransferModal) had any pedigree field
+// at all, so a breeder had no way to record "Limited / family dog / not for
+// breeding" AT the moment of transfer — the only place to do so was an
+// unrelated Overview-tab control, discoverable only by accident. Both
+// modals now show a "Pedigree / Registration" select, prefilled via
+// initialTransferPedigreeRegister() and persisted via the SAME
+// nextPedigreeRegisterUpdate() helper the Overview edit control uses (no
+// second, parallel rule implementation) — merged into the SAME
+// transferDogOwnership() Firestore write as the buyer/status fields.
+//
+// transferDogOwnership() (src/lib/db.ts) writes via a single Firestore
+// partial update (updateDoc). BUYER_STATUS_PATCH below mirrors the
+// buyer/status fields it always writes; simulateTransferWithSelection()
+// additionally mirrors what both modals now do — merge in
+// nextPedigreeRegisterUpdate()'s result — so the full modal flow can be
+// exercised as a plain object merge, without needing a Firestore emulator.
+// The claim-transferred-dogs API route (a separate write, unaffected by
+// this round) still never touches these two fields.
 // ─────────────────────────────────────────────────────────────────────────
 
-const TRANSFER_PATCH = {
+const BUYER_STATUS_PATCH = {
   status: 'transferred',
   transferStatus: 'pendingClaim',
   previousOwnerId: 'breeder-uid',
@@ -32,8 +45,26 @@ const TRANSFER_PATCH = {
   transferredAt: '2026-09-01T00:00:00.000Z',
 } as const
 
+// Simulates the OLD/no-pedigree-control shape: transfer touches only
+// buyer/status fields, leaving pedigreeRegister/breedingEligibility exactly
+// as they were. No longer what the real UI does (both modals always pass a
+// pedigree selection now), but still a valid shape transferDogOwnership()
+// itself supports, since its pedigree params remain optional.
 function simulateTransfer<T extends Record<string, unknown>>(original: T) {
-  return { ...original, ...TRANSFER_PATCH }
+  return { ...original, ...BUYER_STATUS_PATCH }
+}
+
+// Simulates the actual current modal flow: the breeder's pedigree
+// selection (defaulting to whatever initialTransferPedigreeRegister()
+// prefilled, if they never touch the control) is resolved via
+// nextPedigreeRegisterUpdate() and merged into the SAME write as the
+// buyer/status fields.
+function simulateTransferWithSelection<T extends { pedigreeRegister?: string; breedingEligibility?: string }>(
+  original: T,
+  selectedRegisterRaw: string,
+) {
+  const pedigreeUpdate = nextPedigreeRegisterUpdate(original.pedigreeRegister, selectedRegisterRaw)
+  return { ...original, ...BUYER_STATUS_PATCH, ...pedigreeUpdate }
 }
 
 describe('resolvePedigreeRegister', () => {
@@ -186,9 +217,9 @@ describe('checkBreedingCompliance — register/eligibility headline', () => {
 
 // Scenario 8 + 9: transfer preserves unrelated data and doesn't touch pedigree fields
 describe('scenario: ownership transfer preserves unrelated dog data', () => {
-  it('the transfer patch itself never includes pedigreeRegister or breedingEligibility keys', () => {
-    expect(TRANSFER_PATCH).not.toHaveProperty('pedigreeRegister')
-    expect(TRANSFER_PATCH).not.toHaveProperty('breedingEligibility')
+  it('the buyer/status patch itself never includes pedigreeRegister or breedingEligibility keys', () => {
+    expect(BUYER_STATUS_PATCH).not.toHaveProperty('pedigreeRegister')
+    expect(BUYER_STATUS_PATCH).not.toHaveProperty('breedingEligibility')
   })
 
   it('unrelated fields (name, breed, microchip, ankc) survive a simulated transfer unchanged', () => {
@@ -208,6 +239,103 @@ describe('scenario: ownership transfer preserves unrelated dog data', () => {
     // Existing transfer behaviour (status/buyer fields) still applies
     expect(afterTransfer.status).toBe('transferred')
     expect(afterTransfer.buyerName).toBe('Jane Buyer')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Transfer-modal pedigree selection (this round's fix): both ownership-
+// transfer modals now surface a Main/Limited/Not-recorded control at the
+// moment of transfer, persisted via the same nextPedigreeRegisterUpdate()
+// helper — required scenarios 1-6 below.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('initialTransferPedigreeRegister — prefilling the transfer modal control', () => {
+  // Required scenario 1
+  it('missing puppy pedigree enters the transfer modal as not_recorded, never main', () => {
+    expect(initialTransferPedigreeRegister(undefined)).toBe('not_recorded')
+    expect(initialTransferPedigreeRegister('')).not.toBe('main')
+    expect(initialTransferPedigreeRegister(undefined)).not.toBe('main')
+  })
+
+  it('an existing Limited puppy prefills as limited (required scenario 5, part 1)', () => {
+    expect(initialTransferPedigreeRegister('limited')).toBe('limited')
+  })
+
+  it('an existing Main puppy prefills as main', () => {
+    expect(initialTransferPedigreeRegister('main')).toBe('main')
+  })
+
+  it('a legacy no_pedigree/mixed/rescue value prefills as not_recorded, not main (no dedicated option in this 3-way control)', () => {
+    expect(initialTransferPedigreeRegister('no_pedigree')).toBe('not_recorded')
+    expect(initialTransferPedigreeRegister('mixed')).toBe('not_recorded')
+    expect(initialTransferPedigreeRegister('rescue')).toBe('not_recorded')
+  })
+})
+
+describe('scenario: transfer modal — breeder selects a pedigree register at transfer time', () => {
+  const puppy: { name: string; breed: string; microchip: string; pedigreeRegister?: string; breedingEligibility?: string } = {
+    name: 'Rex', breed: 'Labrador', microchip: '900000000123456',
+  }
+
+  // Required scenario 2
+  it('selecting LIMITED persists pedigreeRegister=limited and breedingEligibility=not_eligible', () => {
+    const result = simulateTransferWithSelection(puppy, 'limited')
+    expect(result.pedigreeRegister).toBe('limited')
+    expect(result.breedingEligibility).toBe('not_eligible')
+    expect(resolvePedigreeRegister(result.pedigreeRegister)).toBe('LIMITED')
+    expect(resolveBreedingEligibility(result)).toBe('NOT_ELIGIBLE')
+  })
+
+  // Required scenario 3
+  it('selecting MAIN persists pedigreeRegister=main without automatically becoming eligible', () => {
+    const result = simulateTransferWithSelection(puppy, 'main')
+    expect(result.pedigreeRegister).toBe('main')
+    expect(result.breedingEligibility).toBeUndefined()
+    expect(resolveBreedingEligibility(result)).toBe('UNKNOWN')
+  })
+
+  it('selecting MAIN preserves an existing explicit eligible flag (does not reset it)', () => {
+    const alreadyEligible = { ...puppy, pedigreeRegister: 'main', breedingEligibility: 'eligible' as const }
+    const result = simulateTransferWithSelection(alreadyEligible, 'main')
+    expect(result.pedigreeRegister).toBe('main')
+    expect(result.breedingEligibility).toBe('eligible')
+    expect(resolveBreedingEligibility(result)).toBe('ELIGIBLE')
+  })
+
+  // Required scenario 4
+  it('selecting NOT_RECORDED persists pedigreeRegister=not_recorded with unknown eligibility', () => {
+    const result = simulateTransferWithSelection(puppy, 'not_recorded')
+    expect(result.pedigreeRegister).toBe('not_recorded')
+    expect(result.breedingEligibility).toBe('unknown')
+    expect(resolvePedigreeRegister(result.pedigreeRegister)).toBe('NOT_RECORDED')
+    expect(resolveBreedingEligibility(result)).toBe('UNKNOWN')
+  })
+
+  // Required scenario 5 (part 2) + 6: an existing Limited puppy, prefilled
+  // Limited in the modal, transferred without the breeder changing anything
+  // — the buyer receives exactly that selection.
+  it('an existing Limited puppy stays Limited/not_eligible end-to-end through prefill + transfer', () => {
+    const existingLimitedPuppy = { ...puppy, pedigreeRegister: 'limited' as const }
+    const prefilled = initialTransferPedigreeRegister(existingLimitedPuppy.pedigreeRegister)
+    expect(prefilled).toBe('limited')
+    const buyerCopy = simulateTransferWithSelection(existingLimitedPuppy, prefilled)
+    expect(buyerCopy.pedigreeRegister).toBe('limited')
+    expect(buyerCopy.breedingEligibility).toBe('not_eligible')
+    expect(resolveBreedingEligibility(buyerCopy)).toBe('NOT_ELIGIBLE')
+  })
+
+  // Required scenario 7: existing transfer buyer/status fields still work
+  // once a pedigree selection is merged into the same write.
+  it('buyer/status fields are still written correctly alongside the pedigree selection', () => {
+    const result = simulateTransferWithSelection(puppy, 'limited')
+    expect(result.status).toBe('transferred')
+    expect(result.transferStatus).toBe('pendingClaim')
+    expect(result.buyerName).toBe('Jane Buyer')
+    expect(result.buyerEmail).toBe('jane@example.com')
+    expect(result.previousOwnerId).toBe('breeder-uid')
+    // And unrelated dog data is still untouched
+    expect(result.name).toBe('Rex')
+    expect(result.microchip).toBe('900000000123456')
   })
 })
 

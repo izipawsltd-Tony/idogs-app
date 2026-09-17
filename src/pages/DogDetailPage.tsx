@@ -18,7 +18,7 @@ import {
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
-import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate } from '../lib/breedingCompliance'
+import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
 import { isHeicFile } from '../lib/heic'
 import PhotoUpload from '../components/ui/PhotoUpload'
@@ -820,22 +820,29 @@ export default function DogDetailPage({ toast }: Props) {
   const viewDoc = (path?: string | null, legacyUrl?: string | null) =>
     viewDocument(user, toast, path, legacyUrl)
 
-  async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone?: string) {
+  async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone: string | undefined, pedigreeRegister: string) {
     if (!dogId || !dog) return
     const passportUrl = `${window.location.origin}/p/${dog.passportId}`
+    // Same canonical rule as the Overview edit control and LittersPage's
+    // transfer modal — never a second, parallel implementation of "what
+    // does selecting Limited/Main/Not recorded actually persist".
+    const pedigreeUpdate = nextPedigreeRegisterUpdate((dog as any).pedigreeRegister, pedigreeRegister)
     // The Firestore write below is the actual transfer — once it succeeds,
     // the dog is transferred. Email + audit log are best-effort follow-ups;
     // previously a transient failure in either (network blip, Resend
     // hiccup) threw past this point uncaught, so the modal reported a
     // generic "Something went wrong" and stayed open even though the
     // transfer had already gone through — the breeder saw a failure for a
-    // transfer that had, in fact, succeeded.
+    // transfer that had, in fact, succeeded. The breeder's explicit
+    // pedigree/eligibility choice rides in this SAME write, not a second one.
     await transferDogOwnership(dogId, {
       buyerName,
       buyerEmail,
       buyerPhone,
       transferredAt: new Date().toISOString(),
       microchipCertUrl: (dog as any).microchipCertUrl || null,
+      pedigreeRegister: pedigreeUpdate.pedigreeRegister,
+      breedingEligibility: pedigreeUpdate.breedingEligibility,
     })
     await sendTransferEmail({
       buyerEmail,
@@ -854,7 +861,7 @@ export default function DogDetailPage({ toast }: Props) {
       performedBy: user?.uid || '',
       performedByEmail: user?.email || '',
     }).catch(err => console.error('Transfer audit log failed (transfer itself already succeeded):', err))
-    setDog(prev => prev ? { ...prev, status: 'transferred', transferStatus: 'pendingClaim', buyerName, buyerEmail, buyerPhone } as any : prev)
+    setDog(prev => prev ? { ...prev, status: 'transferred', transferStatus: 'pendingClaim', buyerName, buyerEmail, buyerPhone, ...pedigreeUpdate } as any : prev)
     setShowTransfer(false)
     toast(`${dog.name} transferred to ${buyerName} ✓`, 'success')
   }
@@ -1210,6 +1217,7 @@ export default function DogDetailPage({ toast }: Props) {
           initialBuyerName={dog.reservedForName || ''}
           initialBuyerEmail={dog.reservedForEmail || ''}
           initialBuyerPhone={dog.reservedForPhone || ''}
+          initialPedigreeRegister={initialTransferPedigreeRegister((dog as any).pedigreeRegister)}
           onClose={() => setShowTransfer(false)}
           onTransfer={handleTransfer}
         />
@@ -1228,6 +1236,7 @@ function TransferModal({
   initialBuyerName,
   initialBuyerEmail,
   initialBuyerPhone,
+  initialPedigreeRegister,
   onClose,
   onTransfer,
 }: {
@@ -1238,12 +1247,16 @@ function TransferModal({
   initialBuyerName?: string
   initialBuyerEmail?: string
   initialBuyerPhone?: string
+  // Caller normalizes to 'main'/'limited'/'not_recorded' — never 'main' by
+  // silent default for a dog whose pedigreeRegister was never set.
+  initialPedigreeRegister: string
   onClose: () => void
-  onTransfer: (name: string, email: string, phone?: string) => Promise<void>
+  onTransfer: (name: string, email: string, phone: string | undefined, pedigreeRegister: string) => Promise<void>
 }) {
   const [buyerName, setBuyerName] = useState(initialBuyerName || '')
   const [buyerEmail, setBuyerEmail] = useState(initialBuyerEmail || '')
   const [buyerPhone, setBuyerPhone] = useState(initialBuyerPhone || '')
+  const [pedigreeRegister, setPedigreeRegister] = useState(initialPedigreeRegister)
   const [confirm, setConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -1254,7 +1267,7 @@ function TransferModal({
     setLoading(true)
     setError('')
     try {
-      await onTransfer(buyerName.trim(), buyerEmail.trim().toLowerCase(), buyerPhone.trim() || undefined)
+      await onTransfer(buyerName.trim(), buyerEmail.trim().toLowerCase(), buyerPhone.trim() || undefined, pedigreeRegister)
     } catch (err) {
       // Round 20: never log/surface the raw error here — it can carry a
       // Firestore document path, this caller's UID, or the buyer name/
@@ -1310,6 +1323,29 @@ function TransferModal({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Pedigree / Registration — prefilled from the dog's current
+              value (never silently 'main'); the breeder explicitly sees
+              and confirms this before the transfer completes. */}
+          <div className="form-group">
+            <label className="form-label">Pedigree / Registration</label>
+            <select
+              className="form-select"
+              value={pedigreeRegister}
+              onChange={e => setPedigreeRegister(e.target.value)}
+            >
+              <option value="main">🔵 Main Register</option>
+              <option value="limited">🟠 Limited Register — family/pet, not for breeding</option>
+              <option value="not_recorded">⚪ Not recorded</option>
+            </select>
+            <p className="form-hint">
+              {resolvePedigreeRegister(pedigreeRegister) === 'LIMITED'
+                ? 'The buyer will receive this dog as Limited Register — not eligible for breeding.'
+                : resolvePedigreeRegister(pedigreeRegister) === 'MAIN'
+                ? "Main Register does not by itself mean breeding-eligible — the buyer can review that separately on the dog's Overview page."
+                : "The buyer will see this dog's registration as not recorded — this can be corrected later from the dog's Overview page."}
+            </p>
           </div>
 
           {/* Warning */}

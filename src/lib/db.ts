@@ -536,6 +536,14 @@ export async function transferDogOwnership(
     buyerPhone?: string
     transferredAt: string
     microchipCertUrl?: string | null
+    // Optional — set by both transfer modals via nextPedigreeRegisterUpdate()
+    // (src/lib/breedingCompliance.ts) so the breeder's explicit pedigree
+    // choice at the moment of transfer lands in this SAME write, not a
+    // separate one. Omitted entirely (not just falsy) when the breeder
+    // didn't change anything, which leaves the dog's existing value alone —
+    // this must never be defaulted to 'main' here or anywhere else.
+    pedigreeRegister?: string
+    breedingEligibility?: 'eligible' | 'not_eligible' | 'unknown'
   }
 ): Promise<void> {
   await updateDoc(doc(db, 'dogs', dogId), {
@@ -547,6 +555,8 @@ export async function transferDogOwnership(
     ...(transfer.buyerPhone ? { buyerPhone: transfer.buyerPhone } : {}),
     transferredAt: transfer.transferredAt,
     ...(transfer.microchipCertUrl ? { microchipCertUrl: transfer.microchipCertUrl } : {}),
+    ...(transfer.pedigreeRegister !== undefined ? { pedigreeRegister: transfer.pedigreeRegister } : {}),
+    ...(transfer.breedingEligibility !== undefined ? { breedingEligibility: transfer.breedingEligibility } : {}),
     updatedAt: serverTimestamp(),
   })
 }

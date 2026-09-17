@@ -123,30 +123,51 @@ export function resolveBreedingEligibility(dog: { pedigreeRegister?: string; bre
 }
 
 /**
- * Canonical patch to write when a user edits the pedigree/registration
- * dropdown (breeder or current owner — see DogDetailPage's Pedigree /
- * Registration control, gated only by plan-cap restriction, not by role).
- *   Rule 6: MAIN/NOT_RECORDED → LIMITED forces breedingEligibility to
- *           'not_eligible' (LIMITED can never be eligible).
- *   Rule 7: LIMITED → anything else must NOT resurrect an assumed
- *           'eligible' — the 'not_eligible' that LIMITED forced was never
- *           authoritative data for the new register, so it resets to
- *           'unknown' rather than being carried over.
- *   Otherwise: breedingEligibility is left untouched (whatever explicit
- *   value already existed is preserved).
+ * Canonical patch to write whenever a user sets pedigree/registration —
+ * the DogDetailPage edit control AND both ownership-transfer modals share
+ * this single implementation so the rule can never drift between them.
+ *   Rule 6: anything → LIMITED forces breedingEligibility to 'not_eligible'
+ *           (LIMITED can never be eligible).
+ *   Rule (NOT_RECORDED/NO_PEDIGREE/MIXED/RESCUE): none of these are ever
+ *           authoritative for eligibility, so breedingEligibility is forced
+ *           to 'unknown' — mirrors resolveBreedingEligibility's own logic,
+ *           so the write and the read can never disagree.
+ *   Rule 7: LIMITED → MAIN must NOT resurrect an assumed 'eligible' — the
+ *           'not_eligible' that LIMITED forced was never authoritative data
+ *           for MAIN, so it resets to 'unknown' rather than being carried
+ *           over.
+ *   Otherwise (staying on/arriving at MAIN from a non-limited state):
+ *           breedingEligibility is left untouched, preserving any existing
+ *           explicit value.
  */
 export function nextPedigreeRegisterUpdate(
   currentRaw: string | undefined,
   nextRegisterRaw: string,
-): { pedigreeRegister: string; breedingEligibility?: 'not_eligible' | 'unknown' } {
+): { pedigreeRegister: string; breedingEligibility?: 'eligible' | 'not_eligible' | 'unknown' } {
   const wasLimited = resolvePedigreeRegister(currentRaw) === 'LIMITED'
-  const update: { pedigreeRegister: string; breedingEligibility?: 'not_eligible' | 'unknown' } = { pedigreeRegister: nextRegisterRaw }
-  if (nextRegisterRaw === 'limited') {
+  const nextRegister = resolvePedigreeRegister(nextRegisterRaw)
+  const update: { pedigreeRegister: string; breedingEligibility?: 'eligible' | 'not_eligible' | 'unknown' } = { pedigreeRegister: nextRegisterRaw }
+  if (nextRegister === 'LIMITED') {
     update.breedingEligibility = 'not_eligible'
+  } else if (nextRegister !== 'MAIN') {
+    update.breedingEligibility = 'unknown'
   } else if (wasLimited) {
     update.breedingEligibility = 'unknown'
   }
   return update
+}
+
+/**
+ * Normalizes a dog's raw pedigreeRegister into one of the three options an
+ * ownership-transfer modal offers (Main/Limited/Not recorded) — used to
+ * prefill that control so it never silently shows "Main" for a value that
+ * was actually missing/undefined, or for a legacy no_pedigree/mixed/rescue
+ * classification the transfer modal has no dedicated option for. Shared by
+ * both transfer flows (LittersPage.tsx and DogDetailPage.tsx) so the
+ * prefill rule can't drift between them.
+ */
+export function initialTransferPedigreeRegister(raw?: string): 'main' | 'limited' | 'not_recorded' {
+  return raw === 'main' || raw === 'limited' ? raw : 'not_recorded'
 }
 
 /** Minimal structural shape — adapt from your HealthTest type. */
