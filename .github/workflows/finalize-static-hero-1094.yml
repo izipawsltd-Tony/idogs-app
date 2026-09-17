@@ -1,0 +1,92 @@
+name: Finalize static Hero 1094
+
+on:
+  push:
+    branches:
+      - feature/landing-static-hero-cooper
+    paths:
+      - '.github/workflows/finalize-static-hero-1094.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/landing-static-hero-cooper
+          fetch-depth: 0
+
+      - name: Decode original 1094 Hero asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          p = Path('public/hero-idogs-cooper-1094.jpg')
+          raw = base64.b64decode(p.read_text().strip(), validate=True)
+          if raw[:2] != b'\xff\xd8' or raw[-2:] != b'\xff\xd9':
+              raise SystemExit('Decoded asset is not a valid JPEG envelope')
+          if len(raw) != 288133:
+              raise SystemExit(f'Unexpected decoded size: {len(raw)}')
+          p.write_bytes(raw)
+          PY
+          file public/hero-idogs-cooper-1094.jpg
+
+      - name: Point Hero to clean 1094 asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/pages/LandingPage.tsx')
+          s = p.read_text()
+          s = s.replace('src="/hero-idogs-cooper.jpg"', 'src="/hero-idogs-cooper-1094.jpg"', 1)
+          s = s.replace('width={720}', 'width={1094}', 1)
+          s = s.replace('height={720}', 'height={1094}', 1)
+          s = s.replace('decoding="async"', 'decoding="sync"', 1)
+          if 'loading="eager"' not in s:
+              s = s.replace('fetchPriority="high"\n', 'fetchPriority="high"\n                  loading="eager"\n', 1)
+          p.write_text(s)
+
+          p = Path('index.html')
+          s = p.read_text().replace('/hero-idogs-cooper.jpg', '/hero-idogs-cooper-1094.jpg')
+          p.write_text(s)
+          PY
+
+      - name: Remove broken and temporary Hero files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f public/hero-idogs-cooper.jpg
+          rm -rf .tmp-hero
+
+      - name: Verify references and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'src="/hero-idogs-cooper-1094.jpg"' src/pages/LandingPage.tsx
+          grep -q 'width={1094}' src/pages/LandingPage.tsx
+          grep -q 'height={1094}' src/pages/LandingPage.tsx
+          grep -q 'fetchPriority="high"' src/pages/LandingPage.tsx
+          grep -q 'loading="eager"' src/pages/LandingPage.tsx
+          grep -q 'decoding="sync"' src/pages/LandingPage.tsx
+          grep -q '/hero-idogs-cooper-1094.jpg' index.html
+          test ! -e public/hero-idogs-cooper.jpg
+          npm ci
+          npm run build
+
+      - name: Commit final candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/finalize-static-hero-1094.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/hero-idogs-cooper-1094.jpg public/hero-idogs-cooper.jpg src/pages/LandingPage.tsx index.html .tmp-hero .github/workflows/finalize-static-hero-1094.yml
+          git commit -m "perf(landing): use original 1094 static Hero image"
+          git push origin HEAD:feature/landing-static-hero-cooper
