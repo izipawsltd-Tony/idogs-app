@@ -276,6 +276,7 @@ export function breedingOverview(
       dateOfBirth: d.dateOfBirth,
       colour: d.colour,
       pedigreeRegister: d.pedigreeRegister,
+      breedingEligibility: d.breedingEligibility,
       litterCount: d.litterCount,
       last18mLitters: d.last18mLitters,
       cSectionCount: d.cSectionCount,

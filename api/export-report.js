@@ -354,30 +354,49 @@ function generateBreedingPDFHTML(dog, profile, userState) {
   const litterCount = dog.litterCount ?? 0
   const cSectionCount = dog.cSectionCount ?? 0
   const last18mLitters = dog.last18mLitters ?? 0
-  const pedigreeRegister = dog.pedigreeRegister || 'main'
+  // A missing/undefined pedigreeRegister (every litter-born puppy, until
+  // someone edits it) is NOT_RECORDED, never MAIN — mirrors
+  // resolvePedigreeRegister/resolveBreedingEligibility in
+  // src/lib/breedingCompliance.ts (no cross-import between api/ and src/,
+  // so this is the api-side copy of the same policy).
+  const rawRegister = dog.pedigreeRegister
+  const pedigreeRegister = ['main', 'limited', 'no_pedigree', 'mixed', 'rescue'].includes(rawRegister) ? rawRegister : 'not_recorded'
+  const breedingEligibility = pedigreeRegister === 'limited' ? 'not_eligible'
+    : pedigreeRegister === 'main' && (dog.breedingEligibility === 'eligible' || dog.breedingEligibility === 'not_eligible') ? dog.breedingEligibility
+    : 'unknown'
 
   const isLimited = pedigreeRegister === 'limited'
   const isNoPedigree = ['no_pedigree', 'mixed', 'rescue'].includes(pedigreeRegister)
+  const isNotRecorded = pedigreeRegister === 'not_recorded'
+  const isMarkedNotEligible = pedigreeRegister === 'main' && breedingEligibility === 'not_eligible'
+  const isEligibilityUnconfirmed = pedigreeRegister === 'main' && breedingEligibility === 'unknown'
   const isUnder12 = ageMo < 12
   const isOver = ageMo / 12 >= rules.maxAge
   const littersOk = litterCount < rules.maxLifetime
   const last18Ok = !rules.maxLittersIn18m || last18mLitters < rules.maxLittersIn18m
   const csectionOk = !rules.maxCsections || cSectionCount < rules.maxCsections
 
-  const overallOk = !isLimited && !isNoPedigree && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk
-  const statusColor = overallOk ? '#085041' : isLimited || !littersOk || !csectionOk || !last18Ok ? '#C0392B' : '#C8971F'
+  const overallOk = !isLimited && !isNoPedigree && !isNotRecorded && !isMarkedNotEligible && !isEligibilityUnconfirmed
+    && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk
+  const statusColor = overallOk ? '#085041' : isLimited || isMarkedNotEligible || !littersOk || !csectionOk || !last18Ok ? '#C0392B' : '#C8971F'
   const statusText = isNoPedigree ? 'No pedigree — cannot register litters with Dogs Australia'
     : isLimited ? 'Limited Register — not eligible to breed'
+    : isMarkedNotEligible ? 'Marked not eligible for breeding'
     : !littersOk ? `Lifetime litter limit reached (${rules.maxLifetime} max)`
     : !csectionOk ? `C-section limit reached (${rules.maxCsections} max)`
     : !last18Ok ? 'Too many litters in last 18 months'
     : isUnder12 ? 'Not eligible — under 12 months'
     : isOver ? `Over ${rules.maxAge} years — vet certificate required`
+    : isNotRecorded ? 'Registration not recorded — breeding eligibility unknown'
+    : isEligibilityUnconfirmed ? 'Main Register — breeding eligibility not confirmed'
     : 'Currently eligible to breed'
 
   const pedigreeLabel = {
-    main: '🔵 Main Register (Blue) — eligible to breed',
+    main: isMarkedNotEligible ? '🔵 Main Register — not eligible to breed'
+      : isEligibilityUnconfirmed ? '🔵 Main Register — breeding eligibility not confirmed'
+      : '🔵 Main Register (Blue) — eligible to breed',
     limited: '🟠 Limited Register (Orange) — NOT eligible to breed',
+    not_recorded: '⚪ Registration not recorded — breeding eligibility unknown',
     no_pedigree: 'No pedigree (purebred without papers)',
     mixed: 'Mixed breed / crossbreed',
     rescue: 'Rescue / unknown background',
@@ -447,7 +466,7 @@ function generateBreedingPDFHTML(dog, profile, userState) {
     <tr><th>Date of Birth</th><td>${formatDate(dog.dateOfBirth)}</td><th>Age</th><td>${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo</td></tr>
     <tr><th>Sex</th><td>${dog.sex === 'female' ? '♀ Female' : '♂ Male'}</td><th>Microchip</th><td>${dog.microchip || '—'}</td></tr>
     <tr><th>Dogs Australia Reg</th><td>${dog.ankc || '—'}</td><th>Passport ID</th><td>${dog.passportId || '—'}</td></tr>
-    <tr><th>Pedigree Register</th><td colspan="3" class="${isLimited ? 'fail' : isNoPedigree ? 'warn' : 'ok'}">${pedigreeLabel}</td></tr>
+    <tr><th>Pedigree Register</th><td colspan="3" class="${isLimited || isMarkedNotEligible ? 'fail' : isNoPedigree || isNotRecorded || isEligibilityUnconfirmed ? 'warn' : 'ok'}">${pedigreeLabel}</td></tr>
   </table>
 
   <h2>Breeding Compliance Summary — ${state}</h2>

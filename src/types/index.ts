@@ -145,7 +145,15 @@ export interface Dog {
   depositReceivedAt?: string
 
   // ── Breeding history (edited on compliance tab, stored on Dog) ──
-  pedigreeRegister?: 'main' | 'limited' | 'no_pedigree' | 'mixed' | 'rescue'
+  // Missing/undefined is NOT_RECORDED (see resolvePedigreeRegister in
+  // breedingCompliance.ts) — never treat an absent value as 'main'.
+  pedigreeRegister?: 'main' | 'limited' | 'not_recorded' | 'no_pedigree' | 'mixed' | 'rescue'
+  // Explicit breeding-eligibility confirmation, independent of the
+  // pedigree register. 'main' register does NOT imply 'eligible' — see
+  // resolveBreedingEligibility in breedingCompliance.ts, which is the
+  // only place this should be read through (it also enforces that
+  // 'limited' always forces 'not_eligible' regardless of this field).
+  breedingEligibility?: 'eligible' | 'not_eligible' | 'unknown'
   litterCount?: number
   last18mLitters?: number
   cSectionCount?: number

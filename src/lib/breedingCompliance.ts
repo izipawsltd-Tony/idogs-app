@@ -65,11 +65,88 @@ export interface ComplianceDog {
   sex?: 'male' | 'female' | string
   dateOfBirth?: string             // ISO
   colour?: string
-  pedigreeRegister?: string        // 'main' | 'limited' | 'no_pedigree' | 'mixed' | 'rescue'
+  pedigreeRegister?: string        // 'main' | 'limited' | 'not_recorded' | 'no_pedigree' | 'mixed' | 'rescue'
+  breedingEligibility?: string     // 'eligible' | 'not_eligible' | 'unknown'
   litterCount?: number
   last18mLitters?: number
   cSectionCount?: number
   lastLitterDate?: string
+}
+
+// ── Pedigree register / breeding eligibility (canonical resolvers) ─────────
+//
+// A dog's Firestore `pedigreeRegister` field is missing/undefined for every
+// litter-born puppy (there is no field to set it at puppy-creation time) and
+// for any legacy record predating the field. Several call sites used to
+// treat that as `pedigreeRegister || 'main'`, which silently turned "we
+// never recorded this" into "Main Register — eligible to breed" — exactly
+// the transferred-puppy bug this module now guards against. NOT_RECORDED is
+// its own state, distinct from MAIN, and must never be upgraded to MAIN by
+// a fallback default.
+//
+// Pedigree/registration and breeding eligibility are deliberately separate
+// concepts: MAIN does not imply ELIGIBLE. Eligibility is only ever ELIGIBLE
+// when explicitly confirmed (`breedingEligibility === 'eligible'`); absent
+// that, MAIN reads as UNKNOWN ("not confirmed"), never as an assumed pass.
+
+export type PedigreeRegisterStatus = 'MAIN' | 'LIMITED' | 'NOT_RECORDED' | 'NO_PEDIGREE' | 'MIXED' | 'RESCUE'
+export type BreedingEligibilityStatus = 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'UNKNOWN'
+
+export function resolvePedigreeRegister(raw?: string): PedigreeRegisterStatus {
+  switch (raw) {
+    case 'main': return 'MAIN'
+    case 'limited': return 'LIMITED'
+    case 'no_pedigree': return 'NO_PEDIGREE'
+    case 'mixed': return 'MIXED'
+    case 'rescue': return 'RESCUE'
+    // undefined, '', 'not_recorded', or any unrecognised legacy value —
+    // all fail closed to NOT_RECORDED, never to MAIN.
+    default: return 'NOT_RECORDED'
+  }
+}
+
+/**
+ * Single source of truth for "is this dog eligible to breed", independent
+ * of any other age/health/litter-frequency compliance finding.
+ *   LIMITED                        → always NOT_ELIGIBLE (never overridable)
+ *   MAIN                           → explicit breedingEligibility if set, else UNKNOWN
+ *   NOT_RECORDED / NO_PEDIGREE /
+ *   MIXED / RESCUE                 → always UNKNOWN (nothing authoritative to read)
+ */
+export function resolveBreedingEligibility(dog: { pedigreeRegister?: string; breedingEligibility?: string }): BreedingEligibilityStatus {
+  const register = resolvePedigreeRegister(dog.pedigreeRegister)
+  if (register === 'LIMITED') return 'NOT_ELIGIBLE'
+  if (register !== 'MAIN') return 'UNKNOWN'
+  if (dog.breedingEligibility === 'eligible') return 'ELIGIBLE'
+  if (dog.breedingEligibility === 'not_eligible') return 'NOT_ELIGIBLE'
+  return 'UNKNOWN'
+}
+
+/**
+ * Canonical patch to write when a user edits the pedigree/registration
+ * dropdown (breeder or current owner — see DogDetailPage's Pedigree /
+ * Registration control, gated only by plan-cap restriction, not by role).
+ *   Rule 6: MAIN/NOT_RECORDED → LIMITED forces breedingEligibility to
+ *           'not_eligible' (LIMITED can never be eligible).
+ *   Rule 7: LIMITED → anything else must NOT resurrect an assumed
+ *           'eligible' — the 'not_eligible' that LIMITED forced was never
+ *           authoritative data for the new register, so it resets to
+ *           'unknown' rather than being carried over.
+ *   Otherwise: breedingEligibility is left untouched (whatever explicit
+ *   value already existed is preserved).
+ */
+export function nextPedigreeRegisterUpdate(
+  currentRaw: string | undefined,
+  nextRegisterRaw: string,
+): { pedigreeRegister: string; breedingEligibility?: 'not_eligible' | 'unknown' } {
+  const wasLimited = resolvePedigreeRegister(currentRaw) === 'LIMITED'
+  const update: { pedigreeRegister: string; breedingEligibility?: 'not_eligible' | 'unknown' } = { pedigreeRegister: nextRegisterRaw }
+  if (nextRegisterRaw === 'limited') {
+    update.breedingEligibility = 'not_eligible'
+  } else if (wasLimited) {
+    update.breedingEligibility = 'unknown'
+  }
+  return update
 }
 
 /** Minimal structural shape — adapt from your HealthTest type. */
@@ -526,26 +603,68 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
   const sireAgeMo = sire?.dateOfBirth ? monthsBetween(sire.dateOfBirth, matingDate) : null
 
   // ── Register eligibility (ANKC 6.6.2) ──
-  const reg = normalize(dam.pedigreeRegister)
-  if (['no_pedigree', 'mixed', 'rescue'].includes(reg)) {
+  // Uses the canonical resolvers so a missing/undefined pedigreeRegister
+  // (every litter-born puppy, until someone edits it) resolves to
+  // NOT_RECORDED rather than silently falling through as MAIN + eligible.
+  const damRegister = resolvePedigreeRegister(dam.pedigreeRegister)
+  if (damRegister === 'NO_PEDIGREE' || damRegister === 'MIXED' || damRegister === 'RESCUE') {
     findings.push({
       level: 'info', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
       message: 'No Dogs Australia pedigree — litters cannot be registered with Dogs Australia',
       rule: 'ANKC Part 6, 6.6.1', verified: true,
     })
-  } else if (reg === 'limited') {
+  } else if (damRegister === 'LIMITED') {
     findings.push({
       level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
       message: 'Limited Register — not eligible to breed under Dogs Australia rules',
       rule: 'ANKC Part 6, 6.6.2(ii)', verified: true,
     })
-  }
-  if (sire && normalize(sire.pedigreeRegister) === 'limited') {
+  } else if (damRegister === 'NOT_RECORDED') {
+    findings.push({
+      level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
+      message: 'Registration not recorded — breeding eligibility unknown',
+      rule: 'ANKC Part 6, 6.6.2', verified: true,
+    })
+  } else if (damRegister === 'MAIN' && resolveBreedingEligibility(dam) === 'UNKNOWN') {
+    findings.push({
+      level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
+      message: 'Main Register — breeding eligibility not confirmed',
+      rule: 'ANKC Part 6, 6.6.2', verified: true,
+    })
+  } else if (damRegister === 'MAIN' && resolveBreedingEligibility(dam) === 'NOT_ELIGIBLE') {
     findings.push({
       level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
-      message: `Sire${sire.name ? ` (${sire.name})` : ''} is on the Limited Register — not eligible for breeding`,
-      rule: 'ANKC Part 6, 6.6.2(ii)', verified: true,
+      message: 'Marked not eligible for breeding',
+      rule: 'ANKC Part 6, 6.6.2', verified: true,
     })
+  }
+  if (sire) {
+    const sireRegister = resolvePedigreeRegister(sire.pedigreeRegister)
+    if (sireRegister === 'LIMITED') {
+      findings.push({
+        level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
+        message: `Sire${sire.name ? ` (${sire.name})` : ''} is on the Limited Register — not eligible for breeding`,
+        rule: 'ANKC Part 6, 6.6.2(ii)', verified: true,
+      })
+    } else if (sireRegister === 'NOT_RECORDED') {
+      findings.push({
+        level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
+        message: `Sire${sire.name ? ` (${sire.name})` : ''}: registration not recorded — breeding eligibility unknown`,
+        rule: 'ANKC Part 6, 6.6.2', verified: true,
+      })
+    } else if (sireRegister === 'MAIN' && resolveBreedingEligibility(sire) === 'UNKNOWN') {
+      findings.push({
+        level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
+        message: `Sire${sire.name ? ` (${sire.name})` : ''}: Main Register — breeding eligibility not confirmed`,
+        rule: 'ANKC Part 6, 6.6.2', verified: true,
+      })
+    } else if (sireRegister === 'MAIN' && resolveBreedingEligibility(sire) === 'NOT_ELIGIBLE') {
+      findings.push({
+        level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
+        message: `Sire${sire.name ? ` (${sire.name})` : ''} is marked not eligible for breeding`,
+        rule: 'ANKC Part 6, 6.6.2', verified: true,
+      })
+    }
   }
 
   // ── Dam minimum age ──

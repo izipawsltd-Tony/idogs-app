@@ -18,6 +18,7 @@ import {
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
+import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
 import { isHeicFile } from '../lib/heic'
 import PhotoUpload from '../components/ui/PhotoUpload'
@@ -1487,34 +1488,62 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
           </div>
         )}
         <InfoRow label="Dogs Australia Registration" value={dog.ankc || '—'} />
-        {/* Pedigree Register */}
+        {/* Pedigree Register — resolvePedigreeRegister/resolveBreedingEligibility are the
+            single source of truth here; a missing/undefined pedigreeRegister (every
+            litter-born puppy, until edited) must read as "not recorded", never "Main". */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', gap: 8 }}>
           <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Pedigree / Registration</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {(dog as any).pedigreeRegister === 'limited' ? (
-              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: '#FFF3E0', color: '#E65100', border: '1px solid #FFCC80' }}>
-                🟠 Limited — not eligible to breed
-              </span>
-            ) : (dog as any).pedigreeRegister === 'no_pedigree' ? (
-              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
-                No pedigree (purebred)
-              </span>
-            ) : (dog as any).pedigreeRegister === 'mixed' ? (
-              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
-                Mixed breed
-              </span>
-            ) : (dog as any).pedigreeRegister === 'rescue' ? (
-              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
-                Rescue / unknown
-              </span>
-            ) : (
-              <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid rgba(8,80,65,0.15)' }}>
-                🔵 Main Register — eligible to breed
-              </span>
-            )}
+            {(() => {
+              const register = resolvePedigreeRegister((dog as any).pedigreeRegister)
+              const eligibility = resolveBreedingEligibility(dog as any)
+              if (register === 'LIMITED') {
+                return (
+                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: '#FFF3E0', color: '#E65100', border: '1px solid #FFCC80' }}>
+                    🟠 Limited Register — not eligible to breed
+                  </span>
+                )
+              }
+              if (register === 'NO_PEDIGREE') {
+                return <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>No pedigree (purebred)</span>
+              }
+              if (register === 'MIXED') {
+                return <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>Mixed breed</span>
+              }
+              if (register === 'RESCUE') {
+                return <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>Rescue / unknown</span>
+              }
+              if (register === 'NOT_RECORDED') {
+                return (
+                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
+                    ⚪ Registration not recorded — breeding eligibility unknown
+                  </span>
+                )
+              }
+              // MAIN
+              if (eligibility === 'ELIGIBLE') {
+                return (
+                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid rgba(8,80,65,0.15)' }}>
+                    🔵 Main Register — eligible to breed
+                  </span>
+                )
+              }
+              if (eligibility === 'NOT_ELIGIBLE') {
+                return (
+                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: '#FFF3E0', color: '#E65100', border: '1px solid #FFCC80' }}>
+                    🔵 Main Register — not eligible to breed
+                  </span>
+                )
+              }
+              return (
+                <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
+                  🔵 Main Register — breeding eligibility not confirmed
+                </span>
+              )
+            })()}
             <select
               className="form-select"
-              value={(dog as any).pedigreeRegister || 'main'}
+              value={(dog as any).pedigreeRegister || 'not_recorded'}
               disabled={isRestricted}
               onChange={async e => {
                 // Same missed-gating class as Sale & Availability (Red Boy
@@ -1523,13 +1552,15 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
                 // defense-in-depth story for this control — `disabled`
                 // above already stops it firing from the UI.
                 if (isRestricted) return
-                await updateDog(dog.id, { pedigreeRegister: e.target.value } as any)
+                const updates = nextPedigreeRegisterUpdate((dog as any).pedigreeRegister, e.target.value)
+                await updateDog(dog.id, updates as any)
                 toast('Pedigree status updated')
               }}
               style={{ height: 28, fontSize: 12, padding: '0 28px 0 8px', minWidth: 100 }}
             >
               <option value="main">🔵 Main</option>
               <option value="limited">🟠 Limited</option>
+              <option value="not_recorded">Not recorded</option>
               <option value="no_pedigree">No pedigree</option>
               <option value="mixed">Mixed breed</option>
               <option value="rescue">Rescue</option>
@@ -3505,12 +3536,23 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const last18Ok = rules.maxLittersIn18Months === 999 || last18mLitters < rules.maxLittersIn18Months
   const csectionOk = rules.maxCsections === null || cSectionCount < rules.maxCsections
   const csectionVetNeeded = rules.csectionVetRequired !== null && cSectionCount >= rules.csectionVetRequired
-  const isLimitedRegister = (dog as any).pedigreeRegister === 'limited'
-  const isNoPedigree = ['no_pedigree', 'mixed', 'rescue'].includes((dog as any).pedigreeRegister || '')
-  const overallOk = !isPuppyOrWhelp && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk && !isLimitedRegister && !isNoPedigree
+  // resolvePedigreeRegister/resolveBreedingEligibility are the single source
+  // of truth: a missing/undefined pedigreeRegister (every litter-born puppy,
+  // until edited) must never be read as MAIN, and MAIN must never be read
+  // as an assumed ELIGIBLE without an explicit confirmed flag.
+  const pedigreeRegisterStatus = resolvePedigreeRegister((dog as any).pedigreeRegister)
+  const breedingEligibilityStatus = resolveBreedingEligibility(dog as any)
+  const isLimitedRegister = pedigreeRegisterStatus === 'LIMITED'
+  const isNoPedigree = pedigreeRegisterStatus === 'NO_PEDIGREE' || pedigreeRegisterStatus === 'MIXED' || pedigreeRegisterStatus === 'RESCUE'
+  const isNotRecorded = pedigreeRegisterStatus === 'NOT_RECORDED'
+  const isMarkedNotEligible = pedigreeRegisterStatus === 'MAIN' && breedingEligibilityStatus === 'NOT_ELIGIBLE'
+  const isEligibilityUnconfirmed = pedigreeRegisterStatus === 'MAIN' && breedingEligibilityStatus === 'UNKNOWN'
+  const overallOk = !isPuppyOrWhelp && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk
+    && !isLimitedRegister && !isNoPedigree && !isNotRecorded && !isMarkedNotEligible && !isEligibilityUnconfirmed
   const overallMsg = isPuppyOrWhelp ? `Not yet of breeding age (${dog.lifeStage === 'whelp' ? 'Whelp' : 'Puppy'})`
     : isNoPedigree ? `ℹ️ No Dogs Australia pedigree — cannot register litters with Dogs Australia`
     : isLimitedRegister ? '❌ Limited Register — not eligible to breed under Dogs Australia rules'
+    : isMarkedNotEligible ? '❌ Marked not eligible for breeding'
     : isUnder12 ? `❌ Not eligible — under ${rules.minBreedingMonths} months`
     : isOver ? `⚠️ Over ${rules.maxAgeYears} years — vet certificate required`
     : !littersOk ? `❌ Lifetime litter limit reached (${rules.maxLifetimeLitters} max)`
@@ -3518,6 +3560,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     : !last18Ok ? `❌ ${rules.maxLittersIn18Months} litters already in last 18 months`
     : csectionVetNeeded ? `⚠️ Vet certificate required before next C-section pregnancy`
     : ageMo < minForBreed ? `⚠️ Eligible but ${breedSize} breed — recommended wait until ${minForBreed} months`
+    : isNotRecorded ? 'ℹ️ Registration not recorded — breeding eligibility unknown'
+    : isEligibilityUnconfirmed ? 'ℹ️ Main Register — breeding eligibility not confirmed'
     : '✓ Currently eligible to breed'
 
   async function saveLitters() {
@@ -3613,7 +3657,17 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   }
 
   const rulesTable = [
-    { rule: 'Pedigree / Registration', value: (dog as any).pedigreeRegister === 'limited' ? '🟠 Limited Register — not eligible to breed' : (dog as any).pedigreeRegister === 'no_pedigree' ? 'No pedigree (purebred without papers)' : (dog as any).pedigreeRegister === 'mixed' ? 'Mixed breed' : (dog as any).pedigreeRegister === 'rescue' ? 'Rescue / unknown' : '🔵 Main Register — eligible to breed', source: 'Dogs Australia Regulations Part 6', st: isLimitedRegister ? 'fail' : isNoPedigree ? 'info' : 'ok' },
+    { rule: 'Pedigree / Registration',
+      value: isLimitedRegister ? '🟠 Limited Register — not eligible to breed'
+        : pedigreeRegisterStatus === 'NO_PEDIGREE' ? 'No pedigree (purebred without papers)'
+        : pedigreeRegisterStatus === 'MIXED' ? 'Mixed breed'
+        : pedigreeRegisterStatus === 'RESCUE' ? 'Rescue / unknown'
+        : isNotRecorded ? '⚪ Registration not recorded — breeding eligibility unknown'
+        : isMarkedNotEligible ? '🔵 Main Register — not eligible to breed'
+        : isEligibilityUnconfirmed ? '🔵 Main Register — breeding eligibility not confirmed'
+        : '🔵 Main Register — eligible to breed',
+      source: 'Dogs Australia Regulations Part 6',
+      st: isLimitedRegister || isMarkedNotEligible ? 'fail' : isNoPedigree || isNotRecorded || isEligibilityUnconfirmed ? 'info' : 'ok' },
     { rule: 'Minimum breeding age',              value: `${rules.minBreedingMonths} months`,      st: isPuppyOrWhelp ? 'info' : (!isUnder12 ? 'ok' : 'fail') },
     { rule: `Recommended min age (${breedSize})`,value: `${minForBreed} months`,                 st: isPuppyOrWhelp ? 'info' : (ageMo >= minForBreed ? 'ok' : 'warn') },
     { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No specific rule' : `${rules.maxLittersIn18Months} litters`, st: isPuppyOrWhelp ? 'info' : (last18Ok ? 'ok' : 'fail') },
@@ -3670,15 +3724,21 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       ) : (
       <div style={{
         padding: '16px 20px', borderRadius: 12, marginBottom: 20,
-        background: isPuppyOrWhelp ? 'var(--sand)' : (overallOk ? 'var(--brand-50)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#FDEDED' : '#FBF3E4'),
-        border: `1.5px solid ${isPuppyOrWhelp ? 'var(--border)' : (overallOk ? 'var(--brand-300)' : isUnder12 || !littersOk || !csectionOk || !last18Ok ? '#F3B0B0' : '#EBD9A8')}`,
+        background: isPuppyOrWhelp ? 'var(--sand)' : (overallOk ? 'var(--brand-50)' : isUnder12 || !littersOk || !csectionOk || !last18Ok || isLimitedRegister || isMarkedNotEligible ? '#FDEDED' : '#FBF3E4'),
+        border: `1.5px solid ${isPuppyOrWhelp ? 'var(--border)' : (overallOk ? 'var(--brand-300)' : isUnder12 || !littersOk || !csectionOk || !last18Ok || isLimitedRegister || isMarkedNotEligible ? '#F3B0B0' : '#EBD9A8')}`,
       }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, marginBottom: 10, color: isPuppyOrWhelp ? 'var(--mid)' : (overallOk ? 'var(--brand-600)' : !littersOk || !csectionOk || !last18Ok || isUnder12 ? 'var(--error)' : 'var(--warning)') }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, marginBottom: 10, color: isPuppyOrWhelp ? 'var(--mid)' : (overallOk ? 'var(--brand-600)' : !littersOk || !csectionOk || !last18Ok || isUnder12 || isLimitedRegister || isMarkedNotEligible ? 'var(--error)' : 'var(--warning)') }}>
           {overallMsg}
         </div>
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
           {[
-            { l: 'Register', v: (dog as any).pedigreeRegister === 'limited' ? '🟠 Limited' : (dog as any).pedigreeRegister === 'none' ? 'None' : '🔵 Main', ok: !isLimitedRegister },
+            {
+              // This tile only renders in the !isNoPedigree branch (see the
+              // surrounding conditional below), so NO_PEDIGREE/MIXED/RESCUE
+              // can't reach here — only LIMITED, NOT_RECORDED, or MAIN.
+              l: 'Register',
+              v: isLimitedRegister ? '🟠 Limited' : isNotRecorded ? '⚪ Not recorded' : '🔵 Main',
+              ok: !isLimitedRegister && !isNotRecorded && !isMarkedNotEligible && !isEligibilityUnconfirmed },
             { l: 'Age', v: `${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo`, ok: isPuppyOrWhelp ? true : (!isUnder12 && !isOver) },
             { l: 'Breed size', v: breedSize.charAt(0).toUpperCase() + breedSize.slice(1), ok: true },
             { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: isPuppyOrWhelp ? true : littersOk },
@@ -3948,7 +4008,9 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
     set('sireName', d.name)
     set('sireReg', (d as any).ankc || '')
     set('sireId', dogId)
-    set('sirePedigreeRegister', (d as any).pedigreeRegister || 'main')
+    // Not 'main' — a litter-born male with no pedigreeRegister set yet must
+    // read as "not recorded", not be silently upgraded to Main here either.
+    set('sirePedigreeRegister', (d as any).pedigreeRegister || 'not_recorded')
   }
 
   return (
@@ -4039,6 +4101,11 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
                       {(form as any).sirePedigreeRegister === 'limited' && (
                         <div style={{ marginTop: 6, fontSize: 12, color: 'var(--error)', background: '#FDEDED', border: '1px solid #F3B0B0', borderRadius: 6, padding: '6px 10px' }}>
                           ⚠️ <strong>Limited Register sire</strong> — progeny cannot be registered on the Main Register under Dogs Australia rules.
+                        </div>
+                      )}
+                      {(form as any).sirePedigreeRegister === 'not_recorded' && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--mid)', background: 'var(--sand)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px' }}>
+                          ℹ️ This sire's registration is not recorded — breeding eligibility unknown.
                         </div>
                       )}
                       <span className="form-hint">Or switch to "Enter manually" for external sires</span>
