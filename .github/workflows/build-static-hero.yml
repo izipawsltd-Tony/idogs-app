@@ -31,28 +31,35 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           landing = Path('src/pages/LandingPage.tsx')
           text = landing.read_text()
-          old = '''                <LandingMediaSlot
-                  slotId="hero"
-                  className="hv-shot"
-                  ariaLabel="iDogs product preview"
-                  fallback={<div className="hv-shot">Dog Profile — product screenshot</div>}
-                />'''
-          new = '''                <img
-                  className="hv-shot"
-                  src="/hero-idogs-cooper.avif"
-                  alt="iDogs Digital Passport and dog record preview"
-                  width={720}
-                  height={946}
-                  fetchPriority="high"
-                  decoding="async"
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                />'''
-          if old not in text:
-              raise SystemExit('Hero target block not found')
-          landing.write_text(text.replace(old, new, 1))
+          pattern = re.compile(
+              r'<LandingMediaSlot\s+'
+              r'slotId="hero"\s+'
+              r'className="hv-shot"\s+'
+              r'ariaLabel="iDogs product preview"\s+'
+              r'fallback=\{<div className="hv-shot">Dog Profile — product screenshot</div>\}\s+'
+              r'/>'
+          )
+          indent = ' ' * 16
+          new = '\n'.join([
+              indent + '<img',
+              indent + '  className="hv-shot"',
+              indent + '  src="/hero-idogs-cooper.avif"',
+              indent + '  alt="iDogs Digital Passport and dog record preview"',
+              indent + '  width={720}',
+              indent + '  height={946}',
+              indent + '  fetchPriority="high"',
+              indent + '  decoding="async"',
+              indent + "  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}",
+              indent + '/>',
+          ])
+          text, count = pattern.subn(new, text, count=1)
+          if count != 1:
+              raise SystemExit(f'Hero target block count was {count}, expected 1')
+          landing.write_text(text)
 
           index = Path('index.html')
           html = index.read_text()
