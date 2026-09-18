@@ -1,4 +1,4 @@
-name: Finalize static Hero 1094
+name: Diagnose staged Hero 1094
 
 on:
   push:
@@ -7,115 +7,35 @@ on:
     paths:
       - '.github/workflows/finalize-static-hero-1094.yml'
 
-permissions:
-  contents: write
-
 jobs:
-  finalize:
+  diagnose:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feature/landing-static-hero-cooper
-          fetch-depth: 0
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Decode and verify original 1094 Hero
+      - name: Inspect staged base64
         shell: bash
         run: |
-          set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          import base64, hashlib
-
-          p = Path('public/hero-idogs-cooper-1094.jpg')
-          raw = p.read_bytes()
-          if raw.startswith(b'/9j/'):
-              compact = b''.join(raw.split())
-              raw = base64.b64decode(compact, validate=True)
-              p.write_bytes(raw)
-
-          digest = hashlib.sha256(raw).hexdigest()
-          expected = 'df1e4fb3e27da499f594c328c1c76f7048a7b1920a0d56c4d8aebf9b9edd823d'
-          if digest != expected:
-              raise SystemExit(f'Hero SHA256 mismatch: {digest}; bytes={len(raw)}')
-          if not raw.startswith(b'\xff\xd8\xff') or not raw.endswith(b'\xff\xd9'):
-              raise SystemExit('Hero is not a valid JPEG stream')
-          if len(raw) != 288133:
-              raise SystemExit(f'Unexpected Hero byte size: {len(raw)}')
-          print(f'Hero bytes={len(raw)} sha256={digest}')
+          import string, base64, hashlib
+          p=Path('public/hero-idogs-cooper-1094.jpg')
+          raw=p.read_bytes()
+          print('file_bytes', len(raw))
+          print('head', repr(raw[:40]))
+          print('tail', repr(raw[-40:]))
+          allowed=set(b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\r\n\t ')
+          bad=[(i,b) for i,b in enumerate(raw) if b not in allowed]
+          print('bad_count',len(bad))
+          print('first_bad',bad[:30])
+          for i,b in bad[:10]: print('context',i,repr(raw[max(0,i-30):i+31]))
+          compact=b''.join(raw.split())
+          try:
+            dec=base64.b64decode(compact, validate=False)
+            print('decoded_bytes',len(dec))
+            print('decoded_sha256',hashlib.sha256(dec).hexdigest())
+            print('jpeg_head_tail',repr(dec[:4]),repr(dec[-4:]))
+          except Exception as e:
+            print('decode_error',repr(e))
           PY
-
-          node <<'NODE'
-          const sharp = require('sharp')
-          ;(async () => {
-            const m = await sharp('public/hero-idogs-cooper-1094.jpg').metadata()
-            console.log(`Hero metadata: ${m.format} ${m.width}x${m.height}`)
-            if (m.format !== 'jpeg' || m.width !== 1094 || m.height !== 1094) {
-              throw new Error(`Unexpected Hero metadata: ${m.format} ${m.width}x${m.height}`)
-            }
-          })().catch(err => { console.error(err); process.exit(1) })
-          NODE
-
-      - name: Point landing Hero at clean static asset
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          p = Path('src/pages/LandingPage.tsx')
-          s = p.read_text()
-          s = s.replace('src="/hero-idogs-cooper.jpg"', 'src="/hero-idogs-cooper-1094.jpg"', 1)
-          s = s.replace('width={720}', 'width={1094}', 1)
-          s = s.replace('height={720}', 'height={1094}', 1)
-          s = s.replace('decoding="async"', 'decoding="sync"', 1)
-          hero_pos = s.find('src="/hero-idogs-cooper-1094.jpg"')
-          if hero_pos < 0:
-              raise SystemExit('Hero source reference not found')
-          nearby = s[max(0, hero_pos-300):hero_pos+700]
-          if 'loading="eager"' not in nearby:
-              s = s.replace('fetchPriority="high"\n', 'fetchPriority="high"\n                  loading="eager"\n', 1)
-          p.write_text(s)
-
-          h = Path('index.html')
-          z = h.read_text()
-          z = z.replace('/hero-idogs-cooper.jpg', '/hero-idogs-cooper-1094.jpg')
-          z = z.replace('/hero-idogs-cooper.avif', '/hero-idogs-cooper-1094.jpg')
-          z = z.replace('type="image/avif"', 'type="image/jpeg"')
-          h.write_text(z)
-          PY
-
-      - name: Remove broken Hero and staging scraps
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f public/hero-idogs-cooper.jpg public/hero-idogs-cooper.avif
-          rm -rf .tmp-hero .tmp-hero1094
-          rm -f .github/workflows/finalize-static-hero-1094.yml
-
-      - name: Verify references and production build
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -q 'src="/hero-idogs-cooper-1094.jpg"' src/pages/LandingPage.tsx
-          grep -q 'width={1094}' src/pages/LandingPage.tsx
-          grep -q 'height={1094}' src/pages/LandingPage.tsx
-          grep -q 'fetchPriority="high"' src/pages/LandingPage.tsx
-          grep -q 'loading="eager"' src/pages/LandingPage.tsx
-          grep -q 'decoding="sync"' src/pages/LandingPage.tsx
-          grep -q 'href="/hero-idogs-cooper-1094.jpg"' index.html
-          test ! -e public/hero-idogs-cooper.jpg
-          npm run build
-
-      - name: Commit exact candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix(landing): use verified original 1094 static Hero"
-          git push origin HEAD:feature/landing-static-hero-cooper
