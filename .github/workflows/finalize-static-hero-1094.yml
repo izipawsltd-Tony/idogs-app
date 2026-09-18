@@ -1,4 +1,4 @@
-name: Diagnose staged Hero 1094
+name: Finalize verified static Hero 1094
 
 on:
   push:
@@ -7,35 +7,105 @@ on:
     paths:
       - '.github/workflows/finalize-static-hero-1094.yml'
 
+permissions:
+  contents: write
+
 jobs:
-  diagnose:
+  finalize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feature/landing-static-hero-cooper
-      - name: Inspect staged base64
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Reconstruct and verify clean 1094 Hero asset
         shell: bash
         run: |
+          set -euo pipefail
+          cat .tmp-hero-avif38/chunk*.txt | tr -d '\n\r\t ' | base64 -d > public/hero-idogs-cooper-1094.avif
+          test "$(stat -c %s public/hero-idogs-cooper-1094.avif)" = "44010"
+          echo "5ca3e23ef60f636cb620006645fd47016f39e6101d8d42cd3126ac7a3364f8b9  public/hero-idogs-cooper-1094.avif" | sha256sum -c -
+          node <<'NODE'
+          const sharp = require('sharp')
+          ;(async () => {
+            const m = await sharp('public/hero-idogs-cooper-1094.avif').metadata()
+            console.log(`Hero metadata: ${m.format} ${m.width}x${m.height}`)
+            if (!['heif', 'avif'].includes(m.format) || m.width !== 1094 || m.height !== 1094) {
+              throw new Error(`Unexpected Hero metadata: ${m.format} ${m.width}x${m.height}`)
+            }
+          })().catch(err => { console.error(err); process.exit(1) })
+          NODE
+
+      - name: Point landing Hero at verified static asset
+        shell: bash
+        run: |
+          set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          import string, base64, hashlib
-          p=Path('public/hero-idogs-cooper-1094.jpg')
-          raw=p.read_bytes()
-          print('file_bytes', len(raw))
-          print('head', repr(raw[:40]))
-          print('tail', repr(raw[-40:]))
-          allowed=set(b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\r\n\t ')
-          bad=[(i,b) for i,b in enumerate(raw) if b not in allowed]
-          print('bad_count',len(bad))
-          print('first_bad',bad[:30])
-          for i,b in bad[:10]: print('context',i,repr(raw[max(0,i-30):i+31]))
-          compact=b''.join(raw.split())
-          try:
-            dec=base64.b64decode(compact, validate=False)
-            print('decoded_bytes',len(dec))
-            print('decoded_sha256',hashlib.sha256(dec).hexdigest())
-            print('jpeg_head_tail',repr(dec[:4]),repr(dec[-4:]))
-          except Exception as e:
-            print('decode_error',repr(e))
+
+          p = Path('src/pages/LandingPage.tsx')
+          s = p.read_text()
+          old = 'src="/hero-idogs-cooper.jpg"'
+          new = 'src="/hero-idogs-cooper-1094.avif"'
+          if old not in s and new not in s:
+              raise SystemExit('Expected Hero source reference not found')
+          s = s.replace(old, new, 1)
+          hero = s.find(new)
+          if hero < 0:
+              raise SystemExit('Updated Hero source reference not found')
+          before = s[:hero]
+          after = s[hero:]
+          after = after.replace('width={720}', 'width={1094}', 1)
+          after = after.replace('height={720}', 'height={1094}', 1)
+          nearby = after[:700]
+          if 'loading="eager"' not in nearby:
+              after = after.replace('fetchPriority="high"\n', 'fetchPriority="high"\n                  loading="eager"\n', 1)
+          s = before + after
+          p.write_text(s)
+
+          h = Path('index.html')
+          z = h.read_text()
+          z = z.replace('href="/hero-idogs-cooper.jpg" type="image/jpeg"', 'href="/hero-idogs-cooper-1094.avif" type="image/avif"')
+          z = z.replace('href="/hero-idogs-cooper-1094.jpg" type="image/jpeg"', 'href="/hero-idogs-cooper-1094.avif" type="image/avif"')
+          z = z.replace('href="/hero-idogs-cooper.avif" type="image/avif"', 'href="/hero-idogs-cooper-1094.avif" type="image/avif"')
+          h.write_text(z)
           PY
+
+      - name: Remove broken Hero files and temporary staging chunks
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f public/hero-idogs-cooper.jpg
+          rm -f public/hero-idogs-cooper-1094.jpg
+          rm -f public/hero-idogs-cooper.avif
+          rm -rf .tmp-hero .tmp-hero1094 .tmp-hero-avif .tmp-hero-avif38
+
+      - name: Verify references and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'src="/hero-idogs-cooper-1094.avif"' src/pages/LandingPage.tsx
+          grep -q 'width={1094}' src/pages/LandingPage.tsx
+          grep -q 'height={1094}' src/pages/LandingPage.tsx
+          grep -q 'fetchPriority="high"' src/pages/LandingPage.tsx
+          grep -q 'loading="eager"' src/pages/LandingPage.tsx
+          grep -q 'href="/hero-idogs-cooper-1094.avif" type="image/avif"' index.html
+          test -f public/hero-idogs-cooper-1094.avif
+          test ! -e public/hero-idogs-cooper.jpg
+          test ! -e public/hero-idogs-cooper-1094.jpg
+          npm run build
+
+      - name: Commit exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "perf(landing): use verified 1094 static AVIF Hero"
+          git push origin HEAD:feature/landing-static-hero-cooper
+          echo "FINAL_SHA=$(git rev-parse HEAD)"
