@@ -33,13 +33,14 @@ jobs:
           p = Path('public/hero-idogs-cooper-1094.jpg')
           raw = p.read_bytes()
           if raw.startswith(b'/9j/'):
-              raw = base64.b64decode(raw, validate=True)
+              compact = b''.join(raw.split())
+              raw = base64.b64decode(compact, validate=True)
               p.write_bytes(raw)
 
           digest = hashlib.sha256(raw).hexdigest()
           expected = 'df1e4fb3e27da499f594c328c1c76f7048a7b1920a0d56c4d8aebf9b9edd823d'
           if digest != expected:
-              raise SystemExit(f'Hero SHA256 mismatch: {digest}')
+              raise SystemExit(f'Hero SHA256 mismatch: {digest}; bytes={len(raw)}')
           if not raw.startswith(b'\xff\xd8\xff') or not raw.endswith(b'\xff\xd9'):
               raise SystemExit('Hero is not a valid JPEG stream')
           if len(raw) != 288133:
