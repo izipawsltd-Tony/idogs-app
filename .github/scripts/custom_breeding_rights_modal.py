@@ -38,11 +38,13 @@ if old not in s:
     raise SystemExit('Native breeding rights confirmation block not found')
 s = s.replace(old, new, 1)
 
-# Insert custom iDogs modal before SaleAvailabilityPanel inside OverviewTab.
-marker = "      <SaleAvailabilityPanel"
+# Insert custom iDogs modal immediately before the Sale & Availability panel
+# at the end of OverviewTab. This stays inside the Overview root grid but is
+# fixed-position, so it overlays the page without affecting layout.
+marker = "      {!isOwner && isCurrentEffectiveOwner && <SaleAvailabilityPanel"
 idx = s.find(marker, s.find('function OverviewTab'))
 if idx < 0:
-    raise SystemExit('SaleAvailabilityPanel marker not found')
+    raise SystemExit('Overview SaleAvailabilityPanel insertion marker not found')
 modal = '''      {pendingBreedingRights === 'eligible' && (
         <div
           role="presentation"
