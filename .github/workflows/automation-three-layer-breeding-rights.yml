@@ -41,6 +41,20 @@ jobs:
             exit 0
           fi
 
+          # Repair four over-broad replacement anchors discovered by the first
+          # autonomous run. Earlier replacements already consume some of those
+          # strings, so make the remaining sire-specific replacements exact.
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/automation-three-layer-breeding-rights.py')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace("    (' — not eligible for breeding`', ' — breeding rights do not permit breeding`'),\n", "    ('Limited Register — not eligible for breeding', 'Limited Register — breeding rights do not permit breeding'),\n")
+          s = s.replace("    (' — breeding eligibility unknown`', ' — breeding rights not confirmed`'),\n", "    ('registration not recorded — breeding eligibility unknown', 'registration not recorded — breeding rights not confirmed'),\n")
+          s = s.replace("    (' — breeding eligibility not confirmed`', ' — breeding rights not confirmed`'),\n", "")
+          s = s.replace("    (' is marked not eligible for breeding`', ' has breeding rights marked not permitted`'),\n", "    ('is marked not eligible for breeding', 'has breeding rights marked not permitted'),\n")
+          p.write_text(s, encoding='utf-8')
+          PY
+
           python scripts/automation-three-layer-breeding-rights.py
           npm ci
           npx tsc --noEmit
