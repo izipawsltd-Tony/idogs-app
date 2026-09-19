@@ -6,6 +6,12 @@ on:
       - feat/mobile-app-foundation
     paths:
       - '.github/workflows/mobile-android-debug-apk.yml'
+      - 'src/mobile.css'
+      - 'src/main.tsx'
+      - 'index.html'
+      - 'mobile/**'
+      - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
 
 permissions:
