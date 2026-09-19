@@ -1,0 +1,167 @@
+name: Landing runtime defer cold-load gate and staging
+
+on:
+  push:
+    branches:
+      - automation/landing-runtime-defer-staging-20260919
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: 94c34056ef61105830d122933ac81a1c3583a9f3
+  TEAM_SLUG: izipawsltd-tonys-projects
+  STAGING_ALIAS: https://idogs-app-staging.vercel.app
+  HERO_PATH: /hero-idogs-cooper-1094.avif
+
+jobs:
+  gate-and-stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pin exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(stat -c%s public/hero-idogs-cooper-1094.avif)" -eq 44010
+          echo "EXACT_SOURCE_OK $CANDIDATE_SHA"
+
+      - name: Install
+        run: npm ci
+
+      - name: Pull preview env
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/preview-pull.log 2>&1
+          if [ -f .vercel/.env.preview.local ]; then cp .vercel/.env.preview.local .env.local; fi
+
+      - name: Build and verify deferred bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -f dist/hero-idogs-cooper-1094.avif
+          test "$(stat -c%s dist/hero-idogs-cooper-1094.avif)" -eq 44010
+          ! grep -q 'wasm-bundle' dist/index.html
+          INITIAL_JS=$(grep -Eo '/assets/index-[A-Za-z0-9_-]+\.js' dist/index.html | head -1)
+          test -n "$INITIAL_JS"
+          echo "INITIAL_JS=$INITIAL_JS"
+          echo "INITIAL_JS_BYTES=$(stat -c%s "dist$INITIAL_JS")"
+          find dist/assets -maxdepth 1 -type f -printf '%f %s\n' | sort -k2 -nr | head -20
+          echo BUILD_DEFER_PASS
+
+      - name: Start cold server
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup npx vite preview --host 127.0.0.1 --port 4173 >/tmp/vite-preview.log 2>&1 &
+          for i in {1..30}; do
+            CODE=$(curl -sS -o /tmp/home.html -w '%{http_code}' http://127.0.0.1:4173/ || true)
+            [ "$CODE" = "200" ] && break
+            sleep 1
+          done
+          test "$CODE" = "200"
+          CODE=$(curl -sS -o /tmp/hero.avif -w '%{http_code}' "http://127.0.0.1:4173$HERO_PATH")
+          test "$CODE" = "200"
+          cmp -s public/hero-idogs-cooper-1094.avif /tmp/hero.avif
+
+      - name: Cold mobile and desktop LCP gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          export CHROME_PATH
+          npx --yes lighthouse@12.8.2 http://127.0.0.1:4173/ --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' --only-categories=performance --output=json --output-path=/tmp/mobile.json --max-wait-for-load=45000
+          npx --yes lighthouse@12.8.2 http://127.0.0.1:4173/ --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' --only-categories=performance --preset=desktop --output=json --output-path=/tmp/desktop.json --max-wait-for-load=45000
+          node <<'NODE'
+          const fs=require('fs')
+          const read=p=>JSON.parse(fs.readFileSync(p,'utf8'))
+          const pick=x=>({lcp:Math.round(x.audits['largest-contentful-paint'].numericValue),fcp:Math.round(x.audits['first-contentful-paint'].numericValue),cls:x.audits['cumulative-layout-shift'].numericValue,tbt:Math.round(x.audits['total-blocking-time'].numericValue),perf:Math.round((x.categories.performance.score||0)*100)})
+          const m=pick(read('/tmp/mobile.json')), d=pick(read('/tmp/desktop.json'))
+          console.log('COLD_MOBILE',JSON.stringify(m)); console.log('COLD_DESKTOP',JSON.stringify(d))
+          if(m.lcp>2500) throw new Error(`Mobile LCP ${m.lcp}ms > 2500ms`)
+          if(d.lcp>1500) throw new Error(`Desktop LCP ${d.lcp}ms > 1500ms`)
+          if(m.cls>0.1||d.cls>0.1) throw new Error(`CLS failed m=${m.cls} d=${d.cls}`)
+          NODE
+          echo COLD_LCP_PASS
+
+      - name: Enforce staging boundary
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          git checkout --detach "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/staging-pull.log 2>&1
+          ENV_FILE=.vercel/.env.production.local
+          test -f "$ENV_FILE"
+          grep -Eq '^FIREBASE_PROJECT_ID="?idogs-app-staging"?$' "$ENV_FILE"
+          if grep -q '^STRIPE_SECRET_KEY=' "$ENV_FILE"; then grep -Eq '^STRIPE_SECRET_KEY="?sk_test_' "$ENV_FILE"; fi
+          echo STAGING_BOUNDARY_PASS
+
+      - name: Deploy exact candidate to staging
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          URL=$(npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" 2>&1 | tee /tmp/deploy.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$URL"
+          echo "STAGING_URL=$URL" >> "$GITHUB_ENV"
+          echo "STAGING_DEPLOYMENT=$URL"
+
+      - name: Staging asset and structural QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {1..36}; do
+            CODE=$(curl -sS -o /tmp/staging-hero.avif -w '%{http_code}' "$STAGING_URL$HERO_PATH" || true)
+            [ "$CODE" = "200" ] && break
+            sleep 5
+          done
+          test "$CODE" = "200"
+          cmp -s public/hero-idogs-cooper-1094.avif /tmp/staging-hero.avif
+          HOME_CODE=$(curl -sS -o /tmp/staging-home.html -w '%{http_code}' "$STAGING_ALIAS")
+          test "$HOME_CODE" = "200"
+          grep -q 'id="root"' /tmp/staging-home.html
+          grep -q 'hero-idogs-cooper-1094.avif' /tmp/staging-home.html
+          echo STAGING_STRUCTURE_PASS
+
+      - name: Staging mobile and desktop LCP QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          export CHROME_PATH
+          npx --yes lighthouse@12.8.2 "$STAGING_ALIAS" --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' --only-categories=performance --output=json --output-path=/tmp/staging-mobile.json --max-wait-for-load=45000
+          npx --yes lighthouse@12.8.2 "$STAGING_ALIAS" --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' --only-categories=performance --preset=desktop --output=json --output-path=/tmp/staging-desktop.json --max-wait-for-load=45000
+          node <<'NODE'
+          const fs=require('fs')
+          const read=p=>JSON.parse(fs.readFileSync(p,'utf8'))
+          const pick=x=>({lcp:Math.round(x.audits['largest-contentful-paint'].numericValue),fcp:Math.round(x.audits['first-contentful-paint'].numericValue),cls:x.audits['cumulative-layout-shift'].numericValue,tbt:Math.round(x.audits['total-blocking-time'].numericValue),perf:Math.round((x.categories.performance.score||0)*100)})
+          const m=pick(read('/tmp/staging-mobile.json')), d=pick(read('/tmp/staging-desktop.json'))
+          console.log('STAGING_MOBILE',JSON.stringify(m)); console.log('STAGING_DESKTOP',JSON.stringify(d))
+          if(m.lcp>2500) throw new Error(`Staging mobile LCP ${m.lcp}ms > 2500ms`)
+          if(d.lcp>1500) throw new Error(`Staging desktop LCP ${d.lcp}ms > 1500ms`)
+          if(m.cls>0.1||d.cls>0.1) throw new Error(`Staging CLS failed m=${m.cls} d=${d.cls}`)
+          NODE
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo "STAGING_QA_PASS $CANDIDATE_SHA"
+          echo IDOGS_PRODUCTION_UNTOUCHED
