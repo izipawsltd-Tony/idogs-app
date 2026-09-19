@@ -1247,8 +1247,9 @@ function TransferModal({
   initialBuyerName?: string
   initialBuyerEmail?: string
   initialBuyerPhone?: string
-  // Caller normalizes to 'main'/'limited'/'not_recorded' — never 'main' by
-  // silent default for a dog whose pedigreeRegister was never set.
+  // Caller normalizes via initialTransferPedigreeRegister() — every valid
+  // existing value round-trips as itself; never 'main' by silent default
+  // for a dog whose pedigreeRegister was never set.
   initialPedigreeRegister: string
   onClose: () => void
   onTransfer: (name: string, email: string, phone: string | undefined, pedigreeRegister: string) => Promise<void>
@@ -1326,8 +1327,11 @@ function TransferModal({
           </div>
 
           {/* Pedigree / Registration — prefilled from the dog's current
-              value (never silently 'main'); the breeder explicitly sees
-              and confirms this before the transfer completes. */}
+              value via initialTransferPedigreeRegister() (every one of the
+              six pedigreeRegister values round-trips as itself; only a
+              genuinely missing value defaults here — never silently 'main').
+              The breeder explicitly sees and confirms this before the
+              transfer completes. */}
           <div className="form-group">
             <label className="form-label">Pedigree / Registration</label>
             <select
@@ -1338,13 +1342,18 @@ function TransferModal({
               <option value="main">🔵 Main Register</option>
               <option value="limited">🟠 Limited Register — family/pet, not for breeding</option>
               <option value="not_recorded">⚪ Not recorded</option>
+              <option value="no_pedigree">No pedigree</option>
+              <option value="mixed">Mixed breed</option>
+              <option value="rescue">Rescue / unknown</option>
             </select>
             <p className="form-hint">
               {resolvePedigreeRegister(pedigreeRegister) === 'LIMITED'
                 ? 'The buyer will receive this dog as Limited Register — not eligible for breeding.'
                 : resolvePedigreeRegister(pedigreeRegister) === 'MAIN'
                 ? "Main Register does not by itself mean breeding-eligible — the buyer can review that separately on the dog's Overview page."
-                : "The buyer will see this dog's registration as not recorded — this can be corrected later from the dog's Overview page."}
+                : resolvePedigreeRegister(pedigreeRegister) === 'NOT_RECORDED'
+                ? "The buyer will see this dog's registration as not recorded — this can be corrected later from the dog's Overview page."
+                : "This classification is preserved as-is for the buyer — it can be corrected later from the dog's Overview page."}
             </p>
           </div>
 

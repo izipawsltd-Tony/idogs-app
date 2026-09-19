@@ -265,11 +265,57 @@ describe('initialTransferPedigreeRegister — prefilling the transfer modal cont
     expect(initialTransferPedigreeRegister('main')).toBe('main')
   })
 
-  it('a legacy no_pedigree/mixed/rescue value prefills as not_recorded, not main (no dedicated option in this 3-way control)', () => {
-    expect(initialTransferPedigreeRegister('no_pedigree')).toBe('not_recorded')
-    expect(initialTransferPedigreeRegister('mixed')).toBe('not_recorded')
-    expect(initialTransferPedigreeRegister('rescue')).toBe('not_recorded')
+  // Regression: an earlier version of this helper only recognised
+  // 'main'/'limited' and silently coerced everything else — including a
+  // deliberately-set 'no_pedigree'/'mixed'/'rescue' classification — to
+  // 'not_recorded'. That is exactly the unacceptable data mutation this
+  // round fixes: transfer must never reclassify an existing valid value
+  // just because the breeder didn't touch the control. Required scenarios
+  // 1-4 (adapted from "enters transfer as X" to "prefills as X", since the
+  // prefill IS the value the transfer modal shows/persists if untouched).
+  it('no_pedigree enters the transfer modal unchanged, and remains no_pedigree if untouched', () => {
+    expect(initialTransferPedigreeRegister('no_pedigree')).toBe('no_pedigree')
   })
+
+  it('mixed enters the transfer modal unchanged, and remains mixed if untouched', () => {
+    expect(initialTransferPedigreeRegister('mixed')).toBe('mixed')
+  })
+
+  it('rescue enters the transfer modal unchanged, and remains rescue if untouched', () => {
+    expect(initialTransferPedigreeRegister('rescue')).toBe('rescue')
+  })
+
+  it('an existing not_recorded value round-trips as itself (not re-derived)', () => {
+    expect(initialTransferPedigreeRegister('not_recorded')).toBe('not_recorded')
+  })
+
+  it('undefined becomes not_recorded — the only case that falls back', () => {
+    expect(initialTransferPedigreeRegister(undefined)).toBe('not_recorded')
+    expect(initialTransferPedigreeRegister('')).toBe('not_recorded')
+    expect(initialTransferPedigreeRegister('some_unrecognised_legacy_value')).toBe('not_recorded')
+  })
+})
+
+describe('scenario: transferring an existing adult dog without touching pedigree (no_pedigree/mixed/rescue)', () => {
+  // Required scenarios 1-3, exercised end-to-end through the same
+  // prefill -> (untouched) -> persist path both transfer modals use.
+  it.each(['no_pedigree', 'mixed', 'rescue'] as const)(
+    '%s survives prefill + an untouched transfer submission unchanged',
+    (existingValue) => {
+      const dog: { name: string; breed: string; pedigreeRegister?: string; breedingEligibility?: string } = {
+        name: 'Bailey', breed: 'Mixed', pedigreeRegister: existingValue,
+      }
+      const prefilled = initialTransferPedigreeRegister(dog.pedigreeRegister)
+      expect(prefilled).toBe(existingValue)
+      const buyerCopy = simulateTransferWithSelection(dog, prefilled)
+      expect(buyerCopy.pedigreeRegister).toBe(existingValue)
+      expect(resolvePedigreeRegister(buyerCopy.pedigreeRegister)).toBe(
+        existingValue === 'no_pedigree' ? 'NO_PEDIGREE' : existingValue === 'mixed' ? 'MIXED' : 'RESCUE',
+      )
+      // No ELIGIBLE is ever invented for these states — resolver-consistent UNKNOWN.
+      expect(resolveBreedingEligibility(buyerCopy)).toBe('UNKNOWN')
+    },
+  )
 })
 
 describe('scenario: transfer modal — breeder selects a pedigree register at transfer time', () => {

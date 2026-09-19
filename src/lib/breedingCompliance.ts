@@ -158,16 +158,29 @@ export function nextPedigreeRegisterUpdate(
 }
 
 /**
- * Normalizes a dog's raw pedigreeRegister into one of the three options an
- * ownership-transfer modal offers (Main/Limited/Not recorded) — used to
- * prefill that control so it never silently shows "Main" for a value that
- * was actually missing/undefined, or for a legacy no_pedigree/mixed/rescue
- * classification the transfer modal has no dedicated option for. Shared by
- * both transfer flows (LittersPage.tsx and DogDetailPage.tsx) so the
- * prefill rule can't drift between them.
+ * Normalizes a dog's raw pedigreeRegister for prefilling an ownership-
+ * transfer modal's Pedigree / Registration control. Transfer must NEVER
+ * reclassify an existing valid value just because the breeder didn't touch
+ * the control — every one of the six values the Dog model supports round-
+ * trips as itself. Only a genuinely missing/undefined/unrecognised value
+ * (a litter-born puppy that's never had this field set at all) falls back
+ * to 'not_recorded'. Shared by both transfer flows (LittersPage.tsx and
+ * DogDetailPage.tsx) so the prefill rule can't drift between them.
  */
-export function initialTransferPedigreeRegister(raw?: string): 'main' | 'limited' | 'not_recorded' {
-  return raw === 'main' || raw === 'limited' ? raw : 'not_recorded'
+export function initialTransferPedigreeRegister(
+  raw?: string,
+): 'main' | 'limited' | 'not_recorded' | 'no_pedigree' | 'mixed' | 'rescue' {
+  switch (raw) {
+    case 'main':
+    case 'limited':
+    case 'not_recorded':
+    case 'no_pedigree':
+    case 'mixed':
+    case 'rescue':
+      return raw
+    default:
+      return 'not_recorded'
+  }
 }
 
 /** Minimal structural shape — adapt from your HealthTest type. */

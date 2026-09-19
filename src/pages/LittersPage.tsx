@@ -211,10 +211,9 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   const [transferName, setTransferName] = useState('')
   const [transferEmail, setTransferEmail] = useState('')
   const [transferPhone, setTransferPhone] = useState('')
-  // Prefilled from the puppy's current value when the modal opens (never
-  // silently 'main' — see the setTransferPuppy onClick below). Only 'main'/
-  // 'limited'/'not_recorded' are offered here; resolvePedigreeRegister
-  // still normalizes any other stored/legacy value safely.
+  // Prefilled from the puppy's current value when the modal opens via
+  // initialTransferPedigreeRegister() — every one of the six pedigreeRegister
+  // values round-trips as itself; only missing/undefined defaults here.
   const [transferPedigreeRegister, setTransferPedigreeRegister] = useState('not_recorded')
   const [transferConfirm, setTransferConfirm] = useState(false)
   const [transferring, setTransferring] = useState(false)
@@ -1598,13 +1597,18 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                   <option value="main">🔵 Main Register</option>
                   <option value="limited">🟠 Limited Register — family/pet, not for breeding</option>
                   <option value="not_recorded">⚪ Not recorded</option>
+                  <option value="no_pedigree">No pedigree</option>
+                  <option value="mixed">Mixed breed</option>
+                  <option value="rescue">Rescue / unknown</option>
                 </select>
                 <p className="form-hint">
                   {resolvePedigreeRegister(transferPedigreeRegister) === 'LIMITED'
                     ? 'The buyer will receive this puppy as Limited Register — not eligible for breeding.'
                     : resolvePedigreeRegister(transferPedigreeRegister) === 'MAIN'
                     ? "Main Register does not by itself mean breeding-eligible — the buyer can review that separately on the dog's Overview page."
-                    : "The buyer will see this puppy's registration as not recorded — this can be corrected later from the dog's Overview page."}
+                    : resolvePedigreeRegister(transferPedigreeRegister) === 'NOT_RECORDED'
+                    ? "The buyer will see this puppy's registration as not recorded — this can be corrected later from the dog's Overview page."
+                    : "This classification is preserved as-is for the buyer — it can be corrected later from the dog's Overview page."}
                 </p>
               </div>
               <div style={{ fontSize: '0.85rem', color: 'var(--warning)', background: '#FBF3E4', border: '1px solid #EBD9A8', borderRadius: 8, padding: '0.75rem 1rem' }}>
