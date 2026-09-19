@@ -41,9 +41,9 @@ jobs:
             exit 0
           fi
 
-          # Repair four over-broad replacement anchors discovered by the first
-          # autonomous run. Earlier replacements already consume some of those
-          # strings, so make the remaining sire-specific replacements exact.
+          # Repair over-broad replacement anchors discovered by the first
+          # autonomous run. Earlier replacements already consume some strings,
+          # so make the remaining sire-specific replacements exact.
           python - <<'PY'
           from pathlib import Path
           p = Path('scripts/automation-three-layer-breeding-rights.py')
@@ -56,6 +56,15 @@ jobs:
           PY
 
           python scripts/automation-three-layer-breeding-rights.py
+
+          # Normalize EOF so git diff --check is a hard gate without failing
+          # on a harmless extra blank line produced by the generated test append.
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/lib/breedingCompliance.test.ts')
+          p.write_text(p.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
+          PY
+
           npm ci
           npx tsc --noEmit
           npm test
