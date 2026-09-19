@@ -1,0 +1,256 @@
+name: Hero static cold-load gate and staging promotion
+
+on:
+  push:
+    branches:
+      - automation/hero-static-staging-20260919
+    paths:
+      - '.github/workflows/hero-static-staging-20260919.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cold-load-gate-and-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CANDIDATE_SHA: d3052ea12a9a2498ecec3e77a500315899850f39
+      PROD_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
+      TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      TEAM_SLUG: izipawsltd-tonys-projects
+      STAGING_ALIAS: https://idogs-app-staging.vercel.app
+      HERO_PATH: /hero-idogs-cooper-1094.avif
+
+    steps:
+      - name: Checkout automation branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pin exact candidate source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test -f public/hero-idogs-cooper-1094.avif
+          test ! -e public/hero-idogs-cooper.jpg
+          test ! -e public/hero-idogs-cooper-1094.jpg
+          echo "EXACT_SOURCE_OK $CANDIDATE_SHA"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pull preview environment for realistic local cold-load build
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/preview-pull.log 2>&1
+          if [ -f .vercel/.env.preview.local ]; then cp .vercel/.env.preview.local .env.local; fi
+          echo PREVIEW_ENV_READY
+
+      - name: Build exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          test -f dist/hero-idogs-cooper-1094.avif
+          test "$(stat -c%s dist/hero-idogs-cooper-1094.avif)" -eq 44010
+          echo BUILD_PASS
+
+      - name: Start local cold server
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup npx vite preview --host 127.0.0.1 --port 4173 >/tmp/vite-preview.log 2>&1 &
+          echo $! >/tmp/vite-preview.pid
+          CODE=000
+          for i in {1..30}; do
+            CODE=$(curl -sS -o /tmp/local-home.html -w '%{http_code}' http://127.0.0.1:4173/ || true)
+            [ "$CODE" = "200" ] && break
+            sleep 1
+          done
+          test "$CODE" = "200"
+          HERO_CODE=$(curl -sS -o /tmp/local-hero.avif -w '%{http_code}' http://127.0.0.1:4173$HERO_PATH)
+          test "$HERO_CODE" = "200"
+          cmp -s public/hero-idogs-cooper-1094.avif /tmp/local-hero.avif
+          echo LOCAL_COLD_SERVER_OK
+
+      - name: Cold-load Lighthouse LCP gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          test -n "$CHROME_PATH"
+          export CHROME_PATH
+
+          npx --yes lighthouse@12.8.2 http://127.0.0.1:4173/ \
+            --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' \
+            --only-categories=performance --output=json --output-path=/tmp/lh-mobile.json \
+            --max-wait-for-load=45000
+
+          npx --yes lighthouse@12.8.2 http://127.0.0.1:4173/ \
+            --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' \
+            --only-categories=performance --preset=desktop --output=json --output-path=/tmp/lh-desktop.json \
+            --max-wait-for-load=45000
+
+          node <<'NODE'
+          const fs = require('fs')
+          const mobile = JSON.parse(fs.readFileSync('/tmp/lh-mobile.json','utf8'))
+          const desktop = JSON.parse(fs.readFileSync('/tmp/lh-desktop.json','utf8'))
+          const pick = (x) => ({
+            lcp: Math.round(x.audits['largest-contentful-paint'].numericValue),
+            fcp: Math.round(x.audits['first-contentful-paint'].numericValue),
+            cls: x.audits['cumulative-layout-shift'].numericValue,
+            perf: Math.round((x.categories.performance.score || 0) * 100)
+          })
+          const m = pick(mobile), d = pick(desktop)
+          console.log('COLD_MOBILE', JSON.stringify(m))
+          console.log('COLD_DESKTOP', JSON.stringify(d))
+          if (m.lcp > 2500) throw new Error(`Mobile LCP gate failed: ${m.lcp}ms > 2500ms`)
+          if (d.lcp > 1500) throw new Error(`Desktop LCP gate failed: ${d.lcp}ms > 1500ms`)
+          if (m.cls > 0.1 || d.cls > 0.1) throw new Error(`CLS gate failed mobile=${m.cls} desktop=${d.cls}`)
+          fs.writeFileSync('/tmp/cold-metrics.txt', `mobile_lcp_ms=${m.lcp}\ndesktop_lcp_ms=${d.lcp}\nmobile_perf=${m.perf}\ndesktop_perf=${d.perf}\nmobile_cls=${m.cls}\ndesktop_cls=${d.cls}\n`)
+          NODE
+          cat /tmp/cold-metrics.txt
+          echo COLD_LOAD_LCP_GATE_PASS
+
+      - name: Re-pin exact source before staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .env.local
+          rm -rf .vercel
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          echo EXACT_SOURCE_RECONFIRMED
+
+      - name: Link staging project and enforce staging boundary
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/staging-pull.log 2>&1
+          ENV_FILE=.vercel/.env.production.local
+          test -f "$ENV_FILE"
+          grep -Eq '^FIREBASE_PROJECT_ID="?idogs-app-staging"?$' "$ENV_FILE"
+          if grep -Eq '^EXTRA_LITTER_CHECKOUT_ENABLED="?true"?$' "$ENV_FILE"; then echo 'FAIL staging payment enabled'; exit 1; fi
+          if grep -q '^STRIPE_SECRET_KEY=' "$ENV_FILE"; then grep -Eq '^STRIPE_SECRET_KEY="?sk_test_' "$ENV_FILE"; fi
+          echo STAGING_BOUNDARY_PASS
+
+      - name: Deploy exact SHA to staging project only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          STAGING_URL=$(npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" 2>&1 | tee /tmp/staging-deploy.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$STAGING_URL"
+          echo "STAGING_URL=$STAGING_URL" >> "$GITHUB_ENV"
+          echo "STAGING_DEPLOYMENT $STAGING_URL"
+
+      - name: Direct asset 200 and byte-integrity check
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOME_CODE=000
+          for i in {1..36}; do
+            HOME_CODE=$(curl -sS -o /tmp/staging-home.html -w '%{http_code}' "$STAGING_ALIAS" || true)
+            [ "$HOME_CODE" = "200" ] && break
+            sleep 5
+          done
+          test "$HOME_CODE" = "200"
+
+          HERO_CODE=$(curl -sS -D /tmp/hero-headers.txt -o /tmp/staging-hero.avif -w '%{http_code}' "$STAGING_ALIAS$HERO_PATH")
+          test "$HERO_CODE" = "200"
+          grep -Eqi '^content-type: image/avif' /tmp/hero-headers.txt
+          test "$(stat -c%s /tmp/staging-hero.avif)" -eq 44010
+          cmp -s public/hero-idogs-cooper-1094.avif /tmp/staging-hero.avif
+          echo DIRECT_ASSET_200_PASS
+          echo "HERO_BYTES $(stat -c%s /tmp/staging-hero.avif)"
+          echo "HERO_SHA256 $(sha256sum /tmp/staging-hero.avif | awk '{print $1}')"
+
+      - name: Staging mobile and desktop structural QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          test -n "$CHROME_PATH"
+          export CHROME_PATH
+          npm install --no-save --package-lock=false playwright-core@1.55.0 >/tmp/playwright-install.log 2>&1
+          node --input-type=module <<'NODE'
+          import { chromium } from 'playwright-core'
+          const browser = await chromium.launch({headless:true, executablePath:process.env.CHROME_PATH, args:['--no-sandbox','--disable-gpu']})
+          const cases = [
+            ['desktop', 1440, 900],
+            ['mobile', 390, 844],
+          ]
+          for (const [name,width,height] of cases) {
+            const page = await browser.newPage({ viewport: { width, height } })
+            await page.goto(process.env.STAGING_ALIAS, { waitUntil:'load', timeout:45000 })
+            const hero = page.locator('img.hv-shot')
+            await hero.waitFor({ state:'visible', timeout:15000 })
+            await page.waitForFunction(() => {
+              const img = document.querySelector('img.hv-shot')
+              return img && img.complete && img.naturalWidth > 0
+            }, null, { timeout:15000 })
+            const info = await hero.evaluate((img) => {
+              const r = img.getBoundingClientRect()
+              return {complete:img.complete,naturalWidth:img.naturalWidth,naturalHeight:img.naturalHeight,width:r.width,height:r.height}
+            })
+            const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
+            console.log(`QA_${name.toUpperCase()}`, JSON.stringify({info,overflow,url:page.url()}))
+            if (!info.complete || info.naturalWidth !== 1094 || info.naturalHeight !== 1094) throw new Error(`${name}: Hero image integrity failed`)
+            if (info.width < 250 || info.height < 250) throw new Error(`${name}: Hero rendered too small`)
+            if (overflow) throw new Error(`${name}: horizontal overflow detected`)
+            await page.screenshot({path:`/tmp/staging-${name}.png`, fullPage:false})
+            await page.close()
+          }
+          await browser.close()
+          NODE
+          echo STAGING_STRUCTURAL_QA_PASS
+
+      - name: Staging LCP confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          export CHROME_PATH
+          npx --yes lighthouse@12.8.2 "$STAGING_ALIAS/" \
+            --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' \
+            --only-categories=performance --output=json --output-path=/tmp/staging-mobile.json --max-wait-for-load=45000
+          npx --yes lighthouse@12.8.2 "$STAGING_ALIAS/" \
+            --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' \
+            --only-categories=performance --preset=desktop --output=json --output-path=/tmp/staging-desktop.json --max-wait-for-load=45000
+          node <<'NODE'
+          const fs = require('fs')
+          const m = JSON.parse(fs.readFileSync('/tmp/staging-mobile.json','utf8'))
+          const d = JSON.parse(fs.readFileSync('/tmp/staging-desktop.json','utf8'))
+          const mm = Math.round(m.audits['largest-contentful-paint'].numericValue)
+          const dd = Math.round(d.audits['largest-contentful-paint'].numericValue)
+          const mc = m.audits['cumulative-layout-shift'].numericValue
+          const dc = d.audits['cumulative-layout-shift'].numericValue
+          console.log(`STAGING_MOBILE_LCP_MS ${mm}`)
+          console.log(`STAGING_DESKTOP_LCP_MS ${dd}`)
+          console.log(`STAGING_MOBILE_CLS ${mc}`)
+          console.log(`STAGING_DESKTOP_CLS ${dc}`)
+          if (mm > 2500) throw new Error(`Staging mobile LCP failed: ${mm}ms`)
+          if (dd > 1500) throw new Error(`Staging desktop LCP failed: ${dd}ms`)
+          if (mc > 0.1 || dc > 0.1) throw new Error(`Staging CLS failed mobile=${mc} desktop=${dc}`)
+          NODE
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo "STAGING_EXACT_SHA $CANDIDATE_SHA"
+          echo "STAGING_ALIAS $STAGING_ALIAS"
+          echo IDOGS_PRODUCTION_UNTOUCHED
+          echo STAGING_QA_PASS
