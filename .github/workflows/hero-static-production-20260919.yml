@@ -1,0 +1,113 @@
+name: Hero static exact-SHA production deploy
+
+on:
+  push:
+    branches:
+      - automation/hero-static-production-20260919
+    paths:
+      - '.github/workflows/hero-static-production-20260919.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CANDIDATE_SHA: d3052ea12a9a2498ecec3e77a500315899850f39
+      CURRENT_PROD_SHA: e1a93336df237eec2a3e83e90d869ca849f89924
+      PROD_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+      TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      TEAM_SLUG: izipawsltd-tonys-projects
+      PROD_DOMAIN: https://idogs.com.au
+      HERO_PATH: /hero-idogs-cooper-1094.avif
+
+    steps:
+      - name: Checkout automation branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pin and verify exact approved candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$CURRENT_PROD_SHA" "$CANDIDATE_SHA"
+          git checkout --detach "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test -f public/hero-idogs-cooper-1094.avif
+          test "$(stat -c%s public/hero-idogs-cooper-1094.avif)" -eq 44010
+          grep -q 'src="/hero-idogs-cooper-1094.avif"' src/pages/LandingPage.tsx
+          grep -q 'fetchPriority="high"' src/pages/LandingPage.tsx
+          grep -q 'loading="eager"' src/pages/LandingPage.tsx
+          grep -q 'href="/hero-idogs-cooper-1094.avif"' index.html
+          echo "EXACT_CANDIDATE_OK $CANDIDATE_SHA"
+
+      - name: Install dependencies and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          test -f dist/hero-idogs-cooper-1094.avif
+          test "$(stat -c%s dist/hero-idogs-cooper-1094.avif)" -eq 44010
+          echo BUILD_PASS
+
+      - name: Link production project
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/prod-pull.log 2>&1
+          echo PRODUCTION_PROJECT_LINKED
+
+      - name: Deploy exact SHA to production
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          PROD_URL=$(npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" 2>&1 | tee /tmp/prod-deploy.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$PROD_URL"
+          echo "PROD_URL=$PROD_URL" >> "$GITHUB_ENV"
+          echo "PRODUCTION_DEPLOYMENT $PROD_URL"
+
+      - name: Verify deployment asset and production alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOY_CODE=000
+          for i in {1..36}; do
+            DEPLOY_CODE=$(curl -L -sS -o /tmp/deploy-home.html -w '%{http_code}' "$PROD_URL/" || true)
+            [ "$DEPLOY_CODE" = "200" ] && break
+            sleep 5
+          done
+          test "$DEPLOY_CODE" = "200"
+
+          HERO_CODE=$(curl -L -sS -D /tmp/deploy-hero-headers.txt -o /tmp/deploy-hero.avif -w '%{http_code}' "$PROD_URL$HERO_PATH")
+          test "$HERO_CODE" = "200"
+          grep -Eqi '^content-type: image/avif' /tmp/deploy-hero-headers.txt
+          test "$(stat -c%s /tmp/deploy-hero.avif)" -eq 44010
+          cmp -s public/hero-idogs-cooper-1094.avif /tmp/deploy-hero.avif
+
+          DOMAIN_CODE=000
+          for i in {1..36}; do
+            DOMAIN_CODE=$(curl -L -sS -o /tmp/prod-home.html -w '%{http_code}' "$PROD_DOMAIN/" || true)
+            [ "$DOMAIN_CODE" = "200" ] && break
+            sleep 5
+          done
+          test "$DOMAIN_CODE" = "200"
+          DOMAIN_HERO_CODE=$(curl -L -sS -o /tmp/prod-hero.avif -w '%{http_code}' "$PROD_DOMAIN$HERO_PATH")
+          test "$DOMAIN_HERO_CODE" = "200"
+          test "$(stat -c%s /tmp/prod-hero.avif)" -eq 44010
+          cmp -s public/hero-idogs-cooper-1094.avif /tmp/prod-hero.avif
+          echo "PRODUCTION_EXACT_SHA $CANDIDATE_SHA"
+          echo "PRODUCTION_DOMAIN $PROD_DOMAIN"
+          echo "DIRECT_ASSET_200_PASS bytes=$(stat -c%s /tmp/prod-hero.avif)"
+          echo PRODUCTION_HERO_PASS
