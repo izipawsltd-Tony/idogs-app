@@ -1,0 +1,110 @@
+name: Landing fontless LCP gate and staging
+on:
+  push:
+    branches: [automation/landing-fontless-staging-20260919]
+permissions:
+  contents: read
+env:
+  CANDIDATE_SHA: c4e643da51b8226b5ddff636b55a915d60da7436
+  TEAM_SLUG: izipawsltd-tonys-projects
+  STAGING_ALIAS: https://idogs-app-staging.vercel.app
+  HERO_PATH: /hero-idogs-cooper-1094.avif
+jobs:
+  gate-and-stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Pin exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(stat -c%s public/hero-idogs-cooper-1094.avif)" -eq 44010
+      - name: Install
+        run: npm ci
+      - name: Pull preview env
+        shell: bash
+        env: { VERCEL_TOKEN: "${{ secrets.VERCEL_TOKEN }}" }
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/pull.log 2>&1
+          [ ! -f .vercel/.env.preview.local ] || cp .vercel/.env.preview.local .env.local
+      - name: Build exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(stat -c%s dist/hero-idogs-cooper-1094.avif)" -eq 44010
+          ! grep -q 'fonts.googleapis.com' dist/index.html
+          ! grep -q 'wasm-bundle' dist/index.html
+          INITIAL_JS=$(grep -Eo '/assets/index-[A-Za-z0-9_-]+\.js' dist/index.html | head -1)
+          echo "INITIAL_JS=$INITIAL_JS bytes=$(stat -c%s "dist$INITIAL_JS")"
+      - name: Start local server
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup npx vite preview --host 127.0.0.1 --port 4173 >/tmp/vite.log 2>&1 &
+          for i in {1..30}; do CODE=$(curl -sS -o /tmp/home -w '%{http_code}' http://127.0.0.1:4173/ || true); [ "$CODE" = 200 ] && break; sleep 1; done
+          test "$CODE" = 200
+          CODE=$(curl -sS -o /tmp/hero -w '%{http_code}' "http://127.0.0.1:4173$HERO_PATH")
+          test "$CODE" = 200
+          cmp -s public/hero-idogs-cooper-1094.avif /tmp/hero
+      - name: Cold Lighthouse gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)
+          npx --yes lighthouse@12.8.2 http://127.0.0.1:4173/ --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' --only-categories=performance --output=json --output-path=/tmp/m.json --max-wait-for-load=45000
+          npx --yes lighthouse@12.8.2 http://127.0.0.1:4173/ --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' --only-categories=performance --preset=desktop --output=json --output-path=/tmp/d.json --max-wait-for-load=45000
+          node <<'NODE'
+          const fs=require('fs'); const r=p=>JSON.parse(fs.readFileSync(p));
+          const p=x=>({lcp:Math.round(x.audits['largest-contentful-paint'].numericValue),fcp:Math.round(x.audits['first-contentful-paint'].numericValue),cls:x.audits['cumulative-layout-shift'].numericValue,tbt:Math.round(x.audits['total-blocking-time'].numericValue),perf:Math.round(x.categories.performance.score*100)});
+          const m=p(r('/tmp/m.json')),d=p(r('/tmp/d.json')); console.log('COLD_MOBILE',JSON.stringify(m));console.log('COLD_DESKTOP',JSON.stringify(d));
+          if(m.lcp>2500) throw Error(`mobile LCP ${m.lcp}`); if(d.lcp>1500) throw Error(`desktop LCP ${d.lcp}`); if(m.cls>.1||d.cls>.1) throw Error('CLS');
+          NODE
+      - name: Enforce staging boundary
+        shell: bash
+        env: { VERCEL_TOKEN: "${{ secrets.VERCEL_TOKEN }}" }
+        run: |
+          set -euo pipefail
+          git checkout --detach "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/stagepull.log 2>&1
+          F=.vercel/.env.production.local; test -f "$F"; grep -Eq '^FIREBASE_PROJECT_ID="?idogs-app-staging"?$' "$F"
+          if grep -q '^STRIPE_SECRET_KEY=' "$F"; then grep -Eq '^STRIPE_SECRET_KEY="?sk_test_' "$F"; fi
+      - name: Deploy exact SHA to staging
+        shell: bash
+        env: { VERCEL_TOKEN: "${{ secrets.VERCEL_TOKEN }}" }
+        run: |
+          set -euo pipefail
+          URL=$(npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" 2>&1 | tee /tmp/deploy.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
+          test -n "$URL"; echo "STAGING_URL=$URL" >> "$GITHUB_ENV"; echo "$URL"
+      - name: Staging asset + structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {1..36}; do CODE=$(curl -sS -o /tmp/sh -w '%{http_code}' "$STAGING_URL$HERO_PATH" || true); [ "$CODE" = 200 ] && break; sleep 5; done
+          test "$CODE" = 200; cmp -s public/hero-idogs-cooper-1094.avif /tmp/sh
+          CODE=$(curl -sS -o /tmp/page -w '%{http_code}' "$STAGING_ALIAS"); test "$CODE" = 200; grep -q 'hero-idogs-cooper-1094.avif' /tmp/page
+      - name: Staging Lighthouse QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)
+          npx --yes lighthouse@12.8.2 "$STAGING_ALIAS" --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' --only-categories=performance --output=json --output-path=/tmp/sm.json --max-wait-for-load=45000
+          npx --yes lighthouse@12.8.2 "$STAGING_ALIAS" --quiet --chrome-flags='--headless --no-sandbox --disable-gpu' --only-categories=performance --preset=desktop --output=json --output-path=/tmp/sd.json --max-wait-for-load=45000
+          node <<'NODE'
+          const fs=require('fs'); const r=p=>JSON.parse(fs.readFileSync(p)); const p=x=>({lcp:Math.round(x.audits['largest-contentful-paint'].numericValue),fcp:Math.round(x.audits['first-contentful-paint'].numericValue),cls:x.audits['cumulative-layout-shift'].numericValue,perf:Math.round(x.categories.performance.score*100)}); const m=p(r('/tmp/sm.json')),d=p(r('/tmp/sd.json')); console.log('STAGING_MOBILE',JSON.stringify(m));console.log('STAGING_DESKTOP',JSON.stringify(d)); if(m.lcp>2500||d.lcp>1500||m.cls>.1||d.cls>.1) throw Error('staging perf gate');
+          NODE
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo "STAGING_QA_PASS $CANDIDATE_SHA"
+          echo IDOGS_PRODUCTION_UNTOUCHED
