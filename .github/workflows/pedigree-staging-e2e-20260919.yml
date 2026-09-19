@@ -2,10 +2,8 @@ name: Pedigree exact-SHA staging E2E
 
 on:
   push:
-    branches:
-      - automation/pedigree-staging-e2e-20260919
-    paths:
-      - '.github/workflows/pedigree-staging-e2e-20260919.yml'
+    branches: [automation/pedigree-staging-e2e-20260919]
+    paths: ['.github/workflows/pedigree-staging-e2e-20260919.yml']
 
 permissions:
   contents: read
@@ -16,28 +14,31 @@ jobs:
     timeout-minutes: 45
     env:
       CANDIDATE_SHA: 815a304a546198f60df8537f4f48f1e18aff91ea
-      PROD_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
-      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
-      TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      VERIFIED_PRODUCTION_SHA: d3052ea12a9a2498ecec3e77a500315899850f39
+      MAIN_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
       TEAM_SLUG: izipawsltd-tonys-projects
-      STAGING_ALIAS: https://idogs-app-staging.vercel.app
+      EXACT_PREVIEW_URL: https://idogs-8nskllpgx-izipawsltd-tonys-projects.vercel.app
+      LOCAL_QA_URL: http://127.0.0.1:4173
 
     steps:
-      - name: Checkout automation branch
+      - name: Checkout automation branch and preserve QA harness
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Pin exact pedigree candidate
+      - name: Preserve harness then pin exact pedigree candidate
         shell: bash
         run: |
           set -euo pipefail
+          cp .github/qa/pedigree-staging-e2e.mjs /tmp/pedigree-staging-e2e.mjs
           git checkout --detach "$CANDIDATE_SHA"
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain)"
-          git merge-base --is-ancestor d3052ea12a9a2498ecec3e77a500315899850f39 "$CANDIDATE_SHA"
+          git merge-base --is-ancestor "$VERIFIED_PRODUCTION_SHA" "$CANDIDATE_SHA"
+          printf '\n/.pedigree-staging-e2e.mjs\n' >> .git/info/exclude
+          cp /tmp/pedigree-staging-e2e.mjs ./.pedigree-staging-e2e.mjs
           echo "EXACT_SOURCE_OK $CANDIDATE_SHA"
-          echo "VERIFIED_PRODUCTION_ANCESTOR d3052ea12a9a2498ecec3e77a500315899850f39"
+          echo "VERIFIED_PRODUCTION_ANCESTOR $VERIFIED_PRODUCTION_SHA"
 
       - name: Install dependencies
         run: npm ci
@@ -53,7 +54,7 @@ jobs:
           test -z "$(git status --porcelain)"
           echo DETERMINISTIC_GATE_PASS
 
-      - name: Link staging project and enforce Firebase boundary
+      - name: Pull main Preview environment and enforce staging Firebase boundary
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -61,341 +62,103 @@ jobs:
           set -euo pipefail
           rm -rf .vercel
           mkdir -p .vercel
-          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
-          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/staging-pull.log 2>&1
-          ENV_FILE=.vercel/.env.production.local
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/preview-pull.log 2>&1
+          ENV_FILE=.vercel/.env.preview.local
           test -f "$ENV_FILE"
-          grep -Eq '^FIREBASE_PROJECT_ID="?idogs-app-staging"?$' "$ENV_FILE"
-          if grep -Eq '^FIREBASE_PROJECT_ID="?idogs-app"?$' "$ENV_FILE"; then echo 'FAIL production Firebase detected'; exit 1; fi
-          if grep -Eq '^EXTRA_LITTER_CHECKOUT_ENABLED="?true"?$' "$ENV_FILE"; then echo 'FAIL staging payment enabled'; exit 1; fi
-          if grep -q '^STRIPE_SECRET_KEY=' "$ENV_FILE"; then grep -Eq '^STRIPE_SECRET_KEY="?sk_test_' "$ENV_FILE"; fi
-          echo STAGING_BOUNDARY_PASS
+          set -a
+          source "$ENV_FILE"
+          set +a
+          test "${FIREBASE_PROJECT_ID:-}" = "idogs-app-staging"
+          test "${VITE_FIREBASE_PROJECT_ID:-}" = "idogs-app-staging"
+          test -n "${FIREBASE_CLIENT_EMAIL:-}"
+          test -n "${FIREBASE_PRIVATE_KEY:-}"
+          if [ "${EXTRA_LITTER_CHECKOUT_ENABLED:-false}" = "true" ]; then echo 'FAIL checkout enabled in Preview QA'; exit 1; fi
+          echo MAIN_PREVIEW_FIREBASE_STAGING_BOUNDARY_PASS
+          echo PAYMENT_PATHS_FORBIDDEN_IN_THIS_QA
 
-      - name: Deploy exact candidate to staging project only
+      - name: Verify existing exact-SHA Vercel Preview through authenticated CLI
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test -z "$(git status --porcelain)"
-          STAGING_URL=$(npx --yes vercel@latest deploy --prod --yes --archive=tgz --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" 2>&1 | tee /tmp/staging-deploy.log | grep -Eo 'https://[^ ]+\.vercel\.app' | tail -1)
-          test -n "$STAGING_URL"
-          echo "STAGING_URL=$STAGING_URL" >> "$GITHUB_ENV"
-          echo "STAGING_DEPLOYMENT $STAGING_URL"
-          echo "STAGING_SOURCE_SHA $CANDIDATE_SHA"
+          npx --yes vercel@latest curl / --deployment "$EXACT_PREVIEW_URL" --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" > /tmp/exact-preview-home.html
+          grep -q '<div id="root"></div>' /tmp/exact-preview-home.html
+          npx --yes vercel@latest curl /login --deployment "$EXACT_PREVIEW_URL" --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" > /tmp/exact-preview-login.html
+          grep -q '<div id="root"></div>' /tmp/exact-preview-login.html
+          echo "EXACT_SHA_VERCEL_PREVIEW_REACHABLE $CANDIDATE_SHA"
 
-      - name: Wait for stable staging alias
+      - name: Build exact candidate with the verified staging Preview environment
         shell: bash
         run: |
           set -euo pipefail
-          CODE=000
-          for i in {1..48}; do
-            CODE=$(curl -sS -L -o /tmp/staging-home.html -w '%{http_code}' "$STAGING_ALIAS/" || true)
-            [ "$CODE" = "200" ] && break
-            sleep 5
-          done
-          test "$CODE" = "200"
-          grep -q '<div id="root"></div>' /tmp/staging-home.html
-          echo STAGING_ALIAS_READY
+          set -a
+          source .vercel/.env.preview.local
+          set +a
+          test "$FIREBASE_PROJECT_ID" = "idogs-app-staging"
+          test "$VITE_FIREBASE_PROJECT_ID" = "idogs-app-staging"
+          unset STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_TEST_SECRET_KEY
+          npm run build
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          echo STAGING_FIREBASE_BUILD_PASS
 
       - name: Create disposable staging-only pedigree fixture
         shell: bash
         run: |
           set -euo pipefail
-          ENV_FILE=.vercel/.env.production.local
           set -a
-          source "$ENV_FILE"
+          source .vercel/.env.preview.local
           set +a
-          test "${FIREBASE_PROJECT_ID:-}" = "idogs-app-staging"
+          test "$FIREBASE_PROJECT_ID" = "idogs-app-staging"
+          test "$VITE_FIREBASE_PROJECT_ID" = "idogs-app-staging"
+          unset STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_TEST_SECRET_KEY
           export QA_RUN_KEY="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs'
-          import crypto from 'node:crypto'
-          import { initializeApp, cert, deleteApp } from 'firebase-admin/app'
-          import { getAuth } from 'firebase-admin/auth'
-          import { getFirestore } from 'firebase-admin/firestore'
+          node ./.pedigree-staging-e2e.mjs setup
 
-          if (process.env.FIREBASE_PROJECT_ID !== 'idogs-app-staging') throw new Error('Staging boundary failed before fixture creation')
-          const privateKey = String(process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n')
-          if (!process.env.FIREBASE_CLIENT_EMAIL || !privateKey.includes('BEGIN PRIVATE KEY')) throw new Error('Staging Admin credential unavailable')
-
-          const app = initializeApp({ credential: cert({
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey,
-          }) }, `pedigree-fixture-${process.env.QA_RUN_KEY}`)
-          const auth = getAuth(app)
-          const db = getFirestore(app)
-          const key = process.env.QA_RUN_KEY.replace(/[^A-Za-z0-9-]/g, '-')
-          const email = `pedigree.qa.${key}@example.com`
-          const password = `Qa!${crypto.randomBytes(18).toString('base64url')}9z`
-          const created = await auth.createUser({ email, password, emailVerified: true, displayName: 'Pedigree QA' })
-          const uid = created.uid
-          const now = new Date().toISOString()
-          const dogId = `qa-pedigree-dog-${key}`
-          const litterId = `qa-pedigree-litter-${key}`
-          const puppySpecs = [
-            ['no_pedigree', 'QA No Pedigree'],
-            ['mixed', 'QA Mixed'],
-            ['rescue', 'QA Rescue'],
-            ['not_recorded', 'QA Not Recorded'],
-            [null, 'QA Missing Registration'],
-          ]
-          const puppies = puppySpecs.map(([reg, label], index) => ({ id: `qa-pedigree-puppy-${index}-${key}`, reg, name: `${label} ${key}` }))
-          const fixture = { uid, email, password, dogId, litterId, dogName: `QA Pedigree Dog ${key}`, litterName: `QA Pedigree Litter ${key}`, puppies }
-          fs.writeFileSync('/tmp/pedigree-fixture.json', JSON.stringify(fixture), { mode: 0o600 })
-
-          await db.doc(`users/${uid}`).set({
-            uid, email, name: 'Pedigree QA', role: 'breeder', state: 'SA', plan: 'free',
-            internalEntitlement: { granted: true, grantedAt: now, grantedBy: 'pedigree-staging-e2e', reason: 'Disposable staging QA', expiresAt: null },
-            createdAt: now, updatedAt: now,
-          })
-
-          const baseDog = {
-            tenantId: uid,
-            breed: 'Labrador Retriever',
-            colour: 'Black',
-            microchip: '',
-            ankc: '',
-            isDeceased: false,
-            originBreederId: uid,
-            currentOwnerId: uid,
-            sourceType: 'BREEDER_ISSUED',
-            createdByUserId: uid,
-            photos: [],
-            notes: '',
-            status: 'active',
-            createdAt: now,
-            updatedAt: now,
-          }
-          await db.doc(`dogs/${dogId}`).set({
-            ...baseDog,
-            passportId: `QAPED${key.replaceAll('-', '').slice(-12).toUpperCase()}`,
-            name: fixture.dogName,
-            sex: 'female',
-            dateOfBirth: '2020-01-01',
-            lifeStage: 'adult',
-            pedigreeRegister: 'no_pedigree',
-            breedingEligibility: 'unknown',
-            breederIdType: 'NONE',
-          })
-
-          for (const [index, puppy] of puppies.entries()) {
-            const data = {
-              ...baseDog,
-              passportId: `QAPUP${index}${key.replaceAll('-', '').slice(-10).toUpperCase()}`,
-              name: puppy.name,
-              sex: index % 2 ? 'male' : 'female',
-              dateOfBirth: '2026-06-01',
-              lifeStage: 'puppy',
-              litterId,
-              retainedByBreeder: false,
-              breedingEligibility: 'unknown',
-            }
-            if (puppy.reg !== null) data.pedigreeRegister = puppy.reg
-            await db.doc(`dogs/${puppy.id}`).set(data)
-          }
-
-          await db.doc(`litters/${litterId}`).set({
-            tenantId: uid,
-            name: fixture.litterName,
-            damId: dogId,
-            damName: fixture.dogName,
-            notes: '',
-            actualBirthDate: '2026-06-01',
-            puppyIds: puppies.map(p => p.id),
-            createdAt: now,
-          })
-
-          await deleteApp(app)
-          console.log('DISPOSABLE_FIXTURE_READY', JSON.stringify({ uid, dogId, litterId, puppyCount: puppies.length }))
-          NODE
-
-      - name: Pedigree live E2E on staging Firebase
+      - name: Pedigree live E2E against staging Firebase
         shell: bash
         run: |
           set -euo pipefail
-          ENV_FILE=.vercel/.env.production.local
           set -a
-          source "$ENV_FILE"
+          source .vercel/.env.preview.local
           set +a
-          test "${FIREBASE_PROJECT_ID:-}" = "idogs-app-staging"
+          test "$FIREBASE_PROJECT_ID" = "idogs-app-staging"
+          test "$VITE_FIREBASE_PROJECT_ID" = "idogs-app-staging"
+          unset STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_TEST_SECRET_KEY
+          export QA_RUN_KEY="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export BASE_URL="$LOCAL_QA_URL"
           CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_PATH"
           export CHROME_PATH
           npm install --no-save --package-lock=false playwright-core@1.55.0 >/tmp/playwright-install.log 2>&1
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs'
-          import { chromium } from 'playwright-core'
-          import { initializeApp, cert, deleteApp } from 'firebase-admin/app'
-          import { getFirestore } from 'firebase-admin/firestore'
-
-          if (process.env.FIREBASE_PROJECT_ID !== 'idogs-app-staging') throw new Error('Staging boundary failed before E2E')
-          const fixture = JSON.parse(fs.readFileSync('/tmp/pedigree-fixture.json', 'utf8'))
-          const app = initializeApp({ credential: cert({
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: String(process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-          }) }, `pedigree-verify-${process.env.GITHUB_RUN_ID || 'run'}`)
-          const db = getFirestore(app)
-          const base = process.env.STAGING_ALIAS
-          const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH, args: ['--no-sandbox', '--disable-gpu'] })
-          const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-          const pageErrors = []
-          const serverErrors = []
-          page.on('pageerror', err => pageErrors.push(err.message))
-          page.on('response', res => { if (res.status() >= 500) serverErrors.push(`${res.status()} ${res.url()}`) })
-
-          const assert = (ok, message) => { if (!ok) throw new Error(message) }
-          async function waitDog(expectedRegister, expectedEligibility) {
-            for (let i = 0; i < 30; i++) {
-              const snap = await db.doc(`dogs/${fixture.dogId}`).get()
-              const d = snap.data() || {}
-              if (d.pedigreeRegister === expectedRegister && d.breedingEligibility === expectedEligibility) return
-              await new Promise(r => setTimeout(r, 300))
-            }
-            const d = (await db.doc(`dogs/${fixture.dogId}`).get()).data() || {}
-            throw new Error(`Firestore pedigree mismatch: expected ${expectedRegister}/${expectedEligibility}, got ${d.pedigreeRegister}/${d.breedingEligibility}`)
-          }
-          function pedigreeSelect(scope = page) {
-            return scope.locator('select').filter({ has: scope.locator('option[value="rescue"]') })
-          }
-
-          await page.goto(`${base}/login?next=${encodeURIComponent(`/app/dogs/${fixture.dogId}`)}`, { waitUntil: 'domcontentloaded', timeout: 45000 })
-          await page.getByLabel('Email address').fill(fixture.email)
-          await page.getByLabel('Password').fill(fixture.password)
-          await page.getByRole('button', { name: 'Sign in' }).click()
-          await page.waitForURL(`**/app/dogs/${fixture.dogId}`, { timeout: 45000 })
-          await page.getByRole('heading', { name: fixture.dogName }).waitFor({ state: 'visible', timeout: 30000 })
-
-          let overviewSelect = pedigreeSelect(page).first()
-          assert(await overviewSelect.inputValue() === 'no_pedigree', 'Overview must start as no_pedigree')
-
-          const transitions = [
-            ['limited', 'not_eligible'],
-            ['main', 'unknown'],
-            ['not_recorded', 'unknown'],
-            ['mixed', 'unknown'],
-            ['rescue', 'unknown'],
-            ['no_pedigree', 'unknown'],
-          ]
-          for (const [register, eligibility] of transitions) {
-            await overviewSelect.selectOption(register)
-            await page.getByText('Pedigree status updated', { exact: true }).waitFor({ state: 'visible', timeout: 15000 })
-            await waitDog(register, eligibility)
-            overviewSelect = pedigreeSelect(page).first()
-          }
-          console.log('OVERVIEW_REAL_FIRESTORE_TRANSITIONS_PASS')
-
-          await page.getByRole('button', { name: /Transfer/ }).first().click()
-          await page.getByText('Transfer Ownership', { exact: true }).waitFor({ state: 'visible' })
-          let allPedigreeSelects = pedigreeSelect(page)
-          assert(await allPedigreeSelects.count() >= 2, 'Dog Detail transfer pedigree select not found')
-          assert(await allPedigreeSelects.last().inputValue() === 'no_pedigree', 'Dog Detail transfer modal reclassified no_pedigree')
-          await page.getByRole('button', { name: '✕' }).last().click()
-          console.log('DOG_DETAIL_TRANSFER_PREFILL_PASS')
-
-          await page.goto(`${base}/app/litters`, { waitUntil: 'domcontentloaded', timeout: 45000 })
-          const litterTitle = page.getByText(fixture.litterName, { exact: true })
-          await litterTitle.waitFor({ state: 'visible', timeout: 30000 })
-          await litterTitle.click()
-          await page.getByText(fixture.puppies[0].name, { exact: true }).waitFor({ state: 'visible', timeout: 20000 })
-
-          const expected = new Map(fixture.puppies.map(p => [p.name, p.reg ?? 'not_recorded']))
-          for (const puppy of fixture.puppies) {
-            const nameNode = page.getByText(puppy.name, { exact: true }).first()
-            const row = nameNode.locator('xpath=ancestor::div[.//button[contains(normalize-space(.), "Transfer")]][1]')
-            await row.getByRole('button', { name: /Transfer/ }).click()
-            await page.getByText('Transfer Ownership', { exact: true }).waitFor({ state: 'visible' })
-            const modalSelect = pedigreeSelect(page).last()
-            assert(await modalSelect.inputValue() === expected.get(puppy.name), `Litter transfer modal reclassified ${puppy.name}`)
-            await page.getByRole('button', { name: '✕' }).last().click()
-          }
-          console.log('LITTER_TRANSFER_ALL_REGISTRATION_PREFILLS_PASS')
-
-          await page.setViewportSize({ width: 390, height: 844 })
-          await page.goto(`${base}/app/dogs/${fixture.dogId}`, { waitUntil: 'domcontentloaded', timeout: 45000 })
-          await page.getByRole('heading', { name: fixture.dogName }).waitFor({ state: 'visible', timeout: 30000 })
-          await page.getByRole('button', { name: /Transfer/ }).first().click()
-          await page.getByText('Transfer Ownership', { exact: true }).waitFor({ state: 'visible' })
-          const mobileSelect = pedigreeSelect(page).last()
-          assert(await mobileSelect.isVisible(), 'Mobile transfer pedigree select is not visible')
-          assert(await mobileSelect.inputValue() === 'no_pedigree', 'Mobile transfer pedigree value changed')
-          const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
-          assert(!overflow, 'Horizontal overflow detected at 390px viewport')
-          console.log('MOBILE_PEDIGREE_MODAL_PASS')
-
-          await page.setViewportSize({ width: 1440, height: 900 })
-          const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
-          assert(!desktopOverflow, 'Horizontal overflow detected at desktop viewport')
-
-          if (pageErrors.length) throw new Error(`Page errors: ${pageErrors.join(' | ')}`)
-          if (serverErrors.length) throw new Error(`HTTP 5xx during pedigree E2E: ${serverErrors.join(' | ')}`)
-          const finalDog = (await db.doc(`dogs/${fixture.dogId}`).get()).data() || {}
-          assert(finalDog.pedigreeRegister === 'no_pedigree' && finalDog.breedingEligibility === 'unknown', 'Final persisted pedigree state is wrong')
-          console.log('PEDIGREE_E2E_PASS', JSON.stringify({ candidate: process.env.CANDIDATE_SHA, finalRegister: finalDog.pedigreeRegister, finalEligibility: finalDog.breedingEligibility }))
-
-          await page.close()
-          await browser.close()
-          await deleteApp(app)
-          NODE
+          npx vite preview --host 127.0.0.1 --port 4173 >/tmp/vite-preview.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill "$VITE_PID" 2>/dev/null || true' EXIT
+          for i in {1..40}; do
+            curl -fsS "$LOCAL_QA_URL/login" >/tmp/local-login.html && break
+            sleep 1
+          done
+          grep -q '<div id="root"></div>' /tmp/local-login.html
+          node ./.pedigree-staging-e2e.mjs e2e
+          echo "PEDIGREE_LIVE_E2E_PASS $CANDIDATE_SHA"
 
       - name: Cleanup disposable staging fixture
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          ENV_FILE=.vercel/.env.production.local
-          test -f "$ENV_FILE" || { echo CLEANUP_SKIPPED_NO_ENV_FILE; exit 0; }
+          test -f .vercel/.env.preview.local || { echo CLEANUP_SKIPPED_NO_ENV_FILE; exit 0; }
+          test -f ./.pedigree-staging-e2e.mjs || { echo CLEANUP_SKIPPED_NO_HARNESS; exit 0; }
           set -a
-          source "$ENV_FILE"
+          source .vercel/.env.preview.local
           set +a
           test "${FIREBASE_PROJECT_ID:-}" = "idogs-app-staging"
+          test "${VITE_FIREBASE_PROJECT_ID:-}" = "idogs-app-staging"
+          unset STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_TEST_SECRET_KEY
           export QA_RUN_KEY="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs'
-          import { initializeApp, cert, deleteApp } from 'firebase-admin/app'
-          import { getAuth } from 'firebase-admin/auth'
-          import { getFirestore } from 'firebase-admin/firestore'
-
-          if (process.env.FIREBASE_PROJECT_ID !== 'idogs-app-staging') throw new Error('Cleanup refused outside staging')
-          const app = initializeApp({ credential: cert({
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: String(process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-          }) }, `pedigree-cleanup-${process.env.QA_RUN_KEY}`)
-          const auth = getAuth(app)
-          const db = getFirestore(app)
-          const key = process.env.QA_RUN_KEY.replace(/[^A-Za-z0-9-]/g, '-')
-          const fallbackEmail = `pedigree.qa.${key}@example.com`
-          let fixture = null
-          try { fixture = JSON.parse(fs.readFileSync('/tmp/pedigree-fixture.json', 'utf8')) } catch {}
-          let uid = fixture?.uid || null
-          if (!uid) {
-            try { uid = (await auth.getUserByEmail(fallbackEmail)).uid } catch {}
-          }
-          const refs = []
-          if (fixture) {
-            refs.push(db.doc(`dogs/${fixture.dogId}`), db.doc(`litters/${fixture.litterId}`))
-            for (const puppy of fixture.puppies || []) refs.push(db.doc(`dogs/${puppy.id}`))
-          }
-          if (uid) {
-            for (const collectionName of ['auditLogs', 'activityNotes', 'reminders', 'documents']) {
-              const q = await db.collection(collectionName).where('tenantId', '==', uid).get().catch(() => null)
-              if (q) for (const d of q.docs) refs.push(d.ref)
-            }
-            refs.push(db.doc(`users/${uid}`))
-          }
-          for (let i = 0; i < refs.length; i += 400) {
-            const batch = db.batch()
-            for (const ref of refs.slice(i, i + 400)) batch.delete(ref)
-            await batch.commit()
-          }
-          if (uid) await auth.deleteUser(uid).catch(() => {})
-          await deleteApp(app)
-          console.log('DISPOSABLE_FIXTURE_CLEANUP_PASS')
-          NODE
+          node ./.pedigree-staging-e2e.mjs cleanup
 
       - name: Final exact-SHA staging report
         if: success()
@@ -403,7 +166,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          echo "STAGING_EXACT_SOURCE_SHA $CANDIDATE_SHA"
-          echo "STAGING_ALIAS $STAGING_ALIAS"
-          echo "PRODUCTION_PROJECT_UNTOUCHED $PROD_PROJECT_ID"
+          test -z "$(git status --porcelain)"
+          echo "EXACT_CANDIDATE_SHA $CANDIDATE_SHA"
+          echo "EXACT_VERCEL_PREVIEW $EXACT_PREVIEW_URL"
+          echo "FIREBASE_QA_PROJECT idogs-app-staging"
+          echo "MAIN_PRODUCTION_DEPLOYMENT_UNTOUCHED"
           echo PEDIGREE_STAGING_GATE_PASS
