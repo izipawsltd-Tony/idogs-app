@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           message="$(git log -1 --pretty=%s)"
-          if [ "$message" != "automation: fix three-layer rights QA findings" ]; then
+          if [ "$message" != "automation: fix transfer rights display state" ]; then
             echo "Not a QA repair trigger commit; nothing to do."
             exit 0
           fi
@@ -40,44 +40,11 @@ jobs:
           from pathlib import Path
           p = Path('src/pages/DogDetailPage.tsx')
           s = p.read_text(encoding='utf-8')
-
-          replacements = [
-            (
-              "          initialBreedingRights={initialBreedingRightsValue(dog as any)}\n          onClose={() => setShowTransfer(false)}",
-              "          initialBreedingRights={initialBreedingRightsValue(dog as any)}\n          canConfirmBreedingRights={profile?.role === 'breeder' && isCurrentEffectiveOwner}\n          onClose={() => setShowTransfer(false)}",
-            ),
-            (
-              "  initialBreedingRights,\n  onClose,",
-              "  initialBreedingRights,\n  canConfirmBreedingRights,\n  onClose,",
-            ),
-            (
-              "  initialBreedingRights: BreedingRightsValue\n  onClose: () => void",
-              "  initialBreedingRights: BreedingRightsValue\n  canConfirmBreedingRights: boolean\n  onClose: () => void",
-            ),
-            (
-              "            {resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? (\n              <select\n                className=\"form-select\"\n                value={breedingRights}\n                onChange={e => setBreedingRights(e.target.value as BreedingRightsValue)}\n              >\n                <option value=\"unknown\">⚪ Not confirmed</option>\n                <option value=\"eligible\">🟢 Breeding permitted</option>\n                <option value=\"not_eligible\">🔴 Not permitted</option>\n              </select>\n            ) : (\n              <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>\n                {resolvePedigreeRegister(pedigreeRegister) === 'LIMITED'\n                  ? '🔴 Not permitted — Limited Register'\n                  : '⚪ Not confirmed — registration does not establish breeding rights'}\n              </div>\n            )}",
-              "            {resolvePedigreeRegister(pedigreeRegister) === 'MAIN' && canConfirmBreedingRights ? (\n              <select\n                className=\"form-select\"\n                value={breedingRights}\n                onChange={e => setBreedingRights(e.target.value as BreedingRightsValue)}\n              >\n                <option value=\"unknown\">⚪ Not confirmed</option>\n                <option value=\"eligible\">🟢 Breeding permitted</option>\n                <option value=\"not_eligible\">🔴 Not permitted</option>\n              </select>\n            ) : resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? (\n              <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>\n                {initialBreedingRights === 'eligible' ? '🟢 Confirmed — breeding permitted' : initialBreedingRights === 'not_eligible' ? '🔴 Not permitted' : '⚪ Not confirmed'}\n              </div>\n            ) : (\n              <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>\n                {resolvePedigreeRegister(pedigreeRegister) === 'LIMITED'\n                  ? '🔴 Not permitted — Limited Register'\n                  : '⚪ Not confirmed — registration does not establish breeding rights'}\n              </div>\n            )}",
-            ),
-            (
-              "            <p className=\"form-hint\">Breeding rights are the breeder's recorded permission. Actual breeding compliance is checked separately against age, health and state/Dogs Australia rules.</p>",
-              "            <p className=\"form-hint\">Breeding rights are the breeder's recorded permission. Actual breeding compliance is checked separately against age, health and state/Dogs Australia rules.{!canConfirmBreedingRights && resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? ' Only a breeder account can confirm Breeding permitted.' : ''}</p>",
-            ),
-            (
-              "      value: isLimitedRegister ? '🔴 Not permitted — Limited Register'\n        : isMarkedNotEligible ? '🔴 Not permitted'\n        : isEligibilityUnconfirmed ? '⚪ Not confirmed'\n        : '🟢 Confirmed — breeding permitted',\n      source: 'Breeder-recorded rights',\n      st: isLimitedRegister || isMarkedNotEligible ? 'fail' : isEligibilityUnconfirmed ? 'info' : 'ok' },",
-              "      value: isLimitedRegister ? '🔴 Not permitted — Limited Register'\n        : pedigreeRegisterStatus !== 'MAIN' ? '⚪ Not confirmed'\n        : isMarkedNotEligible ? '🔴 Not permitted'\n        : isEligibilityUnconfirmed ? '⚪ Not confirmed'\n        : '🟢 Confirmed — breeding permitted',\n      source: 'Breeder-recorded rights',\n      st: isLimitedRegister || isMarkedNotEligible ? 'fail' : pedigreeRegisterStatus !== 'MAIN' || isEligibilityUnconfirmed ? 'info' : 'ok' },",
-            ),
-            (
-              "              v: isLimitedRegister || isMarkedNotEligible ? '🔴 Not permitted' : isEligibilityUnconfirmed ? '⚪ Not confirmed' : '🟢 Confirmed',\n              ok: !isLimitedRegister && !isMarkedNotEligible && !isEligibilityUnconfirmed },",
-              "              v: isLimitedRegister || isMarkedNotEligible ? '🔴 Not permitted' : isNotRecorded || isEligibilityUnconfirmed ? '⚪ Not confirmed' : '🟢 Confirmed',\n              ok: !isLimitedRegister && !isMarkedNotEligible && !isNotRecorded && !isEligibilityUnconfirmed },",
-            ),
-          ]
-
-          for old, new in replacements:
-            if old not in s:
-              raise SystemExit(f'Expected QA anchor not found: {old[:140]!r}')
-            s = s.replace(old, new, 1)
-
-          p.write_text(s, encoding='utf-8')
+          old = "{initialBreedingRights === 'eligible' ? '🟢 Confirmed — breeding permitted' : initialBreedingRights === 'not_eligible' ? '🔴 Not permitted' : '⚪ Not confirmed'}"
+          new = "{breedingRights === 'eligible' ? '🟢 Confirmed — breeding permitted' : breedingRights === 'not_eligible' ? '🔴 Not permitted' : '⚪ Not confirmed'}"
+          if old not in s:
+            raise SystemExit('Expected transfer rights display anchor not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
           PY
 
           npm ci
@@ -89,9 +56,5 @@ jobs:
           git config user.name "iDogs Auto Build"
           git config user.email "actions@users.noreply.github.com"
           git add src/pages/DogDetailPage.tsx
-          if git diff --cached --quiet; then
-            echo "No source changes to commit"
-            exit 0
-          fi
-          git commit -m "fix(pedigree): preserve rights authority and unknown state"
+          git commit -m "fix(pedigree): keep transfer rights display in sync"
           git push origin HEAD:fix/pedigree-transfer-breeding-eligibility
