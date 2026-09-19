@@ -1223,6 +1223,7 @@ export default function DogDetailPage({ toast }: Props) {
           initialBuyerPhone={dog.reservedForPhone || ''}
           initialPedigreeRegister={initialTransferPedigreeRegister((dog as any).pedigreeRegister)}
           initialBreedingRights={initialBreedingRightsValue(dog as any)}
+          canConfirmBreedingRights={profile?.role === 'breeder' && isCurrentEffectiveOwner}
           onClose={() => setShowTransfer(false)}
           onTransfer={handleTransfer}
         />
@@ -1243,6 +1244,7 @@ function TransferModal({
   initialBuyerPhone,
   initialPedigreeRegister,
   initialBreedingRights,
+  canConfirmBreedingRights,
   onClose,
   onTransfer,
 }: {
@@ -1258,6 +1260,7 @@ function TransferModal({
   // for a dog whose pedigreeRegister was never set.
   initialPedigreeRegister: string
   initialBreedingRights: BreedingRightsValue
+  canConfirmBreedingRights: boolean
   onClose: () => void
   onTransfer: (name: string, email: string, phone: string | undefined, pedigreeRegister: string, breedingRights: BreedingRightsValue) => Promise<void>
 }) {
@@ -1376,7 +1379,7 @@ function TransferModal({
               explicit breeder-confirmed permitted/not-permitted decision. */}
           <div className="form-group">
             <label className="form-label">Breeding rights</label>
-            {resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? (
+            {resolvePedigreeRegister(pedigreeRegister) === 'MAIN' && canConfirmBreedingRights ? (
               <select
                 className="form-select"
                 value={breedingRights}
@@ -1386,6 +1389,10 @@ function TransferModal({
                 <option value="eligible">🟢 Breeding permitted</option>
                 <option value="not_eligible">🔴 Not permitted</option>
               </select>
+            ) : resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? (
+              <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>
+                {initialBreedingRights === 'eligible' ? '🟢 Confirmed — breeding permitted' : initialBreedingRights === 'not_eligible' ? '🔴 Not permitted' : '⚪ Not confirmed'}
+              </div>
             ) : (
               <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>
                 {resolvePedigreeRegister(pedigreeRegister) === 'LIMITED'
@@ -1393,7 +1400,7 @@ function TransferModal({
                   : '⚪ Not confirmed — registration does not establish breeding rights'}
               </div>
             )}
-            <p className="form-hint">Breeding rights are the breeder's recorded permission. Actual breeding compliance is checked separately against age, health and state/Dogs Australia rules.</p>
+            <p className="form-hint">Breeding rights are the breeder's recorded permission. Actual breeding compliance is checked separately against age, health and state/Dogs Australia rules.{!canConfirmBreedingRights && resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? ' Only a breeder account can confirm Breeding permitted.' : ''}</p>
           </div>
 
           {/* Warning */}
@@ -3759,11 +3766,12 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       st: isNotRecorded ? 'info' : 'ok' },
     { rule: 'Breeding rights',
       value: isLimitedRegister ? '🔴 Not permitted — Limited Register'
+        : pedigreeRegisterStatus !== 'MAIN' ? '⚪ Not confirmed'
         : isMarkedNotEligible ? '🔴 Not permitted'
         : isEligibilityUnconfirmed ? '⚪ Not confirmed'
         : '🟢 Confirmed — breeding permitted',
       source: 'Breeder-recorded rights',
-      st: isLimitedRegister || isMarkedNotEligible ? 'fail' : isEligibilityUnconfirmed ? 'info' : 'ok' },
+      st: isLimitedRegister || isMarkedNotEligible ? 'fail' : pedigreeRegisterStatus !== 'MAIN' || isEligibilityUnconfirmed ? 'info' : 'ok' },
     { rule: 'Minimum breeding age',              value: `${rules.minBreedingMonths} months`,      st: isPuppyOrWhelp ? 'info' : (!isUnder12 ? 'ok' : 'fail') },
     { rule: `Recommended min age (${breedSize})`,value: `${minForBreed} months`,                 st: isPuppyOrWhelp ? 'info' : (ageMo >= minForBreed ? 'ok' : 'warn') },
     { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No specific rule' : `${rules.maxLittersIn18Months} litters`, st: isPuppyOrWhelp ? 'info' : (last18Ok ? 'ok' : 'fail') },
@@ -3837,8 +3845,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
               ok: !isNotRecorded },
             {
               l: 'Breeding rights',
-              v: isLimitedRegister || isMarkedNotEligible ? '🔴 Not permitted' : isEligibilityUnconfirmed ? '⚪ Not confirmed' : '🟢 Confirmed',
-              ok: !isLimitedRegister && !isMarkedNotEligible && !isEligibilityUnconfirmed },
+              v: isLimitedRegister || isMarkedNotEligible ? '🔴 Not permitted' : isNotRecorded || isEligibilityUnconfirmed ? '⚪ Not confirmed' : '🟢 Confirmed',
+              ok: !isLimitedRegister && !isMarkedNotEligible && !isNotRecorded && !isEligibilityUnconfirmed },
             { l: 'Age', v: `${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo`, ok: isPuppyOrWhelp ? true : (!isUnder12 && !isOver) },
             { l: 'Breed size', v: breedSize.charAt(0).toUpperCase() + breedSize.slice(1), ok: true },
             { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: isPuppyOrWhelp ? true : littersOk },
