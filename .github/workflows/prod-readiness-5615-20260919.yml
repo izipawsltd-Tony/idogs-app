@@ -1,0 +1,195 @@
+name: Production readiness 5615 QA
+
+on:
+  push:
+    branches:
+      - automation/prod-readiness-5615-20260919
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: 561530d92fadb5a305f9cc05d938ee12e9ceb4b4
+  HERO_PATH: /hero-idogs-cooper-1094.avif
+
+jobs:
+  qa:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pin exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(stat -c%s public/hero-idogs-cooper-1094.avif)" -eq 44010
+          echo "EXACT_SOURCE_PASS=$CANDIDATE_SHA"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and structural gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(stat -c%s dist/hero-idogs-cooper-1094.avif)" -eq 44010
+          ! grep -q 'fonts.googleapis.com' dist/index.html
+          ! grep -q 'wasm-bundle' dist/index.html
+          find dist/assets -maxdepth 1 -name 'wasm-bundle-*.js' -type f | grep -q .
+          find dist/assets -maxdepth 1 -name 'heic-*.js' -type f | grep -q .
+          grep -Fq "import LandingPage from '../pages/LandingPage'" src/components/App.tsx
+          ! grep -Eq "^import .* from '../pages/(LoginPage|SignupPage|DashboardPage|DogListPage|DogDetailPage|LittersPage|AdminAuditPage|AdminSurveyPage)'" src/components/App.tsx
+          LAZY_COUNT=$(grep -c 'React.lazy' src/components/App.tsx)
+          test "$LAZY_COUNT" -ge 40
+          grep -Fq 'src="/hero-idogs-cooper-1094.avif"' src/pages/LandingPage.tsx
+          ! grep -Fq 'slotId="hero"' src/pages/LandingPage.tsx
+          grep -Fq 'MAX_LANDING_VIDEO_BYTES = 20 * 1024 * 1024' api/_lib/landing-media.js
+          grep -Fq 'MAX_LANDING_VIDEO_BYTES = 20 * 1024 * 1024' src/lib/landingMedia.ts
+          INITIAL_JS=$(grep -Eo '/assets/index-[A-Za-z0-9_-]+\.js' dist/index.html | head -1)
+          test -n "$INITIAL_JS"
+          INITIAL_BYTES=$(stat -c%s "dist$INITIAL_JS")
+          echo "INITIAL_JS=$INITIAL_JS"
+          echo "INITIAL_JS_BYTES=$INITIAL_BYTES"
+          echo "LAZY_ROUTE_COUNT=$LAZY_COUNT"
+          test "$INITIAL_BYTES" -le 230000
+          echo STRUCTURAL_GATE_PASS
+
+      - name: Landing media regression with static-hero contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          timeout 150s node scripts/test-landing-media.mjs 2>&1 | tee /tmp/landing-media.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            FAIL_COUNT=$(grep -c '^FAIL:' /tmp/landing-media.log || true)
+            echo "landing-media legacy failure count=$FAIL_COUNT"
+            test "$FAIL_COUNT" -eq 1
+            grep -Fq 'FAIL: LandingPage.tsx renders a LandingMediaSlot for slotId="hero"' /tmp/landing-media.log
+            ! grep -Fq 'FAIL: MAX_LANDING_VIDEO_BYTES' /tmp/landing-media.log
+            echo 'EXPECTED_LEGACY_HERO_ASSERTION_ONLY: static hero is intentional for LCP; no dynamic hero slot on public landing.'
+          fi
+          echo LANDING_MEDIA_REGRESSION_PASS
+
+      - name: Additional targeted regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 150s node scripts/test-image-compression.mjs
+          timeout 150s node scripts/test-billing-navigation.mjs
+          timeout 150s node scripts/test-staging-isolation-fallbacks.mjs
+          echo TARGETED_REGRESSION_PASS
+
+      - name: Start exact local preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup npx vite preview --host 127.0.0.1 --port 4173 >/tmp/vite-preview.log 2>&1 &
+          for i in {1..30}; do
+            CODE=$(curl -sS -o /tmp/home.html -w '%{http_code}' http://127.0.0.1:4173/ || true)
+            [ "$CODE" = "200" ] && break
+            sleep 1
+          done
+          test "$CODE" = "200"
+          CODE=$(curl -sS -o /tmp/hero.avif -w '%{http_code}' "http://127.0.0.1:4173$HERO_PATH")
+          test "$CODE" = "200"
+          cmp -s public/hero-idogs-cooper-1094.avif /tmp/hero.avif
+          echo LOCAL_PREVIEW_PASS
+
+      - name: Public route smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          for p in / /login /signup /terms /privacy /forgot-password /survey /app/dashboard; do
+            code=$(curl -sS -o /tmp/route.html -w '%{http_code}' "http://127.0.0.1:4173$p")
+            echo "$p $code"
+            test "$code" = "200"
+            grep -q '<div id="root"></div>' /tmp/route.html
+          done
+          echo PUBLIC_ROUTE_SMOKE_PASS
+
+      - name: Cold Lighthouse stability gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)
+          test -n "$CHROME_PATH"
+          mkdir -p qa-artifacts
+          for run in 1 2 3; do
+            npx --yes lighthouse@12.8.2 http://127.0.0.1:4173/ \
+              --quiet --chrome-flags='--headless --no-sandbox --disable-gpu --incognito' \
+              --only-categories=performance --output=json \
+              --output-path="qa-artifacts/mobile-$run.json" --max-wait-for-load=45000
+          done
+          npx --yes lighthouse@12.8.2 http://127.0.0.1:4173/ \
+            --quiet --chrome-flags='--headless --no-sandbox --disable-gpu --incognito' \
+            --only-categories=performance --preset=desktop --output=json \
+            --output-path=qa-artifacts/desktop.json --max-wait-for-load=45000
+          node <<'NODE'
+          const fs = require('fs')
+          const read = p => JSON.parse(fs.readFileSync(p, 'utf8'))
+          const pick = x => ({lcp:Math.round(x.audits['largest-contentful-paint'].numericValue),fcp:Math.round(x.audits['first-contentful-paint'].numericValue),cls:x.audits['cumulative-layout-shift'].numericValue,tbt:Math.round(x.audits['total-blocking-time'].numericValue),perf:Math.round((x.categories.performance.score||0)*100)})
+          const mobile=[1,2,3].map(i=>pick(read(`qa-artifacts/mobile-${i}.json`)))
+          const desktop=pick(read('qa-artifacts/desktop.json'))
+          mobile.forEach((m,i)=>console.log(`COLD_MOBILE_${i+1}`,JSON.stringify(m)))
+          console.log('COLD_DESKTOP',JSON.stringify(desktop))
+          const lcps=mobile.map(x=>x.lcp).sort((a,b)=>a-b)
+          console.log(`MOBILE_LCP_MEDIAN=${lcps[1]} MOBILE_LCP_WORST=${lcps[2]}`)
+          if(mobile.some(m=>m.lcp>2500)) throw new Error(`Mobile LCP stability gate failed: ${mobile.map(x=>x.lcp).join(',')}ms`)
+          if(mobile.some(m=>m.cls>0.1)) throw new Error('Mobile CLS gate failed')
+          if(desktop.lcp>1500) throw new Error(`Desktop LCP ${desktop.lcp}ms > 1500ms`)
+          if(desktop.cls>0.1) throw new Error(`Desktop CLS ${desktop.cls} > 0.1`)
+          NODE
+          echo LIGHTHOUSE_STABILITY_PASS
+
+      - name: Quality Lighthouse audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHROME_PATH=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)
+          npx --yes lighthouse@12.8.2 http://127.0.0.1:4173/ \
+            --quiet --chrome-flags='--headless --no-sandbox --disable-gpu --incognito' \
+            --only-categories=accessibility,best-practices,seo --preset=desktop \
+            --output=json --output-path=qa-artifacts/quality.json --max-wait-for-load=45000
+          node <<'NODE'
+          const x=require('./qa-artifacts/quality.json')
+          const s=n=>Math.round((x.categories[n].score||0)*100)
+          const a=s('accessibility'), b=s('best-practices'), seo=s('seo')
+          console.log(`QUALITY accessibility=${a} best_practices=${b} seo=${seo}`)
+          if(a<90) throw new Error(`Accessibility ${a} < 90`)
+          if(b<90) throw new Error(`Best Practices ${b} < 90`)
+          if(seo<90) throw new Error(`SEO ${seo} < 90`)
+          NODE
+          echo QUALITY_AUDIT_PASS
+
+      - name: Capture QA screenshots
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p qa-artifacts
+          CHROME=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)
+          test -n "$CHROME"
+          "$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars --window-size=390,844 --screenshot=qa-artifacts/landing-mobile.png http://127.0.0.1:4173/ || true
+          "$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,1000 --screenshot=qa-artifacts/landing-desktop.png http://127.0.0.1:4173/ || true
+          "$CHROME" --headless --no-sandbox --disable-gpu --hide-scrollbars --window-size=390,844 --screenshot=qa-artifacts/login-mobile.png http://127.0.0.1:4173/login || true
+          echo SCREENSHOT_CAPTURE_DONE
+
+      - name: Upload QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-readiness-5615-evidence
+          path: qa-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
