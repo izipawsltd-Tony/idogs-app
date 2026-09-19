@@ -49,20 +49,44 @@ jobs:
       - name: Prepare approved iDogs branding
         run: npm --prefix mobile run branding
 
+      - name: Verify branding source masters
+        shell: bash
+        run: |
+          test -f mobile/resources/icon-only.png
+          test -f mobile/resources/icon-foreground.png
+          test -f mobile/resources/icon-background.png
+          test -f mobile/resources/splash.png
+          test -f mobile/resources/branding-manifest.json
+          node --input-type=module <<'NODE'
+          import sharp from 'sharp'
+          for (const [file, expected] of [
+            ['mobile/resources/icon-only.png', [1024, 1024]],
+            ['mobile/resources/splash.png', [2732, 2732]],
+          ]) {
+            const meta = await sharp(file).metadata()
+            if (meta.width !== expected[0] || meta.height !== expected[1]) {
+              throw new Error(`${file} is ${meta.width}x${meta.height}, expected ${expected[0]}x${expected[1]}`)
+            }
+          }
+          NODE
+
       - name: Generate Android native project
         run: npm --prefix mobile run add:android
 
       - name: Sync web build into Android
         run: npm --prefix mobile run sync:android
 
-      - name: Verify Android identity and shell
+      - name: Generate Android launcher and splash assets
+        run: npm --prefix mobile run assets:android
+
+      - name: Verify Android identity and native branding
         shell: bash
         run: |
           test -f mobile/android/app/src/main/AndroidManifest.xml
-          test -f mobile/resources/icon-source.png
-          test -f mobile/resources/brand-horizontal-source.png
           grep -q "au.com.idogs.app" mobile/android/app/build.gradle || grep -q "au.com.idogs.app" mobile/android/app/build.gradle.kts
-          echo "iDogs Android mobile shell generated successfully."
+          find mobile/android/app/src/main/res -type f -iname '*launcher*' | grep -q .
+          find mobile/android/app/src/main/res -type f -iname '*splash*' | grep -q .
+          echo "iDogs Android shell + native branding generated successfully."
 
       - name: Upload generated Android shell
         uses: actions/upload-artifact@v4
@@ -99,20 +123,41 @@ jobs:
       - name: Prepare approved iDogs branding
         run: npm --prefix mobile run branding
 
+      - name: Verify branding source masters
+        shell: bash
+        run: |
+          test -f mobile/resources/icon-only.png
+          test -f mobile/resources/splash.png
+          node --input-type=module <<'NODE'
+          import sharp from 'sharp'
+          for (const [file, expected] of [
+            ['mobile/resources/icon-only.png', [1024, 1024]],
+            ['mobile/resources/splash.png', [2732, 2732]],
+          ]) {
+            const meta = await sharp(file).metadata()
+            if (meta.width !== expected[0] || meta.height !== expected[1]) {
+              throw new Error(`${file} is ${meta.width}x${meta.height}, expected ${expected[0]}x${expected[1]}`)
+            }
+          }
+          NODE
+
       - name: Generate iOS native project
         run: npm --prefix mobile run add:ios
 
       - name: Sync web build into iOS
         run: npm --prefix mobile run sync:ios
 
-      - name: Verify iOS identity and shell
+      - name: Generate iOS app icon and splash assets
+        run: npm --prefix mobile run assets:ios
+
+      - name: Verify iOS identity and native branding
         shell: bash
         run: |
           test -f mobile/ios/App/App.xcodeproj/project.pbxproj
-          test -f mobile/resources/icon-source.png
-          test -f mobile/resources/brand-horizontal-source.png
           grep -q "au.com.idogs.app" mobile/ios/App/App.xcodeproj/project.pbxproj
-          echo "iDogs iOS mobile shell generated successfully."
+          test -d mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset
+          find mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset -type f -name '*.png' | grep -q .
+          echo "iDogs iOS shell + native branding generated successfully."
 
       - name: Upload generated iOS shell
         uses: actions/upload-artifact@v4
