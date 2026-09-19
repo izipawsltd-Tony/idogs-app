@@ -1,0 +1,139 @@
+name: iDogs Android Debug APK
+
+on:
+  push:
+    branches:
+      - feat/mobile-app-foundation
+    paths:
+      - '.github/workflows/mobile-android-debug-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-android-debug-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-debug-apk:
+    name: Build staging Android debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Pull Preview env and fail closed unless Firebase is staging
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${VERCEL_TOKEN:-}" || { echo 'VERCEL_TOKEN missing'; exit 1; }
+          rm -rf .vercel
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-pull.log 2>&1
+          test -f .vercel/.env.preview.local
+          ENV_FILE=.vercel/.env.preview.local GITHUB_ENV_FILE="$GITHUB_ENV" node <<'NODE'
+          const fs = require('fs')
+          const text = fs.readFileSync(process.env.ENV_FILE, 'utf8')
+          function read(name) {
+            const line = text.split(/\r?\n/).find(l => l.startsWith(name + '='))
+            if (!line) return null
+            let v = line.slice(name.length + 1).trim()
+            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+            return v.replace(/\\n/g, '\n')
+          }
+          const required = [
+            'VITE_FIREBASE_API_KEY',
+            'VITE_FIREBASE_AUTH_DOMAIN',
+            'VITE_FIREBASE_PROJECT_ID',
+            'VITE_FIREBASE_STORAGE_BUCKET',
+            'VITE_FIREBASE_MESSAGING_SENDER_ID',
+            'VITE_FIREBASE_APP_ID',
+          ]
+          const values = Object.fromEntries(required.map(k => [k, read(k)]))
+          for (const [k, v] of Object.entries(values)) {
+            if (!v) throw new Error(`${k} missing from Preview env`)
+          }
+          if (values.VITE_FIREBASE_PROJECT_ID !== 'idogs-app-staging') {
+            throw new Error('FAIL CLOSED: Preview Firebase is not idogs-app-staging')
+          }
+          for (const [k, v] of Object.entries(values)) {
+            fs.appendFileSync(process.env.GITHUB_ENV_FILE, `${k}=${v}\n`)
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV_FILE, 'VITE_EXTRA_LITTER_CHECKOUT_ENABLED=false\n')
+          console.log('Preview Firebase classification: STAGING')
+          NODE
+
+      - name: Build web bundle with staging Firebase only
+        run: npm run build
+
+      - name: Install Capacitor mobile dependencies
+        run: npm --prefix mobile install --no-audit --no-fund
+
+      - name: Prepare approved iDogs branding
+        run: npm --prefix mobile run branding
+
+      - name: Generate Android native project
+        run: npm --prefix mobile run add:android
+
+      - name: Sync web bundle into Android
+        run: npm --prefix mobile run sync:android
+
+      - name: Generate Android launcher and splash assets
+        run: npm --prefix mobile run assets:android
+
+      - name: Build debug APK
+        working-directory: mobile/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Verify APK identity and integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          grep -q "au.com.idogs.app" mobile/android/app/build.gradle || grep -q "au.com.idogs.app" mobile/android/app/build.gradle.kts
+          unzip -t "$APK" >/dev/null
+          mkdir -p mobile/apk-output
+          cp "$APK" mobile/apk-output/iDogs-staging-debug-${GITHUB_SHA}.apk
+          cat > mobile/apk-output/BUILD_INFO.txt <<EOF
+          iDogs Android Debug APK
+          Git SHA: ${GITHUB_SHA}
+          App ID: au.com.idogs.app
+          Firebase: idogs-app-staging
+          Build type: debug
+          Payments: disabled for this QA build
+          EOF
+          sha256sum mobile/apk-output/*.apk | tee mobile/apk-output/SHA256SUMS.txt
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-android-debug-apk-${{ github.sha }}
+          path: mobile/apk-output/
+          if-no-files-found: error
+          retention-days: 14
