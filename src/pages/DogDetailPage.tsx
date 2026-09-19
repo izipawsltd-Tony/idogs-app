@@ -1654,16 +1654,28 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
           </div>
         </div>
 
-        {/* Layer 3 — Actual breeding compliance. Deliberately computed in
-            the Breeding tab from age, state/Dogs Australia rules and breeding
-            history; never inferred from registration or rights alone. */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', gap: 8 }}>
-          <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Actual breeding compliance</span>
-          {onOpenBreeding ? (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenBreeding} style={{ fontSize: 12 }}>Review in Breeding tab →</button>
-          ) : (
-            <span style={{ fontSize: 12, color: 'var(--mid)', textAlign: 'right' }}>Checked separately when this dog is used for breeding</span>
-          )}
+        {/* Layer 3 — Actual breeding compliance. This is intentionally
+            more prominent than a tertiary link because it is the action that
+            turns registration + rights into a real breeding-readiness check. */}
+        <div style={{ padding: '12px 16px 14px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ background: '#FFF9EC', border: '1.5px solid #EBD9A8', borderRadius: 12, padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 0, flex: '1 1 220px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--dark)' }}>Actual breeding compliance</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--warning)', background: '#FBF3E4', border: '1px solid #EBD9A8', borderRadius: 20, padding: '2px 7px' }}>IMPORTANT</span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--mid)', lineHeight: 1.45 }}>
+                Check age, health, breeding history and state / Dogs Australia rules before breeding.
+              </div>
+            </div>
+            {onOpenBreeding ? (
+              <button type="button" className="btn btn-primary btn-sm" onClick={onOpenBreeding} style={{ fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', flex: '0 0 auto' }}>
+                Review Breeding Compliance →
+              </button>
+            ) : (
+              <span style={{ fontSize: 12, color: 'var(--mid)', textAlign: 'right' }}>Checked separately when this dog is used for breeding</span>
+            )}
+          </div>
         </div>
         {editingBreederId ? (
           <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
