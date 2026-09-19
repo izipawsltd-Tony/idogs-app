@@ -18,7 +18,7 @@ import {
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
-import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
+import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, nextBreedingRightsUpdate, initialTransferPedigreeRegister, initialBreedingRightsValue, pedigreeRegisterLabel, breedingRightsLabel, type BreedingRightsValue } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
 import { isHeicFile } from '../lib/heic'
 import PhotoUpload from '../components/ui/PhotoUpload'
@@ -820,13 +820,14 @@ export default function DogDetailPage({ toast }: Props) {
   const viewDoc = (path?: string | null, legacyUrl?: string | null) =>
     viewDocument(user, toast, path, legacyUrl)
 
-  async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone: string | undefined, pedigreeRegister: string) {
+  async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone: string | undefined, pedigreeRegister: string, breedingRights: BreedingRightsValue) {
     if (!dogId || !dog) return
     const passportUrl = `${window.location.origin}/p/${dog.passportId}`
     // Same canonical rule as the Overview edit control and LittersPage's
     // transfer modal — never a second, parallel implementation of "what
     // does selecting Limited/Main/Not recorded actually persist".
     const pedigreeUpdate = nextPedigreeRegisterUpdate((dog as any).pedigreeRegister, pedigreeRegister)
+    const rightsUpdate = nextBreedingRightsUpdate(pedigreeRegister, breedingRights)
     // The Firestore write below is the actual transfer — once it succeeds,
     // the dog is transferred. Email + audit log are best-effort follow-ups;
     // previously a transient failure in either (network blip, Resend
@@ -842,7 +843,7 @@ export default function DogDetailPage({ toast }: Props) {
       transferredAt: new Date().toISOString(),
       microchipCertUrl: (dog as any).microchipCertUrl || null,
       pedigreeRegister: pedigreeUpdate.pedigreeRegister,
-      breedingEligibility: pedigreeUpdate.breedingEligibility,
+      breedingEligibility: rightsUpdate.breedingEligibility,
     })
     await sendTransferEmail({
       buyerEmail,
@@ -861,7 +862,7 @@ export default function DogDetailPage({ toast }: Props) {
       performedBy: user?.uid || '',
       performedByEmail: user?.email || '',
     }).catch(err => console.error('Transfer audit log failed (transfer itself already succeeded):', err))
-    setDog(prev => prev ? { ...prev, status: 'transferred', transferStatus: 'pendingClaim', buyerName, buyerEmail, buyerPhone, ...pedigreeUpdate } as any : prev)
+    setDog(prev => prev ? { ...prev, status: 'transferred', transferStatus: 'pendingClaim', buyerName, buyerEmail, buyerPhone, ...pedigreeUpdate, ...rightsUpdate } as any : prev)
     setShowTransfer(false)
     toast(`${dog.name} transferred to ${buyerName} ✓`, 'success')
   }
@@ -1148,7 +1149,10 @@ export default function DogDetailPage({ toast }: Props) {
         <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} isCurrentEffectiveOwner={isCurrentEffectiveOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} isCurrentEffectiveOwner={isCurrentEffectiveOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdateDogFields={async (updates) => {
+        await updateDog(dogId!, updates)
+        setDog(prev => prev ? { ...prev, ...updates } : prev)
+      }} onOpenBreeding={dog.sex === 'female' && !isOwner ? () => setTab('breeding') : undefined} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} onUpdateSale={async (firestoreUpdates, localUpdates) => {
@@ -1218,6 +1222,7 @@ export default function DogDetailPage({ toast }: Props) {
           initialBuyerEmail={dog.reservedForEmail || ''}
           initialBuyerPhone={dog.reservedForPhone || ''}
           initialPedigreeRegister={initialTransferPedigreeRegister((dog as any).pedigreeRegister)}
+          initialBreedingRights={initialBreedingRightsValue(dog as any)}
           onClose={() => setShowTransfer(false)}
           onTransfer={handleTransfer}
         />
@@ -1237,6 +1242,7 @@ function TransferModal({
   initialBuyerEmail,
   initialBuyerPhone,
   initialPedigreeRegister,
+  initialBreedingRights,
   onClose,
   onTransfer,
 }: {
@@ -1251,13 +1257,15 @@ function TransferModal({
   // existing value round-trips as itself; never 'main' by silent default
   // for a dog whose pedigreeRegister was never set.
   initialPedigreeRegister: string
+  initialBreedingRights: BreedingRightsValue
   onClose: () => void
-  onTransfer: (name: string, email: string, phone: string | undefined, pedigreeRegister: string) => Promise<void>
+  onTransfer: (name: string, email: string, phone: string | undefined, pedigreeRegister: string, breedingRights: BreedingRightsValue) => Promise<void>
 }) {
   const [buyerName, setBuyerName] = useState(initialBuyerName || '')
   const [buyerEmail, setBuyerEmail] = useState(initialBuyerEmail || '')
   const [buyerPhone, setBuyerPhone] = useState(initialBuyerPhone || '')
   const [pedigreeRegister, setPedigreeRegister] = useState(initialPedigreeRegister)
+  const [breedingRights, setBreedingRights] = useState<BreedingRightsValue>(initialBreedingRights)
   const [confirm, setConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -1268,7 +1276,7 @@ function TransferModal({
     setLoading(true)
     setError('')
     try {
-      await onTransfer(buyerName.trim(), buyerEmail.trim().toLowerCase(), buyerPhone.trim() || undefined, pedigreeRegister)
+      await onTransfer(buyerName.trim(), buyerEmail.trim().toLowerCase(), buyerPhone.trim() || undefined, pedigreeRegister, breedingRights)
     } catch (err) {
       // Round 20: never log/surface the raw error here — it can carry a
       // Firestore document path, this caller's UID, or the buyer name/
@@ -1337,7 +1345,13 @@ function TransferModal({
             <select
               className="form-select"
               value={pedigreeRegister}
-              onChange={e => setPedigreeRegister(e.target.value)}
+              onChange={e => {
+                const nextRegister = e.target.value
+                const patch = nextPedigreeRegisterUpdate(pedigreeRegister, nextRegister)
+                setPedigreeRegister(nextRegister)
+                if (patch.breedingEligibility) setBreedingRights(patch.breedingEligibility)
+                else if (resolvePedigreeRegister(nextRegister) !== 'MAIN') setBreedingRights('unknown')
+              }}
             >
               <option value="main">🔵 Main Register</option>
               <option value="limited">🟠 Limited Register — family/pet, not for breeding</option>
@@ -1355,6 +1369,31 @@ function TransferModal({
                 ? "The buyer will see this dog's registration as not recorded — this can be corrected later from the dog's Overview page."
                 : "This classification is preserved as-is for the buyer — it can be corrected later from the dog's Overview page."}
             </p>
+          </div>
+
+          {/* Breeding rights — separate from pedigree registration and from
+              the final compliance engine. Only Main Register can carry an
+              explicit breeder-confirmed permitted/not-permitted decision. */}
+          <div className="form-group">
+            <label className="form-label">Breeding rights</label>
+            {resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? (
+              <select
+                className="form-select"
+                value={breedingRights}
+                onChange={e => setBreedingRights(e.target.value as BreedingRightsValue)}
+              >
+                <option value="unknown">⚪ Not confirmed</option>
+                <option value="eligible">🟢 Breeding permitted</option>
+                <option value="not_eligible">🔴 Not permitted</option>
+              </select>
+            ) : (
+              <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>
+                {resolvePedigreeRegister(pedigreeRegister) === 'LIMITED'
+                  ? '🔴 Not permitted — Limited Register'
+                  : '⚪ Not confirmed — registration does not establish breeding rights'}
+              </div>
+            )}
+            <p className="form-hint">Breeding rights are the breeder's recorded permission. Actual breeding compliance is checked separately against age, health and state/Dogs Australia rules.</p>
           </div>
 
           {/* Warning */}
@@ -1407,7 +1446,7 @@ function TransferModal({
               onChange={e => setConfirm(e.target.checked)}
               style={{ marginTop: 2, accentColor: 'var(--brand-600)', width: 16, height: 16, flexShrink: 0 }}
             />
-            <span>I confirm I want to transfer <strong>{dogName}</strong> to this buyer as <strong>{pedigreeRegisterLabel(pedigreeRegister)}</strong>. This action cannot be undone.</span>
+            <span>I confirm I want to transfer <strong>{dogName}</strong> to this buyer as <strong>{pedigreeRegisterLabel(pedigreeRegister)}</strong>{resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? <> with breeding rights <strong>{breedingRightsLabel(breedingRights)}</strong></> : null}. This action cannot be undone.</span>
           </label>
 
           {error && <p className="form-error">{error}</p>}
@@ -1432,7 +1471,7 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, isCurrentEffectiveOwner, onUpdateBreederId, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, isCurrentEffectiveOwner, onUpdateDogFields, onOpenBreeding, onUpdateBreederId, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number | null
   toast: (msg: string, type?: ToastMessage['type']) => void
   isOwner: boolean
@@ -1452,6 +1491,8 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
   // "you don't have permission to update this dog anymore", which is
   // CORRECT Rules behavior surfaced as a confusing, avoidable UI dead end.
   isCurrentEffectiveOwner: boolean
+  onUpdateDogFields: (updates: Partial<Dog>) => Promise<void>
+  onOpenBreeding?: () => void
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
   onUpdateSale: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
@@ -1475,6 +1516,9 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
   const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
   const [breederIdValue, setBreederIdValue] = useState(dog.breederIdValue || '')
   const [savingBreederId, setSavingBreederId] = useState(false)
+  const pedigreeRegisterStatus = resolvePedigreeRegister((dog as any).pedigreeRegister)
+  const breedingRightsStatus = resolveBreedingEligibility(dog as any)
+  const canEditBreedingRights = profile?.role === 'breeder' && isCurrentEffectiveOwner && !isRestricted && pedigreeRegisterStatus === 'MAIN'
 
   // ADR-001 §Decision 6 — provenance display, never a real person/
   // organisation name beyond the caller's own kennelName when they are
@@ -1533,73 +1577,28 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
           </div>
         )}
         <InfoRow label="Dogs Australia Registration" value={dog.ankc || '—'} />
-        {/* Pedigree Register — resolvePedigreeRegister/resolveBreedingEligibility are the
-            single source of truth here; a missing/undefined pedigreeRegister (every
-            litter-born puppy, until edited) must read as "not recorded", never "Main". */}
+        {/* Layer 1 — Pedigree registration. Registration is descriptive only;
+            it never silently decides breeding rights or actual compliance. */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', gap: 8 }}>
-          <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Pedigree / Registration</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {(() => {
-              const register = resolvePedigreeRegister((dog as any).pedigreeRegister)
-              const eligibility = resolveBreedingEligibility(dog as any)
-              if (register === 'LIMITED') {
-                return (
-                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: '#FFF3E0', color: '#E65100', border: '1px solid #FFCC80' }}>
-                    🟠 Limited Register — not eligible to breed
-                  </span>
-                )
-              }
-              if (register === 'NO_PEDIGREE') {
-                return <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>No pedigree (purebred)</span>
-              }
-              if (register === 'MIXED') {
-                return <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>Mixed breed</span>
-              }
-              if (register === 'RESCUE') {
-                return <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>Rescue / unknown</span>
-              }
-              if (register === 'NOT_RECORDED') {
-                return (
-                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
-                    ⚪ Registration not recorded — breeding eligibility unknown
-                  </span>
-                )
-              }
-              // MAIN
-              if (eligibility === 'ELIGIBLE') {
-                return (
-                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid rgba(8,80,65,0.15)' }}>
-                    🔵 Main Register — eligible to breed
-                  </span>
-                )
-              }
-              if (eligibility === 'NOT_ELIGIBLE') {
-                return (
-                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: '#FFF3E0', color: '#E65100', border: '1px solid #FFCC80' }}>
-                    🔵 Main Register — not eligible to breed
-                  </span>
-                )
-              }
-              return (
-                <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
-                  🔵 Main Register — breeding eligibility not confirmed
-                </span>
-              )
-            })()}
+          <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Pedigree registration</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: pedigreeRegisterStatus === 'MAIN' ? 'var(--brand-50)' : pedigreeRegisterStatus === 'LIMITED' ? '#FFF3E0' : 'var(--sand)', color: pedigreeRegisterStatus === 'MAIN' ? 'var(--brand-600)' : pedigreeRegisterStatus === 'LIMITED' ? '#E65100' : 'var(--mid)', border: pedigreeRegisterStatus === 'MAIN' ? '1px solid rgba(8,80,65,0.15)' : pedigreeRegisterStatus === 'LIMITED' ? '1px solid #FFCC80' : '1px solid transparent' }}>
+              {pedigreeRegisterStatus === 'MAIN' ? '🔵 Main Register'
+                : pedigreeRegisterStatus === 'LIMITED' ? '🟠 Limited Register'
+                : pedigreeRegisterStatus === 'NO_PEDIGREE' ? 'No pedigree (purebred)'
+                : pedigreeRegisterStatus === 'MIXED' ? 'Mixed breed'
+                : pedigreeRegisterStatus === 'RESCUE' ? 'Rescue / unknown'
+                : '⚪ Registration not recorded'}
+            </span>
             <select
               className="form-select"
               value={(dog as any).pedigreeRegister || 'not_recorded'}
-              disabled={isRestricted}
+              disabled={isRestricted || !isCurrentEffectiveOwner}
               onChange={async e => {
-                // Same missed-gating class as Sale & Availability (Red Boy
-                // follow-up audit, item 6): auto-saves on change with no
-                // separate Save button, so the guard here IS the whole
-                // defense-in-depth story for this control — `disabled`
-                // above already stops it firing from the UI.
-                if (isRestricted) return
+                if (isRestricted || !isCurrentEffectiveOwner) return
                 const updates = nextPedigreeRegisterUpdate((dog as any).pedigreeRegister, e.target.value)
-                await updateDog(dog.id, updates as any)
-                toast('Pedigree status updated')
+                await onUpdateDogFields(updates as Partial<Dog>)
+                toast('Pedigree registration updated')
               }}
               style={{ height: 28, fontSize: 12, padding: '0 28px 0 8px', minWidth: 100 }}
             >
@@ -1611,6 +1610,53 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
               <option value="rescue">Rescue</option>
             </select>
           </div>
+        </div>
+
+        {/* Layer 2 — Breeding rights. This is an explicit breeder decision,
+            not a conclusion from Main Register and not the compliance result. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', gap: 8 }}>
+          <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Breeding rights</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: pedigreeRegisterStatus === 'LIMITED' || breedingRightsStatus === 'NOT_ELIGIBLE' ? '#FDEDED' : breedingRightsStatus === 'ELIGIBLE' ? 'var(--brand-50)' : 'var(--sand)', color: pedigreeRegisterStatus === 'LIMITED' || breedingRightsStatus === 'NOT_ELIGIBLE' ? 'var(--error)' : breedingRightsStatus === 'ELIGIBLE' ? 'var(--brand-600)' : 'var(--mid)' }}>
+              {pedigreeRegisterStatus === 'LIMITED' ? '🔴 Not permitted — Limited Register'
+                : pedigreeRegisterStatus !== 'MAIN' ? '⚪ Not confirmed'
+                : breedingRightsStatus === 'ELIGIBLE' ? '🟢 Confirmed — breeding permitted'
+                : breedingRightsStatus === 'NOT_ELIGIBLE' ? '🔴 Not permitted'
+                : '⚪ Not confirmed'}
+            </span>
+            {canEditBreedingRights && (
+              <select
+                className="form-select"
+                value={initialBreedingRightsValue(dog as any)}
+                onChange={async e => {
+                  const next = e.target.value as BreedingRightsValue
+                  if (next === 'eligible') {
+                    const confirmed = window.confirm("Confirm breeding rights?\n\nI confirm this dog is on Main Register and I am recording that its breeding rights are not restricted.\n\nThis does NOT mean the dog automatically passes age, health or legal breeding compliance checks.")
+                    if (!confirmed) { e.currentTarget.value = initialBreedingRightsValue(dog as any); return }
+                  }
+                  await onUpdateDogFields(nextBreedingRightsUpdate((dog as any).pedigreeRegister, next) as Partial<Dog>)
+                  toast('Breeding rights updated')
+                }}
+                style={{ height: 28, fontSize: 12, padding: '0 28px 0 8px', minWidth: 132 }}
+              >
+                <option value="unknown">Not confirmed</option>
+                <option value="eligible">Breeding permitted</option>
+                <option value="not_eligible">Not permitted</option>
+              </select>
+            )}
+          </div>
+        </div>
+
+        {/* Layer 3 — Actual breeding compliance. Deliberately computed in
+            the Breeding tab from age, state/Dogs Australia rules and breeding
+            history; never inferred from registration or rights alone. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', gap: 8 }}>
+          <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Actual breeding compliance</span>
+          {onOpenBreeding ? (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenBreeding} style={{ fontSize: 12 }}>Review in Breeding tab →</button>
+          ) : (
+            <span style={{ fontSize: 12, color: 'var(--mid)', textAlign: 'right' }}>Checked separately when this dog is used for breeding</span>
+          )}
         </div>
         {editingBreederId ? (
           <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
@@ -3596,8 +3642,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     && !isLimitedRegister && !isNoPedigree && !isNotRecorded && !isMarkedNotEligible && !isEligibilityUnconfirmed
   const overallMsg = isPuppyOrWhelp ? `Not yet of breeding age (${dog.lifeStage === 'whelp' ? 'Whelp' : 'Puppy'})`
     : isNoPedigree ? `ℹ️ No Dogs Australia pedigree — cannot register litters with Dogs Australia`
-    : isLimitedRegister ? '❌ Limited Register — not eligible to breed under Dogs Australia rules'
-    : isMarkedNotEligible ? '❌ Marked not eligible for breeding'
+    : isLimitedRegister ? '❌ Limited Register — breeding rights do not permit breeding'
+    : isMarkedNotEligible ? '❌ Breeding rights marked not permitted'
     : isUnder12 ? `❌ Not eligible — under ${rules.minBreedingMonths} months`
     : isOver ? `⚠️ Over ${rules.maxAgeYears} years — vet certificate required`
     : !littersOk ? `❌ Lifetime litter limit reached (${rules.maxLifetimeLitters} max)`
@@ -3605,9 +3651,9 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     : !last18Ok ? `❌ ${rules.maxLittersIn18Months} litters already in last 18 months`
     : csectionVetNeeded ? `⚠️ Vet certificate required before next C-section pregnancy`
     : ageMo < minForBreed ? `⚠️ Eligible but ${breedSize} breed — recommended wait until ${minForBreed} months`
-    : isNotRecorded ? 'ℹ️ Registration not recorded — breeding eligibility unknown'
-    : isEligibilityUnconfirmed ? 'ℹ️ Main Register — breeding eligibility not confirmed'
-    : '✓ Currently eligible to breed'
+    : isNotRecorded ? 'ℹ️ Registration not recorded — breeding rights not confirmed'
+    : isEligibilityUnconfirmed ? 'ℹ️ Main Register — breeding rights not confirmed'
+    : '✓ Actual breeding compliance checks passed'
 
   async function saveLitters() {
     setSaving(true)
@@ -3702,17 +3748,22 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   }
 
   const rulesTable = [
-    { rule: 'Pedigree / Registration',
-      value: isLimitedRegister ? '🟠 Limited Register — not eligible to breed'
+    { rule: 'Pedigree registration',
+      value: pedigreeRegisterStatus === 'MAIN' ? '🔵 Main Register'
+        : pedigreeRegisterStatus === 'LIMITED' ? '🟠 Limited Register'
+        : isNotRecorded ? '⚪ Registration not recorded'
         : pedigreeRegisterStatus === 'NO_PEDIGREE' ? 'No pedigree (purebred without papers)'
         : pedigreeRegisterStatus === 'MIXED' ? 'Mixed breed'
-        : pedigreeRegisterStatus === 'RESCUE' ? 'Rescue / unknown'
-        : isNotRecorded ? '⚪ Registration not recorded — breeding eligibility unknown'
-        : isMarkedNotEligible ? '🔵 Main Register — not eligible to breed'
-        : isEligibilityUnconfirmed ? '🔵 Main Register — breeding eligibility not confirmed'
-        : '🔵 Main Register — eligible to breed',
+        : 'Rescue / unknown',
       source: 'Dogs Australia Regulations Part 6',
-      st: isLimitedRegister || isMarkedNotEligible ? 'fail' : isNoPedigree || isNotRecorded || isEligibilityUnconfirmed ? 'info' : 'ok' },
+      st: isNotRecorded ? 'info' : 'ok' },
+    { rule: 'Breeding rights',
+      value: isLimitedRegister ? '🔴 Not permitted — Limited Register'
+        : isMarkedNotEligible ? '🔴 Not permitted'
+        : isEligibilityUnconfirmed ? '⚪ Not confirmed'
+        : '🟢 Confirmed — breeding permitted',
+      source: 'Breeder-recorded rights',
+      st: isLimitedRegister || isMarkedNotEligible ? 'fail' : isEligibilityUnconfirmed ? 'info' : 'ok' },
     { rule: 'Minimum breeding age',              value: `${rules.minBreedingMonths} months`,      st: isPuppyOrWhelp ? 'info' : (!isUnder12 ? 'ok' : 'fail') },
     { rule: `Recommended min age (${breedSize})`,value: `${minForBreed} months`,                 st: isPuppyOrWhelp ? 'info' : (ageMo >= minForBreed ? 'ok' : 'warn') },
     { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No specific rule' : `${rules.maxLittersIn18Months} litters`, st: isPuppyOrWhelp ? 'info' : (last18Ok ? 'ok' : 'fail') },
@@ -3781,9 +3832,13 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
               // This tile only renders in the !isNoPedigree branch (see the
               // surrounding conditional below), so NO_PEDIGREE/MIXED/RESCUE
               // can't reach here — only LIMITED, NOT_RECORDED, or MAIN.
-              l: 'Register',
+              l: 'Registration',
               v: isLimitedRegister ? '🟠 Limited' : isNotRecorded ? '⚪ Not recorded' : '🔵 Main',
-              ok: !isLimitedRegister && !isNotRecorded && !isMarkedNotEligible && !isEligibilityUnconfirmed },
+              ok: !isNotRecorded },
+            {
+              l: 'Breeding rights',
+              v: isLimitedRegister || isMarkedNotEligible ? '🔴 Not permitted' : isEligibilityUnconfirmed ? '⚪ Not confirmed' : '🟢 Confirmed',
+              ok: !isLimitedRegister && !isMarkedNotEligible && !isEligibilityUnconfirmed },
             { l: 'Age', v: `${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo`, ok: isPuppyOrWhelp ? true : (!isUnder12 && !isOver) },
             { l: 'Breed size', v: breedSize.charAt(0).toUpperCase() + breedSize.slice(1), ok: true },
             { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: isPuppyOrWhelp ? true : littersOk },

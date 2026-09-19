@@ -21,7 +21,7 @@ import { prepareImageForUpload, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } 
 import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showcaseMoney'
 import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
 import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage, toFirestoreAssignBuyerUpdate } from '../lib/assignBuyer'
-import { resolvePedigreeRegister, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
+import { resolvePedigreeRegister, nextPedigreeRegisterUpdate, nextBreedingRightsUpdate, initialTransferPedigreeRegister, initialBreedingRightsValue, pedigreeRegisterLabel, breedingRightsLabel, type BreedingRightsValue } from '../lib/breedingCompliance'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -215,6 +215,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   // initialTransferPedigreeRegister() — every one of the six pedigreeRegister
   // values round-trips as itself; only missing/undefined defaults here.
   const [transferPedigreeRegister, setTransferPedigreeRegister] = useState('not_recorded')
+  const [transferBreedingRights, setTransferBreedingRights] = useState<BreedingRightsValue>('unknown')
   const [transferConfirm, setTransferConfirm] = useState(false)
   const [transferring, setTransferring] = useState(false)
   const [transferError, setTransferError] = useState('')
@@ -948,6 +949,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
       // parallel implementation of "what does selecting Limited/Main/Not
       // recorded actually persist".
       const pedigreeUpdate = nextPedigreeRegisterUpdate((transferPuppy as any).pedigreeRegister, transferPedigreeRegister)
+      const rightsUpdate = nextBreedingRightsUpdate(transferPedigreeRegister, transferBreedingRights)
       // The Firestore write below is the actual transfer — once it succeeds,
       // the puppy is transferred. Email is a best-effort follow-up; a
       // transient failure there must not surface as "transfer failed" when
@@ -959,7 +961,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
         buyerPhone: transferPhone.trim() || undefined,
         transferredAt: new Date().toISOString(),
         pedigreeRegister: pedigreeUpdate.pedigreeRegister,
-        breedingEligibility: pedigreeUpdate.breedingEligibility,
+        breedingEligibility: rightsUpdate.breedingEligibility,
       })
       await sendTransferEmail({
         buyerEmail: transferEmail.trim(),
@@ -977,6 +979,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
       setTransferEmail('')
       setTransferPhone('')
       setTransferPedigreeRegister('not_recorded')
+      setTransferBreedingRights('unknown')
       setTransferConfirm(false)
     } catch (err) {
       // Round 20: never log/surface the raw error — it can carry a
@@ -1407,6 +1410,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                           setTransferEmail(puppy.reservedForEmail || '')
                                           setTransferPhone(puppy.reservedForPhone || '')
                                           setTransferPedigreeRegister(initialTransferPedigreeRegister((puppy as any).pedigreeRegister))
+                                          setTransferBreedingRights(initialBreedingRightsValue(puppy as any))
                                           setTransferError('')
                                         }}
                                       >🔄 Transfer</button>
@@ -1592,7 +1596,13 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                 <select
                   className="form-select"
                   value={transferPedigreeRegister}
-                  onChange={e => setTransferPedigreeRegister(e.target.value)}
+                  onChange={e => {
+                    const nextRegister = e.target.value
+                    const patch = nextPedigreeRegisterUpdate(transferPedigreeRegister, nextRegister)
+                    setTransferPedigreeRegister(nextRegister)
+                    if (patch.breedingEligibility) setTransferBreedingRights(patch.breedingEligibility)
+                    else if (resolvePedigreeRegister(nextRegister) !== 'MAIN') setTransferBreedingRights('unknown')
+                  }}
                 >
                   <option value="main">🔵 Main Register</option>
                   <option value="limited">🟠 Limited Register — family/pet, not for breeding</option>
@@ -1610,6 +1620,21 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                     ? "The buyer will see this puppy's registration as not recorded — this can be corrected later from the dog's Overview page."
                     : "This classification is preserved as-is for the buyer — it can be corrected later from the dog's Overview page."}
                 </p>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Breeding rights</label>
+                {resolvePedigreeRegister(transferPedigreeRegister) === 'MAIN' ? (
+                  <select className="form-select" value={transferBreedingRights} onChange={e => setTransferBreedingRights(e.target.value as BreedingRightsValue)}>
+                    <option value="unknown">⚪ Not confirmed</option>
+                    <option value="eligible">🟢 Breeding permitted</option>
+                    <option value="not_eligible">🔴 Not permitted</option>
+                  </select>
+                ) : (
+                  <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>
+                    {resolvePedigreeRegister(transferPedigreeRegister) === 'LIMITED' ? '🔴 Not permitted — Limited Register' : '⚪ Not confirmed — registration does not establish breeding rights'}
+                  </div>
+                )}
+                <p className="form-hint">Breeding rights are recorded separately from actual breeding compliance.</p>
               </div>
               <div style={{ fontSize: '0.85rem', color: 'var(--warning)', background: '#FBF3E4', border: '1px solid #EBD9A8', borderRadius: 8, padding: '0.75rem 1rem' }}>
                 ⚠️ Once transferred, the new owner will have full control of this puppy's profile.
@@ -1629,7 +1654,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
               </div>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.625rem', fontSize: '0.875rem', color: 'var(--dark)', cursor: 'pointer', lineHeight: 1.4 }}>
                 <input type="checkbox" checked={transferConfirm} onChange={e => setTransferConfirm(e.target.checked)} style={{ marginTop: 2, accentColor: 'var(--brand-600)', width: 16, height: 16, flexShrink: 0 }} />
-                <span>I confirm I want to transfer <strong>{transferPuppy.name}</strong> to this buyer as <strong>{pedigreeRegisterLabel(transferPedigreeRegister)}</strong>. This cannot be undone.</span>
+                <span>I confirm I want to transfer <strong>{transferPuppy.name}</strong> to this buyer as <strong>{pedigreeRegisterLabel(transferPedigreeRegister)}</strong>{resolvePedigreeRegister(transferPedigreeRegister) === 'MAIN' ? <> with breeding rights <strong>{breedingRightsLabel(transferBreedingRights)}</strong></> : null}. This cannot be undone.</span>
               </label>
               {transferError && <p className="form-error">{transferError}</p>}
             </div>

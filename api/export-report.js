@@ -380,27 +380,30 @@ function generateBreedingPDFHTML(dog, profile, userState) {
     && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk
   const statusColor = overallOk ? '#085041' : isLimited || isMarkedNotEligible || !littersOk || !csectionOk || !last18Ok ? '#C0392B' : '#C8971F'
   const statusText = isNoPedigree ? 'No pedigree — cannot register litters with Dogs Australia'
-    : isLimited ? 'Limited Register — not eligible to breed'
-    : isMarkedNotEligible ? 'Marked not eligible for breeding'
+    : isLimited ? 'Limited Register — breeding rights do not permit breeding'
+    : isMarkedNotEligible ? 'Breeding rights marked not permitted'
     : !littersOk ? `Lifetime litter limit reached (${rules.maxLifetime} max)`
     : !csectionOk ? `C-section limit reached (${rules.maxCsections} max)`
     : !last18Ok ? 'Too many litters in last 18 months'
     : isUnder12 ? 'Not eligible — under 12 months'
     : isOver ? `Over ${rules.maxAge} years — vet certificate required`
-    : isNotRecorded ? 'Registration not recorded — breeding eligibility unknown'
-    : isEligibilityUnconfirmed ? 'Main Register — breeding eligibility not confirmed'
-    : 'Currently eligible to breed'
+    : isNotRecorded ? 'Registration not recorded — breeding rights not confirmed'
+    : isEligibilityUnconfirmed ? 'Main Register — breeding rights not confirmed'
+    : 'Actual breeding compliance checks passed'
 
   const pedigreeLabel = {
-    main: isMarkedNotEligible ? '🔵 Main Register — not eligible to breed'
-      : isEligibilityUnconfirmed ? '🔵 Main Register — breeding eligibility not confirmed'
-      : '🔵 Main Register (Blue) — eligible to breed',
-    limited: '🟠 Limited Register (Orange) — NOT eligible to breed',
-    not_recorded: '⚪ Registration not recorded — breeding eligibility unknown',
+    main: '🔵 Main Register (Blue)',
+    limited: '🟠 Limited Register (Orange)',
+    not_recorded: '⚪ Registration not recorded',
     no_pedigree: 'No pedigree (purebred without papers)',
     mixed: 'Mixed breed / crossbreed',
     rescue: 'Rescue / unknown background',
   }[pedigreeRegister] || '—'
+  const breedingRightsLabel = isLimited ? '🔴 Not permitted — Limited Register'
+    : pedigreeRegister !== 'main' ? '⚪ Not confirmed'
+    : isMarkedNotEligible ? '🔴 Not permitted'
+    : isEligibilityUnconfirmed ? '⚪ Not confirmed'
+    : '🟢 Confirmed — breeding permitted'
 
   const heatCycles = dog.heatCycles || []
 
@@ -466,7 +469,8 @@ function generateBreedingPDFHTML(dog, profile, userState) {
     <tr><th>Date of Birth</th><td>${formatDate(dog.dateOfBirth)}</td><th>Age</th><td>${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo</td></tr>
     <tr><th>Sex</th><td>${dog.sex === 'female' ? '♀ Female' : '♂ Male'}</td><th>Microchip</th><td>${dog.microchip || '—'}</td></tr>
     <tr><th>Dogs Australia Reg</th><td>${dog.ankc || '—'}</td><th>Passport ID</th><td>${dog.passportId || '—'}</td></tr>
-    <tr><th>Pedigree Register</th><td colspan="3" class="${isLimited || isMarkedNotEligible ? 'fail' : isNoPedigree || isNotRecorded || isEligibilityUnconfirmed ? 'warn' : 'ok'}">${pedigreeLabel}</td></tr>
+    <tr><th>Pedigree registration</th><td colspan="3" class="${isNotRecorded ? 'warn' : 'ok'}">${pedigreeLabel}</td></tr>
+    <tr><th>Breeding rights</th><td colspan="3" class="${isLimited || isMarkedNotEligible ? 'fail' : isEligibilityUnconfirmed || pedigreeRegister !== 'main' ? 'warn' : 'ok'}">${breedingRightsLabel}</td></tr>
   </table>
 
   <h2>Breeding Compliance Summary — ${state}</h2>

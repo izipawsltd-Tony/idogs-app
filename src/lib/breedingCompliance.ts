@@ -91,6 +91,7 @@ export interface ComplianceDog {
 
 export type PedigreeRegisterStatus = 'MAIN' | 'LIMITED' | 'NOT_RECORDED' | 'NO_PEDIGREE' | 'MIXED' | 'RESCUE'
 export type BreedingEligibilityStatus = 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'UNKNOWN'
+export type BreedingRightsValue = 'eligible' | 'not_eligible' | 'unknown'
 
 export function resolvePedigreeRegister(raw?: string): PedigreeRegisterStatus {
   switch (raw) {
@@ -120,6 +121,53 @@ export function resolveBreedingEligibility(dog: { pedigreeRegister?: string; bre
   if (dog.breedingEligibility === 'eligible') return 'ELIGIBLE'
   if (dog.breedingEligibility === 'not_eligible') return 'NOT_ELIGIBLE'
   return 'UNKNOWN'
+}
+
+
+/**
+ * UI/storage adapter for the explicit breeder-controlled layer between
+ * pedigree registration and actual compliance. We keep the existing
+ * Firestore field name `breedingEligibility` for backwards compatibility,
+ * but user-facing copy calls it "Breeding rights" so it cannot be confused
+ * with the final compliance result.
+ */
+export function initialBreedingRightsValue(
+  dog: { pedigreeRegister?: string; breedingEligibility?: string },
+): BreedingRightsValue {
+  const status = resolveBreedingEligibility(dog)
+  if (status === 'ELIGIBLE') return 'eligible'
+  if (status === 'NOT_ELIGIBLE') return 'not_eligible'
+  return 'unknown'
+}
+
+export function breedingRightsLabel(value: BreedingRightsValue | BreedingEligibilityStatus): string {
+  switch (value) {
+    case 'eligible':
+    case 'ELIGIBLE':
+      return 'Breeding permitted'
+    case 'not_eligible':
+    case 'NOT_ELIGIBLE':
+      return 'Not permitted'
+    default:
+      return 'Not confirmed'
+  }
+}
+
+/**
+ * Canonical write rule for the Breeding rights control.
+ * - LIMITED always forces not_eligible.
+ * - MAIN may be explicitly confirmed as permitted, not permitted, or unknown.
+ * - Any other registration state cannot be promoted to permitted through the
+ *   rights control; it resolves to unknown until registration is authoritative.
+ */
+export function nextBreedingRightsUpdate(
+  pedigreeRegisterRaw: string | undefined,
+  nextRightsRaw: BreedingRightsValue,
+): { breedingEligibility: BreedingRightsValue } {
+  const register = resolvePedigreeRegister(pedigreeRegisterRaw)
+  if (register === 'LIMITED') return { breedingEligibility: 'not_eligible' }
+  if (register !== 'MAIN') return { breedingEligibility: 'unknown' }
+  return { breedingEligibility: nextRightsRaw }
 }
 
 /**
@@ -667,25 +715,25 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
   } else if (damRegister === 'LIMITED') {
     findings.push({
       level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
-      message: 'Limited Register — not eligible to breed under Dogs Australia rules',
+      message: 'Limited Register — breeding rights do not permit breeding',
       rule: 'ANKC Part 6, 6.6.2(ii)', verified: true,
     })
   } else if (damRegister === 'NOT_RECORDED') {
     findings.push({
       level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
-      message: 'Registration not recorded — breeding eligibility unknown',
+      message: 'Registration not recorded — breeding rights not confirmed',
       rule: 'ANKC Part 6, 6.6.2', verified: true,
     })
   } else if (damRegister === 'MAIN' && resolveBreedingEligibility(dam) === 'UNKNOWN') {
     findings.push({
       level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
-      message: 'Main Register — breeding eligibility not confirmed',
+      message: 'Main Register — breeding rights not confirmed',
       rule: 'ANKC Part 6, 6.6.2', verified: true,
     })
   } else if (damRegister === 'MAIN' && resolveBreedingEligibility(dam) === 'NOT_ELIGIBLE') {
     findings.push({
       level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
-      message: 'Marked not eligible for breeding',
+      message: 'Breeding rights marked not permitted',
       rule: 'ANKC Part 6, 6.6.2', verified: true,
     })
   }
@@ -694,25 +742,25 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
     if (sireRegister === 'LIMITED') {
       findings.push({
         level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
-        message: `Sire${sire.name ? ` (${sire.name})` : ''} is on the Limited Register — not eligible for breeding`,
+        message: `Sire${sire.name ? ` (${sire.name})` : ''} is on the Limited Register — breeding rights do not permit breeding`,
         rule: 'ANKC Part 6, 6.6.2(ii)', verified: true,
       })
     } else if (sireRegister === 'NOT_RECORDED') {
       findings.push({
         level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
-        message: `Sire${sire.name ? ` (${sire.name})` : ''}: registration not recorded — breeding eligibility unknown`,
+        message: `Sire${sire.name ? ` (${sire.name})` : ''}: registration not recorded — breeding rights not confirmed`,
         rule: 'ANKC Part 6, 6.6.2', verified: true,
       })
     } else if (sireRegister === 'MAIN' && resolveBreedingEligibility(sire) === 'UNKNOWN') {
       findings.push({
         level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
-        message: `Sire${sire.name ? ` (${sire.name})` : ''}: Main Register — breeding eligibility not confirmed`,
+        message: `Sire${sire.name ? ` (${sire.name})` : ''}: Main Register — breeding rights not confirmed`,
         rule: 'ANKC Part 6, 6.6.2', verified: true,
       })
     } else if (sireRegister === 'MAIN' && resolveBreedingEligibility(sire) === 'NOT_ELIGIBLE') {
       findings.push({
         level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
-        message: `Sire${sire.name ? ` (${sire.name})` : ''} is marked not eligible for breeding`,
+        message: `Sire${sire.name ? ` (${sire.name})` : ''} has breeding rights marked not permitted`,
         rule: 'ANKC Part 6, 6.6.2', verified: true,
       })
     }
@@ -901,7 +949,7 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
   const headline =
     overall === 'block' ? `❌ ${firstBlock!.message}`
     : overall === 'warn' ? `⚠️ ${firstWarn!.message}`
-    : '✓ Currently eligible to breed'
+    : '✓ Actual breeding compliance checks passed'
 
   return { overall, headline, findings }
 }
