@@ -11,38 +11,54 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Compare preview env capabilities without values
+      - name: Classify main Preview env without exposing values
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
-          mkdir -p /tmp/pedigree-env-report
-          R=/tmp/pedigree-env-report/capabilities.txt
-          : > "$R"
-
-          inspect_env() {
-            LABEL="$1"
-            PROJECT_JSON="$2"
-            rm -rf .vercel
-            mkdir -p .vercel
-            printf '%s\n' "$PROJECT_JSON" > .vercel/project.json
-            npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/${LABEL}-pull.log 2>&1
-            F=.vercel/.env.preview.local
-            test -f "$F"
-            echo "[$LABEL]" >> "$R"
-            for N in FIREBASE_PROJECT_ID VITE_FIREBASE_PROJECT_ID FIREBASE_CLIENT_EMAIL FIREBASE_PRIVATE_KEY VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_APP_ID STRIPE_SECRET_KEY EXTRA_LITTER_CHECKOUT_ENABLED; do
-              if grep -q "^${N}=" "$F"; then echo "${N}=PRESENT" >> "$R"; else echo "${N}=ABSENT" >> "$R"; fi
-            done
-            if grep -q 'idogs-app-staging' "$F"; then echo 'STAGING_MARKER=PRESENT' >> "$R"; else echo 'STAGING_MARKER=ABSENT' >> "$R"; fi
-            if grep -Eq '^STRIPE_SECRET_KEY=.*sk_test_' "$F"; then echo 'STRIPE_MODE=TEST' >> "$R"; elif grep -q '^STRIPE_SECRET_KEY=' "$F"; then echo 'STRIPE_MODE=NON_TEST' >> "$R"; else echo 'STRIPE_MODE=ABSENT' >> "$R"; fi
+          rm -rf .vercel
+          mkdir -p .vercel /tmp/pedigree-env-report
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/preview-pull.log 2>&1
+          F=.vercel/.env.preview.local
+          test -f "$F"
+          export ENV_FILE="$F"
+          node <<'NODE' > /tmp/pedigree-env-report/classification.txt
+          const fs = require('fs')
+          const text = fs.readFileSync(process.env.ENV_FILE, 'utf8')
+          function read(name) {
+            const line = text.split(/\r?\n/).find(l => l.startsWith(name + '='))
+            if (!line) return null
+            let v = line.slice(name.length + 1).trim()
+            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+            return v.replace(/\\n/g, '\n')
           }
-
-          inspect_env MAIN_PROJECT_PREVIEW '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}'
-          inspect_env STAGING_PROJECT_PREVIEW '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}'
-      - name: Upload names-only report
+          function classifyProject(name) {
+            const v = read(name)
+            if (v == null) return 'ABSENT'
+            if (v === 'idogs-app-staging') return 'STAGING'
+            if (v === 'idogs-app') return 'PRODUCTION'
+            return 'OTHER'
+          }
+          function present(name) { return read(name) == null ? 'ABSENT' : 'PRESENT' }
+          function boolClass(name) {
+            const v = read(name)
+            if (v == null) return 'ABSENT'
+            if (v === 'true') return 'TRUE'
+            if (v === 'false') return 'FALSE'
+            return 'OTHER'
+          }
+          console.log('FIREBASE_PROJECT_ID=' + classifyProject('FIREBASE_PROJECT_ID'))
+          console.log('VITE_FIREBASE_PROJECT_ID=' + classifyProject('VITE_FIREBASE_PROJECT_ID'))
+          console.log('FIREBASE_CLIENT_EMAIL=' + present('FIREBASE_CLIENT_EMAIL'))
+          console.log('FIREBASE_PRIVATE_KEY=' + present('FIREBASE_PRIVATE_KEY'))
+          console.log('EXTRA_LITTER_CHECKOUT_ENABLED=' + boolClass('EXTRA_LITTER_CHECKOUT_ENABLED'))
+          console.log('STRIPE_SECRET_KEY=' + present('STRIPE_SECRET_KEY'))
+          NODE
+      - name: Upload classification only
         uses: actions/upload-artifact@v4
         with:
-          name: pedigree-preview-env-capabilities
-          path: /tmp/pedigree-env-report/capabilities.txt
+          name: pedigree-preview-env-classification
+          path: /tmp/pedigree-env-report/classification.txt
           retention-days: 1
