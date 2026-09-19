@@ -183,6 +183,23 @@ export function initialTransferPedigreeRegister(
   }
 }
 
+/**
+ * Short plain-text label for a pedigreeRegister value, for use anywhere the
+ * UI needs to name the value in prose (e.g. a transfer confirmation
+ * checkbox) rather than render it as a standalone badge. Single source so
+ * that label text can't drift from resolvePedigreeRegister's own states.
+ */
+export function pedigreeRegisterLabel(raw?: string): string {
+  switch (resolvePedigreeRegister(raw)) {
+    case 'MAIN': return 'Main Register'
+    case 'LIMITED': return 'Limited Register'
+    case 'NO_PEDIGREE': return 'No pedigree'
+    case 'MIXED': return 'Mixed breed'
+    case 'RESCUE': return 'Rescue / unknown'
+    case 'NOT_RECORDED': return 'Not recorded'
+  }
+}
+
 /** Minimal structural shape — adapt from your HealthTest type. */
 export interface ComplianceHealthTest {
   testType?: string                // 'hip' | 'elbow' | 'eye' | 'dna' | free text

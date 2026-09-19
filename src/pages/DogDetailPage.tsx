@@ -18,7 +18,7 @@ import {
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
-import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister } from '../lib/breedingCompliance'
+import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
 import { isHeicFile } from '../lib/heic'
 import PhotoUpload from '../components/ui/PhotoUpload'
@@ -1407,7 +1407,7 @@ function TransferModal({
               onChange={e => setConfirm(e.target.checked)}
               style={{ marginTop: 2, accentColor: 'var(--brand-600)', width: 16, height: 16, flexShrink: 0 }}
             />
-            <span>I confirm I want to transfer <strong>{dogName}</strong> to this buyer. This action cannot be undone.</span>
+            <span>I confirm I want to transfer <strong>{dogName}</strong> to this buyer as <strong>{pedigreeRegisterLabel(pedigreeRegister)}</strong>. This action cannot be undone.</span>
           </label>
 
           {error && <p className="form-error">{error}</p>}

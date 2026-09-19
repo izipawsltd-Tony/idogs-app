@@ -4,6 +4,7 @@ import {
   resolveBreedingEligibility,
   nextPedigreeRegisterUpdate,
   initialTransferPedigreeRegister,
+  pedigreeRegisterLabel,
   checkBreedingCompliance,
 } from './breedingCompliance'
 
@@ -248,6 +249,28 @@ describe('scenario: ownership transfer preserves unrelated dog data', () => {
 // moment of transfer, persisted via the same nextPedigreeRegisterUpdate()
 // helper — required scenarios 1-6 below.
 // ─────────────────────────────────────────────────────────────────────────
+
+// Item 12 (this round): the transfer confirm checkbox previously only named
+// the buyer ("I confirm I want to transfer Rex to this buyer") — it never
+// named the pedigree value the breeder was locking in for the buyer at the
+// same moment. pedigreeRegisterLabel() is the shared text used to fix that
+// in both modals' confirm checkbox, so the label can't drift from
+// resolvePedigreeRegister's own states.
+describe('pedigreeRegisterLabel — transfer confirmation copy', () => {
+  it('produces a distinct, human-readable label for every one of the six values', () => {
+    expect(pedigreeRegisterLabel('main')).toBe('Main Register')
+    expect(pedigreeRegisterLabel('limited')).toBe('Limited Register')
+    expect(pedigreeRegisterLabel('not_recorded')).toBe('Not recorded')
+    expect(pedigreeRegisterLabel('no_pedigree')).toBe('No pedigree')
+    expect(pedigreeRegisterLabel('mixed')).toBe('Mixed breed')
+    expect(pedigreeRegisterLabel('rescue')).toBe('Rescue / unknown')
+  })
+
+  it('missing/undefined labels as Not recorded, never Main Register', () => {
+    expect(pedigreeRegisterLabel(undefined)).toBe('Not recorded')
+    expect(pedigreeRegisterLabel(undefined)).not.toBe('Main Register')
+  })
+})
 
 describe('initialTransferPedigreeRegister — prefilling the transfer modal control', () => {
   // Required scenario 1

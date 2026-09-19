@@ -21,7 +21,7 @@ import { prepareImageForUpload, MAX_VIDEO_UPLOAD_BYTES, ImageCompressionError } 
 import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showcaseMoney'
 import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
 import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage, toFirestoreAssignBuyerUpdate } from '../lib/assignBuyer'
-import { resolvePedigreeRegister, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister } from '../lib/breedingCompliance'
+import { resolvePedigreeRegister, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -1629,7 +1629,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
               </div>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.625rem', fontSize: '0.875rem', color: 'var(--dark)', cursor: 'pointer', lineHeight: 1.4 }}>
                 <input type="checkbox" checked={transferConfirm} onChange={e => setTransferConfirm(e.target.checked)} style={{ marginTop: 2, accentColor: 'var(--brand-600)', width: 16, height: 16, flexShrink: 0 }} />
-                <span>I confirm I want to transfer <strong>{transferPuppy.name}</strong> to this buyer. This cannot be undone.</span>
+                <span>I confirm I want to transfer <strong>{transferPuppy.name}</strong> to this buyer as <strong>{pedigreeRegisterLabel(transferPedigreeRegister)}</strong>. This cannot be undone.</span>
               </label>
               {transferError && <p className="form-error">{transferError}</p>}
             </div>
