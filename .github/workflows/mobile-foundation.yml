@@ -1,0 +1,73 @@
+name: iDogs Mobile Foundation
+
+on:
+  push:
+    branches:
+      - feat/mobile-app-foundation
+    paths:
+      - 'mobile/**'
+      - 'src/mobile.css'
+      - 'src/main.tsx'
+      - 'index.html'
+      - 'public/01_idogs_primary_horizontal_transparent.png'
+      - 'public/02_idogs_icon_transparent.png'
+      - '.github/workflows/mobile-foundation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-mobile-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-shell:
+    name: Generate Android shell
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build iDogs web app
+        run: npm run build
+
+      - name: Install Capacitor mobile dependencies
+        run: npm --prefix mobile install --no-audit --no-fund
+
+      - name: Prepare approved iDogs branding
+        run: npm --prefix mobile run branding
+
+      - name: Generate Android native project
+        run: npm --prefix mobile run add:android
+
+      - name: Sync web build into Android
+        run: npm --prefix mobile run sync:android
+
+      - name: Verify mobile identity and shell
+        shell: bash
+        run: |
+          test -f mobile/android/app/src/main/AndroidManifest.xml
+          test -f mobile/resources/icon-source.png
+          test -f mobile/resources/brand-horizontal-source.png
+          grep -q "au.com.idogs.app" mobile/android/app/build.gradle || grep -q "au.com.idogs.app" mobile/android/app/build.gradle.kts
+          echo "iDogs Android mobile shell generated successfully."
+
+      - name: Upload generated Android shell
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-android-shell-${{ github.sha }}
+          path: mobile/android
+          if-no-files-found: error
+          retention-days: 7
