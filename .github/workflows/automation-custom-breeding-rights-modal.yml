@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    if: github.event.head_commit.message == 'automation: replace breeding rights browser confirm'
+    if: ${{ github.event.head_commit.message == 'automation: replace breeding rights browser confirm' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
