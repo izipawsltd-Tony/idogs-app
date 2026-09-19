@@ -1391,7 +1391,7 @@ function TransferModal({
               </select>
             ) : resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? (
               <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>
-                {initialBreedingRights === 'eligible' ? '🟢 Confirmed — breeding permitted' : initialBreedingRights === 'not_eligible' ? '🔴 Not permitted' : '⚪ Not confirmed'}
+                {breedingRights === 'eligible' ? '🟢 Confirmed — breeding permitted' : breedingRights === 'not_eligible' ? '🔴 Not permitted' : '⚪ Not confirmed'}
               </div>
             ) : (
               <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>
