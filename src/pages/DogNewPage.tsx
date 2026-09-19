@@ -687,7 +687,7 @@ export default function DogNewPage({ toast }: Props) {
               <div className="form-group">
                 <label className="form-label">Pedigree / Registration status</label>
                 <select className="form-select" value={(form as any).pedigreeRegister || 'main'} onChange={e => set('pedigreeRegister', e.target.value)}>
-                  <option value="main">🔵 Main Register (Blue) — eligible to breed &amp; show</option>
+                  <option value="main">🔵 Main Register (Blue)</option>
                   <option value="limited">🟠 Limited Register (Orange) — NOT eligible to breed</option>
                   <option value="no_pedigree">No pedigree — purebred without papers</option>
                   <option value="mixed">Mixed breed / crossbreed</option>
@@ -699,7 +699,7 @@ export default function DogNewPage({ toast }: Props) {
                   </div>
                 )}
                 {(form as any).pedigreeRegister === 'main' && (
-                  <span className="form-hint">Main Register (Blue certificate) — eligible to breed with other Main Register dogs</span>
+                  <span className="form-hint">Main Register (Blue certificate) — required for Dogs Australia breeding &amp; showing. This does not by itself confirm breeding eligibility; review that separately on the Breeding Compliance tab.</span>
                 )}
                 {['no_pedigree', 'mixed', 'rescue'].includes((form as any).pedigreeRegister) && (
                   <span className="form-hint">iDogs will still track health records, vaccines and reminders for this dog.</span>
