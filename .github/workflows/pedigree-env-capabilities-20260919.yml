@@ -11,28 +11,38 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Pull staging env and write names-only capability report
+      - name: Compare preview env capabilities without values
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
-          mkdir -p .vercel /tmp/pedigree-env-report
-          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
-          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/staging-pull.log 2>&1
-          F=.vercel/.env.production.local
-          test -f "$F"
+          mkdir -p /tmp/pedigree-env-report
           R=/tmp/pedigree-env-report/capabilities.txt
           : > "$R"
-          for N in FIREBASE_PROJECT_ID VITE_FIREBASE_PROJECT_ID FIREBASE_CLIENT_EMAIL FIREBASE_PRIVATE_KEY VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_APP_ID STRIPE_SECRET_KEY EXTRA_LITTER_CHECKOUT_ENABLED; do
-            if grep -q "^${N}=" "$F"; then echo "${N}=PRESENT" >> "$R"; else echo "${N}=ABSENT" >> "$R"; fi
-          done
-          if grep -q 'idogs-app-staging' "$F"; then echo 'STAGING_MARKER=PRESENT' >> "$R"; else echo 'STAGING_MARKER=ABSENT' >> "$R"; fi
-          if grep -Eq '^STRIPE_SECRET_KEY=.*sk_test_' "$F"; then echo 'STRIPE_MODE=TEST' >> "$R"; elif grep -q '^STRIPE_SECRET_KEY=' "$F"; then echo 'STRIPE_MODE=NON_TEST' >> "$R"; else echo 'STRIPE_MODE=ABSENT' >> "$R"; fi
-          sort -o "$R" "$R"
+
+          inspect_env() {
+            LABEL="$1"
+            PROJECT_JSON="$2"
+            rm -rf .vercel
+            mkdir -p .vercel
+            printf '%s\n' "$PROJECT_JSON" > .vercel/project.json
+            npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/${LABEL}-pull.log 2>&1
+            F=.vercel/.env.preview.local
+            test -f "$F"
+            echo "[$LABEL]" >> "$R"
+            for N in FIREBASE_PROJECT_ID VITE_FIREBASE_PROJECT_ID FIREBASE_CLIENT_EMAIL FIREBASE_PRIVATE_KEY VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_APP_ID STRIPE_SECRET_KEY EXTRA_LITTER_CHECKOUT_ENABLED; do
+              if grep -q "^${N}=" "$F"; then echo "${N}=PRESENT" >> "$R"; else echo "${N}=ABSENT" >> "$R"; fi
+            done
+            if grep -q 'idogs-app-staging' "$F"; then echo 'STAGING_MARKER=PRESENT' >> "$R"; else echo 'STAGING_MARKER=ABSENT' >> "$R"; fi
+            if grep -Eq '^STRIPE_SECRET_KEY=.*sk_test_' "$F"; then echo 'STRIPE_MODE=TEST' >> "$R"; elif grep -q '^STRIPE_SECRET_KEY=' "$F"; then echo 'STRIPE_MODE=NON_TEST' >> "$R"; else echo 'STRIPE_MODE=ABSENT' >> "$R"; fi
+          }
+
+          inspect_env MAIN_PROJECT_PREVIEW '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}'
+          inspect_env STAGING_PROJECT_PREVIEW '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}'
       - name: Upload names-only report
         uses: actions/upload-artifact@v4
         with:
-          name: pedigree-staging-env-capabilities
+          name: pedigree-preview-env-capabilities
           path: /tmp/pedigree-env-report/capabilities.txt
           retention-days: 1
