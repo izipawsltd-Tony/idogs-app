@@ -138,7 +138,7 @@ export async function uploadLandingMediaDirect(
     }
     xhr.upload.onprogress = event => {
       if (event.lengthComputable && onProgress) {
-        onProgress(Math.round((event.loaded / event.total) * 100)
+        onProgress(Math.round((event.loaded / event.total) * 100))
       }
     }
     xhr.onload = () => {
