@@ -18,7 +18,7 @@ import {
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
-import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, nextBreedingRightsUpdate, initialTransferPedigreeRegister, initialBreedingRightsValue, pedigreeRegisterLabel, breedingRightsLabel, type BreedingRightsValue } from '../lib/breedingCompliance'
+import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, nextBreedingRightsUpdate, initialTransferPedigreeRegister, initialBreedingRightsValue, pedigreeRegisterLabel, breedingRightsLabel, STATE_RULES, NO_JURISDICTION_RULES, resolveComplianceJurisdiction, type AustralianJurisdiction, type BreedingRightsValue } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
 import { isHeicFile } from '../lib/heic'
 import PhotoUpload from '../components/ui/PhotoUpload'
@@ -120,7 +120,7 @@ export default function DogDetailPage({ toast }: Props) {
   const { dogId } = useParams<{ dogId: string }>()
   const navigate = useNavigate()
   const { user, profile } = useAuth()
-  const userState: string = (profile as any)?.state || 'SA'
+  const userState = resolveComplianceJurisdiction((profile as any)?.state)
   const isOwner = profile?.role === 'owner'
   const [tab, setTab] = useState<Tab>('overview')
   const [dog, setDog] = useState<Dog | null>(null)
@@ -3326,33 +3326,7 @@ function ageAtDate(dob: string, date: Date): string {
 }
 
 
-// ── BREEDING COMPLIANCE RULES BY STATE ───────────────────────
-interface StateRules {
-  stateName: string
-  minBreedingMonths: number
-  minBreedingMonthsLarge: number
-  maxLifetimeLitters: number
-  maxLittersIn18Months: number
-  maxCsections: number | null
-  csectionVetRequired: number | null
-  maxAgeYears: number
-  vetCertAfterAge: number
-  requiresBIN: boolean
-  notes: string
-  sourceUrl: string
-  sourceName: string
-}
-
-const STATE_RULES: Record<string, StateRules> = {
-  SA:  { stateName: 'South Australia',          minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs SA membership (DACO) required. No specific C-section limit under SA law.', sourceUrl: 'https://www.dogssa.com.au/about/policies/dogs-sa-code-of-ethics-for-members-part-xv-codes/', sourceName: 'Dogs SA Code of Ethics' },
-  NSW: { stateName: 'New South Wales',           minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 999, maxCsections: 3,    csectionVetRequired: 2,    maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: true,  notes: 'BIN mandatory from 1 Dec 2025. Max 5 litters OR 3 C-sections lifetime, whichever first. Vet cert required before 3rd C-section pregnancy.', sourceUrl: 'https://www.olg.nsw.gov.au/pets/nsw-pet-registry/breeders/changes-dog-breeding-laws', sourceName: 'NSW Prevention of Cruelty to Animals Act 1979 (amended 2024)' },
-  VIC: { stateName: 'Victoria',                  minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Victoria AO status: up to 10 fertile females. PER source number required for all ads.', sourceUrl: 'https://dogsvictoria.org.au/media/6000/dv-code-of-practice-effective-150224.pdf', sourceName: 'Dogs Victoria Code of Practice' },
-  QLD: { stateName: 'Queensland',                minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Register as breeder within 28 days of litter. Supply number required for all ads.', sourceUrl: 'https://www.business.qld.gov.au/industries/farms-fishing-forestry/agriculture/animal/industries/dogs', sourceName: 'Animal Care and Protection Act 2001 (QLD)' },
-  WA:  { stateName: 'Western Australia',         minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 999, maxCsections: null, csectionVetRequired: null, maxAgeYears: 7, vetCertAfterAge: 7, requiresBIN: false, notes: 'WA: max breeding age 7 years (stricter than other states). Dogs West (CAWA) membership required.', sourceUrl: 'https://www.dogswest.com', sourceName: 'CAWA H Regulations + Animal Welfare Act 2002 (WA)' },
-  ACT: { stateName: 'Australian Capital Territory', minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2, maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Australia rules apply via Dogs ACT.', sourceUrl: 'https://www.dogsact.org.au', sourceName: 'Dogs Australia + Animal Welfare Act 1992 (ACT)' },
-  NT:  { stateName: 'Northern Territory',        minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Australia rules apply via Dogs NT.', sourceUrl: 'https://www.dogsnt.com.au', sourceName: 'Dogs Australia + Animal Welfare Act 1999 (NT)' },
-  TAS: { stateName: 'Tasmania',                  minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Australia rules apply via Dogs Tasmania.', sourceUrl: 'https://www.dogstasmania.com.au', sourceName: 'Dogs Australia + Animal Welfare Act 1993 (TAS)' },
-}
+// Breeding compliance jurisdiction rules are canonical in ../lib/breedingCompliance.
 
 // Mating methods taxonomy
 const MATING_METHODS = [
@@ -3476,11 +3450,11 @@ function describeParentEligibilityFailure(err: { error?: string; reason?: string
 function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   dog: Dog
   dogId: string
-  userState: string
+  userState: AustralianJurisdiction | null
   onUpdate: (updates: Partial<Dog>) => Promise<void>
   toast: (msg: string, type?: ToastMessage['type']) => void
 }) {
-  const [selectedState, setSelectedState] = useState(userState)
+  const [selectedState, setSelectedState] = useState<AustralianJurisdiction | ''>(userState || '')
   const [heatCycles, setHeatCycles] = useState<HeatCycle[]>([])
   const [loadingCycles, setLoadingCycles] = useState(true)
   const [showAddHeat, setShowAddHeat] = useState(false)
@@ -3515,7 +3489,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const [firstHeatDate, setFirstHeatDate] = useState((dog as any).firstHeatDate || '')
   const [editingHeat, setEditingHeat] = useState(false)
 
-  const rules = STATE_RULES[selectedState] || STATE_RULES['SA']
+  const hasJurisdiction = !!selectedState
+  const rules = selectedState ? STATE_RULES[selectedState] : NO_JURISDICTION_RULES
   const breedSize = getBreedSize(dog.breed)
   const heatInterval = getHeatIntervalMonths(dog.breed)
   const firstHeatMo = getFirstHeatMonths(dog.breed)
@@ -3633,7 +3608,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     const minAge = (breedSize === 'large' || breedSize === 'giant') ? rules.minBreedingMonthsLarge : rules.minBreedingMonths
     if (ageAtHeatMo < rules.minBreedingMonths) return { status: 'blocked', msg: `❌ Under ${rules.minBreedingMonths}mo`, color: 'var(--error)' }
     if (ageAtHeatMo < minAge) return { status: 'caution', msg: `⚠️ Under ${minAge}mo (${breedSize})`, color: 'var(--warning)' }
-    if (ageAtHeatMo >= rules.vetCertAfterAge * 12) return { status: 'warn', msg: `⚠️ Vet cert required`, color: 'var(--warning)' }
+    if (ageAtHeatMo >= rules.vetCertAfterAgeYears * 12) return { status: 'warn', msg: `⚠️ Vet cert required`, color: 'var(--warning)' }
     return { status: 'ok', msg: '✓ Eligible', color: 'var(--brand-600)' }
   }
 
@@ -3642,8 +3617,9 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const isUnder12 = !isPuppyOrWhelp && ageMo < rules.minBreedingMonths
   const minForBreed = (breedSize === 'large' || breedSize === 'giant') ? rules.minBreedingMonthsLarge : rules.minBreedingMonths
   const isOver = ageYrs >= rules.maxAgeYears
-  const littersOk = litterCount < rules.maxLifetimeLitters
-  const last18Ok = rules.maxLittersIn18Months === 999 || last18mLitters < rules.maxLittersIn18Months
+  const littersOk = rules.maxLifetimeLitters === 999 || litterCount < rules.maxLifetimeLitters
+  const memberFrequencyRuleApplies = rules.maxLittersIn18Months !== 999 && rules.littersIn18mSource !== 'KENNEL_CLUB_STATE'
+  const last18Ok = !memberFrequencyRuleApplies || last18mLitters < rules.maxLittersIn18Months
   const csectionOk = rules.maxCsections === null || cSectionCount < rules.maxCsections
   const csectionVetNeeded = rules.csectionVetRequired !== null && cSectionCount >= rules.csectionVetRequired
   // resolvePedigreeRegister/resolveBreedingEligibility are the single source
@@ -3657,9 +3633,10 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const isNotRecorded = pedigreeRegisterStatus === 'NOT_RECORDED'
   const isMarkedNotEligible = pedigreeRegisterStatus === 'MAIN' && breedingEligibilityStatus === 'NOT_ELIGIBLE'
   const isEligibilityUnconfirmed = pedigreeRegisterStatus === 'MAIN' && breedingEligibilityStatus === 'UNKNOWN'
-  const overallOk = !isPuppyOrWhelp && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk
+  const overallOk = hasJurisdiction && !isPuppyOrWhelp && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk
     && !isLimitedRegister && !isNoPedigree && !isNotRecorded && !isMarkedNotEligible && !isEligibilityUnconfirmed
-  const overallMsg = isPuppyOrWhelp ? `Not yet of breeding age (${dog.lifeStage === 'whelp' ? 'Whelp' : 'Puppy'})`
+  const overallMsg = !hasJurisdiction ? '⚠️ Compliance jurisdiction not set — select breeder state / territory'
+    : isPuppyOrWhelp ? `Not yet of breeding age (${dog.lifeStage === 'whelp' ? 'Whelp' : 'Puppy'})`
     : isNoPedigree ? `ℹ️ No Dogs Australia pedigree — cannot register litters with Dogs Australia`
     : isLimitedRegister ? '❌ Limited Register — breeding rights do not permit breeding'
     : isMarkedNotEligible ? '❌ Breeding rights marked not permitted'
@@ -3786,16 +3763,16 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       st: isLimitedRegister || isMarkedNotEligible ? 'fail' : pedigreeRegisterStatus !== 'MAIN' || isEligibilityUnconfirmed ? 'info' : 'ok' },
     { rule: 'Minimum breeding age',              value: `${rules.minBreedingMonths} months`,      st: isPuppyOrWhelp ? 'info' : (!isUnder12 ? 'ok' : 'fail') },
     { rule: `Recommended min age (${breedSize})`,value: `${minForBreed} months`,                 st: isPuppyOrWhelp ? 'info' : (ageMo >= minForBreed ? 'ok' : 'warn') },
-    { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No specific rule' : `${rules.maxLittersIn18Months} litters`, st: isPuppyOrWhelp ? 'info' : (last18Ok ? 'ok' : 'fail') },
-    { rule: 'Max litters in lifetime',           value: `${rules.maxLifetimeLitters} litters`,    st: isPuppyOrWhelp ? 'info' : (littersOk ? 'ok' : 'fail') },
+    { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No verified universal state rule' : rules.littersIn18mSource === 'KENNEL_CLUB_STATE' ? `${rules.memberBodyName} member rule — membership not confirmed` : `${rules.maxLittersIn18Months} litters`, st: isPuppyOrWhelp || rules.littersIn18mSource === 'KENNEL_CLUB_STATE' ? 'info' : (last18Ok ? 'ok' : 'fail') },
+    { rule: 'Max litters in lifetime',           value: rules.maxLifetimeLitters === 999 ? 'No verified universal state cap' : `${rules.maxLifetimeLitters} litters`, st: isPuppyOrWhelp ? 'info' : (littersOk ? 'ok' : 'fail') },
     ...(rules.maxCsections !== null ? [
       { rule: 'Max C-section litters',           value: `${rules.maxCsections} C-sections`,       st: isPuppyOrWhelp ? 'info' : (csectionOk ? 'ok' : 'fail') },
       { rule: 'Vet cert before C-section',       value: `After ${rules.csectionVetRequired} C-sections`, st: isPuppyOrWhelp ? 'info' : (!csectionVetNeeded ? 'ok' : 'warn') },
     ] : [{ rule: 'C-section limit', value: 'No specific state rule', st: 'info' }]),
-    { rule: 'Maximum breeding age',              value: `${rules.maxAgeYears} years`,              st: isPuppyOrWhelp ? 'info' : (!isOver ? 'ok' : 'warn') },
+    { rule: 'Breeding age review threshold',     value: `${rules.maxAgeYears} years`,              st: isPuppyOrWhelp ? 'info' : (!isOver ? 'ok' : 'warn') },
     { rule: 'Minimum puppy sale age',            value: '8 weeks',                                st: 'info' },
     { rule: 'Skip first heat',                   value: 'Do not breed on first heat',             st: 'info' },
-    ...(rules.requiresBIN ? [{ rule: 'Breeder ID Number (BIN)', value: 'Mandatory (NSW)', st: 'info' }] : []),
+    ...(rules.breederIdLabel ? [{ rule: 'Breeder identifier', value: rules.breederIdLabel, st: 'info' }] : []),
   ]
 
   return (
@@ -3808,16 +3785,25 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 12, color: 'var(--light)' }}>Rules for:</span>
-          <select className="form-select" value={selectedState} onChange={e => setSelectedState(e.target.value)} style={{ height: 34, fontSize: 13, paddingRight: 32, minWidth: 180 }}>
+          <select className="form-select" value={selectedState} onChange={e => setSelectedState(e.target.value as AustralianJurisdiction | '')} style={{ height: 34, fontSize: 13, paddingRight: 32, minWidth: 180 }}>
+            <option value="">Select state / territory</option>
             {Object.entries(STATE_RULES).map(([code, r]) => <option key={code} value={code}>{r.stateName}</option>)}
           </select>
         </div>
       </div>
 
       {/* Source note */}
-      <div style={{ fontSize: 12, color: 'var(--mid)', marginBottom: 16, padding: '8px 12px', background: 'var(--sand)', borderRadius: 8 }}>
-        📋 <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-600)' }}>{rules.sourceName}</a>
-        {selectedState !== userState && <span style={{ marginLeft: 8, color: 'var(--warning)', fontWeight: 500 }}>⚠️ Profile state: {STATE_RULES[userState]?.stateName}</span>}
+      <div style={{ fontSize: 12, color: 'var(--mid)', marginBottom: 16, padding: '10px 12px', background: 'var(--sand)', borderRadius: 8, lineHeight: 1.55 }}>
+        {hasJurisdiction ? (
+          <>
+            <div>📍 <strong>Jurisdiction:</strong> {rules.stateName}</div>
+            <div>📋 <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-600)' }}>{rules.sourceName}</a></div>
+            <div>🏛️ <strong>Member body:</strong> <a href={rules.memberBodyUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-600)' }}>{rules.memberBodyName}</a> — member rules are conditional and are not treated as state law unless membership is known.</div>
+            {userState && selectedState !== userState && <div style={{ color: 'var(--warning)', fontWeight: 500 }}>⚠️ Profile state: {STATE_RULES[userState].stateName}</div>}
+          </>
+        ) : (
+          <div style={{ color: 'var(--warning)', fontWeight: 600 }}>⚠️ Compliance jurisdiction not set. Select a state / territory before relying on state-law results.</div>
+        )}
       </div>
 
       {/* Overall status */}
@@ -3861,7 +3847,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
               ok: !isLimitedRegister && !isMarkedNotEligible && !isNotRecorded && !isEligibilityUnconfirmed },
             { l: 'Age', v: `${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo`, ok: isPuppyOrWhelp ? true : (!isUnder12 && !isOver) },
             { l: 'Breed size', v: breedSize.charAt(0).toUpperCase() + breedSize.slice(1), ok: true },
-            { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: isPuppyOrWhelp ? true : littersOk },
+            { l: 'Total litters', v: rules.maxLifetimeLitters === 999 ? `${litterCount}` : `${litterCount} / ${rules.maxLifetimeLitters}`, ok: isPuppyOrWhelp ? true : littersOk },
             ...(rules.maxLittersIn18Months !== 999 ? [{ l: 'Last 18 months', v: `${last18mLitters} / ${rules.maxLittersIn18Months}`, ok: isPuppyOrWhelp ? true : last18Ok }] : []),
             ...(rules.maxCsections !== null ? [{ l: 'C-sections', v: `${cSectionCount} / ${rules.maxCsections}`, ok: isPuppyOrWhelp ? true : csectionOk }] : []),
           ].map(x => (
@@ -3908,7 +3894,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
               <div className="form-group">
                 <label className="form-label">Total litters (lifetime)</label>
                 <input className="form-input" type="number" min={0} max={10} value={litterCount} onChange={e => setLitterCount(parseInt(e.target.value) || 0)} />
-                <span className="form-hint">Max {rules.maxLifetimeLitters} under {selectedState}</span>
+                <span className="form-hint">{rules.maxLifetimeLitters === 999 ? 'No verified universal state lifetime cap encoded' : `Max ${rules.maxLifetimeLitters} under ${selectedState}`}</span>
               </div>
               {rules.maxLittersIn18Months !== 999 && (
                 <div className="form-group">
@@ -3932,7 +3918,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         ) : (
           <div>
             {[
-              { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: littersOk },
+              { l: 'Total litters', v: rules.maxLifetimeLitters === 999 ? `${litterCount}` : `${litterCount} / ${rules.maxLifetimeLitters}`, ok: littersOk },
               ...(rules.maxLittersIn18Months !== 999 ? [{ l: 'Last 18 months', v: `${last18mLitters} / ${rules.maxLittersIn18Months}`, ok: last18Ok }] : []),
               { l: 'C-section litters', v: rules.maxCsections !== null ? `${cSectionCount} / ${rules.maxCsections}` : `${cSectionCount} (no state limit)`, ok: csectionOk },
               { l: 'Last litter date', v: lastLitterDate ? fmtDate(new Date(lastLitterDate)) : '—', ok: true },

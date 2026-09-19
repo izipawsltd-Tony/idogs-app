@@ -9,6 +9,8 @@ import {
   pedigreeRegisterLabel,
   breedingRightsLabel,
   checkBreedingCompliance,
+  resolveComplianceJurisdiction,
+  STATE_RULES,
 } from './breedingCompliance'
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -483,5 +485,75 @@ describe('three-layer model — Pedigree registration → Breeding rights → Ac
     expect(result.overall).not.toBe('block')
     expect(result.overall).not.toBe('warn')
     expect(result.headline).toBe('✓ Actual breeding compliance checks passed')
+  })
+})
+
+
+describe('jurisdiction-aware compliance', () => {
+  const mainDam = {
+    name: 'Jurisdiction Dam',
+    breed: 'Poodle',
+    dateOfBirth: '2020-01-01',
+    pedigreeRegister: 'main',
+    breedingEligibility: 'eligible',
+  }
+
+  it('recognises all eight Australian jurisdictions and fails closed for missing/invalid values', () => {
+    for (const code of ['SA', 'NSW', 'VIC', 'QLD', 'WA', 'TAS', 'ACT', 'NT']) {
+      expect(resolveComplianceJurisdiction(code)).toBe(code)
+      expect(resolveComplianceJurisdiction(code.toLowerCase())).toBe(code)
+    }
+    expect(resolveComplianceJurisdiction(undefined)).toBeNull()
+    expect(resolveComplianceJurisdiction('')).toBeNull()
+    expect(resolveComplianceJurisdiction('XX')).toBeNull()
+  })
+
+  it('never falls back missing jurisdiction to South Australia', () => {
+    const result = checkBreedingCompliance({ dam: mainDam })
+    expect(result.overall).toBe('warn')
+    expect(result.headline).toContain('jurisdiction not set')
+    expect(result.findings.some(f => f.rule.includes('SA S&G'))).toBe(false)
+  })
+
+  it('encodes ACT verified limits as ACT rules, not generic SA defaults', () => {
+    expect(STATE_RULES.ACT.minBreedingMonths).toBe(18)
+    expect(STATE_RULES.ACT.maxLifetimeLitters).toBe(4)
+    expect(STATE_RULES.ACT.maxLittersIn18Months).toBe(1)
+    expect(STATE_RULES.ACT.maxAgeYears).toBe(6)
+    const result = checkBreedingCompliance({ dam: { ...mainDam, litterCount: 4 }, state: 'ACT' })
+    expect(result.findings.some(f => f.level === 'warn' && f.source === 'STATE_LAW' && f.message.includes('4 litters'))).toBe(true)
+  })
+
+  it('encodes Tasmania 5-litter and age-7 vet-determination thresholds', () => {
+    expect(STATE_RULES.TAS.maxLifetimeLitters).toBe(5)
+    expect(STATE_RULES.TAS.lifetimeLittersVetExemption).toBe(true)
+    expect(STATE_RULES.TAS.vetCertAfterAgeYears).toBe(7)
+    const result = checkBreedingCompliance({ dam: { ...mainDam, litterCount: 5 }, state: 'TAS' })
+    expect(result.findings.some(f => f.consequence === 'VET_CERT_REQUIRED' && f.verified)).toBe(true)
+  })
+
+  it('encodes NSW BIN, lifetime litter and C-section rules as verified', () => {
+    expect(STATE_RULES.NSW.requiresBIN).toBe(true)
+    expect(STATE_RULES.NSW.maxLifetimeLitters).toBe(5)
+    expect(STATE_RULES.NSW.maxCsections).toBe(3)
+    expect(STATE_RULES.NSW.csectionVerified).toBe(true)
+    const result = checkBreedingCompliance({ dam: { ...mainDam, cSectionCount: 3 }, state: 'NSW' })
+    expect(result.findings.some(f => f.level === 'block' && f.message.includes('C-section'))).toBe(true)
+  })
+
+  it('does not invent a universal 5-litter state cap for VIC, QLD, WA or NT', () => {
+    for (const code of ['VIC', 'QLD', 'WA', 'NT'] as const) {
+      expect(STATE_RULES[code].maxLifetimeLitters).toBe(999)
+      const result = checkBreedingCompliance({ dam: { ...mainDam, litterCount: 6 }, state: code })
+      expect(result.findings.some(f => f.message.includes('Lifetime litter'))).toBe(false)
+    }
+  })
+
+  it('keeps conditional member-body frequency rules off unless membership is explicitly applied', () => {
+    const dam = { ...mainDam, last18mLitters: 2 }
+    const withoutMembership = checkBreedingCompliance({ dam, state: 'SA' })
+    expect(withoutMembership.findings.some(f => f.source === 'KENNEL_CLUB_STATE' && f.message.includes('18 months'))).toBe(false)
+    const withMembership = checkBreedingCompliance({ dam, state: 'SA', applyMemberBodyRules: true })
+    expect(withMembership.findings.some(f => f.source === 'KENNEL_CLUB_STATE' && f.message.includes('18 months'))).toBe(true)
   })
 })
