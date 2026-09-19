@@ -1,0 +1,42 @@
+name: Staging env names diagnostic
+on:
+  push:
+    branches: [automation/staging-env-names-diagnostic-20260919]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Pin exact app candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach c4e643da51b8226b5ddff636b55a915d60da7436
+          test "$(git rev-parse HEAD)" = "c4e643da51b8226b5ddff636b55a915d60da7436"
+      - name: Pull staging env and report names only
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/staging-pull.log 2>&1
+          F=.vercel/.env.production.local
+          test -f "$F"
+          echo 'ENV_NAMES_BEGIN'
+          sed -E 's/=.*$//' "$F" | sed '/^$/d' | sort -u
+          echo 'ENV_NAMES_END'
+          if grep -q 'idogs-app-staging' "$F"; then echo STAGING_FIREBASE_MARKER_PRESENT; else echo STAGING_FIREBASE_MARKER_ABSENT; fi
+          if grep -q '^VITE_FIREBASE_PROJECT_ID=' "$F"; then echo HAS_VITE_FIREBASE_PROJECT_ID; fi
+          if grep -q '^FIREBASE_PROJECT_ID=' "$F"; then echo HAS_FIREBASE_PROJECT_ID; fi
+          if grep -q '^STRIPE_SECRET_KEY=' "$F"; then
+            if grep -Eq '^STRIPE_SECRET_KEY=.*sk_test_' "$F"; then echo STRIPE_SECRET_MODE_TEST; else echo STRIPE_SECRET_MODE_NOT_TEST; fi
+          else
+            echo STRIPE_SECRET_KEY_ABSENT
+          fi
+          echo PROJECT_LINKED_IDOGS_APP_STAGING
