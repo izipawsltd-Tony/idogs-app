@@ -3,57 +3,60 @@ import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-do
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import ToastContainer from './ui/Toast'
+import LoadingScreen from './ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 
-// Pages
+// Keep the landing page eager so the marketing surface can render from the
+// initial bundle. Every other route is loaded only when it is actually
+// visited, keeping app/admin/upload code (including HEIC/WASM paths) off the
+// landing-page critical path.
 import LandingPage from '../pages/LandingPage'
-import LoginPage from '../pages/LoginPage'
-import SignupPage from '../pages/SignupPage'
-import VerifyEmailPage from '../pages/VerifyEmailPage'
-import DashboardPage from '../pages/DashboardPage'
-import DogListPage from '../pages/DogListPage'
-import DogDetailPage from '../pages/DogDetailPage'
-import DogNewPage from '../pages/DogNewPage'
-import LittersPage from '../pages/LittersPage'
-import RemindersPage from '../pages/RemindersPage'
-import SettingsPage from '../pages/SettingsPage'
-import DocumentsPage from '../pages/DocumentsPage'
-import ExportPage from '../pages/ExportPage'
-import AuditPage from '../pages/AuditPage'
-import BillingPage from '../pages/BillingPage'
-import SurveyPage from '../pages/SurveyPage'
-import AdminSurveyPage from '../pages/AdminSurveyPage'
-import AdminAuditPage from '../pages/AdminAuditPage'
-import LandingMediaAdminPage from '../pages/LandingMediaAdminPage'
-import TermsPage from '../pages/TermsPage'
-import PrivacyPage from '../pages/PrivacyPage'
-import PassportPublicPage from '../pages/PassportPublicPage'
-import ShowcasePublicPage from '../pages/ShowcasePublicPage'
-import ForgotPasswordPage from '../pages/ForgotPasswordPage'
-import NotFoundPage from '../pages/NotFoundPage'
-import ComingSoonPage from '../pages/ComingSoonPage'
-import ReportsPage from '../pages/ReportsPage'
-import BuyersPage from '../pages/BuyersPage'
-import ClaimDogPage from '../pages/ClaimDogPage'
-import PrivateDogPage from '../pages/PrivateDogPage'
-import SuperAdminRoute from '../super-admin/SuperAdminRoute'
-import SuperAdminLayout from '../super-admin/SuperAdminLayout'
-import SuperAdminOverviewPage from '../super-admin/pages/SuperAdminOverviewPage'
-import SuperAdminAiCeoPage from '../super-admin/pages/SuperAdminAiCeoPage'
-import SuperAdminOrganisationsPage from '../super-admin/pages/SuperAdminOrganisationsPage'
-import SuperAdminOrganisationDetailPage from '../super-admin/pages/SuperAdminOrganisationDetailPage'
-import SuperAdminUsersPage from '../super-admin/pages/SuperAdminUsersPage'
-import SuperAdminUserDetailPage from '../super-admin/pages/SuperAdminUserDetailPage'
-import SuperAdminSubscriptionsPage from '../super-admin/pages/SuperAdminSubscriptionsPage'
-import SuperAdminPlansPricingPage from '../super-admin/pages/SuperAdminPlansPricingPage'
-import SuperAdminAuditLogsPage from '../super-admin/pages/SuperAdminAuditLogsPage'
-import SuperAdminAuditLogDetailPage from '../super-admin/pages/SuperAdminAuditLogDetailPage'
-import SuperAdminSettingsPage from '../super-admin/pages/SuperAdminSettingsPage'
-import SuperAdminSupportInboxPage from '../super-admin/pages/SuperAdminSupportInboxPage'
-import SuperAdminFaqManagementPage from '../super-admin/pages/SuperAdminFaqManagementPage'
 
-import AppLayout from './layout/AppLayout'
-import LoadingScreen from './ui/LoadingScreen'
+const LoginPage = React.lazy(() => import('../pages/LoginPage'))
+const SignupPage = React.lazy(() => import('../pages/SignupPage'))
+const VerifyEmailPage = React.lazy(() => import('../pages/VerifyEmailPage'))
+const DashboardPage = React.lazy(() => import('../pages/DashboardPage'))
+const DogListPage = React.lazy(() => import('../pages/DogListPage'))
+const DogDetailPage = React.lazy(() => import('../pages/DogDetailPage'))
+const DogNewPage = React.lazy(() => import('../pages/DogNewPage'))
+const LittersPage = React.lazy(() => import('../pages/LittersPage'))
+const RemindersPage = React.lazy(() => import('../pages/RemindersPage'))
+const SettingsPage = React.lazy(() => import('../pages/SettingsPage'))
+const DocumentsPage = React.lazy(() => import('../pages/DocumentsPage'))
+const ExportPage = React.lazy(() => import('../pages/ExportPage'))
+const AuditPage = React.lazy(() => import('../pages/AuditPage'))
+const BillingPage = React.lazy(() => import('../pages/BillingPage'))
+const SurveyPage = React.lazy(() => import('../pages/SurveyPage'))
+const AdminSurveyPage = React.lazy(() => import('../pages/AdminSurveyPage'))
+const AdminAuditPage = React.lazy(() => import('../pages/AdminAuditPage'))
+const LandingMediaAdminPage = React.lazy(() => import('../pages/LandingMediaAdminPage'))
+const TermsPage = React.lazy(() => import('../pages/TermsPage'))
+const PrivacyPage = React.lazy(() => import('../pages/PrivacyPage'))
+const PassportPublicPage = React.lazy(() => import('../pages/PassportPublicPage'))
+const ShowcasePublicPage = React.lazy(() => import('../pages/ShowcasePublicPage'))
+const ForgotPasswordPage = React.lazy(() => import('../pages/ForgotPasswordPage'))
+const NotFoundPage = React.lazy(() => import('../pages/NotFoundPage'))
+const ReportsPage = React.lazy(() => import('../pages/ReportsPage'))
+const BuyersPage = React.lazy(() => import('../pages/BuyersPage'))
+const ClaimDogPage = React.lazy(() => import('../pages/ClaimDogPage'))
+const PrivateDogPage = React.lazy(() => import('../pages/PrivateDogPage'))
+
+const AppLayout = React.lazy(() => import('./layout/AppLayout'))
+const SuperAdminRoute = React.lazy(() => import('../super-admin/SuperAdminRoute'))
+const SuperAdminLayout = React.lazy(() => import('../super-admin/SuperAdminLayout'))
+const SuperAdminOverviewPage = React.lazy(() => import('../super-admin/pages/SuperAdminOverviewPage'))
+const SuperAdminAiCeoPage = React.lazy(() => import('../super-admin/pages/SuperAdminAiCeoPage'))
+const SuperAdminOrganisationsPage = React.lazy(() => import('../super-admin/pages/SuperAdminOrganisationsPage'))
+const SuperAdminOrganisationDetailPage = React.lazy(() => import('../super-admin/pages/SuperAdminOrganisationDetailPage'))
+const SuperAdminUsersPage = React.lazy(() => import('../super-admin/pages/SuperAdminUsersPage'))
+const SuperAdminUserDetailPage = React.lazy(() => import('../super-admin/pages/SuperAdminUserDetailPage'))
+const SuperAdminSubscriptionsPage = React.lazy(() => import('../super-admin/pages/SuperAdminSubscriptionsPage'))
+const SuperAdminPlansPricingPage = React.lazy(() => import('../super-admin/pages/SuperAdminPlansPricingPage'))
+const SuperAdminAuditLogsPage = React.lazy(() => import('../super-admin/pages/SuperAdminAuditLogsPage'))
+const SuperAdminAuditLogDetailPage = React.lazy(() => import('../super-admin/pages/SuperAdminAuditLogDetailPage'))
+const SuperAdminSettingsPage = React.lazy(() => import('../super-admin/pages/SuperAdminSettingsPage'))
+const SuperAdminSupportInboxPage = React.lazy(() => import('../super-admin/pages/SuperAdminSupportInboxPage'))
+const SuperAdminFaqManagementPage = React.lazy(() => import('../super-admin/pages/SuperAdminFaqManagementPage'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -89,78 +92,81 @@ function DogDetailRoute({ toast }: { toast: (msg: string, type?: ToastMessage['t
   const { dogId } = useParams<{ dogId: string }>()
   return <DogDetailPage key={dogId} toast={toast} />
 }
+
 export default function App() {
   const { toasts, toast, dismiss, dismissAll } = useToast()
 
   return (
     <>
-      <Routes>
-        {/* Public */}
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={<LoginPage toast={toast} />} />
-        <Route path="/signup" element={<SignupPage toast={toast} />} />
-        <Route path="/p/:passportId" element={<PassportPublicPage />} />
-        <Route path="/s/:token" element={<ShowcasePublicPage />} />
-        <Route path="/terms" element={<TermsPage />} />
-        <Route path="/survey" element={<SurveyPage />} />
-        <Route path="/privacy" element={<PrivacyPage />} />
-        <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
-        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <React.Suspense fallback={<LoadingScreen />}>
+        <Routes>
+          {/* Public */}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage toast={toast} />} />
+          <Route path="/signup" element={<SignupPage toast={toast} />} />
+          <Route path="/p/:passportId" element={<PassportPublicPage />} />
+          <Route path="/s/:token" element={<ShowcasePublicPage />} />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/survey" element={<SurveyPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
-        {/* Isolated Super SaaS Admin — intentionally outside AppLayout. */}
-        <Route path="/app/super-admin" element={
-          <ProtectedRoute>
-            <SuperAdminRoute>
-              <SuperAdminLayout />
-            </SuperAdminRoute>
-          </ProtectedRoute>
-        }>
-          <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
-          <Route path="dashboard" element={<SuperAdminOverviewPage />} />
-          <Route path="ai-ceo" element={<SuperAdminAiCeoPage />} />
-          <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
-          <Route path="organisations/:id" element={<SuperAdminOrganisationDetailPage />} />
-          <Route path="users" element={<SuperAdminUsersPage />} />
-          <Route path="users/:uid" element={<SuperAdminUserDetailPage />} />
-          <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
-          <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
-          <Route path="support-inbox" element={<SuperAdminSupportInboxPage />} />
-          <Route path="support-faqs" element={<SuperAdminFaqManagementPage />} />
-          <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
-          <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
-          <Route path="settings" element={<SuperAdminSettingsPage />} />
-        </Route>
+          {/* Isolated Super SaaS Admin — intentionally outside AppLayout. */}
+          <Route path="/app/super-admin" element={
+            <ProtectedRoute>
+              <SuperAdminRoute>
+                <SuperAdminLayout />
+              </SuperAdminRoute>
+            </ProtectedRoute>
+          }>
+            <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
+            <Route path="dashboard" element={<SuperAdminOverviewPage />} />
+            <Route path="ai-ceo" element={<SuperAdminAiCeoPage />} />
+            <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
+            <Route path="organisations/:id" element={<SuperAdminOrganisationDetailPage />} />
+            <Route path="users" element={<SuperAdminUsersPage />} />
+            <Route path="users/:uid" element={<SuperAdminUserDetailPage />} />
+            <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
+            <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
+            <Route path="support-inbox" element={<SuperAdminSupportInboxPage />} />
+            <Route path="support-faqs" element={<SuperAdminFaqManagementPage />} />
+            <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
+            <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
+            <Route path="settings" element={<SuperAdminSettingsPage />} />
+          </Route>
 
-        {/* Protected — app */}
-        <Route path="/app" element={
-          <ProtectedRoute>
-            <AppLayout toast={toast} />
-          </ProtectedRoute>
-        }>
-          <Route index element={<Navigate to="/app/dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardPage toast={toast} />} />
-          <Route path="dogs" element={<DogListPage toast={toast} />} />
-          <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
-          <Route path="dogs/:dogId" element={<DogDetailRoute toast={toast} />} />
-          <Route path="litters" element={<LittersPage toast={toast} dismissAll={dismissAll} />} />
-          <Route path="reminders" element={<RemindersPage toast={toast} />} />
-          <Route path="settings" element={<SettingsPage toast={toast} />} />
-          <Route path="documents" element={<DocumentsPage toast={toast} />} />
-          <Route path="export" element={<BreederOnlyRoute><ExportPage toast={toast} /></BreederOnlyRoute>} />
-          <Route path="audit" element={<AuditPage toast={toast} />} />
-          <Route path="billing" element={<BillingPage toast={toast} />} />
-          <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
-          <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
-          <Route path="admin/landing-media" element={<LandingMediaAdminPage toast={toast} />} />
-          <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppies" replace />} />
-          <Route path="buyers"  element={<BreederOnlyRoute><BuyersPage /></BreederOnlyRoute>} />
-          <Route path="reports" element={<BreederOnlyRoute><ReportsPage toast={toast} /></BreederOnlyRoute>} />
-          <Route path="claim-dogs" element={<ClaimDogPage toast={toast} />} />
-          <Route path="shared-dogs/:dogId" element={<PrivateDogPage />} />
-        </Route>
+          {/* Protected — app */}
+          <Route path="/app" element={
+            <ProtectedRoute>
+              <AppLayout toast={toast} />
+            </ProtectedRoute>
+          }>
+            <Route index element={<Navigate to="/app/dashboard" replace />} />
+            <Route path="dashboard" element={<DashboardPage toast={toast} />} />
+            <Route path="dogs" element={<DogListPage toast={toast} />} />
+            <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
+            <Route path="dogs/:dogId" element={<DogDetailRoute toast={toast} />} />
+            <Route path="litters" element={<LittersPage toast={toast} dismissAll={dismissAll} />} />
+            <Route path="reminders" element={<RemindersPage toast={toast} />} />
+            <Route path="settings" element={<SettingsPage toast={toast} />} />
+            <Route path="documents" element={<DocumentsPage toast={toast} />} />
+            <Route path="export" element={<BreederOnlyRoute><ExportPage toast={toast} /></BreederOnlyRoute>} />
+            <Route path="audit" element={<AuditPage toast={toast} />} />
+            <Route path="billing" element={<BillingPage toast={toast} />} />
+            <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
+            <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
+            <Route path="admin/landing-media" element={<LandingMediaAdminPage toast={toast} />} />
+            <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppies" replace />} />
+            <Route path="buyers" element={<BreederOnlyRoute><BuyersPage /></BreederOnlyRoute>} />
+            <Route path="reports" element={<BreederOnlyRoute><ReportsPage toast={toast} /></BreederOnlyRoute>} />
+            <Route path="claim-dogs" element={<ClaimDogPage toast={toast} />} />
+            <Route path="shared-dogs/:dogId" element={<PrivateDogPage />} />
+          </Route>
 
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </React.Suspense>
       <ToastContainer toasts={toasts} dismiss={dismiss} />
     </>
   )
