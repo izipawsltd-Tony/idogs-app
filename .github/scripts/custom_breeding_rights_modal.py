@@ -3,6 +3,11 @@ from pathlib import Path
 p = Path('src/pages/DogDetailPage.tsx')
 s = p.read_text(encoding='utf-8')
 
+# Idempotent: a follow-up workflow run after the generated commit should be a no-op.
+if 'id="confirm-breeding-rights-title"' in s and 'pendingBreedingRights' in s:
+    print('Custom breeding rights modal already applied; no changes needed.')
+    raise SystemExit(0)
+
 # Add pending/saving state to OverviewTab.
 needle = "  const [savingBreederId, setSavingBreederId] = useState(false)\n  const pedigreeRegisterStatus = resolvePedigreeRegister((dog as any).pedigreeRegister)"
 replacement = "  const [savingBreederId, setSavingBreederId] = useState(false)\n  const [pendingBreedingRights, setPendingBreedingRights] = useState<BreedingRightsValue | null>(null)\n  const [savingBreedingRights, setSavingBreedingRights] = useState(false)\n  const pedigreeRegisterStatus = resolvePedigreeRegister((dog as any).pedigreeRegister)"
@@ -33,7 +38,7 @@ if old not in s:
     raise SystemExit('Native breeding rights confirmation block not found')
 s = s.replace(old, new, 1)
 
-# Insert custom iDogs modal before the end of OverviewTab root grid (before SaleAvailabilityPanel block marker).
+# Insert custom iDogs modal before SaleAvailabilityPanel inside OverviewTab.
 marker = "      <SaleAvailabilityPanel"
 idx = s.find(marker, s.find('function OverviewTab'))
 if idx < 0:
@@ -91,5 +96,4 @@ modal = '''      {pendingBreedingRights === 'eligible' && (
 
 '''
 s = s[:idx] + modal + s[idx:]
-
 p.write_text(s, encoding='utf-8')
