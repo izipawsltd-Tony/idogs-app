@@ -26,7 +26,9 @@ jobs:
           cache: npm
 
       - name: Generate jurisdiction-aware compliance
-        run: python .github/scripts/jurisdiction_compliance_v1.py
+        run: |
+          python .github/scripts/jurisdiction_compliance_v1.py
+          python .github/scripts/jurisdiction_compliance_v1_fix.py
 
       - name: Verify candidate
         run: |
