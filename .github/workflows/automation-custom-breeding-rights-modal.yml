@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   build:
-    if: ${{ github.event.head_commit.message == 'automation: replace breeding rights browser confirm' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -41,8 +40,12 @@ jobs:
             exit 1
           fi
 
-      - name: Commit and push
+      - name: Commit and push when changed
         run: |
+          if git diff --quiet -- src/pages/DogDetailPage.tsx; then
+            echo "No generated code change; nothing to commit."
+            exit 0
+          fi
           git config user.name "iDogs Auto Build"
           git config user.email "actions@users.noreply.github.com"
           git add src/pages/DogDetailPage.tsx
