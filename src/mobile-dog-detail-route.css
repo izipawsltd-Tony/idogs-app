@@ -1,0 +1,92 @@
+@media (max-width: 768px) {
+  html[data-idogs-route='dog-detail'] .main-area main > div {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    padding: 16px !important;
+    overflow-x: hidden;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main > div > div[style*="align-items: flex-start"][style*="margin-bottom: 28px"] {
+    display: grid !important;
+    grid-template-columns: auto minmax(0, 1fr) !important;
+    align-items: start !important;
+    gap: 12px !important;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main > div > div[style*="align-items: flex-start"][style*="margin-bottom: 28px"] > :nth-child(2) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main > div > div[style*="align-items: flex-start"][style*="margin-bottom: 28px"] > :last-child {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main > div > div[style*="align-items: flex-start"][style*="margin-bottom: 28px"] > :last-child > * {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    justify-content: center;
+    white-space: nowrap;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main div[style*="grid-template-columns: 1fr 1fr"],
+  html[data-idogs-route='dog-detail'] .main-area main div[style*="grid-template-columns: 1fr 1fr 1fr"],
+  html[data-idogs-route='dog-detail'] .main-area main div[style*="grid-template-columns: 260px 1fr"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] {
+    flex-wrap: wrap !important;
+    align-items: flex-start !important;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] > div {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] span {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] select {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main > div > div[style*="position: relative"][style*="margin-bottom: 24px"] {
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main > div > div[style*="position: relative"][style*="margin-bottom: 24px"] > div:first-child {
+    max-width: 100%;
+    overflow-x: auto !important;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  html[data-idogs-route='dog-detail'] .main-area main > div > div[style*="position: relative"][style*="margin-bottom: 24px"] > div:first-child::-webkit-scrollbar {
+    display: none;
+  }
+}
