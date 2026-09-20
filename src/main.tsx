@@ -14,8 +14,14 @@ type CapacitorWindow = Window & {
 }
 
 const capacitor = (window as CapacitorWindow).Capacitor
-if (capacitor?.isNativePlatform?.()) {
-  document.documentElement.dataset.idogsNativePlatform = capacitor.getPlatform?.() || 'native'
+const buildNativePlatform = import.meta.env.VITE_IDOGS_NATIVE_PLATFORM?.trim()
+const runtimeNativePlatform = capacitor?.isNativePlatform?.()
+  ? (capacitor.getPlatform?.() || 'native')
+  : ''
+const nativePlatform = buildNativePlatform || runtimeNativePlatform
+
+if (nativePlatform) {
+  document.documentElement.dataset.idogsNativePlatform = nativePlatform
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
