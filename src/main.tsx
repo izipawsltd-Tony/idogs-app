@@ -37,6 +37,7 @@ if (nativePlatform) {
   }
 }
 
+// Keep an explicit route marker for WebView-safe, route-scoped mobile CSS.
 function RouteMarker() {
   const location = useLocation()
 
