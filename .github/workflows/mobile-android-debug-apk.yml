@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/mobile-android-debug-apk.yml'
       - 'src/mobile.css'
+      - 'src/pages/LandingPage.tsx'
       - 'src/main.tsx'
       - 'index.html'
       - 'mobile/**'
