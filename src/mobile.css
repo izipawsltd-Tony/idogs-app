@@ -181,6 +181,45 @@ body {
     max-width: 100%;
   }
 
+  /* Dashboard uses inline desktop dimensions (28px 32px page padding and a
+     1fr/340px main grid). Force those exact patterns into a narrow-screen
+     layout so the right rail and PanelCard action links cannot sit outside the
+     viewport. These selectors intentionally match only the existing dashboard
+     inline declarations and do not change desktop/web layout. */
+  .main-area main > div[style*="28px 32px"] {
+    padding: 20px 16px !important;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .main-area main div[style*="1fr 340px"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* PanelCard headers are already allowed to wrap, but the action cluster can
+     still preserve its own min-content width. Give it a full mobile row so
+     '+ Add dog', 'View all', and 'Full history' remain completely visible. */
+  .main-area main .card > div:first-child {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .main-area main .card > div:first-child > div:last-child {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .main-area main .card > div:first-child > div:last-child > a {
+    max-width: 100%;
+  }
+
   .bottom-nav {
     box-sizing: border-box;
     height: calc(var(--mobile-bottom-nav-h) + var(--safe-area-bottom)) !important;
