@@ -31,6 +31,7 @@ jobs:
       IDOGS_MOBILE_APP_ID: au.com.idogs.app.staging
       IDOGS_MOBILE_APP_NAME: iDogs QA
       IDOGS_QA_SIGNING_CERT_SHA256: dd96113d2bb7d9a20de6a09c89d3b6200ec0cfd0a2681dd13e9000372ece0932
+      VITE_IDOGS_NATIVE_PLATFORM: android
 
     steps:
       - name: Checkout exact commit
