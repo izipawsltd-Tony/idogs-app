@@ -30,6 +30,7 @@ jobs:
     env:
       IDOGS_MOBILE_APP_ID: au.com.idogs.app.staging
       IDOGS_MOBILE_APP_NAME: iDogs QA
+      IDOGS_QA_SIGNING_CERT_SHA256: dd96113d2bb7d9a20de6a09c89d3b6200ec0cfd0a2681dd13e9000372ece0932
 
     steps:
       - name: Checkout exact commit
@@ -48,6 +49,8 @@ jobs:
           java-version: '21'
 
       # QA-only signing identity. Production release signing is separate.
+      # The certificate fingerprint is pinned above. A missing/changed cache
+      # must fail closed rather than silently creating a new Android identity.
       - name: Restore persistent QA signing key
         id: qa-signing-cache
         uses: actions/cache@v4
@@ -55,22 +58,13 @@ jobs:
           path: ~/.android/debug.keystore
           key: idogs-android-qa-debug-keystore-v1
 
-      - name: Seed QA signing key on cache miss
+      - name: Verify pinned QA signing key
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.android"
-          if [ ! -s "$HOME/.android/debug.keystore" ]; then
-            keytool -genkeypair \
-              -keystore "$HOME/.android/debug.keystore" \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -dname "CN=iDogs QA,O=IZIPAWS,C=AU" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -noprompt
+          if [ "${{ steps.qa-signing-cache.outputs.cache-hit }}" != "true" ]; then
+            echo 'FAIL CLOSED: pinned iDogs QA signing key cache is missing'
+            exit 1
           fi
           test -s "$HOME/.android/debug.keystore"
           KEYSTORE_SHA=$(keytool -list -v \
@@ -81,7 +75,12 @@ jobs:
             | tr -d ':' \
             | tr '[:upper:]' '[:lower:]')
           test -n "$KEYSTORE_SHA"
-          echo "QA signing certificate SHA-256: $KEYSTORE_SHA"
+          echo "Pinned QA certificate SHA-256: $IDOGS_QA_SIGNING_CERT_SHA256"
+          echo "Restored QA certificate SHA-256: $KEYSTORE_SHA"
+          if [ "$KEYSTORE_SHA" != "$IDOGS_QA_SIGNING_CERT_SHA256" ]; then
+            echo 'FAIL CLOSED: restored QA signing key fingerprint changed'
+            exit 1
+          fi
           echo "QA_KEYSTORE_CERT_SHA256=$KEYSTORE_SHA" >> "$GITHUB_ENV"
 
       - name: Install web dependencies
@@ -158,7 +157,7 @@ jobs:
           ./gradlew --no-daemon assembleDebug
 
       # Do not trust Gradle's ephemeral/default debug signer. Re-align and
-      # re-sign the final QA APK explicitly with the restored iDogs QA key.
+      # re-sign the final QA APK explicitly with the pinned iDogs QA key.
       - name: Deterministically sign QA APK
         shell: bash
         run: |
@@ -201,15 +200,16 @@ jobs:
           "$IDOGS_APKSIGNER" verify --verbose --print-certs "$APK" | tee mobile/apk-output/SIGNING_REPORT.txt
           APK_CERT_SHA=$(
             "$IDOGS_APKSIGNER" verify --print-certs "$APK" \
-              | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' \
+              | awk -F': ' '/certificate SHA-256 digest:/{print $2; exit}' \
               | tr -d ':' \
               | tr '[:upper:]' '[:lower:]'
           )
           test -n "$APK_CERT_SHA"
+          echo "Pinned certificate SHA-256: $IDOGS_QA_SIGNING_CERT_SHA256"
           echo "Keystore certificate SHA-256: $QA_KEYSTORE_CERT_SHA256"
           echo "APK signer certificate SHA-256: $APK_CERT_SHA"
-          if [ "$APK_CERT_SHA" != "$QA_KEYSTORE_CERT_SHA256" ]; then
-            echo 'FAIL CLOSED: APK signer does not match QA keystore'
+          if [ "$APK_CERT_SHA" != "$IDOGS_QA_SIGNING_CERT_SHA256" ] || [ "$APK_CERT_SHA" != "$QA_KEYSTORE_CERT_SHA256" ]; then
+            echo 'FAIL CLOSED: APK signer identity does not match pinned QA certificate'
             exit 1
           fi
 
@@ -223,7 +223,7 @@ jobs:
           Firebase: idogs-app-staging
           Build type: debug QA
           Signing certificate SHA-256: ${APK_CERT_SHA}
-          Signing gate: APK signer == QA keystore PASS
+          Signing gate: APK signer == pinned QA certificate == QA keystore PASS
           Payments: disabled for this QA build
           EOF
           sha256sum "$OUT_APK" | tee mobile/apk-output/SHA256SUMS.txt
