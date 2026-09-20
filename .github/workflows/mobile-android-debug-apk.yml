@@ -47,18 +47,15 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # GitHub-hosted runners are ephemeral. Without persisting the default
-      # Android debug keystore, every run signs the QA app with a new
-      # certificate and Android refuses in-place QA updates. This cache is
-      # QA/debug-only; production release signing remains completely separate.
-      - name: Restore persistent QA debug signing key
+      # QA-only signing identity. Production release signing is separate.
+      - name: Restore persistent QA signing key
         id: qa-signing-cache
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
           key: idogs-android-qa-debug-keystore-v1
 
-      - name: Seed persistent QA debug signing key on cache miss
+      - name: Seed QA signing key on cache miss
         shell: bash
         run: |
           set -euo pipefail
@@ -69,13 +66,23 @@ jobs:
               -storepass android \
               -alias androiddebugkey \
               -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US" \
+              -dname "CN=iDogs QA,O=IZIPAWS,C=AU" \
               -keyalg RSA \
               -keysize 2048 \
               -validity 10000 \
               -noprompt
           fi
           test -s "$HOME/.android/debug.keystore"
+          KEYSTORE_SHA=$(keytool -list -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey \
+            | awk -F': ' '/SHA256:/{print $2; exit}' \
+            | tr -d ':' \
+            | tr '[:upper:]' '[:lower:]')
+          test -n "$KEYSTORE_SHA"
+          echo "QA signing certificate SHA-256: $KEYSTORE_SHA"
+          echo "QA_KEYSTORE_CERT_SHA256=$KEYSTORE_SHA" >> "$GITHUB_ENV"
 
       - name: Install web dependencies
         run: npm ci
@@ -150,28 +157,76 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleDebug
 
-      - name: Verify APK identity and integrity
+      # Do not trust Gradle's ephemeral/default debug signer. Re-align and
+      # re-sign the final QA APK explicitly with the restored iDogs QA key.
+      - name: Deterministically sign QA APK
         shell: bash
         run: |
           set -euo pipefail
-          APK=mobile/android/app/build/outputs/apk/debug/app-debug.apk
-          test -s "$APK"
+          RAW_APK=mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          ALIGNED_APK=mobile/android/app/build/outputs/apk/debug/app-debug-qa-aligned.apk
+          SIGNED_APK=mobile/android/app/build/outputs/apk/debug/app-debug-qa-signed.apk
+          test -s "$RAW_APK"
           test -s "$HOME/.android/debug.keystore"
+
+          BUILD_TOOLS_DIR=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+          test -x "$ZIPALIGN"
+          test -x "$APKSIGNER"
+
+          "$ZIPALIGN" -f -p 4 "$RAW_APK" "$ALIGNED_APK"
+          "$APKSIGNER" sign \
+            --ks "$HOME/.android/debug.keystore" \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out "$SIGNED_APK" \
+            "$ALIGNED_APK"
+          test -s "$SIGNED_APK"
+          echo "IDOGS_APKSIGNER=$APKSIGNER" >> "$GITHUB_ENV"
+          echo "IDOGS_SIGNED_APK=$SIGNED_APK" >> "$GITHUB_ENV"
+
+      - name: Verify QA signer identity and APK integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$IDOGS_SIGNED_APK"
+          test -s "$APK"
+          test -n "${QA_KEYSTORE_CERT_SHA256:-}"
           grep -q "au.com.idogs.app.staging" mobile/android/app/build.gradle || grep -q "au.com.idogs.app.staging" mobile/android/app/build.gradle.kts
           unzip -t "$APK" >/dev/null
+
           mkdir -p mobile/apk-output
-          cp "$APK" mobile/apk-output/iDogs-QA-staging-debug-${GITHUB_SHA}.apk
+          "$IDOGS_APKSIGNER" verify --verbose --print-certs "$APK" | tee mobile/apk-output/SIGNING_REPORT.txt
+          APK_CERT_SHA=$(
+            "$IDOGS_APKSIGNER" verify --print-certs "$APK" \
+              | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' \
+              | tr -d ':' \
+              | tr '[:upper:]' '[:lower:]'
+          )
+          test -n "$APK_CERT_SHA"
+          echo "Keystore certificate SHA-256: $QA_KEYSTORE_CERT_SHA256"
+          echo "APK signer certificate SHA-256: $APK_CERT_SHA"
+          if [ "$APK_CERT_SHA" != "$QA_KEYSTORE_CERT_SHA256" ]; then
+            echo 'FAIL CLOSED: APK signer does not match QA keystore'
+            exit 1
+          fi
+
+          OUT_APK="mobile/apk-output/iDogs-QA-staging-debug-${GITHUB_SHA}.apk"
+          cp "$APK" "$OUT_APK"
           cat > mobile/apk-output/BUILD_INFO.txt <<EOF
-          iDogs Android Debug APK
+          iDogs Android QA APK
           Git SHA: ${GITHUB_SHA}
           App ID: au.com.idogs.app.staging
           App name: iDogs QA
           Firebase: idogs-app-staging
-          Build type: debug
-          Signing: persistent QA debug keystore cache v1
+          Build type: debug QA
+          Signing certificate SHA-256: ${APK_CERT_SHA}
+          Signing gate: APK signer == QA keystore PASS
           Payments: disabled for this QA build
           EOF
-          sha256sum mobile/apk-output/*.apk | tee mobile/apk-output/SHA256SUMS.txt
+          sha256sum "$OUT_APK" | tee mobile/apk-output/SHA256SUMS.txt
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
