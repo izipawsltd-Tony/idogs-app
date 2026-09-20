@@ -44,6 +44,16 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # GitHub-hosted runners are ephemeral. Without persisting the default
+      # Android debug keystore, every run signs au.com.idogs.app with a new
+      # certificate and Android refuses in-place QA updates. This cache is
+      # QA/debug-only; production release signing remains completely separate.
+      - name: Restore persistent QA debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: idogs-android-qa-debug-keystore-v1
+
       - name: Install web dependencies
         run: npm ci
 
@@ -123,6 +133,7 @@ jobs:
           set -euo pipefail
           APK=mobile/android/app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK"
+          test -s "$HOME/.android/debug.keystore"
           grep -q "au.com.idogs.app" mobile/android/app/build.gradle || grep -q "au.com.idogs.app" mobile/android/app/build.gradle.kts
           unzip -t "$APK" >/dev/null
           mkdir -p mobile/apk-output
@@ -133,6 +144,7 @@ jobs:
           App ID: au.com.idogs.app
           Firebase: idogs-app-staging
           Build type: debug
+          Signing: persistent QA debug keystore cache v1
           Payments: disabled for this QA build
           EOF
           sha256sum mobile/apk-output/*.apk | tee mobile/apk-output/SHA256SUMS.txt
