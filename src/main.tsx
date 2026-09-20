@@ -22,6 +22,14 @@ const nativePlatform = buildNativePlatform || runtimeNativePlatform
 
 if (nativePlatform) {
   document.documentElement.dataset.idogsNativePlatform = nativePlatform
+
+  // Native app entry should behave like an app, not like the marketing site.
+  // Only rewrite the root URL so deep links and explicit routes still work.
+  // LoginPage already redirects an authenticated user to /app/dashboard,
+  // while a signed-out user remains on the login form.
+  if (window.location.pathname === '/') {
+    window.history.replaceState(window.history.state, '', '/login')
+  }
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
