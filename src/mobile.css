@@ -13,9 +13,34 @@
    --safe-area-inset-* values, but keep a conservative status-bar minimum for
    preview/new WebView combinations where both the injected and env() top inset
    briefly resolve to zero. Browser/PWA rendering is unaffected because this
-   selector is only set by the native Capacitor runtime. */
+   selector is only set by the native bundle/runtime marker. */
 html[data-idogs-native-platform='android'] {
-  --safe-area-top: max(var(--safe-area-inset-top, 0px), env(safe-area-inset-top, 0px), 32px);
+  --safe-area-top: max(var(--safe-area-inset-top, 0px), env(safe-area-inset-top, 0px), 36px);
+}
+
+/* Landing V2 is edge-to-edge. Reserve a real top band for Android system UI
+   instead of letting app controls share the camera/status-bar row. The fixed
+   spacer paints the system-bar area, while page-content padding preserves
+   layout flow and sticky header top keeps the header below it while scrolling. */
+html[data-idogs-native-platform='android'] .lv2-page::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--safe-area-top);
+  background: #16302B;
+  z-index: 45;
+  pointer-events: none;
+}
+
+html[data-idogs-native-platform='android'] .lv2-page #lv2-page-content {
+  padding-top: var(--safe-area-top);
+}
+
+html[data-idogs-native-platform='android'] .lv2-page header.nav {
+  top: var(--safe-area-top);
+  padding-top: 0;
 }
 
 html,
