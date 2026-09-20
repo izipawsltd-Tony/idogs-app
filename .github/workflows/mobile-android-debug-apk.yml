@@ -27,6 +27,9 @@ jobs:
     name: Build staging Android debug APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      IDOGS_MOBILE_APP_ID: au.com.idogs.app.staging
+      IDOGS_MOBILE_APP_NAME: iDogs QA
 
     steps:
       - name: Checkout exact commit
@@ -45,7 +48,7 @@ jobs:
           java-version: '21'
 
       # GitHub-hosted runners are ephemeral. Without persisting the default
-      # Android debug keystore, every run signs au.com.idogs.app with a new
+      # Android debug keystore, every run signs the QA app with a new
       # certificate and Android refuses in-place QA updates. This cache is
       # QA/debug-only; production release signing remains completely separate.
       - name: Restore persistent QA debug signing key
@@ -154,14 +157,15 @@ jobs:
           APK=mobile/android/app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK"
           test -s "$HOME/.android/debug.keystore"
-          grep -q "au.com.idogs.app" mobile/android/app/build.gradle || grep -q "au.com.idogs.app" mobile/android/app/build.gradle.kts
+          grep -q "au.com.idogs.app.staging" mobile/android/app/build.gradle || grep -q "au.com.idogs.app.staging" mobile/android/app/build.gradle.kts
           unzip -t "$APK" >/dev/null
           mkdir -p mobile/apk-output
-          cp "$APK" mobile/apk-output/iDogs-staging-debug-${GITHUB_SHA}.apk
+          cp "$APK" mobile/apk-output/iDogs-QA-staging-debug-${GITHUB_SHA}.apk
           cat > mobile/apk-output/BUILD_INFO.txt <<EOF
           iDogs Android Debug APK
           Git SHA: ${GITHUB_SHA}
-          App ID: au.com.idogs.app
+          App ID: au.com.idogs.app.staging
+          App name: iDogs QA
           Firebase: idogs-app-staging
           Build type: debug
           Signing: persistent QA debug keystore cache v1
