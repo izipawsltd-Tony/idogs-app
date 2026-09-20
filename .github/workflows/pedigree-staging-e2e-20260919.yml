@@ -16,6 +16,7 @@ jobs:
       CANDIDATE_SHA: bd3aa96db1ace02a6fe39407f0575a9dd2cfe9aa
       VERIFIED_PRODUCTION_SHA: d3052ea12a9a2498ecec3e77a500315899850f39
       MAIN_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+      STAGING_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       TEAM_SLUG: izipawsltd-tonys-projects
       EXACT_PREVIEW_URL: https://idogs-dphbbt6wx-izipawsltd-tonys-projects.vercel.app
       LOCAL_QA_URL: http://127.0.0.1:4173
@@ -54,7 +55,7 @@ jobs:
           test -z "$(git status --porcelain)"
           echo DETERMINISTIC_GATE_PASS
 
-      - name: Pull main Preview environment and enforce staging Firebase boundary
+      - name: Pull dedicated staging environment and enforce Firebase boundary
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -62,9 +63,9 @@ jobs:
           set -euo pipefail
           rm -rf .vercel
           mkdir -p .vercel
-          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
-          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/preview-pull.log 2>&1
-          ENV_FILE=.vercel/.env.preview.local
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" >/tmp/staging-pull.log 2>&1
+          ENV_FILE=.vercel/.env.production.local
           test -f "$ENV_FILE"
           set -a
           source "$ENV_FILE"
@@ -73,8 +74,15 @@ jobs:
           test "${VITE_FIREBASE_PROJECT_ID:-}" = "idogs-app-staging"
           test -n "${FIREBASE_CLIENT_EMAIL:-}"
           test -n "${FIREBASE_PRIVATE_KEY:-}"
-          if [ "${EXTRA_LITTER_CHECKOUT_ENABLED:-false}" = "true" ]; then echo 'FAIL checkout enabled in Preview QA'; exit 1; fi
-          echo MAIN_PREVIEW_FIREBASE_STAGING_BOUNDARY_PASS
+          if [ -n "${STRIPE_SECRET_KEY:-}" ] && [[ "$STRIPE_SECRET_KEY" != sk_test_* ]]; then
+            echo 'FAIL staging Vercel project is not using a Stripe test secret'
+            exit 1
+          fi
+          if [ "${EXTRA_LITTER_CHECKOUT_ENABLED:-false}" = "true" ]; then
+            echo 'FAIL checkout enabled in pedigree staging QA'
+            exit 1
+          fi
+          echo DEDICATED_STAGING_FIREBASE_BOUNDARY_PASS
           echo PAYMENT_PATHS_FORBIDDEN_IN_THIS_QA
 
       - name: Verify existing exact-SHA Vercel Preview through authenticated CLI
@@ -83,18 +91,20 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           set -euo pipefail
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
           npx --yes vercel@latest curl / --deployment "$EXACT_PREVIEW_URL" --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" > /tmp/exact-preview-home.html
           grep -q '<div id="root"></div>' /tmp/exact-preview-home.html
           npx --yes vercel@latest curl /login --deployment "$EXACT_PREVIEW_URL" --token="$VERCEL_TOKEN" --scope="$TEAM_SLUG" > /tmp/exact-preview-login.html
           grep -q '<div id="root"></div>' /tmp/exact-preview-login.html
+          printf '%s\n' '{"projectId":"prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app-staging"}' > .vercel/project.json
           echo "EXACT_SHA_VERCEL_PREVIEW_REACHABLE $CANDIDATE_SHA"
 
-      - name: Build exact candidate with the verified staging Preview environment
+      - name: Build exact candidate with dedicated staging environment
         shell: bash
         run: |
           set -euo pipefail
           set -a
-          source .vercel/.env.preview.local
+          source .vercel/.env.production.local
           set +a
           test "$FIREBASE_PROJECT_ID" = "idogs-app-staging"
           test "$VITE_FIREBASE_PROJECT_ID" = "idogs-app-staging"
@@ -109,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           set -a
-          source .vercel/.env.preview.local
+          source .vercel/.env.production.local
           set +a
           test "$FIREBASE_PROJECT_ID" = "idogs-app-staging"
           test "$VITE_FIREBASE_PROJECT_ID" = "idogs-app-staging"
@@ -122,7 +132,7 @@ jobs:
         run: |
           set -euo pipefail
           set -a
-          source .vercel/.env.preview.local
+          source .vercel/.env.production.local
           set +a
           test "$FIREBASE_PROJECT_ID" = "idogs-app-staging"
           test "$VITE_FIREBASE_PROJECT_ID" = "idogs-app-staging"
@@ -149,10 +159,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f .vercel/.env.preview.local || { echo CLEANUP_SKIPPED_NO_ENV_FILE; exit 0; }
+          test -f .vercel/.env.production.local || { echo CLEANUP_SKIPPED_NO_ENV_FILE; exit 0; }
           test -f ./.pedigree-staging-e2e.mjs || { echo CLEANUP_SKIPPED_NO_HARNESS; exit 0; }
           set -a
-          source .vercel/.env.preview.local
+          source .vercel/.env.production.local
           set +a
           test "${FIREBASE_PROJECT_ID:-}" = "idogs-app-staging"
           test "${VITE_FIREBASE_PROJECT_ID:-}" = "idogs-app-staging"
@@ -170,5 +180,6 @@ jobs:
           echo "EXACT_CANDIDATE_SHA $CANDIDATE_SHA"
           echo "EXACT_VERCEL_PREVIEW $EXACT_PREVIEW_URL"
           echo "FIREBASE_QA_PROJECT idogs-app-staging"
+          echo "DEDICATED_VERCEL_STAGING_PROJECT idogs-app-staging"
           echo "MAIN_PRODUCTION_DEPLOYMENT_UNTOUCHED"
           echo PEDIGREE_STAGING_GATE_PASS
