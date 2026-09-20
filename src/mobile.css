@@ -9,6 +9,15 @@
   --mobile-bottom-nav-h: 68px;
 }
 
+/* Android 16+ enforces edge-to-edge. Capacitor 8 normally injects the native
+   --safe-area-inset-* values, but keep a conservative status-bar minimum for
+   preview/new WebView combinations where both the injected and env() top inset
+   briefly resolve to zero. Browser/PWA rendering is unaffected because this
+   selector is only set by the native Capacitor runtime. */
+html[data-idogs-native-platform='android'] {
+  --safe-area-top: max(var(--safe-area-inset-top, 0px), env(safe-area-inset-top, 0px), 32px);
+}
+
 html,
 body,
 #root {
