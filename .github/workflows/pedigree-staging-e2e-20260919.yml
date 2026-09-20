@@ -13,11 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      CANDIDATE_SHA: 815a304a546198f60df8537f4f48f1e18aff91ea
+      CANDIDATE_SHA: bd3aa96db1ace02a6fe39407f0575a9dd2cfe9aa
       VERIFIED_PRODUCTION_SHA: d3052ea12a9a2498ecec3e77a500315899850f39
       MAIN_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
       TEAM_SLUG: izipawsltd-tonys-projects
-      EXACT_PREVIEW_URL: https://idogs-8nskllpgx-izipawsltd-tonys-projects.vercel.app
+      EXACT_PREVIEW_URL: https://idogs-dphbbt6wx-izipawsltd-tonys-projects.vercel.app
       LOCAL_QA_URL: http://127.0.0.1:4173
 
     steps:
