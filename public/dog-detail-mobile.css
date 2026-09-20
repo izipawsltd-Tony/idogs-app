@@ -1,0 +1,120 @@
+@media (max-width: 768px) {
+  /*
+   * Dog Detail fallback for Android/iOS WebViews.
+   *
+   * The first QA implementation used :has() plus inline-style probing to
+   * scope these rules. The Pixel 8 QA WebView did not apply that selector
+   * path reliably, so this fallback deliberately uses only long-supported
+   * descendant/attribute selectors. It is loaded after the app bundle and
+   * therefore wins against the desktop-first inline layout via !important.
+   * Desktop is unaffected by the media query.
+   */
+
+  .main-area main > div[style*="padding: 32px"] {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    padding: 16px !important;
+    overflow-x: hidden;
+  }
+
+  /* Dog identity header: photo + identity first, actions on a full-width row. */
+  .main-area main > div[style*="padding: 32px"] > div[style*="margin-bottom: 28px"][style*="align-items: flex-start"] {
+    display: grid !important;
+    grid-template-columns: auto minmax(0, 1fr) !important;
+    align-items: start !important;
+    gap: 12px !important;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .main-area main > div[style*="padding: 32px"] > div[style*="margin-bottom: 28px"][style*="align-items: flex-start"] > :nth-child(2) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .main-area main > div[style*="padding: 32px"] > div[style*="margin-bottom: 28px"][style*="align-items: flex-start"] > :last-child {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .main-area main > div[style*="padding: 32px"] > div[style*="margin-bottom: 28px"][style*="align-items: flex-start"] > :last-child > * {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    justify-content: center;
+    white-space: normal !important;
+    text-align: center;
+  }
+
+  /* All desktop two/three-column content inside Dog Detail becomes readable. */
+  .main-area main > div[style*="padding: 32px"] div[style*="grid-template-columns: 1fr 1fr"],
+  .main-area main > div[style*="padding: 32px"] div[style*="grid-template-columns: 1fr 1fr 1fr"],
+  .main-area main > div[style*="padding: 32px"] div[style*="grid-template-columns: 260px 1fr"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  /* Pedigree / Registration row: label, status and selector stack vertically. */
+  .main-area main > div[style*="padding: 32px"] div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    flex-wrap: nowrap !important;
+    min-width: 0;
+  }
+
+  .main-area main > div[style*="padding: 32px"] div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] > div {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+
+  .main-area main > div[style*="padding: 32px"] div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] span {
+    max-width: 100%;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  .main-area main > div[style*="padding: 32px"] div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] select {
+    box-sizing: border-box;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  /* Keep the tab strip locally scrollable without widening the page. */
+  .main-area main > div[style*="padding: 32px"] > div[style*="position: relative"][style*="margin-bottom: 24px"] {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .main-area main > div[style*="padding: 32px"] > div[style*="position: relative"][style*="margin-bottom: 24px"] > div:first-child {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto !important;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .main-area main > div[style*="padding: 32px"] > div[style*="position: relative"][style*="margin-bottom: 24px"] > div:first-child::-webkit-scrollbar {
+    display: none;
+  }
+}
