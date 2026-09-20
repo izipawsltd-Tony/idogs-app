@@ -220,6 +220,107 @@ body {
     max-width: 100%;
   }
 
+  /* Dog Detail is still authored as a desktop-first page with many inline
+     two-column layouts. Scope the mobile overrides to the page containing the
+     direct "My dogs" back-link so Dashboard/Dogs list layouts that already
+     pass QA are not affected. Modern Android WebView supports :has(). */
+  .main-area main:has(> div > a[href="/app/dogs"]) > div {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    padding: 16px !important;
+    overflow-x: hidden;
+  }
+
+  /* Dog identity header: keep photo + identity compact, then give management
+     actions a full-width row instead of letting View/Transfer/Delete fall off
+     the right edge. */
+  .main-area main:has(> div > a[href="/app/dogs"]) > div > div[style*="align-items: flex-start"][style*="margin-bottom: 28px"] {
+    display: grid !important;
+    grid-template-columns: auto minmax(0, 1fr) !important;
+    align-items: start !important;
+    gap: 12px !important;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .main-area main:has(> div > a[href="/app/dogs"]) > div > div[style*="align-items: flex-start"][style*="margin-bottom: 28px"] > :nth-child(2) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .main-area main:has(> div > a[href="/app/dogs"]) > div > div[style*="align-items: flex-start"][style*="margin-bottom: 28px"] > :last-child {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: 100%;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px !important;
+  }
+
+  .main-area main:has(> div > a[href="/app/dogs"]) > div > div[style*="align-items: flex-start"][style*="margin-bottom: 28px"] > :last-child > * {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+    white-space: nowrap;
+  }
+
+  /* Overview and tab forms: desktop two/three-column grids become one readable
+     column. This fixes compressed Details/Health Summary and the pedigree row
+     without changing desktop or other routes. */
+  .main-area main:has(> div > a[href="/app/dogs"]) div[style*="grid-template-columns: 1fr 1fr"],
+  .main-area main:has(> div > a[href="/app/dogs"]) div[style*="grid-template-columns: 1fr 1fr 1fr"],
+  .main-area main:has(> div > a[href="/app/dogs"]) div[style*="grid-template-columns: 260px 1fr"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Pedigree / Registration and similar split rows may contain a long status
+     chip plus a select. Let those controls wrap into a normal vertical mobile
+     arrangement rather than squeezing their text into a few characters. */
+  .main-area main:has(> div > a[href="/app/dogs"]) div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] {
+    flex-wrap: wrap !important;
+    align-items: flex-start !important;
+  }
+
+  .main-area main:has(> div > a[href="/app/dogs"]) div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] > div {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .main-area main:has(> div > a[href="/app/dogs"]) div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] span {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .main-area main:has(> div > a[href="/app/dogs"]) div[style*="padding: 10px 16px"][style*="justify-content: space-between"][style*="gap: 8px"] select {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* Tabs intentionally remain horizontally swipeable, but should behave like a
+     tab strip rather than create page-level horizontal overflow. */
+  .main-area main:has(> div > a[href="/app/dogs"]) > div > div[style*="position: relative"][style*="margin-bottom: 24px"] {
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .main-area main:has(> div > a[href="/app/dogs"]) > div > div[style*="position: relative"][style*="margin-bottom: 24px"] > div:first-child {
+    max-width: 100%;
+    scrollbar-width: none;
+  }
+
+  .main-area main:has(> div > a[href="/app/dogs"]) > div > div[style*="position: relative"][style*="margin-bottom: 24px"] > div:first-child::-webkit-scrollbar {
+    display: none;
+  }
+
   .bottom-nav {
     box-sizing: border-box;
     height: calc(var(--mobile-bottom-nav-h) + var(--safe-area-bottom)) !important;
