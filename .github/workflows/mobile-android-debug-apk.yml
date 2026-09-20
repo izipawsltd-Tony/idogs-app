@@ -49,10 +49,30 @@ jobs:
       # certificate and Android refuses in-place QA updates. This cache is
       # QA/debug-only; production release signing remains completely separate.
       - name: Restore persistent QA debug signing key
+        id: qa-signing-cache
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
           key: idogs-android-qa-debug-keystore-v1
+
+      - name: Seed persistent QA debug signing key on cache miss
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          if [ ! -s "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -noprompt
+          fi
+          test -s "$HOME/.android/debug.keystore"
 
       - name: Install web dependencies
         run: npm ci
