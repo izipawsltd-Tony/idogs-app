@@ -146,6 +146,25 @@ jobs:
       - name: Sync web bundle into Android
         run: npm --prefix mobile run sync:android
 
+      - name: Patch Android launcher routing
+        run: npm --prefix mobile run patch:android:launcher
+
+      - name: Verify Android launcher routing
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN_ACTIVITY=mobile/android/app/src/main/java/au/com/idogs/app/staging/MainActivity.java
+          MANIFEST=mobile/android/app/src/main/AndroidManifest.xml
+          test -s "$MAIN_ACTIVITY"
+          test -s "$MANIFEST"
+          grep -q 'super.onCreate(launcher ? null : savedInstanceState)' "$MAIN_ACTIVITY"
+          grep -q 'resetToNativeStartPath' "$MAIN_ACTIVITY"
+          grep -q 'Intent.ACTION_MAIN' "$MAIN_ACTIVITY"
+          grep -q 'Intent.CATEGORY_LAUNCHER' "$MAIN_ACTIVITY"
+          grep -q 'android:launchMode="singleTask"' "$MANIFEST"
+          grep -q '"startPath": "/login"' mobile/android/app/src/main/assets/capacitor.config.json
+          echo 'Android launcher policy: MAIN/LAUNCHER -> /login, saved WebView route restoration disabled, singleTask PASS'
+
       - name: Generate Android launcher and splash assets
         run: npm --prefix mobile run assets:android
 
@@ -224,6 +243,7 @@ jobs:
           App name: iDogs QA
           Firebase: idogs-app-staging
           Build type: debug QA
+          Native launcher: MAIN/LAUNCHER -> /login via singleTask MainActivity
           Signing certificate SHA-256: ${APK_CERT_SHA}
           Signing gate: APK signer == pinned QA certificate == QA keystore PASS
           Payments: disabled for this QA build
