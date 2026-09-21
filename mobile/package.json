@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "branding": "node ./scripts/prepare-branding.mjs",
+    "patch:android:launcher": "node ./scripts/patch-android-launcher.mjs",
     "assets:android": "npx @capacitor/assets generate --android --assetPath resources",
     "assets:ios": "npx @capacitor/assets generate --ios --assetPath resources",
     "add:android": "cap add android",
