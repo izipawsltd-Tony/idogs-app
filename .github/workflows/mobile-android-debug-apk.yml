@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: idogs-android-debug-apk-${{ github.ref }}
@@ -49,9 +49,6 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # QA-only signing identity. Production release signing is separate.
-      # The certificate fingerprint is pinned above. A missing/changed cache
-      # must fail closed rather than silently creating a new Android identity.
       - name: Restore persistent QA signing key
         id: qa-signing-cache
         uses: actions/cache@v4
@@ -176,8 +173,6 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleDebug
 
-      # Do not trust Gradle's ephemeral/default debug signer. Re-align and
-      # re-sign the final QA APK explicitly with the pinned iDogs QA key.
       - name: Deterministically sign QA APK
         shell: bash
         run: |
@@ -249,6 +244,40 @@ jobs:
           Payments: disabled for this QA build
           EOF
           sha256sum "$OUT_APK" | tee mobile/apk-output/SHA256SUMS.txt
+
+      - name: Publish fixed latest QA release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SRC_APK="mobile/apk-output/iDogs-QA-staging-debug-${GITHUB_SHA}.apk"
+          LATEST_APK="mobile/apk-output/iDogs-QA-latest.apk"
+          LATEST_INFO="mobile/apk-output/iDogs-QA-latest-BUILD_INFO.txt"
+          LATEST_SUM="mobile/apk-output/iDogs-QA-latest-SHA256SUMS.txt"
+          LATEST_SIGNING="mobile/apk-output/iDogs-QA-latest-SIGNING_REPORT.txt"
+
+          test -s "$SRC_APK"
+          cp "$SRC_APK" "$LATEST_APK"
+          cp mobile/apk-output/BUILD_INFO.txt "$LATEST_INFO"
+          cp mobile/apk-output/SIGNING_REPORT.txt "$LATEST_SIGNING"
+          sha256sum "$LATEST_APK" > "$LATEST_SUM"
+
+          if gh release view idogs-qa-latest >/dev/null 2>&1; then
+            gh release delete idogs-qa-latest --yes --cleanup-tag
+          fi
+
+          gh release create idogs-qa-latest \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title 'iDogs QA Latest' \
+            --notes "Automated Android QA build. Exact SHA: ${GITHUB_SHA}. Staging only; not for production." \
+            "$LATEST_APK" \
+            "$LATEST_INFO" \
+            "$LATEST_SUM" \
+            "$LATEST_SIGNING"
+
+          echo "Published fixed QA release for exact SHA ${GITHUB_SHA}"
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
