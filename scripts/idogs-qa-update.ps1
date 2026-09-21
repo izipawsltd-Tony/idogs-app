@@ -3,7 +3,8 @@ param(
   [string]$Branch = 'feat/mobile-app-foundation',
   [string]$Workflow = 'mobile-android-debug-apk.yml',
   [string]$Package = 'au.com.idogs.app.staging',
-  [string]$PreferredAvd = 'Pixel_8'
+  [string]$PreferredAvd = 'Pixel_8',
+  [int]$BuildWaitMinutes = 20
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,72 +66,82 @@ function Invoke-GitHubJson([string]$Uri) {
   return Invoke-RestMethod -Uri $Uri -Headers $headers -Method Get
 }
 
+function Wait-LatestSuccessfulBuild {
+  $deadline = (Get-Date).AddMinutes($BuildWaitMinutes)
+  $runsUri = "https://api.github.com/repos/$Repo/actions/workflows/$Workflow/runs?branch=$([uri]::EscapeDataString($Branch))&per_page=1"
+
+  do {
+    $runs = Invoke-GitHubJson $runsUri
+    $run = $runs.workflow_runs | Select-Object -First 1
+    if (-not $run) { throw 'No Android QA workflow run found.' }
+
+    Write-Host "Latest workflow: run $($run.id) | $($run.status) | $($run.conclusion) | $($run.head_sha.Substring(0,8))"
+
+    if ($run.status -eq 'completed') {
+      if ($run.conclusion -ne 'success') {
+        throw "Latest Android QA build did not pass. Run $($run.id) conclusion: $($run.conclusion)"
+      }
+      return $run
+    }
+
+    if ((Get-Date) -gt $deadline) {
+      throw "Latest Android QA build did not finish within $BuildWaitMinutes minutes."
+    }
+
+    Start-Sleep -Seconds 10
+  } while ($true)
+}
+
 $adb = Get-AdbPath
 Ensure-Device $adb
 
-Write-Step 'Finding latest successful iDogs Android QA build'
-$runsUri = "https://api.github.com/repos/$Repo/actions/workflows/$Workflow/runs?branch=$([uri]::EscapeDataString($Branch))&status=success&per_page=10"
-$runs = Invoke-GitHubJson $runsUri
-$run = $runs.workflow_runs | Where-Object { $_.conclusion -eq 'success' } | Select-Object -First 1
-if (-not $run) { throw 'No successful Android QA workflow run found.' }
-
+Write-Step 'Waiting for latest successful iDogs Android QA build'
+$run = Wait-LatestSuccessfulBuild
 $sha = $run.head_sha
 $runId = $run.id
-Write-Host "Run ID : $runId"
+Write-Host "Run ID   : $runId"
 Write-Host "Exact SHA: $sha"
 
-Write-Step 'Downloading exact APK artifact'
-$artifacts = Invoke-GitHubJson "https://api.github.com/repos/$Repo/actions/runs/$runId/artifacts?per_page=100"
-$artifactName = "idogs-android-debug-apk-$sha"
-$artifact = $artifacts.artifacts | Where-Object { $_.name -eq $artifactName -and -not $_.expired } | Select-Object -First 1
-if (-not $artifact) { throw "Artifact not found: $artifactName" }
-
+Write-Step 'Downloading fixed latest QA release'
+$releaseBase = "https://github.com/$Repo/releases/download/idogs-qa-latest"
 $workRoot = Join-Path $env:TEMP 'idogs-qa-auto'
 $workDir = Join-Path $workRoot $sha
-$zip = Join-Path $workDir 'artifact.zip'
 if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
 New-Item -ItemType Directory -Path $workDir -Force | Out-Null
 
-$headers = @{ 'User-Agent' = 'iDogs-QA-Updater'; 'Accept' = 'application/vnd.github+json' }
-try {
-  Invoke-WebRequest -Uri $artifact.archive_download_url -Headers $headers -OutFile $zip -MaximumRedirection 10
-} catch {
-  $gh = Get-Command gh -ErrorAction SilentlyContinue
-  if (-not $gh) {
-    throw "GitHub artifact download requires authentication on this machine. Install/login GitHub CLI once with 'gh auth login', then rerun this updater. Original error: $($_.Exception.Message)"
-  }
-  & $gh.Source run download $runId --repo $Repo --name $artifactName --dir $workDir
-  if ($LASTEXITCODE -ne 0) { throw 'gh run download failed.' }
+$apk = Join-Path $workDir 'iDogs-QA-latest.apk'
+$buildInfo = Join-Path $workDir 'iDogs-QA-latest-BUILD_INFO.txt'
+$sumFile = Join-Path $workDir 'iDogs-QA-latest-SHA256SUMS.txt'
+$signingReport = Join-Path $workDir 'iDogs-QA-latest-SIGNING_REPORT.txt'
+
+Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/iDogs-QA-latest.apk" -OutFile $apk
+Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/iDogs-QA-latest-BUILD_INFO.txt" -OutFile $buildInfo
+Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/iDogs-QA-latest-SHA256SUMS.txt" -OutFile $sumFile
+Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/iDogs-QA-latest-SIGNING_REPORT.txt" -OutFile $signingReport
+
+Write-Step 'Verifying exact SHA, staging identity, Firebase and APK hash'
+$info = Get-Content $buildInfo -Raw
+if ($info -notmatch [regex]::Escape("Git SHA: $sha")) { throw 'BUILD_INFO SHA does not match latest successful workflow SHA.' }
+if ($info -notmatch 'App ID: au\.com\.idogs\.app\.staging') { throw 'BUILD_INFO app ID is not staging.' }
+if ($info -notmatch 'Firebase: idogs-app-staging') { throw 'BUILD_INFO Firebase is not staging.' }
+if ($info -notmatch 'Payments: disabled') { throw 'BUILD_INFO does not confirm payments are disabled.' }
+
+$expected = ((Get-Content $sumFile | Select-Object -First 1) -split '\s+')[0].ToLowerInvariant()
+$actual = (Get-FileHash $apk -Algorithm SHA256).Hash.ToLowerInvariant()
+if (-not $expected -or $expected -ne $actual) { throw 'APK SHA-256 verification failed.' }
+Write-Host "APK SHA-256: $actual" -ForegroundColor Green
+
+Write-Step 'Installing or updating iDogs QA'
+$installOutput = & $adb install -r $apk 2>&1
+$installOutput | ForEach-Object { Write-Host $_ }
+if ($LASTEXITCODE -ne 0 -or ($installOutput -join "`n") -notmatch 'Success') {
+  throw 'adb install -r failed.'
 }
-
-if (Test-Path $zip) { Expand-Archive -Path $zip -DestinationPath $workDir -Force }
-$apk = Get-ChildItem $workDir -Recurse -Filter '*.apk' | Select-Object -First 1
-if (-not $apk) { throw 'Downloaded artifact does not contain an APK.' }
-
-$buildInfo = Get-ChildItem $workDir -Recurse -Filter 'BUILD_INFO.txt' | Select-Object -First 1
-if ($buildInfo) {
-  $info = Get-Content $buildInfo.FullName -Raw
-  if ($info -notmatch [regex]::Escape("Git SHA: $sha")) { throw 'BUILD_INFO SHA does not match workflow SHA.' }
-  if ($info -notmatch 'App ID: au\.com\.idogs\.app\.staging') { throw 'BUILD_INFO app ID is not staging.' }
-  if ($info -notmatch 'Firebase: idogs-app-staging') { throw 'BUILD_INFO Firebase is not staging.' }
-}
-
-$sumFile = Get-ChildItem $workDir -Recurse -Filter 'SHA256SUMS.txt' | Select-Object -First 1
-if ($sumFile) {
-  $expected = ((Get-Content $sumFile.FullName | Select-Object -First 1) -split '\s+')[0].ToLowerInvariant()
-  $actual = (Get-FileHash $apk.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($expected -ne $actual) { throw 'APK SHA-256 verification failed.' }
-  Write-Host "APK SHA-256: $actual"
-}
-
-Write-Step 'Installing iDogs QA'
-& $adb install -r $apk.FullName
-if ($LASTEXITCODE -ne 0) { throw 'adb install failed.' }
 
 Write-Step 'Launching exact staging package'
 & $adb shell am force-stop $Package | Out-Null
 & $adb shell monkey -p $Package -c android.intent.category.LAUNCHER 1 | Out-Null
-Start-Sleep -Seconds 3
+Start-Sleep -Seconds 5
 
 $focus = (& $adb shell dumpsys window | Select-String 'mCurrentFocus|mFocusedApp' | Out-String)
 if ($focus -notmatch [regex]::Escape($Package)) {
@@ -142,12 +153,27 @@ Write-Step 'Capturing QA screenshot'
 $outDir = Join-Path ([Environment]::GetFolderPath('MyPictures')) 'iDogs-QA'
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $remote = '/sdcard/idogs-qa-latest.png'
-$local = Join-Path $outDir "iDogs-QA-$($sha.Substring(0,8)).png"
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$local = Join-Path $outDir "iDogs-QA-$($sha.Substring(0,8))-$stamp.png"
 & $adb shell screencap -p $remote | Out-Null
 & $adb pull $remote $local | Out-Null
 & $adb shell rm -f $remote | Out-Null
+if (-not (Test-Path $local)) { throw 'Screenshot capture failed.' }
 
-Write-Host "`nPASS: iDogs QA updated and launched" -ForegroundColor Green
+$resultFile = Join-Path $outDir 'LATEST-QA-RESULT.txt'
+@"
+iDogs QA AUTO RESULT
+Status: PASS
+Workflow run: $runId
+Exact SHA: $sha
+Package: $Package
+APK SHA-256: $actual
+Screenshot: $local
+Completed: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+"@ | Set-Content -Path $resultFile -Encoding UTF8
+
+Write-Host "`nPASS: latest iDogs QA build verified, installed and launched" -ForegroundColor Green
 Write-Host "Exact SHA : $sha"
 Write-Host "Screenshot: $local"
+Write-Host "Result    : $resultFile"
 Start-Process $local
