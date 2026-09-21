@@ -24,15 +24,10 @@ const nativePlatform = buildNativePlatform || runtimeNativePlatform
 if (nativePlatform) {
   document.documentElement.dataset.idogsNativePlatform = nativePlatform
 
-  // A launcher cold-start must behave like a native app rather than resume a
-  // stale internal SPA route from the previous WebView session. Route every
-  // normal app launch through /login: LoginPage keeps a signed-out user on the
-  // form and immediately redirects an existing authenticated session to
-  // /app/dashboard. Preserve public passport/showcase links so explicit public
-  // links still open their intended content.
-  const pathname = window.location.pathname
-  const isPublicDeepLink = /^\/(p|s)\//.test(pathname)
-  if (!isPublicDeepLink && pathname !== '/login') {
+  // Native builds now start at /login in capacitor.config.ts via server.startPath.
+  // Keep only a narrow JS fallback for an unexpected root load; do not rewrite
+  // internal app routes or public deep links here.
+  if (window.location.pathname === '/') {
     window.history.replaceState(window.history.state, '', '/login')
   }
 }
