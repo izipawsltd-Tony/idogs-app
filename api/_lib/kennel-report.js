@@ -5,7 +5,9 @@ export const escapeHTML = (v) => value(v).replace(/[&<>"']/g, c => ({ '&': '&amp
 const isoDay = (v) => {
   if (!v) return null
   const d = new Date(v)
-  return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : null
+  if (!Number.isFinite(d.getTime())) return null
+  const day = d.toISOString().slice(0, 10)
+  return Number(day.slice(0, 4)) >= 1900 ? day : null
 }
 const csvCell = v => `"${String(v == null ? '' : v).replace(/^[=+@\-\t\r]/, "'$&").replace(/"/g, '""')}"`
 const localDay = v => {
@@ -95,24 +97,27 @@ export function buildKennelReport(data, profile = {}, generatedAt = new Date(), 
   for (const item of daily) if (item.verifiable && item.breedingFemale + item.breedingMale + item.boarding + item.puppies + item.other > 0 && !logDays.has(item.date)) add('Daily care', item.date, 'Care/caretaker log not recorded for occupied day')
   const chips = new Map()
   for (const dog of dogs) {
+    if (/(?:^|[\s_-])(?:qa|test)(?:$|[\s_-])/i.test(dog.name || '')) add('Dog', dog.id, 'Possible test record; confirm whether this dog belongs in a Council report')
     const chip = String(dog.microchip || '').trim()
     if (!chip) add('Dog', dog.id, 'Microchip not recorded; confirm age, sale status or exemption')
     else {
-      if (chips.has(chip) && chips.get(chip) !== dog.id) add('Dog', dog.id, `Microchip ${chip} also appears on dog ${chips.get(chip)}`)
+      if (chips.has(chip) && chips.get(chip) !== dog.id) add('Dog', dog.id, `Microchip ${chip} also appears on ${byId.get(chips.get(chip))?.name || 'another dog'}; reconcile source records`)
       chips.set(chip, dog.id)
     }
     const dob = isoDay(dog.dateOfBirth)
     if (!dob) add('Dog', dog.id, 'Date of birth missing or invalid')
+    else if (dob > localDay(generatedAt)) add('Dog', dog.id, 'Date of birth is in the future; confirm whether this is a planned puppy record')
     for (const [kind, records, dateKey] of [
       ['Vaccination', dog.vaccines, 'dateGiven'], ['Worming', dog.wormings, 'dateGiven'],
       ['Health test', dog.healthTests, 'dateTested'],
     ]) for (const record of records || []) {
       const day = isoDay(record[dateKey])
-      if (!day) add(kind, record.id, `Event date missing or invalid for dog ${dog.id}`)
-      else if (dob && day < dob) add(kind, record.id, `Event ${day} precedes dog ${dog.id} birth ${dob}`)
+      if (!day) add(kind, record.id, `Event date missing or invalid for ${dog.name || 'this dog'}`)
+      else if (dob && day < dob) add(kind, record.id, `Event ${day} precedes ${dog.name || 'dog'} birth ${dob}`)
       if (record.nextDue && isoDay(record.nextDue) && day && isoDay(record.nextDue) < day) {
-        add(kind, record.id, `Next due date precedes event date for dog ${dog.id}`)
+        add(kind, record.id, `Next due date precedes event date for ${dog.name || 'this dog'}`)
       }
+      if (record.nextDue && !isoDay(record.nextDue)) add(kind, record.id, `Next due date missing or invalid for ${dog.name || 'this dog'}`)
     }
   }
   for (const litter of litters) {
@@ -148,6 +153,19 @@ export function kennelCSV(report) {
   return '\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n')
 }
 
+export function issueLabel(report, issue) {
+  const dog = report.byId.get(issue.id)
+  if (dog) return dog.name || 'Unnamed dog'
+  const litter = report.litters.find(l => l.id === issue.id)
+  if (litter) return litter.name || 'Unnamed litter'
+  for (const d of report.dogs) if ([...(d.vaccines || []), ...(d.wormings || []), ...(d.healthTests || [])].some(x => x.id === issue.id)) return d.name || 'Unnamed dog'
+  if (issue.id === 'approval') return 'Facility approval'
+  if (issue.id === 'ledger') return 'Movement ledger'
+  if (issue.id === 'conditions') return 'Approval conditions'
+  if (issue.id === 'kennel' || issue.id === 'breeder') return 'Breeder profile'
+  return issue.id
+}
+
 export function kennelHTML(report) {
   const e = escapeHTML
   const p = report.profile
@@ -172,7 +190,7 @@ export function kennelHTML(report) {
   <strong>Period:</strong> ${e(report.period.from)} to ${e(report.period.to)} (Australia/Adelaide) &nbsp; <strong>Generated:</strong> ${e(report.generatedAt)}</p>
   <h2>Summary</h2><p>${report.dogs.length} dog records · ${report.litters.length} litter records · ${report.issues.length} review items. “Active” is an account status and does not establish physical presence or compliance with a facility cap.</p>
   <p>Configured limits (owner supplied): breeding female ${e(f.breedingFemale)}, breeding male ${e(f.breedingMale)}, boarding ${e(f.boarding)}. Ledger declared complete from ${e(f.ledgerStartDate)}: ${f.ledgerAttested ? 'Yes' : 'No'}. These entries are not independently verified against the approval document.</p>
-  <h2>Review items</h2>${table(['Area','Subject','Action required'],report.issues.map(i=>row([i.subject,i.subject==='Dog'?name(i.id):i.id,i.message])))}
+  <h2>Review items</h2>${table(['Area','Subject','Action required'],report.issues.map(i=>row([i.subject,issueLabel(report,i),i.message])))}
   <h2>Daily occupancy</h2><p>${report.daily.every(d=>d.verifiable) ? 'Based on the owner-attested movement ledger; reconcile with source records.' : 'Not verifiable: the opening roster or complete movement history is missing. Blank counts must not be interpreted as zero.'}</p>${table(['Date','Evidence','Breeding F','Breeding M','Boarding','Puppies','Other','Peak F / M / boarding'],report.daily.map(d=>row([d.date,d.verifiable?'Owner-attested ledger':'Not verifiable',d.breedingFemale,d.breedingMale,d.boarding,d.puppies,d.other,d.peak?`${d.peak.breedingFemale} / ${d.peak.breedingMale} / ${d.peak.boarding}`:'Not verifiable'])))}
   <h2>Arrival and departure ledger</h2>${table(['Time','Dog','Action','Category','Notes'],report.movements.map(m=>row([m.occurredAt,name(m.dogId),m.direction,m.category,m.voidedAt ? `VOIDED: ${value(m.voidReason)}` : m.note])))}
   <h2>Daily care and incidents</h2>${table(['Date','Caretaker','Exercise minutes','Care notes','Incidents'],report.dailyLogs.map(l=>row([l.date,l.caretaker,l.exerciseMinutes,l.careNotes,l.incidentNotes])))}

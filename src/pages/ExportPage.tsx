@@ -46,6 +46,7 @@ export default function ExportPage({ toast }: Props) {
 
   // Female dogs only for breeding compliance
   const femaleDogs = dogs.filter(d => d.sex === 'female' && (d as any).status !== 'transferred')
+  const possibleTestDogs = dogs.filter(d => /(?:^|[\s_-])(?:qa|test)(?:$|[\s_-])/i.test(d.name || ''))
 
   const { beginRequest } = useRequestGuard(user?.uid)
 
@@ -109,6 +110,11 @@ export default function ExportPage({ toast }: Props) {
     if (scope === 'litter' && !selectedLitterId) { toast('Please select a litter', 'error'); return }
     if (scope === 'breeding' && !selectedDogId) { toast('Please select a female dog', 'error'); return }
 
+    // Open during the click gesture; browsers may block windows opened after
+    // the token/API awaits. Keep it empty until the response succeeds.
+    const printWindow = format === 'pdf' ? window.open('', '_blank') : null
+    if (format === 'pdf' && !printWindow) { toast('Allow pop-ups for iDogs to print the PDF report', 'error'); return }
+    if (printWindow) printWindow.document.body.textContent = 'Preparing report…'
     setExporting(format)
     try {
       const idToken = await user.getIdToken()
@@ -129,7 +135,8 @@ export default function ExportPage({ toast }: Props) {
         if (res.status === 403) {
           const body = await res.json().catch(() => ({}))
           if (body.reason === 'EXPORT_PLAN_GATE') {
-            toast('PDF/CSV export is an iDogs Plus feature. Upgrade to Plus to export reports.', 'error')
+            printWindow?.close()
+            toast('Report export is an iDogs Plus feature. Upgrade to Plus to export reports.', 'error')
             return
           }
         }
@@ -144,23 +151,26 @@ export default function ExportPage({ toast }: Props) {
         const contentDisp = res.headers.get('Content-Disposition') || ''
         const match = contentDisp.match(/filename="(.+)"/)
         a.download = match ? match[1] : `export.${format}`
+        document.body.appendChild(a)
         a.click()
-        URL.revokeObjectURL(url)
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 60_000)
         toast(`${format.toUpperCase()} downloaded ✓`, 'success')
       } else {
         const { html, filename } = await res.json()
-        const win = window.open('', '_blank')
-        if (win) {
-          win.document.write(html)
-          win.document.close()
+        if (printWindow) {
+          printWindow.document.open()
+          printWindow.document.write(html)
+          printWindow.document.close()
           setTimeout(() => {
-            win.document.title = filename
-            win.print()
+            printWindow.document.title = filename
+            printWindow.print()
           }, 500)
         }
         toast('PDF ready — use Print → Save as PDF ✓', 'success')
       }
     } catch {
+      printWindow?.close()
       toast('Export failed. Please try again.', 'error')
     } finally {
       setExporting(null)
@@ -294,6 +304,9 @@ export default function ExportPage({ toast }: Props) {
         {scope === 'kennel' && (
           <div style={{ marginTop: 12, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', padding: '10px 14px', borderRadius: 8 }}>
             {loadError ? '⚠️ Kennel data unavailable — retry.' : <>📊 {dogs.length} dog records, {litters.length} litters, {movements.length} movement events and {dailyLogs.length} care logs.</>}
+            <div style={{ marginTop: 8 }}>The dog and litter registers include historical account records. The selected dates apply to occupancy and daily care.</div>
+            {(!facility.address || !facility.approvalNumber || !facility.approvalDocumentRef) && <div style={{ marginTop: 8, color: '#8A4B00' }}>⚠️ Enter and save the facility address, approval number and document reference before Council review.</div>}
+            {possibleTestDogs.length > 0 && <div style={{ marginTop: 8, color: '#8A4B00' }}>⚠️ {possibleTestDogs.length} possible test records need classification before sharing: {possibleTestDogs.map(d => d.name).join(', ')}. They remain visible in the report until the source records are resolved.</div>}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 10 }}>
               <label>From <input type="date" className="form-input" value={period.from} onChange={e=>setPeriod({ ...period, from:e.target.value })} /></label>
               <label>To <input type="date" className="form-input" value={period.to} onChange={e=>setPeriod({ ...period, to:e.target.value })} /></label>

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { buildKennelReport, kennelCSV, kennelHTML, validatePeriod } from '../api/_lib/kennel-report.js'
+import { buildKennelReport, kennelCSV, kennelHTML, issueLabel, validatePeriod } from '../api/_lib/kennel-report.js'
 import { kennelWorkbook } from '../api/_lib/kennel-workbook.js'
 assert.throws(()=>validatePeriod('2026-02-30','2026-03-01'))
 
@@ -10,8 +10,9 @@ const dogs = [
 const report = buildKennelReport({ dogs, litters: [{ id: 'l1', name: 'Litter', damId: 'one', puppyIds: ['two', 'missing'] }] }, {}, new Date('2026-09-23T00:00:00Z'))
 assert.equal(report.dogs.length, 2)
 assert(report.issues.some(i => i.message.includes('Microchip 123')))
-assert(report.issues.some(i => i.message.includes('precedes dog')))
+assert(report.issues.some(i => i.message.includes('precedes Red Boy')))
 assert(report.issues.some(i => i.message.includes('Next due date')))
+assert.equal(issueLabel(report, report.issues.find(i => i.id === 'v1')), 'Red Boy')
 assert(report.issues.some(i => i.message.includes('Puppy missing')))
 assert.match(kennelCSV(report), /"one","one"/)
 assert.match(kennelCSV(report), /"'=SUM\(1\)"/)
@@ -38,4 +39,8 @@ const ready = buildKennelReport({ dogs: [{ id:'dam', name:'Dam', sex:'female', d
   dailyLogs: [{ date:'2026-09-23', caretaker:'Owner', exerciseMinutes:45 }] },
   { kennelName:'Kennel', breederIdValue:'DACO1' }, new Date('2026-09-24T00:00:00Z'), { from:'2026-09-23', to:'2026-09-23' })
 assert.equal(ready.status, 'READY FOR OWNER REVIEW')
+const contaminated = buildKennelReport({ dogs: [{ id:'qa', name:'QA-test-dog', dateOfBirth:'0026-05-09', microchip:'555' }], litters:[] }, {}, new Date('2026-09-23T00:00:00Z'))
+assert(contaminated.issues.some(i => i.message.includes('Possible test record')))
+assert(contaminated.issues.some(i => i.message.includes('Date of birth missing or invalid')))
+assert(kennelWorkbook(contaminated).includes(Buffer.from('xl/worksheets/sheet9.xml')))
 console.log('Kennel report validation passed')
