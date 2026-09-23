@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 25
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      STAGING_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
       VERCEL_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
       CLIENT_SOURCE_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
       ADMIN_SOURCE_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
@@ -50,7 +51,7 @@ jobs:
           set -euo pipefail
           test -n "${VERCEL_TOKEN:-}" || { echo 'VERCEL_TOKEN missing'; exit 1; }
 
-      - name: Pull staging client env and candidate Admin envs
+      - name: Pull staging client env and fallback Admin envs
         shell: bash
         run: |
           set -euo pipefail
@@ -76,8 +77,8 @@ jobs:
           pull_env "$CLIENT_SOURCE_PROJECT_ID" idogs-app preview /tmp/idogs-client-preview.env
           test -s /tmp/idogs-client-preview.env || { echo 'FAIL CLOSED: main Preview env unavailable'; exit 1; }
 
-          # Admin credentials are intentionally sourced only from the dedicated
-          # staging Vercel project. Try its Preview env first, then Production.
+          # Backward-compatible fallback only. These sources are accepted only
+          # if the following guard proves project + bucket are genuinely staging.
           pull_env "$ADMIN_SOURCE_PROJECT_ID" idogs-app-staging preview /tmp/idogs-admin-preview.env
           pull_env "$ADMIN_SOURCE_PROJECT_ID" idogs-app-staging production /tmp/idogs-admin-production.env
 
@@ -90,6 +91,7 @@ jobs:
           ADMIN_PRODUCTION_ENV=/tmp/idogs-admin-production.env \
           SAFE_ENV=/tmp/idogs-native-qa-safe-env.json node <<'NODE'
           const fs = require('fs')
+          const EXPECTED = 'idogs-app-staging'
 
           function parseFile(path) {
             if (!path || !fs.existsSync(path)) return ''
@@ -117,36 +119,63 @@ jobs:
           for (const [k, v] of Object.entries(client)) {
             if (!v) throw new Error(`${k} missing from main Preview env`)
           }
-          if (client.VITE_FIREBASE_PROJECT_ID !== 'idogs-app-staging') {
+          if (client.VITE_FIREBASE_PROJECT_ID !== EXPECTED) {
             throw new Error('FAIL CLOSED: client Firebase is not staging')
           }
-          if (!client.VITE_FIREBASE_STORAGE_BUCKET.includes('idogs-app-staging')) {
+          if (!client.VITE_FIREBASE_STORAGE_BUCKET.includes(EXPECTED)) {
             throw new Error('FAIL CLOSED: client Storage bucket is not staging')
           }
 
-          const adminNames = [
-            'FIREBASE_PROJECT_ID',
-            'FIREBASE_CLIENT_EMAIL',
-            'FIREBASE_PRIVATE_KEY',
-            'FIREBASE_STORAGE_BUCKET',
-          ]
-          const candidates = [
-            ['staging-project Preview', parseFile(process.env.ADMIN_PREVIEW_ENV)],
-            ['staging-project Production', parseFile(process.env.ADMIN_PRODUCTION_ENV)],
-          ]
-
           let selected = null
-          for (const [label, text] of candidates) {
-            const values = Object.fromEntries(adminNames.map(k => [k, read(text, k)]))
-            const complete = adminNames.every(k => Boolean(values[k]))
-            const projectOk = values.FIREBASE_PROJECT_ID === 'idogs-app-staging'
-            const bucketOk = Boolean(values.FIREBASE_STORAGE_BUCKET?.includes('idogs-app-staging'))
-            console.log(`${label}: credentials=${complete ? 'PRESENT' : 'MISSING'} project=${projectOk ? 'STAGING' : 'NON_STAGING_OR_MISSING'} bucket=${bucketOk ? 'STAGING' : 'NON_STAGING_OR_MISSING'}`)
-            if (!selected && complete && projectOk && bucketOk) selected = { label, values }
+          const canonicalRaw = process.env.STAGING_SERVICE_ACCOUNT_JSON || ''
+          if (canonicalRaw) {
+            let sa
+            try { sa = JSON.parse(canonicalRaw) } catch {
+              throw new Error('FAIL CLOSED: IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON is invalid JSON')
+            }
+            const projectId = sa.project_id || sa.projectId || ''
+            const clientEmail = sa.client_email || sa.clientEmail || ''
+            const privateKey = sa.private_key || sa.privateKey || ''
+            if (projectId !== EXPECTED) {
+              throw new Error('FAIL CLOSED: canonical staging service account belongs to the wrong Firebase project')
+            }
+            if (!clientEmail || !privateKey) {
+              throw new Error('FAIL CLOSED: canonical staging service account is incomplete')
+            }
+            selected = {
+              label: 'GitHub canonical staging service account',
+              values: {
+                FIREBASE_PROJECT_ID: projectId,
+                FIREBASE_CLIENT_EMAIL: clientEmail,
+                FIREBASE_PRIVATE_KEY: privateKey,
+                FIREBASE_STORAGE_BUCKET: client.VITE_FIREBASE_STORAGE_BUCKET,
+              },
+            }
+            console.log('Canonical staging Admin secret: PRESENT + VERIFIED STAGING')
+          } else {
+            console.log('Canonical staging Admin secret: MISSING; checking guarded Vercel staging fallbacks')
+            const adminNames = [
+              'FIREBASE_PROJECT_ID',
+              'FIREBASE_CLIENT_EMAIL',
+              'FIREBASE_PRIVATE_KEY',
+              'FIREBASE_STORAGE_BUCKET',
+            ]
+            const candidates = [
+              ['staging-project Preview', parseFile(process.env.ADMIN_PREVIEW_ENV)],
+              ['staging-project Production', parseFile(process.env.ADMIN_PRODUCTION_ENV)],
+            ]
+            for (const [label, text] of candidates) {
+              const values = Object.fromEntries(adminNames.map(k => [k, read(text, k)]))
+              const complete = adminNames.every(k => Boolean(values[k]))
+              const projectOk = values.FIREBASE_PROJECT_ID === EXPECTED
+              const bucketOk = Boolean(values.FIREBASE_STORAGE_BUCKET?.includes(EXPECTED))
+              console.log(`${label}: credentials=${complete ? 'PRESENT' : 'MISSING'} project=${projectOk ? 'STAGING' : 'NON_STAGING_OR_MISSING'} bucket=${bucketOk ? 'STAGING' : 'NON_STAGING_OR_MISSING'}`)
+              if (!selected && complete && projectOk && bucketOk) selected = { label, values }
+            }
           }
 
           if (!selected) {
-            throw new Error('FAIL CLOSED: no verified staging Firebase Admin source exists in idogs-app-staging')
+            throw new Error('OWNER GATE: add IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON for idogs-app-staging; no safe staging Admin credential exists')
           }
 
           const safe = { ...client, ...selected.values }
