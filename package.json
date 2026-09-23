@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run && node scripts/test-kennel-report.mjs && node scripts/test-kennel-input.mjs"
   },
   "dependencies": {
     "@emailjs/browser": "^4.4.1",

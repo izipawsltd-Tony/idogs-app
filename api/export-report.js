@@ -64,16 +64,37 @@ async function fetchLitterFull(litterId) {
 }
 
 async function fetchKennelFull(tenantId) {
-  const [userSnap, dogsSnap, littersSnap] = await Promise.all([
+  const [userSnap, dogsSnap, littersSnap, facilitySnap, movementsSnap, logsSnap] = await Promise.all([
     db.collection('users').doc(tenantId).get(),
     db.collection('dogs').where('tenantId', '==', tenantId).get(),
     db.collection('litters').where('tenantId', '==', tenantId).get(),
+    db.collection('kennelFacilities').doc(tenantId).get(),
+    db.collection('kennelMovements').where('tenantId', '==', tenantId).limit(2001).get(),
+    db.collection('kennelDailyLogs').where('tenantId', '==', tenantId).limit(2001).get(),
   ])
+  if (movementsSnap.size > 2000 || logsSnap.size > 2000) throw new Error('Kennel report exceeds record limit')
   const dogs = await Promise.all(dogsSnap.docs.map(d => fetchDogFull(d.id)))
+  // The issuing breeder retains the dog's original tenantId after an
+  // ownership claim. Do not export health events subsequently added by the
+  // new owner into the former breeder's kennel report.
+  const ownedHistory = dogs.filter(d => d && d.tenantId === tenantId).map(d => {
+    if (!d.currentOwnerId || d.currentOwnerId === tenantId) return d
+    const cutoff = d.transferredAt ? Date.parse(d.transferredAt) : NaN
+    const beforeTransfer = (event, key) => Number.isFinite(cutoff) &&
+      Number.isFinite(Date.parse(event[key])) && Date.parse(event[key]) <= cutoff
+    return { ...d,
+      vaccines: d.vaccines.filter(e => beforeTransfer(e, 'dateGiven')),
+      wormings: d.wormings.filter(e => beforeTransfer(e, 'dateGiven')),
+      healthTests: d.healthTests.filter(e => beforeTransfer(e, 'dateTested')),
+    }
+  })
   return {
     profile: userSnap.data(),
-    dogs: dogs.filter(d => d && d.tenantId === tenantId),
+    dogs: ownedHistory,
     litters: littersSnap.docs.map(d => ({ ...d.data(), id: d.id })),
+    facility: facilitySnap.data() || null,
+    movements: movementsSnap.docs.map(d => ({ ...d.data(), id: d.id })),
+    dailyLogs: logsSnap.docs.map(d => ({ ...d.data(), id: d.id })),
   }
 }
 
@@ -647,7 +668,9 @@ export default async function handler(req, res) {
     }
 
     if (scope === 'kennel') {
-      const report = buildKennelReport(data, profile)
+      let report
+      try { report = buildKennelReport(data, profile, new Date(), req.body.period) }
+      catch (err) { return res.status(400).json({ error: err.message }) }
       const filename = `kennel_records_${new Date().toISOString().slice(0,10)}`
       if (format === 'csv') {
         res.setHeader('Content-Type', 'text/csv; charset=utf-8')
