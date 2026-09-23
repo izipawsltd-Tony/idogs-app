@@ -1,0 +1,219 @@
+name: iDogs Native API QA Backend
+
+on:
+  push:
+    branches:
+      - feat/mobile-app-foundation
+    paths:
+      - 'api/**'
+      - 'src/lib/nativeApiRouting.ts'
+      - 'src/lib/nativeApiRouting.test.ts'
+      - 'scripts/idogs-qa-update.ps1'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/mobile-native-api-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-native-api-qa-backend
+  cancel-in-progress: true
+
+jobs:
+  deploy-native-qa-api:
+    name: Deploy isolated staging Native API
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
+      SOURCE_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+      QA_PROJECT_NAME: idogs-native-api-qa-izipaws
+      QA_PUBLIC_BASE: https://idogs-native-api-qa-izipaws.vercel.app
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify Vercel token
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${VERCEL_TOKEN:-}" || { echo 'VERCEL_TOKEN missing'; exit 1; }
+
+      - name: Pull trusted staging Firebase values from main Preview env
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vercel
+          mkdir -p .vercel
+          printf '%s\n' "{\"projectId\":\"$SOURCE_PROJECT_ID\",\"orgId\":\"$VERCEL_TEAM_ID\",\"projectName\":\"idogs-app\"}" > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-source-pull.log 2>&1
+          test -s .vercel/.env.preview.local
+          cp .vercel/.env.preview.local /tmp/idogs-source-preview.env
+
+      - name: Fail closed unless source Firebase Admin and client are staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_ENV=/tmp/idogs-source-preview.env SAFE_ENV=/tmp/idogs-native-qa-safe-env.json node <<'NODE'
+          const fs = require('fs')
+          const text = fs.readFileSync(process.env.SOURCE_ENV, 'utf8')
+          function read(name) {
+            const line = text.split(/\r?\n/).find(l => l.startsWith(name + '='))
+            if (!line) return null
+            let v = line.slice(name.length + 1).trim()
+            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+            return v.replace(/\\n/g, '\n')
+          }
+          const names = [
+            'VITE_FIREBASE_API_KEY',
+            'VITE_FIREBASE_AUTH_DOMAIN',
+            'VITE_FIREBASE_PROJECT_ID',
+            'VITE_FIREBASE_STORAGE_BUCKET',
+            'VITE_FIREBASE_MESSAGING_SENDER_ID',
+            'VITE_FIREBASE_APP_ID',
+            'FIREBASE_PROJECT_ID',
+            'FIREBASE_CLIENT_EMAIL',
+            'FIREBASE_PRIVATE_KEY',
+            'FIREBASE_STORAGE_BUCKET',
+          ]
+          const values = Object.fromEntries(names.map(k => [k, read(k)]))
+          for (const [k, v] of Object.entries(values)) {
+            if (!v) throw new Error(`${k} missing from trusted Preview env`)
+          }
+          if (values.VITE_FIREBASE_PROJECT_ID !== 'idogs-app-staging') throw new Error('FAIL CLOSED: client Firebase is not staging')
+          if (values.FIREBASE_PROJECT_ID !== 'idogs-app-staging') throw new Error('FAIL CLOSED: Admin Firebase is not staging')
+          if (!values.FIREBASE_STORAGE_BUCKET.includes('idogs-app-staging')) throw new Error('FAIL CLOSED: Admin Storage bucket is not staging')
+          if (!values.VITE_FIREBASE_STORAGE_BUCKET.includes('idogs-app-staging')) throw new Error('FAIL CLOSED: client Storage bucket is not staging')
+          fs.writeFileSync(process.env.SAFE_ENV, JSON.stringify(values), { mode: 0o600 })
+          console.log('Source environment classification: STAGING Firebase client + Admin + Storage PASS')
+          console.log('External service credentials copied: NONE')
+          NODE
+
+      - name: Create or reuse dedicated QA project and install allowlisted env only
+        shell: bash
+        run: |
+          set -euo pipefail
+          SAFE_ENV=/tmp/idogs-native-qa-safe-env.json node <<'NODE'
+          const fs = require('fs')
+          const token = process.env.VERCEL_TOKEN
+          const teamId = process.env.VERCEL_TEAM_ID
+          const name = process.env.QA_PROJECT_NAME
+          const safe = JSON.parse(fs.readFileSync(process.env.SAFE_ENV, 'utf8'))
+          const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+          const q = `?teamId=${encodeURIComponent(teamId)}`
+          async function request(url, options = {}) {
+            const r = await fetch(url, { ...options, headers: { ...headers, ...(options.headers || {}) } })
+            const text = await r.text()
+            let body = null
+            try { body = text ? JSON.parse(text) : null } catch { body = { raw: text } }
+            return { r, body }
+          }
+          let { r, body: project } = await request(`https://api.vercel.com/v9/projects/${name}${q}`)
+          if (r.status === 404) {
+            const created = await request(`https://api.vercel.com/v11/projects${q}`, {
+              method: 'POST',
+              body: JSON.stringify({
+                name,
+                framework: 'vite',
+                buildCommand: 'npm run build',
+                outputDirectory: 'dist',
+                installCommand: 'npm ci',
+              }),
+            })
+            if (!created.r.ok) throw new Error(`Create QA project failed: ${created.r.status} ${JSON.stringify(created.body)}`)
+            project = created.body
+          } else if (!r.ok) {
+            throw new Error(`Get QA project failed: ${r.status} ${JSON.stringify(project)}`)
+          }
+          if (!project?.id) throw new Error('Dedicated QA project id missing')
+
+          // This project is intentionally public and contains staging Firebase
+          // credentials only. Keep existing business projects protected.
+          const protection = await request(`https://api.vercel.com/v9/projects/${project.id}${q}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ ssoProtection: null }),
+          })
+          if (!protection.r.ok) throw new Error(`Disable SSO on dedicated QA project failed: ${protection.r.status}`)
+
+          const publicKeys = new Set([
+            'VITE_FIREBASE_AUTH_DOMAIN', 'VITE_FIREBASE_PROJECT_ID',
+            'VITE_FIREBASE_STORAGE_BUCKET', 'VITE_FIREBASE_MESSAGING_SENDER_ID',
+            'VITE_FIREBASE_APP_ID', 'FIREBASE_PROJECT_ID', 'FIREBASE_STORAGE_BUCKET',
+          ])
+          const envs = Object.entries(safe).map(([key, value]) => ({
+            key,
+            value,
+            type: publicKeys.has(key) ? 'plain' : 'sensitive',
+            target: ['production'],
+          }))
+          envs.push({ key: 'IDOGS_NATIVE_QA_BACKEND', value: '1', type: 'plain', target: ['production'] })
+          envs.push({ key: 'VITE_EXTRA_LITTER_CHECKOUT_ENABLED', value: 'false', type: 'plain', target: ['production'] })
+
+          const envResult = await request(`https://api.vercel.com/v10/projects/${project.id}/env${q}&upsert=true`, {
+            method: 'POST',
+            body: JSON.stringify(envs),
+          })
+          if (!envResult.r.ok) throw new Error(`Install QA env failed: ${envResult.r.status} ${JSON.stringify(envResult.body)}`)
+          fs.appendFileSync(process.env.GITHUB_ENV, `IDOGS_NATIVE_QA_PROJECT_ID=${project.id}\n`)
+          console.log(`Dedicated QA project ready: ${project.id}`)
+          console.log('Installed env allowlist: Firebase staging only + QA marker; no Stripe/Resend/SMS secrets')
+          NODE
+
+      - name: Link dedicated project and deploy exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vercel
+          mkdir -p .vercel
+          printf '%s\n' "{\"projectId\":\"$IDOGS_NATIVE_QA_PROJECT_ID\",\"orgId\":\"$VERCEL_TEAM_ID\",\"projectName\":\"$QA_PROJECT_NAME\"}" > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-qa-pull.log 2>&1
+          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
+          DEPLOY_URL=$(npx --yes vercel@latest deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects | tail -1)
+          test -n "$DEPLOY_URL"
+          echo "IDOGS_NATIVE_QA_DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "Dedicated QA deployment: $DEPLOY_URL"
+
+      - name: Verify exact deployment health
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest inspect "$IDOGS_NATIVE_QA_DEPLOY_URL" --wait --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-qa-inspect.log 2>&1
+          HEALTH=$(curl --fail --silent --show-error --max-time 30 "$IDOGS_NATIVE_QA_DEPLOY_URL/api/native-qa-health")
+          HEALTH="$HEALTH" node <<'NODE'
+          const h = JSON.parse(process.env.HEALTH)
+          if (h.ok !== true) throw new Error('QA health ok != true')
+          if (h.firebaseProjectId !== 'idogs-app-staging') throw new Error('QA Admin Firebase not staging')
+          if (h.vercelEnv !== 'production') throw new Error('QA backend is not dedicated production target')
+          if (h.backendMode !== 'dedicated-qa') throw new Error('QA backend marker missing')
+          console.log('Exact deployment health: dedicated-qa + idogs-app-staging PASS')
+          NODE
+
+      - name: Verify stable public QA API domain
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEALTH=$(curl --fail --silent --show-error --location --max-time 30 "$QA_PUBLIC_BASE/api/native-qa-health")
+          HEALTH="$HEALTH" node <<'NODE'
+          const h = JSON.parse(process.env.HEALTH)
+          if (h.ok !== true || h.firebaseProjectId !== 'idogs-app-staging' || h.backendMode !== 'dedicated-qa') {
+            throw new Error(`Stable QA API health mismatch: ${JSON.stringify(h)}`)
+          }
+          console.log('Stable public QA API: PASS')
+          NODE
+
+      - name: Confirm no external-service env was copied
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Dedicated project env allowlist excludes: STRIPE*, RESEND*, SMS*, TWILIO*, CRON*, billing secrets.'
+          echo 'Native client additionally blocks payment/billing/outbound-message/super-admin routes.'

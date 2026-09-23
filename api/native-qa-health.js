@@ -1,5 +1,4 @@
 const EXPECTED_PROJECT = 'idogs-app-staging'
-const EXPECTED_ENV = 'preview'
 const EXPECTED_BRANCH = 'feat/mobile-app-foundation'
 
 export default async function handler(req, res) {
@@ -12,13 +11,19 @@ export default async function handler(req, res) {
   const firebaseProjectId = process.env.FIREBASE_PROJECT_ID || ''
   const vercelEnv = process.env.VERCEL_ENV || ''
   const branch = process.env.VERCEL_GIT_COMMIT_REF || ''
-  const ok = firebaseProjectId === EXPECTED_PROJECT && vercelEnv === EXPECTED_ENV && branch === EXPECTED_BRANCH
+  const dedicatedQaMarker = process.env.IDOGS_NATIVE_QA_BACKEND === '1'
+
+  const dedicatedQa = dedicatedQaMarker && vercelEnv === 'production'
+  const legacyProtectedPreview = vercelEnv === 'preview' && branch === EXPECTED_BRANCH
+  const backendMode = dedicatedQa ? 'dedicated-qa' : (legacyProtectedPreview ? 'branch-preview' : 'invalid')
+  const ok = firebaseProjectId === EXPECTED_PROJECT && dedicatedQa
 
   const body = {
     ok,
     firebaseProjectId,
     vercelEnv,
     branch,
+    backendMode,
   }
 
   if (!ok) {

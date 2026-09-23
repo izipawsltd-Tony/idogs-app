@@ -1,12 +1,8 @@
-const NATIVE_QA_API_BASE = 'https://idogs-app-git-feat-mobile-app-3024f6-izipawsltd-tonys-projects.vercel.app'
+const NATIVE_QA_API_BASE = 'https://idogs-native-api-qa-izipaws.vercel.app'
 const EXPECTED_STAGING_FIREBASE_PROJECT = 'idogs-app-staging'
-const EXPECTED_VERCEL_ENV = 'preview'
-const EXPECTED_BRANCH = 'feat/mobile-app-foundation'
+const EXPECTED_VERCEL_ENV = 'production'
+const EXPECTED_BACKEND_MODE = 'dedicated-qa'
 
-// Native QA is allowed to exercise staging data workflows, but it must never
-// reach APIs that can create real charges/subscriptions or send real outbound
-// customer communications. Preview has historically carried non-test external
-// service credentials, so this is enforced at transport level, not just UI.
 const NATIVE_QA_BLOCKED_API_PATHS = new Set([
   '/api/billing-summary',
   '/api/create-billing-portal',
@@ -27,6 +23,7 @@ export type NativeQaHealth = {
   firebaseProjectId?: unknown
   vercelEnv?: unknown
   branch?: unknown
+  backendMode?: unknown
 }
 
 export function getNativeQaApiBase(firebaseProjectId: string | undefined): string {
@@ -42,7 +39,6 @@ function relativeApiPath(input: string): string {
 
 export function assertNativeQaApiPathAllowed(input: string): void {
   if (!input.startsWith('/api/')) return
-
   const path = relativeApiPath(input)
   if (NATIVE_QA_BLOCKED_API_PATHS.has(path) || path.startsWith('/api/super-admin/')) {
     throw new Error('NATIVE_QA_EXTERNAL_SIDE_EFFECT_API_BLOCKED')
@@ -60,26 +56,24 @@ export function assertNativeQaHealth(value: NativeQaHealth): void {
     value.ok !== true ||
     value.firebaseProjectId !== EXPECTED_STAGING_FIREBASE_PROJECT ||
     value.vercelEnv !== EXPECTED_VERCEL_ENV ||
-    value.branch !== EXPECTED_BRANCH
+    value.backendMode !== EXPECTED_BACKEND_MODE
   ) {
     throw new Error('NATIVE_API_BACKEND_NOT_STAGING')
   }
 }
 
 /**
- * Native iDogs QA is served from the local Capacitor origin, so browser-style
- * relative /api/* URLs cannot reach Vercel. CapacitorHttp patches window.fetch
- * in the native shell (mobile/capacitor.config.ts), which lets us use native
- * transport without WebView CORS. We keep every existing web call unchanged
- * and only rewrite relative /api/* calls when this explicit staging bootstrap
- * succeeds.
+ * Native iDogs QA runs against a dedicated public Vercel QA API project.
+ * That project receives only staging Firebase credentials plus the
+ * IDOGS_NATIVE_QA_BACKEND marker — no Stripe, Resend or SMS credentials.
+ * CapacitorHttp patches fetch in the native shell to avoid WebView CORS.
  *
  * Safety contract:
- * - native QA must be built with the staging Firebase project;
- * - the backend must be the fixed feature-branch Preview alias;
- * - the backend health endpoint must independently report Preview + staging;
- * - payment/billing/outbound-message/super-admin API paths are blocked locally;
- * - no fallback to idogs.com.au or another origin is allowed.
+ * - client build must use idogs-app-staging;
+ * - dedicated backend health must report staging Firebase + dedicated-qa;
+ * - billing/payment/outbound-message/super-admin endpoints are blocked locally;
+ * - only relative /api/* paths are rewritten;
+ * - no fallback to idogs.com.au or protected Preview deployments exists.
  */
 export async function installNativeQaApiRouting(firebaseProjectId: string | undefined): Promise<void> {
   const apiBase = getNativeQaApiBase(firebaseProjectId)
@@ -90,9 +84,7 @@ export async function installNativeQaApiRouting(firebaseProjectId: string | unde
     cache: 'no-store',
     headers: { 'X-iDogs-Native-QA': '1' },
   })
-  if (!healthResponse.ok) {
-    throw new Error('NATIVE_API_BACKEND_HEALTH_FAILED')
-  }
+  if (!healthResponse.ok) throw new Error('NATIVE_API_BACKEND_HEALTH_FAILED')
 
   const health = await healthResponse.json().catch(() => null) as NativeQaHealth | null
   if (!health) throw new Error('NATIVE_API_BACKEND_HEALTH_INVALID')
@@ -106,12 +98,9 @@ export async function installNativeQaApiRouting(firebaseProjectId: string | unde
       const raw = input.toString()
       return transportFetch(raw.startsWith('/api/') ? rewriteNativeApiUrl(raw, apiBase) : input, init)
     }
-    // Existing iDogs API calls use string /api/* paths. Request objects are
-    // deliberately left untouched so signed upload/external requests cannot
-    // be accidentally redirected through the iDogs backend.
     return transportFetch(input, init)
   }) as typeof window.fetch
 
-  document.documentElement.dataset.idogsNativeApi = 'staging-preview'
+  document.documentElement.dataset.idogsNativeApi = 'dedicated-staging-qa'
   document.documentElement.dataset.idogsNativeExternalSideEffects = 'blocked'
 }

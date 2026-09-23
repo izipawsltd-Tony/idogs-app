@@ -6,7 +6,7 @@ import {
   rewriteNativeApiUrl,
 } from './nativeApiRouting'
 
-const QA_BASE = 'https://idogs-app-git-feat-mobile-app-3024f6-izipawsltd-tonys-projects.vercel.app'
+const QA_BASE = 'https://idogs-native-api-qa-izipaws.vercel.app'
 
 describe('native API routing', () => {
   it('accepts only the staging Firebase project', () => {
@@ -52,26 +52,26 @@ describe('native API routing', () => {
     expect(() => assertNativeQaApiPathAllowed('/api/upload-document')).not.toThrow()
   })
 
-  it('requires Preview branch and staging Admin Firebase health', () => {
+  it('requires dedicated QA backend mode and staging Admin Firebase', () => {
     expect(() => assertNativeQaHealth({
       ok: true,
       firebaseProjectId: 'idogs-app-staging',
-      vercelEnv: 'preview',
-      branch: 'feat/mobile-app-foundation',
+      vercelEnv: 'production',
+      backendMode: 'dedicated-qa',
     })).not.toThrow()
 
     expect(() => assertNativeQaHealth({
       ok: true,
       firebaseProjectId: 'idogs-app',
-      vercelEnv: 'preview',
-      branch: 'feat/mobile-app-foundation',
+      vercelEnv: 'production',
+      backendMode: 'dedicated-qa',
     })).toThrow('NATIVE_API_BACKEND_NOT_STAGING')
 
     expect(() => assertNativeQaHealth({
       ok: true,
       firebaseProjectId: 'idogs-app-staging',
-      vercelEnv: 'production',
-      branch: 'master',
+      vercelEnv: 'preview',
+      backendMode: 'branch-preview',
     })).toThrow('NATIVE_API_BACKEND_NOT_STAGING')
   })
 })
