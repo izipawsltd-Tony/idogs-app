@@ -5,6 +5,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { computeEffectivePlan } from './_lib/entitlements.js'
+import { buildKennelReport, kennelCSV, kennelHTML } from './_lib/kennel-report.js'
 
 // Bounded staging-isolation safety patch: this endpoint never touches
 // Firebase Storage (it only reads Firestore and returns generated HTML/
@@ -71,7 +72,7 @@ async function fetchKennelFull(tenantId) {
   const dogs = await Promise.all(dogsSnap.docs.map(d => fetchDogFull(d.id)))
   return {
     profile: userSnap.data(),
-    dogs: dogs.filter(Boolean),
+    dogs: dogs.filter(d => d && d.tenantId === tenantId),
     litters: littersSnap.docs.map(d => ({ ...d.data(), id: d.id })),
   }
 }
@@ -643,6 +644,18 @@ export default async function handler(req, res) {
       return res.status(200).json({ html, filename })
     } else {
       return res.status(400).json({ error: 'Invalid scope' })
+    }
+
+    if (scope === 'kennel') {
+      const report = buildKennelReport(data, profile)
+      const filename = `kennel_records_${new Date().toISOString().slice(0,10)}`
+      if (format === 'csv') {
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`)
+        return res.status(200).send(kennelCSV(report))
+      }
+      if (format === 'pdf') return res.status(200).json({ html: kennelHTML(report), filename })
+      return res.status(400).json({ error: 'Invalid format' })
     }
 
     if (format === 'csv') {

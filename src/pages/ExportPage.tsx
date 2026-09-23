@@ -144,7 +144,7 @@ export default function ExportPage({ toast }: Props) {
         Export & Compliance Reports
       </h1>
       <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 32 }}>
-        Generate audit reports for Dogs Australia inspections, state compliance, and personal records.
+        Export your recorded dogs, litters and health history for review.
       </p>
 
       {loadError && (
@@ -162,7 +162,7 @@ export default function ExportPage({ toast }: Props) {
 
       {/* Compliance notice */}
       <div style={{ background: 'var(--green-light)', border: '1px solid rgba(8,80,65,.12)', borderRadius: 10, padding: '12px 16px', marginBottom: 24, fontSize: 13, color: '#0F6E56' }}>
-        🇦🇺 <strong>Australian Universal Compliance Report</strong> — covers NSW Puppy Farm Act 2024, VIC Pet Exchange Register, QLD Animal Management Act, SA Dog and Cat Management Act, and WA Dog Act requirements.
+        <strong>Review your records before sharing.</strong> A kennel export highlights missing or inconsistent information. It does not verify site occupancy or Council approval conditions.
       </div>
 
       {/* Step 1 — Scope */}
@@ -229,7 +229,7 @@ export default function ExportPage({ toast }: Props) {
           <div style={{ marginTop: 12, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', padding: '10px 14px', borderRadius: 8 }}>
             {loadError
               ? '⚠️ Dog/litter counts unavailable — your data failed to load.'
-              : <>📊 Will include <strong>{dogs.length} dogs</strong> and <strong>{litters.length} litters</strong> — all health records, vaccines, and transfers.</>}
+              : <>📊 Will include <strong>{dogs.length} dog records</strong> and <strong>{litters.length} litter records</strong>, linked health events and data review items. Transfer and physical occupancy evidence is not currently included.</>}
           </div>
         )}
 
@@ -281,7 +281,7 @@ export default function ExportPage({ toast }: Props) {
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
               {scope === 'breeding'
                 ? 'Formatted breeding compliance report — suitable for Dogs Australia inspections.'
-                : 'Professional formatted report — print or save as PDF for inspectors.'}
+                : 'Formatted record report with a clear Draft review status — print or save as PDF.'}
             </div>
             <button
               className="btn btn-primary btn-sm"
@@ -301,7 +301,7 @@ export default function ExportPage({ toast }: Props) {
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
               {scope === 'breeding'
                 ? 'CSV not available for breeding compliance — use PDF.'
-                : 'Raw data export — open in Excel, Numbers, or Google Sheets.'}
+                : scope === 'kennel' ? 'Detailed rows with record IDs and named fields — open in Excel.' : 'Raw data export — open in Excel, Numbers, or Google Sheets.'}
             </div>
             <button
               className="btn btn-secondary btn-sm"
