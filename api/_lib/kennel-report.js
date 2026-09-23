@@ -85,6 +85,8 @@ export function buildKennelReport(data, profile = {}, generatedAt = new Date(), 
   const dogs = data.dogs || []
   const litters = data.litters || []
   const byId = new Map(dogs.map(d => [d.id, d]))
+  const heatCycles = (data.heatCycles || []).filter(c => byId.has(c.dogId)).sort((a,b) => String(b.heatStartDate || b.matingDate || '').localeCompare(String(a.heatStartDate || a.matingDate || '')))
+  const puppies = litters.flatMap(litter => (litter.puppyIds || []).map(id => ({ litter, dog: byId.get(id), id })))
   const issues = []
   const add = (subject, id, message) => issues.push({ subject, id, message })
   const facility = data.facility || null
@@ -99,6 +101,7 @@ export function buildKennelReport(data, profile = {}, generatedAt = new Date(), 
   for (const dog of dogs) {
     if (/(?:^|[\s_-])(?:qa|test)(?:$|[\s_-])/i.test(dog.name || '')) add('Dog', dog.id, 'Possible test record; confirm whether this dog belongs in a Council report')
     const chip = String(dog.microchip || '').trim()
+    if (dog.depositAmount != null && (!Number.isFinite(Number(dog.depositAmount)) || Number(dog.depositAmount) < 0)) add('Sale', dog.id, `Deposit amount for ${dog.name || 'this dog'} is invalid; reconcile the source`)
     if (!chip) add('Dog', dog.id, 'Microchip not recorded; confirm age, sale status or exemption')
     else {
       if (chips.has(chip) && chips.get(chip) !== dog.id) add('Dog', dog.id, `Microchip ${chip} also appears on ${byId.get(chips.get(chip))?.name || 'another dog'}; reconcile source records`)
@@ -118,17 +121,29 @@ export function buildKennelReport(data, profile = {}, generatedAt = new Date(), 
         add(kind, record.id, `Next due date precedes event date for ${dog.name || 'this dog'}`)
       }
       if (record.nextDue && !isoDay(record.nextDue)) add(kind, record.id, `Next due date missing or invalid for ${dog.name || 'this dog'}`)
+      if (record.uncertain) add(kind, record.id, `Record marked uncertain for ${dog.name || 'this dog'}; confirm against the source`)
     }
   }
+  const linkedPuppies = new Map()
   for (const litter of litters) {
     if (!litter.actualBirthDate) add('Litter', litter.id, 'Actual birth date not recorded; may be planned or incomplete')
-    for (const id of litter.puppyIds || []) if (!byId.has(id)) add('Litter', litter.id, `Puppy ${id} is not in this kennel export`)
+    for (const id of litter.puppyIds || []) {
+      if (!byId.has(id)) add('Litter', litter.id, `Puppy ${id} is not in this kennel export`)
+      if (linkedPuppies.has(id)) add('Litter', litter.id, `Puppy ${byId.get(id)?.name || id} is linked to more than one litter`)
+      linkedPuppies.set(id,litter.id)
+      if (byId.get(id)?.litterId && byId.get(id).litterId !== litter.id) add('Litter', litter.id, `Puppy ${byId.get(id)?.name || id} points to a different litter`)
+    }
     if (litter.damId && !byId.has(litter.damId)) add('Litter', litter.id, `Dam ${litter.damId} is not in this kennel export`)
+  }
+  for (const cycle of heatCycles) {
+    for (const key of ['heatStartDate','matingDate','ultrasoundDate','whelpingActual']) {
+      if (cycle[key] && !isoDay(cycle[key])) add('Breeding', cycle.id, `${key} is invalid for ${byId.get(cycle.dogId)?.name || 'the dam'}`)
+    }
   }
   if (!profile.kennelName) add('Profile', 'kennel', 'Kennel name not recorded')
   if (!profile.breederIdValue && !profile.breederNumber) add('Profile', 'breeder', 'Breeder registration number not recorded')
   if (!facility?.conditionNotes) add('Facility', 'conditions', 'Approval conditions have not been entered for owner review')
-  return { dogs, litters, byId, issues, profile, facility, movements, dailyLogs, daily, period: selected, generatedAt: generatedAt.toISOString(),
+  return { dogs, litters, heatCycles, puppies, byId, issues, profile, facility, movements, dailyLogs, daily, period: selected, generatedAt: generatedAt.toISOString(),
     status: issues.length ? 'DRAFT — DATA REQUIRES REVIEW' : 'READY FOR OWNER REVIEW' }
 }
 
@@ -158,6 +173,8 @@ export function issueLabel(report, issue) {
   if (dog) return dog.name || 'Unnamed dog'
   const litter = report.litters.find(l => l.id === issue.id)
   if (litter) return litter.name || 'Unnamed litter'
+  const cycle = report.heatCycles.find(c => c.id === issue.id)
+  if (cycle) return report.byId.get(cycle.dogId)?.name || 'Unlinked dam'
   for (const d of report.dogs) if ([...(d.vaccines || []), ...(d.wormings || []), ...(d.healthTests || [])].some(x => x.id === issue.id)) return d.name || 'Unnamed dog'
   if (issue.id === 'approval') return 'Facility approval'
   if (issue.id === 'ledger') return 'Movement ledger'
@@ -180,6 +197,9 @@ export function kennelHTML(report) {
     ...(d.healthTests || []).map(h => row([d.name, 'Health test', `${value(h.testType)}: ${value(h.result)}`, h.dateTested, '', h.lab, h.certNumber])),
   ])
   const transfers = report.dogs.filter(d => d.transferredAt || d.status === 'transferred')
+  const breedingRows = report.heatCycles.map(c => row([name(c.dogId),c.sireName || name(c.sireId),c.heatStartDate,c.matingDate,c.pregnancyConfirmed?'Yes':'No',c.whelpingEstimate,c.whelpingActual,c.puppiesBorn,c.puppiesAlive]))
+  const puppyRows = report.litters.flatMap(l => (l.puppyIds?.length ? l.puppyIds : [null]).map(id => { const d=report.byId.get(id); return row([l.name,name(l.damId),d?.name || (id?'Unlinked puppy':'No puppy records'),d?.sex,d?.availabilityStatus,d?.microchip,d?.buyerName]) }))
+  const salesRows = report.dogs.filter(d => d.availabilityStatus === 'sold' || d.availabilityStatus === 'reserved' || d.depositStatus === 'received').map(d=>row([d.name,d.availabilityStatus,d.depositStatus,d.depositAmount,d.buyerName || d.reservedForName]))
   const f = report.facility || {}
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Kennel records — ${e(p.kennelName)}</title><style>
   @page{size:A4 landscape;margin:16mm}body{font:11px Arial,sans-serif;color:#18251e}h1,h2{color:#1A3A2A}h1{font-size:22px}h2{font-size:16px;margin-top:24px;break-after:avoid}p{line-height:1.45}.banner{padding:12px;background:#fff4d6;border-left:4px solid #b77900}table{border-collapse:collapse;width:100%;margin:10px 0 18px;table-layout:fixed}th,td{border:1px solid #d6ded8;padding:6px;overflow-wrap:anywhere;text-align:left;vertical-align:top}th{background:#e8f1eb}tr{break-inside:avoid}small{color:#555}@media print{thead{display:table-header-group}}
@@ -188,15 +208,19 @@ export function kennelHTML(report) {
   <strong>Approval:</strong> ${e(f.approvalNumber)} &nbsp; <strong>Approval document:</strong> ${e(f.approvalDocumentRef)} &nbsp; <strong>Conditions:</strong> ${e(f.conditionNotes)}<br>
   <strong>Breeder:</strong> ${e(`${p.firstName || ''} ${p.lastName || ''}`.trim())} &nbsp; <strong>State:</strong> ${e(p.state)} &nbsp; <strong>Breeder ID:</strong> ${e(p.breederIdValue || p.breederNumber)}<br>
   <strong>Period:</strong> ${e(report.period.from)} to ${e(report.period.to)} (Australia/Adelaide) &nbsp; <strong>Generated:</strong> ${e(report.generatedAt)}</p>
-  <h2>Summary</h2><p>${report.dogs.length} dog records · ${report.litters.length} litter records · ${report.issues.length} review items. “Active” is an account status and does not establish physical presence or compliance with a facility cap.</p>
+  <h2>Summary</h2><p>${report.dogs.length} dog records · ${report.litters.length} litter records · ${new Set(report.puppies.filter(x=>x.dog).map(x=>x.id)).size} linked puppies · ${report.heatCycles.length} breeding events · ${report.issues.length} review items. “Active” is an account status and does not establish physical presence or compliance with a facility cap.</p>
   <p>Configured limits (owner supplied): breeding female ${e(f.breedingFemale)}, breeding male ${e(f.breedingMale)}, boarding ${e(f.boarding)}. Ledger declared complete from ${e(f.ledgerStartDate)}: ${f.ledgerAttested ? 'Yes' : 'No'}. These entries are not independently verified against the approval document.</p>
   <h2>Review items</h2>${table(['Area','Subject','Action required'],report.issues.map(i=>row([i.subject,issueLabel(report,i),i.message])))}
   <h2>Daily occupancy</h2><p>${report.daily.every(d=>d.verifiable) ? 'Based on the owner-attested movement ledger; reconcile with source records.' : 'Not verifiable: the opening roster or complete movement history is missing. Blank counts must not be interpreted as zero.'}</p>${table(['Date','Evidence','Breeding F','Breeding M','Boarding','Puppies','Other','Peak F / M / boarding'],report.daily.map(d=>row([d.date,d.verifiable?'Owner-attested ledger':'Not verifiable',d.breedingFemale,d.breedingMale,d.boarding,d.puppies,d.other,d.peak?`${d.peak.breedingFemale} / ${d.peak.breedingMale} / ${d.peak.boarding}`:'Not verifiable'])))}
   <h2>Arrival and departure ledger</h2>${table(['Time','Dog','Action','Category','Notes'],report.movements.map(m=>row([m.occurredAt,name(m.dogId),m.direction,m.category,m.voidedAt ? `VOIDED: ${value(m.voidReason)}` : m.note])))}
   <h2>Daily care and incidents</h2>${table(['Date','Caretaker','Exercise minutes','Care notes','Incidents'],report.dailyLogs.map(l=>row([l.date,l.caretaker,l.exerciseMinutes,l.careNotes,l.incidentNotes])))}
   <h2>Dog register</h2>${table(['Name','Breed','Sex','DOB','Microchip','Status'],dogRows)}
+  <h2>Breeding register</h2>${breedingRows.length?table(['Dam','Sire','Heat start','Mating','Pregnancy confirmed','Expected whelping','Actual whelping','Born','Alive'],breedingRows):'<p>No breeding events recorded.</p>'}
   <h2>Litters and puppies</h2>${table(['Litter','Dam','Sire','Birth date','Linked puppies'],litterRows)}
+  ${table(['Litter','Dam','Puppy','Sex','Availability','Microchip','Recipient'],puppyRows)}
+  <h2>Sales records</h2>${salesRows.length?table(['Dog / puppy','Availability','Deposit status','Deposit amount (AUD)','Buyer'],salesRows):'<p>No sale records found.</p>'}
   <h2>Recorded transfers</h2>${table(['Dog','Transfer date','Recipient','Record status'],transfers.map(d=>row([d.name,d.transferredAt,d.buyerName,d.transferStatus || 'DACO confirmation not verified'])))}
   <h2>Health records</h2>${table(['Dog','Type','Product / result','Event date','Next due','Vet / lab','Record status'],healthRows)}
+  <h2>Audit history</h2><p>A kennel-level activity audit is not available from the current iDogs export. Movement entries and daily care records above are owner-entered records, not an independent system audit.</p>
   <p><small>Source: iDogs account records and owner-entered facility logs. Blank fields appear as “Not recorded”. Supporting certificates, approval document and DACO transfer confirmation are referenced only when stated; no source attachment is embedded. Owner must reconcile records and approval wording before sending to Council.</small></p></body></html>`
 }

@@ -19,15 +19,25 @@ certificates are attached.
 
 The PDF presents breeder/facility identity, reporting period, daily occupancy,
 care, review items, dog register, litter relationships, transfers and health
-events. The primary spreadsheet is an `.xlsx` workbook with separate Read me,
-Review items, Dog register, Litters and puppies, Health events, Transfers,
-Daily occupancy, Movements and Daily care sheets. Visible labels use dog and
+events. The primary spreadsheet is an `.xlsx` workbook with Report Summary,
+Dogs Register, Breeding Register, Litters & Puppies, Sales & Transfers,
+Health & Vaccination, Daily occupancy, Movements, Daily care and Data Quality
+sheets. Heat cycles and linked puppies retain their source grain; sale and
+transfer rows are distinguished. Visible labels use dog and
 litter names. Source IDs remain in the model to reconcile duplicate names.
 The register is historical account data; daily occupancy and care cover the
 selected period. Both outputs derive from the same model. Untrusted text is
-escaped in HTML and workbook XML, and workbook cells are strings rather than
-formulas. The older kennel CSV endpoint remains for compatibility, but the UI
+escaped in HTML and workbook XML. Numeric counts and AUD amounts are typed
+cells; identifiers remain text and no formulas are emitted. The older kennel
+CSV endpoint remains for compatibility, but the UI
 offers Excel. Existing single-dog, litter and breeding exports are out of scope.
+
+The supplied iziPAWS workbook and `Export design.pdf` inform the layout. iDogs
+does not have the same sales/audit data model. Deposit amounts on a Dog are
+stored in AUD dollars and are not proof of settlement. Kennel-level audit
+history is marked unavailable. QA-like names require classification, not
+silent exclusion, because no trustworthy per-record test flag exists. These
+gaps remain visible before a Council-facing pack can be considered complete.
 
 ## Acceptance cases
 

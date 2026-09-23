@@ -65,15 +65,16 @@ async function fetchLitterFull(litterId) {
 }
 
 async function fetchKennelFull(tenantId) {
-  const [userSnap, dogsSnap, littersSnap, facilitySnap, movementsSnap, logsSnap] = await Promise.all([
+  const [userSnap, dogsSnap, littersSnap, facilitySnap, movementsSnap, logsSnap, cyclesSnap] = await Promise.all([
     db.collection('users').doc(tenantId).get(),
     db.collection('dogs').where('tenantId', '==', tenantId).get(),
     db.collection('litters').where('tenantId', '==', tenantId).get(),
     db.collection('kennelFacilities').doc(tenantId).get(),
     db.collection('kennelMovements').where('tenantId', '==', tenantId).limit(2001).get(),
     db.collection('kennelDailyLogs').where('tenantId', '==', tenantId).limit(2001).get(),
+    db.collection('heatCycles').where('tenantId', '==', tenantId).limit(2001).get(),
   ])
-  if (movementsSnap.size > 2000 || logsSnap.size > 2000) throw new Error('Kennel report exceeds record limit')
+  if (movementsSnap.size > 2000 || logsSnap.size > 2000 || cyclesSnap.size > 2000) throw new Error('Kennel report exceeds record limit')
   const dogs = await Promise.all(dogsSnap.docs.map(d => fetchDogFull(d.id)))
   // The issuing breeder retains the dog's original tenantId after an
   // ownership claim. Do not export health events subsequently added by the
@@ -93,6 +94,7 @@ async function fetchKennelFull(tenantId) {
     profile: userSnap.data(),
     dogs: ownedHistory,
     litters: littersSnap.docs.map(d => ({ ...d.data(), id: d.id })),
+    heatCycles: cyclesSnap.docs.map(d => ({ ...d.data(), id: d.id })).filter(c => ownedHistory.some(d => d.id === c.dogId)),
     facility: facilitySnap.data() || null,
     movements: movementsSnap.docs.map(d => ({ ...d.data(), id: d.id })),
     dailyLogs: logsSnap.docs.map(d => ({ ...d.data(), id: d.id })),

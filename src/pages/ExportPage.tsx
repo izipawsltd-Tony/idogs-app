@@ -382,7 +382,7 @@ export default function ExportPage({ toast }: Props) {
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
               {scope === 'breeding'
                 ? 'CSV not available for breeding compliance — use PDF.'
-                : scope === 'kennel' ? 'Excel workbook with summary, review items, dog and litter registers, health, transfers, occupancy and care on separate sheets.' : 'Raw data export — open in Excel, Numbers, or Google Sheets.'}
+                : scope === 'kennel' ? 'Excel workbook with summary, dogs, breeding events, puppies, health, sales/transfers, occupancy, care and data quality.' : 'Raw data export — open in Excel, Numbers, or Google Sheets.'}
             </div>
             <button
               className="btn btn-secondary btn-sm"
