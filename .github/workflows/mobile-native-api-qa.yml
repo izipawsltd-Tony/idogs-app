@@ -29,7 +29,8 @@ jobs:
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_TEAM_ID: team_oZF1Z0BUEceb9fAXdmFV1Saz
-      SOURCE_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+      CLIENT_SOURCE_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
+      ADMIN_SOURCE_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       QA_PROJECT_NAME: idogs-native-api-qa-izipaws
       QA_PUBLIC_BASE: https://idogs-native-api-qa-izipaws.vercel.app
 
@@ -49,52 +50,108 @@ jobs:
           set -euo pipefail
           test -n "${VERCEL_TOKEN:-}" || { echo 'VERCEL_TOKEN missing'; exit 1; }
 
-      - name: Pull trusted staging Firebase values from main Preview env
+      - name: Pull staging client env and candidate Admin envs
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf .vercel
-          mkdir -p .vercel
-          printf '%s\n' "{\"projectId\":\"$SOURCE_PROJECT_ID\",\"orgId\":\"$VERCEL_TEAM_ID\",\"projectName\":\"idogs-app\"}" > .vercel/project.json
-          npx --yes vercel@latest pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-source-pull.log 2>&1
-          test -s .vercel/.env.preview.local
-          cp .vercel/.env.preview.local /tmp/idogs-source-preview.env
 
-      - name: Fail closed unless source Firebase Admin and client are staging
+          pull_env() {
+            local project_id="$1"
+            local project_name="$2"
+            local environment="$3"
+            local outfile="$4"
+            rm -rf .vercel
+            mkdir -p .vercel
+            printf '%s\n' "{\"projectId\":\"${project_id}\",\"orgId\":\"$VERCEL_TEAM_ID\",\"projectName\":\"${project_name}\"}" > .vercel/project.json
+            if npx --yes vercel@latest pull --yes --environment="$environment" --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-pull-${project_name}-${environment}.log 2>&1; then
+              local source_file=".vercel/.env.${environment}.local"
+              if [ -s "$source_file" ]; then
+                cp "$source_file" "$outfile"
+                return 0
+              fi
+            fi
+            : > "$outfile"
+          }
+
+          pull_env "$CLIENT_SOURCE_PROJECT_ID" idogs-app preview /tmp/idogs-client-preview.env
+          test -s /tmp/idogs-client-preview.env || { echo 'FAIL CLOSED: main Preview env unavailable'; exit 1; }
+
+          # Admin credentials are intentionally sourced only from the dedicated
+          # staging Vercel project. Try its Preview env first, then Production.
+          pull_env "$ADMIN_SOURCE_PROJECT_ID" idogs-app-staging preview /tmp/idogs-admin-preview.env
+          pull_env "$ADMIN_SOURCE_PROJECT_ID" idogs-app-staging production /tmp/idogs-admin-production.env
+
+      - name: Build staging-only Firebase allowlist
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE_ENV=/tmp/idogs-source-preview.env SAFE_ENV=/tmp/idogs-native-qa-safe-env.json node <<'NODE'
+          CLIENT_ENV=/tmp/idogs-client-preview.env \
+          ADMIN_PREVIEW_ENV=/tmp/idogs-admin-preview.env \
+          ADMIN_PRODUCTION_ENV=/tmp/idogs-admin-production.env \
+          SAFE_ENV=/tmp/idogs-native-qa-safe-env.json node <<'NODE'
           const fs = require('fs')
-          const text = fs.readFileSync(process.env.SOURCE_ENV, 'utf8')
-          function read(name) {
+
+          function parseFile(path) {
+            if (!path || !fs.existsSync(path)) return ''
+            return fs.readFileSync(path, 'utf8')
+          }
+
+          function read(text, name) {
             const line = text.split(/\r?\n/).find(l => l.startsWith(name + '='))
             if (!line) return null
             let v = line.slice(name.length + 1).trim()
             if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
             return v.replace(/\\n/g, '\n')
           }
-          const names = [
+
+          const clientText = parseFile(process.env.CLIENT_ENV)
+          const clientNames = [
             'VITE_FIREBASE_API_KEY',
             'VITE_FIREBASE_AUTH_DOMAIN',
             'VITE_FIREBASE_PROJECT_ID',
             'VITE_FIREBASE_STORAGE_BUCKET',
             'VITE_FIREBASE_MESSAGING_SENDER_ID',
             'VITE_FIREBASE_APP_ID',
+          ]
+          const client = Object.fromEntries(clientNames.map(k => [k, read(clientText, k)]))
+          for (const [k, v] of Object.entries(client)) {
+            if (!v) throw new Error(`${k} missing from main Preview env`)
+          }
+          if (client.VITE_FIREBASE_PROJECT_ID !== 'idogs-app-staging') {
+            throw new Error('FAIL CLOSED: client Firebase is not staging')
+          }
+          if (!client.VITE_FIREBASE_STORAGE_BUCKET.includes('idogs-app-staging')) {
+            throw new Error('FAIL CLOSED: client Storage bucket is not staging')
+          }
+
+          const adminNames = [
             'FIREBASE_PROJECT_ID',
             'FIREBASE_CLIENT_EMAIL',
             'FIREBASE_PRIVATE_KEY',
             'FIREBASE_STORAGE_BUCKET',
           ]
-          const values = Object.fromEntries(names.map(k => [k, read(k)]))
-          for (const [k, v] of Object.entries(values)) {
-            if (!v) throw new Error(`${k} missing from trusted Preview env`)
+          const candidates = [
+            ['staging-project Preview', parseFile(process.env.ADMIN_PREVIEW_ENV)],
+            ['staging-project Production', parseFile(process.env.ADMIN_PRODUCTION_ENV)],
+          ]
+
+          let selected = null
+          for (const [label, text] of candidates) {
+            const values = Object.fromEntries(adminNames.map(k => [k, read(text, k)]))
+            const complete = adminNames.every(k => Boolean(values[k]))
+            const projectOk = values.FIREBASE_PROJECT_ID === 'idogs-app-staging'
+            const bucketOk = Boolean(values.FIREBASE_STORAGE_BUCKET?.includes('idogs-app-staging'))
+            console.log(`${label}: credentials=${complete ? 'PRESENT' : 'MISSING'} project=${projectOk ? 'STAGING' : 'NON_STAGING_OR_MISSING'} bucket=${bucketOk ? 'STAGING' : 'NON_STAGING_OR_MISSING'}`)
+            if (!selected && complete && projectOk && bucketOk) selected = { label, values }
           }
-          if (values.VITE_FIREBASE_PROJECT_ID !== 'idogs-app-staging') throw new Error('FAIL CLOSED: client Firebase is not staging')
-          if (values.FIREBASE_PROJECT_ID !== 'idogs-app-staging') throw new Error('FAIL CLOSED: Admin Firebase is not staging')
-          if (!values.FIREBASE_STORAGE_BUCKET.includes('idogs-app-staging')) throw new Error('FAIL CLOSED: Admin Storage bucket is not staging')
-          if (!values.VITE_FIREBASE_STORAGE_BUCKET.includes('idogs-app-staging')) throw new Error('FAIL CLOSED: client Storage bucket is not staging')
-          fs.writeFileSync(process.env.SAFE_ENV, JSON.stringify(values), { mode: 0o600 })
+
+          if (!selected) {
+            throw new Error('FAIL CLOSED: no verified staging Firebase Admin source exists in idogs-app-staging')
+          }
+
+          const safe = { ...client, ...selected.values }
+          fs.writeFileSync(process.env.SAFE_ENV, JSON.stringify(safe), { mode: 0o600 })
+          console.log(`Selected Admin source: ${selected.label}`)
           console.log('Source environment classification: STAGING Firebase client + Admin + Storage PASS')
           console.log('External service credentials copied: NONE')
           NODE
@@ -137,8 +194,8 @@ jobs:
           }
           if (!project?.id) throw new Error('Dedicated QA project id missing')
 
-          // This project is intentionally public and contains staging Firebase
-          // credentials only. Keep existing business projects protected.
+          // Only the isolated QA project is public. Existing business projects
+          // remain protected. The QA project contains staging Firebase only.
           const protection = await request(`https://api.vercel.com/v9/projects/${project.id}${q}`, {
             method: 'PATCH',
             body: JSON.stringify({ ssoProtection: null }),
