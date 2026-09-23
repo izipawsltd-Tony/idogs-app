@@ -1,0 +1,78 @@
+name: iDogs Mobile Functional QA
+
+on:
+  push:
+    branches:
+      - feat/mobile-app-foundation
+    paths:
+      - 'src/**'
+      - 'api/**'
+      - 'scripts/**'
+      - 'firestore.rules'
+      - 'firestore.indexes.json'
+      - 'firebase.json'
+      - '.github/workflows/mobile-functional-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-mobile-functional-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  functional-qa:
+    name: Emulator functional QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Static Dog Detail and litter client regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-round16-dogdetail-subordinate-reads.mjs
+          node scripts/test-litter-create-client-dto.mjs
+          node scripts/test-transfer-error-sanitization.mjs
+
+      - name: Run safe Auth + Firestore emulator functional suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes firebase-tools@latest emulators:exec \
+            --only auth,firestore \
+            --project demo-idogs-qa \
+            'node scripts/test-claim-transferred-dogs.mjs && \
+             node scripts/test-scan-count-api.mjs && \
+             node scripts/test-document-continuity.mjs && \
+             node scripts/test-h8-post-transfer-authorization.mjs && \
+             node scripts/test-second-transfer-rules.mjs && \
+             node scripts/test-litter-puppy-fields-rules-emulator.mjs && \
+             node scripts/test-dog-ownership-matrix.mjs'
+
+      - name: Functional QA safety summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'PASS: local-emulator functional QA completed.'
+          echo 'Coverage: claim transfer, scan count, documents, health/vaccine/worming ownership, second transfer, litter/puppy fields, dog ownership.'
+          echo 'No production Firebase, Stripe, SMS, email or live customer side effects were invoked.'
