@@ -3,6 +3,25 @@ const EXPECTED_STAGING_FIREBASE_PROJECT = 'idogs-app-staging'
 const EXPECTED_VERCEL_ENV = 'preview'
 const EXPECTED_BRANCH = 'feat/mobile-app-foundation'
 
+// Native QA is allowed to exercise staging data workflows, but it must never
+// reach APIs that can create real charges/subscriptions or send real outbound
+// customer communications. Preview has historically carried non-test external
+// service credentials, so this is enforced at transport level, not just UI.
+const NATIVE_QA_BLOCKED_API_PATHS = new Set([
+  '/api/billing-summary',
+  '/api/create-billing-portal',
+  '/api/create-checkout',
+  '/api/create-extra-litter-checkout',
+  '/api/create-sms-addon-checkout',
+  '/api/remove-sms-addon',
+  '/api/send-email',
+  '/api/send-reminders',
+  '/api/send-sms',
+  '/api/create-showcase-enquiry',
+  '/api/enforce-billing-grace',
+  '/api/stripe-webhook',
+])
+
 export type NativeQaHealth = {
   ok?: unknown
   firebaseProjectId?: unknown
@@ -17,8 +36,22 @@ export function getNativeQaApiBase(firebaseProjectId: string | undefined): strin
   return NATIVE_QA_API_BASE
 }
 
+function relativeApiPath(input: string): string {
+  return input.split(/[?#]/, 1)[0]
+}
+
+export function assertNativeQaApiPathAllowed(input: string): void {
+  if (!input.startsWith('/api/')) return
+
+  const path = relativeApiPath(input)
+  if (NATIVE_QA_BLOCKED_API_PATHS.has(path) || path.startsWith('/api/super-admin/')) {
+    throw new Error('NATIVE_QA_EXTERNAL_SIDE_EFFECT_API_BLOCKED')
+  }
+}
+
 export function rewriteNativeApiUrl(input: string, apiBase: string): string {
   if (!input.startsWith('/api/')) return input
+  assertNativeQaApiPathAllowed(input)
   return `${apiBase}${input}`
 }
 
@@ -45,6 +78,7 @@ export function assertNativeQaHealth(value: NativeQaHealth): void {
  * - native QA must be built with the staging Firebase project;
  * - the backend must be the fixed feature-branch Preview alias;
  * - the backend health endpoint must independently report Preview + staging;
+ * - payment/billing/outbound-message/super-admin API paths are blocked locally;
  * - no fallback to idogs.com.au or another origin is allowed.
  */
 export async function installNativeQaApiRouting(firebaseProjectId: string | undefined): Promise<void> {
@@ -79,4 +113,5 @@ export async function installNativeQaApiRouting(firebaseProjectId: string | unde
   }) as typeof window.fetch
 
   document.documentElement.dataset.idogsNativeApi = 'staging-preview'
+  document.documentElement.dataset.idogsNativeExternalSideEffects = 'blocked'
 }

@@ -79,6 +79,9 @@ function renderNativeApiBlocked() {
 async function bootstrap() {
   if (nativePlatform) {
     try {
+      // Installs staging-only /api routing before Auth/App can make requests.
+      // The routing layer also blocks payment, outbound-message and super-admin
+      // side-effect APIs in QA even if a UI path accidentally exposes them.
       await installNativeQaApiRouting(import.meta.env.VITE_FIREBASE_PROJECT_ID)
     } catch {
       renderNativeApiBlocked()

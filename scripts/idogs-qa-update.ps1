@@ -92,6 +92,34 @@ function Wait-LatestSuccessfulBuild {
   } while ($true)
 }
 
+function Wait-NativeQaHealth {
+  $deadline = (Get-Date).AddMinutes($BuildWaitMinutes)
+  $healthUri = 'https://idogs-app-git-feat-mobile-app-3024f6-izipawsltd-tonys-projects.vercel.app/api/native-qa-health'
+  $headers = @{ 'User-Agent' = 'iDogs-QA-Updater'; 'Cache-Control' = 'no-cache'; 'X-iDogs-Native-QA' = '1' }
+
+  do {
+    try {
+      $health = Invoke-RestMethod -Uri $healthUri -Headers $headers -Method Get -TimeoutSec 20
+      if (
+        $health.ok -eq $true -and
+        $health.firebaseProjectId -eq 'idogs-app-staging' -and
+        $health.vercelEnv -eq 'preview' -and
+        $health.branch -eq $Branch
+      ) {
+        return $health
+      }
+      Write-Host "Native API health mismatch; waiting for safe staging backend..." -ForegroundColor Yellow
+    } catch {
+      Write-Host "Native API backend not ready/public yet; waiting..." -ForegroundColor Yellow
+    }
+
+    if ((Get-Date) -gt $deadline) {
+      throw "Native QA API backend did not verify as public staging Preview within $BuildWaitMinutes minutes."
+    }
+    Start-Sleep -Seconds 10
+  } while ($true)
+}
+
 $adb = Get-AdbPath
 Ensure-Device $adb
 
@@ -131,6 +159,10 @@ $actual = (Get-FileHash $apk -Algorithm SHA256).Hash.ToLowerInvariant()
 if (-not $expected -or $expected -ne $actual) { throw 'APK SHA-256 verification failed.' }
 Write-Host "APK SHA-256: $actual" -ForegroundColor Green
 
+Write-Step 'Verifying public staging Native API backend'
+$health = Wait-NativeQaHealth
+Write-Host "Native API: $($health.vercelEnv) / $($health.branch) / $($health.firebaseProjectId)" -ForegroundColor Green
+
 Write-Step 'Installing or updating iDogs QA'
 $installOutput = & $adb install -r $apk 2>&1
 $installOutput | ForEach-Object { Write-Host $_ }
@@ -168,11 +200,13 @@ Workflow run: $runId
 Exact SHA: $sha
 Package: $Package
 APK SHA-256: $actual
+Native API: $($health.vercelEnv) / $($health.branch) / $($health.firebaseProjectId)
+External payment/message side effects: blocked by native routing layer
 Screenshot: $local
 Completed: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 "@ | Set-Content -Path $resultFile -Encoding UTF8
 
-Write-Host "`nPASS: latest iDogs QA build verified, installed and launched" -ForegroundColor Green
+Write-Host "`nPASS: latest iDogs QA build verified, staging API verified, installed and launched" -ForegroundColor Green
 Write-Host "Exact SHA : $sha"
 Write-Host "Screenshot: $local"
 Write-Host "Result    : $resultFile"
