@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { buildKennelReport, kennelCSV, kennelHTML, validatePeriod } from '../api/_lib/kennel-report.js'
+import { kennelWorkbook } from '../api/_lib/kennel-workbook.js'
 assert.throws(()=>validatePeriod('2026-02-30','2026-03-01'))
 
 const dogs = [
@@ -19,6 +20,11 @@ assert.match(html, /&lt;script&gt;/)
 assert.doesNotMatch(html, /<script>/)
 assert.match(html, /DRAFT — DATA REQUIRES REVIEW/)
 assert.match(html, /Opening roster and complete movement history/)
+assert.equal(report.daily[0].breedingFemale, null)
+assert.match(html, /Not verifiable: the opening roster/)
+const workbook = kennelWorkbook(report)
+assert.equal(workbook.readUInt32LE(0), 0x04034b50)
+assert(workbook.includes(Buffer.from('xl/worksheets/sheet9.xml')))
 const occupied = buildKennelReport({ dogs: [{ id:'dam', name:'Dam', sex:'female', dateOfBirth:'2020-01-01', microchip:'987' }], litters: [],
   facility: { address:'1 Road', approvalNumber:'DA1', approvalDocumentRef:'document 1', ledgerStartDate:'2026-09-01', ledgerAttested:true, breedingFemale:0, conditionNotes:'Care condition' },
   movements: [{ id:'a', dogId:'dam', direction:'arrival', category:'breeding', occurredAt:'2026-09-23T00:00:00Z' }], dailyLogs: [] },

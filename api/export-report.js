@@ -6,6 +6,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { computeEffectivePlan } from './_lib/entitlements.js'
 import { buildKennelReport, kennelCSV, kennelHTML } from './_lib/kennel-report.js'
+import { kennelWorkbook } from './_lib/kennel-workbook.js'
 
 // Bounded staging-isolation safety patch: this endpoint never touches
 // Firebase Storage (it only reads Firestore and returns generated HTML/
@@ -672,6 +673,11 @@ export default async function handler(req, res) {
       try { report = buildKennelReport(data, profile, new Date(), req.body.period) }
       catch (err) { return res.status(400).json({ error: err.message }) }
       const filename = `kennel_records_${new Date().toISOString().slice(0,10)}`
+      if (format === 'xlsx') {
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`)
+        return res.status(200).send(kennelWorkbook(report))
+      }
       if (format === 'csv') {
         res.setHeader('Content-Type', 'text/csv; charset=utf-8')
         res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`)

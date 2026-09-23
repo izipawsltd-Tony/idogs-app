@@ -33,6 +33,7 @@ function occupancyForPeriod(dogs, movements, facility, from, to, add) {
   const active = new Map()
   const daily = []
   const events = movements.filter(m => !m.voidedAt).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id))
+  const verifiable = Boolean(facility?.ledgerStartDate && facility.ledgerStartDate <= from && facility.ledgerAttested && events.length)
   if (!facility?.ledgerStartDate || facility.ledgerStartDate > from || !facility.ledgerAttested) {
     add('Facility', 'ledger', 'Opening roster and complete movement history have not been attested for this period')
   }
@@ -68,7 +69,8 @@ function occupancyForPeriod(dogs, movements, facility, from, to, add) {
       for (const key of Object.keys(peak)) peak[key] = Math.max(peak[key], current[key])
     }
     const closing = counts()
-    daily.push({ date, ...closing, peak })
+    daily.push({ date, ...(verifiable ? closing : Object.fromEntries(Object.keys(closing).map(k => [k, null]))), peak: verifiable ? peak : null, verifiable })
+    if (!verifiable) continue
     for (const key of ['breedingFemale', 'breedingMale', 'boarding']) {
       if (facility?.[key] != null && peak[key] > facility[key]) add('Occupancy', date, `${key} peak ${peak[key]} exceeds configured limit ${facility[key]}`)
     }
@@ -90,7 +92,7 @@ export function buildKennelReport(data, profile = {}, generatedAt = new Date(), 
   if (!facility?.address || !facility?.approvalNumber || !facility?.approvalDocumentRef) add('Facility', 'approval', 'Address, approval number or approval document reference not recorded')
   const daily = occupancyForPeriod(dogs, movements, facility, selected.from, selected.to, add)
   const logDays = new Set(dailyLogs.map(l => l.date))
-  for (const item of daily) if (item.breedingFemale + item.breedingMale + item.boarding + item.puppies + item.other > 0 && !logDays.has(item.date)) add('Daily care', item.date, 'Care/caretaker log not recorded for occupied day')
+  for (const item of daily) if (item.verifiable && item.breedingFemale + item.breedingMale + item.boarding + item.puppies + item.other > 0 && !logDays.has(item.date)) add('Daily care', item.date, 'Care/caretaker log not recorded for occupied day')
   const chips = new Map()
   for (const dog of dogs) {
     const chip = String(dog.microchip || '').trim()
@@ -140,7 +142,7 @@ export function kennelCSV(report) {
   }
   for (const l of report.litters) rows.push(['LITTER', l.id, l.damId, l.id, l.name, `Sire: ${value(l.sireName || l.sireId)}; puppies: ${(l.puppyIds || []).length}`, '', l.actualBirthDate, l.expectedDueDate, '', '', '', l.archived ? 'Archived' : 'Recorded'])
   for (const m of report.movements) rows.push(['MOVEMENT', m.id, m.dogId, '', m.direction, m.category, '', m.occurredAt, '', '', '', '', m.voidedAt ? `Voided: ${value(m.voidReason)}` : m.note])
-  for (const d of report.daily) rows.push(['DAILY_OCCUPANCY', d.date, '', '', `Female ${d.breedingFemale}; male ${d.breedingMale}; boarding ${d.boarding}`, `Puppies ${d.puppies}; other ${d.other}`, '', d.date, '', '', '', '', `Peak: F ${d.peak.breedingFemale}; M ${d.peak.breedingMale}; boarding ${d.peak.boarding}`])
+  for (const d of report.daily) rows.push(['DAILY_OCCUPANCY', d.date, '', '', d.verifiable ? `Female ${d.breedingFemale}; male ${d.breedingMale}; boarding ${d.boarding}` : 'Not verifiable', d.verifiable ? `Puppies ${d.puppies}; other ${d.other}` : 'Opening roster or movement history missing', '', d.date, '', '', '', '', d.peak ? `Peak: F ${d.peak.breedingFemale}; M ${d.peak.breedingMale}; boarding ${d.peak.boarding}` : 'Not verifiable'])
   for (const l of report.dailyLogs) rows.push(['DAILY_CARE', l.id || l.date, '', '', `Caretaker: ${value(l.caretaker)}`, `Exercise minutes: ${value(l.exerciseMinutes)}`, '', l.date, '', '', '', '', `${value(l.careNotes)}; incidents: ${value(l.incidentNotes)}`])
   for (const issue of report.issues) rows.push(['ISSUE', issue.id, '', '', issue.subject, '', '', '', '', '', '', '', issue.message])
   return '\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n')
@@ -151,12 +153,13 @@ export function kennelHTML(report) {
   const p = report.profile
   const row = cells => `<tr>${cells.map(c => `<td>${e(c)}</td>`).join('')}</tr>`
   const table = (heads, rows) => `<table><thead><tr>${heads.map(h => `<th>${e(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
-  const dogRows = report.dogs.map(d => row([d.id, d.name, d.breed, d.sex, d.dateOfBirth, d.microchip, d.status]))
-  const litterRows = report.litters.map(l => row([l.id, l.name, report.byId.get(l.damId)?.name || l.damId, l.sireName || report.byId.get(l.sireId)?.name || l.sireId, l.actualBirthDate, (l.puppyIds || []).map(id => `${report.byId.get(id)?.name || 'Missing'} (${id})`).join('; ')]))
+  const name = id => report.byId.get(id)?.name || (id ? 'Unlinked dog' : 'Not recorded')
+  const dogRows = report.dogs.map(d => row([d.name, d.breed, d.sex, d.dateOfBirth, d.microchip, d.status]))
+  const litterRows = report.litters.map(l => row([l.name, name(l.damId), l.sireName || name(l.sireId), l.actualBirthDate, (l.puppyIds || []).map(name).join('; ')]))
   const healthRows = report.dogs.flatMap(d => [
-    ...(d.vaccines || []).map(v => row([d.id, v.id, 'Vaccination', v.name, v.dateGiven, v.nextDue, v.vetClinic, v.uncertain ? 'Uncertain' : 'Recorded'])),
-    ...(d.wormings || []).map(w => row([d.id, w.id, 'Worming', w.product, w.dateGiven, w.nextDue, '', 'Recorded'])),
-    ...(d.healthTests || []).map(h => row([d.id, h.id, 'Health test', `${value(h.testType)}: ${value(h.result)}`, h.dateTested, '', h.lab, h.certNumber])),
+    ...(d.vaccines || []).map(v => row([d.name, 'Vaccination', v.name, v.dateGiven, v.nextDue, v.vetClinic, v.uncertain ? 'Uncertain' : 'Recorded'])),
+    ...(d.wormings || []).map(w => row([d.name, 'Worming', w.product, w.dateGiven, w.nextDue, '', 'Recorded'])),
+    ...(d.healthTests || []).map(h => row([d.name, 'Health test', `${value(h.testType)}: ${value(h.result)}`, h.dateTested, '', h.lab, h.certNumber])),
   ])
   const transfers = report.dogs.filter(d => d.transferredAt || d.status === 'transferred')
   const f = report.facility || {}
@@ -169,13 +172,13 @@ export function kennelHTML(report) {
   <strong>Period:</strong> ${e(report.period.from)} to ${e(report.period.to)} (Australia/Adelaide) &nbsp; <strong>Generated:</strong> ${e(report.generatedAt)}</p>
   <h2>Summary</h2><p>${report.dogs.length} dog records · ${report.litters.length} litter records · ${report.issues.length} review items. “Active” is an account status and does not establish physical presence or compliance with a facility cap.</p>
   <p>Configured limits (owner supplied): breeding female ${e(f.breedingFemale)}, breeding male ${e(f.breedingMale)}, boarding ${e(f.boarding)}. Ledger declared complete from ${e(f.ledgerStartDate)}: ${f.ledgerAttested ? 'Yes' : 'No'}. These entries are not independently verified against the approval document.</p>
-  <h2>Review items</h2>${table(['Subject','Record ID','Issue'],report.issues.map(i=>row([i.subject,i.id,i.message])))}
-  <h2>Daily occupancy</h2>${table(['Date','Breeding F','Breeding M','Boarding','Puppies','Other','Peak F / M / boarding'],report.daily.map(d=>row([d.date,d.breedingFemale,d.breedingMale,d.boarding,d.puppies,d.other,`${d.peak.breedingFemale} / ${d.peak.breedingMale} / ${d.peak.boarding}`])))}
-  <h2>Arrival and departure ledger</h2>${table(['Event ID','Time','Dog ID','Action','Category','Notes'],report.movements.map(m=>row([m.id,m.occurredAt,m.dogId,m.direction,m.category,m.voidedAt ? `VOIDED: ${value(m.voidReason)}` : m.note])))}
+  <h2>Review items</h2>${table(['Area','Subject','Action required'],report.issues.map(i=>row([i.subject,i.subject==='Dog'?name(i.id):i.id,i.message])))}
+  <h2>Daily occupancy</h2><p>${report.daily.every(d=>d.verifiable) ? 'Based on the owner-attested movement ledger; reconcile with source records.' : 'Not verifiable: the opening roster or complete movement history is missing. Blank counts must not be interpreted as zero.'}</p>${table(['Date','Evidence','Breeding F','Breeding M','Boarding','Puppies','Other','Peak F / M / boarding'],report.daily.map(d=>row([d.date,d.verifiable?'Owner-attested ledger':'Not verifiable',d.breedingFemale,d.breedingMale,d.boarding,d.puppies,d.other,d.peak?`${d.peak.breedingFemale} / ${d.peak.breedingMale} / ${d.peak.boarding}`:'Not verifiable'])))}
+  <h2>Arrival and departure ledger</h2>${table(['Time','Dog','Action','Category','Notes'],report.movements.map(m=>row([m.occurredAt,name(m.dogId),m.direction,m.category,m.voidedAt ? `VOIDED: ${value(m.voidReason)}` : m.note])))}
   <h2>Daily care and incidents</h2>${table(['Date','Caretaker','Exercise minutes','Care notes','Incidents'],report.dailyLogs.map(l=>row([l.date,l.caretaker,l.exerciseMinutes,l.careNotes,l.incidentNotes])))}
-  <h2>Dog register</h2>${table(['Dog ID','Name','Breed','Sex','DOB','Microchip','Status'],dogRows)}
-  <h2>Litters and puppies</h2>${table(['Litter ID','Name','Dam','Sire','Birth date','Linked puppies'],litterRows)}
-  <h2>Recorded transfers</h2>${table(['Dog ID','Dog','Transfer date','Recipient','Record status'],transfers.map(d=>row([d.id,d.name,d.transferredAt,d.buyerName,d.transferStatus || 'DACO confirmation not verified'])))}
-  <h2>Health records</h2>${table(['Dog ID','Event ID','Type','Product / result','Event date','Next due','Vet / lab','Record status'],healthRows)}
+  <h2>Dog register</h2>${table(['Name','Breed','Sex','DOB','Microchip','Status'],dogRows)}
+  <h2>Litters and puppies</h2>${table(['Litter','Dam','Sire','Birth date','Linked puppies'],litterRows)}
+  <h2>Recorded transfers</h2>${table(['Dog','Transfer date','Recipient','Record status'],transfers.map(d=>row([d.name,d.transferredAt,d.buyerName,d.transferStatus || 'DACO confirmation not verified'])))}
+  <h2>Health records</h2>${table(['Dog','Type','Product / result','Event date','Next due','Vet / lab','Record status'],healthRows)}
   <p><small>Source: iDogs account records and owner-entered facility logs. Blank fields appear as “Not recorded”. Supporting certificates, approval document and DACO transfer confirmation are referenced only when stated; no source attachment is embedded. Owner must reconcile records and approval wording before sending to Council.</small></p></body></html>`
 }

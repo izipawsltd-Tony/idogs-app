@@ -9,7 +9,7 @@ interface Props {
 }
 
 type Scope = 'dog' | 'litter' | 'kennel' | 'breeding'
-type Format = 'pdf' | 'csv'
+type Format = 'pdf' | 'csv' | 'xlsx'
 type Facility = { facilityName: string; address: string; council: string; approvalNumber: string; approvalDocumentRef: string; conditionNotes: string; ledgerStartDate: string; ledgerAttested: boolean; breedingFemale: string; breedingMale: string; boarding: string }
 type Movement = { id: string; dogId: string; occurredAt: string; direction: string; category: string; note?: string; voidedAt?: unknown }
 type DailyLog = { id: string; date: string; caretaker: string; exerciseMinutes: number | null; careNotes: string; incidentNotes: string }
@@ -136,17 +136,17 @@ export default function ExportPage({ toast }: Props) {
         throw new Error('Export failed')
       }
 
-      if (format === 'csv') {
+      if (format === 'csv' || format === 'xlsx') {
         const blob = await res.blob()
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
         const contentDisp = res.headers.get('Content-Disposition') || ''
         const match = contentDisp.match(/filename="(.+)"/)
-        a.download = match ? match[1] : 'export.csv'
+        a.download = match ? match[1] : `export.${format}`
         a.click()
         URL.revokeObjectURL(url)
-        toast('CSV downloaded ✓', 'success')
+        toast(`${format.toUpperCase()} downloaded ✓`, 'success')
       } else {
         const { html, filename } = await res.json()
         const win = window.open('', '_blank')
@@ -365,21 +365,21 @@ export default function ExportPage({ toast }: Props) {
 
           <div style={{ border: `1px solid ${scope === 'breeding' ? 'var(--border)' : 'var(--border)'}`, borderRadius: 12, padding: 16, opacity: scope === 'breeding' ? 0.5 : 1 }}>
             <div style={{ fontSize: 20, marginBottom: 8 }}>📊</div>
-            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 4 }}>CSV / Excel</div>
+            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 4 }}>{scope === 'kennel' ? 'Council workbook' : 'CSV / Excel'}</div>
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
               {scope === 'breeding'
                 ? 'CSV not available for breeding compliance — use PDF.'
-                : scope === 'kennel' ? 'Detailed rows with record IDs and named fields — open in Excel.' : 'Raw data export — open in Excel, Numbers, or Google Sheets.'}
+                : scope === 'kennel' ? 'Excel workbook with summary, review items, dog and litter registers, health, transfers, occupancy and care on separate sheets.' : 'Raw data export — open in Excel, Numbers, or Google Sheets.'}
             </div>
             <button
               className="btn btn-secondary btn-sm"
               style={{ width: '100%' }}
-              onClick={() => scope === 'breeding' ? toast('Use PDF for breeding compliance reports', 'error') : handleExport('csv')}
+              onClick={() => scope === 'breeding' ? toast('Use PDF for breeding compliance reports', 'error') : handleExport(scope === 'kennel' ? 'xlsx' : 'csv')}
               disabled={exporting !== null || scope === 'breeding' || loadError}
             >
-              {exporting === 'csv'
+              {exporting === 'csv' || exporting === 'xlsx'
                 ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Generating…</>
-                : '📊 Export CSV'}
+                : scope === 'kennel' ? '📊 Export Excel' : '📊 Export CSV'}
             </button>
           </div>
         </div>
