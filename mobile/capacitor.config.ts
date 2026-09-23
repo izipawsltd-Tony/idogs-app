@@ -12,6 +12,13 @@ const config: CapacitorConfig = {
     startPath: '/login',
   },
   plugins: {
+    // Native QA calls a remote Vercel Preview backend. Let Capacitor patch
+    // fetch/XMLHttpRequest to native transport so these calls are not subject
+    // to WebView CORS. src/lib/nativeApiRouting.ts still fail-closes the
+    // destination to the staging Preview backend before enabling /api/*.
+    CapacitorHttp: {
+      enabled: true,
+    },
     SystemBars: {
       insetsHandling: 'css',
       style: 'DARK',
