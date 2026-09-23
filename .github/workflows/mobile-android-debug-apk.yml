@@ -9,6 +9,8 @@ on:
       - 'src/mobile.css'
       - 'src/pages/LandingPage.tsx'
       - 'src/main.tsx'
+      - 'src/lib/nativeApiRouting.ts'
+      - 'src/lib/nativeApiRouting.test.ts'
       - 'index.html'
       - 'mobile/**'
       - 'package.json'
