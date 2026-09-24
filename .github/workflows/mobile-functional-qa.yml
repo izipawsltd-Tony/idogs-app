@@ -76,3 +76,4 @@ jobs:
           echo 'PASS: local-emulator functional QA completed.'
           echo 'Coverage: claim transfer, scan count, documents, health/vaccine/worming ownership, second transfer, litter/puppy fields, dog ownership.'
           echo 'No production Firebase, Stripe, SMS, email or live customer side effects were invoked.'
+          echo 'Native API backend isolation verification marker: dedicated staging QA.'
