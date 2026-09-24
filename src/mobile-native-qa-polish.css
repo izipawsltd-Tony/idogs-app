@@ -1,0 +1,20 @@
+/* Native QA polish identified from real-device Android screenshot QA.
+   Keep production web behaviour unchanged; QA-only billing suppression is
+   scoped to the dedicated-staging marker installed after backend health PASS. */
+
+@media (max-width: 768px) {
+  /* Android safe-area was reserved twice: body/system-bar paint + main-area
+     padding. The sticky top bar already pins itself below the status bar, so
+     removing the second reservation eliminates the blank band above the app
+     header and restores the dashboard's intended first-card spacing. */
+  html[data-idogs-native-platform='android'] .main-area {
+    padding-top: 0 !important;
+  }
+
+  /* Native QA deliberately has no Stripe/payment credentials and the routing
+     layer blocks billing side effects. Do not expose a dead Billing link in QA.
+     This does not affect web or a future production-native build. */
+  html[data-idogs-native-api='dedicated-staging-qa'] a[href='/app/billing'] {
+    display: none !important;
+  }
+}
