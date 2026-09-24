@@ -7,6 +7,14 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { computeEffectivePlan } from './_lib/entitlements.js'
 import { buildKennelReport, kennelCSV, kennelHTML } from './_lib/kennel-report.js'
 import { kennelWorkbook } from './_lib/kennel-workbook.js'
+import { reportPDF } from './_lib/report-pdf.js'
+
+async function sendPDF(res, html, filename) {
+  const pdf = await reportPDF(html, { title: filename.replace(/_/g, ' ') })
+  res.setHeader('Content-Type', 'application/pdf')
+  res.setHeader('Content-Disposition', `inline; filename="${filename}.pdf"`)
+  return res.status(200).send(pdf)
+}
 
 // Bounded staging-isolation safety patch: this endpoint never touches
 // Firebase Storage (it only reads Firestore and returns generated HTML/
@@ -664,8 +672,7 @@ export default async function handler(req, res) {
       // Breeding compliance is PDF only
       const html = generateBreedingPDFHTML(data, profile, req.body.userState)
       const filename = `${data.name}_breeding_compliance_${new Date().toISOString().slice(0,10)}`
-      res.setHeader('Content-Type', 'application/json')
-      return res.status(200).json({ html, filename })
+      return sendPDF(res, html, filename)
     } else {
       return res.status(400).json({ error: 'Invalid scope' })
     }
@@ -678,14 +685,14 @@ export default async function handler(req, res) {
       if (format === 'xlsx') {
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`)
-        return res.status(200).send(kennelWorkbook(report))
+        return res.status(200).send(await kennelWorkbook(report))
       }
       if (format === 'csv') {
         res.setHeader('Content-Type', 'text/csv; charset=utf-8')
         res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`)
         return res.status(200).send(kennelCSV(report))
       }
-      if (format === 'pdf') return res.status(200).json({ html: kennelHTML(report), filename })
+      if (format === 'pdf') return sendPDF(res, kennelHTML(report), filename)
       return res.status(400).json({ error: 'Invalid format' })
     }
 
@@ -702,13 +709,11 @@ export default async function handler(req, res) {
 
     if (format === 'pdf') {
       const html = generatePDFHTML(data, scope, profile)
-      // Return HTML for client-side PDF generation via print
       const filename = scope === 'dog' ? `${data.name}_record`
         : scope === 'litter' ? `${data.name}_litter`
         : `kennel_audit_${new Date().toISOString().slice(0,10)}`
 
-      res.setHeader('Content-Type', 'application/json')
-      return res.status(200).json({ html, filename })
+      return sendPDF(res, html, filename)
     }
 
     return res.status(400).json({ error: 'Invalid format' })

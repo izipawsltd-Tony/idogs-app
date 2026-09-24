@@ -112,9 +112,9 @@ export default function ExportPage({ toast }: Props) {
 
     // Open during the click gesture; browsers may block windows opened after
     // the token/API awaits. Keep it empty until the response succeeds.
-    const printWindow = format === 'pdf' ? window.open('', '_blank') : null
-    if (format === 'pdf' && !printWindow) { toast('Allow pop-ups for iDogs to print the PDF report', 'error'); return }
-    if (printWindow) printWindow.document.body.textContent = 'Preparing report…'
+    const previewWindow = format === 'pdf' ? window.open('', '_blank') : null
+    if (format === 'pdf' && !previewWindow) { toast('Allow pop-ups for iDogs to open the PDF report', 'error'); return }
+    if (previewWindow) previewWindow.document.body.textContent = 'Preparing report…'
     setExporting(format)
     try {
       const idToken = await user.getIdToken()
@@ -135,7 +135,7 @@ export default function ExportPage({ toast }: Props) {
         if (res.status === 403) {
           const body = await res.json().catch(() => ({}))
           if (body.reason === 'EXPORT_PLAN_GATE') {
-            printWindow?.close()
+            previewWindow?.close()
             toast('Report export is an iDogs Plus feature. Upgrade to Plus to export reports.', 'error')
             return
           }
@@ -157,20 +157,15 @@ export default function ExportPage({ toast }: Props) {
         setTimeout(() => URL.revokeObjectURL(url), 60_000)
         toast(`${format.toUpperCase()} downloaded ✓`, 'success')
       } else {
-        const { html, filename } = await res.json()
-        if (printWindow) {
-          printWindow.document.open()
-          printWindow.document.write(html)
-          printWindow.document.close()
-          setTimeout(() => {
-            printWindow.document.title = filename
-            printWindow.print()
-          }, 500)
-        }
-        toast('PDF ready — use Print → Save as PDF ✓', 'success')
+        const blob = await res.blob()
+        if (blob.type !== 'application/pdf' || (await blob.slice(0, 5).text()) !== '%PDF-') throw new Error('Invalid PDF response')
+        const url = URL.createObjectURL(blob)
+        if (previewWindow) previewWindow.location.href = url
+        setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000)
+        toast('PDF opened — use the viewer toolbar to download or print ✓', 'success')
       }
     } catch {
-      printWindow?.close()
+      previewWindow?.close()
       toast('Export failed. Please try again.', 'error')
     } finally {
       setExporting(null)
@@ -362,7 +357,7 @@ export default function ExportPage({ toast }: Props) {
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
               {scope === 'breeding'
                 ? 'Formatted breeding compliance report — suitable for Dogs Australia inspections.'
-                : 'Formatted record report with a clear Draft review status — print or save as PDF.'}
+                : 'Formatted PDF report with a clear Draft review status — open, download or print when ready.'}
             </div>
             <button
               className="btn btn-primary btn-sm"
@@ -398,7 +393,7 @@ export default function ExportPage({ toast }: Props) {
         </div>
 
         <div style={{ marginTop: 12, fontSize: 12, color: 'var(--light)' }}>
-          💡 For PDF: a new window will open — use <strong>File → Print → Save as PDF</strong> to save.
+          💡 PDF opens in a new tab. Use the PDF viewer toolbar to download or print when needed.
         </div>
       </div>
     </div>

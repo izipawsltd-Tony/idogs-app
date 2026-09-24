@@ -1,45 +1,12 @@
-// Self-contained Office Open XML workbook. Each topic has its own readable sheet.
-import { deflateRawSync } from 'node:zlib'
+// Council workbook generated with ExcelJS for broad Excel and Excel Online compatibility.
+import ExcelJS from 'exceljs'
 import { issueLabel } from './kennel-report.js'
 
-const xml = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c])
-const shown = v => v == null || v === '' ? '' : String(v)
 const day = v => { if (!v) return ''; const d = new Date(v); return Number.isNaN(+d) || d.getUTCFullYear() < 1900 ? 'Invalid date' : new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Adelaide', day: '2-digit', month: '2-digit', year: 'numeric' }).format(d) }
 const label = (r, id) => r.byId.get(id)?.name || (id ? 'Unlinked dog' : 'Not recorded')
 const human = v => v ? String(v).replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) : ''
-const sheet = (inputRows, name, report) => {
-  const rows = inputRows.length > 1 ? inputRows : [...inputRows, ['No records found']]
-  const width = Math.max(4,...rows.map(r=>r.length))
-  const kennel = report.facility?.facilityName || report.profile?.kennelName || 'Kennel name not recorded'
-  const band = [
-    `iDogs  |  ${name}`,
-    `Kennel: ${kennel}     Council: ${report.facility?.council || 'Not recorded'}`,
-    `Reporting period: ${day(report.period.from)} – ${day(report.period.to)}     Generated: ${day(report.generatedAt)} (Australia/Adelaide)`,
-    `Report status: ${report.status}`,
-  ]
-  const cell = (v,i,j) => {
-    const address = `${column(j)}${i+5}`
-    const money = /AUD/.test(String(rows[0][j] || '')) || /AUD/.test(String(rows[i][0] || ''))
-    const style = i===0 ? 4 : i%2===0 ? (money?7:6) : (money?5:0)
-    if (typeof v === 'number' && Number.isFinite(v)) return `<c r="${address}" s="${style}"><v>${v}</v></c>`
-    return `<c r="${address}" t="inlineStr" s="${style}"><is><t>${xml(shown(v))}</t></is></c>`
-  }
-  const header = band.map((v,i)=>`<row r="${i+1}" ht="${i===0?36:25}" customHeight="1"><c r="A${i+1}" t="inlineStr" s="${i===0?1:i===3?3:2}"><is><t>${xml(v)}</t></is></c></row>`).join('')
-  const colWidth = j => Math.min(42,Math.max(j===0?24:16, String(rows[0][j]||'').length+4, ...rows.slice(1,51).map(r=>Math.min(42,String(r[j]??'').length+2))))
-  const height = (r,i) => i===0 ? 32 : Math.min(108, Math.max(24, Math.ceil(Math.max(...r.map((v,j)=>String(v??'').length/Math.max(10,colWidth(j)-3))))*17))
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="5" topLeftCell="B6" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>${Array.from({length:width},(_,j)=>`<col min="${j+1}" max="${j+1}" width="${colWidth(j)}" customWidth="1"/>`).join('')}</cols><sheetData>${header}${rows.map((r,i)=>`<row r="${i+5}" ht="${height(r,i)}" customHeight="1">${r.map((v,j)=>cell(v,i,j)).join('')}</row>`).join('')}</sheetData><mergeCells count="4">${band.map((_,i)=>`<mergeCell ref="A${i+1}:${column(width-1)}${i+1}"/>`).join('')}</mergeCells><autoFilter ref="A5:${column(width-1)}${rows.length+4}"/><printOptions headings="0" gridLines="0"/><pageMargins left="0.3" right="0.3" top="0.55" bottom="0.55" header="0.2" footer="0.2"/><pageSetup orientation="landscape" paperSize="9" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;LiDogs Council review report&amp;RPage &amp;P</oddFooter></headerFooter></worksheet>`
-}
-const column = i => { let s=''; for(i++;i;i=Math.floor((i-1)/26)) s=String.fromCharCode(65+(i-1)%26)+s; return s }
-const crcTable = Array.from({length:256},(_,i)=>{let c=i;for(let n=0;n<8;n++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c>>>0})
-const crc = b => { let c=0xffffffff; for(const x of b)c=crcTable[(c^x)&255]^(c>>>8); return (c^0xffffffff)>>>0 }
-function zip(files) {
-  const parts=[], central=[]; let offset=0
-  for(const [name,content] of files){const nb=Buffer.from(name), raw=Buffer.from(content), packed=deflateRawSync(raw), h=Buffer.alloc(30), c=crc(raw);h.writeUInt32LE(0x04034b50,0);h.writeUInt16LE(20,4);h.writeUInt16LE(8,8);h.writeUInt32LE(c,14);h.writeUInt32LE(packed.length,18);h.writeUInt32LE(raw.length,22);h.writeUInt16LE(nb.length,26);parts.push(h,nb,packed)
-    const d=Buffer.alloc(46);d.writeUInt32LE(0x02014b50,0);d.writeUInt16LE(20,4);d.writeUInt16LE(20,6);d.writeUInt16LE(8,10);d.writeUInt32LE(c,16);d.writeUInt32LE(packed.length,20);d.writeUInt32LE(raw.length,24);d.writeUInt16LE(nb.length,28);d.writeUInt32LE(offset,42);central.push(d,nb);offset+=h.length+nb.length+packed.length }
-  const end=Buffer.alloc(22), size=central.reduce((n,b)=>n+b.length,0);end.writeUInt32LE(0x06054b50,0);end.writeUInt16LE(files.length,8);end.writeUInt16LE(files.length,10);end.writeUInt32LE(size,12);end.writeUInt32LE(offset,16);return Buffer.concat([...parts,...central,end])
-}
-const styles = `<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00"/></numFmts><fonts count="4"><font><name val="Arial"/><sz val="10"/><color rgb="FF203129"/></font><font><name val="Arial"/><sz val="16"/><b/><color rgb="FFFFFFFF"/></font><font><name val="Arial"/><sz val="10"/><color rgb="FF1A3A2A"/></font><font><name val="Arial"/><sz val="10"/><b/><color rgb="FFFFFFFF"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1A3A2A"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8F1EB"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF4F6F3"/></patternFill></fill></fills><borders count="2"><border/><border><left style="hair"><color rgb="FFDCE5DE"/></left><right style="hair"><color rgb="FFDCE5DE"/></right><top/><bottom style="hair"><color rgb="FFDCE5DE"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0"><alignment vertical="center" indent="1"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0"><alignment vertical="center" indent="1"/></xf><xf numFmtId="0" fontId="2" fillId="4" borderId="0" xfId="0"><alignment vertical="center" indent="1"/></xf><xf numFmtId="0" fontId="3" fillId="2" borderId="1" xfId="0"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="164" fontId="0" fillId="4" borderId="1" xfId="0" applyNumberFormat="1"><alignment vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`
-export function kennelWorkbook(r) {
+export async function kennelWorkbook(r) {
+
   const f=r.facility||{}, p=r.profile||{}, verifiable=r.daily.every(d=>d.verifiable)
   const puppyRows = r.puppies || [], cycles = r.heatCycles || []
   const latest = (records, key) => [...(records||[])].filter(x=>x[key]).sort((a,b)=>String(b[key]).localeCompare(String(a[key])))[0]?.[key]
@@ -53,11 +20,51 @@ export function kennelWorkbook(r) {
     ['Sales & Transfers',[['Record type','Dog / puppy','Litter','Recipient / buyer','Availability','Deposit status','Deposit amount (AUD)','Transfer date','Transfer status'],...saleDogs.flatMap(d=>{const rows=[];if(d.availabilityStatus==='sold'||d.availabilityStatus==='reserved'||d.depositStatus==='received')rows.push(['Sale record',d.name,r.litters.find(l=>l.id===d.litterId)?.name,d.buyerName||d.reservedForName,human(d.availabilityStatus),human(d.depositStatus),d.depositAmount,'','']);if(d.transferredAt||d.status==='transferred')rows.push(['Ownership transfer',d.name,r.litters.find(l=>l.id===d.litterId)?.name,d.buyerName,'','','',day(d.transferredAt),human(d.transferStatus)||'Confirmation not verified']);return rows})]],
     ['Health & Vaccination',[['Subject','Litter','Type','Product or test','Result','Event date','Next due','Vet or lab','Certificate','Uncertain'],...r.dogs.flatMap(d=>{const litter=r.litters.find(l=>l.id===d.litterId)?.name;return [...(d.vaccines||[]).map(v=>[d.name,litter,'Vaccination',v.name,'',day(v.dateGiven),day(v.nextDue),v.vetClinic,'',v.uncertain?'Yes':'No']),...(d.wormings||[]).map(w=>[d.name,litter,'Worming',w.product,'',day(w.dateGiven),day(w.nextDue),'','','No']),...(d.healthTests||[]).map(h=>[d.name,litter,'Health test',h.testType,h.result,day(h.dateTested),'',h.lab,h.certNumber,'No'])]})]],
     ['Daily occupancy',[['Date','Evidence status','Breeding females','Breeding males','Boarding','Puppies','Other','Peak females','Peak males','Peak boarding'],...r.daily.map(d=>[day(d.date),d.verifiable?'Owner attested ledger':'Not verifiable',d.breedingFemale,d.breedingMale,d.boarding,d.puppies,d.other,d.peak?.breedingFemale,d.peak?.breedingMale,d.peak?.boarding])]],
-    ['Movements',[['Date and time','Dog','Direction','Category','Note','Record status'],...r.movements.map(m=>[m.occurredAt,label(r,m.dogId),m.direction,m.category,m.note,m.voidedAt?`Voided: ${shown(m.voidReason)}`:'Recorded'])]],
+    ['Movements',[['Date and time','Dog','Direction','Category','Note','Record status'],...r.movements.map(m=>[m.occurredAt,label(r,m.dogId),m.direction,m.category,m.note,m.voidedAt?`Voided: ${m.voidReason || 'reason not recorded'}`:'Recorded'])]],
     ['Daily care',[['Date','Caretaker','Exercise minutes','Care notes','Incidents'],...r.dailyLogs.map(l=>[day(l.date),l.caretaker,l.exerciseMinutes,l.careNotes,l.incidentNotes])]],
     ['Data Quality',[['Area','Record','Action required','Priority'],...r.issues.map(i=>[i.subject,issueLabel(r,i),i.message,/approval|ledger|microchip|linked|different litter|invalid|uncertain|test record/i.test(i.message)?'High':'Medium'])]],
   ]
-  const names=sheets.map(([name],i)=>`<sheet name="${xml(name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join('')
-  const files=[['[Content_Types].xml',`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`],['_rels/.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],['xl/workbook.xml',`<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names}</sheets></workbook>`],['xl/_rels/workbook.xml.rels',`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],['xl/styles.xml',styles],...sheets.map(([name,rows],i)=>[`xl/worksheets/sheet${i+1}.xml`,sheet(rows,name,r)])]
-  return zip(files)
+  const book = new ExcelJS.Workbook()
+  book.creator = 'iDogs'
+  book.subject = 'Council review report'
+  const green = 'FF1A3A2A', pale = 'FFE8F1EB', band = 'FFF4F6F3'
+  for (const [name, records] of sheets) {
+    const ws = book.addWorksheet(name, { pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } })
+    const width = Math.max(4, ...records.map(row => row.length))
+    const kennel = r.facility?.facilityName || r.profile?.kennelName || 'Kennel name not recorded'
+    const header = [
+      `iDogs  |  ${name}`,
+      `Kennel: ${kennel}     Council: ${r.facility?.council || 'Not recorded'}`,
+      `Reporting period: ${day(r.period.from)} – ${day(r.period.to)}     Generated: ${day(r.generatedAt)} (Australia/Adelaide)`,
+      `Report status: ${r.status}`,
+    ]
+    ws.columns = Array.from({ length: width }, (_, j) => ({ width: Math.min(42, Math.max(j === 0 ? 24 : 16, String(records[0]?.[j] || '').length + 4, ...records.slice(1, 51).map(row => Math.min(42, String(row[j] ?? '').length + 2)))) }))
+    header.forEach((value, i) => {
+      ws.mergeCells(i + 1, 1, i + 1, width)
+      const row = ws.getRow(i + 1); row.height = i === 0 ? 36 : 25
+      const cell = row.getCell(1); cell.value = value
+      cell.font = { name: 'Arial', size: i === 0 ? 16 : 10, bold: i === 0, color: { argb: i === 0 ? 'FFFFFFFF' : green } }
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i === 0 ? green : i === 3 ? band : pale } }
+      cell.alignment = { vertical: 'middle', indent: 1 }
+    })
+    const rows = records.length > 1 ? records : [...records, ['No records found']]
+    rows.forEach((values, i) => {
+      const row = ws.getRow(i + 5)
+      row.values = values.map(v => typeof v === 'number' && Number.isFinite(v) ? v : String(v ?? ''))
+      row.height = i === 0 ? 32 : Math.min(108, Math.max(24, Math.ceil(Math.max(...values.map((v,j) => String(v ?? '').length / Math.max(10, (ws.getColumn(j+1).width || 16)-3)))) * 17))
+      row.eachCell({ includeEmpty: true }, (cell, col) => {
+        cell.font = { name: 'Arial', size: 10, bold: i === 0, color: { argb: i === 0 ? 'FFFFFFFF' : 'FF203129' } }
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i === 0 ? green : i % 2 === 0 ? band : 'FFFFFFFF' } }
+        cell.alignment = { vertical: 'middle', wrapText: true }
+        cell.border = { bottom: { style: 'hair', color: { argb: 'FFDCE5DE' } } }
+        if (i > 0 && typeof cell.value === 'number' && (/AUD/.test(String(rows[0]?.[col-1] || '')) || /AUD/.test(String(values[0] || '')))) cell.numFmt = '"$"#,##0.00'
+      })
+    })
+    ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 5 }]
+    ws.autoFilter = { from: { row: 5, column: 1 }, to: { row: rows.length + 4, column: width } }
+    ws.pageSetup.margins = { left: .3, right: .3, top: .55, bottom: .55, header: .2, footer: .2 }
+    ws.headerFooter.oddFooter = '&LiDogs Council review report&RPage &P'
+    ws.printTitlesRow = '1:5'
+  }
+  return Buffer.from(await book.xlsx.writeBuffer())
 }

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { buildKennelReport, kennelCSV, kennelHTML, issueLabel, validatePeriod } from '../api/_lib/kennel-report.js'
 import { kennelWorkbook } from '../api/_lib/kennel-workbook.js'
+import { reportPDF } from '../api/_lib/report-pdf.js'
+import ExcelJS from 'exceljs'
 assert.throws(()=>validatePeriod('2026-02-30','2026-03-01'))
 
 const dogs = [
@@ -27,9 +29,17 @@ assert.match(html, /class="report-head"/)
 assert.match(html, /iDogs \/ COUNCIL REVIEW/)
 assert.match(html, /thead\{display:table-header-group\}/)
 assert.match(html, /@bottom-right\{content:"Page " counter\(page\)/)
-const workbook = kennelWorkbook(report)
+const workbook = await kennelWorkbook(report)
 assert.equal(workbook.readUInt32LE(0), 0x04034b50)
 assert(workbook.includes(Buffer.from('xl/worksheets/sheet10.xml')))
+const parsed = new ExcelJS.Workbook()
+await parsed.xlsx.load(workbook)
+assert.equal(parsed.worksheets.length, 10)
+assert.equal(parsed.getWorksheet('Report Summary').getCell('A5').value, 'Council review report')
+assert.equal(parsed.getWorksheet('Dogs Register').getCell('A6').value, 'Red Boy')
+const pdf = await reportPDF(html, { title: 'Council review report' })
+assert.equal(pdf.subarray(0, 5).toString(), '%PDF-')
+assert(pdf.length > 2000)
 const occupied = buildKennelReport({ dogs: [{ id:'dam', name:'Dam', sex:'female', dateOfBirth:'2020-01-01', microchip:'987' }], litters: [],
   facility: { address:'1 Road', approvalNumber:'DA1', approvalDocumentRef:'document 1', ledgerStartDate:'2026-09-01', ledgerAttested:true, breedingFemale:0, conditionNotes:'Care condition' },
   movements: [{ id:'a', dogId:'dam', direction:'arrival', category:'breeding', occurredAt:'2026-09-23T00:00:00Z' }], dailyLogs: [] },
@@ -46,7 +56,7 @@ assert.equal(ready.status, 'READY FOR OWNER REVIEW')
 const contaminated = buildKennelReport({ dogs: [{ id:'qa', name:'QA-test-dog', dateOfBirth:'0026-05-09', microchip:'555' }], litters:[] }, {}, new Date('2026-09-23T00:00:00Z'))
 assert(contaminated.issues.some(i => i.message.includes('Possible test record')))
 assert(contaminated.issues.some(i => i.message.includes('Date of birth missing or invalid')))
-assert(kennelWorkbook(contaminated).includes(Buffer.from('xl/worksheets/sheet10.xml')))
+assert((await kennelWorkbook(contaminated)).includes(Buffer.from('xl/worksheets/sheet10.xml')))
 const detailed = buildKennelReport({ dogs:[{id:'dam',name:'Dam',sex:'female',microchip:'111',dateOfBirth:'2020-01-01'}, {id:'pup',name:'Puppy',sex:'male',microchip:'222',dateOfBirth:'2026-07-01',litterId:'l',availabilityStatus:'reserved',depositStatus:'received',depositAmount:500,buyerName:'Buyer',vaccines:[{id:'v',name:'C3',dateGiven:'2026-08-01'}]}],litters:[{id:'l',name:'First litter',damId:'dam',actualBirthDate:'2026-07-01',puppyIds:['pup']}],heatCycles:[{id:'h',dogId:'dam',heatStartDate:'2026-04-01',matingDate:'2026-04-20',sireName:'External sire',pregnancyConfirmed:true}] }, {},new Date('2026-09-23T00:00:00Z'))
 assert.equal(detailed.puppies.length,1)
 assert.equal(detailed.heatCycles.length,1)
