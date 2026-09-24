@@ -263,8 +263,7 @@ jobs:
           mkdir -p .vercel
           printf '%s\n' "{\"projectId\":\"$IDOGS_NATIVE_QA_PROJECT_ID\",\"orgId\":\"$VERCEL_TEAM_ID\",\"projectName\":\"$QA_PROJECT_NAME\"}" > .vercel/project.json
           npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-qa-pull.log 2>&1
-          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects
-          DEPLOY_URL=$(npx --yes vercel@latest deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects | tail -1)
+          DEPLOY_URL=$(npx --yes vercel@latest deploy --prod --yes --force --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects | tail -1)
           test -n "$DEPLOY_URL"
           echo "IDOGS_NATIVE_QA_DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
           echo "Dedicated QA deployment: $DEPLOY_URL"
