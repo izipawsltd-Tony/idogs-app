@@ -26,12 +26,6 @@ const nativePlatform = buildNativePlatform || runtimeNativePlatform
 if (nativePlatform) {
   document.documentElement.dataset.idogsNativePlatform = nativePlatform
 
-  // Native navigation should behave like an app rather than restoring an old
-  // browser scroll offset when the launcher opens a fresh route.
-  if ('scrollRestoration' in window.history) {
-    window.history.scrollRestoration = 'manual'
-  }
-
   // Native builds start at /login in capacitor.config.ts via server.startPath.
   // Keep only a narrow JS fallback for an unexpected root load; do not rewrite
   // internal app routes or public deep links here.
@@ -52,15 +46,6 @@ function RouteMarker() {
       document.documentElement.dataset.idogsRoute = 'dog-detail'
     } else {
       delete document.documentElement.dataset.idogsRoute
-    }
-
-    // A native route transition should open at the top of its screen. This also
-    // prevents a previously-restored dashboard offset from hiding the first KPI
-    // row behind the sticky mobile header after launcher resume.
-    if (nativePlatform) {
-      requestAnimationFrame(() => {
-        window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-      })
     }
   }, [location.pathname])
 
