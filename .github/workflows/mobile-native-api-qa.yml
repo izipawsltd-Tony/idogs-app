@@ -189,8 +189,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SAFE_ENV=/tmp/idogs-native-qa-safe-env.json node <<'NODE'
-          const fs = require('fs')
+          SAFE_ENV=/tmp/idogs-native-qa-safe-env.json node --input-type=module <<'NODE'
+          import fs from 'node:fs'
           const token = process.env.VERCEL_TOKEN
           const teamId = process.env.VERCEL_TEAM_ID
           const name = process.env.QA_PROJECT_NAME
