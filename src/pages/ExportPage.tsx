@@ -9,7 +9,12 @@ interface Props {
 }
 
 type Scope = 'dog' | 'litter' | 'kennel' | 'breeding'
-type Format = 'pdf' | 'csv'
+type Format = 'pdf' | 'csv' | 'xlsx'
+type Facility = { facilityName: string; address: string; council: string; approvalNumber: string; approvalDocumentRef: string; conditionNotes: string; ledgerStartDate: string; ledgerAttested: boolean; breedingFemale: string; breedingMale: string; boarding: string }
+type Movement = { id: string; dogId: string; occurredAt: string; direction: string; category: string; note?: string; voidedAt?: unknown }
+type DailyLog = { id: string; date: string; caretaker: string; exerciseMinutes: number | null; careNotes: string; incidentNotes: string }
+const emptyFacility: Facility = { facilityName: '', address: '', council: '', approvalNumber: '', approvalDocumentRef: '', conditionNotes: '', ledgerStartDate: '', ledgerAttested: false, breedingFemale: '', breedingMale: '', boarding: '' }
+const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Adelaide', year: 'numeric', month: '2-digit', day: '2-digit' })
 
 export default function ExportPage({ toast }: Props) {
   const { user, profile } = useAuth()
@@ -30,10 +35,18 @@ export default function ExportPage({ toast }: Props) {
   // is the safe, consistent choice: the user should never be looking at
   // a page that's actively lying about what it's about to export.
   const [loadError, setLoadError] = useState(false)
+  const [facility, setFacility] = useState<Facility>(emptyFacility)
+  const [movements, setMovements] = useState<Movement[]>([])
+  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([])
+  const [period, setPeriod] = useState({ from: today(), to: today() })
+  const [movement, setMovement] = useState({ dogId: '', direction: 'arrival', category: 'breeding', occurredAt: '', note: '' })
+  const [dailyLog, setDailyLog] = useState({ date: today(), caretaker: '', exerciseMinutes: '', careNotes: '', incidentNotes: '' })
+  const [saving, setSaving] = useState(false)
   const userState = (profile as any)?.state || 'SA'
 
   // Female dogs only for breeding compliance
   const femaleDogs = dogs.filter(d => d.sex === 'female' && (d as any).status !== 'transferred')
+  const possibleTestDogs = dogs.filter(d => /(?:^|[\s_-])(?:qa|test)(?:$|[\s_-])/i.test(d.name || ''))
 
   const { beginRequest } = useRequestGuard(user?.uid)
 
@@ -42,10 +55,16 @@ export default function ExportPage({ toast }: Props) {
     const req = beginRequest()
     setLoading(true)
     setLoadError(false)
-    Promise.all([getDogs(), getLitters()])
-      .then(([d, l]) => {
+    Promise.all([getDogs(), getLitters(), user.getIdToken().then(token => fetch('/api/kennel-report-data', { headers: { Authorization: `Bearer ${token}` } }).then(async response => {
+      if (response.status === 403) return { facility: null, movements: [], dailyLogs: [] }
+      if (!response.ok) throw new Error('Kennel report data unavailable')
+      return response.json()
+    }))])
+      .then(([d, l, reportData]) => {
         if (!req.isCurrent()) return
         setDogs(d); setLitters(l)
+        setFacility({ ...emptyFacility, ...(reportData.facility || {}), breedingFemale: String(reportData.facility?.breedingFemale ?? ''), breedingMale: String(reportData.facility?.breedingMale ?? ''), boarding: String(reportData.facility?.boarding ?? '') })
+        setMovements(reportData.movements || []); setDailyLogs(reportData.dailyLogs || [])
       })
       .catch(() => {
         if (!req.isCurrent()) return
@@ -63,10 +82,26 @@ export default function ExportPage({ toast }: Props) {
     // switch — a stale selector option or kennel-summary count from a
     // former account must never linger into the new one's view.
     setDogs([]); setLitters([]); setLoadError(false)
+    setFacility(emptyFacility); setMovements([]); setDailyLogs([])
     setSelectedDogId(''); setSelectedLitterId('')
     loadExportData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
+
+  async function saveKennelData(action: string, payload: Record<string, unknown>) {
+    if (!user) return
+    setSaving(true)
+    try {
+      const token = await user.getIdToken()
+      const response = await fetch('/api/kennel-report-data', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action, ...payload }) })
+      if (!response.ok) throw new Error((await response.json()).error || 'Save failed')
+      toast('Kennel record saved', 'success')
+      loadExportData()
+    } catch (error) { toast(error instanceof Error ? error.message : 'Save failed', 'error') }
+    finally { setSaving(false) }
+  }
 
   async function handleExport(format: Format) {
     if (!user) return
@@ -75,6 +110,11 @@ export default function ExportPage({ toast }: Props) {
     if (scope === 'litter' && !selectedLitterId) { toast('Please select a litter', 'error'); return }
     if (scope === 'breeding' && !selectedDogId) { toast('Please select a female dog', 'error'); return }
 
+    // Open during the click gesture; browsers may block windows opened after
+    // the token/API awaits. Keep it empty until the response succeeds.
+    const previewWindow = format === 'pdf' ? window.open('', '_blank') : null
+    if (format === 'pdf' && !previewWindow) { toast('Allow pop-ups for iDogs to open the PDF report', 'error'); return }
+    if (previewWindow) previewWindow.document.body.textContent = 'Preparing report…'
     setExporting(format)
     try {
       const idToken = await user.getIdToken()
@@ -87,6 +127,7 @@ export default function ExportPage({ toast }: Props) {
           tenantId: user.uid,
           format,
           userState,
+          period: scope === 'kennel' ? period : undefined,
         }),
       })
 
@@ -94,38 +135,37 @@ export default function ExportPage({ toast }: Props) {
         if (res.status === 403) {
           const body = await res.json().catch(() => ({}))
           if (body.reason === 'EXPORT_PLAN_GATE') {
-            toast('PDF/CSV export is an iDogs Plus feature. Upgrade to Plus to export reports.', 'error')
+            previewWindow?.close()
+            toast('Report export is an iDogs Plus feature. Upgrade to Plus to export reports.', 'error')
             return
           }
         }
         throw new Error('Export failed')
       }
 
-      if (format === 'csv') {
+      if (format === 'csv' || format === 'xlsx') {
         const blob = await res.blob()
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
         const contentDisp = res.headers.get('Content-Disposition') || ''
         const match = contentDisp.match(/filename="(.+)"/)
-        a.download = match ? match[1] : 'export.csv'
+        a.download = match ? match[1] : `export.${format}`
+        document.body.appendChild(a)
         a.click()
-        URL.revokeObjectURL(url)
-        toast('CSV downloaded ✓', 'success')
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 60_000)
+        toast(`${format.toUpperCase()} downloaded ✓`, 'success')
       } else {
-        const { html, filename } = await res.json()
-        const win = window.open('', '_blank')
-        if (win) {
-          win.document.write(html)
-          win.document.close()
-          setTimeout(() => {
-            win.document.title = filename
-            win.print()
-          }, 500)
-        }
-        toast('PDF ready — use Print → Save as PDF ✓', 'success')
+        const blob = await res.blob()
+        if (blob.type !== 'application/pdf' || (await blob.slice(0, 5).text()) !== '%PDF-') throw new Error('Invalid PDF response')
+        const url = URL.createObjectURL(blob)
+        if (previewWindow) previewWindow.location.href = url
+        setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000)
+        toast('PDF opened — use the viewer toolbar to download or print ✓', 'success')
       }
     } catch {
+      previewWindow?.close()
       toast('Export failed. Please try again.', 'error')
     } finally {
       setExporting(null)
@@ -139,12 +179,12 @@ export default function ExportPage({ toast }: Props) {
   )
 
   return (
-    <div style={{ padding: 32, maxWidth: 640 }}>
+    <div style={{ padding: 32, maxWidth: 900 }}>
       <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>
         Export & Compliance Reports
       </h1>
       <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 32 }}>
-        Generate audit reports for Dogs Australia inspections, state compliance, and personal records.
+        Export your recorded dogs, litters and health history for review.
       </p>
 
       {loadError && (
@@ -160,9 +200,40 @@ export default function ExportPage({ toast }: Props) {
         </div>
       )}
 
+      {scope === 'kennel' && <div className="card" style={{ marginBottom: 16 }}>
+        <h2 style={{ fontSize: 18, marginBottom: 8 }}>Facility & Council report details</h2>
+        <p style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 16 }}>Enter the wording and limits from your own approval. Keep its document available for review.</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+          {([['facilityName','Facility name'],['address','Facility address'],['council','Council'],['approvalNumber','Approval / DA number'],['approvalDocumentRef','Approval document reference'],['ledgerStartDate','Movement ledger complete from (YYYY-MM-DD)'],['breedingFemale','Approved breeding females'],['breedingMale','Approved breeding males'],['boarding','Approved boarding dogs']] as const).map(([key,label]) => <label key={key} className="form-group"><span className="form-label">{label}</span><input className="form-input" type={key === 'ledgerStartDate' ? 'date' : key.startsWith('breeding') || key === 'boarding' ? 'number' : 'text'} value={facility[key]} onChange={e => setFacility({ ...facility, [key]: e.target.value })} /></label>)}
+        </div>
+        <label className="form-group"><span className="form-label">Approval conditions / evidence notes</span><textarea className="form-input" rows={3} value={facility.conditionNotes} onChange={e=>setFacility({ ...facility, conditionNotes: e.target.value })} /></label>
+        <label style={{ display: 'block', fontSize: 13, margin: '12px 0' }}><input type="checkbox" checked={facility.ledgerAttested} onChange={e=>setFacility({ ...facility, ledgerAttested: e.target.checked })} /> I confirm every dog present from the ledger start has an arrival entry, and subsequent arrivals/departures are complete.</label>
+        <button className="btn btn-secondary btn-sm" disabled={saving || loadError} onClick={()=>saveKennelData('saveFacility', { facility })}>Save facility details</button>
+        <h3 style={{ marginTop: 22 }}>Arrival / departure</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0' }}>
+          <select className="form-select" aria-label="Dog" value={movement.dogId} onChange={e=>setMovement({ ...movement, dogId: e.target.value })}><option value="">Choose dog</option>{dogs.map(d=><option value={d.id} key={d.id}>{d.name} · {d.id}</option>)}</select>
+          <select className="form-select" aria-label="Direction" value={movement.direction} onChange={e=>setMovement({ ...movement, direction: e.target.value })}><option value="arrival">Arrival</option><option value="departure">Departure</option></select>
+          <select className="form-select" aria-label="Category" value={movement.category} onChange={e=>setMovement({ ...movement, category: e.target.value })}><option value="breeding">Breeding</option><option value="boarding">Boarding</option><option value="puppy">Puppy</option><option value="other">Other</option></select>
+          <input className="form-input" aria-label="Date and time" type="datetime-local" value={movement.occurredAt} onChange={e=>setMovement({ ...movement, occurredAt: e.target.value })} />
+          <input className="form-input" aria-label="Movement note" placeholder="Reason / reference" value={movement.note} onChange={e=>setMovement({ ...movement, note: e.target.value })} />
+          <button className="btn btn-secondary btn-sm" disabled={saving || !movement.dogId || !movement.occurredAt} onClick={()=>saveKennelData('addMovement', { movement: { ...movement, occurredAt: new Date(movement.occurredAt).toISOString() } })}>Record movement</button>
+        </div>
+        <div style={{ maxHeight: 150, overflowY: 'auto', fontSize: 12 }}>{movements.filter(m=>!m.voidedAt).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)).slice(0,20).map(m=><div key={m.id} style={{ padding: 4, borderBottom: '1px solid var(--border)' }}>{m.occurredAt} · {m.direction} · {dogs.find(d=>d.id===m.dogId)?.name || m.dogId} ({m.category}) <button className="btn btn-secondary btn-sm" disabled={saving} onClick={()=>{ const reason = window.prompt('Reason for voiding this entry (kept in audit history):'); if (reason) saveKennelData('voidMovement',{ id:m.id, reason }) }}>Void</button></div>)}</div>
+        <h3 style={{ marginTop: 22 }}>Daily care log</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0' }}>
+          <input className="form-input" aria-label="Care date" type="date" value={dailyLog.date} onChange={e=>setDailyLog({ ...dailyLog, date:e.target.value })} />
+          <input className="form-input" aria-label="Caretaker" placeholder="Caretaker" value={dailyLog.caretaker} onChange={e=>setDailyLog({ ...dailyLog, caretaker:e.target.value })} />
+          <input className="form-input" aria-label="Exercise minutes" type="number" min="0" max="1440" placeholder="Exercise minutes" value={dailyLog.exerciseMinutes} onChange={e=>setDailyLog({ ...dailyLog, exerciseMinutes:e.target.value })} />
+          <input className="form-input" aria-label="Care notes" placeholder="Cleaning, water, feeding" value={dailyLog.careNotes} onChange={e=>setDailyLog({ ...dailyLog, careNotes:e.target.value })} />
+          <input className="form-input" aria-label="Incidents" placeholder="Incident / none observed" value={dailyLog.incidentNotes} onChange={e=>setDailyLog({ ...dailyLog, incidentNotes:e.target.value })} />
+          <button className="btn btn-secondary btn-sm" disabled={saving} onClick={()=>saveKennelData('saveDailyLog', { dailyLog })}>Save daily log</button>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--mid)' }}>{dailyLogs.length} daily logs recorded. Edits replace the day's display values; confirm against your source diary.</div>
+      </div>}
+
       {/* Compliance notice */}
       <div style={{ background: 'var(--green-light)', border: '1px solid rgba(8,80,65,.12)', borderRadius: 10, padding: '12px 16px', marginBottom: 24, fontSize: 13, color: '#0F6E56' }}>
-        🇦🇺 <strong>Australian Universal Compliance Report</strong> — covers NSW Puppy Farm Act 2024, VIC Pet Exchange Register, QLD Animal Management Act, SA Dog and Cat Management Act, and WA Dog Act requirements.
+        <strong>Review your records before sharing.</strong> A kennel export highlights missing or inconsistent information. It does not verify site occupancy or Council approval conditions.
       </div>
 
       {/* Step 1 — Scope */}
@@ -227,9 +298,14 @@ export default function ExportPage({ toast }: Props) {
         {/* Kennel summary */}
         {scope === 'kennel' && (
           <div style={{ marginTop: 12, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', padding: '10px 14px', borderRadius: 8 }}>
-            {loadError
-              ? '⚠️ Dog/litter counts unavailable — your data failed to load.'
-              : <>📊 Will include <strong>{dogs.length} dogs</strong> and <strong>{litters.length} litters</strong> — all health records, vaccines, and transfers.</>}
+            {loadError ? '⚠️ Kennel data unavailable — retry.' : <>📊 {dogs.length} dog records, {litters.length} litters, {movements.length} movement events and {dailyLogs.length} care logs.</>}
+            <div style={{ marginTop: 8 }}>The dog and litter registers include historical account records. The selected dates apply to occupancy and daily care.</div>
+            {(!facility.address || !facility.approvalNumber || !facility.approvalDocumentRef) && <div style={{ marginTop: 8, color: '#8A4B00' }}>⚠️ Enter and save the facility address, approval number and document reference before Council review.</div>}
+            {possibleTestDogs.length > 0 && <div style={{ marginTop: 8, color: '#8A4B00' }}>⚠️ {possibleTestDogs.length} possible test records need classification before sharing: {possibleTestDogs.map(d => d.name).join(', ')}. They remain visible in the report until the source records are resolved.</div>}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 10 }}>
+              <label>From <input type="date" className="form-input" value={period.from} onChange={e=>setPeriod({ ...period, from:e.target.value })} /></label>
+              <label>To <input type="date" className="form-input" value={period.to} onChange={e=>setPeriod({ ...period, to:e.target.value })} /></label>
+            </div>
           </div>
         )}
 
@@ -281,7 +357,7 @@ export default function ExportPage({ toast }: Props) {
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
               {scope === 'breeding'
                 ? 'Formatted breeding compliance report — suitable for Dogs Australia inspections.'
-                : 'Professional formatted report — print or save as PDF for inspectors.'}
+                : 'Formatted PDF report with a clear Draft review status — open, download or print when ready.'}
             </div>
             <button
               className="btn btn-primary btn-sm"
@@ -297,27 +373,27 @@ export default function ExportPage({ toast }: Props) {
 
           <div style={{ border: `1px solid ${scope === 'breeding' ? 'var(--border)' : 'var(--border)'}`, borderRadius: 12, padding: 16, opacity: scope === 'breeding' ? 0.5 : 1 }}>
             <div style={{ fontSize: 20, marginBottom: 8 }}>📊</div>
-            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 4 }}>CSV / Excel</div>
+            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 4 }}>{scope === 'kennel' ? 'Council workbook' : 'CSV / Excel'}</div>
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 14 }}>
               {scope === 'breeding'
                 ? 'CSV not available for breeding compliance — use PDF.'
-                : 'Raw data export — open in Excel, Numbers, or Google Sheets.'}
+                : scope === 'kennel' ? 'Excel workbook with summary, dogs, breeding events, puppies, health, sales/transfers, occupancy, care and data quality.' : 'Raw data export — open in Excel, Numbers, or Google Sheets.'}
             </div>
             <button
               className="btn btn-secondary btn-sm"
               style={{ width: '100%' }}
-              onClick={() => scope === 'breeding' ? toast('Use PDF for breeding compliance reports', 'error') : handleExport('csv')}
+              onClick={() => scope === 'breeding' ? toast('Use PDF for breeding compliance reports', 'error') : handleExport(scope === 'kennel' ? 'xlsx' : 'csv')}
               disabled={exporting !== null || scope === 'breeding' || loadError}
             >
-              {exporting === 'csv'
+              {exporting === 'csv' || exporting === 'xlsx'
                 ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Generating…</>
-                : '📊 Export CSV'}
+                : scope === 'kennel' ? '📊 Export Excel' : '📊 Export CSV'}
             </button>
           </div>
         </div>
 
         <div style={{ marginTop: 12, fontSize: 12, color: 'var(--light)' }}>
-          💡 For PDF: a new window will open — use <strong>File → Print → Save as PDF</strong> to save.
+          💡 PDF opens in a new tab. Use the PDF viewer toolbar to download or print when needed.
         </div>
       </div>
     </div>

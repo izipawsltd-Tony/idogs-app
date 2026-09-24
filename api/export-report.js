@@ -5,6 +5,16 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { computeEffectivePlan } from './_lib/entitlements.js'
+import { buildKennelReport, kennelCSV, kennelHTML } from './_lib/kennel-report.js'
+import { kennelWorkbook } from './_lib/kennel-workbook.js'
+import { reportPDF } from './_lib/report-pdf.js'
+
+async function sendPDF(res, html, filename) {
+  const pdf = await reportPDF(html, { title: filename.replace(/_/g, ' ') })
+  res.setHeader('Content-Type', 'application/pdf')
+  res.setHeader('Content-Disposition', `inline; filename="${filename}.pdf"`)
+  return res.status(200).send(pdf)
+}
 
 // Bounded staging-isolation safety patch: this endpoint never touches
 // Firebase Storage (it only reads Firestore and returns generated HTML/
@@ -63,16 +73,39 @@ async function fetchLitterFull(litterId) {
 }
 
 async function fetchKennelFull(tenantId) {
-  const [userSnap, dogsSnap, littersSnap] = await Promise.all([
+  const [userSnap, dogsSnap, littersSnap, facilitySnap, movementsSnap, logsSnap, cyclesSnap] = await Promise.all([
     db.collection('users').doc(tenantId).get(),
     db.collection('dogs').where('tenantId', '==', tenantId).get(),
     db.collection('litters').where('tenantId', '==', tenantId).get(),
+    db.collection('kennelFacilities').doc(tenantId).get(),
+    db.collection('kennelMovements').where('tenantId', '==', tenantId).limit(2001).get(),
+    db.collection('kennelDailyLogs').where('tenantId', '==', tenantId).limit(2001).get(),
+    db.collection('heatCycles').where('tenantId', '==', tenantId).limit(2001).get(),
   ])
+  if (movementsSnap.size > 2000 || logsSnap.size > 2000 || cyclesSnap.size > 2000) throw new Error('Kennel report exceeds record limit')
   const dogs = await Promise.all(dogsSnap.docs.map(d => fetchDogFull(d.id)))
+  // The issuing breeder retains the dog's original tenantId after an
+  // ownership claim. Do not export health events subsequently added by the
+  // new owner into the former breeder's kennel report.
+  const ownedHistory = dogs.filter(d => d && d.tenantId === tenantId).map(d => {
+    if (!d.currentOwnerId || d.currentOwnerId === tenantId) return d
+    const cutoff = d.transferredAt ? Date.parse(d.transferredAt) : NaN
+    const beforeTransfer = (event, key) => Number.isFinite(cutoff) &&
+      Number.isFinite(Date.parse(event[key])) && Date.parse(event[key]) <= cutoff
+    return { ...d,
+      vaccines: d.vaccines.filter(e => beforeTransfer(e, 'dateGiven')),
+      wormings: d.wormings.filter(e => beforeTransfer(e, 'dateGiven')),
+      healthTests: d.healthTests.filter(e => beforeTransfer(e, 'dateTested')),
+    }
+  })
   return {
     profile: userSnap.data(),
-    dogs: dogs.filter(Boolean),
+    dogs: ownedHistory,
     litters: littersSnap.docs.map(d => ({ ...d.data(), id: d.id })),
+    heatCycles: cyclesSnap.docs.map(d => ({ ...d.data(), id: d.id })).filter(c => ownedHistory.some(d => d.id === c.dogId)),
+    facility: facilitySnap.data() || null,
+    movements: movementsSnap.docs.map(d => ({ ...d.data(), id: d.id })),
+    dailyLogs: logsSnap.docs.map(d => ({ ...d.data(), id: d.id })),
   }
 }
 
@@ -639,10 +672,28 @@ export default async function handler(req, res) {
       // Breeding compliance is PDF only
       const html = generateBreedingPDFHTML(data, profile, req.body.userState)
       const filename = `${data.name}_breeding_compliance_${new Date().toISOString().slice(0,10)}`
-      res.setHeader('Content-Type', 'application/json')
-      return res.status(200).json({ html, filename })
+      return sendPDF(res, html, filename)
     } else {
       return res.status(400).json({ error: 'Invalid scope' })
+    }
+
+    if (scope === 'kennel') {
+      let report
+      try { report = buildKennelReport(data, profile, new Date(), req.body.period) }
+      catch (err) { return res.status(400).json({ error: err.message }) }
+      const filename = `kennel_records_${new Date().toISOString().slice(0,10)}`
+      if (format === 'xlsx') {
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`)
+        return res.status(200).send(await kennelWorkbook(report))
+      }
+      if (format === 'csv') {
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`)
+        return res.status(200).send(kennelCSV(report))
+      }
+      if (format === 'pdf') return sendPDF(res, kennelHTML(report), filename)
+      return res.status(400).json({ error: 'Invalid format' })
     }
 
     if (format === 'csv') {
@@ -658,13 +709,11 @@ export default async function handler(req, res) {
 
     if (format === 'pdf') {
       const html = generatePDFHTML(data, scope, profile)
-      // Return HTML for client-side PDF generation via print
       const filename = scope === 'dog' ? `${data.name}_record`
         : scope === 'litter' ? `${data.name}_litter`
         : `kennel_audit_${new Date().toISOString().slice(0,10)}`
 
-      res.setHeader('Content-Type', 'application/json')
-      return res.status(200).json({ html, filename })
+      return sendPDF(res, html, filename)
     }
 
     return res.status(400).json({ error: 'Invalid format' })

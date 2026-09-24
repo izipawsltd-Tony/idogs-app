@@ -7,16 +7,20 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run && node scripts/test-kennel-report.mjs && node scripts/test-kennel-input.mjs"
   },
   "dependencies": {
     "@emailjs/browser": "^4.4.1",
+    "@pdf-lib/fontkit": "^1.1.1",
+    "cheerio": "^1.0.0",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
+    "exceljs": "^4.4.0",
     "firebase": "^10.13.0",
     "firebase-admin": "^14.0.0",
     "heic-convert": "^2.1.0",
     "libheif-js": "1.19.8",
+    "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
