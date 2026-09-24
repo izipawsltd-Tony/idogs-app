@@ -115,8 +115,13 @@ export async function reportPDF(html, { title = 'iDogs Council review report', l
     if (tag === 'li') { paragraph(`• ${$(node).text()}`,8); return }
     if (tag === 'br') return
     if (tag === 'div' && $(node).hasClass('meta')) {
-      $(node).children().each((_,child)=>paragraph($(child).text(),8,true,3)); y-=5; return
+      $(node).children().each((_,child)=>{
+        const label = normalise($(child).find('strong').first().text())
+        const value = normalise($(child).text().slice(label.length))
+        paragraph(`${label}: ${value}`,8,true,3)
+      }); y-=5; return
     }
+    if (tag === 'div' && ($(node).hasClass('brand') || $(node).hasClass('subtitle'))) { paragraph($(node).text(),8,false,2); return }
     if (tag === 'div' && ($(node).hasClass('details') || $(node).hasClass('banner'))) { paragraph($(node).text(),8,false,8); return }
     if (tag === 'header') { $(node).children().each((_,child)=>walk(child)); return }
     $(node).children().each((_,child)=>walk(child))
