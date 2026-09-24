@@ -14,34 +14,41 @@ function Write-Step([string]$Text) { Write-Host "`n==> $Text" -ForegroundColor C
 
 function Get-AdbPath {
   $candidates = @(
-    "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe",
-    "$env:ANDROID_HOME\platform-tools\adb.exe",
-    "$env:ANDROID_SDK_ROOT\platform-tools\adb.exe"
-  ) | Where-Object { $_ -and (Test-Path $_) }
-  if (-not $candidates) { throw 'ADB not found. Open Android Studio once and install Android SDK Platform Tools.' }
-  return $candidates[0]
+    @(
+      "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe",
+      "$env:ANDROID_HOME\platform-tools\adb.exe",
+      "$env:ANDROID_SDK_ROOT\platform-tools\adb.exe"
+    ) | Where-Object { $_ -and (Test-Path $_) }
+  )
+  if (-not $candidates -or $candidates.Count -eq 0) { throw 'ADB not found. Open Android Studio once and install Android SDK Platform Tools.' }
+  return [string]$candidates[0]
 }
 
 function Get-EmulatorPath {
   $candidates = @(
-    "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe",
-    "$env:ANDROID_HOME\emulator\emulator.exe",
-    "$env:ANDROID_SDK_ROOT\emulator\emulator.exe"
-  ) | Where-Object { $_ -and (Test-Path $_) }
-  if ($candidates) { return $candidates[0] }
+    @(
+      "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe",
+      "$env:ANDROID_HOME\emulator\emulator.exe",
+      "$env:ANDROID_SDK_ROOT\emulator\emulator.exe"
+    ) | Where-Object { $_ -and (Test-Path $_) }
+  )
+  if ($candidates.Count -gt 0) { return [string]$candidates[0] }
   return $null
 }
 
 function Ensure-Device([string]$Adb) {
+  Write-Host "ADB: $Adb"
   $device = (& $Adb devices | Select-String '\sdevice$' | Select-Object -First 1)
   if ($device) { return }
   $emulator = Get-EmulatorPath
   if (-not $emulator) { throw 'No Android emulator is running and emulator.exe was not found.' }
-  $avds = @(& $emulator -list-avds) | Where-Object { $_ -and $_.Trim() }
-  if (-not $avds) { throw 'No Android Virtual Device found. Create one in Android Studio Device Manager.' }
+  $avds = @(
+    @(& $emulator -list-avds) | Where-Object { $_ -and $_.Trim() }
+  )
+  if (-not $avds -or $avds.Count -eq 0) { throw 'No Android Virtual Device found. Create one in Android Studio Device Manager.' }
   $avd = $avds | Where-Object { $_ -eq $PreferredAvd } | Select-Object -First 1
   if (-not $avd) { $avd = $avds | Where-Object { $_ -match 'Pixel' } | Select-Object -First 1 }
-  if (-not $avd) { $avd = $avds[0] }
+  if (-not $avd) { $avd = [string]$avds[0] }
   Write-Step "Starting emulator: $avd"
   Start-Process -FilePath $emulator -ArgumentList @('-avd', $avd) | Out-Null
   & $Adb wait-for-device | Out-Null
