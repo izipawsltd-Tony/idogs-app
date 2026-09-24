@@ -6,9 +6,19 @@
   /* Android safe-area was reserved twice: body/system-bar paint + main-area
      padding. The sticky top bar already pins itself below the status bar, so
      removing the second reservation eliminates the blank band above the app
-     header and restores the dashboard's intended first-card spacing. */
+     header. */
   html[data-idogs-native-platform='android'] .main-area {
     padding-top: 0 !important;
+  }
+
+  /* Real-device launcher QA showed WebView can restore a small body scroll
+     offset even after the native launcher resets the route. Dashboard already
+     has 20px mobile top padding; increase only its native top inset so the
+     first KPI row remains fully visible below the sticky header without
+     re-introducing a global JS scroll reset. Web/PWA and other routes are
+     intentionally unchanged. */
+  html[data-idogs-native-platform='android'] .main-area main > div[style*="28px 32px"] {
+    padding-top: 40px !important;
   }
 
   /* Native QA deliberately has no Stripe/payment credentials and the routing
