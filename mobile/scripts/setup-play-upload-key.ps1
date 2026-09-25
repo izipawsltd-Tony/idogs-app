@@ -2,7 +2,7 @@
 # Keeps the private key on this computer and sends it only to the named GitHub repository as encrypted Actions secrets.
 param(
   [string]$Repository = 'izipawsltd-Tony/idogs-app',
-  [string]$KeyDirectory = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'iDogs-Play-Upload-Key')
+  [string]$KeyDirectory = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'iDogs-Play-Upload-Key')
 )
 
 $ErrorActionPreference = 'Stop'
