@@ -4,6 +4,7 @@ import { BrowserRouter, useLocation } from 'react-router-dom'
 import { AuthProvider } from './hooks/useAuth'
 import App from './components/App'
 import { installNativeQaApiRouting } from './lib/nativeApiRouting'
+import { installNativeProductionApiRouting } from './lib/nativeProductionApiRouting'
 import './index.css'
 import './mobile.css'
 import './mobile-dog-detail-route.css'
@@ -71,8 +72,8 @@ function renderNativeApiBlocked() {
   root.innerHTML = `
     <main style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif;background:#f7f8f5;color:#1a3a2a">
       <section style="max-width:420px;background:#fff;border:1px solid #d8ded8;border-radius:16px;padding:24px;box-shadow:0 8px 24px rgba(0,0,0,.06)">
-        <h1 style="font-size:20px;margin:0 0 12px">iDogs QA connection blocked</h1>
-        <p style="margin:0;line-height:1.5;color:#4b5563">This QA build could not verify the staging API environment. No server API requests were enabled. Run iDogs QA Auto Update again after the latest build completes.</p>
+        <h1 style="font-size:20px;margin:0 0 12px">iDogs connection blocked</h1>
+        <p style="margin:0;line-height:1.5;color:#4b5563">This build could not verify its API environment. No server API requests were enabled.</p>
       </section>
     </main>`
 }
@@ -83,7 +84,13 @@ async function bootstrap() {
       // Installs staging-only /api routing before Auth/App can make requests.
       // The routing layer also blocks payment, outbound-message and super-admin
       // side-effect APIs in QA even if a UI path accidentally exposes them.
-      await installNativeQaApiRouting(import.meta.env.VITE_FIREBASE_PROJECT_ID)
+      if (import.meta.env.VITE_IDOGS_NATIVE_CHANNEL === 'production') {
+        installNativeProductionApiRouting(import.meta.env.VITE_FIREBASE_PROJECT_ID)
+      } else if (import.meta.env.VITE_IDOGS_NATIVE_CHANNEL === 'qa' || !import.meta.env.VITE_IDOGS_NATIVE_CHANNEL) {
+        await installNativeQaApiRouting(import.meta.env.VITE_FIREBASE_PROJECT_ID)
+      } else {
+        throw new Error('NATIVE_CHANNEL_UNKNOWN')
+      }
     } catch {
       renderNativeApiBlocked()
       return

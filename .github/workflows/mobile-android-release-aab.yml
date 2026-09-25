@@ -1,0 +1,130 @@
+name: iDogs Android Release AAB Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-android-release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-release-aab:
+    if: github.ref == 'refs/heads/feat/mobile-android-release-readiness'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      IDOGS_MOBILE_APP_ID: au.com.idogs.app
+      IDOGS_MOBILE_APP_NAME: iDogs
+      VITE_IDOGS_NATIVE_PLATFORM: android
+      VITE_IDOGS_NATIVE_CHANNEL: production
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install and test
+        run: |
+          npm ci
+          npm test -- src/lib/nativeProductionApiRouting.test.ts src/lib/nativeApiRouting.test.ts
+      - name: Pull production web environment and verify identity
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${VERCEL_TOKEN:-}" || { echo 'VERCEL_TOKEN missing'; exit 1; }
+          rm -rf .vercel
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/idogs-release-vercel-pull.log 2>&1
+          test -s .vercel/.env.production.local
+          ENV_FILE=.vercel/.env.production.local GITHUB_ENV_FILE="$GITHUB_ENV" node <<'NODE'
+          const fs = require('fs')
+          const text = fs.readFileSync(process.env.ENV_FILE, 'utf8')
+          function read(name) {
+            const line = text.split(/\r?\n/).find(l => l.startsWith(name + '='))
+            if (!line) return null
+            let v = line.slice(name.length + 1).trim()
+            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+            return v.replace(/\\n/g, '\n')
+          }
+          const required = ['VITE_FIREBASE_API_KEY', 'VITE_FIREBASE_AUTH_DOMAIN',
+            'VITE_FIREBASE_PROJECT_ID', 'VITE_FIREBASE_STORAGE_BUCKET',
+            'VITE_FIREBASE_MESSAGING_SENDER_ID', 'VITE_FIREBASE_APP_ID']
+          const values = Object.fromEntries(required.map(k => [k, read(k)]))
+          for (const [k, v] of Object.entries(values)) if (!v) throw new Error(`${k} missing`)
+          if (values.VITE_FIREBASE_PROJECT_ID !== 'idogs-app') throw new Error('FAIL CLOSED: Firebase is not production')
+          if (values.VITE_FIREBASE_AUTH_DOMAIN !== 'idogs-app.firebaseapp.com') throw new Error('FAIL CLOSED: Firebase Auth domain mismatch')
+          for (const [k, v] of Object.entries(values)) fs.appendFileSync(process.env.GITHUB_ENV_FILE, `${k}=${v}\n`)
+          console.log('Production Firebase identity PASS')
+          NODE
+      - name: Build production web and Android shell
+        run: |
+          npm run build
+          npm --prefix mobile ci --no-audit --no-fund
+          npm --prefix mobile run branding
+          npm --prefix mobile run add:android
+          npm --prefix mobile run sync:android
+          npm --prefix mobile run patch:android:launcher
+          npm --prefix mobile run assets:android
+      - name: Verify production shell and build bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'au.com.idogs.app' mobile/android/app/build.gradle
+          if grep -q 'au.com.idogs.app.staging' mobile/android/app/build.gradle; then exit 1; fi
+          test -s mobile/android/app/src/main/java/au/com/idogs/app/MainActivity.java
+          grep -q 'android:launchMode="singleTask"' mobile/android/app/src/main/AndroidManifest.xml
+          grep -q '"startPath": "/login"' mobile/android/app/src/main/assets/capacitor.config.json
+          chmod +x mobile/android/gradlew
+          (cd mobile/android && ./gradlew --no-daemon bundleRelease)
+      - name: Sign and verify release AAB
+        shell: bash
+        env:
+          IDOGS_RELEASE_KEYSTORE_BASE64: ${{ secrets.IDOGS_RELEASE_KEYSTORE_BASE64 }}
+          IDOGS_RELEASE_STORE_PASSWORD: ${{ secrets.IDOGS_RELEASE_STORE_PASSWORD }}
+          IDOGS_RELEASE_KEY_PASSWORD: ${{ secrets.IDOGS_RELEASE_KEY_PASSWORD }}
+          IDOGS_RELEASE_KEY_ALIAS: ${{ secrets.IDOGS_RELEASE_KEY_ALIAS }}
+          IDOGS_RELEASE_CERT_SHA256: ${{ secrets.IDOGS_RELEASE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          for name in IDOGS_RELEASE_KEYSTORE_BASE64 IDOGS_RELEASE_STORE_PASSWORD IDOGS_RELEASE_KEY_PASSWORD IDOGS_RELEASE_KEY_ALIAS IDOGS_RELEASE_CERT_SHA256; do
+            test -n "${!name:-}" || { echo "OWNER GATE: $name missing"; exit 1; }
+          done
+          umask 077
+          KEYSTORE="$RUNNER_TEMP/idogs-release-upload.jks"
+          printf '%s' "$IDOGS_RELEASE_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          test -s "$KEYSTORE"
+          CERT=$(keytool -list -v -keystore "$KEYSTORE" -storepass "$IDOGS_RELEASE_STORE_PASSWORD" -alias "$IDOGS_RELEASE_KEY_ALIAS" | awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          EXPECTED=$(printf '%s' "$IDOGS_RELEASE_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          test -n "$CERT" && test "$CERT" = "$EXPECTED" || { echo 'FAIL CLOSED: release signing certificate mismatch'; exit 1; }
+          SOURCE=mobile/android/app/build/outputs/bundle/release/app-release.aab
+          test -s "$SOURCE"
+          mkdir -p mobile/aab-output
+          OUT="mobile/aab-output/iDogs-production-candidate-${GITHUB_SHA}.aab"
+          cp "$SOURCE" "$OUT"
+          jarsigner -keystore "$KEYSTORE" -storepass "$IDOGS_RELEASE_STORE_PASSWORD" -keypass "$IDOGS_RELEASE_KEY_PASSWORD" "$OUT" "$IDOGS_RELEASE_KEY_ALIAS"
+          jarsigner -verify -strict "$OUT" >/dev/null
+          unzip -t "$OUT" >/dev/null
+          sha256sum "$OUT" > mobile/aab-output/SHA256SUMS.txt
+          printf 'SHA=%s\nApp ID=au.com.idogs.app\nFirebase=idogs-app\nChannel=production\nSigning certificate SHA-256=%s\nStatus=internal testing candidate only\n' "$GITHUB_SHA" "$CERT" > mobile/aab-output/BUILD_INFO.txt
+          rm -f "$KEYSTORE"
+          echo 'Production AAB signing and integrity PASS'
+      - name: Upload internal testing candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-android-release-candidate-${{ github.sha }}
+          path: mobile/aab-output/
+          if-no-files-found: error
+          retention-days: 14
