@@ -81,7 +81,7 @@ jobs:
       - name: Build production web and Android shell
         run: |
           npm run build
-          npm --prefix mobile ci --no-audit --no-fund
+          npm --prefix mobile install --no-audit --no-fund
           npm --prefix mobile run branding
           npm --prefix mobile run add:android
           npm --prefix mobile run sync:android
