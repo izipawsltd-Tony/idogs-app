@@ -1,0 +1,261 @@
+name: iDogs Android Production AAB
+
+on:
+  push:
+    branches:
+      - feat/mobile-app-foundation
+    paths:
+      - '.github/workflows/mobile-android-production-aab.yml'
+      - 'src/**'
+      - 'index.html'
+      - 'mobile/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-android-production-aab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-production-aab:
+    name: Build signed production AAB
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      IDOGS_MOBILE_APP_ID: au.com.idogs.app
+      IDOGS_MOBILE_APP_NAME: iDogs
+      VITE_IDOGS_NATIVE_PLATFORM: android
+      VITE_IDOGS_NATIVE_MODE: production
+      UPLOAD_KEY_ALIAS: idogs-upload
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Pull production client env and fail closed on staging
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${VERCEL_TOKEN:-}" || { echo 'FAIL CLOSED: VERCEL_TOKEN missing'; exit 1; }
+          rm -rf .vercel
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-production-pull.log 2>&1
+          test -f .vercel/.env.production.local
+          ENV_FILE=.vercel/.env.production.local GITHUB_ENV_FILE="$GITHUB_ENV" node <<'NODE'
+          const fs = require('fs')
+          const text = fs.readFileSync(process.env.ENV_FILE, 'utf8')
+          function read(name) {
+            const line = text.split(/\r?\n/).find(l => l.startsWith(name + '='))
+            if (!line) return null
+            let v = line.slice(name.length + 1).trim()
+            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+            return v.replace(/\\n/g, '\n')
+          }
+          const required = [
+            'VITE_FIREBASE_API_KEY',
+            'VITE_FIREBASE_AUTH_DOMAIN',
+            'VITE_FIREBASE_PROJECT_ID',
+            'VITE_FIREBASE_STORAGE_BUCKET',
+            'VITE_FIREBASE_MESSAGING_SENDER_ID',
+            'VITE_FIREBASE_APP_ID',
+          ]
+          const values = Object.fromEntries(required.map(k => [k, read(k)]))
+          for (const [k, v] of Object.entries(values)) {
+            if (!v) throw new Error(`${k} missing from Production env`)
+          }
+          if (values.VITE_FIREBASE_PROJECT_ID === 'idogs-app-staging') {
+            throw new Error('FAIL CLOSED: production AAB resolved staging Firebase')
+          }
+          for (const [k, v] of Object.entries(values)) {
+            fs.appendFileSync(process.env.GITHUB_ENV_FILE, `${k}=${v}\n`)
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV_FILE, 'VITE_EXTRA_LITTER_CHECKOUT_ENABLED=false\n')
+          console.log(`Production Firebase classification: NON-STAGING (${values.VITE_FIREBASE_PROJECT_ID})`)
+          NODE
+
+      - name: Build production web bundle
+        run: npm run build
+
+      - name: Install Capacitor mobile dependencies
+        run: npm --prefix mobile install --no-audit --no-fund
+
+      - name: Prepare approved iDogs branding
+        run: npm --prefix mobile run branding
+
+      - name: Generate Android native project
+        run: npm --prefix mobile run add:android
+
+      - name: Sync production web bundle into Android
+        run: npm --prefix mobile run sync:android
+
+      - name: Patch Android launcher routing
+        run: npm --prefix mobile run patch:android:launcher
+
+      - name: Set Play version code and name
+        shell: bash
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          BUILD_FILE=mobile/android/app/build.gradle
+          test -s "$BUILD_FILE"
+          VERSION_NAME="0.1.${VERSION_CODE}"
+          BUILD_FILE="$BUILD_FILE" VERSION_CODE="$VERSION_CODE" VERSION_NAME="$VERSION_NAME" node <<'NODE'
+          const fs = require('fs')
+          const file = process.env.BUILD_FILE
+          let text = fs.readFileSync(file, 'utf8')
+          const vc = process.env.VERSION_CODE
+          const vn = process.env.VERSION_NAME
+          if (!/versionCode\s+\d+/.test(text)) throw new Error('versionCode not found')
+          if (!/versionName\s+["'][^"']+["']/.test(text)) throw new Error('versionName not found')
+          text = text.replace(/versionCode\s+\d+/, `versionCode ${vc}`)
+          text = text.replace(/versionName\s+["'][^"']+["']/, `versionName "${vn}"`)
+          fs.writeFileSync(file, text)
+          NODE
+          echo "IDOGS_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "IDOGS_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+
+      - name: Verify production Android identity and launcher policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN_ACTIVITY=mobile/android/app/src/main/java/au/com/idogs/app/MainActivity.java
+          MANIFEST=mobile/android/app/src/main/AndroidManifest.xml
+          BUILD_FILE=mobile/android/app/build.gradle
+          CONFIG=mobile/android/app/src/main/assets/capacitor.config.json
+          test -s "$MAIN_ACTIVITY"
+          test -s "$MANIFEST"
+          test -s "$BUILD_FILE"
+          test -s "$CONFIG"
+          grep -q 'au.com.idogs.app' "$BUILD_FILE"
+          ! grep -q 'au.com.idogs.app.staging' "$BUILD_FILE"
+          grep -q 'super.onCreate(launcher ? null : savedInstanceState)' "$MAIN_ACTIVITY"
+          grep -q 'resetToNativeStartPath' "$MAIN_ACTIVITY"
+          grep -q 'android:launchMode="singleTask"' "$MANIFEST"
+          grep -q '"appId": "au.com.idogs.app"' "$CONFIG"
+          grep -q '"startPath": "/login"' "$CONFIG"
+          echo "Production identity PASS: au.com.idogs.app"
+          echo "Version: $IDOGS_VERSION_NAME ($IDOGS_VERSION_CODE)"
+
+      - name: Generate Android launcher and splash assets
+        run: npm --prefix mobile run assets:android
+
+      - name: Build unsigned release AAB
+        working-directory: mobile/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon bundleRelease
+          test -s app/build/outputs/bundle/release/app-release.aab
+
+      - name: Require production upload signing secrets
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ] || [ -z "${KEYSTORE_PASSWORD:-}" ]; then
+            echo 'OWNER GATE: production Android upload signing secrets are missing.'
+            echo 'Required: IDOGS_ANDROID_UPLOAD_KEYSTORE_BASE64 and IDOGS_ANDROID_UPLOAD_KEYSTORE_PASSWORD.'
+            exit 1
+          fi
+          echo 'Production upload signing secrets: PRESENT'
+
+      - name: Restore and verify upload key
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYSTORE="$RUNNER_TEMP/idogs-upload.p12"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+          keytool -list -v -keystore "$KEYSTORE" -storetype PKCS12 -storepass "$KEYSTORE_PASSWORD" -alias "$UPLOAD_KEY_ALIAS" >/tmp/idogs-upload-key.txt
+          CERT_SHA=$(awk -F': ' '/SHA256:/{print $2; exit}' /tmp/idogs-upload-key.txt | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          test -n "$CERT_SHA"
+          echo "IDOGS_UPLOAD_KEYSTORE=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "IDOGS_UPLOAD_CERT_SHA256=$CERT_SHA" >> "$GITHUB_ENV"
+          echo "Upload certificate SHA-256: $CERT_SHA"
+
+      - name: Sign production AAB
+        shell: bash
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          UNSIGNED=mobile/android/app/build/outputs/bundle/release/app-release.aab
+          mkdir -p mobile/aab-output
+          SIGNED="mobile/aab-output/iDogs-production-${GITHUB_SHA}.aab"
+          jarsigner \
+            -keystore "$IDOGS_UPLOAD_KEYSTORE" \
+            -storetype PKCS12 \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEYSTORE_PASSWORD" \
+            -sigalg SHA256withRSA \
+            -digestalg SHA-256 \
+            -signedjar "$SIGNED" \
+            "$UNSIGNED" \
+            "$UPLOAD_KEY_ALIAS"
+          test -s "$SIGNED"
+          jarsigner -verify -verbose -certs "$SIGNED" >/tmp/idogs-aab-verify.txt
+          grep -q 'jar verified' /tmp/idogs-aab-verify.txt
+          unzip -t "$SIGNED" >/dev/null
+
+          AAB_CERT_SHA=$(keytool -printcert -jarfile "$SIGNED" | awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          test -n "$AAB_CERT_SHA"
+          if [ "$AAB_CERT_SHA" != "$IDOGS_UPLOAD_CERT_SHA256" ]; then
+            echo 'FAIL CLOSED: signed AAB certificate does not match upload keystore'
+            exit 1
+          fi
+          echo "Signed AAB certificate SHA-256: $AAB_CERT_SHA"
+
+          cat > mobile/aab-output/BUILD_INFO.txt <<EOF
+          iDogs Android Production AAB — Internal Testing Candidate
+          Git SHA: ${GITHUB_SHA}
+          Package: au.com.idogs.app
+          App name: iDogs
+          Firebase: ${VITE_FIREBASE_PROJECT_ID}
+          API base: https://idogs.com.au
+          Native mode: production
+          Version name: ${IDOGS_VERSION_NAME}
+          Version code: ${IDOGS_VERSION_CODE}
+          Upload certificate SHA-256: ${AAB_CERT_SHA}
+          External Stripe purchase/portal APIs: blocked in native Android
+          Intended track: Google Play Internal Testing only
+          Production public release: NOT AUTHORIZED
+          EOF
+          sha256sum "$SIGNED" | tee mobile/aab-output/SHA256SUMS.txt
+          cp /tmp/idogs-aab-verify.txt mobile/aab-output/JARSIGNER_VERIFY.txt
+
+      - name: Upload Internal Testing candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-android-production-aab-${{ github.sha }}
+          path: mobile/aab-output/
+          if-no-files-found: error
+          retention-days: 30

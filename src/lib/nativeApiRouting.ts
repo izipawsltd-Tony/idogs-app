@@ -1,4 +1,5 @@
 const NATIVE_QA_API_BASE = 'https://idogs-native-api-qa-izipaws.vercel.app'
+const NATIVE_PRODUCTION_API_BASE = 'https://idogs.com.au'
 const EXPECTED_STAGING_FIREBASE_PROJECT = 'idogs-app-staging'
 const EXPECTED_VERCEL_ENV = 'production'
 const EXPECTED_BACKEND_MODE = 'dedicated-qa'
@@ -18,6 +19,19 @@ const NATIVE_QA_BLOCKED_API_PATHS = new Set([
   '/api/stripe-webhook',
 ])
 
+// Google Play production builds must not expose Stripe purchase/portal flows
+// for digital services inside the Android app. Read-only billing state can
+// still be fetched, but purchase/portal endpoints are blocked locally before
+// a request can leave the device. Web billing at idogs.com.au is unchanged.
+const NATIVE_PRODUCTION_BLOCKED_API_PATHS = new Set([
+  '/api/create-billing-portal',
+  '/api/create-checkout',
+  '/api/create-extra-litter-checkout',
+  '/api/create-sms-addon-checkout',
+  '/api/enforce-billing-grace',
+  '/api/stripe-webhook',
+])
+
 export type NativeQaHealth = {
   ok?: unknown
   firebaseProjectId?: unknown
@@ -33,6 +47,13 @@ export function getNativeQaApiBase(firebaseProjectId: string | undefined): strin
   return NATIVE_QA_API_BASE
 }
 
+export function getNativeProductionApiBase(firebaseProjectId: string | undefined): string {
+  if (!firebaseProjectId || firebaseProjectId === EXPECTED_STAGING_FIREBASE_PROJECT) {
+    throw new Error('NATIVE_API_ENV_NOT_PRODUCTION')
+  }
+  return NATIVE_PRODUCTION_API_BASE
+}
+
 function relativeApiPath(input: string): string {
   return input.split(/[?#]/, 1)[0]
 }
@@ -45,10 +66,29 @@ export function assertNativeQaApiPathAllowed(input: string): void {
   }
 }
 
+export function assertNativeProductionApiPathAllowed(input: string): void {
+  if (!input.startsWith('/api/')) return
+  const path = relativeApiPath(input)
+  if (NATIVE_PRODUCTION_BLOCKED_API_PATHS.has(path)) {
+    throw new Error('NATIVE_PRODUCTION_EXTERNAL_PAYMENT_API_BLOCKED')
+  }
+}
+
 export function rewriteNativeApiUrl(input: string, apiBase: string): string {
   if (!input.startsWith('/api/')) return input
-  assertNativeQaApiPathAllowed(input)
   return `${apiBase}${input}`
+}
+
+export function rewriteNativeQaApiUrl(input: string, apiBase: string): string {
+  if (!input.startsWith('/api/')) return input
+  assertNativeQaApiPathAllowed(input)
+  return rewriteNativeApiUrl(input, apiBase)
+}
+
+export function rewriteNativeProductionApiUrl(input: string, apiBase: string): string {
+  if (!input.startsWith('/api/')) return input
+  assertNativeProductionApiPathAllowed(input)
+  return rewriteNativeApiUrl(input, apiBase)
 }
 
 export function assertNativeQaHealth(value: NativeQaHealth): void {
@@ -62,18 +102,26 @@ export function assertNativeQaHealth(value: NativeQaHealth): void {
   }
 }
 
+function installFetchRouter(
+  apiBase: string,
+  rewrite: (input: string, apiBase: string) => string,
+): void {
+  const transportFetch = window.fetch.bind(window)
+  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof input === 'string') {
+      return transportFetch(rewrite(input, apiBase), init)
+    }
+    if (input instanceof URL) {
+      return transportFetch(input, init)
+    }
+    return transportFetch(input, init)
+  }) as typeof window.fetch
+}
+
 /**
  * Native iDogs QA runs against a dedicated public Vercel QA API project.
- * That project receives only staging Firebase credentials plus the
- * IDOGS_NATIVE_QA_BACKEND marker — no Stripe, Resend or SMS credentials.
- * CapacitorHttp patches fetch in the native shell to avoid WebView CORS.
- *
- * Safety contract:
- * - client build must use idogs-app-staging;
- * - dedicated backend health must report staging Firebase + dedicated-qa;
- * - billing/payment/outbound-message/super-admin endpoints are blocked locally;
- * - only relative /api/* paths are rewritten;
- * - no fallback to idogs.com.au or protected Preview deployments exists.
+ * It fail-closes on staging backend health and blocks all external side-effect
+ * APIs used for payments/outbound messages/admin operations.
  */
 export async function installNativeQaApiRouting(firebaseProjectId: string | undefined): Promise<void> {
   const apiBase = getNativeQaApiBase(firebaseProjectId)
@@ -90,17 +138,21 @@ export async function installNativeQaApiRouting(firebaseProjectId: string | unde
   if (!health) throw new Error('NATIVE_API_BACKEND_HEALTH_INVALID')
   assertNativeQaHealth(health)
 
-  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    if (typeof input === 'string') {
-      return transportFetch(rewriteNativeApiUrl(input, apiBase), init)
-    }
-    if (input instanceof URL) {
-      const raw = input.toString()
-      return transportFetch(raw.startsWith('/api/') ? rewriteNativeApiUrl(raw, apiBase) : input, init)
-    }
-    return transportFetch(input, init)
-  }) as typeof window.fetch
-
+  installFetchRouter(apiBase, rewriteNativeQaApiUrl)
   document.documentElement.dataset.idogsNativeApi = 'dedicated-staging-qa'
   document.documentElement.dataset.idogsNativeExternalSideEffects = 'blocked'
+}
+
+/**
+ * Production Android uses the public production iDogs API origin. The build
+ * pipeline injects Firebase client configuration from Vercel production and
+ * this guard rejects staging before React/Auth can start. Stripe purchase and
+ * billing-portal endpoints are blocked locally for Google Play compliance;
+ * production web billing remains unchanged.
+ */
+export function installNativeProductionApiRouting(firebaseProjectId: string | undefined): void {
+  const apiBase = getNativeProductionApiBase(firebaseProjectId)
+  installFetchRouter(apiBase, rewriteNativeProductionApiUrl)
+  document.documentElement.dataset.idogsNativeApi = 'production'
+  document.documentElement.dataset.idogsNativeExternalPayments = 'blocked'
 }

@@ -1,30 +1,30 @@
-/* Native QA polish identified from real-device Android screenshot QA.
-   Keep production web behaviour unchanged; QA-only billing suppression is
-   scoped to the dedicated-staging marker installed after backend health PASS. */
+/* Native QA / production polish identified from real-device Android screenshot QA.
+   Keep production web behaviour unchanged; native-only rules are scoped to
+   runtime markers installed before React renders. */
 
 @media (max-width: 768px) {
   /* Android safe-area was reserved twice: body/system-bar paint + main-area
      padding. The sticky top bar already pins itself below the status bar, so
      removing the second reservation eliminates the blank band above the app
-     header. */
+     header and restores the dashboard's intended first-card spacing. */
   html[data-idogs-native-platform='android'] .main-area {
     padding-top: 0 !important;
   }
 
-  /* Real-device launcher QA showed WebView can restore a small body scroll
-     offset even after the native launcher resets the route. Dashboard already
-     has 20px mobile top padding; increase only its native top inset so the
-     first KPI row remains fully visible below the sticky header without
-     re-introducing a global JS scroll reset. Web/PWA and other routes are
-     intentionally unchanged. */
+  /* Real-device QA showed Android restoring a small scroll offset that lets the
+     sticky top bar cover the first dashboard stat row. Add native-only top
+     breathing room to the dashboard's known desktop-padding root; this avoids
+     the global window.scrollTo lifecycle regression that previously blanked the
+     WebView. */
   html[data-idogs-native-platform='android'] .main-area main > div[style*="28px 32px"] {
     padding-top: 40px !important;
   }
 
-  /* Native QA deliberately has no Stripe/payment credentials and the routing
-     layer blocks billing side effects. Do not expose a dead Billing link in QA.
-     This does not affect web or a future production-native build. */
-  html[data-idogs-native-api='dedicated-staging-qa'] a[href='/app/billing'] {
+  /* Native QA has no payment credentials, and Google Play production must not
+     expose Stripe purchase/portal entry points for digital services. Web billing
+     remains unchanged. */
+  html[data-idogs-native-api='dedicated-staging-qa'] a[href='/app/billing'],
+  html[data-idogs-native-api='production'] a[href='/app/billing'] {
     display: none !important;
   }
 }
