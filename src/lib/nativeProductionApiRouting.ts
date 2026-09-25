@@ -23,5 +23,12 @@ export function installNativeProductionApiRouting(firebaseProjectId: string | un
     }
     return transportFetch(input, init)
   }) as typeof window.fetch
+  const transportOpen = XMLHttpRequest.prototype.open
+  XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
+    const destination = typeof url === 'string'
+      ? rewriteNativeProductionApiUrl(url, apiBase)
+      : url
+    return transportOpen.call(this, method, destination, ...rest as [boolean, string?, string?])
+  } as typeof XMLHttpRequest.prototype.open
   document.documentElement.dataset.idogsNativeApi = 'production'
 }

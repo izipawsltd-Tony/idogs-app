@@ -124,7 +124,9 @@ jobs:
           OUT="mobile/aab-output/iDogs-production-candidate-${GITHUB_SHA}.aab"
           cp "$SOURCE" "$OUT"
           jarsigner -keystore "$KEYSTORE" -storepass "$IDOGS_RELEASE_STORE_PASSWORD" -keypass "$IDOGS_RELEASE_KEY_PASSWORD" "$OUT" "$IDOGS_RELEASE_KEY_ALIAS"
-          jarsigner -verify -strict "$OUT" >/dev/null
+          jarsigner -verify "$OUT" | grep -q 'jar verified'
+          SIGNED_CERT=$(keytool -printcert -jarfile "$OUT" | awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          test "$SIGNED_CERT" = "$EXPECTED" || { echo 'FAIL CLOSED: AAB signer fingerprint mismatch'; exit 1; }
           unzip -t "$OUT" >/dev/null
           sha256sum "$OUT" > mobile/aab-output/SHA256SUMS.txt
           printf 'SHA=%s\nApp ID=au.com.idogs.app\nFirebase=idogs-app\nChannel=production\nSigning certificate SHA-256=%s\nStatus=internal testing candidate only\n' "$GITHUB_SHA" "$CERT" > mobile/aab-output/BUILD_INFO.txt
