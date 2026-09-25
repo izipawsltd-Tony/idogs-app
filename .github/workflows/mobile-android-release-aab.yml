@@ -1,6 +1,15 @@
 name: iDogs Android Release AAB Candidate
 
 on:
+  push:
+    branches:
+      - feat/mobile-android-release-readiness
+    paths:
+      - '.github/workflows/mobile-android-release-aab.yml'
+      - 'src/main.tsx'
+      - 'src/lib/nativeProductionApiRouting.ts'
+      - 'src/lib/nativeProductionApiRouting.test.ts'
+      - 'mobile/**'
   workflow_dispatch:
 
 permissions:
