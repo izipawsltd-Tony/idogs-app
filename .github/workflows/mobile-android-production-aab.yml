@@ -171,46 +171,57 @@ jobs:
           ./gradlew --no-daemon bundleRelease
           test -s app/build/outputs/bundle/release/app-release.aab
 
-      - name: Require production upload signing secrets
+      - name: Require production upload signing secret
         shell: bash
         env:
-          KEYSTORE_B64: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          SIGNING_JSON: ${{ secrets.IDOGS_ANDROID_UPLOAD_SIGNING_JSON }}
         run: |
           set -euo pipefail
-          if [ -z "${KEYSTORE_B64:-}" ] || [ -z "${KEYSTORE_PASSWORD:-}" ]; then
-            echo 'OWNER GATE: production Android upload signing secrets are missing.'
-            echo 'Required: IDOGS_ANDROID_UPLOAD_KEYSTORE_BASE64 and IDOGS_ANDROID_UPLOAD_KEYSTORE_PASSWORD.'
+          if [ -z "${SIGNING_JSON:-}" ]; then
+            echo 'OWNER GATE: IDOGS_ANDROID_UPLOAD_SIGNING_JSON is missing.'
+            echo 'Run the one-click production signing setup, then rerun this workflow.'
             exit 1
           fi
-          echo 'Production upload signing secrets: PRESENT'
+          echo 'Production upload signing secret: PRESENT'
 
       - name: Restore and verify upload key
         shell: bash
         env:
-          KEYSTORE_B64: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          SIGNING_JSON: ${{ secrets.IDOGS_ANDROID_UPLOAD_SIGNING_JSON }}
         run: |
           set -euo pipefail
           KEYSTORE="$RUNNER_TEMP/idogs-upload.p12"
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+          PASSFILE="$RUNNER_TEMP/idogs-upload-password.txt"
+          SIGNING_JSON="$SIGNING_JSON" KEYSTORE="$KEYSTORE" PASSFILE="$PASSFILE" node <<'NODE'
+          const fs = require('fs')
+          let value
+          try { value = JSON.parse(process.env.SIGNING_JSON) } catch { throw new Error('Signing secret is not valid JSON') }
+          if (value.alias !== 'idogs-upload') throw new Error('Signing alias must be idogs-upload')
+          if (value.format !== 'PKCS12') throw new Error('Signing format must be PKCS12')
+          if (typeof value.password !== 'string' || value.password.length < 16) throw new Error('Signing password invalid')
+          if (typeof value.keystoreBase64 !== 'string' || value.keystoreBase64.length < 100) throw new Error('Signing keystore invalid')
+          fs.writeFileSync(process.env.KEYSTORE, Buffer.from(value.keystoreBase64, 'base64'), { mode: 0o600 })
+          fs.writeFileSync(process.env.PASSFILE, value.password, { mode: 0o600 })
+          NODE
           test -s "$KEYSTORE"
+          test -s "$PASSFILE"
+          KEYSTORE_PASSWORD=$(cat "$PASSFILE")
           keytool -list -v -keystore "$KEYSTORE" -storetype PKCS12 -storepass "$KEYSTORE_PASSWORD" -alias "$UPLOAD_KEY_ALIAS" >/tmp/idogs-upload-key.txt
           CERT_SHA=$(awk -F': ' '/SHA256:/{print $2; exit}' /tmp/idogs-upload-key.txt | tr -d ':' | tr '[:upper:]' '[:lower:]')
           test -n "$CERT_SHA"
           echo "IDOGS_UPLOAD_KEYSTORE=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "IDOGS_UPLOAD_PASSFILE=$PASSFILE" >> "$GITHUB_ENV"
           echo "IDOGS_UPLOAD_CERT_SHA256=$CERT_SHA" >> "$GITHUB_ENV"
           echo "Upload certificate SHA-256: $CERT_SHA"
 
       - name: Sign production AAB
         shell: bash
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.IDOGS_ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           UNSIGNED=mobile/android/app/build/outputs/bundle/release/app-release.aab
           mkdir -p mobile/aab-output
           SIGNED="mobile/aab-output/iDogs-production-${GITHUB_SHA}.aab"
+          KEYSTORE_PASSWORD=$(cat "$IDOGS_UPLOAD_PASSFILE")
           jarsigner \
             -keystore "$IDOGS_UPLOAD_KEYSTORE" \
             -storetype PKCS12 \
