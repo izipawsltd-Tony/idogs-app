@@ -30,7 +30,6 @@ jobs:
       IDOGS_MOBILE_APP_NAME: iDogs
       VITE_IDOGS_NATIVE_PLATFORM: android
       VITE_IDOGS_NATIVE_MODE: production
-      UPLOAD_KEY_ALIAS: idogs-upload
 
     steps:
       - name: Checkout exact commit
@@ -171,46 +170,50 @@ jobs:
           ./gradlew --no-daemon bundleRelease
           test -s app/build/outputs/bundle/release/app-release.aab
 
-      - name: Require production upload signing secret
+      - name: Require proven production release signing secrets
         shell: bash
         env:
-          SIGNING_JSON: ${{ secrets.IDOGS_ANDROID_UPLOAD_SIGNING_JSON }}
+          KEYSTORE_B64: ${{ secrets.IDOGS_RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.IDOGS_RELEASE_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.IDOGS_RELEASE_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.IDOGS_RELEASE_KEY_ALIAS }}
+          EXPECTED_CERT_SHA256: ${{ secrets.IDOGS_RELEASE_CERT_SHA256 }}
         run: |
           set -euo pipefail
-          if [ -z "${SIGNING_JSON:-}" ]; then
-            echo 'OWNER GATE: IDOGS_ANDROID_UPLOAD_SIGNING_JSON is missing.'
-            echo 'Run the one-click production signing setup, then rerun this workflow.'
-            exit 1
-          fi
-          echo 'Production upload signing secret: PRESENT'
+          test -n "${KEYSTORE_B64:-}" || { echo 'FAIL CLOSED: IDOGS_RELEASE_KEYSTORE_BASE64 missing'; exit 1; }
+          test -n "${STORE_PASSWORD:-}" || { echo 'FAIL CLOSED: IDOGS_RELEASE_STORE_PASSWORD missing'; exit 1; }
+          test -n "${KEY_PASSWORD:-}" || { echo 'FAIL CLOSED: IDOGS_RELEASE_KEY_PASSWORD missing'; exit 1; }
+          test -n "${KEY_ALIAS:-}" || { echo 'FAIL CLOSED: IDOGS_RELEASE_KEY_ALIAS missing'; exit 1; }
+          test -n "${EXPECTED_CERT_SHA256:-}" || { echo 'FAIL CLOSED: IDOGS_RELEASE_CERT_SHA256 missing'; exit 1; }
+          echo 'Proven production release signing secrets: PRESENT'
 
-      - name: Restore and verify upload key
+      - name: Restore and verify proven production release key
         shell: bash
         env:
-          SIGNING_JSON: ${{ secrets.IDOGS_ANDROID_UPLOAD_SIGNING_JSON }}
+          KEYSTORE_B64: ${{ secrets.IDOGS_RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.IDOGS_RELEASE_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.IDOGS_RELEASE_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.IDOGS_RELEASE_KEY_ALIAS }}
+          EXPECTED_CERT_SHA256: ${{ secrets.IDOGS_RELEASE_CERT_SHA256 }}
         run: |
           set -euo pipefail
-          KEYSTORE="$RUNNER_TEMP/idogs-upload.p12"
-          PASSFILE="$RUNNER_TEMP/idogs-upload-password.txt"
-          SIGNING_JSON="$SIGNING_JSON" KEYSTORE="$KEYSTORE" PASSFILE="$PASSFILE" node <<'NODE'
-          const fs = require('fs')
-          let value
-          try { value = JSON.parse(process.env.SIGNING_JSON) } catch { throw new Error('Signing secret is not valid JSON') }
-          if (value.alias !== 'idogs-upload') throw new Error('Signing alias must be idogs-upload')
-          if (value.format !== 'PKCS12') throw new Error('Signing format must be PKCS12')
-          if (typeof value.password !== 'string' || value.password.length < 16) throw new Error('Signing password invalid')
-          if (typeof value.keystoreBase64 !== 'string' || value.keystoreBase64.length < 100) throw new Error('Signing keystore invalid')
-          fs.writeFileSync(process.env.KEYSTORE, Buffer.from(value.keystoreBase64, 'base64'), { mode: 0o600 })
-          fs.writeFileSync(process.env.PASSFILE, value.password, { mode: 0o600 })
-          NODE
+          KEYSTORE="$RUNNER_TEMP/idogs-release.keystore"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
           test -s "$KEYSTORE"
-          test -s "$PASSFILE"
-          KEYSTORE_PASSWORD=$(cat "$PASSFILE")
-          keytool -list -v -keystore "$KEYSTORE" -storetype PKCS12 -storepass "$KEYSTORE_PASSWORD" -alias "$UPLOAD_KEY_ALIAS" >/tmp/idogs-upload-key.txt
-          CERT_SHA=$(awk -F': ' '/SHA256:/{print $2; exit}' /tmp/idogs-upload-key.txt | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          keytool -list -v -keystore "$KEYSTORE" -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" >/tmp/idogs-release-key.txt
+          CERT_SHA=$(awk -F': ' '/SHA256:/{print $2; exit}' /tmp/idogs-release-key.txt | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          EXPECTED=$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
           test -n "$CERT_SHA"
+          test "$CERT_SHA" = "$EXPECTED" || { echo 'FAIL CLOSED: release key certificate mismatch'; exit 1; }
+          printf '%s' "$STORE_PASSWORD" > "$RUNNER_TEMP/idogs-store-password.txt"
+          printf '%s' "$KEY_PASSWORD" > "$RUNNER_TEMP/idogs-key-password.txt"
+          printf '%s' "$KEY_ALIAS" > "$RUNNER_TEMP/idogs-key-alias.txt"
+          chmod 600 "$RUNNER_TEMP/idogs-store-password.txt" "$RUNNER_TEMP/idogs-key-password.txt" "$RUNNER_TEMP/idogs-key-alias.txt"
           echo "IDOGS_UPLOAD_KEYSTORE=$KEYSTORE" >> "$GITHUB_ENV"
-          echo "IDOGS_UPLOAD_PASSFILE=$PASSFILE" >> "$GITHUB_ENV"
+          echo "IDOGS_UPLOAD_STORE_PASSFILE=$RUNNER_TEMP/idogs-store-password.txt" >> "$GITHUB_ENV"
+          echo "IDOGS_UPLOAD_KEY_PASSFILE=$RUNNER_TEMP/idogs-key-password.txt" >> "$GITHUB_ENV"
+          echo "IDOGS_UPLOAD_ALIAS_FILE=$RUNNER_TEMP/idogs-key-alias.txt" >> "$GITHUB_ENV"
           echo "IDOGS_UPLOAD_CERT_SHA256=$CERT_SHA" >> "$GITHUB_ENV"
           echo "Upload certificate SHA-256: $CERT_SHA"
 
@@ -221,17 +224,18 @@ jobs:
           UNSIGNED=mobile/android/app/build/outputs/bundle/release/app-release.aab
           mkdir -p mobile/aab-output
           SIGNED="mobile/aab-output/iDogs-production-${GITHUB_SHA}.aab"
-          KEYSTORE_PASSWORD=$(cat "$IDOGS_UPLOAD_PASSFILE")
+          STORE_PASSWORD=$(cat "$IDOGS_UPLOAD_STORE_PASSFILE")
+          KEY_PASSWORD=$(cat "$IDOGS_UPLOAD_KEY_PASSFILE")
+          KEY_ALIAS=$(cat "$IDOGS_UPLOAD_ALIAS_FILE")
           jarsigner \
             -keystore "$IDOGS_UPLOAD_KEYSTORE" \
-            -storetype PKCS12 \
-            -storepass "$KEYSTORE_PASSWORD" \
-            -keypass "$KEYSTORE_PASSWORD" \
+            -storepass "$STORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
             -sigalg SHA256withRSA \
             -digestalg SHA-256 \
             -signedjar "$SIGNED" \
             "$UNSIGNED" \
-            "$UPLOAD_KEY_ALIAS"
+            "$KEY_ALIAS"
           test -s "$SIGNED"
           jarsigner -verify -verbose -certs "$SIGNED" >/tmp/idogs-aab-verify.txt
           grep -q 'jar verified' /tmp/idogs-aab-verify.txt
@@ -240,7 +244,7 @@ jobs:
           AAB_CERT_SHA=$(keytool -printcert -jarfile "$SIGNED" | awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           test -n "$AAB_CERT_SHA"
           if [ "$AAB_CERT_SHA" != "$IDOGS_UPLOAD_CERT_SHA256" ]; then
-            echo 'FAIL CLOSED: signed AAB certificate does not match upload keystore'
+            echo 'FAIL CLOSED: signed AAB certificate does not match proven release keystore'
             exit 1
           fi
           echo "Signed AAB certificate SHA-256: $AAB_CERT_SHA"
