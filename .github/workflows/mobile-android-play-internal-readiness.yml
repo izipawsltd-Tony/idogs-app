@@ -1,0 +1,135 @@
+name: iDogs Play Internal Testing Readiness
+
+on:
+  push:
+    branches:
+      - feat/mobile-app-foundation
+    paths:
+      - '.github/workflows/mobile-android-play-internal-readiness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: idogs-play-internal-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-play-internal-testing:
+    name: Package verified Play Internal Testing candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Locate latest successful production AAB run
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RESPONSE=$(gh api -X GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/mobile-android-production-aab.yml/runs" \
+            -f branch="${GITHUB_REF_NAME}" \
+            -f status=success \
+            -f per_page=20)
+          RUN_ID=$(printf '%s' "$RESPONSE" | jq -r '.workflow_runs[0].id // empty')
+          SOURCE_SHA=$(printf '%s' "$RESPONSE" | jq -r '.workflow_runs[0].head_sha // empty')
+          SOURCE_RUN_NUMBER=$(printf '%s' "$RESPONSE" | jq -r '.workflow_runs[0].run_number // empty')
+          test -n "$RUN_ID" || { echo 'FAIL CLOSED: no successful production AAB run found'; exit 1; }
+          test -n "$SOURCE_SHA" || { echo 'FAIL CLOSED: source SHA missing'; exit 1; }
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "source_run_number=$SOURCE_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Using production AAB run $RUN_ID at $SOURCE_SHA"
+
+      - name: Download verified production AAB artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.source.outputs.run_id }}
+          pattern: idogs-android-production-aab-*
+          path: source-artifact
+          merge-multiple: true
+
+      - name: Verify source artifact and Play guardrails
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s source-artifact/BUILD_INFO.txt
+          test -s source-artifact/SHA256SUMS.txt
+          test -s source-artifact/JARSIGNER_VERIFY.txt
+          grep -q '^Package: au.com.idogs.app$' source-artifact/BUILD_INFO.txt
+          grep -q '^Firebase: idogs-app$' source-artifact/BUILD_INFO.txt
+          grep -q '^Native mode: production$' source-artifact/BUILD_INFO.txt
+          grep -q '^Intended track: Google Play Internal Testing only$' source-artifact/BUILD_INFO.txt
+          grep -q '^Production public release: NOT AUTHORIZED$' source-artifact/BUILD_INFO.txt
+          grep -q 'jar verified' source-artifact/JARSIGNER_VERIFY.txt
+          AAB_COUNT=$(find source-artifact -maxdepth 1 -type f -name '*.aab' | wc -l | tr -d ' ')
+          test "$AAB_COUNT" = '1' || { echo "FAIL CLOSED: expected exactly one AAB, found $AAB_COUNT"; exit 1; }
+          AAB=$(find source-artifact -maxdepth 1 -type f -name '*.aab' -print -quit)
+          EXPECTED_HASH=$(awk '{print $1; exit}' source-artifact/SHA256SUMS.txt)
+          ACTUAL_HASH=$(sha256sum "$AAB" | awk '{print $1}')
+          test -n "$EXPECTED_HASH"
+          test "$EXPECTED_HASH" = "$ACTUAL_HASH" || { echo 'FAIL CLOSED: AAB checksum mismatch'; exit 1; }
+          echo "Verified production AAB SHA-256: $ACTUAL_HASH"
+
+      - name: Build Play Internal Testing upload package
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          SOURCE_RUN_NUMBER: ${{ steps.source.outputs.source_run_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p play-ready
+          cp source-artifact/*.aab play-ready/
+          cp source-artifact/BUILD_INFO.txt play-ready/
+          cp source-artifact/SHA256SUMS.txt play-ready/
+          cp source-artifact/JARSIGNER_VERIFY.txt play-ready/
+
+          cat > play-ready/INTERNAL_TESTING_RELEASE_NOTES.txt <<'EOF'
+          Initial Android internal testing build for iDogs.
+
+          Scope:
+          - Native Android shell for iDogs
+          - Production Firebase and production iDogs API routing
+          - Login-first launcher flow
+          - Dog owner and breeder core workflows
+          - Internal testing only; no public production rollout authorised
+          EOF
+
+          AAB=$(find play-ready -maxdepth 1 -type f -name '*.aab' -printf '%f\n' -quit)
+          VERSION_NAME=$(awk -F': ' '/^Version name:/{print $2; exit}' play-ready/BUILD_INFO.txt)
+          VERSION_CODE=$(awk -F': ' '/^Version code:/{print $2; exit}' play-ready/BUILD_INFO.txt)
+          CERT_SHA=$(awk -F': ' '/^Upload certificate SHA-256:/{print $2; exit}' play-ready/BUILD_INFO.txt)
+
+          cat > play-ready/PLAY_UPLOAD_MANIFEST.txt <<EOF
+          iDogs — Google Play Internal Testing Upload Manifest
+          Source Git SHA: ${SOURCE_SHA}
+          Source GitHub Actions run: ${SOURCE_RUN_ID}
+          Source production AAB run number: ${SOURCE_RUN_NUMBER}
+          Package: au.com.idogs.app
+          AAB file: ${AAB}
+          Version name: ${VERSION_NAME}
+          Version code: ${VERSION_CODE}
+          Upload certificate SHA-256: ${CERT_SHA}
+          Target track: Internal testing
+          Public production release: NOT AUTHORIZED
+          Owner gate remaining: upload this AAB in Google Play Console and create/review the Internal testing release.
+          EOF
+
+          test -n "$AAB"
+          test -n "$VERSION_NAME"
+          test -n "$VERSION_CODE"
+          test -n "$CERT_SHA"
+
+      - name: Upload Play Internal Testing ready artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-play-internal-testing-ready-${{ steps.source.outputs.source_sha }}
+          path: play-ready/
+          if-no-files-found: error
+          retention-days: 30
