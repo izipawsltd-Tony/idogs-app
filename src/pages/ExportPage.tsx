@@ -200,40 +200,10 @@ export default function ExportPage({ toast }: Props) {
         </div>
       )}
 
-      {scope === 'kennel' && <div className="card" style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 18, marginBottom: 8 }}>Facility & Council report details</h2>
-        <p style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 16 }}>Enter the wording and limits from your own approval. Keep its document available for review.</p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
-          {([['facilityName','Facility name'],['address','Facility address'],['council','Council'],['approvalNumber','Approval / DA number'],['approvalDocumentRef','Approval document reference'],['ledgerStartDate','Movement ledger complete from (YYYY-MM-DD)'],['breedingFemale','Approved breeding females'],['breedingMale','Approved breeding males'],['boarding','Approved boarding dogs']] as const).map(([key,label]) => <label key={key} className="form-group"><span className="form-label">{label}</span><input className="form-input" type={key === 'ledgerStartDate' ? 'date' : key.startsWith('breeding') || key === 'boarding' ? 'number' : 'text'} value={facility[key]} onChange={e => setFacility({ ...facility, [key]: e.target.value })} /></label>)}
-        </div>
-        <label className="form-group"><span className="form-label">Approval conditions / evidence notes</span><textarea className="form-input" rows={3} value={facility.conditionNotes} onChange={e=>setFacility({ ...facility, conditionNotes: e.target.value })} /></label>
-        <label style={{ display: 'block', fontSize: 13, margin: '12px 0' }}><input type="checkbox" checked={facility.ledgerAttested} onChange={e=>setFacility({ ...facility, ledgerAttested: e.target.checked })} /> I confirm every dog present from the ledger start has an arrival entry, and subsequent arrivals/departures are complete.</label>
-        <button className="btn btn-secondary btn-sm" disabled={saving || loadError} onClick={()=>saveKennelData('saveFacility', { facility })}>Save facility details</button>
-        <h3 style={{ marginTop: 22 }}>Arrival / departure</h3>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0' }}>
-          <select className="form-select" aria-label="Dog" value={movement.dogId} onChange={e=>setMovement({ ...movement, dogId: e.target.value })}><option value="">Choose dog</option>{dogs.map(d=><option value={d.id} key={d.id}>{d.name} · {d.id}</option>)}</select>
-          <select className="form-select" aria-label="Direction" value={movement.direction} onChange={e=>setMovement({ ...movement, direction: e.target.value })}><option value="arrival">Arrival</option><option value="departure">Departure</option></select>
-          <select className="form-select" aria-label="Category" value={movement.category} onChange={e=>setMovement({ ...movement, category: e.target.value })}><option value="breeding">Breeding</option><option value="boarding">Boarding</option><option value="puppy">Puppy</option><option value="other">Other</option></select>
-          <input className="form-input" aria-label="Date and time" type="datetime-local" value={movement.occurredAt} onChange={e=>setMovement({ ...movement, occurredAt: e.target.value })} />
-          <input className="form-input" aria-label="Movement note" placeholder="Reason / reference" value={movement.note} onChange={e=>setMovement({ ...movement, note: e.target.value })} />
-          <button className="btn btn-secondary btn-sm" disabled={saving || !movement.dogId || !movement.occurredAt} onClick={()=>saveKennelData('addMovement', { movement: { ...movement, occurredAt: new Date(movement.occurredAt).toISOString() } })}>Record movement</button>
-        </div>
-        <div style={{ maxHeight: 150, overflowY: 'auto', fontSize: 12 }}>{movements.filter(m=>!m.voidedAt).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)).slice(0,20).map(m=><div key={m.id} style={{ padding: 4, borderBottom: '1px solid var(--border)' }}>{m.occurredAt} · {m.direction} · {dogs.find(d=>d.id===m.dogId)?.name || m.dogId} ({m.category}) <button className="btn btn-secondary btn-sm" disabled={saving} onClick={()=>{ const reason = window.prompt('Reason for voiding this entry (kept in audit history):'); if (reason) saveKennelData('voidMovement',{ id:m.id, reason }) }}>Void</button></div>)}</div>
-        <h3 style={{ marginTop: 22 }}>Daily care log</h3>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0' }}>
-          <input className="form-input" aria-label="Care date" type="date" value={dailyLog.date} onChange={e=>setDailyLog({ ...dailyLog, date:e.target.value })} />
-          <input className="form-input" aria-label="Caretaker" placeholder="Caretaker" value={dailyLog.caretaker} onChange={e=>setDailyLog({ ...dailyLog, caretaker:e.target.value })} />
-          <input className="form-input" aria-label="Exercise minutes" type="number" min="0" max="1440" placeholder="Exercise minutes" value={dailyLog.exerciseMinutes} onChange={e=>setDailyLog({ ...dailyLog, exerciseMinutes:e.target.value })} />
-          <input className="form-input" aria-label="Care notes" placeholder="Cleaning, water, feeding" value={dailyLog.careNotes} onChange={e=>setDailyLog({ ...dailyLog, careNotes:e.target.value })} />
-          <input className="form-input" aria-label="Incidents" placeholder="Incident / none observed" value={dailyLog.incidentNotes} onChange={e=>setDailyLog({ ...dailyLog, incidentNotes:e.target.value })} />
-          <button className="btn btn-secondary btn-sm" disabled={saving} onClick={()=>saveKennelData('saveDailyLog', { dailyLog })}>Save daily log</button>
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--mid)' }}>{dailyLogs.length} daily logs recorded. Edits replace the day's display values; confirm against your source diary.</div>
-      </div>}
 
       {/* Compliance notice */}
       <div style={{ background: 'var(--green-light)', border: '1px solid rgba(8,80,65,.12)', borderRadius: 10, padding: '12px 16px', marginBottom: 24, fontSize: 13, color: '#0F6E56' }}>
-        <strong>Review your records before sharing.</strong> A kennel export highlights missing or inconsistent information. It does not verify site occupancy or Council approval conditions.
+        <strong>Review your records before sharing.</strong> Council facility evidence is optional for ordinary dog and breeding records. A Council report highlights missing or inconsistent information and does not verify approval conditions.
       </div>
 
       {/* Step 1 — Scope */}
@@ -245,7 +215,7 @@ export default function ExportPage({ toast }: Props) {
           {([
             { id: 'dog',     icon: '🐕', label: 'Single Dog',    desc: 'Health record for 1 dog' },
             { id: 'litter',  icon: '🐣', label: 'Litter',        desc: 'All puppies in a litter' },
-            { id: 'kennel',  icon: '🏠', label: 'Full Kennel',   desc: 'All dogs + litters' },
+            { id: 'kennel',  icon: '📋', label: 'All Dogs & Litters', desc: 'Full register for Council review' },
             { id: 'breeding',icon: '🌸', label: 'Breeding Compliance', desc: 'Heat cycles, litter history & state rules' },
           ] as const).map(opt => (
             <button
@@ -300,7 +270,7 @@ export default function ExportPage({ toast }: Props) {
           <div style={{ marginTop: 12, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', padding: '10px 14px', borderRadius: 8 }}>
             {loadError ? '⚠️ Kennel data unavailable — retry.' : <>📊 {dogs.length} dog records, {litters.length} litters, {movements.length} movement events and {dailyLogs.length} care logs.</>}
             <div style={{ marginTop: 8 }}>The dog and litter registers include historical account records. The selected dates apply to occupancy and daily care.</div>
-            {(!facility.address || !facility.approvalNumber || !facility.approvalDocumentRef) && <div style={{ marginTop: 8, color: '#8A4B00' }}>⚠️ Enter and save the facility address, approval number and document reference before Council review.</div>}
+            {(!facility.address || !facility.approvalNumber || !facility.approvalDocumentRef) && <div style={{ marginTop: 8, color: '#8A4B00' }}>⚠️ If Council needs facility approval evidence, add the address, approval number and document reference in the optional section below. Missing evidence is flagged in the report.</div>}
             {possibleTestDogs.length > 0 && <div style={{ marginTop: 8, color: '#8A4B00' }}>⚠️ {possibleTestDogs.length} possible test records need classification before sharing: {possibleTestDogs.map(d => d.name).join(', ')}. They remain visible in the report until the source records are resolved.</div>}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 10 }}>
               <label>From <input type="date" className="form-input" value={period.from} onChange={e=>setPeriod({ ...period, from:e.target.value })} /></label>
@@ -396,6 +366,42 @@ export default function ExportPage({ toast }: Props) {
           💡 PDF opens in a new tab. Use the PDF viewer toolbar to download or print when needed.
         </div>
       </div>
+
+      {scope === 'kennel' && <details className="card" style={{ marginTop: 16 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 16, fontWeight: 600, color: 'var(--dark)' }}>Optional Council facility and occupancy records</summary>
+        <p style={{ fontSize: 13, color: 'var(--mid)', marginTop: 10 }}>Use this section when your Council requests facility approval, arrival/departure or daily care evidence. Dog and litter exports do not require these entries.</p>
+        <div style={{ marginTop: 16 }}>
+        <h2 style={{ fontSize: 18, marginBottom: 8 }}>Facility & Council report details</h2>
+        <p style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 16 }}>Enter the wording and limits from your own approval. Keep its document available for review.</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+          {([['facilityName','Facility name'],['address','Facility address'],['council','Council'],['approvalNumber','Approval / DA number'],['approvalDocumentRef','Approval document reference'],['ledgerStartDate','Movement ledger complete from (YYYY-MM-DD)'],['breedingFemale','Approved breeding females'],['breedingMale','Approved breeding males'],['boarding','Approved boarding dogs']] as const).map(([key,label]) => <label key={key} className="form-group"><span className="form-label">{label}</span><input className="form-input" type={key === 'ledgerStartDate' ? 'date' : key.startsWith('breeding') || key === 'boarding' ? 'number' : 'text'} value={facility[key]} onChange={e => setFacility({ ...facility, [key]: e.target.value })} /></label>)}
+        </div>
+        <label className="form-group"><span className="form-label">Approval conditions / evidence notes</span><textarea className="form-input" rows={3} value={facility.conditionNotes} onChange={e=>setFacility({ ...facility, conditionNotes: e.target.value })} /></label>
+        <label style={{ display: 'block', fontSize: 13, margin: '12px 0' }}><input type="checkbox" checked={facility.ledgerAttested} onChange={e=>setFacility({ ...facility, ledgerAttested: e.target.checked })} /> I confirm every dog present from the ledger start has an arrival entry, and subsequent arrivals/departures are complete.</label>
+        <button className="btn btn-secondary btn-sm" disabled={saving || loadError} onClick={()=>saveKennelData('saveFacility', { facility })}>Save facility details</button>
+        <h3 style={{ marginTop: 22 }}>Arrival / departure</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0' }}>
+          <select className="form-select" aria-label="Dog" value={movement.dogId} onChange={e=>setMovement({ ...movement, dogId: e.target.value })}><option value="">Choose dog</option>{dogs.map(d=><option value={d.id} key={d.id}>{d.name} · {d.id}</option>)}</select>
+          <select className="form-select" aria-label="Direction" value={movement.direction} onChange={e=>setMovement({ ...movement, direction: e.target.value })}><option value="arrival">Arrival</option><option value="departure">Departure</option></select>
+          <select className="form-select" aria-label="Category" value={movement.category} onChange={e=>setMovement({ ...movement, category: e.target.value })}><option value="breeding">Breeding</option><option value="boarding">Boarding</option><option value="puppy">Puppy</option><option value="other">Other</option></select>
+          <input className="form-input" aria-label="Date and time" type="datetime-local" value={movement.occurredAt} onChange={e=>setMovement({ ...movement, occurredAt: e.target.value })} />
+          <input className="form-input" aria-label="Movement note" placeholder="Reason / reference" value={movement.note} onChange={e=>setMovement({ ...movement, note: e.target.value })} />
+          <button className="btn btn-secondary btn-sm" disabled={saving || !movement.dogId || !movement.occurredAt} onClick={()=>saveKennelData('addMovement', { movement: { ...movement, occurredAt: new Date(movement.occurredAt).toISOString() } })}>Record movement</button>
+        </div>
+        <div style={{ maxHeight: 150, overflowY: 'auto', fontSize: 12 }}>{movements.filter(m=>!m.voidedAt).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)).slice(0,20).map(m=><div key={m.id} style={{ padding: 4, borderBottom: '1px solid var(--border)' }}>{m.occurredAt} · {m.direction} · {dogs.find(d=>d.id===m.dogId)?.name || m.dogId} ({m.category}) <button className="btn btn-secondary btn-sm" disabled={saving} onClick={()=>{ const reason = window.prompt('Reason for voiding this entry (kept in audit history):'); if (reason) saveKennelData('voidMovement',{ id:m.id, reason }) }}>Void</button></div>)}</div>
+        <h3 style={{ marginTop: 22 }}>Daily care log</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '8px 0' }}>
+          <input className="form-input" aria-label="Care date" type="date" value={dailyLog.date} onChange={e=>setDailyLog({ ...dailyLog, date:e.target.value })} />
+          <input className="form-input" aria-label="Caretaker" placeholder="Caretaker" value={dailyLog.caretaker} onChange={e=>setDailyLog({ ...dailyLog, caretaker:e.target.value })} />
+          <input className="form-input" aria-label="Exercise minutes" type="number" min="0" max="1440" placeholder="Exercise minutes" value={dailyLog.exerciseMinutes} onChange={e=>setDailyLog({ ...dailyLog, exerciseMinutes:e.target.value })} />
+          <input className="form-input" aria-label="Care notes" placeholder="Cleaning, water, feeding" value={dailyLog.careNotes} onChange={e=>setDailyLog({ ...dailyLog, careNotes:e.target.value })} />
+          <input className="form-input" aria-label="Incidents" placeholder="Incident / none observed" value={dailyLog.incidentNotes} onChange={e=>setDailyLog({ ...dailyLog, incidentNotes:e.target.value })} />
+          <button className="btn btn-secondary btn-sm" disabled={saving} onClick={()=>saveKennelData('saveDailyLog', { dailyLog })}>Save daily log</button>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--mid)' }}>{dailyLogs.length} daily logs recorded. Edits replace the day's display values; confirm against your source diary.</div>
+        </div>
+      </details>}
+
     </div>
   )
 }
