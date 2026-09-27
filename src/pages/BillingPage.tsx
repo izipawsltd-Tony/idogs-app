@@ -3,6 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSearchParams } from 'react-router-dom'
 import type { ToastMessage } from '../types'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
+import { isAndroidNativeApp } from '../lib/nativePlatform'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -108,6 +109,11 @@ export default function BillingPage({ toast }: Props) {
   const subscriptionStatus = verifiedEntitlement?.subscriptionStatus
     ?? ((profile as any)?.subscriptionStatus as string | undefined)
   const isPastDue = isPlus && subscriptionStatus === 'past_due'
+  // Google Play does not allow purchase/subscription UI for digital services
+  // inside the Android app; the matching server-side calls are already
+  // blocked in nativeApiRouting.ts. Read-only status and existing
+  // entitlements (including cancelling an SMS add-on) still work.
+  const androidPurchasesUnavailable = isAndroidNativeApp()
 
   useEffect(() => {
     if (searchParams.get('success')) {
@@ -328,9 +334,13 @@ export default function BillingPage({ toast }: Props) {
               )}
             </div>
             {billingDetails?.canManageBilling && (
-              <button type="button" className="btn btn-secondary" onClick={handleOpenPortal} disabled={portalLoading}>
-                {portalLoading ? 'Opening…' : 'Manage subscription'}
-              </button>
+              androidPurchasesUnavailable ? (
+                <span style={{ fontSize: 12, color: 'var(--light)' }}>Purchases are unavailable in this Android app.</span>
+              ) : (
+                <button type="button" className="btn btn-secondary" onClick={handleOpenPortal} disabled={portalLoading}>
+                  {portalLoading ? 'Opening…' : 'Manage subscription'}
+                </button>
+              )
             )}
           </div>
         </div>
@@ -390,6 +400,8 @@ export default function BillingPage({ toast }: Props) {
             </ul>
             {isPlus ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan</div>
+            ) : androidPurchasesUnavailable ? (
+              <div style={{ textAlign: 'center', padding: '9px', background: 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>Purchases are unavailable in this Android app.</div>
             ) : (
               <button onClick={() => handleSubscribe(interval)} disabled={loading} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
                 {loading ? <><span className="spinner" style={{ width: 13, height: 13, borderTopColor: '#fff' }} /> Processing…</> : `Upgrade to Plus — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}
@@ -426,6 +438,8 @@ export default function BillingPage({ toast }: Props) {
                 )}
                 {billingDetails?.sms.status === 'active' || billingDetails?.sms.status === 'past_due' ? (
                   <button className="btn btn-secondary" type="button" onClick={handleSmsRemove} disabled={smsRemoveLoading}>{smsRemoveLoading ? 'Removing SMS…' : 'Remove SMS add-on'}</button>
+                ) : androidPurchasesUnavailable ? (
+                  <div style={{ fontSize: 12, color: 'var(--light)' }}>Purchases are unavailable in this Android app.</div>
                 ) : !isPlus ? (
                   <div style={{ fontSize: 12, color: 'var(--light)' }}>Upgrade to iDogs Plus before adding SMS reminders.</div>
                 ) : !billingDetails?.sms.configured ? (

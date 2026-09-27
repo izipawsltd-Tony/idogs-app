@@ -79,6 +79,21 @@ export function rewriteNativeApiUrl(input: string, apiBase: string): string {
   return `${apiBase}${input}`
 }
 
+// Request instances always normalize `.url` to an absolute URL, and a caller
+// could equally pass a URL instance instead of a bare string. Recovering just
+// the path here means assert/rewrite's `/api/` matching applies the same way
+// no matter which of the three RequestInfo|URL shapes a fetch call used.
+export function apiPathFromFetchInput(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.pathname + input.search + input.hash
+  try {
+    const url = new URL(input.url)
+    return url.pathname + url.search + url.hash
+  } catch {
+    return input.url
+  }
+}
+
 export function rewriteNativeQaApiUrl(input: string, apiBase: string): string {
   if (!input.startsWith('/api/')) return input
   assertNativeQaApiPathAllowed(input)
@@ -108,13 +123,15 @@ function installFetchRouter(
 ): void {
   const transportFetch = window.fetch.bind(window)
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    if (typeof input === 'string') {
-      return transportFetch(rewrite(input, apiBase), init)
-    }
-    if (input instanceof URL) {
-      return transportFetch(input, init)
-    }
-    return transportFetch(input, init)
+    const path = apiPathFromFetchInput(input)
+    // rewrite() throws for a blocked native /api/* path before returning, so
+    // this rejects a blocked call here regardless of whether it arrived as a
+    // string, a URL, or a Request — closing the bypass a
+    // `typeof input === 'string'` check alone would leave open.
+    const rewritten = rewrite(path, apiBase)
+    if (rewritten === path) return transportFetch(input, init)
+    if (input instanceof Request) return transportFetch(new Request(rewritten, input), init)
+    return transportFetch(rewritten, init)
   }) as typeof window.fetch
 }
 

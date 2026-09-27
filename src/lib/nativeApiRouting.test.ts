@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  apiPathFromFetchInput,
   assertNativeProductionApiPathAllowed,
   assertNativeQaApiPathAllowed,
   assertNativeQaHealth,
@@ -87,6 +88,29 @@ describe('native API routing', () => {
       .toBe(`${PROD_BASE}/api/claim-transferred-dogs?mode=check`)
     expect(rewriteNativeProductionApiUrl('https://storage.googleapis.com/signed-upload', PROD_BASE))
       .toBe('https://storage.googleapis.com/signed-upload')
+  })
+
+  it('extracts a matchable /api/* path from string, URL, and Request fetch inputs alike', () => {
+    expect(apiPathFromFetchInput('/api/create-checkout?x=1')).toBe('/api/create-checkout?x=1')
+    expect(apiPathFromFetchInput(new URL('/api/create-checkout', PROD_BASE))).toBe('/api/create-checkout')
+    expect(apiPathFromFetchInput(new Request(`${PROD_BASE}/api/create-extra-litter-checkout`)))
+      .toBe('/api/create-extra-litter-checkout')
+    expect(apiPathFromFetchInput(new URL('https://storage.googleapis.com/signed-upload')))
+      .toBe('/signed-upload')
+  })
+
+  it('still blocks native production payment endpoints requested via URL or Request objects, not just plain strings', () => {
+    const blockedViaUrl = new URL('/api/create-checkout', PROD_BASE)
+    const blockedViaRequest = new Request(`${PROD_BASE}/api/create-extra-litter-checkout`, { method: 'POST' })
+
+    expect(() => rewriteNativeProductionApiUrl(apiPathFromFetchInput(blockedViaUrl), PROD_BASE))
+      .toThrow('NATIVE_PRODUCTION_EXTERNAL_PAYMENT_API_BLOCKED')
+    expect(() => rewriteNativeProductionApiUrl(apiPathFromFetchInput(blockedViaRequest), PROD_BASE))
+      .toThrow('NATIVE_PRODUCTION_EXTERNAL_PAYMENT_API_BLOCKED')
+
+    const allowedViaUrl = new URL('/api/claim-transferred-dogs', PROD_BASE)
+    expect(rewriteNativeProductionApiUrl(apiPathFromFetchInput(allowedViaUrl), PROD_BASE))
+      .toBe(`${PROD_BASE}/api/claim-transferred-dogs`)
   })
 
   it('requires dedicated QA backend mode and staging Admin Firebase', () => {
