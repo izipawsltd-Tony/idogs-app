@@ -6,6 +6,7 @@ import {
   assertNativeQaHealth,
   getNativeProductionApiBase,
   getNativeQaApiBase,
+  nativeApiRoutablePath,
   rewriteNativeApiUrl,
   rewriteNativeProductionApiUrl,
   rewriteNativeQaApiUrl,
@@ -13,6 +14,7 @@ import {
 
 const QA_BASE = 'https://idogs-native-api-qa-izipaws.vercel.app'
 const PROD_BASE = 'https://idogs.com.au'
+const NATIVE_SHELL_ORIGIN = 'https://localhost'
 
 describe('native API routing', () => {
   it('accepts only the staging Firebase project for QA', () => {
@@ -111,6 +113,54 @@ describe('native API routing', () => {
     const allowedViaUrl = new URL('/api/claim-transferred-dogs', PROD_BASE)
     expect(rewriteNativeProductionApiUrl(apiPathFromFetchInput(allowedViaUrl), PROD_BASE))
       .toBe(`${PROD_BASE}/api/claim-transferred-dogs`)
+  })
+
+  it('lets a bare relative /api/* string through as routable, and any other bare string through untouched', () => {
+    expect(nativeApiRoutablePath('/api/create-checkout?x=1', PROD_BASE, NATIVE_SHELL_ORIGIN))
+      .toBe('/api/create-checkout?x=1')
+    expect(nativeApiRoutablePath('/app/dashboard', PROD_BASE, NATIVE_SHELL_ORIGIN)).toBeNull()
+    expect(nativeApiRoutablePath('https://storage.googleapis.com/signed-upload', PROD_BASE, NATIVE_SHELL_ORIGIN))
+      .toBeNull()
+  })
+
+  it('passes an absolute third-party URL/Request through untouched, even with a coincidental /api/* path', () => {
+    const thirdPartyUrl = new URL('https://storage.googleapis.com/api/signed-upload?token=abc')
+    expect(nativeApiRoutablePath(thirdPartyUrl, QA_BASE, NATIVE_SHELL_ORIGIN)).toBeNull()
+    expect(nativeApiRoutablePath(thirdPartyUrl, PROD_BASE, NATIVE_SHELL_ORIGIN)).toBeNull()
+
+    const thirdPartyRequest = new Request('https://storage.googleapis.com/api/signed-upload', {
+      method: 'PUT',
+      body: 'file-bytes',
+    })
+    expect(nativeApiRoutablePath(thirdPartyRequest, QA_BASE, NATIVE_SHELL_ORIGIN)).toBeNull()
+  })
+
+  it('treats same-origin (native shell) and explicit iDogs API origins as routable, regardless of which base is active', () => {
+    // Same-origin absolute URL, as `new Request('/api/...')` would normalize to.
+    expect(nativeApiRoutablePath(new URL('/api/create-checkout', NATIVE_SHELL_ORIGIN), QA_BASE, NATIVE_SHELL_ORIGIN))
+      .toBe('/api/create-checkout')
+
+    // Explicit production origin must stay routable even while QA is the active apiBase,
+    // so an absolute iDogs checkout URL cannot bypass the payment block just by being
+    // spelled out in full instead of as a relative path.
+    expect(nativeApiRoutablePath(new URL(`${PROD_BASE}/api/create-checkout`), QA_BASE, NATIVE_SHELL_ORIGIN))
+      .toBe('/api/create-checkout')
+
+    // Explicit QA origin must stay routable even while production is the active apiBase.
+    expect(nativeApiRoutablePath(new Request(`${QA_BASE}/api/claim-transferred-dogs`), PROD_BASE, NATIVE_SHELL_ORIGIN))
+      .toBe('/api/claim-transferred-dogs')
+  })
+
+  it('still blocks a same-origin or explicit-iDogs-origin payment path delivered as an absolute URL/Request', () => {
+    expect(() => rewriteNativeProductionApiUrl(
+      nativeApiRoutablePath(new URL(`${PROD_BASE}/api/create-checkout`), PROD_BASE, NATIVE_SHELL_ORIGIN) ?? '',
+      PROD_BASE,
+    )).toThrow('NATIVE_PRODUCTION_EXTERNAL_PAYMENT_API_BLOCKED')
+
+    expect(() => rewriteNativeQaApiUrl(
+      nativeApiRoutablePath(new Request(`${QA_BASE}/api/send-sms`), QA_BASE, NATIVE_SHELL_ORIGIN) ?? '',
+      QA_BASE,
+    )).toThrow('NATIVE_QA_EXTERNAL_SIDE_EFFECT_API_BLOCKED')
   })
 
   it('requires dedicated QA backend mode and staging Admin Firebase', () => {
