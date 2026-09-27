@@ -151,6 +151,24 @@ describe('native API routing', () => {
       .toBe('/api/claim-transferred-dogs')
   })
 
+  it('treats an absolute iDogs API string identically to a URL/Request, so it cannot bypass the block list', () => {
+    expect(nativeApiRoutablePath(`${PROD_BASE}/api/create-checkout`, PROD_BASE, NATIVE_SHELL_ORIGIN))
+      .toBe('/api/create-checkout')
+    expect(() => rewriteNativeProductionApiUrl(
+      nativeApiRoutablePath(`${PROD_BASE}/api/create-checkout`, PROD_BASE, NATIVE_SHELL_ORIGIN) ?? '',
+      PROD_BASE,
+    )).toThrow('NATIVE_PRODUCTION_EXTERNAL_PAYMENT_API_BLOCKED')
+
+    // An absolute iDogs API string that isn't blocked still routes normally.
+    expect(nativeApiRoutablePath(`${PROD_BASE}/api/claim-transferred-dogs`, PROD_BASE, NATIVE_SHELL_ORIGIN))
+      .toBe('/api/claim-transferred-dogs')
+
+    // An absolute third-party string with a coincidental /api/* path must
+    // still pass through untouched, exactly like the URL/Request case above.
+    expect(nativeApiRoutablePath('https://storage.googleapis.com/api/signed-upload?token=abc', PROD_BASE, NATIVE_SHELL_ORIGIN))
+      .toBeNull()
+  })
+
   it('still blocks a same-origin or explicit-iDogs-origin payment path delivered as an absolute URL/Request', () => {
     expect(() => rewriteNativeProductionApiUrl(
       nativeApiRoutablePath(new URL(`${PROD_BASE}/api/create-checkout`), PROD_BASE, NATIVE_SHELL_ORIGIN) ?? '',

@@ -102,8 +102,22 @@ export function nativeApiRoutablePath(
   apiBase: string,
   currentOrigin: string,
 ): string | null {
+  const eligibleOrigins = [currentOrigin, apiBase, NATIVE_PRODUCTION_API_BASE, NATIVE_QA_API_BASE]
+    .map(safeOrigin)
+    .filter((origin): origin is string => origin !== null)
+
   if (typeof input === 'string') {
-    return input.startsWith('/api/') ? input : null
+    // A bare relative string (e.g. `/api/create-checkout`) has no origin of
+    // its own, so `safeOrigin` returns null for it — fall back to the plain
+    // `/api/` prefix check. An absolute string must go through the same
+    // eligible-origin check as a URL/Request below, otherwise spelling a
+    // blocked iDogs endpoint out in full as a string (instead of passing a
+    // URL/Request) would silently bypass the block list.
+    const absoluteOrigin = safeOrigin(input)
+    if (absoluteOrigin === null) return input.startsWith('/api/') ? input : null
+    if (!eligibleOrigins.includes(absoluteOrigin)) return null
+    const absoluteUrl = new URL(input)
+    return absoluteUrl.pathname + absoluteUrl.search + absoluteUrl.hash
   }
 
   let absoluteUrl: URL
@@ -112,10 +126,6 @@ export function nativeApiRoutablePath(
   } catch {
     return null
   }
-
-  const eligibleOrigins = [currentOrigin, apiBase, NATIVE_PRODUCTION_API_BASE, NATIVE_QA_API_BASE]
-    .map(safeOrigin)
-    .filter((origin): origin is string => origin !== null)
 
   if (!eligibleOrigins.includes(absoluteUrl.origin)) return null
   return absoluteUrl.pathname + absoluteUrl.search + absoluteUrl.hash
