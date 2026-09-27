@@ -27,6 +27,8 @@ import { sendTransferEmail } from '../lib/email'
 import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
 import { db, auth } from '../lib/firebase'
 import { emitDogUsageChanged } from '../lib/dogUsageEvents'
+import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { restrictedBreederIdMessage, restrictedSaleAvailabilityMessage } from '../lib/nativeUpgradeCopy'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -1043,7 +1045,9 @@ export default function DogDetailPage({ toast }: Props) {
             <div style={{ marginTop: 10, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span>
                 🔒 This dog is over your plan's limit and is read-only — the record, Dog ID, and QR Passport all still work, and it can still be transferred.
-                {' '}<Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>Upgrade to Plus</Link> or activate it in place of another dog.
+                {isAndroidNativeApp()
+                  ? ' Activate it in place of another dog to edit it.'
+                  : (<>{' '}<Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>Upgrade to Plus</Link> or activate it in place of another dog.</>)}
               </span>
               <button className="btn btn-sm" disabled={statusActionLoading} onClick={() => handleSetDogStatus('activate')} style={{ background: '#fff', border: '1px solid rgba(200,151,31,0.4)', color: 'var(--gold)', flexShrink: 0 }}>
                 {statusActionLoading ? <span className="spinner" /> : 'Activate this dog'}
@@ -1497,7 +1501,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
     // the ✎/+ Add trigger below, which already prevents reaching this
     // form at all for a restricted dog.
     if (isRestricted) {
-      toast("This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Breeder ID.", 'error')
+      toast(restrictedBreederIdMessage(isAndroidNativeApp()), 'error')
       return
     }
     setSavingBreederId(true)
@@ -1753,7 +1757,7 @@ function SaleAvailabilityPanel({ dog, onSave, toast, isRestricted }: {
     // isn't a denied write at all, since no write is attempted; the
     // plan-limit explanation is what's true here.
     if (isRestricted) {
-      toast("This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Sale & availability.", 'error')
+      toast(restrictedSaleAvailabilityMessage(isAndroidNativeApp()), 'error')
       return
     }
     setSaving(true)
@@ -1847,7 +1851,7 @@ function SaleAvailabilityPanel({ dog, onSave, toast, isRestricted }: {
 
       {isRestricted && (
         <div style={{ marginBottom: 14, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10 }}>
-          🔒 This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Sale & availability.
+          {'🔒 '}{restrictedSaleAvailabilityMessage(isAndroidNativeApp())}
         </div>
       )}
 

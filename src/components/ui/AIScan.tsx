@@ -1,6 +1,8 @@
 import { useState, useRef } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import type { ToastMessage } from '../../types'
+import { isAndroidNativeApp } from '../../lib/nativePlatform'
+import { aiScanQuotaExhaustedMessage } from '../../lib/nativeUpgradeCopy'
 
 interface ScanResult {
   documentType: string
@@ -261,9 +263,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
           ? isPlus
             ? `${scanQuotaRemaining} of 10 AI scans left this month`
             : `${scanQuotaRemaining} of 2 free AI scans left (one-time)`
-          : isPlus
-            ? "You've used all 10 AI scans for this billing period — resets next period."
-            : 'Free AI scans used up — upgrade to Plus for 10/month.'}
+          : aiScanQuotaExhaustedMessage(isAndroidNativeApp(), isPlus)}
       </div>
 
       {/* Preview */}
