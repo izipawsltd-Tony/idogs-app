@@ -4,6 +4,13 @@ import { useSearchParams } from 'react-router-dom'
 import type { ToastMessage } from '../types'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
 import { isAndroidNativeApp } from '../lib/nativePlatform'
+import {
+  androidPlanUnavailableNotice,
+  billingIntroCopy,
+  plusFeatureList,
+  showPlanPricingUI,
+  showSmsAddonPrice,
+} from '../lib/billingPageAndroidGate'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -74,15 +81,6 @@ const FREE_FEATURES = [
   'Ownership transfer',
   '2 free AI scans — one-time',
 ]
-const PLUS_FEATURES = [
-  'Up to 5 dogs',
-  'Everything in Free',
-  '10 AI Document Scans / month',
-  '2 litters per rolling 12 months',
-  'Extra litters A$39 each',
-  'PDF & CSV report export',
-]
-
 type IntervalKey = 'plus_monthly' | 'plus_annual'
 
 export default function BillingPage({ toast }: Props) {
@@ -293,7 +291,7 @@ export default function BillingPage({ toast }: Props) {
           Billing & Plans
         </h1>
         <p style={{ fontSize: 14, color: 'var(--light)' }}>
-          Simple pricing — free forever for 1-2 dogs, upgrade when you need more. Paid prices are in AUD and include GST.
+          {billingIntroCopy(androidPurchasesUnavailable)}
         </p>
       </div>
 
@@ -335,7 +333,7 @@ export default function BillingPage({ toast }: Props) {
             </div>
             {billingDetails?.canManageBilling && (
               androidPurchasesUnavailable ? (
-                <span style={{ fontSize: 12, color: 'var(--light)' }}>Purchases are unavailable in this Android app.</span>
+                <span style={{ fontSize: 12, color: 'var(--light)' }}>{androidPlanUnavailableNotice()}</span>
               ) : (
                 <button type="button" className="btn btn-secondary" onClick={handleOpenPortal} disabled={portalLoading}>
                   {portalLoading ? 'Opening…' : 'Manage subscription'}
@@ -352,21 +350,23 @@ export default function BillingPage({ toast }: Props) {
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 24 }}>
-        <div style={{ display: 'inline-flex', background: 'var(--sand)', borderRadius: 10, padding: 4 }}>
-          <button
-            onClick={() => setInterval('plus_monthly')}
-            style={{ padding: '8px 18px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: interval === 'plus_monthly' ? '#fff' : 'transparent', color: interval === 'plus_monthly' ? 'var(--dark)' : 'var(--light)', boxShadow: interval === 'plus_monthly' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
-          >Monthly</button>
-          <button
-            onClick={() => setInterval('plus_annual')}
-            style={{ padding: '8px 18px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: interval === 'plus_annual' ? '#fff' : 'transparent', color: interval === 'plus_annual' ? 'var(--dark)' : 'var(--light)', boxShadow: interval === 'plus_annual' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', display: 'flex', alignItems: 'center', gap: 6 }}
-          >
-            Annual
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--green)', background: 'var(--green-light)', padding: '2px 6px', borderRadius: 20 }}>ANNUAL OPTION</span>
-          </button>
+      {showPlanPricingUI(androidPurchasesUnavailable) && (
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 24 }}>
+          <div style={{ display: 'inline-flex', background: 'var(--sand)', borderRadius: 10, padding: 4 }}>
+            <button
+              onClick={() => setInterval('plus_monthly')}
+              style={{ padding: '8px 18px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: interval === 'plus_monthly' ? '#fff' : 'transparent', color: interval === 'plus_monthly' ? 'var(--dark)' : 'var(--light)', boxShadow: interval === 'plus_monthly' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+            >Monthly</button>
+            <button
+              onClick={() => setInterval('plus_annual')}
+              style={{ padding: '8px 18px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: interval === 'plus_annual' ? '#fff' : 'transparent', color: interval === 'plus_annual' ? 'var(--dark)' : 'var(--light)', boxShadow: interval === 'plus_annual' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              Annual
+              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--green)', background: 'var(--green-light)', padding: '2px 6px', borderRadius: 20 }}>ANNUAL OPTION</span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 32 }}>
         <div style={{ background: '#fff', border: '2px solid var(--border)', borderRadius: 16, padding: 20 }}>
@@ -383,25 +383,31 @@ export default function BillingPage({ toast }: Props) {
         </div>
 
         <div style={{ background: '#fff', border: '2px solid var(--green)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 4px 20px rgba(8,80,65,0.12)' }}>
-          <div style={{ background: 'var(--green)', color: '#fff', fontSize: 11, fontWeight: 700, textAlign: 'center', padding: 5, letterSpacing: '0.05em' }}>MOST POPULAR</div>
+          {showPlanPricingUI(androidPurchasesUnavailable) && (
+            <div style={{ background: 'var(--green)', color: '#fff', fontSize: 11, fontWeight: 700, textAlign: 'center', padding: 5, letterSpacing: '0.05em' }}>MOST POPULAR</div>
+          )}
           <div style={{ padding: 20 }}>
             <div style={{ fontSize: 24, marginBottom: 6 }}>🏆</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Plus</div>
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>For active breeders with a growing kennel</div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
-              <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>
-              <span style={{ fontSize: 12, color: 'var(--light)' }}>{interval === 'plus_annual' ? 'AUD/year' : 'AUD/month'}</span>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 16 }}>
-              {interval === 'plus_annual' ? `≈ $${(PLUS_ANNUAL_PRICE_AUD / 12).toFixed(2)}/month, billed annually` : `$${PLUS_MONTHLY_PRICE_AUD * 12} AUD/year if paid monthly`}
-            </div>
+            {showPlanPricingUI(androidPurchasesUnavailable) && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>
+                  <span style={{ fontSize: 12, color: 'var(--light)' }}>{interval === 'plus_annual' ? 'AUD/year' : 'AUD/month'}</span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 16 }}>
+                  {interval === 'plus_annual' ? `≈ $${(PLUS_ANNUAL_PRICE_AUD / 12).toFixed(2)}/month, billed annually` : `$${PLUS_MONTHLY_PRICE_AUD * 12} AUD/year if paid monthly`}
+                </div>
+              </>
+            )}
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {PLUS_FEATURES.map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
+              {plusFeatureList(androidPurchasesUnavailable).map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
             </ul>
             {isPlus ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan</div>
             ) : androidPurchasesUnavailable ? (
-              <div style={{ textAlign: 'center', padding: '9px', background: 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>Purchases are unavailable in this Android app.</div>
+              <div style={{ textAlign: 'center', padding: '9px', background: 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>{androidPlanUnavailableNotice()}</div>
             ) : (
               <button onClick={() => handleSubscribe(interval)} disabled={loading} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
                 {loading ? <><span className="spinner" style={{ width: 13, height: 13, borderTopColor: '#fff' }} /> Processing…</> : `Upgrade to Plus — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}
@@ -419,7 +425,9 @@ export default function BillingPage({ toast }: Props) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 320px' }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>SMS Add-on</div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}><span style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: 'var(--dark)' }}>$3</span><span style={{ fontSize: 13, color: 'var(--light)' }}>AUD / month</span></div>
+            {showSmsAddonPrice(androidPurchasesUnavailable) && (
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}><span style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: 'var(--dark)' }}>$3</span><span style={{ fontSize: 13, color: 'var(--light)' }}>AUD / month</span></div>
+            )}
             <div style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6 }}>20 SMS credits each billing month for vaccination, worming and breeding reminders: heat cycle, mating, pregnancy and whelping.</div>
             <div style={{ fontSize: 12, color: 'var(--light)', marginTop: 6 }}>One long or Unicode SMS can use more than one credit. Unused credits do not roll over.</div>
           </div>
@@ -439,7 +447,7 @@ export default function BillingPage({ toast }: Props) {
                 {billingDetails?.sms.status === 'active' || billingDetails?.sms.status === 'past_due' ? (
                   <button className="btn btn-secondary" type="button" onClick={handleSmsRemove} disabled={smsRemoveLoading}>{smsRemoveLoading ? 'Removing SMS…' : 'Remove SMS add-on'}</button>
                 ) : androidPurchasesUnavailable ? (
-                  <div style={{ fontSize: 12, color: 'var(--light)' }}>Purchases are unavailable in this Android app.</div>
+                  <div style={{ fontSize: 12, color: 'var(--light)' }}>{androidPlanUnavailableNotice()}</div>
                 ) : !isPlus ? (
                   <div style={{ fontSize: 12, color: 'var(--light)' }}>Upgrade to iDogs Plus before adding SMS reminders.</div>
                 ) : !billingDetails?.sms.configured ? (
