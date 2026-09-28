@@ -737,7 +737,7 @@ const LV2_CSS = `
     .lv2-page .flow-step:not(:last-child)::after{display:none;}
     .lv2-page .flow-step{width:100%;}
     .lv2-page .foot-cols{gap:30px;}
-    .lv2-page .sticky-cta{display:block;}
+    .lv2-page .sticky-cta{display:none;}
     .lv2-page .final, .lv2-page footer{padding-bottom:90px;}
   }
   @media (max-width:390px){ .lv2-page .wrap{padding:0 18px;} .lv2-page .hero h1{font-size:33px;} }
