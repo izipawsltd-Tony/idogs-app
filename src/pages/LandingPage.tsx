@@ -23,6 +23,21 @@ import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMe
 // rest of the app's existing global stylesheet (index.css already
 // defines its own unrelated .btn/.btn-primary/etc. — confirmed by
 // direct inspection before writing this file).
+const FAST_LANDING_MEDIA: Partial<Record<LandingSlotId, { localSrc: string; publishedUrl: string }>> = {
+  'dog-profile': {
+    localSrc: '/landing-media-fast/dog-profile.webp',
+    publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/dog-profile/published/8eab97d1-5e79-4852-ab53-5c508e11a868.jpg',
+  },
+  'puppy-showcase': {
+    localSrc: '/landing-media-fast/puppy-showcase.webp',
+    publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/puppy-showcase/published/2a6c4588-21bd-4ee3-87e6-e4346a579353.png',
+  },
+  'digital-passport': {
+    localSrc: '/landing-media-fast/digital-passport.webp',
+    publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/digital-passport/published/bc56f60a-f899-46c8-82c6-415c2c12dd37.jpg',
+  },
+}
+
 export default function LandingPage() {
   const { user, loading } = useAuth()
   const navigate = useNavigate()
@@ -448,11 +463,12 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
     return () => { cancelled = true }
   }, [slotId])
 
-  if (!media || failed) return <>{fallback}</>
+  const fastMedia = FAST_LANDING_MEDIA[slotId]
+  if (failed && !fastMedia) return <>{fallback}</>
 
   const fillStyle: CSSProperties = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
 
-  if (media.kind === 'video') {
+  if (media?.kind === 'video' && !failed) {
     return (
       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
         <video
@@ -484,12 +500,21 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
     )
   }
 
+  const imageSrc = media?.kind === 'image' && !failed
+    ? (fastMedia && media.url === fastMedia.publishedUrl ? fastMedia.localSrc : media.url)
+    : fastMedia?.localSrc
+
+  if (!imageSrc) return <>{fallback}</>
+
   return (
     <img
       className={className}
       style={fillStyle}
-      src={media.url}
+      src={imageSrc}
       alt={ariaLabel}
+      loading="eager"
+      decoding="async"
+      fetchPriority="high"
       onError={() => setFailed(true)}
     />
   )
