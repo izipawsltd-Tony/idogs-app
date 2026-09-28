@@ -466,7 +466,7 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
   const fastMedia = FAST_LANDING_MEDIA[slotId]
   if (failed && !fastMedia) return <>{fallback}</>
 
-  const fillStyle: CSSProperties = { width: '100%', height: '100%', objectFit: 'contain', display: 'block', background: 'var(--bone-2)' }
+  const fillStyle: CSSProperties = { width: '100%', height: 'auto', aspectRatio: 'auto', objectFit: 'contain', display: 'block', background: 'var(--bone-2)' }
 
   if (media?.kind === 'video' && !failed) {
     return (
@@ -637,7 +637,8 @@ const LV2_CSS = `
   .lv2-page .ph { width:100%; background:repeating-linear-gradient(135deg,var(--bone-2) 0 12px,#e2dac7 12px 24px); border-radius:8px; display:grid; place-items:center; text-align:center; color:var(--ink-soft); font-size:13px; font-weight:600; padding:16px; }
   .lv2-page .ph-desktop { aspect-ratio:16/10; }
   .lv2-page .ph-mobile { aspect-ratio:9/19.5; overflow:hidden; }
-  .lv2-page .frame-desktop img.ph-desktop, .lv2-page .frame-desktop video.ph-desktop, .lv2-page .frame-mobile img.ph-mobile, .lv2-page .frame-mobile video.ph-mobile { object-fit:contain!important; background:var(--bone-2); padding:0; }
+  .lv2-page .frame-desktop img.ph-desktop, .lv2-page .frame-mobile img.ph-mobile { height:auto!important; aspect-ratio:auto!important; object-fit:contain!important; background:var(--bone-2); padding:0; }
+  .lv2-page .frame-desktop video.ph-desktop, .lv2-page .frame-mobile video.ph-mobile { object-fit:cover!important; background:var(--bone-2); padding:0; }
   .lv2-page .shot-cap { text-align:center; font-size:13px; color:var(--ink-soft); margin-top:10px; }
 
   .lv2-page .paths { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:20px; }
@@ -711,7 +712,8 @@ const LV2_CSS = `
   @media (max-width:900px){
     .lv2-page .hero-grid{grid-template-columns:1fr;gap:34px;}
     .lv2-page .shots{grid-template-columns:1fr;justify-items:center;}
-    .lv2-page .frame-desktop, .lv2-page .frame-mobile{max-width:420px;width:100%;}
+    .lv2-page .frame-desktop{max-width:420px;width:100%;}
+    .lv2-page .frame-mobile{max-width:300px;width:100%;}
     .lv2-page .paths{grid-template-columns:1fr;}
     .lv2-page .pillars{grid-template-columns:1fr 1fr;}
     .lv2-page .steps{grid-template-columns:1fr 1fr;}
