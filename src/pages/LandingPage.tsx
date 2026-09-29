@@ -155,23 +155,19 @@ export default function LandingPage() {
                 <div className="shot-cap">Dog records in one organised profile</div>
               </div>
               <div>
-                <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="puppy-showcase"
-                    className="ph ph-mobile"
-                    ariaLabel="A mobile-friendly Puppy Showcase"
-                    fallback={<div className="ph ph-mobile" role="img" aria-label="A mobile-friendly Puppy Showcase (product screenshot to follow)">Puppy Showcase</div>}
-                  /></div>
+                <MobileFeatureFrame
+                  slotId="puppy-showcase"
+                  ariaLabel="A mobile-friendly Puppy Showcase"
+                  fallbackLabel="Puppy Showcase"
+                />
                 <div className="shot-cap">A mobile-friendly Puppy Showcase</div>
               </div>
               <div>
-                <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="digital-passport"
-                    className="ph ph-mobile"
-                    ariaLabel="A limited public Passport view"
-                    fallback={<div className="ph ph-mobile" role="img" aria-label="A limited public Passport view (product screenshot to follow)">Digital Passport / QR</div>}
-                  /></div>
+                <MobileFeatureFrame
+                  slotId="digital-passport"
+                  ariaLabel="A limited public Passport view"
+                  fallbackLabel="Digital Passport / QR"
+                />
                 <div className="shot-cap">A limited public Passport view</div>
               </div>
             </div>
@@ -520,6 +516,24 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
   )
 }
 
+function MobileFeatureFrame({ slotId, ariaLabel, fallbackLabel }: {
+  slotId: 'puppy-showcase' | 'digital-passport'
+  ariaLabel: string
+  fallbackLabel: string
+}) {
+  return (
+    <div className="frame-mobile">
+      <div className="bar" aria-hidden="true"><i></i><i></i><i></i></div>
+      <LandingMediaSlot
+        slotId={slotId}
+        className="ph ph-mobile"
+        ariaLabel={ariaLabel}
+        fallback={<div className="ph ph-mobile" role="img" aria-label={`${ariaLabel} (product screenshot to follow)`}>{fallbackLabel}</div>}
+      />
+    </div>
+  )
+}
+
 // ── SCOPED CSS ─────────────────────────────────────────────────
 // Every rule below is prefixed under `.lv2-page` (or `.lv2-page` IS the
 // selector) — nothing here is a bare/global element or :root selector,
@@ -636,9 +650,11 @@ const LV2_CSS = `
   .lv2-page .frame-desktop .bar i, .lv2-page .frame-mobile .bar i { width:9px; height:9px; border-radius:50%; background:rgba(255,255,255,.35); }
   .lv2-page .ph { width:100%; background:repeating-linear-gradient(135deg,var(--bone-2) 0 12px,#e2dac7 12px 24px); border-radius:8px; display:grid; place-items:center; text-align:center; color:var(--ink-soft); font-size:13px; font-weight:600; padding:16px; }
   .lv2-page .ph-desktop { aspect-ratio:16/10; }
-  .lv2-page .ph-mobile { aspect-ratio:9/19.5; overflow:hidden; }
-  .lv2-page .frame-desktop img.ph-desktop, .lv2-page .frame-mobile img.ph-mobile { height:auto!important; aspect-ratio:auto!important; object-fit:contain!important; background:var(--bone-2); padding:0; }
-  .lv2-page .frame-desktop video.ph-desktop, .lv2-page .frame-mobile video.ph-mobile { object-fit:cover!important; background:var(--bone-2); padding:0; }
+  .lv2-page .ph-mobile { aspect-ratio:390/844; overflow:hidden; }
+  .lv2-page .frame-desktop img.ph-desktop { height:auto!important; aspect-ratio:auto!important; object-fit:contain!important; background:var(--bone-2); padding:0; }
+  .lv2-page .frame-mobile img.ph-mobile { height:auto!important; aspect-ratio:390/844!important; object-fit:contain!important; object-position:center top; background:var(--bone-2); padding:0; }
+  .lv2-page .frame-desktop video.ph-desktop { object-fit:cover!important; background:var(--bone-2); padding:0; }
+  .lv2-page .frame-mobile video.ph-mobile { height:auto!important; aspect-ratio:390/844!important; object-fit:cover!important; background:var(--bone-2); padding:0; }
   .lv2-page .shot-cap { text-align:center; font-size:13px; color:var(--ink-soft); margin-top:10px; }
 
   .lv2-page .paths { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:20px; }
