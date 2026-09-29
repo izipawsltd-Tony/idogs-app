@@ -5,6 +5,7 @@ import {
   plusFeatureList,
   showPlanPricingUI,
   showSmsAddonPrice,
+  showExternalPaymentFaq,
 } from './billingPageAndroidGate'
 
 // Google Play rejects apps that show purchase/pricing UI for digital goods
@@ -40,6 +41,11 @@ describe('BillingPage Android purchase-UI gate', () => {
       expect(feature).not.toMatch(FORBIDDEN_ON_ANDROID)
     }
     expect(webFeatures.some(f => FORBIDDEN_ON_ANDROID.test(f))).toBe(true)
+  })
+
+  it('hides external-payment FAQ on Android only', () => {
+    expect(showExternalPaymentFaq(true)).toBe(false)
+    expect(showExternalPaymentFaq(false)).toBe(true)
   })
 
   it('Android plan-unavailable notice is neutral and non-empty', () => {

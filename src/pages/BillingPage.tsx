@@ -10,6 +10,7 @@ import {
   plusFeatureList,
   showPlanPricingUI,
   showSmsAddonPrice,
+  showExternalPaymentFaq,
 } from '../lib/billingPageAndroidGate'
 
 interface Props {
@@ -112,6 +113,7 @@ export default function BillingPage({ toast }: Props) {
   // blocked in nativeApiRouting.ts. Read-only status and existing
   // entitlements (including cancelling an SMS add-on) still work.
   const androidPurchasesUnavailable = isAndroidNativeApp()
+  const showExternalPaymentCopy = showExternalPaymentFaq(androidPurchasesUnavailable)
 
   useEffect(() => {
     if (searchParams.get('success')) {
@@ -484,8 +486,10 @@ export default function BillingPage({ toast }: Props) {
             { q: 'Is the free plan really free forever?', a: 'Yes — up to 2 dogs is free forever. No credit card required, no expiry.' },
             { q: 'What happens if I have more than 5 dogs on Plus (or more than 2 on Free)?', a: 'Nothing is ever deleted. Dogs beyond your plan’s limit become read-only — you can still view them, transfer them, and their QR Passport keeps working. You choose which dogs stay active, and can swap at any time.' },
             { q: 'How do the 10 AI scans/month work?', a: 'Plus includes 10 AI Document Scans every month, resetting on your billing date — whether you’re on Monthly or Annual. Unused scans don’t roll over. Free accounts get 2 scans total, for the life of the account.' },
-            { q: 'What if my payment fails?', a: 'You keep full Plus access for 7 days while we retry the payment. After that, your account moves to the Free plan (no data is ever deleted) until payment succeeds.' },
-            { q: 'Is my payment secure?', a: 'Yes — payments are processed by Stripe, PCI DSS Level 1 certified. We never store your card details.' },
+            ...(showExternalPaymentCopy ? [
+              { q: 'What if my payment fails?', a: 'You keep full Plus access for 7 days while we retry the payment. After that, your account moves to the Free plan (no data is ever deleted) until payment succeeds.' },
+              { q: 'Is my payment secure?', a: 'Yes — payments are processed by Stripe, PCI DSS Level 1 certified. We never store your card details.' },
+            ] : []),
           ].map((item, i, arr) => (
             <div key={i} style={{ paddingBottom: i < arr.length - 1 ? 14 : 0, borderBottom: i < arr.length - 1 ? '1px solid var(--sand)' : 'none' }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>{item.q}</div>

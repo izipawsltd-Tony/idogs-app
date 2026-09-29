@@ -40,3 +40,8 @@ export function androidPlanUnavailableNotice(): string {
 export function showSmsAddonPrice(isAndroid: boolean): boolean {
   return !isAndroid
 }
+
+// External payment processor / retry copy is web-only.
+export function showExternalPaymentFaq(isAndroid: boolean): boolean {
+  return !isAndroid
+}
