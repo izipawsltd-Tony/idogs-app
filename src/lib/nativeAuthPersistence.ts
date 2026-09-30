@@ -16,3 +16,7 @@ export function resolveNativePlatform(
 export function shouldUseBrowserLocalAuthPersistence(nativePlatform?: string): boolean {
   return nativePlatform?.trim().toLowerCase() === 'android'
 }
+
+export function androidAuthPersistencePreference<T>(browserLocal: T, indexedDb: T): [T, T] {
+  return [browserLocal, indexedDb]
+}

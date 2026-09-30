@@ -7,7 +7,7 @@ import {
 } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
-import { resolveNativePlatform, shouldUseBrowserLocalAuthPersistence, type CapacitorRuntimeLike } from './nativeAuthPersistence'
+import { androidAuthPersistencePreference, resolveNativePlatform, shouldUseBrowserLocalAuthPersistence, type CapacitorRuntimeLike } from './nativeAuthPersistence'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -24,7 +24,7 @@ const nativePlatform = resolveNativePlatform(import.meta.env.VITE_IDOGS_NATIVE_P
 
 const app = initializeApp(firebaseConfig)
 export const auth = shouldUseBrowserLocalAuthPersistence(nativePlatform)
-  ? initializeAuth(app, { persistence: [indexedDBLocalPersistence, browserLocalPersistence] })
+  ? initializeAuth(app, { persistence: androidAuthPersistencePreference(browserLocalPersistence, indexedDBLocalPersistence) })
   : getAuth(app)
 export const db = getFirestore(app)
 export const storage = getStorage(app)

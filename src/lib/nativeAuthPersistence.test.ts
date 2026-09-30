@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { resolveNativePlatform, shouldUseBrowserLocalAuthPersistence } from './nativeAuthPersistence'
+import {
+  androidAuthPersistencePreference,
+  resolveNativePlatform,
+  shouldUseBrowserLocalAuthPersistence,
+} from './nativeAuthPersistence'
 
 describe('Android auth persistence selection', () => {
   it('uses durable browser-local persistence for Android native builds', () => {
@@ -21,5 +25,9 @@ describe('Android auth persistence selection', () => {
     expect(resolveNativePlatform(undefined, { isNativePlatform: () => false, getPlatform: () => 'android' })).toBe('')
     expect(shouldUseBrowserLocalAuthPersistence('ios')).toBe(false)
     expect(shouldUseBrowserLocalAuthPersistence('')).toBe(false)
+  })
+
+  it('prefers browser-local persistence before IndexedDB for Android', () => {
+    expect(androidAuthPersistencePreference('browserLocal', 'indexedDb')).toEqual(['browserLocal', 'indexedDb'])
   })
 })
