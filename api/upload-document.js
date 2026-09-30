@@ -9,6 +9,16 @@ import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
 import { canAddDogRecord } from './_lib/dog-access.js'
 
+const MAX_FILE_BYTES = 10 * 1024 * 1024
+const ALLOWED_MEDIA_TYPES = new Map([
+  ['application/pdf', { extension: 'pdf', fileType: 'pdf' }],
+  ['image/jpeg', { extension: 'jpg', fileType: 'jpg' }],
+  ['image/png', { extension: 'png', fileType: 'png' }],
+  ['image/webp', { extension: 'webp', fileType: 'webp' }],
+  ['image/heic', { extension: 'heic', fileType: 'heic' }],
+  ['image/heif', { extension: 'heic', fileType: 'heic' }],
+])
+
 // Init Firebase Admin (once)
 //
 // Bounded staging-isolation safety patch: storageBucket is intentionally
@@ -66,10 +76,21 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
 
-  const { base64, mediaType, dogId, documentType, extractedData } = req.body
+  const { base64, mediaType, dogId, documentType, extractedData, title, notes, source } = req.body
 
-  if (!base64 || !dogId) {
+  if (typeof base64 !== 'string' || !base64 || typeof dogId !== 'string' || !dogId) {
     return res.status(400).json({ error: 'Missing required fields' })
+  }
+  const media = ALLOWED_MEDIA_TYPES.get(mediaType)
+  if (!media) {
+    return res.status(415).json({ error: 'Unsupported file type' })
+  }
+  const buffer = Buffer.from(base64, 'base64')
+  if (!buffer.length || buffer.length > MAX_FILE_BYTES) {
+    return res.status(413).json({ error: 'File must be 10MB or smaller' })
+  }
+  if ((title != null && typeof title !== 'string') || (notes != null && typeof notes !== 'string')) {
+    return res.status(400).json({ error: 'Invalid document metadata' })
   }
 
   const db = getFirestore()
@@ -90,8 +111,8 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: 'Not authorized to upload documents for this dog' })
     }
 
-    const ext = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
-    const fileName = `${documentType || 'document'}_${Date.now()}.${ext}`
+    const safeDocumentType = typeof documentType === 'string' && documentType ? documentType : 'other'
+    const fileName = `${safeDocumentType}_${Date.now()}.${media.extension}`
     // Use the verified uid (not a client-supplied tenantId) for the path —
     // this can legitimately be the dog's breeder OR its current owner,
     // whichever account is doing the scanning.
@@ -100,10 +121,8 @@ export default async function handler(req, res) {
     // Upload to Firebase Storage
     const bucket = getStorage().bucket(bucketName)
     const file = bucket.file(filePath)
-    const buffer = Buffer.from(base64, 'base64')
-
     await file.save(buffer, {
-      metadata: { contentType: mediaType || 'image/jpeg' },
+      metadata: { contentType: mediaType },
     })
 
     // SECURITY FIX (separate from the auth fix above): files used to be
@@ -118,19 +137,28 @@ export default async function handler(req, res) {
     const fileUrl = null
 
     // Save metadata to Firestore
-    await db.collection('documents').add({
+    const uploadedAt = new Date()
+    const documentData = {
       dogId,
       tenantId: uid,
       fileName,
       fileUrl,
       filePath,
-      fileType: ext === 'pdf' ? 'pdf' : 'image',
-      documentType: documentType || 'other',
-      uploadedAt: new Date(),
+      fileType: media.fileType,
+      documentType: safeDocumentType,
+      uploadedAt,
       extractedData: extractedData || {},
-    })
+      ...(typeof title === 'string' && title.trim() ? { title: title.trim().slice(0, 200) } : {}),
+      ...(typeof notes === 'string' && notes.trim() ? { notes: notes.trim().slice(0, 2000) } : {}),
+      ...(source === 'manual' ? { source: 'manual' } : {}),
+    }
+    const documentRef = await db.collection('documents').add(documentData)
 
-    return res.status(200).json({ success: true, filePath })
+    return res.status(200).json({
+      success: true,
+      filePath,
+      document: { ...documentData, id: documentRef.id, uploadedAt: uploadedAt.toISOString() },
+    })
   } catch (err) {
     // Round 19: the previous version logged AND returned err.message/
     // err.code/a stack slice to the client — any of which can carry the

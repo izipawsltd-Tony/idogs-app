@@ -3,9 +3,6 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getAllDocumentsForUser, getDogs, deleteDocument } from '../lib/db'
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
-import { db, storage } from '../lib/firebase'
 import type { Dog, ToastMessage } from '../types'
 
 interface Props {
@@ -28,6 +25,18 @@ function getDocIcon(type: string) {
 }
 function getDocLabel(type: string) {
   return DOC_TYPES.find(d => d.value === type)?.label || 'Document'
+}
+
+function normaliseDocumentMediaType(file: File): string {
+  if (file.type === 'application/pdf') return file.type
+  if (file.type === 'image/jpeg' || file.type === 'image/png' || file.type === 'image/webp' || file.type === 'image/heic' || file.type === 'image/heif') return file.type
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  if (ext === 'pdf') return 'application/pdf'
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg'
+  if (ext === 'png') return 'image/png'
+  if (ext === 'webp') return 'image/webp'
+  if (ext === 'heic' || ext === 'heif') return 'image/heic'
+  return ''
 }
 
 async function viewDocument(
@@ -298,7 +307,6 @@ export default function DocumentsPage({ toast }: Props) {
       {showUpload && (
         <UploadModal
           dogs={Object.values(dogs)}
-          userId={user!.uid}
           onClose={() => setShowUpload(false)}
           onSuccess={handleUpload}
           toast={toast}
@@ -310,13 +318,13 @@ export default function DocumentsPage({ toast }: Props) {
 
 // ── UPLOAD MODAL ─────────────────────────────────────────────
 
-function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
+function UploadModal({ dogs, onClose, onSuccess, toast }: {
   dogs: Dog[]
-  userId: string
   onClose: () => void
   onSuccess: (doc: any) => void
   toast: (msg: string, type?: ToastMessage['type']) => void
 }) {
+  const { user } = useAuth()
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [docType, setDocType] = useState('other')
@@ -331,6 +339,10 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
   const MAX_MB = 10
 
   function handleFileChange(f: File) {
+    if (!normaliseDocumentMediaType(f)) {
+      toast('Unsupported file type — use PDF, JPG, PNG, WebP, or HEIC', 'error')
+      return
+    }
     if (f.size > MAX_MB * 1024 * 1024) {
       toast(`File too large — max ${MAX_MB}MB`, 'error')
       return
@@ -346,41 +358,37 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
     setUploading(true)
     setProgress(0)
     try {
-      // Upload to Firebase Storage
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'pdf'
-      const storagePath = `documents/${userId}/${dogId}/${Date.now()}.${ext}`
-      const storageRef = ref(storage, storagePath)
-      const uploadTask = uploadBytesResumable(storageRef, file)
-
-      await new Promise<void>((resolve, reject) => {
-        uploadTask.on(
-          'state_changed',
-          snap => setProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
-          reject,
-          resolve,
-        )
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '')
+        reader.onerror = () => reject(new Error('Could not read file'))
+        reader.readAsDataURL(file)
       })
-
-      const fileUrl = await getDownloadURL(uploadTask.snapshot.ref)
-
-      // Save to Firestore
-      const docData = {
-        tenantId: userId,
-        dogId,
-        documentType: docType,
-        title: title || getDocLabel(docType),
-        notes: notes || null,
-        fileUrl,
-        fileType: ext,
-        storagePath,
-        source: 'manual',
-        uploadedAt: serverTimestamp(),
-      }
-      const ref2 = await addDoc(collection(db, 'documents'), docData)
-      onSuccess({ id: ref2.id, ...docData, uploadedAt: { toDate: () => new Date() } })
+      setProgress(25)
+      if (!user) throw new Error('Please sign in to upload documents')
+      const idToken = await user.getIdToken()
+      const response = await fetch('/api/upload-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({
+          base64,
+          mediaType: normaliseDocumentMediaType(file),
+          dogId,
+          documentType: docType,
+          title: title || getDocLabel(docType),
+          notes,
+          source: 'manual',
+        }),
+      })
+      setProgress(90)
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.error || 'Upload failed')
+      const createdAt = new Date(body.document?.uploadedAt || Date.now())
+      setProgress(100)
+      onSuccess({ ...body.document, uploadedAt: { toDate: () => createdAt } })
     } catch (err) {
       console.error(err)
-      toast('Upload failed — please try again', 'error')
+      toast(err instanceof Error ? err.message : 'Upload failed — please try again', 'error')
     } finally {
       setUploading(false)
     }

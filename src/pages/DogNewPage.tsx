@@ -397,7 +397,10 @@ export default function DogNewPage({ toast }: Props) {
           try {
             const uploadRes = await fetch('/api/upload-document', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${await user.getIdToken()}`,
+              },
               body: JSON.stringify({
                 base64: f.base64,
                 mediaType: f.mediaType,

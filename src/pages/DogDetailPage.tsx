@@ -613,7 +613,7 @@ export default function DogDetailPage({ toast }: Props) {
     }
   }
 
-  async function handleScanResult(result: any, filePath?: string) {
+  async function handleScanResult(result: any, filePath?: string, _rawFile?: unknown, uploadedDocument?: Record<string, any>) {
     if (!dogId || !dog) return
 
     let vaccineCount = 0
@@ -769,24 +769,15 @@ export default function DogDetailPage({ toast }: Props) {
       setHealthTests(updatedHealth)
     }
 
-    // Refresh the Documents tab immediately — AIScan uploads the document
-    // via /api/upload-document (Admin SDK) before calling onResult, so by
-    // this point the Firestore doc already exists if filePath is set. A
-    // failed upload leaves filePath undefined, so no refetch (and no false
-    // record) happens for it.
-    if (filePath) {
-      const updatedDocs = await getDogDocuments(dogId).catch(() => documents)
-      setDocuments(updatedDocs)
-    }
-
-    // Refresh the Documents tab immediately — AIScan uploads the document
-    // via /api/upload-document (Admin SDK) before calling onResult, so by
-    // this point the Firestore doc already exists if filePath is set. A
-    // failed upload leaves filePath undefined, so no refetch (and no false
-    // record) happens for it.
-    if (filePath) {
-      const updatedDocs = await getDogDocuments(dogId).catch(() => documents)
-      setDocuments(updatedDocs)
+    // The authenticated upload endpoint returns the exact Firestore record
+    // it created. Add that record directly instead of issuing duplicate
+    // follow-up reads that can race, fail, or briefly return stale data.
+    if (filePath && uploadedDocument?.id) {
+      const createdAt = typeof uploadedDocument.uploadedAt === 'string'
+        ? new Date(uploadedDocument.uploadedAt)
+        : new Date()
+      const newDocument: any = { ...uploadedDocument, uploadedAt: { toDate: () => createdAt } }
+      setDocuments(prev => prev.some(d => d.id === newDocument.id) ? prev : [newDocument, ...prev])
     }
 
     // Update dog fields from scan
