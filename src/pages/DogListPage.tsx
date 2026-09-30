@@ -54,6 +54,20 @@ const DOG_LIST_CSS = `
     font-weight: 500;
   }
   .dog-list-photo-fallback-emoji { font-size: 30px; }
+  .dog-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+  }
+  .dog-card-badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+  }
   @media (max-width: 600px) {
     .dog-list-controls {
       flex-direction: column;
@@ -70,6 +84,15 @@ const DOG_LIST_CSS = `
     }
     .dog-list-photo-fallback { height: 68px; }
     .dog-list-photo-fallback-emoji { font-size: 26px; }
+    .dog-card-meta {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .dog-card-badges {
+      width: 100%;
+      justify-content: flex-start;
+    }
   }
 `
 
@@ -455,9 +478,9 @@ function DogCard({ dog }: { dog: Dog }) {
             <span style={{ fontSize: 13, color: 'var(--mid)' }}>{dog.sex === 'female' ? '♀' : '♂'}</span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div className="dog-card-meta">
             <div style={{ fontSize: 12, color: 'var(--light)' }}>{getDogAge(dog.dateOfBirth)}</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <div className="dog-card-badges">
               {isTransferred ? (
                 <span className="badge badge-gray" style={{ fontSize: 10 }}>→ {(dog as any).buyerName}</span>
               ) : isRestricted ? (

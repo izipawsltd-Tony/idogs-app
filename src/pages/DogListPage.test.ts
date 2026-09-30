@@ -12,6 +12,13 @@ describe('DogListPage mobile UX regression', () => {
     expect(source).toContain('white-space: nowrap')
   })
 
+  it('keeps mobile card metadata inside the card instead of clipping badges', () => {
+    expect(source).toContain('className="dog-card-meta"')
+    expect(source).toContain('className="dog-card-badges"')
+    expect(source).toMatch(/@media \(max-width: 600px\)[\s\S]*?\.dog-card-meta\s*{[\s\S]*?flex-direction: column/)
+    expect(source).toMatch(/\.dog-card-badges\s*{[\s\S]*?width: 100%[\s\S]*?justify-content: flex-start/)
+  })
+
   it('falls back after image load errors and keeps the no-photo treatment compact', () => {
     expect(source).toContain('onError={() => setPhotoFailed(true)}')
     expect(source).toContain("const showPhoto = Boolean(profilePhoto) && !photoFailed")
