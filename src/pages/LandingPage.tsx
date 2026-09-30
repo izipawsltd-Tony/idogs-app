@@ -33,7 +33,7 @@ const FAST_LANDING_MEDIA: Partial<Record<LandingSlotId, { localSrc: string; publ
     publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/puppy-showcase/published/2a6c4588-21bd-4ee3-87e6-e4346a579353.png',
   },
   'digital-passport': {
-    localSrc: '/landing-media-fast/digital-passport.webp',
+    localSrc: '/landing-media-fast/digital-passport-iphone17.webp',
     publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/digital-passport/published/bc56f60a-f899-46c8-82c6-415c2c12dd37.jpg',
   },
 }
@@ -526,7 +526,7 @@ function MobileFeatureFrame({ slotId, ariaLabel, fallbackLabel }: {
       <div className="bar" aria-hidden="true"><i></i><i></i><i></i></div>
       <LandingMediaSlot
         slotId={slotId}
-        className="ph ph-mobile"
+        className={slotId === 'digital-passport' ? 'ph ph-mobile ph-mobile-natural' : 'ph ph-mobile'}
         ariaLabel={ariaLabel}
         fallback={<div className="ph ph-mobile" role="img" aria-label={`${ariaLabel} (product screenshot to follow)`}>{fallbackLabel}</div>}
       />
@@ -653,6 +653,7 @@ const LV2_CSS = `
   .lv2-page .ph-mobile { aspect-ratio:390/844; overflow:hidden; }
   .lv2-page .frame-desktop img.ph-desktop { height:auto!important; aspect-ratio:auto!important; object-fit:contain!important; background:var(--bone-2); padding:0; }
   .lv2-page .frame-mobile img.ph-mobile { height:auto!important; aspect-ratio:390/844!important; object-fit:contain!important; object-position:center top; background:var(--bone-2); padding:0; }
+  .lv2-page .frame-mobile img.ph-mobile-natural { width:100%; height:auto!important; aspect-ratio:auto!important; object-fit:contain!important; background:none; }
   .lv2-page .frame-desktop video.ph-desktop { object-fit:cover!important; background:var(--bone-2); padding:0; }
   .lv2-page .frame-mobile video.ph-mobile { height:auto!important; aspect-ratio:390/844!important; object-fit:cover!important; background:var(--bone-2); padding:0; }
   .lv2-page .shot-cap { text-align:center; font-size:13px; color:var(--ink-soft); margin-top:10px; }
