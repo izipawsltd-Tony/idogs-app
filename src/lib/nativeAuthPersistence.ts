@@ -1,8 +1,18 @@
-// Android's Capacitor WebView must keep Firebase Auth across process restarts.
-// Keep this decision pure so web/iOS cannot accidentally inherit the native
-// persistence override during a future auth refactor.
-export function shouldUseBrowserLocalAuthPersistence(
-  nativePlatform: string | undefined,
-): boolean {
+export type CapacitorRuntimeLike = {
+  isNativePlatform?: () => boolean
+  getPlatform?: () => string
+}
+
+export function resolveNativePlatform(
+  buildPlatform: string | undefined,
+  capacitor?: CapacitorRuntimeLike,
+): string {
+  const embedded = buildPlatform?.trim().toLowerCase()
+  if (embedded) return embedded
+  if (!capacitor?.isNativePlatform?.()) return ''
+  return capacitor.getPlatform?.()?.trim().toLowerCase() || 'native'
+}
+
+export function shouldUseBrowserLocalAuthPersistence(nativePlatform?: string): boolean {
   return nativePlatform?.trim().toLowerCase() === 'android'
 }
