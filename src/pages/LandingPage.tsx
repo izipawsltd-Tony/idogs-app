@@ -146,31 +146,37 @@ export default function LandingPage() {
             <div className="shots">
               <div>
                 <div className="frame-desktop"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="dog-profile"
+                  <img
+                    src="/landing-media-fast/dog-profile.webp"
                     className="ph ph-desktop"
-                    ariaLabel="Dog records in one organised profile"
-                    fallback={<div className="ph ph-desktop" role="img" aria-label="Dog records in one organised profile (product screenshot to follow)">Dog Profile &amp; records</div>}
+                    alt="Dog records in one organised profile"
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority="high"
                   /></div>
                 <div className="shot-cap">Dog records in one organised profile</div>
               </div>
               <div>
                 <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="puppy-showcase"
+                  <img
+                    src="/landing-media-fast/puppy-showcase.webp"
                     className="ph ph-mobile"
-                    ariaLabel="A mobile-friendly Puppy Showcase"
-                    fallback={<div className="ph ph-mobile" role="img" aria-label="A mobile-friendly Puppy Showcase (product screenshot to follow)">Puppy Showcase</div>}
+                    alt="A mobile-friendly Puppy Showcase"
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority="high"
                   /></div>
                 <div className="shot-cap">A mobile-friendly Puppy Showcase</div>
               </div>
               <div>
                 <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="digital-passport"
+                  <img
+                    src="/landing-media-fast/digital-passport.webp"
                     className="ph ph-mobile"
-                    ariaLabel="A limited public Passport view"
-                    fallback={<div className="ph ph-mobile" role="img" aria-label="A limited public Passport view (product screenshot to follow)">Digital Passport / QR</div>}
+                    alt="A limited public Passport view"
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority="high"
                   /></div>
                 <div className="shot-cap">A limited public Passport view</div>
               </div>
