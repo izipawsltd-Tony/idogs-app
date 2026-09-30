@@ -149,6 +149,7 @@ export default function LandingPage() {
                   <img
                     src="/landing-media-fast/dog-profile.webp"
                     className="ph ph-desktop"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     alt="Dog records in one organised profile"
                     loading="eager"
                     decoding="async"
@@ -161,6 +162,7 @@ export default function LandingPage() {
                   <img
                     src="/landing-media-fast/puppy-showcase.webp"
                     className="ph ph-mobile"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     alt="A mobile-friendly Puppy Showcase"
                     loading="eager"
                     decoding="async"
@@ -173,6 +175,7 @@ export default function LandingPage() {
                   <img
                     src="/landing-media-fast/digital-passport.webp"
                     className="ph ph-mobile"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     alt="A limited public Passport view"
                     loading="eager"
                     decoding="async"
