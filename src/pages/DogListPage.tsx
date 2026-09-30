@@ -15,6 +15,64 @@ const MISSING_TEST_LABEL: Record<CoverageType, string> = {
 // the count shown in Insights always matches the dogs this filter surfaces.
 const HEALTH_ELIGIBLE_STAGES: LifeStage[] = ['young_adult', 'adult', 'senior']
 
+const DOG_LIST_CSS = `
+  .dog-list-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+    margin-bottom: 20px;
+  }
+  .dog-list-search {
+    flex: 0 0 260px;
+    max-width: 260px;
+  }
+  .dog-list-filters {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 4px;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .dog-list-photo-fallback {
+    height: 96px;
+    background: linear-gradient(135deg, var(--brand-50), var(--sand));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--mid);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .dog-list-photo-fallback-emoji { font-size: 30px; }
+  @media (max-width: 600px) {
+    .dog-list-controls {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .dog-list-search {
+      flex: none;
+      width: 100%;
+      max-width: none;
+    }
+    .dog-list-filters {
+      flex: none;
+      width: 100%;
+    }
+    .dog-list-photo-fallback { height: 68px; }
+    .dog-list-photo-fallback-emoji { font-size: 26px; }
+  }
+`
+
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
@@ -193,6 +251,7 @@ export default function DogListPage({ toast }: Props) {
 
   return (
     <div style={{ padding: 32 }}>
+      <style>{DOG_LIST_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>My dogs</h1>
@@ -209,16 +268,15 @@ export default function DogListPage({ toast }: Props) {
           transferred filters against stale or incomplete `dogs` data
           would be misleading, and the Transferred(N) count is stale too. */}
       {!loadError && (
-      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className="dog-list-controls">
         <input
-          className="form-input"
-          style={{ maxWidth: 260 }}
+          className="form-input dog-list-search"
           type="text"
           placeholder="Search name or breed…"
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', maxWidth: '100%', minWidth: 0, paddingBottom: 2 }}>
+        <div className="dog-list-filters" aria-label="Filter dogs">
           {filterTabs.map(tab => (
             <button
               key={tab.key}
@@ -343,6 +401,14 @@ function DogCard({ dog }: { dog: Dog }) {
   // records/AI scans until the user upgrades or swaps it back to active.
   const isRestricted = dog.status === 'restricted'
   const actualStage = dog.isDeceased ? 'remembered' : calculateLifeStage(dog.dateOfBirth, dog.breed)
+  const profilePhoto = typeof dog.profilePhoto === 'string' ? dog.profilePhoto.trim() : ''
+  const [photoFailed, setPhotoFailed] = useState(false)
+
+  useEffect(() => {
+    setPhotoFailed(false)
+  }, [profilePhoto])
+
+  const showPhoto = Boolean(profilePhoto) && !photoFailed
   return (
     <Link to={`/app/dogs/${dog.id}`} style={{ textDecoration: 'none' }}>
       <div className="card" style={{
@@ -354,12 +420,13 @@ function DogCard({ dog }: { dog: Dog }) {
         onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'none' }}
       >
         {/* Photo banner */}
-        {dog.profilePhoto ? (
+        {showPhoto ? (
           <div style={{ position: 'relative', height: 160, overflow: 'hidden' }}>
             <img
-              src={dog.profilePhoto}
+              src={profilePhoto}
               alt={dog.name}
               style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block' }}
+              onError={() => setPhotoFailed(true)}
             />
             {isTransferred && (
               <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
@@ -373,8 +440,9 @@ function DogCard({ dog }: { dog: Dog }) {
             )}
           </div>
         ) : (
-          <div style={{ height: 160, background: 'linear-gradient(135deg, var(--brand-50), var(--sand))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 44 }}>
-            {LIFE_STAGE_EMOJI[actualStage]}
+          <div className="dog-list-photo-fallback" role="img" aria-label={`No photo available for ${dog.name}`}>
+            <span className="dog-list-photo-fallback-emoji" aria-hidden="true">{LIFE_STAGE_EMOJI[actualStage]}</span>
+            <span>No photo</span>
           </div>
         )}
 
