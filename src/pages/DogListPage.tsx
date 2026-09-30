@@ -189,7 +189,7 @@ export default function DogListPage({ toast }: Props) {
   const filterTabs: { key: DogFilter; label: string }[] = [
     { key: 'all', label: 'All' },
     { key: 'puppies', label: 'Puppies' },
-    { key: 'young_adult', label: 'Passport' },
+    { key: 'young_adult', label: 'Young' },
     { key: 'adult', label: 'Adult' },
     { key: 'senior', label: 'Senior' },
     { key: 'remembered', label: 'Forever' },
