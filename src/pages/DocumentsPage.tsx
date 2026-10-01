@@ -3,9 +3,6 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getAllDocumentsForUser, getDogs, deleteDocument } from '../lib/db'
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
-import { db, storage } from '../lib/firebase'
 import type { Dog, ToastMessage } from '../types'
 
 interface Props {
@@ -298,7 +295,7 @@ export default function DocumentsPage({ toast }: Props) {
       {showUpload && (
         <UploadModal
           dogs={Object.values(dogs)}
-          userId={user!.uid}
+          user={user!}
           onClose={() => setShowUpload(false)}
           onSuccess={handleUpload}
           toast={toast}
@@ -310,9 +307,9 @@ export default function DocumentsPage({ toast }: Props) {
 
 // ── UPLOAD MODAL ─────────────────────────────────────────────
 
-function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
+function UploadModal({ dogs, user, onClose, onSuccess, toast }: {
   dogs: Dog[]
-  userId: string
+  user: { getIdToken: () => Promise<string> }
   onClose: () => void
   onSuccess: (doc: any) => void
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -344,42 +341,31 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
     e.preventDefault()
     if (!file || !dogId) return
     setUploading(true)
-    setProgress(0)
+    setProgress(10)
     try {
-      // Upload to Firebase Storage
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'pdf'
-      const storagePath = `documents/${userId}/${dogId}/${Date.now()}.${ext}`
-      const storageRef = ref(storage, storagePath)
-      const uploadTask = uploadBytesResumable(storageRef, file)
-
-      await new Promise<void>((resolve, reject) => {
-        uploadTask.on(
-          'state_changed',
-          snap => setProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
-          reject,
-          resolve,
-        )
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result || ''))
+        reader.onerror = reject
+        reader.readAsDataURL(file)
       })
-
-      const fileUrl = await getDownloadURL(uploadTask.snapshot.ref)
-
-      // Save to Firestore
-      const docData = {
-        tenantId: userId,
-        dogId,
-        documentType: docType,
-        title: title || getDocLabel(docType),
-        notes: notes || null,
-        fileUrl,
-        fileType: ext,
-        storagePath,
-        source: 'manual',
-        uploadedAt: serverTimestamp(),
-      }
-      const ref2 = await addDoc(collection(db, 'documents'), docData)
-      onSuccess({ id: ref2.id, ...docData, uploadedAt: { toDate: () => new Date() } })
-    } catch (err) {
-      console.error(err)
+      const base64 = dataUrl.split(',')[1]
+      if (!base64) throw new Error('Could not read file')
+      setProgress(35)
+      const idToken = await user.getIdToken()
+      setProgress(50)
+      const response = await fetch('/api/upload-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ base64, mediaType: file.type || 'application/octet-stream', dogId, documentType: docType, title: title || getDocLabel(docType), notes: notes || null, source: 'manual', originalFileName: file.name }),
+      })
+      if (!response.ok) throw new Error('Upload failed')
+      setProgress(90)
+      const uploaded = await response.json()
+      setProgress(100)
+      onSuccess({ id: uploaded.documentId, dogId, documentType: docType, title: title || getDocLabel(docType), notes: notes || null, filePath: uploaded.filePath, fileType: uploaded.fileType || 'file', source: 'manual', uploadedAt: { toDate: () => new Date() } })
+    } catch {
+      console.error('Manual document upload failed')
       toast('Upload failed — please try again', 'error')
     } finally {
       setUploading(false)

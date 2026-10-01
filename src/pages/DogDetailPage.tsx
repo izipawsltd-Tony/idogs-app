@@ -616,6 +616,11 @@ export default function DogDetailPage({ toast }: Props) {
   async function handleScanResult(result: any, filePath?: string) {
     if (!dogId || !dog) return
 
+    // The upload endpoint commits the private object and its Firestore
+    // document before AIScan calls this handler. Refresh immediately so
+    // later extraction work cannot delay or prevent Documents visibility.
+    if (filePath) retryDocuments()
+
     let vaccineCount = 0
     let healthCount = 0
     const skippedTests: string[] = []
@@ -767,26 +772,6 @@ export default function DogDetailPage({ toast }: Props) {
     if (healthCount > 0) {
       const updatedHealth = await getHealthTests(dogId)
       setHealthTests(updatedHealth)
-    }
-
-    // Refresh the Documents tab immediately — AIScan uploads the document
-    // via /api/upload-document (Admin SDK) before calling onResult, so by
-    // this point the Firestore doc already exists if filePath is set. A
-    // failed upload leaves filePath undefined, so no refetch (and no false
-    // record) happens for it.
-    if (filePath) {
-      const updatedDocs = await getDogDocuments(dogId).catch(() => documents)
-      setDocuments(updatedDocs)
-    }
-
-    // Refresh the Documents tab immediately — AIScan uploads the document
-    // via /api/upload-document (Admin SDK) before calling onResult, so by
-    // this point the Firestore doc already exists if filePath is set. A
-    // failed upload leaves filePath undefined, so no refetch (and no false
-    // record) happens for it.
-    if (filePath) {
-      const updatedDocs = await getDogDocuments(dogId).catch(() => documents)
-      setDocuments(updatedDocs)
     }
 
     // Update dog fields from scan

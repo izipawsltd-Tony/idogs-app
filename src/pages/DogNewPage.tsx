@@ -395,14 +395,15 @@ export default function DogNewPage({ toast }: Props) {
         for (const f of pendingFilesSnapshot) {
           if (!req.isCurrent()) return
           try {
+            const idToken = await user.getIdToken()
+            if (!req.isCurrent()) return
             const uploadRes = await fetch('/api/upload-document', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
               body: JSON.stringify({
                 base64: f.base64,
                 mediaType: f.mediaType,
                 dogId,
-                tenantId: user.uid,
                 documentType: f.documentType,
                 extractedData: { dogName: formSnapshot.name },
               }),

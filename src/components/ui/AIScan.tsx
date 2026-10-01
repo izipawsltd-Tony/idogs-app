@@ -29,7 +29,7 @@ interface ScanResult {
 }
 
 interface Props {
-  onResult: (result: ScanResult, filePath?: string) => void
+  onResult: (result: ScanResult, filePath?: string, rawFile?: { base64: string; mediaType: string; documentType: string }) => void
   toast: (msg: string, type?: ToastMessage['type']) => void
   dogId?: string
   tenantId?: string
@@ -157,6 +157,9 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
               mediaType,
               dogId,
               documentType: scanData?.documentType || 'other',
+              title: scanData?.documentType === 'pedigree' ? 'Pedigree Certificate' : undefined,
+              notes: scanData?.notes || undefined,
+              source: 'scan',
               extractedData: {
                 dogName: scanData?.dogName || null,
                 vaccines: scanData?.vaccines?.length || 0,
@@ -201,7 +204,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
       // Call onResult AFTER upload so filePath is available for saving to records
       // Even if scanData is null, we can call onResult so the parent component can refresh document lists
       const resultData = scanData || { documentType: 'other', dogName: null, breed: null, dateOfBirth: null, microchip: null, vaccines: [], healthTest: null, ankc: null, notes: null }
-      onResult(resultData, filePath)
+      onResult(resultData, filePath, dogId ? undefined : { base64, mediaType, documentType: resultData.documentType || 'other' })
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Scan failed', 'error')
     } finally {
