@@ -22,6 +22,14 @@ import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showc
 import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
 import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage, toFirestoreAssignBuyerUpdate } from '../lib/assignBuyer'
 import { resolvePedigreeRegister, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
+import { isAndroidNativeApp } from '../lib/nativePlatform'
+import {
+  litterShowcasePlanGateMessage,
+  puppyAddedRestrictedMessage,
+  restrictedPuppyAssignBuyerMessage,
+  restrictedPuppyEditMessage,
+  restrictedPuppyMediaMessage,
+} from '../lib/nativeUpgradeCopy'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -455,7 +463,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   async function handleAssignBuyer(enq: ShowcaseEnquiry, puppy: Dog) {
     if (assignBuyerBusy[enq.id]) return
     if ((puppy as any).status === 'restricted') {
-      toast("This puppy is over your plan's dog limit and is read-only — upgrade or free up a slot to assign a buyer.", 'error')
+      toast(restrictedPuppyAssignBuyerMessage(isAndroidNativeApp()), 'error')
       return
     }
     const reservedLike = puppy.availabilityStatus === 'reserved' || puppy.availabilityStatus === 'sold'
@@ -811,7 +819,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
       // failed with an unexplained error. Tell them immediately instead.
       toast(
         createdStatus === 'restricted'
-          ? `${finalName} added, but is read-only — you're over your plan's dog limit. Upgrade or free up a slot to edit it.`
+          ? puppyAddedRestrictedMessage(isAndroidNativeApp(), finalName)
           : (alreadyExisted ? `${finalName} was already added — no duplicate created` : `${finalName} added — QR Passport created!`)
       )
     } catch (err) {
@@ -877,7 +885,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     // are untouched — this only short-circuits a write Rules would deny
     // anyway.
     if ((puppy as any).status === 'restricted') {
-      toast("This puppy is over your plan's dog limit and is read-only — upgrade or free up a slot to edit it.", 'error')
+      toast(restrictedPuppyEditMessage(isAndroidNativeApp()), 'error')
       return
     }
     try {
@@ -1428,7 +1436,9 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                   <div style={{ padding: '14px 16px', borderTop: '1px solid var(--border)', background: 'var(--sand)' }}>
                                     {isPuppyRestricted && (
                                       <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10 }}>
-                                        🔒 This puppy is over your plan's dog limit and is read-only — <Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>upgrade to Plus</Link> or free up a slot to edit it.
+                                        {isAndroidNativeApp()
+                                          ? "🔒 This puppy is over your plan's dog limit and is read-only — free up a slot to edit it."
+                                          : (<>🔒 This puppy is over your plan's dog limit and is read-only — <Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>upgrade to Plus</Link> or free up a slot to edit it.</>)}
                                       </div>
                                     )}
                                     <fieldset disabled={isPuppyRestricted} style={{ border: 'none', padding: 0, margin: 0 }}>
@@ -1453,7 +1463,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                       <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 10 }}>🎪 Litter Showcase</div>
                       {getEffectivePlanClient(profile) !== 'plus' ? (
                         <div style={{ fontSize: 13, color: 'var(--light)' }}>
-                          Litter Showcase is a Plus-plan feature — upgrade to curate which puppies from this litter can be showcased.
+                          {litterShowcasePlanGateMessage(isAndroidNativeApp())}
                         </div>
                       ) : showcaseLoading[litter.id] ? (
                         <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
@@ -2682,7 +2692,7 @@ function ShowcaseManager({
                             </button>
                           </>
                         ) : (
-                          <span>🔒 {puppy.name} is over your plan's dog limit and is read-only — media can't be added until it's activated or you upgrade.</span>
+                          <span>{restrictedPuppyMediaMessage(isAndroidNativeApp(), puppy.name)}</span>
                         )}
                       </div>
                     )}

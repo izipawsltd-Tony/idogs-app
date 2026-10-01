@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
+import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { showLandingPaidPromotion } from '../lib/landingPageAndroidGate'
 
 // ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
 // Ported from the approved design-review package:
@@ -28,6 +30,7 @@ export default function LandingPage() {
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const pageContentRef = useRef<HTMLDivElement>(null)
+  const showPaidPromotion = showLandingPaidPromotion(isAndroidNativeApp())
 
   useEffect(() => {
     if (!loading && user) navigate('/app/dashboard')
@@ -64,7 +67,7 @@ export default function LandingPage() {
               <a href="#features">Features</a>
               <a href="#for-owners">For Owners</a>
               <a href="#for-breeders">For Breeders</a>
-              <a href="#pricing">Pricing</a>
+              {showPaidPromotion && <a href="#pricing">Pricing</a>}
             </nav>
             <div className="nav-right">
               <Link className="nav-login" to="/login">Log In</Link>
@@ -93,7 +96,7 @@ export default function LandingPage() {
                 <Link className="btn btn-primary" to="/signup">Start Free</Link>
                 <a className="btn btn-ghost" href="#howitworks">See How It Works</a>
               </div>
-              <p className="price-note">Plans from A$7/month · No complicated pricing.</p>
+              {showPaidPromotion && <p className="price-note">Plans from A$7/month · No complicated pricing.</p>}
             </div>
             {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
             <div className="hero-visual" aria-label="iDogs product preview">
@@ -259,41 +262,44 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section className="block pricing-block" id="pricing">
-          <div className="wrap">
-            <p className="kicker">Simple pricing</p>
-            <h2>Everything you need, without complicated plans.</h2>
-            <p className="lead">Start free. Upgrade to iDogs Plus when you need more.</p>
-            <div className="pricing-grid">
-              <article className="pricing-card pricing-card-main">
-                <div className="pricing-card-head">
-                  <div>
-                    <p className="pricing-label">iDogs Plus</p>
-                    <p className="pricing-price"><span>A$7</span><small>/month</small></p>
+        {showPaidPromotion && (
+          <section className="block pricing-block" id="pricing">
+            <div className="wrap">
+              <p className="kicker">Simple pricing</p>
+              <h2>Everything you need, without complicated plans.</h2>
+              <p className="lead">Start free. Upgrade to iDogs Plus when you need more.</p>
+              <div className="pricing-grid">
+                <article className="pricing-card pricing-card-main">
+                  <div className="pricing-card-head">
+                    <div>
+                      <p className="pricing-label">iDogs Plus</p>
+                      <p className="pricing-price"><span>A$7</span><small>/month</small></p>
+                    </div>
+                    <span className="pricing-badge">Most popular</span>
                   </div>
-                  <span className="pricing-badge">Most popular</span>
-                </div>
-                <p className="pricing-copy">Organise your dogs and breeding records in one connected workspace.</p>
-                <ul className="pricing-list">
-                  <li>Dog profiles, health records and documents</li>
-                  <li>Breeder tools for dogs, litters and puppies</li>
-                  <li>2 litters per rolling 12 months included</li>
-                  <li>Extra litters A$39 each</li>
-                  <li>Digital Passport and QR sharing</li>
-                </ul>
-                <Link className="btn btn-primary pricing-cta" to="/signup">Start Free</Link>
-              </article>
-              <article className="pricing-card pricing-card-addon">
-                <p className="pricing-label">Optional add-on</p>
-                <h3>SMS Reminders</h3>
-                <p className="pricing-price"><span>+A$3</span><small>/month</small></p>
-                <p className="pricing-copy">Add SMS reminders to Plus when you need them.</p>
-                <div className="sms-credit"><strong>20 SMS credits / month</strong><span>Resets each billing month.</span></div>
-              </article>
+                  <p className="pricing-copy">Organise your dogs and breeding records in one connected workspace.</p>
+                  <ul className="pricing-list">
+                    <li>Dog profiles, health records and documents</li>
+                    <li>Breeder tools for dogs, litters and puppies</li>
+                    <li>2 litters per rolling 12 months included</li>
+                    <li>Extra litters A$39 each</li>
+                    <li>Digital Passport and QR sharing</li>
+                  </ul>
+                  <Link className="btn btn-primary pricing-cta" to="/signup">Start Free</Link>
+                </article>
+                <article className="pricing-card pricing-card-addon">
+                  <p className="pricing-label">Optional add-on</p>
+                  <h3>SMS Reminders</h3>
+                  <p className="pricing-price"><span>+A$3</span><small>/month</small></p>
+                  <p className="pricing-copy">Add SMS reminders to Plus when you need them.</p>
+                  <div className="sms-credit"><strong>20 SMS credits / month</strong><span>Resets each billing month.</span></div>
+                </article>
+              </div>
+              <p className="pricing-footnote">All paid prices are in AUD and include GST. Less than the cost of a coffee each month.</p>
             </div>
-            <p className="pricing-footnote">All paid prices are in AUD and include GST. Less than the cost of a coffee each month.</p>
-          </div>
-        </section>
+          </section>
+
+        )}
 
         {/* FAQ section intentionally absent — no answer verified against the real product yet (brief §13) */}
 
@@ -319,7 +325,7 @@ export default function LandingPage() {
                   <a href="#features">Features</a>
                   <a href="#for-owners">For Owners</a>
                   <a href="#for-breeders">For Breeders</a>
-                  <a href="#pricing">Pricing</a>
+                  {showPaidPromotion && <a href="#pricing">Pricing</a>}
                 </div>
                 <div className="foot-col">
                   <h5>Account</h5>
@@ -344,7 +350,7 @@ export default function LandingPage() {
         </div>
       </div>
 
-      {menuOpen && <MobileMenu onClose={() => setMenuOpen(false)} />}
+      {menuOpen && <MobileMenu onClose={() => setMenuOpen(false)} showPaidPromotion={showPaidPromotion} />}
     </div>
   )
 }
@@ -357,7 +363,7 @@ export default function LandingPage() {
 // hamburger button, since that's what was just clicked), closeRef gets
 // initial focus, Tab/Shift+Tab wraps within the panel's own focusable
 // elements, Escape closes, and focus returns to the opener on unmount.
-function MobileMenu({ onClose }: { onClose: () => void }) {
+function MobileMenu({ onClose, showPaidPromotion }: { onClose: () => void; showPaidPromotion: boolean }) {
   const panelRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const openerRef = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null)
@@ -398,7 +404,7 @@ function MobileMenu({ onClose }: { onClose: () => void }) {
         <a href="#features" onClick={onClose}>Features</a>
         <a href="#for-owners" onClick={onClose}>For Owners</a>
         <a href="#for-breeders" onClick={onClose}>For Breeders</a>
-        <a href="#pricing" onClick={onClose}>Pricing</a>
+        {showPaidPromotion && <a href="#pricing" onClick={onClose}>Pricing</a>}
         <Link to="/login" style={{ border: 'none' }} onClick={onClose}>Log In</Link>
         <Link className="btn btn-primary" to="/signup" onClick={onClose}>Start Free</Link>
       </div>

@@ -79,6 +79,73 @@ export function rewriteNativeApiUrl(input: string, apiBase: string): string {
   return `${apiBase}${input}`
 }
 
+function safeOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin
+  } catch {
+    return null
+  }
+}
+
+// An absolute URL/Request whose origin is some third party (e.g. a signed
+// upload host) must never be treated as a native `/api/*` call: stripping
+// its origin down to a bare pathname would let a coincidental `/api/...`
+// path get silently rewritten onto the iDogs API host, sending that
+// request's body/auth to the wrong server. Only a bare relative string, or
+// an absolute URL/Request whose origin is the native shell's own origin or
+// one of the known iDogs API origins (QA or production, regardless of which
+// one is currently active), is eligible for rewrite/block-list checks — the
+// latter also ensures an absolute iDogs URL can't bypass the payment block
+// just by being spelled out in full instead of as a relative path.
+export function nativeApiRoutablePath(
+  input: RequestInfo | URL,
+  apiBase: string,
+  currentOrigin: string,
+): string | null {
+  const eligibleOrigins = [currentOrigin, apiBase, NATIVE_PRODUCTION_API_BASE, NATIVE_QA_API_BASE]
+    .map(safeOrigin)
+    .filter((origin): origin is string => origin !== null)
+
+  if (typeof input === 'string') {
+    // A bare relative string (e.g. `/api/create-checkout`) has no origin of
+    // its own, so `safeOrigin` returns null for it — fall back to the plain
+    // `/api/` prefix check. An absolute string must go through the same
+    // eligible-origin check as a URL/Request below, otherwise spelling a
+    // blocked iDogs endpoint out in full as a string (instead of passing a
+    // URL/Request) would silently bypass the block list.
+    const absoluteOrigin = safeOrigin(input)
+    if (absoluteOrigin === null) return input.startsWith('/api/') ? input : null
+    if (!eligibleOrigins.includes(absoluteOrigin)) return null
+    const absoluteUrl = new URL(input)
+    return absoluteUrl.pathname + absoluteUrl.search + absoluteUrl.hash
+  }
+
+  let absoluteUrl: URL
+  try {
+    absoluteUrl = input instanceof URL ? input : new URL(input.url)
+  } catch {
+    return null
+  }
+
+  if (!eligibleOrigins.includes(absoluteUrl.origin)) return null
+  return absoluteUrl.pathname + absoluteUrl.search + absoluteUrl.hash
+}
+
+// Request instances always normalize `.url` to an absolute URL, and a caller
+// could equally pass a URL instance instead of a bare string. Recovering just
+// the path here means assert/rewrite's `/api/` matching applies the same way
+// no matter which of the three RequestInfo|URL shapes a fetch call used.
+export function apiPathFromFetchInput(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.pathname + input.search + input.hash
+  try {
+    const url = new URL(input.url)
+    return url.pathname + url.search + url.hash
+  } catch {
+    return input.url
+  }
+}
+
 export function rewriteNativeQaApiUrl(input: string, apiBase: string): string {
   if (!input.startsWith('/api/')) return input
   assertNativeQaApiPathAllowed(input)
@@ -108,13 +175,18 @@ function installFetchRouter(
 ): void {
   const transportFetch = window.fetch.bind(window)
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    if (typeof input === 'string') {
-      return transportFetch(rewrite(input, apiBase), init)
-    }
-    if (input instanceof URL) {
-      return transportFetch(input, init)
-    }
-    return transportFetch(input, init)
+    const path = nativeApiRoutablePath(input, apiBase, window.location.origin)
+    // A third-party absolute URL/Request (not same-origin, not a known iDogs
+    // API origin) is left completely untouched here. rewrite() throws for a
+    // blocked native /api/* path once we do have an eligible path, so this
+    // still rejects a blocked call regardless of whether it arrived as a
+    // string, a URL, or a Request — closing the bypass a
+    // `typeof input === 'string'` check alone would leave open.
+    if (path === null) return transportFetch(input, init)
+    const rewritten = rewrite(path, apiBase)
+    if (rewritten === path) return transportFetch(input, init)
+    if (input instanceof Request) return transportFetch(new Request(rewritten, input), init)
+    return transportFetch(rewritten, init)
   }) as typeof window.fetch
 }
 

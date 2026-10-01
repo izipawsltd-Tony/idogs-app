@@ -1,7 +1,13 @@
 import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import {
+  browserLocalPersistence,
+  getAuth,
+  indexedDBLocalPersistence,
+  initializeAuth,
+} from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
+import { androidAuthPersistencePreference, resolveNativePlatform, shouldUseBrowserLocalAuthPersistence, type CapacitorRuntimeLike } from './nativeAuthPersistence'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -12,8 +18,14 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
+type CapacitorWindow = Window & { Capacitor?: CapacitorRuntimeLike }
+const capacitor = typeof window === 'undefined' ? undefined : (window as CapacitorWindow).Capacitor
+const nativePlatform = resolveNativePlatform(import.meta.env.VITE_IDOGS_NATIVE_PLATFORM, capacitor)
+
 const app = initializeApp(firebaseConfig)
-export const auth = getAuth(app)
+export const auth = shouldUseBrowserLocalAuthPersistence(nativePlatform)
+  ? initializeAuth(app, { persistence: androidAuthPersistencePreference(browserLocalPersistence, indexedDBLocalPersistence) })
+  : getAuth(app)
 export const db = getFirestore(app)
 export const storage = getStorage(app)
 export default app

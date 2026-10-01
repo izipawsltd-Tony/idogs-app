@@ -6,6 +6,8 @@ import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
+import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { dogLimitReachedBody } from '../lib/nativeUpgradeCopy'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -548,12 +550,14 @@ export default function DogNewPage({ toast }: Props) {
             The free plan supports up to {FREE_DOG_LIMIT} dogs.
           </p>
           <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 28, lineHeight: 1.6 }}>
-            Upgrade to add more dogs, unlock iDogs Scan, documents, and ownership transfer.
+            {dogLimitReachedBody(isAndroidNativeApp())}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link to="/app/billing" className="btn btn-primary">
-              Upgrade — from $5/mo
-            </Link>
+            {!isAndroidNativeApp() && (
+              <Link to="/app/billing" className="btn btn-primary">
+                Upgrade — from $5/mo
+              </Link>
+            )}
             <Link to="/app/dogs" className="btn btn-secondary">
               Back to my dogs
             </Link>

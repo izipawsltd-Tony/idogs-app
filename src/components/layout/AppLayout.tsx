@@ -6,6 +6,8 @@ import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '..
 import { getInitials, AU_STATES, isDogEligibleForCap, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../../lib/utils'
 import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
 import { SUPER_ADMIN_EMAILS } from '../../lib/superAdmin'
+import { isAndroidNativeApp } from '../../lib/nativePlatform'
+import { sidebarPurchasesUnavailableNotice } from '../../lib/nativeUpgradeCopy'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
 import SupportChatWidget from '../SupportChatWidget'
@@ -540,13 +542,19 @@ export default function AppLayout({ toast }: Props) {
               </div>
             )}
             {planCfg.upgrade && (
-              <button
-                className="btn btn-primary btn-sm"
-                style={{ width: '100%', marginTop: 10, background: 'var(--gold-500)', borderColor: 'var(--gold-500)' }}
-                onClick={() => navigate('/app/billing')}
-              >
-                Upgrade plan
-              </button>
+              isAndroidNativeApp() ? (
+                <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mid)', textAlign: 'center' }}>
+                  {sidebarPurchasesUnavailableNotice()}
+                </div>
+              ) : (
+                <button
+                  className="btn btn-primary btn-sm"
+                  style={{ width: '100%', marginTop: 10, background: 'var(--gold-500)', borderColor: 'var(--gold-500)' }}
+                  onClick={() => navigate('/app/billing')}
+                >
+                  Upgrade plan
+                </button>
+              )
             )}
           </div>
         </div>

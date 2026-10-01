@@ -4,24 +4,16 @@ import { BrowserRouter, useLocation } from 'react-router-dom'
 import { AuthProvider } from './hooks/useAuth'
 import App from './components/App'
 import { installNativeProductionApiRouting, installNativeQaApiRouting } from './lib/nativeApiRouting'
+import { resolveNativePlatform, type CapacitorRuntimeLike } from './lib/nativeAuthPersistence'
 import './index.css'
 import './mobile.css'
 import './mobile-dog-detail-route.css'
 import './mobile-native-qa-polish.css'
 
-type CapacitorWindow = Window & {
-  Capacitor?: {
-    getPlatform?: () => string
-    isNativePlatform?: () => boolean
-  }
-}
+type CapacitorWindow = Window & { Capacitor?: CapacitorRuntimeLike }
 
 const capacitor = (window as CapacitorWindow).Capacitor
-const buildNativePlatform = import.meta.env.VITE_IDOGS_NATIVE_PLATFORM?.trim()
-const runtimeNativePlatform = capacitor?.isNativePlatform?.()
-  ? (capacitor.getPlatform?.() || 'native')
-  : ''
-const nativePlatform = buildNativePlatform || runtimeNativePlatform
+const nativePlatform = resolveNativePlatform(import.meta.env.VITE_IDOGS_NATIVE_PLATFORM, capacitor)
 const nativeMode = import.meta.env.VITE_IDOGS_NATIVE_MODE?.trim().toLowerCase()
 
 if (nativePlatform) {
