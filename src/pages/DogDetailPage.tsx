@@ -1137,7 +1137,10 @@ export default function DogDetailPage({ toast }: Props) {
         <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} isCurrentEffectiveOwner={isCurrentEffectiveOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} isCurrentEffectiveOwner={isCurrentEffectiveOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdatePedigree={async updates => {
+        await updateDog(dogId!, updates)
+        setDog(prev => prev ? { ...prev, ...updates } : prev)
+      }} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} onUpdateSale={async (firestoreUpdates, localUpdates) => {
@@ -1421,7 +1424,7 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, isCurrentEffectiveOwner, onUpdateBreederId, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, isCurrentEffectiveOwner, onUpdateBreederId, onUpdatePedigree, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number | null
   toast: (msg: string, type?: ToastMessage['type']) => void
   isOwner: boolean
@@ -1442,6 +1445,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
   // CORRECT Rules behavior surfaced as a confusing, avoidable UI dead end.
   isCurrentEffectiveOwner: boolean
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
+  onUpdatePedigree: (updates: Partial<Dog>) => Promise<void>
   onUpdateSale: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
 }) {
@@ -1527,7 +1531,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
             litter-born puppy, until edited) must read as "not recorded", never "Main". */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', gap: 8 }}>
           <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Pedigree / Registration</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {(() => {
               const register = resolvePedigreeRegister((dog as any).pedigreeRegister)
               const eligibility = resolveBreedingEligibility(dog as any)
@@ -1587,7 +1591,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
                 // above already stops it firing from the UI.
                 if (isRestricted) return
                 const updates = nextPedigreeRegisterUpdate((dog as any).pedigreeRegister, e.target.value)
-                await updateDog(dog.id, updates as any)
+                await onUpdatePedigree(updates as Partial<Dog>)
                 toast('Pedigree status updated')
               }}
               style={{ height: 28, fontSize: 12, padding: '0 28px 0 8px', minWidth: 100 }}
@@ -1599,6 +1603,24 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
               <option value="mixed">Mixed breed</option>
               <option value="rescue">Rescue</option>
             </select>
+            {resolvePedigreeRegister((dog as any).pedigreeRegister) === 'MAIN' && (
+              <select
+                className="form-select"
+                aria-label="Breeding eligibility"
+                value={(dog as any).breedingEligibility || 'unknown'}
+                disabled={isRestricted}
+                onChange={async e => {
+                  if (isRestricted) return
+                  await onUpdatePedigree({ breedingEligibility: e.target.value as NonNullable<Dog['breedingEligibility']> })
+                  toast('Breeding eligibility updated')
+                }}
+                style={{ height: 28, fontSize: 12, padding: '0 28px 0 8px', minWidth: 150 }}
+              >
+                <option value="unknown">Eligibility: Not confirmed</option>
+                <option value="eligible">✓ Eligible to breed</option>
+                <option value="not_eligible">Not eligible to breed</option>
+              </select>
+            )}
           </div>
         </div>
         {editingBreederId ? (
