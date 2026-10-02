@@ -1,6 +1,7 @@
 const NATIVE_QA_API_BASE = 'https://idogs-native-api-qa-izipaws.vercel.app'
 const NATIVE_PRODUCTION_API_BASE = 'https://idogs.com.au'
 const EXPECTED_STAGING_FIREBASE_PROJECT = 'idogs-app-staging'
+const EXPECTED_PRODUCTION_FIREBASE_PROJECT = 'idogs-app'
 const EXPECTED_VERCEL_ENV = 'production'
 const EXPECTED_BACKEND_MODE = 'dedicated-qa'
 
@@ -48,7 +49,7 @@ export function getNativeQaApiBase(firebaseProjectId: string | undefined): strin
 }
 
 export function getNativeProductionApiBase(firebaseProjectId: string | undefined): string {
-  if (!firebaseProjectId || firebaseProjectId === EXPECTED_STAGING_FIREBASE_PROJECT) {
+  if (firebaseProjectId !== EXPECTED_PRODUCTION_FIREBASE_PROJECT) {
     throw new Error('NATIVE_API_ENV_NOT_PRODUCTION')
   }
   return NATIVE_PRODUCTION_API_BASE

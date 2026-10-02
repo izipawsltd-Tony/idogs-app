@@ -37,5 +37,8 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Native production environment guard regression
+        run: npm run test:native-release-env
+
       - name: Production build
         run: npm run build

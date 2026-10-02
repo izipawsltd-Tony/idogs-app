@@ -10,6 +10,19 @@ This folder contains the Capacitor mobile shell for the existing iDogs React/Vit
 - App icon source: `../public/02_idogs_icon_transparent.png`
 - Horizontal brand source: `../public/01_idogs_primary_horizontal_transparent.png`
 
+## Production Android identity checks
+
+The production AAB pipeline requires Firebase project `idogs-app` and Auth
+domain `idogs-app.firebaseapp.com` before exporting client configuration.
+Missing, blank or multiline client fields stop packaging. Android startup also
+requires the exact production project before installing the API transport.
+An unrelated Firebase project must never be combined with the production API.
+
+Run `npm run test:native-release-env` from the repository root to verify the
+packaging guard. `npm test` covers the runtime routing, authentication and
+Android purchase UI guards. The production AAB workflow runs both sets before
+building and signing an Internal Testing candidate.
+
 ## Phase 1 workflow
 
 From the repository root:

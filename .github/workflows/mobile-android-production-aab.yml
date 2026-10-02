@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/mobile-app-foundation
+      - feat/android-production-identity-guard
     paths:
       - '.github/workflows/mobile-android-production-aab.yml'
       - 'src/**'
@@ -11,6 +12,8 @@ on:
       - 'mobile/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'scripts/validate-native-production-env.mjs'
+      - 'scripts/test-native-production-env.mjs'
   workflow_dispatch:
 
 permissions:
@@ -50,6 +53,11 @@ jobs:
       - name: Install web dependencies
         run: npm ci
 
+      - name: Verify native guards before production packaging
+        run: |
+          npm test -- src/lib/nativeApiRouting.test.ts src/lib/nativeAuthPersistence.test.ts src/lib/nativePlatform.test.ts src/lib/billingPageAndroidGate.test.ts src/lib/landingPageAndroidGate.test.ts src/lib/nativeUpgradeCopy.test.ts
+          npm run test:native-release-env
+
       - name: Pull production client env and fail closed on staging
         shell: bash
         env:
@@ -62,8 +70,9 @@ jobs:
           printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
           npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-production-pull.log 2>&1
           test -f .vercel/.env.production.local
-          ENV_FILE=.vercel/.env.production.local GITHUB_ENV_FILE="$GITHUB_ENV" node <<'NODE'
-          const fs = require('fs')
+          ENV_FILE=.vercel/.env.production.local GITHUB_ENV_FILE="$GITHUB_ENV" node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          import { assertNativeProductionEnvironment } from './scripts/validate-native-production-env.mjs'
           const text = fs.readFileSync(process.env.ENV_FILE, 'utf8')
           function read(name) {
             const line = text.split(/\r?\n/).find(l => l.startsWith(name + '='))
@@ -81,17 +90,12 @@ jobs:
             'VITE_FIREBASE_APP_ID',
           ]
           const values = Object.fromEntries(required.map(k => [k, read(k)]))
-          for (const [k, v] of Object.entries(values)) {
-            if (!v) throw new Error(`${k} missing from Production env`)
-          }
-          if (values.VITE_FIREBASE_PROJECT_ID === 'idogs-app-staging') {
-            throw new Error('FAIL CLOSED: production AAB resolved staging Firebase')
-          }
+          assertNativeProductionEnvironment(values)
           for (const [k, v] of Object.entries(values)) {
             fs.appendFileSync(process.env.GITHUB_ENV_FILE, `${k}=${v}\n`)
           }
           fs.appendFileSync(process.env.GITHUB_ENV_FILE, 'VITE_EXTRA_LITTER_CHECKOUT_ENABLED=false\n')
-          console.log(`Production Firebase classification: NON-STAGING (${values.VITE_FIREBASE_PROJECT_ID})`)
+          console.log('Production Firebase identity PASS: idogs-app / idogs-app.firebaseapp.com')
           NODE
 
       - name: Build production web bundle

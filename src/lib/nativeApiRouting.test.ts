@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   apiPathFromFetchInput,
   assertNativeProductionApiPathAllowed,
@@ -6,6 +6,7 @@ import {
   assertNativeQaHealth,
   getNativeProductionApiBase,
   getNativeQaApiBase,
+  installNativeProductionApiRouting,
   nativeApiRoutablePath,
   rewriteNativeApiUrl,
   rewriteNativeProductionApiUrl,
@@ -23,11 +24,27 @@ describe('native API routing', () => {
     expect(() => getNativeQaApiBase(undefined)).toThrow('NATIVE_API_ENV_NOT_STAGING')
   })
 
-  it('rejects staging or missing Firebase for production native', () => {
+  it('accepts only the exact production Firebase project for production native', () => {
     expect(getNativeProductionApiBase('idogs-app')).toBe(PROD_BASE)
-    expect(getNativeProductionApiBase('any-production-project')).toBe(PROD_BASE)
-    expect(() => getNativeProductionApiBase('idogs-app-staging')).toThrow('NATIVE_API_ENV_NOT_PRODUCTION')
-    expect(() => getNativeProductionApiBase(undefined)).toThrow('NATIVE_API_ENV_NOT_PRODUCTION')
+    for (const project of ['idogs-app-staging', 'any-production-project', 'idogs-app-copy', '', ' idogs-app', undefined]) {
+      expect(() => getNativeProductionApiBase(project)).toThrow('NATIVE_API_ENV_NOT_PRODUCTION')
+    }
+  })
+
+  it('does not enable production transport or markers when the Firebase project is wrong', () => {
+    const fetch = vi.fn()
+    const dataset = {}
+    vi.stubGlobal('window', { fetch, location: { origin: NATIVE_SHELL_ORIGIN } })
+    vi.stubGlobal('document', { documentElement: { dataset } })
+    try {
+      expect(() => installNativeProductionApiRouting('another-production-project'))
+        .toThrow('NATIVE_API_ENV_NOT_PRODUCTION')
+      expect(window.fetch).toBe(fetch)
+      expect(fetch).not.toHaveBeenCalled()
+      expect(dataset).toEqual({})
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('rewrites only relative iDogs API paths', () => {
