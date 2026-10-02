@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:native-release-env": "node --test scripts/test-native-production-env.mjs"
   },
   "dependencies": {
     "@emailjs/browser": "^4.4.1",
