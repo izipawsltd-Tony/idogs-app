@@ -3,12 +3,13 @@
    runtime markers installed before React renders. */
 
 @media (max-width: 768px) {
-  /* Android safe-area was reserved twice: body/system-bar paint + main-area
-     padding. The sticky top bar already pins itself below the status bar, so
-     removing the second reservation eliminates the blank band above the app
-     header and restores the dashboard's intended first-card spacing. */
+  /* The painted status band does not reserve layout space. Keep one inset
+     before the in-flow header so its sticky offset cannot cover page content.
+     clip also avoids overflow-x:hidden creating a non-scrolling ancestor for
+     the sticky header; the document remains its scroll container. */
   html[data-idogs-native-platform='android'] .main-area {
-    padding-top: 0 !important;
+    padding-top: var(--safe-area-top) !important;
+    overflow-x: clip;
   }
 
   /* Real-device QA showed Android restoring a small scroll offset that lets the
