@@ -175,7 +175,13 @@ function installFetchRouter(
   rewrite: (input: string, apiBase: string) => string,
 ): void {
   const transportFetch = window.fetch.bind(window)
+  // CapacitorHttp buffers/proxies remote requests. Firestore's WebChannel
+  // requires incremental response chunks and must use the original WebView
+  // fetch. Keep native HTTP for iDogs APIs and signed uploads, not Firestore.
+  const webFetch = (window as Window & { CapacitorWebFetch?: typeof fetch }).CapacitorWebFetch
+  const firestoreFetch = webFetch?.bind(window) ?? transportFetch
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    if (isFirestoreStreamRequest(input)) return firestoreFetch(input, init)
     const path = nativeApiRoutablePath(input, apiBase, window.location.origin)
     // A third-party absolute URL/Request (not same-origin, not a known iDogs
     // API origin) is left completely untouched here. rewrite() throws for a
@@ -189,6 +195,15 @@ function installFetchRouter(
     if (input instanceof Request) return transportFetch(new Request(rewritten, input), init)
     return transportFetch(rewritten, init)
   }) as typeof window.fetch
+}
+
+export function isFirestoreStreamRequest(input: RequestInfo | URL): boolean {
+  try {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
+    return url.protocol === 'https:' && url.hostname === 'firestore.googleapis.com'
+  } catch {
+    return false
+  }
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   getNativeProductionApiBase,
   getNativeQaApiBase,
   installNativeProductionApiRouting,
+  isFirestoreStreamRequest,
   nativeApiRoutablePath,
   rewriteNativeApiUrl,
   rewriteNativeProductionApiUrl,
@@ -18,6 +19,53 @@ const PROD_BASE = 'https://idogs.com.au'
 const NATIVE_SHELL_ORIGIN = 'https://localhost'
 
 describe('native API routing', () => {
+  it('preserves Firestore response streams while APIs and uploads retain native transport', async () => {
+    const stream = new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([49])); controller.close() } })
+    const response = new Response(stream)
+    const webFetch = vi.fn().mockResolvedValue(response)
+    const nativeFetch = vi.fn().mockResolvedValue(new Response('{}'))
+    const xhr = vi.fn()
+    vi.stubGlobal('window', { fetch: nativeFetch, CapacitorWebFetch: webFetch, XMLHttpRequest: xhr, location: { origin: NATIVE_SHELL_ORIGIN } })
+    vi.stubGlobal('document', { documentElement: { dataset: {} } })
+    try {
+      installNativeProductionApiRouting('idogs-app')
+      const request = new Request('https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?RID=rpc')
+      const init = { signal: new AbortController().signal }
+      expect(await window.fetch(request, init)).toBe(response)
+      expect(webFetch).toHaveBeenCalledWith(request, init)
+      expect(nativeFetch).not.toHaveBeenCalled()
+      expect(window.XMLHttpRequest).toBe(xhr)
+      const apiInit = { method: 'POST', body: '{}', headers: { Authorization: 'Bearer qa-token' } }
+      await window.fetch('/api/create-dog', apiInit)
+      expect(nativeFetch).toHaveBeenLastCalledWith(`${PROD_BASE}/api/create-dog`, apiInit)
+      const upload = new Request('https://storage.googleapis.com/api/signed-upload', { method: 'PUT', body: 'bytes' })
+      await window.fetch(upload)
+      expect(nativeFetch).toHaveBeenLastCalledWith(upload, undefined)
+      expect(() => window.fetch('/api/create-checkout')).toThrow('NATIVE_PRODUCTION_EXTERNAL_PAYMENT_API_BLOCKED')
+      expect(webFetch).toHaveBeenCalledTimes(1)
+      expect(nativeFetch).toHaveBeenCalledTimes(2)
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('only bypasses native HTTP for the exact HTTPS Firestore host', () => {
+    for (const input of ['https://firestore.googleapis.com/v1/projects/test', new URL('https://firestore.googleapis.com/'), new Request('https://firestore.googleapis.com/')]) {
+      expect(isFirestoreStreamRequest(input)).toBe(true)
+    }
+    for (const input of ['/api/create-dog', 'http://firestore.googleapis.com/', 'https://firestore.googleapis.com.attacker.example/', 'https://firestore.googleapis.com@attacker.example/', 'invalid', 'https://storage.googleapis.com/file']) {
+      expect(isFirestoreStreamRequest(input)).toBe(false)
+    }
+  })
+
+  it('uses the existing transport when no Capacitor original fetch is available', async () => {
+    const transport = vi.fn().mockResolvedValue(new Response('{}'))
+    vi.stubGlobal('window', { fetch: transport, location: { origin: NATIVE_SHELL_ORIGIN } })
+    vi.stubGlobal('document', { documentElement: { dataset: {} } })
+    try {
+      installNativeProductionApiRouting('idogs-app')
+      await window.fetch('https://firestore.googleapis.com/v1/projects/test')
+      expect(transport).toHaveBeenCalledWith('https://firestore.googleapis.com/v1/projects/test', undefined)
+    } finally { vi.unstubAllGlobals() }
+  })
   it('accepts only the staging Firebase project for QA', () => {
     expect(getNativeQaApiBase('idogs-app-staging')).toBe(QA_BASE)
     expect(() => getNativeQaApiBase('idogs-app')).toThrow('NATIVE_API_ENV_NOT_STAGING')
