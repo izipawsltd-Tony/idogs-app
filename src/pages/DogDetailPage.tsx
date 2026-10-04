@@ -869,7 +869,11 @@ export default function DogDetailPage({ toast }: Props) {
   }
 
   if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
-  if (!dog) return null
+  if (!dog) return <div role="alert" style={{ padding: 32 }}>
+    <h1>Could not load this dog</h1>
+    <p>The saved profile could not be loaded. Check your dog list before creating another profile.</p>
+    <Link to="/app/dogs" className="btn btn-primary">Back to my dogs</Link>
+  </div>
 
   const publicUrl = `${window.location.origin}/p/${dog.passportId}`
 

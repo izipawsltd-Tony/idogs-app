@@ -3,6 +3,7 @@ import {
   query, where, serverTimestamp, setDoc, Timestamp, deleteField
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
+import { confirmedCreatedDogId, DogCreationUnconfirmedError } from './dogCreationResponse'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage, LitterShowcase, ShowcaseAvailability, ShowcasePuppyEntry } from '../types'
 import { calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
 
@@ -414,8 +415,8 @@ export async function createDog(
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error || `Create dog failed (${res.status})`)
   }
-  const result = await res.json()
-  return result.dogId
+  const result = await res.json().catch(() => { throw new DogCreationUnconfirmedError() })
+  return confirmedCreatedDogId(result)
 }
 
 // Codex round 3, Blocker 3, then moved server-side + hardened in Codex
