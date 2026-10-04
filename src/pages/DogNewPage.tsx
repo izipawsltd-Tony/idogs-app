@@ -8,6 +8,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
 import { isAndroidNativeApp } from '../lib/nativePlatform'
 import { dogLimitReachedBody } from '../lib/nativeUpgradeCopy'
+import { DogCreationUnconfirmedError } from '../lib/dogCreationResponse'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -81,7 +82,7 @@ export default function DogNewPage({ toast }: Props) {
   const [submitting, setSubmitting] = useState(false)
 
   function acquireSubmitLock(): symbol | null {
-    if (submittingRef.current || committedDogIdRef.current) return null
+    if (submittingRef.current || committedDogIdRef.current || creationUnconfirmedRef.current) return null
     const token = Symbol('dog-new-submit-lock')
     submittingRef.current = true
     lockOwnerTokenRef.current = token
@@ -133,6 +134,8 @@ export default function DogNewPage({ toast }: Props) {
   // re-render, so the submit/"Add anyway" buttons need this state flag
   // to actually go (and stay) disabled once a Dog has been created.
   const [dogCreated, setDogCreated] = useState(false)
+  const creationUnconfirmedRef = useRef(false)
+  const [creationUnconfirmed, setCreationUnconfirmed] = useState(false)
 
   const [form, setForm] = useState<DogFormData>({
     name: '', breed: '', sex: 'female',
@@ -482,8 +485,13 @@ export default function DogNewPage({ toast }: Props) {
         toast(`${formSnapshot.name} added with ${totalVaccines} vaccine record(s)${fileNote}!`)
       }
       navigate(`/app/dogs/${dogId}`)
-    } catch {
-      if (committedDogIdRef.current) {
+    } catch (err) {
+      if (err instanceof DogCreationUnconfirmedError) {
+        // The server may have committed. Never automatically retry this mutation.
+        creationUnconfirmedRef.current = true
+        setCreationUnconfirmed(true)
+        toast('Could not confirm the saved dog. Check My dogs before adding it again.', 'error')
+      } else if (committedDogIdRef.current) {
         // The Dog itself was already created (this failure happened in a
         // follow-up step) — never claim total failure when a real, saved
         // Dog/Passport already exists. This is a terminal outcome for
@@ -744,8 +752,9 @@ export default function DogNewPage({ toast }: Props) {
                 ))}
               </div>
             )}
+            {creationUnconfirmed && <div role="alert">Could not confirm the saved dog. <Link to="/app/dogs">Check My dogs</Link> before adding it again.</div>}
             <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
-              <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading || submitting || dogCreated}>
+              <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading || submitting || dogCreated || creationUnconfirmed}>
                 {(loading || submitting) ? <span className="spinner" /> : (() => {
                   const recordCount = scannedDocs.reduce((s, d) => s + (d.vaccines?.length || 0), 0)
                   const base = isOwner ? 'Create Dog ID & passport' : 'Add dog & create passport'
