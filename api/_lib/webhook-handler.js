@@ -64,7 +64,7 @@
 //      association and always adopts whatever customer id it carries.
 
 import { randomBytes } from 'node:crypto'
-import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
+import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS } from './checkout-handler.js'
 import { reconcileDogCapTx, reactivateUpToCapTx } from './dog-cap.js'
 import { anchorDayFromDate } from './entitlements.js'
 import { SMS_MONTHLY_CREDITS } from './sms-addon.js'
@@ -72,6 +72,9 @@ import { SMS_MONTHLY_CREDITS } from './sms-addon.js'
 const PRICE_INTERVAL = Object.freeze({
   [CHECKOUT_PRICE_IDS.plus_monthly]: 'monthly',
   [CHECKOUT_PRICE_IDS.plus_annual]: 'annual',
+  [LEGACY_PAID_PRICE_IDS.basic]: 'monthly',
+  [LEGACY_PAID_PRICE_IDS.pro]: 'monthly',
+  [LEGACY_PAID_PRICE_IDS.kennel]: 'monthly',
 })
 
 function resolveInterval(subscription) {

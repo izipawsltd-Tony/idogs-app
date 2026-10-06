@@ -5,13 +5,24 @@ import { logSanitizedError } from './http-helpers.js'
 // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED). Only two
 // real Stripe Checkout price ids exist for iDogs — Plus Monthly and Plus
 // Annual. The legacy Basic/Pro/Kennel/SMS-addon four-tier prices are
-// retired here (no live customers referenced them — see CLAUDE.md
-// "Trạng thái production"), never selectable through this endpoint again.
+// retired from NEW checkout selection, but existing paid subscriptions are
+// still honored by the webhook compatibility allowlist below.
 // The $40 launch-offer price mentioned in §1.1 of the record is explicitly
 // NOT implemented per this round's scope.
 export const CHECKOUT_PRICE_IDS = Object.freeze({
   plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',
   plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
+})
+
+// Legacy paid subscriptions remain entitlement-compatible for renewals.
+// They are deliberately NOT exposed by createCheckoutHandler, so no new
+// Basic/Pro/Kennel subscriptions can be created. Existing subscribers who
+// are still being charged must not fall back to Free merely because the
+// public pricing model moved to Free/Plus.
+export const LEGACY_PAID_PRICE_IDS = Object.freeze({
+  basic: 'price_1TiaZn5lmfxrCiH3GCzSSuAy',
+  pro: 'price_1Tiabb5lmfxrCiH3kBdaQsRH',
+  kennel: 'price_1TiU7j5lmfxrCiH3J1WbbrLR',
 })
 
 // Both keys resolve to the same entitlement — Plus. The billing interval
