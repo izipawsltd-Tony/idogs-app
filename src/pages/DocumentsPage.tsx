@@ -1,11 +1,10 @@
+import { viewDocument } from '../lib/documentViewer'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getAllDocumentsForUser, getDogs, deleteDocument } from '../lib/db'
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
-import { db, storage } from '../lib/firebase'
+import { uploadManualDocument } from '../lib/manualDocumentUpload'
 import type { Dog, ToastMessage } from '../types'
 
 interface Props {
@@ -30,59 +29,6 @@ function getDocLabel(type: string) {
   return DOC_TYPES.find(d => d.value === type)?.label || 'Document'
 }
 
-async function viewDocument(
-  user: { getIdToken: () => Promise<string> } | null | undefined,
-  toast: (msg: string, type?: ToastMessage['type']) => void,
-  path?: string | null,
-  legacyUrl?: string | null,
-) {
-  if (!path) {
-    if (legacyUrl) window.open(legacyUrl, '_blank', 'noopener,noreferrer')
-    return
-  }
-  if (!user) {
-    toast('Please sign in to view this document', 'error')
-    return
-  }
-
-  // To bypass browser popup blockers, open the new tab synchronously
-  // before the async fetch, then update its URL once the signed URL is returned.
-  const newWin = window.open('about:blank', '_blank')
-  if (newWin) {
-    newWin.document.write('<div style="font-family:sans-serif;padding:40px;text-align:center;color:#666;">Opening secure document...</div>')
-  }
-
-  try {
-    const idToken = await user.getIdToken()
-    const response = await fetch('/api/get-signed-url', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-      body: JSON.stringify({ filePath: path }),
-    })
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}))
-      if (import.meta.env.DEV) {
-        console.error('get-signed-url failed:', response.status, err.error || 'Unknown error')
-      }
-      if (response.status === 404) {
-        toast('This file is missing from storage or uses an old upload format. You can remove this broken document record.', 'error')
-      } else {
-        toast('Could not open document. Please contact breeder or try again.', 'error')
-      }
-      if (newWin) newWin.close()
-      return
-    }
-    const { url } = await response.json()
-    if (newWin) {
-      newWin.location.href = url
-    } else {
-      window.open(url, '_blank', 'noopener,noreferrer')
-    }
-  } catch {
-    if (newWin) newWin.close()
-    toast('Network error — please check connection', 'error')
-  }
-}
 
 export default function DocumentsPage({ toast }: Props) {
   const { user } = useAuth()
@@ -132,10 +78,10 @@ export default function DocumentsPage({ toast }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
 
-  async function handleUpload(doc: any) {
-    setDocuments(prev => [doc, ...prev])
+  function handleUpload(metadataSaved: boolean) {
     setShowUpload(false)
-    toast('Document uploaded', 'success')
+    loadDocuments()
+    toast(metadataSaved ? 'Document uploaded' : 'Document uploaded; title/notes could not be saved. Refresh the list before retrying.', metadataSaved ? 'success' : 'error')
   }
 
   const FILTER_TABS = ['all', ...DOC_TYPES.map(d => d.value)]
@@ -239,7 +185,7 @@ export default function DocumentsPage({ toast }: Props) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
                     <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)' }}>
-                      {doc.title || getDocLabel(doc.documentType)}
+                      {doc.name || doc.title || getDocLabel(doc.documentType)}
                     </span>
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)', fontWeight: 500 }}>
                       {(doc.fileType || 'FILE').toUpperCase()}
@@ -314,9 +260,10 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
   dogs: Dog[]
   userId: string
   onClose: () => void
-  onSuccess: (doc: any) => void
+  onSuccess: (metadataSaved: boolean) => void
   toast: (msg: string, type?: ToastMessage['type']) => void
 }) {
+  const { user } = useAuth()
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [docType, setDocType] = useState('other')
@@ -324,11 +271,10 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
   const [title, setTitle] = useState('')
   const [notes, setNotes] = useState('')
   const [uploading, setUploading] = useState(false)
-  const [progress, setProgress] = useState(0)
   const [dragOver, setDragOver] = useState(false)
 
   const ACCEPTED = '.pdf,.jpg,.jpeg,.png,.webp,.heic'
-  const MAX_MB = 10
+  const MAX_MB = 3
 
   function handleFileChange(f: File) {
     if (f.size > MAX_MB * 1024 * 1024) {
@@ -344,54 +290,23 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
     e.preventDefault()
     if (!file || !dogId) return
     setUploading(true)
-    setProgress(0)
     try {
-      // Upload to Firebase Storage
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'pdf'
-      const storagePath = `documents/${userId}/${dogId}/${Date.now()}.${ext}`
-      const storageRef = ref(storage, storagePath)
-      const uploadTask = uploadBytesResumable(storageRef, file)
-
-      await new Promise<void>((resolve, reject) => {
-        uploadTask.on(
-          'state_changed',
-          snap => setProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
-          reject,
-          resolve,
-        )
-      })
-
-      const fileUrl = await getDownloadURL(uploadTask.snapshot.ref)
-
-      // Save to Firestore
-      const docData = {
-        tenantId: userId,
-        dogId,
-        documentType: docType,
-        title: title || getDocLabel(docType),
-        notes: notes || null,
-        fileUrl,
-        fileType: ext,
-        storagePath,
-        source: 'manual',
-        uploadedAt: serverTimestamp(),
-      }
-      const ref2 = await addDoc(collection(db, 'documents'), docData)
-      onSuccess({ id: ref2.id, ...docData, uploadedAt: { toDate: () => new Date() } })
+      if (!user || user.uid !== userId) throw new Error('Account changed; please reopen Upload')
+      const result = await uploadManualDocument(user, file, dogId, docType, title || getDocLabel(docType), notes)
+      onSuccess(result.metadataSaved)
     } catch (err) {
-      console.error(err)
-      toast('Upload failed — please try again', 'error')
+      toast(err instanceof Error ? err.message : 'Upload failed — please try again', 'error')
     } finally {
       setUploading(false)
     }
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={() => { if (!uploading) onClose() }}>
       <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Upload Document</h2>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--light)', lineHeight: 1 }}>×</button>
+          <button aria-label="Close upload" disabled={uploading} onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--light)', lineHeight: 1 }}>×</button>
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -472,22 +387,12 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
             />
           </div>
 
-          {/* Progress bar */}
-          {uploading && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--mid)', marginBottom: 4 }}>
-                <span>Uploading…</span><span>{progress}%</span>
-              </div>
-              <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${progress}%`, background: 'var(--brand-600)', borderRadius: 3, transition: 'width 0.2s' }} />
-              </div>
-            </div>
-          )}
+          {uploading && <div role="status" style={{ fontSize: 12, color: 'var(--mid)' }}>Uploading secure document…</div>}
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 4 }}>
             <button type="button" onClick={onClose} className="btn btn-secondary" disabled={uploading}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={!file || !dogId || uploading}>
-              {uploading ? `Uploading ${progress}%…` : 'Upload Document'}
+              {uploading ? 'Uploading…' : 'Upload Document'}
             </button>
           </div>
         </form>

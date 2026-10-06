@@ -651,7 +651,8 @@ export async function getWormingRecords(dogId: string): Promise<WormingRecord[]>
 }
 
 export async function addWormingRecord(data: Omit<WormingRecord, 'id' | 'createdAt'>): Promise<string> {
-  const ref = await addDoc(collection(db, 'wormingRecords'), { ...data, createdAt: serverTimestamp() })
+  const fields = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined))
+  const ref = await addDoc(collection(db, 'wormingRecords'), { ...fields, createdAt: serverTimestamp() })
   return ref.id
 }
 

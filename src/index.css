@@ -585,3 +585,9 @@ h1, h2, h3, h4, h5, h6 {
     padding: 14px calc(14px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
   }
 }
+
+@media (max-width: 600px) {
+  .dog-document-card { flex-wrap: wrap; align-items: flex-start !important; }
+  .dog-document-card .dog-document-content { flex-basis: calc(100% - 60px) !important; }
+  .dog-document-card .dog-document-actions { width: 100%; justify-content: flex-end; }
+}
