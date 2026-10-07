@@ -169,7 +169,7 @@ export default function DocumentsPage({ toast }: Props) {
             const dog = dogs[doc.dogId]
             const uploadDate = doc.uploadedAt?.toDate?.()?.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
             return (
-              <div key={i} style={{
+              <div key={i} className="documents-list-card" style={{
                 background: 'var(--white)', border: '1px solid var(--border)',
                 borderRadius: 'var(--radius-md)', padding: '14px 16px',
                 display: 'flex', alignItems: 'center', gap: 14,
@@ -182,7 +182,7 @@ export default function DocumentsPage({ toast }: Props) {
                 }}>
                   {getDocIcon(doc.documentType)}
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="documents-list-content" style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
                     <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)' }}>
                       {doc.name || doc.title || getDocLabel(doc.documentType)}
@@ -209,7 +209,7 @@ export default function DocumentsPage({ toast }: Props) {
                     </div>
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+                <div className="documents-list-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
                   <button
                     onClick={() => viewDocument(user, toast, doc.filePath || doc.storagePath, doc.fileUrl)}
                     className="btn btn-secondary btn-sm"
