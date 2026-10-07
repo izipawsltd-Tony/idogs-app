@@ -14,7 +14,8 @@ import { useRequestGuard } from '../hooks/useRequestGuard'
 import {
   formatDate, getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS,
   getVaccineStatus, isOverdue, isDueSoon, getTodaysMilestone, ordinal, BREEDER_ID_CONFIG, type Milestone,
-  isEligibleSireDog, isDogTransferred, isDogHistoryBearing, isDogDeletableByUser
+  isEligibleSireDog, isDogTransferred, isDogHistoryBearing, isDogDeletableByUser,
+  calculateLifeStage, parseDobStrict
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
@@ -157,6 +158,18 @@ export default function DogDetailPage({ toast }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [statusActionLoading, setStatusActionLoading] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
+  const [showEditProfile, setShowEditProfile] = useState(false)
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [profileDraft, setProfileDraft] = useState({
+    name: '',
+    breed: '',
+    sex: 'female' as Dog['sex'],
+    dateOfBirth: '',
+    colour: '',
+    microchip: '',
+    ankc: '',
+    notes: '',
+  })
   const [documents, setDocuments] = useState<any[]>([])
   const [documentsError, setDocumentsError] = useState(false)
 
@@ -853,6 +866,53 @@ export default function DogDetailPage({ toast }: Props) {
     toast(`${dog.name} transferred to ${buyerName} ✓`, 'success')
   }
 
+  function openEditProfile() {
+    if (!dog) return
+    setProfileDraft({
+      name: dog.name || '', breed: dog.breed || '', sex: dog.sex || 'female',
+      dateOfBirth: dog.dateOfBirth || '', colour: dog.colour || '',
+      microchip: dog.microchip || '', ankc: dog.ankc || '', notes: dog.notes || '',
+    })
+    setShowEditProfile(true)
+  }
+
+  async function handleSaveProfile() {
+    if (!dog || !dogId || !user?.uid) return
+    const midTransfer = isDogTransferred(dog)
+    const restricted = (dog as any).status === 'restricted'
+    const archived = (dog as any).status === 'archived'
+    if (dog.currentOwnerId !== user.uid || midTransfer || restricted || archived) {
+      toast('This dog is currently read-only. Only the current owner can edit its profile.', 'error')
+      setShowEditProfile(false)
+      return
+    }
+    const name = profileDraft.name.trim()
+    const breed = profileDraft.breed.trim()
+    if (!name || !breed) { toast('Dog name and breed are required.', 'error'); return }
+    if (!parseDobStrict(profileDraft.dateOfBirth)) { toast('Please enter a valid date of birth.', 'error'); return }
+    const updates: Partial<Dog> = {
+      name, breed, sex: profileDraft.sex, dateOfBirth: profileDraft.dateOfBirth,
+      colour: profileDraft.colour.trim(), microchip: profileDraft.microchip.trim(),
+      ankc: profileDraft.ankc.trim(), notes: profileDraft.notes.trim(),
+      lifeStage: calculateLifeStage(profileDraft.dateOfBirth, breed),
+    }
+    setSavingProfile(true)
+    try {
+      await updateDog(dogId, updates)
+      setDog(prev => prev ? { ...prev, ...updates } : prev)
+      setShowEditProfile(false)
+      toast('Dog profile updated', 'success')
+    } catch (err) {
+      const code = safeReadFirestoreErrorCode(err)
+      if (code === 'permission-denied') {
+        try { const fresh = await getDog(dogId); if (fresh) setDog(fresh) } catch {}
+        toast('You no longer have permission to edit this dog. Ownership may have changed.', 'error')
+      } else {
+        toast('Failed to update dog profile. Please try again.', 'error')
+      }
+    } finally { setSavingProfile(false) }
+  }
+
   if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
   if (!dog) return null
 
@@ -907,6 +967,7 @@ export default function DogDetailPage({ toast }: Props) {
   const isCurrentEffectiveOwner = dog.currentOwnerId === user?.uid
   const dogIsMidTransfer = isDogTransferred(dog)
   const dogHasPermanentHistory = isDogHistoryBearing(dog as unknown as Record<string, unknown>)
+  const canEditProfile = isCurrentEffectiveOwner && !dogIsMidTransfer && !isRestricted && !isArchived
   const canDeleteDog = isCurrentEffectiveOwner && !dogIsMidTransfer && !dogHasPermanentHistory
   const deleteBlockedReason = !isCurrentEffectiveOwner
     ? undefined
@@ -1086,6 +1147,9 @@ export default function DogDetailPage({ toast }: Props) {
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">View passport ↗</a>
+          {canEditProfile && (
+            <button onClick={openEditProfile} className="btn btn-secondary btn-sm">✎ Edit profile</button>
+          )}
           {!isTransferred && (
             <button
               onClick={() => setShowTransfer(true)}
@@ -1198,6 +1262,41 @@ export default function DogDetailPage({ toast }: Props) {
         setDog(prev => prev ? { ...prev, ...updates } : prev)
         toast('Breeding record updated')
       }} toast={toast} />}
+
+      {showEditProfile && dog && (
+        <div onClick={() => !savingProfile && setShowEditProfile(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(26,25,23,0.55)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 1000 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 20, width: 'min(680px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,0.18)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 20 }}>Edit dog profile</h2>
+                <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--mid)' }}>The current owner can update everyday profile details after ownership is claimed.</p>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowEditProfile(false)} disabled={savingProfile}>✕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '20px 24px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group"><label className="form-label">Dog's name *</label><input className="form-input" value={profileDraft.name} onChange={e => setProfileDraft(v => ({ ...v, name: e.target.value }))} autoFocus /></div>
+                <div className="form-group"><label className="form-label">Sex *</label><select className="form-select" value={profileDraft.sex} onChange={e => setProfileDraft(v => ({ ...v, sex: e.target.value as Dog['sex'] }))}><option value="female">Female</option><option value="male">Male</option></select></div>
+              </div>
+              <div className="form-group"><label className="form-label">Breed *</label><input className="form-input" value={profileDraft.breed} onChange={e => setProfileDraft(v => ({ ...v, breed: e.target.value }))} /></div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group"><label className="form-label">Date of birth *</label><input className="form-input" type="date" max={new Date().toISOString().split('T')[0]} value={profileDraft.dateOfBirth} onChange={e => setProfileDraft(v => ({ ...v, dateOfBirth: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Colour / markings</label><input className="form-input" value={profileDraft.colour} onChange={e => setProfileDraft(v => ({ ...v, colour: e.target.value }))} /></div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group"><label className="form-label">Microchip number</label><input className="form-input" value={profileDraft.microchip} onChange={e => setProfileDraft(v => ({ ...v, microchip: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Dogs Australia Registration</label><input className="form-input" value={profileDraft.ankc} onChange={e => setProfileDraft(v => ({ ...v, ankc: e.target.value }))} /></div>
+              </div>
+              <div className="form-group"><label className="form-label">Notes</label><textarea className="form-textarea" style={{ minHeight: 90 }} value={profileDraft.notes} onChange={e => setProfileDraft(v => ({ ...v, notes: e.target.value }))} /></div>
+              <div style={{ fontSize: 12, color: 'var(--mid)', background: 'var(--sand)', borderRadius: 8, padding: '9px 11px' }}>Ownership history, Dog ID / QR Passport and transfer provenance stay protected and cannot be changed here.</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--gray-100)' }}>
+              <button className="btn btn-secondary" onClick={() => setShowEditProfile(false)} disabled={savingProfile}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSaveProfile} disabled={savingProfile}>{savingProfile ? <><span className="spinner" /> Saving…</> : 'Save changes'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Transfer Ownership Modal */}
       {showTransfer && dog && (
@@ -1464,6 +1563,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
   // threaded as a new prop from the parent, since it's the exact same
   // `dog.status` value the parent's own `isRestricted` is computed from.
   const isRestricted = (dog as any).status === 'restricted'
+  const isReadOnly = isRestricted || !isCurrentEffectiveOwner || isDogTransferred(dog) || (dog as any).status === 'archived'
   const [editingBreederId, setEditingBreederId] = useState(false)
   const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
   const [breederIdValue, setBreederIdValue] = useState(dog.breederIdValue || '')
@@ -1489,8 +1589,8 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
     // status blocks it identically. Defense in depth alongside disabling
     // the ✎/+ Add trigger below, which already prevents reaching this
     // form at all for a restricted dog.
-    if (isRestricted) {
-      toast(restrictedBreederIdMessage(isAndroidNativeApp()), 'error')
+    if (isReadOnly) {
+      toast(isRestricted ? restrictedBreederIdMessage(isAndroidNativeApp()) : 'This dog is read-only for this account. Only the current owner can edit Breeder ID.', 'error')
       return
     }
     setSavingBreederId(true)
@@ -1582,14 +1682,14 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
             <select
               className="form-select"
               value={(dog as any).pedigreeRegister || 'not_recorded'}
-              disabled={isRestricted}
+              disabled={isReadOnly}
               onChange={async e => {
                 // Same missed-gating class as Sale & Availability (Red Boy
                 // follow-up audit, item 6): auto-saves on change with no
                 // separate Save button, so the guard here IS the whole
                 // defense-in-depth story for this control — `disabled`
                 // above already stops it firing from the UI.
-                if (isRestricted) return
+                if (isReadOnly) return
                 const updates = nextPedigreeRegisterUpdate((dog as any).pedigreeRegister, e.target.value)
                 await onUpdatePedigree(updates as Partial<Dog>)
                 toast('Pedigree status updated')
@@ -1608,9 +1708,9 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
                 className="form-select"
                 aria-label="Breeding eligibility"
                 value={(dog as any).breedingEligibility || 'unknown'}
-                disabled={isRestricted}
+                disabled={isReadOnly}
                 onChange={async e => {
-                  if (isRestricted) return
+                  if (isReadOnly) return
                   await onUpdatePedigree({ breedingEligibility: e.target.value as NonNullable<Dog['breedingEligibility']> })
                   toast('Breeding eligibility updated')
                 }}
@@ -1649,7 +1749,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
               </>
             )}
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary btn-sm" onClick={handleSaveBreederId} disabled={savingBreederId || isRestricted}>{savingBreederId ? <span className="spinner" /> : 'Save'}</button>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveBreederId} disabled={savingBreederId || isReadOnly}>{savingBreederId ? <span className="spinner" /> : 'Save'}</button>
               <button className="btn btn-secondary btn-sm" onClick={() => { setEditingBreederId(false); setBreederIdType(dog.breederIdType || 'NONE'); setBreederIdValue(dog.breederIdValue || '') }}>Cancel</button>
             </div>
           </div>
@@ -1668,13 +1768,13 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
                   Verify ↗
                 </a>
               )}
-              <button onClick={() => setEditingBreederId(true)} disabled={isRestricted} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px', fontSize: 12 }}>✎</button>
+              <button onClick={() => setEditingBreederId(true)} disabled={isReadOnly} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px', fontSize: 12 }}>✎</button>
             </span>
           </div>
         ) : (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
             <span style={{ color: 'var(--light)' }}>Breeder ID</span>
-            <button onClick={() => setEditingBreederId(true)} disabled={isRestricted} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--brand-600)' }}>+ Add</button>
+            <button onClick={() => setEditingBreederId(true)} disabled={isReadOnly} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--brand-600)' }}>+ Add</button>
           </div>
         )}
         <InfoRow label="Passport ID" value={dog.passportId} mono />
