@@ -1372,31 +1372,16 @@ function TransferModal({
   }
 
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0,
-        background: 'rgba(26, 25, 23, 0.55)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '1rem', zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      <div
-        style={{
-          background: '#fff', borderRadius: 20, width: '100%', maxWidth: 460,
-          boxShadow: '0 24px 64px rgba(0,0,0,0.18)', overflow: 'hidden',
-        }}
-        onClick={e => e.stopPropagation()}
-      >
+    <div className="transfer-modal-overlay" onClick={onClose}>
+      <div className="transfer-modal-shell" onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+        <div className="transfer-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', fontWeight: 600, color: 'var(--dark)' }}>Transfer Ownership</div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1rem', color: 'var(--mid)', cursor: 'pointer', padding: '4px 8px', borderRadius: 6 }}>✕</button>
         </div>
 
         {/* Body */}
-        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="transfer-modal-body">
           {/* Dog info */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--brand-50)', borderRadius: 10, padding: '0.875rem 1rem' }}>
             <span style={{ fontSize: '1.5rem' }}>🐾</span>
@@ -1473,7 +1458,7 @@ function TransferModal({
               value={buyerEmail}
               onChange={e => setBuyerEmail(e.target.value)}
             />
-            <p className="form-hint">They'll receive an email with the passport link and signup instructions.</p>
+            <p className="form-hint">They'll receive an email with secure iDogs access and sign-in instructions.</p>
           </div>
 
           {/* Buyer phone */}
@@ -1503,7 +1488,7 @@ function TransferModal({
         </div>
 
         {/* Footer */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--gray-100)' }}>
+        <div className="transfer-modal-footer">
           <button className="btn btn-secondary btn-sm" onClick={onClose} disabled={loading}>Cancel</button>
           <button
             className="btn btn-sm"
