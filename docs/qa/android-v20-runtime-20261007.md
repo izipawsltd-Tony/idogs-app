@@ -35,3 +35,11 @@ The cold-offline failure was reproduced using the real installed Firestore SDK w
 Follow-up validation: **121 Vitest tests**, **4 native environment guards**, TypeScript/Vite build and `git diff --check` passed. These source fixes are **not installed v20** and require native verification in the next candidate. The layout-only v21 build was cancelled after discovery of the offline blocker; the next build includes both follow-up fixes.
 
 The four v19 regression fixes and synthetic Scan checks passed. **Installed v20 is not Android Production ready because cold-offline behavior failed.** Remaining coverage: native verification of the offline fix and follow-up layout, PetOwner/transfer on isolated accounts, archive/restore with a suitable QA ownership-history fixture, comprehensive offline behavior and physical-device testing. No real transfer, public Production rollout, billing payment, email or SMS was performed.
+
+## v22 Play distribution check — 2026-10-07
+
+Candidate: versionCode **22**, versionName **0.1.22**, source SHA `10d1eb57064cd30873de0e5d2168166cabac98ba`. Signed AAB path: `C:\\Projects\\idogs-play-internal-ready\\v22-10d1eb57\\iDogs-v22-0.1.22.aab`.
+
+On tester emulator `emulator-5554`, the installed Play build remained **20 / 0.1.20** with installer `com.android.vending`. The Play Store app details page for `au.com.idogs.app` rendered **Uninstall** and **Open**, with no **Update** action. Therefore v22 was **not yet available to this Internal Testing tester** at the time of the check.
+
+Result: **BLOCKED at Play distribution gate**. Native v22 cold-offline, Retry/network recovery, Global Documents layout and regression smoke were **not executed** and are **not PASS**. No sideload was used because this QA stage requires installation through Google Play Internal Testing.
