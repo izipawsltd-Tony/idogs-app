@@ -2,6 +2,7 @@
 // Sends email via Vercel serverless /api/send-email (Resend backend)
 
 import { getAuth } from 'firebase/auth'
+import { canonicalPassportUrl } from './canonicalUrl'
 
 async function sendEmail(params: {
   to_email: string
@@ -36,11 +37,15 @@ export async function sendTransferEmail(params: {
   breederName: string
   passportUrl: string
 }) {
+  // Never expose Vercel preview/staging hosts in customer-facing transfer
+  // emails. Transfers may be initiated while QA is running on a preview,
+  // but the recipient should always see and trust the canonical iDogs URL.
+  const passportUrl = canonicalPassportUrl(params.passportUrl)
   return sendEmail({
     to_email: params.buyerEmail,
     to_name: params.buyerName,
     subject: `${params.breederName} has transferred ${params.dogName} to you on iDogs`,
-    message: `${params.breederName} has transferred ownership of ${params.dogName} (${params.breed}) to you.\n\nView ${params.dogName}'s passport here:\n${params.passportUrl}\n\nTo claim full ownership and manage ${params.dogName}'s profile, create your free iDogs account — the dog will appear automatically in your dashboard.`,
+    message: `${params.breederName} has transferred ownership of ${params.dogName} (${params.breed}) to you.\n\nView ${params.dogName}'s passport here:\n${passportUrl}\n\nTo claim full ownership and manage ${params.dogName}'s profile, create your free iDogs account — the dog will appear automatically in your dashboard.`,
     action_url: 'https://idogs.com.au/signup',
   })
 }
