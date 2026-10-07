@@ -974,15 +974,6 @@ export default function DogDetailPage({ toast }: Props) {
       : dogHasPermanentHistory
         ? "This dog has permanent ownership/transfer history and can't be deleted — that record is part of its compliance audit trail. Archive it instead to shelve it (reversible anytime)."
         : undefined
-  // Archiving is a real, already-working alternative here (api/set-dog-
-  // status.js's archive action accepts status 'active'/'restricted' —
-  // unlike delete, it does NOT check the history fields at all, since
-  // archiving never erases anything) — but only when it would actually
-  // succeed: not mid-transfer (the endpoint explicitly 409s on that) and
-  // not already archived (that state already has its own Restore banner
-  // below).
-  const canOfferArchiveInsteadOfDelete = isCurrentEffectiveOwner && dogHasPermanentHistory && !dogIsMidTransfer && !isArchived
-
   // Codex fix-round (Finding 2/3) — litter puppy retention (promote/
   // unpromote) and legacy-restriction reconciliation. Gated identically:
   // breeder-only (Pet Owner accounts don't have litters), the CURRENT
@@ -1131,14 +1122,6 @@ export default function DogDetailPage({ toast }: Props) {
               <span>📦 This dog is archived — read-only until restored.</span>
               <button className="btn btn-sm btn-secondary" disabled={statusActionLoading} onClick={() => handleSetDogStatus('restore')}>
                 {statusActionLoading ? <span className="spinner" /> : 'Restore this dog'}
-              </button>
-            </div>
-          )}
-          {canOfferArchiveInsteadOfDelete && (
-            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', border: '1px solid var(--border)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span>🔒 This dog has permanent ownership/transfer history, so it can't be deleted — that record is part of its compliance audit trail. You can archive it instead to shelve it (reversible anytime).</span>
-              <button className="btn btn-sm btn-secondary" disabled={statusActionLoading} onClick={() => handleSetDogStatus('archive')}>
-                {statusActionLoading ? <span className="spinner" /> : '📦 Archive this dog'}
               </button>
             </div>
           )}
