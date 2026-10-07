@@ -1,11 +1,16 @@
 import {
-  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
+  collection, doc, getDoc, getDocsFromServer as getDocs, addDoc, updateDoc, deleteDoc,
   query, where, serverTimestamp, setDoc, Timestamp, deleteField
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import { confirmedCreatedDogId, DogCreationUnconfirmedError } from './dogCreationResponse'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage, LitterShowcase, ShowcaseAvailability, ShowcasePuppyEntry } from '../types'
 import { calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
+
+// These lists feed counts and ownership decisions. Firestore's default
+// getDocs can resolve an empty cache while offline, which looks like a
+// confirmed empty account. Require a server response so existing error/Retry
+// states render unavailable data rather than misleading zeroes.
 
 function uid(): string {
   return auth.currentUser?.uid ?? ''
