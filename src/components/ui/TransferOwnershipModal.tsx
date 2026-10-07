@@ -26,8 +26,6 @@ export default function TransferOwnershipModal({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const passportUrl = `https://idogs.com.au/p/${dog.passportId}`
-
   async function handleTransfer() {
     if (!buyerName.trim() || !buyerEmail.trim()) {
       setError('Please fill in buyer name and email.')
@@ -56,7 +54,6 @@ export default function TransferOwnershipModal({
         dogName: dog.name,
         breed: dog.breed,
         breederName,
-        passportUrl,
       })
 
       onSuccess()

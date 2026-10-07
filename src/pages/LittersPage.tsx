@@ -951,7 +951,6 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     setTransferring(true)
     setTransferError('')
     try {
-      const passportUrl = `${window.location.origin}/p/${transferPuppy.passportId}`
       // Same canonical rule as DogDetailPage's edit control — never a second,
       // parallel implementation of "what does selecting Limited/Main/Not
       // recorded actually persist".
@@ -975,7 +974,6 @@ export default function LittersPage({ toast, dismissAll }: Props) {
         dogName: transferPuppy.name,
         breed: transferPuppy.breed,
         breederName: user?.displayName || 'Your breeder',
-        passportUrl,
       }).catch(err => console.error('Transfer email failed (transfer itself already succeeded):', err))
       const updatedDogs = await getDogs()
       setDogs(updatedDogs.filter(d => !d.isDeceased))

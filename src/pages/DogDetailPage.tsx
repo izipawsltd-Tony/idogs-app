@@ -822,7 +822,6 @@ export default function DogDetailPage({ toast }: Props) {
 
   async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone: string | undefined, pedigreeRegister: string) {
     if (!dogId || !dog) return
-    const passportUrl = `${window.location.origin}/p/${dog.passportId}`
     // Same canonical rule as the Overview edit control and LittersPage's
     // transfer modal — never a second, parallel implementation of "what
     // does selecting Limited/Main/Not recorded actually persist".
@@ -850,7 +849,6 @@ export default function DogDetailPage({ toast }: Props) {
       dogName: dog.name,
       breed: dog.breed,
       breederName: user?.displayName || 'Your breeder',
-      passportUrl,
     }).catch(err => console.error('Transfer email failed (transfer itself already succeeded):', err))
     await logAudit({
       tenantId: user?.uid || '',
