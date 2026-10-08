@@ -6,3 +6,7 @@
 export function isAndroidNativeApp(doc: Pick<Document, 'documentElement'> = document): boolean {
   return doc.documentElement.dataset.idogsNativePlatform === 'android'
 }
+
+export function isNativeApp(doc: Pick<Document, 'documentElement'> = document): boolean {
+  return ['android', 'ios'].includes(doc.documentElement.dataset.idogsNativePlatform || '')
+}

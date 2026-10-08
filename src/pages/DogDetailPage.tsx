@@ -1,3 +1,5 @@
+import { publicAppOrigin } from '../lib/publicLinks'
+import { viewDocument } from '../lib/documentViewer'
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import QRCode from 'qrcode'
@@ -36,59 +38,6 @@ interface Props {
 
 type Tab = 'overview' | 'vaccines' | 'worming' | 'health' | 'reminders' | 'passport' | 'timeline' | 'scan' | 'documents' | 'breeding'
 
-async function viewDocument(
-  user: { getIdToken: () => Promise<string> } | null | undefined,
-  toast: (msg: string, type?: ToastMessage['type']) => void,
-  path?: string | null,
-  legacyUrl?: string | null,
-) {
-  if (!path) {
-    if (legacyUrl) window.open(legacyUrl, '_blank', 'noopener,noreferrer')
-    return
-  }
-  if (!user) {
-    toast('Please sign in to view this document', 'error')
-    return
-  }
-
-  // To bypass browser popup blockers, open the new tab synchronously
-  // before the async fetch, then update its URL once the signed URL is returned.
-  const newWin = window.open('about:blank', '_blank')
-  if (newWin) {
-    newWin.document.write('<div style="font-family:sans-serif;padding:40px;text-align:center;color:#666;">Opening secure document...</div>')
-  }
-
-  try {
-    const idToken = await user.getIdToken()
-    const response = await fetch('/api/get-signed-url', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-      body: JSON.stringify({ filePath: path }),
-    })
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}))
-      if (import.meta.env.DEV) {
-        console.error('get-signed-url failed:', response.status, err.error || 'Unknown error')
-      }
-      if (response.status === 404) {
-        toast('This file is missing from storage or uses an old upload format. You can remove this broken document record.', 'error')
-      } else {
-        toast('Could not open document. Please contact breeder or try again.', 'error')
-      }
-      if (newWin) newWin.close()
-      return
-    }
-    const { url } = await response.json()
-    if (newWin) {
-      newWin.location.href = url
-    } else {
-      window.open(url, '_blank', 'noopener,noreferrer')
-    }
-  } catch {
-    if (newWin) newWin.close()
-    toast('Could not open document', 'error')
-  }
-}
 
 // Maps AI Scan's free-text testType guess to the exact HealthTest.testType
 // enum. Only these 6 values are ever written to Firestore — anything that
@@ -395,7 +344,7 @@ export default function DogDetailPage({ toast }: Props) {
         setDocuments(docsRes.data); setDocumentsError(!docsRes.ok)
         setLifeStageEvents(auditRes.data.filter(e => e.action === 'life_stage_changed'))
         setAuditError(!auditRes.ok)
-        const publicUrl = `${window.location.origin}/p/${d.passportId}`
+        const publicUrl = `${publicAppOrigin()}/p/${d.passportId}`
         const url = await QRCode.toDataURL(publicUrl, {
           width: 200, margin: 2, errorCorrectionLevel: 'H',
           color: { dark: '#1A3A2A', light: '#FFFFFF' }
@@ -824,7 +773,7 @@ export default function DogDetailPage({ toast }: Props) {
 
   async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone: string | undefined, pedigreeRegister: string) {
     if (!dogId || !dog) return
-    const passportUrl = `${window.location.origin}/p/${dog.passportId}`
+    const passportUrl = `${publicAppOrigin()}/p/${dog.passportId}`
     // Same canonical rule as the Overview edit control and LittersPage's
     // transfer modal — never a second, parallel implementation of "what
     // does selecting Limited/Main/Not recorded actually persist".
@@ -875,7 +824,7 @@ export default function DogDetailPage({ toast }: Props) {
     <Link to="/app/dogs" className="btn btn-primary">Back to my dogs</Link>
   </div>
 
-  const publicUrl = `${window.location.origin}/p/${dog.passportId}`
+  const publicUrl = `${publicAppOrigin()}/p/${dog.passportId}`
 
   // Only consider the latest record per vaccine group for the header status.
   // A record is "superseded" if a newer dose of the same type was given —
@@ -2774,7 +2723,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {documents.map((doc, i) => (
-            <div key={i} style={{
+            <div key={doc.id || i} className="dog-document-card" style={{
               background: 'var(--white)', border: '1px solid var(--border)',
               borderRadius: 'var(--radius-md)', padding: '12px 16px',
               display: 'flex', alignItems: 'center', gap: 14,
@@ -2787,11 +2736,11 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
               }}>
                 {getDocIcon(doc.documentType)}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="dog-document-content" style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 2 }}>
                   {editingDocId === doc.id ? (
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <input value={editDocName} onChange={e => setEditDocName(e.target.value)} placeholder={getDocLabel(doc.documentType)} autoFocus style={{ fontSize: 14, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', flex: 1 }} />
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input value={editDocName} onChange={e => setEditDocName(e.target.value)} placeholder={getDocLabel(doc.documentType)} autoFocus style={{ fontSize: 14, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', minWidth: 0, flex: '1 1 160px' }} />
                       <button type="button" className="btn btn-sm" onClick={async () => {
                         try {
                           await updateDocument(doc.id, editDocName)
@@ -2803,9 +2752,9 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditingDocId(null)}>Cancel</button>
                     </div>
                   ) : (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      {doc.name || getDocLabel(doc.documentType)}
-                      <button type="button" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || '') }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', overflowWrap: 'anywhere' }}>
+                      {doc.name || doc.title || getDocLabel(doc.documentType)}
+                      <button type="button" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || doc.title || '') }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>
                     </span>
                   )}
                 </div>
@@ -2823,7 +2772,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+              <div className="dog-document-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
                 <button
                   onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
                   className="btn btn-secondary btn-sm"

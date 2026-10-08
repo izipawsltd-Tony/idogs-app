@@ -1,3 +1,4 @@
+import { publicAppOrigin } from '../lib/publicLinks'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -951,7 +952,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     setTransferring(true)
     setTransferError('')
     try {
-      const passportUrl = `${window.location.origin}/p/${transferPuppy.passportId}`
+      const passportUrl = `${publicAppOrigin()}/p/${transferPuppy.passportId}`
       // Same canonical rule as DogDetailPage's edit control — never a second,
       // parallel implementation of "what does selecting Limited/Main/Not
       // recorded actually persist".
@@ -2256,7 +2257,7 @@ function ShowcaseManager({
   }
 
   async function copyPrivateAccessLink(puppy: Dog) {
-    const url = `${window.location.origin}/app/shared-dogs/${puppy.id}`
+    const url = `${publicAppOrigin()}/app/shared-dogs/${puppy.id}`
     try {
       await navigator.clipboard.writeText(url)
       toast(`Private link copied for ${puppy.name}`)
@@ -2403,13 +2404,13 @@ function ShowcaseManager({
                   <input
                     className="form-input"
                     readOnly
-                    value={`${window.location.origin}/s/${shareLastRotatedToken}`}
+                    value={`${publicAppOrigin()}/s/${shareLastRotatedToken}`}
                     style={{ fontSize: 12 }}
                     onFocus={e => e.target.select()}
                   />
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/s/${shareLastRotatedToken}`) }}
+                    onClick={() => { navigator.clipboard?.writeText(`${publicAppOrigin()}/s/${shareLastRotatedToken}`) }}
                   >Copy link</button>
                 </div>
                 <p style={{ fontSize: 11, color: 'var(--mid)', marginTop: 5 }}>Use the same link for all interested buyers.</p>
