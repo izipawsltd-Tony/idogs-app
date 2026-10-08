@@ -57,3 +57,24 @@ Immediate post-publish tester check: emulator package was still **20 / 0.1.20** 
 At approximately 21:53 Adelaide time, Google Play Internal Testing propagation reached the emulator tester account `izipawsltd@gmail.com`. After refreshing the Play Store entitlement and restarting the emulator, the iDogs listing showed **Update**. The update was installed through Google Play (no sideload).
 
 Post-update package evidence on `emulator-5554`: versionCode **22**, versionName **0.1.22**, installer `com.android.vending`, lastUpdateTime `2026-10-08 21:53:12`. Play Store then showed **Open** / **Uninstall**.
+
+## Native v22 regression — 2026-10-08
+
+Installed through Google Play Internal Testing: versionCode **22**, versionName **0.1.22**, installer `com.android.vending`.
+
+| Check | Result |
+| --- | --- |
+| Cold offline | PASS — with airplane mode/data/Wi-Fi disabled and cold app start, Home displayed loading-error guidance, Retry controls and em dashes instead of false zero counts. Screenshot: `qa-v22-offline-cold.png`. |
+| Network restore / Retry | PASS — network was restored; Retry reloaded actual account data (28 dogs before new QA fixture, 26 documents, 3 litters, 14 overdue reminders). Screenshot: `qa-v22-retry-restored.png`. |
+| Global Documents mobile layout | PASS — card metadata remained readable and View / Remove actions rendered on a separate action row. Screenshot: `qa-v22-documents-layout.png`. |
+| Isolated QA fixture | PASS — created synthetic dog `QA-v22-20261008-TEST-ONLY`, Labrador Retriever, Female, DOB 2026-10-08. Passport ID `QA--2026-3B8N`. |
+| QR Passport | PASS — Public URL displayed `https://idogs.com.au/p/QA--2026-3B8N`. Screenshot: `qa-v22-qr.png`. |
+| Worming optional fields | PASS — `QA-v22-Worming-TEST-ONLY`, date given 2026-10-08, Next due and Weight left blank; saved successfully and tab became Worming (1). |
+| Manual PDF upload | PASS — uploaded existing synthetic 1.5 KB QA PDF to the v22 QA dog only; global count 26 → 27 and dog Documents 0 → 1. |
+| PDF View | PASS — View opened the synthetic PDF in Chrome and visibly rendered the expected QA text. Screenshot: `qa-v22-pdf-view2.png`. |
+| Rename | PASS — Dog Documents Edit/Save renamed the QA PDF to `QA-v22-PDF-EDIT-SAVED`. |
+| Persistence | PASS — after force-stop/relaunch Home showed 29 Dogs / 27 Documents and recent activity included `QA-v22-PDF-EDIT-SAVED` plus worming activity for the QA dog. |
+
+No real ownership transfer, billing, email/SMS or destructive operation on a real dog was performed. Network state was restored after the offline test.
+
+Remaining Android Production-gate coverage is unchanged: isolated PetOwner/transfer flow, archive/restore with a suitable synthetic fixture, and physical Android-device testing. No physical Android phone is currently available.
