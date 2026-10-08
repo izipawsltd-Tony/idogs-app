@@ -43,3 +43,11 @@ Candidate: versionCode **22**, versionName **0.1.22**, source SHA `10d1eb57064cd
 On tester emulator `emulator-5554`, the installed Play build remained **20 / 0.1.20** with installer `com.android.vending`. The Play Store app details page for `au.com.idogs.app` rendered **Uninstall** and **Open**, with no **Update** action. Therefore v22 was **not yet available to this Internal Testing tester** at the time of the check.
 
 Result: **BLOCKED at Play distribution gate**. Native v22 cold-offline, Retry/network recovery, Global Documents layout and regression smoke were **not executed** and are **not PASS**. No sideload was used because this QA stage requires installation through Google Play Internal Testing.
+
+## v22 Internal Testing rollout — 2026-10-08
+
+Google Play Console Internal testing release was created from the signed AAB `iDogs-v22-0.1.22.aab` (versionCode **22**, versionName **0.1.22**; source SHA `10d1eb57064cd30873de0e5d2168166cabac98ba`). Upload completed and Play recognized artifact **22 (0.1.22)**, target SDK 36. Validation showed one non-blocking warning: no deobfuscation file associated with the App Bundle. No blocking errors were shown.
+
+The release was confirmed with **Save and publish**. Internal testing then showed **Latest release: 22 (0.1.22)**, status **Available to internal testers**, released Oct 8 2026 at approximately 3:15 PM Adelaide time.
+
+Immediate post-publish tester check: emulator package was still **20 / 0.1.20** with installer `com.android.vending`; Play propagation had not yet reached that tester at the first check. Native v22 QA remains pending until the tester can update through Google Play.
