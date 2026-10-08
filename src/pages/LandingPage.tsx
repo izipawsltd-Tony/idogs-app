@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
+import { PLUS_MONTHLY_PRICE_AUD, LITTER_QUOTA_PLUS_ROLLING_12_MONTHS, EXTRA_LITTER_PRICE_AUD } from '../lib/pricingCopy'
 
 // ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
 // Ported from the approved design-review package:
@@ -290,7 +291,7 @@ export default function LandingPage() {
                 <div className="pricing-card-head">
                   <div>
                     <p className="pricing-label">iDogs Plus</p>
-                    <p className="pricing-price"><span>A$7</span><small>/month</small></p>
+                    <p className="pricing-price"><span>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</span><small>/month</small></p>
                   </div>
                   <span className="pricing-badge">Most popular</span>
                 </div>
@@ -298,8 +299,8 @@ export default function LandingPage() {
                 <ul className="pricing-list">
                   <li>Dog profiles, health records and documents</li>
                   <li>Breeder tools for dogs, litters and puppies</li>
-                  <li>2 litters per rolling 12 months included</li>
-                  <li>Extra litters A$39 each</li>
+                  <li>{LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} litters per rolling 12 months included</li>
+                  <li>{`Extra litters A$${EXTRA_LITTER_PRICE_AUD} each`}</li>
                   <li>Digital Passport and QR sharing</li>
                 </ul>
                 <Link className="btn btn-primary pricing-cta" to="/signup">Start Free</Link>

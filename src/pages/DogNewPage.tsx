@@ -8,6 +8,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
 import { isAndroidNativeApp } from '../lib/nativePlatform'
 import { dogLimitReachedBody } from '../lib/nativeUpgradeCopy'
+import { PLUS_MONTHLY_PRICE_AUD } from '../lib/pricingCopy'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -556,7 +557,7 @@ export default function DogNewPage({ toast }: Props) {
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             {!isAndroidNativeApp() && (
               <Link to="/app/billing" className="btn btn-primary">
-                Upgrade — from $5/mo
+                {`Upgrade — from A$${PLUS_MONTHLY_PRICE_AUD}/mo`}
               </Link>
             )}
             <Link to="/app/dogs" className="btn btn-secondary">

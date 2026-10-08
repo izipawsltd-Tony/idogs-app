@@ -2,6 +2,7 @@ import Stripe from 'stripe'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
+import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from './pricing-policy.js'
 import { computeEffectivePlan, hasValidInternalEntitlement } from './entitlements.js'
 import { ALLOWED_ADMINS } from '../super-admin/_auth.js'
 
@@ -105,7 +106,7 @@ async function compileRevenueTruth(users) {
   const legacyStoredEstimateAud = users.reduce((sum, user) => {
     const storedActive = user.subscriptionStatus === 'active' && user.stripeSubscriptionId && user.plan === 'plus'
     if (!storedActive) return sum
-    return sum + (user.billingInterval === 'annual' ? 49 / 12 : 5)
+    return sum + (user.billingInterval === 'annual' ? PLUS_ANNUAL_PRICE_AUD / 12 : PLUS_MONTHLY_PRICE_AUD)
   }, 0)
 
   const result = {
