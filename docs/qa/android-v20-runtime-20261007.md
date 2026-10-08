@@ -78,3 +78,26 @@ Installed through Google Play Internal Testing: versionCode **22**, versionName 
 No real ownership transfer, billing, email/SMS or destructive operation on a real dog was performed. Network state was restored after the offline test.
 
 Remaining Android Production-gate coverage is unchanged: isolated PetOwner/transfer flow, archive/restore with a suitable synthetic fixture, and physical Android-device testing. No physical Android phone is currently available.
+
+## PetOwner/transfer + archive/restore gate — 2026-10-08
+
+### PetOwner / transfer pre-submit QA
+Synthetic fixture: `QA-v22-20261008-TEST-ONLY` (passport `QA--2026-3B8N`).
+
+PASS up to the irreversible submit boundary:
+- Transfer Ownership modal opened for the synthetic dog.
+- Required buyer name/email validation exercised with synthetic values.
+- Confirmation control exercised.
+- `Transfer Ownership` changed from disabled to enabled when required fields/confirmation were valid.
+- The modal explicitly states the buyer will receive an email and the transfer cannot be undone.
+- Per QA guardrails (no email/SMS and no real/irreversible ownership transfer), the final Transfer Ownership submit was NOT clicked.
+- Cancel closed the modal and the dog remained unchanged with Worming (1), Documents (1), and passport ID `QA--2026-3B8N`.
+
+### Archive / restore
+Native UI source/behavior confirms:
+- archive is a supported trusted status transition (`/api/set-dog-status`) from active/restricted to archived; restore transitions archived back to active.
+- The Dog Detail UI only offers `Archive this dog` as the reversible alternative when the dog has permanent ownership/transfer history.
+- The isolated v22 fixture has no permanent transfer history, so the native UI does not expose Archive for this fixture.
+- Creating that history through Transfer Ownership would send an email and create an irreversible transfer, which is explicitly outside the approved QA guardrails.
+
+Result: **archive/restore native QA BLOCKED by the current no-email/no-real-transfer guardrail, not failed**. No backend bypass, direct Firestore mutation, email, SMS, or irreversible ownership transfer was performed.
