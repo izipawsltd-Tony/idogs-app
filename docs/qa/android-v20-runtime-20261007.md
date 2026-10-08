@@ -51,3 +51,9 @@ Google Play Console Internal testing release was created from the signed AAB `iD
 The release was confirmed with **Save and publish**. Internal testing then showed **Latest release: 22 (0.1.22)**, status **Available to internal testers**, released Oct 8 2026 at approximately 3:15 PM Adelaide time.
 
 Immediate post-publish tester check: emulator package was still **20 / 0.1.20** with installer `com.android.vending`; Play propagation had not yet reached that tester at the first check. Native v22 QA remains pending until the tester can update through Google Play.
+
+## v22 tester propagation and Play update — 2026-10-08
+
+At approximately 21:53 Adelaide time, Google Play Internal Testing propagation reached the emulator tester account `izipawsltd@gmail.com`. After refreshing the Play Store entitlement and restarting the emulator, the iDogs listing showed **Update**. The update was installed through Google Play (no sideload).
+
+Post-update package evidence on `emulator-5554`: versionCode **22**, versionName **0.1.22**, installer `com.android.vending`, lastUpdateTime `2026-10-08 21:53:12`. Play Store then showed **Open** / **Uninstall**.
