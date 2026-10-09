@@ -80,6 +80,7 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
     items: [
       { path: '/app/dogs?stage=puppies', label: 'Puppies', icon: '🐾', breederOnly: true },
       { path: '/app/buyers',  label: 'Buyers',  icon: '👥', breederOnly: true },
+      { path: '/app/finance', label: 'Invoices & Payments', icon: '🧾', breederOnly: true },
     ],
   },
   {

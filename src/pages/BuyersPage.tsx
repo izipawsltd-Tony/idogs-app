@@ -341,12 +341,15 @@ export default function BuyersPage() {
                           </span>
                         )}
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                         {activity > 0 && (
                           <span style={{ fontSize: '0.8rem', color: 'var(--mid)' }}>
                             {fmtDate(activity)}
                           </span>
                         )}
+                        <Link className="btn btn-sm btn-secondary" to={`/app/finance?dogId=${dog.id}`}>
+                          Invoice / Receipt
+                        </Link>
                         <span className={badge.className} style={badge.style}>
                           {relationship === 'transferred' ? 'Transferred' : 'Reserved'}
                         </span>

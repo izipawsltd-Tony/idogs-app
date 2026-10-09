@@ -34,6 +34,7 @@ import NotFoundPage from '../pages/NotFoundPage'
 import ComingSoonPage from '../pages/ComingSoonPage'
 import ReportsPage from '../pages/ReportsPage'
 import BuyersPage from '../pages/BuyersPage'
+import FinanceDocumentsPage from '../pages/FinanceDocumentsPage'
 import ClaimDogPage from '../pages/ClaimDogPage'
 import PrivateDogPage from '../pages/PrivateDogPage'
 import SuperAdminRoute from '../super-admin/SuperAdminRoute'
@@ -154,6 +155,7 @@ export default function App() {
           <Route path="admin/landing-media" element={<LandingMediaAdminPage toast={toast} />} />
           <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppies" replace />} />
           <Route path="buyers"  element={<BreederOnlyRoute><BuyersPage /></BreederOnlyRoute>} />
+          <Route path="finance" element={<BreederOnlyRoute><FinanceDocumentsPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="reports" element={<BreederOnlyRoute><ReportsPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="claim-dogs" element={<ClaimDogPage toast={toast} />} />
           <Route path="shared-dogs/:dogId" element={<PrivateDogPage />} />
