@@ -77,10 +77,10 @@ function PrintableDocument({ doc }: { doc: FinanceDocument }) {
   const dog = doc.dog || {}
 
   return (
-    <div style={{ background: '#fff', color: '#1a1917', padding: 32, maxWidth: 820, margin: '0 auto', borderRadius: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, borderBottom: '3px solid #085041', paddingBottom: 18, flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 700, color: '#085041' }}>{seller.businessName || 'Breeder'}</div>
+    <div className="finance-document-paper">
+      <div className="finance-document-head">
+        <div className="finance-document-business">
+          <div className="finance-document-business-name">{seller.businessName || 'Breeder'}</div>
           <div style={{ fontSize: 12, color: '#5c5a54', lineHeight: 1.6, marginTop: 7 }}>
             {seller.address && <>{seller.address}<br /></>}
             {(seller.state || seller.postcode) && <>{[seller.state, seller.postcode].filter(Boolean).join(' ')}<br /></>}
@@ -90,8 +90,8 @@ function PrintableDocument({ doc }: { doc: FinanceDocument }) {
             {seller.breederId && <>Breeder ID: {seller.breederId}</>}
           </div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 700 }}>{documentTitle(doc)}</div>
+        <div className="finance-document-title">
+          <h2>{documentTitle(doc)}</h2>
           <div style={{ color: '#5c5a54', marginTop: 6 }}>{doc.documentNumber}</div>
           <div style={{ fontSize: 12, color: '#5c5a54' }}>Date: {doc.issueDate}</div>
           {doc.dueDate && <div style={{ fontSize: 12, color: '#5c5a54' }}>Due: {doc.dueDate}</div>}
@@ -344,20 +344,41 @@ export default function FinanceDocumentsPage({ toast }: Props) {
         ? [['Amount paid', money(doc.amountPaidCents)], ['Payment method', doc.paymentMethod || 'Not specified'], ['Reference', doc.paymentReference || '—']]
         : [['Amount refunded', money(doc.refundAmountCents)], ['Refund method', doc.paymentMethod || 'Not specified'], ['Original document', doc.originalDocumentNumber || '—'], ['Reason', doc.refundReason || '—']]
 
-    const win = window.open('', '_blank', 'noopener,noreferrer')
+    const frame = document.createElement('iframe')
+    frame.setAttribute('aria-hidden', 'true')
+    frame.style.position = 'fixed'
+    frame.style.right = '0'
+    frame.style.bottom = '0'
+    frame.style.width = '1px'
+    frame.style.height = '1px'
+    frame.style.border = '0'
+    frame.style.opacity = '0'
+    document.body.appendChild(frame)
+
+    const win = frame.contentWindow
     if (!win) {
-      toast('Pop-up blocked. Allow pop-ups to print or save PDF.', 'error')
+      frame.remove()
+      toast('Could not open the print preview.', 'error')
       return
     }
+    win.document.open()
     win.document.write(`<!doctype html><html><head><title>${escapeHtml(doc.documentNumber)}</title>
-      <style>body{font-family:Arial,sans-serif;color:#1a1917;margin:0;padding:36px}.head{display:flex;justify-content:space-between;border-bottom:3px solid #085041;padding-bottom:18px}.brand{font-size:26px;font-weight:800;color:#085041}.muted{font-size:12px;color:#5c5a54;line-height:1.6}.grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin:26px 0}.cap{font-size:11px;color:#777;font-weight:700;text-transform:uppercase}.name{font-size:15px;font-weight:700;margin:5px 0}table{width:100%;border-collapse:collapse}td{padding:10px 0;border-bottom:1px solid #ece9e2}td:last-child{text-align:right;font-weight:700}.bank{margin-top:20px;padding:14px;background:#f5f1e8;border-radius:10px}.foot{margin-top:28px;padding-top:14px;border-top:1px solid #e2dfd8;font-size:11px;color:#999}@media print{body{padding:0}}</style>
+      <style>@page{size:A4;margin:16mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#1a1917;margin:0;padding:24px;max-width:820px;margin-inline:auto}.head{display:grid;grid-template-columns:minmax(0,1fr) minmax(210px,280px);gap:32px;align-items:start;border-bottom:3px solid #085041;padding-bottom:18px}.head>div:first-child{min-width:0}.head>div:last-child{text-align:right;min-width:0}.brand{font-size:26px;line-height:1.18;font-weight:800;color:#085041;overflow-wrap:anywhere}.muted{font-size:12px;color:#5c5a54;line-height:1.6;overflow-wrap:anywhere}.grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin:26px 0}.cap{font-size:11px;color:#777;font-weight:700;text-transform:uppercase}.name{font-size:15px;font-weight:700;margin:5px 0;overflow-wrap:anywhere}table{width:100%;border-collapse:collapse}td{padding:10px 0;border-bottom:1px solid #ece9e2}td:last-child{text-align:right;font-weight:700}.bank{margin-top:20px;padding:14px;background:#f5f1e8;border-radius:10px}.foot{margin-top:28px;padding-top:14px;border-top:1px solid #e2dfd8;font-size:11px;color:#999}@media(max-width:620px){.head,.grid{grid-template-columns:1fr}.head>div:last-child{text-align:left}}@media print{body{padding:0;max-width:none}.head,.grid{break-inside:avoid}.bank{break-inside:avoid}}</style>
       </head><body><div class="head"><div><div class="brand">${escapeHtml(seller.businessName || 'Breeder')}</div><div class="muted">${escapeHtml(seller.address || '')}<br>${escapeHtml([seller.state,seller.postcode].filter(Boolean).join(' '))}<br>${escapeHtml(seller.phone || '')}<br>${escapeHtml(seller.email || '')}${seller.abn ? '<br>ABN: '+escapeHtml(seller.abn):''}${seller.breederId ? '<br>Breeder ID: '+escapeHtml(seller.breederId):''}</div></div><div style="text-align:right"><div style="font-size:24px;font-weight:800">${documentTitle(doc)}</div><div class="muted">${escapeHtml(doc.documentNumber)}<br>Date: ${escapeHtml(doc.issueDate)}${doc.dueDate?'<br>Due: '+escapeHtml(doc.dueDate):''}</div></div></div>
       <div class="grid"><div><div class="cap">Buyer</div><div class="name">${escapeHtml(buyer.name)}</div><div class="muted">${escapeHtml(buyer.email||'')}<br>${escapeHtml(buyer.phone||'')}<br>${escapeHtml(buyer.address||'')}</div></div><div><div class="cap">Dog / Puppy</div><div class="name">${escapeHtml(dog.name||'Unnamed')}</div><div class="muted">${escapeHtml([dog.breed,dog.sex,dog.colour].filter(Boolean).join(' · '))}<br>${dog.dateOfBirth?'DOB: '+escapeHtml(dog.dateOfBirth)+'<br>':''}${dog.microchip?'Microchip: '+escapeHtml(dog.microchip)+'<br>':''}${dog.registration?'Registration: '+escapeHtml(dog.registration):''}</div></div></div>
       <table>${lines.map(([a,b])=>`<tr><td>${escapeHtml(a)}</td><td>${escapeHtml(b)}</td></tr>`).join('')}</table>
       ${doc.type==='invoice'&&(seller.bankBsb||seller.bankAccountNumber)?`<div class="bank"><b>Payment details</b><div class="muted">${escapeHtml(seller.bankAccountName||seller.businessName||'')}${seller.bankBsb?'<br>BSB: '+escapeHtml(seller.bankBsb):''}${seller.bankAccountNumber?'<br>Account: '+escapeHtml(seller.bankAccountNumber):''}</div></div>`:''}
       ${doc.notes?'<div class="muted" style="margin-top:18px"><b>Notes:</b> '+escapeHtml(doc.notes)+'</div>':''}<div class="foot">Generated from iDogs · idogs.com.au</div>
-      <script>window.onload=()=>{window.print()}<\/script></body></html>`)
+      </body></html>`)
     win.document.close()
+    window.setTimeout(() => {
+      try {
+        win.focus()
+        win.print()
+      } finally {
+        window.setTimeout(() => frame.remove(), 1500)
+      }
+    }, 250)
   }
 
   return (
@@ -425,70 +446,87 @@ export default function FinanceDocumentsPage({ toast }: Props) {
       )}
 
       {showCreate && (
-        <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && setShowCreate(false)}>
-          <div className="modal-content" style={{ maxWidth: 760, maxHeight: '92vh', overflowY: 'auto' }}>
-            <div className="modal-header">
-              <div><h2 style={{ margin: 0 }}>Create {typeLabel(type)}</h2><p style={{ margin: '4px 0 0', color: 'var(--mid)', fontSize: 12 }}>Based on the forms you provided.</p></div>
-              <button className="modal-close" onClick={() => setShowCreate(false)}>×</button>
+        <div className="finance-modal-overlay" onMouseDown={e => e.target === e.currentTarget && setShowCreate(false)}>
+          <div className="finance-modal-shell">
+            <div className="finance-modal-header">
+              <div>
+                <div style={{ fontSize: 12, color: '#0c725d', fontWeight: 800, letterSpacing: '.05em', textTransform: 'uppercase' }}>Breeder finance</div>
+                <h2 style={{ margin: '4px 0 0', fontSize: 24 }}>Create {typeLabel(type)}</h2>
+                <p style={{ margin: '5px 0 0', color: 'var(--mid)', fontSize: 13 }}>Buyer and puppy details are pre-filled where available.</p>
+              </div>
+              <button className="finance-modal-close" aria-label="Close" onClick={() => setShowCreate(false)}>×</button>
             </div>
-            <div style={{ padding: 20 }}>
-              <div style={sectionTitle}>Dog & buyer</div>
-              <div className="form-group"><label className="form-label">Dog / Puppy *</label><select className="form-select" value={dogId} onChange={e => setDogId(e.target.value)}><option value="">Select dog</option>{dogs.filter(d => d.tenantId === user?.uid).map(d => <option key={d.id} value={d.id}>{d.name || 'Unnamed'} — {d.breed}</option>)}</select></div>
-              <div style={twoCol}>
-                <div className="form-group"><label className="form-label">Buyer name *</label><input className="form-input" value={buyerName} onChange={e => setBuyerName(e.target.value)} /></div>
-                <div className="form-group"><label className="form-label">Buyer email</label><input className="form-input" type="email" value={buyerEmail} onChange={e => setBuyerEmail(e.target.value)} /></div>
-                <div className="form-group"><label className="form-label">Buyer phone</label><input className="form-input" value={buyerPhone} onChange={e => setBuyerPhone(e.target.value)} /></div>
-                <div className="form-group"><label className="form-label">Buyer address</label><input className="form-input" value={buyerAddress} onChange={e => setBuyerAddress(e.target.value)} /></div>
-              </div>
-
-              <div style={sectionTitle}>Seller details</div>
-              <div style={twoCol}>
-                <div className="form-group"><label className="form-label">Business / kennel name</label><input className="form-input" value={businessName} onChange={e => setBusinessName(e.target.value)} /></div>
-                <div className="form-group"><label className="form-label">ABN</label><input className="form-input" value={abn} onChange={e => setAbn(e.target.value)} placeholder="Optional" /></div>
-              </div>
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, fontSize: 13 }}><input type="checkbox" checked={gstRegistered} onChange={e => setGstRegistered(e.target.checked)} /> GST registered — show TAX INVOICE and GST included amount</label>
-
-              <div style={sectionTitle}>Document details</div>
-              <div style={twoCol}>
-                <div className="form-group"><label className="form-label">Date</label><input className="form-input" type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} /></div>
-                {type === 'invoice' && <div className="form-group"><label className="form-label">Due date</label><input className="form-input" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>}
-                {type === 'invoice' && <><div className="form-group"><label className="form-label">Puppy sale price (AUD) *</label><input className="form-input" inputMode="decimal" value={salePrice} onChange={e => setSalePrice(e.target.value)} placeholder="2500.00" /></div><div className="form-group"><label className="form-label">Deposit already paid</label><input className="form-input" inputMode="decimal" value={depositPaid} onChange={e => setDepositPaid(e.target.value)} placeholder="500.00" /></div></>}
-                {type === 'receipt' && <div className="form-group"><label className="form-label">Amount paid (AUD) *</label><input className="form-input" inputMode="decimal" value={amountPaid} onChange={e => setAmountPaid(e.target.value)} placeholder="500.00" /></div>}
-                {type === 'refund' && <div className="form-group"><label className="form-label">Amount refunded (AUD) *</label><input className="form-input" inputMode="decimal" value={refundAmount} onChange={e => setRefundAmount(e.target.value)} placeholder="500.00" /></div>}
-                {type !== 'invoice' && <div className="form-group"><label className="form-label">{type === 'refund' ? 'Refund method' : 'Payment method'}</label><select className="form-select" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}><option>Bank transfer</option><option>Cash</option><option>Card</option><option>PayID</option><option>Other</option></select></div>}
-                {type === 'receipt' && <div className="form-group"><label className="form-label">Transaction reference</label><input className="form-input" value={paymentReference} onChange={e => setPaymentReference(e.target.value)} /></div>}
-                {type === 'refund' && <><div className="form-group"><label className="form-label">Original invoice / receipt no.</label><input className="form-input" value={originalDocumentNumber} onChange={e => setOriginalDocumentNumber(e.target.value)} /></div><div className="form-group" style={{ gridColumn: '1 / -1' }}><label className="form-label">Refund reason</label><input className="form-input" value={refundReason} onChange={e => setRefundReason(e.target.value)} /></div></>}
-              </div>
-
-              {type === 'invoice' && <>
-                <div style={sectionTitle}>Bank details</div>
-                <div style={twoCol}>
-                  <div className="form-group"><label className="form-label">Account name</label><input className="form-input" value={bankAccountName} onChange={e => setBankAccountName(e.target.value)} /></div>
-                  <div className="form-group"><label className="form-label">BSB</label><input className="form-input" value={bankBsb} onChange={e => setBankBsb(e.target.value)} /></div>
-                  <div className="form-group"><label className="form-label">Account number</label><input className="form-input" value={bankAccountNumber} onChange={e => setBankAccountNumber(e.target.value)} /></div>
+            <div className="finance-modal-body">
+              <section className="finance-form-section">
+                <div className="finance-form-section-title">① Dog & buyer</div>
+                <div className="finance-form-grid">
+                  <div className="form-group finance-span-2"><label className="form-label">Dog / Puppy *</label><select className="form-select" value={dogId} onChange={e => setDogId(e.target.value)}><option value="">Select dog</option>{dogs.filter(d => d.tenantId === user?.uid).map(d => <option key={d.id} value={d.id}>{d.name || 'Unnamed'} — {d.breed}</option>)}</select></div>
+                  <div className="form-group"><label className="form-label">Buyer name *</label><input className="form-input" value={buyerName} onChange={e => setBuyerName(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">Buyer email</label><input className="form-input" type="email" value={buyerEmail} onChange={e => setBuyerEmail(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">Buyer phone</label><input className="form-input" value={buyerPhone} onChange={e => setBuyerPhone(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">Buyer address</label><input className="form-input" value={buyerAddress} onChange={e => setBuyerAddress(e.target.value)} /></div>
                 </div>
-              </>}
+              </section>
 
-              <div className="form-group"><label className="form-label">Notes / terms</label><textarea className="form-textarea" rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder={type === 'invoice' ? 'e.g. Puppy to be collected after full payment.' : 'Optional notes'} /></div>
+              <section className="finance-form-section">
+                <div className="finance-form-section-title">② Seller details</div>
+                <div className="finance-form-grid">
+                  <div className="form-group"><label className="form-label">Business / kennel name</label><input className="form-input" value={businessName} onChange={e => setBusinessName(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">ABN</label><input className="form-input" value={abn} onChange={e => setAbn(e.target.value)} placeholder="Optional" /></div>
+                  <label className="finance-gst-toggle finance-span-2"><input type="checkbox" checked={gstRegistered} onChange={e => setGstRegistered(e.target.checked)} /><span><strong>GST registered</strong><br />Show “Tax Invoice” and calculate GST included in the total.</span></label>
+                </div>
+              </section>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
-                <button className="btn btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
-                <button className="btn btn-primary" disabled={saving} onClick={createDocument}>{saving ? 'Creating…' : `Create ${typeLabel(type)}`}</button>
-              </div>
+              <section className="finance-form-section">
+                <div className="finance-form-section-title">③ Document details</div>
+                <div className="finance-form-grid">
+                  <div className="form-group"><label className="form-label">Date</label><input className="form-input" type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} /></div>
+                  {type === 'invoice' && <div className="form-group"><label className="form-label">Due date</label><input className="form-input" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>}
+                  {type === 'invoice' && <><div className="form-group"><label className="form-label">Puppy sale price (AUD) *</label><input className="form-input" inputMode="decimal" value={salePrice} onChange={e => setSalePrice(e.target.value)} placeholder="2500.00" /></div><div className="form-group"><label className="form-label">Deposit already paid</label><input className="form-input" inputMode="decimal" value={depositPaid} onChange={e => setDepositPaid(e.target.value)} placeholder="500.00" /></div></>}
+                  {type === 'receipt' && <div className="form-group"><label className="form-label">Amount paid (AUD) *</label><input className="form-input" inputMode="decimal" value={amountPaid} onChange={e => setAmountPaid(e.target.value)} placeholder="500.00" /></div>}
+                  {type === 'refund' && <div className="form-group"><label className="form-label">Amount refunded (AUD) *</label><input className="form-input" inputMode="decimal" value={refundAmount} onChange={e => setRefundAmount(e.target.value)} placeholder="500.00" /></div>}
+                  {type !== 'invoice' && <div className="form-group"><label className="form-label">{type === 'refund' ? 'Refund method' : 'Payment method'}</label><select className="form-select" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}><option>Bank transfer</option><option>Cash</option><option>Card</option><option>PayID</option><option>Other</option></select></div>}
+                  {type === 'receipt' && <div className="form-group"><label className="form-label">Transaction reference</label><input className="form-input" value={paymentReference} onChange={e => setPaymentReference(e.target.value)} /></div>}
+                  {type === 'refund' && <><div className="form-group"><label className="form-label">Original invoice / receipt no.</label><input className="form-input" value={originalDocumentNumber} onChange={e => setOriginalDocumentNumber(e.target.value)} /></div><div className="form-group finance-span-2"><label className="form-label">Refund reason</label><input className="form-input" value={refundReason} onChange={e => setRefundReason(e.target.value)} /></div></>}
+                </div>
+              </section>
+
+              {type === 'invoice' && (
+                <section className="finance-form-section">
+                  <div className="finance-form-section-title">④ Payment details</div>
+                  <div className="finance-form-grid">
+                    <div className="form-group"><label className="form-label">Account name</label><input className="form-input" value={bankAccountName} onChange={e => setBankAccountName(e.target.value)} /></div>
+                    <div className="form-group"><label className="form-label">BSB</label><input className="form-input" value={bankBsb} onChange={e => setBankBsb(e.target.value)} /></div>
+                    <div className="form-group"><label className="form-label">Account number</label><input className="form-input" value={bankAccountNumber} onChange={e => setBankAccountNumber(e.target.value)} /></div>
+                  </div>
+                </section>
+              )}
+
+              <section className="finance-form-section">
+                <div className="finance-form-section-title">{type === 'invoice' ? '⑤' : '④'} Notes & terms</div>
+                <div className="form-group"><label className="form-label">Notes / terms</label><textarea className="form-textarea" rows={4} value={notes} onChange={e => setNotes(e.target.value)} placeholder={type === 'invoice' ? 'e.g. Puppy to be collected after full payment.' : 'Optional notes'} /></div>
+              </section>
+            </div>
+            <div className="finance-modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
+              <button className="btn btn-primary" disabled={saving} onClick={createDocument}>{saving ? 'Creating…' : `Create ${typeLabel(type)}`}</button>
             </div>
           </div>
         </div>
       )}
 
       {viewing && (
-        <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && setViewing(null)}>
-          <div className="modal-content" style={{ maxWidth: 900, maxHeight: '94vh', overflowY: 'auto', background: '#f2efe8' }}>
-            <div className="modal-header" style={{ background: '#fff' }}>
-              <div><strong>{viewing.documentNumber}</strong>{viewing.emailedAt && <span className="badge badge-green" style={{ marginLeft: 8 }}>Emailed</span>}</div>
-              <button className="modal-close" onClick={() => setViewing(null)}>×</button>
+        <div className="finance-modal-overlay" onMouseDown={e => e.target === e.currentTarget && setViewing(null)}>
+          <div className="finance-modal-shell finance-document-preview-shell">
+            <div className="finance-modal-header">
+              <div>
+                <div style={{ fontSize: 12, color: '#0c725d', fontWeight: 800, letterSpacing: '.05em', textTransform: 'uppercase' }}>Document preview</div>
+                <div style={{ marginTop: 4 }}><strong>{viewing.documentNumber}</strong>{viewing.emailedAt && <span className="badge badge-green" style={{ marginLeft: 8 }}>Emailed</span>}</div>
+              </div>
+              <button className="finance-modal-close" aria-label="Close" onClick={() => setViewing(null)}>×</button>
             </div>
-            <div style={{ padding: 20 }}><PrintableDocument doc={viewing} /></div>
-            <div style={{ padding: '0 20px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+            <div className="finance-modal-body finance-document-preview-body"><PrintableDocument doc={viewing} /></div>
+            <div className="finance-preview-actions">
               <button className="btn btn-secondary" onClick={() => printDocument(viewing)}>Print / Save PDF</button>
               <button className="btn btn-primary" disabled={sendingId === viewing.id || !viewing.buyer?.email} onClick={() => sendEmail(viewing)}>{sendingId === viewing.id ? 'Sending…' : 'Send email'}</button>
             </div>
