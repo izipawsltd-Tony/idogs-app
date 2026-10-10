@@ -851,3 +851,31 @@ h1, h2, h3, h4, h5, h6 {
   .finance-document-title { text-align: left; }
   .finance-document-business-name { font-size: 23px; }
 }
+
+.finance-print-root { display: none; }
+
+@media print {
+  @page { size: A4; margin: 14mm; }
+  body * { visibility: hidden !important; }
+  .finance-print-root,
+  .finance-print-root * { visibility: visible !important; }
+  .finance-print-root {
+    display: block !important;
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    background: #fff !important;
+  }
+  .finance-print-root .finance-document-paper {
+    display: block !important;
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .finance-print-root .finance-document-head {
+    break-inside: avoid;
+  }
+}

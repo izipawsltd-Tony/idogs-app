@@ -172,6 +172,7 @@ export default function FinanceDocumentsPage({ toast }: Props) {
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [viewing, setViewing] = useState<FinanceDocument | null>(null)
+  const [printDoc, setPrintDoc] = useState<FinanceDocument | null>(null)
   const [type, setType] = useState<FinanceType>('invoice')
   const [saving, setSaving] = useState(false)
   const [sendingId, setSendingId] = useState('')
@@ -329,7 +330,7 @@ export default function FinanceDocumentsPage({ toast }: Props) {
     }
   }
 
-  function printDocument(doc: FinanceDocument) {
+  function printDocumentLegacy(doc: FinanceDocument) {
     const seller = doc.seller || {}
     const buyer = doc.buyer || {}
     const dog = doc.dog || {}
@@ -380,6 +381,19 @@ export default function FinanceDocumentsPage({ toast }: Props) {
       }
     }, 250)
   }
+
+  function printDocument(doc: FinanceDocument) {
+    setPrintDoc(doc)
+    window.setTimeout(() => {
+      window.print()
+    }, 120)
+  }
+
+  useEffect(() => {
+    const clearPrintDoc = () => setPrintDoc(null)
+    window.addEventListener('afterprint', clearPrintDoc)
+    return () => window.removeEventListener('afterprint', clearPrintDoc)
+  }, [])
 
   return (
     <div style={{ padding: 32 }}>
@@ -515,13 +529,20 @@ export default function FinanceDocumentsPage({ toast }: Props) {
         </div>
       )}
 
+      {printDoc && (
+        <div className="finance-print-root" aria-hidden="true">
+          <PrintableDocument doc={printDoc} />
+        </div>
+      )}
+
       {viewing && (
         <div className="finance-modal-overlay" onMouseDown={e => e.target === e.currentTarget && setViewing(null)}>
           <div className="finance-modal-shell finance-document-preview-shell">
             <div className="finance-modal-header">
               <div>
                 <div style={{ fontSize: 12, color: '#0c725d', fontWeight: 800, letterSpacing: '.05em', textTransform: 'uppercase' }}>Document preview</div>
-                <div style={{ marginTop: 4 }}><strong>{viewing.documentNumber}</strong>{viewing.emailedAt && <span className="badge badge-green" style={{ marginLeft: 8 }}>Emailed</span>}</div>
+                <div style={{ marginTop: 4, fontSize: 19, fontWeight: 800 }}>{documentTitle(viewing)}</div>
+                <div style={{ marginTop: 3, color: 'var(--mid)', fontSize: 12 }}><strong>{viewing.documentNumber}</strong>{viewing.emailedAt && <span className="badge badge-green" style={{ marginLeft: 8 }}>Emailed</span>}</div>
               </div>
               <button className="finance-modal-close" aria-label="Close" onClick={() => setViewing(null)}>×</button>
             </div>
