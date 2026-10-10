@@ -879,3 +879,34 @@ h1, h2, h3, h4, h5, h6 {
     break-inside: avoid;
   }
 }
+
+/* Finance document header spacing fix */
+.finance-document-head {
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
+  gap: 48px;
+}
+.finance-document-business {
+  padding-right: 20px;
+}
+.finance-document-title {
+  min-width: 260px;
+  padding-left: 20px;
+  justify-self: end;
+  text-align: right;
+}
+.finance-document-title h2 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 1.15;
+  word-break: break-word;
+}
+@media (max-width: 700px) {
+  .finance-document-head { grid-template-columns: 1fr; gap: 18px; }
+  .finance-document-business { padding-right: 0; }
+  .finance-document-title {
+    min-width: 0;
+    padding-left: 0;
+    justify-self: stretch;
+    text-align: left;
+  }
+}

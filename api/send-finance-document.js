@@ -51,25 +51,27 @@ function documentHtml(doc) {
 
   return `
   <div style="font-family:Arial,sans-serif;max-width:720px;margin:0 auto;color:#1a1917">
-    <div style="display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #085041;padding-bottom:18px">
-      <div>
-        <div style="font-size:26px;font-weight:800;color:#085041">${esc(seller.businessName || 'Breeder')}</div>
-        <div style="font-size:12px;line-height:1.55;color:#5c5a54;margin-top:6px">
-          ${esc(seller.address || '')}${seller.address ? '<br>' : ''}
-          ${esc([seller.state, seller.postcode].filter(Boolean).join(' '))}${seller.state || seller.postcode ? '<br>' : ''}
-          ${esc(seller.phone || '')}${seller.phone ? '<br>' : ''}
-          ${esc(seller.email || '')}
-          ${seller.abn ? '<br>ABN: ' + esc(seller.abn) : ''}
-          ${seller.breederId ? '<br>Breeder ID: ' + esc(seller.breederId) : ''}
-        </div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:24px;font-weight:800">${titleFor(doc)}</div>
-        <div style="font-size:13px;color:#5c5a54;margin-top:8px">${esc(doc.documentNumber)}</div>
-        <div style="font-size:12px;color:#5c5a54">Date: ${esc(doc.issueDate)}</div>
-        ${doc.dueDate ? '<div style="font-size:12px;color:#5c5a54">Due: ' + esc(doc.dueDate) + '</div>' : ''}
-      </div>
-    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;border-bottom:3px solid #085041;">
+      <tr>
+        <td valign="top" style="width:58%;padding:0 34px 18px 0;">
+          <div style="font-size:26px;line-height:1.2;font-weight:800;color:#085041;word-break:break-word;">${esc(seller.businessName || 'Breeder')}</div>
+          <div style="font-size:12px;line-height:1.55;color:#5c5a54;margin-top:6px;">
+            ${esc(seller.address || '')}${seller.address ? '<br>' : ''}
+            ${esc([seller.state, seller.postcode].filter(Boolean).join(' '))}${seller.state || seller.postcode ? '<br>' : ''}
+            ${esc(seller.phone || '')}${seller.phone ? '<br>' : ''}
+            ${esc(seller.email || '')}
+            ${seller.abn ? '<br>ABN: ' + esc(seller.abn) : ''}
+            ${seller.breederId ? '<br>Breeder ID: ' + esc(seller.breederId) : ''}
+          </div>
+        </td>
+        <td valign="top" align="right" style="width:42%;padding:0 0 18px 34px;text-align:right;">
+          <div style="font-size:24px;line-height:1.15;font-weight:800;white-space:normal;">${titleFor(doc)}</div>
+          <div style="font-size:13px;color:#5c5a54;margin-top:10px;">${esc(doc.documentNumber)}</div>
+          <div style="font-size:12px;color:#5c5a54;">Date: ${esc(doc.issueDate)}</div>
+          ${doc.dueDate ? '<div style="font-size:12px;color:#5c5a54">Due: ' + esc(doc.dueDate) + '</div>' : ''}
+        </td>
+      </tr>
+    </table>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:24px 0">
       <div>
