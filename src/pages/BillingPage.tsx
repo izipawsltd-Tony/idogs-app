@@ -108,7 +108,9 @@ export default function BillingPage({ toast }: Props) {
   const subscriptionStatus = verifiedEntitlement?.subscriptionStatus
     ?? ((profile as any)?.subscriptionStatus as string | undefined)
   const isPastDue = isPlus && subscriptionStatus === 'past_due'
-  // Native app-store builds must not expose the web/Stripe purchase path for digital services.\r\n  // The matching native API routes are blocked in nativeApiRouting.ts. Read-only\r\n  // status and existing entitlements (including cancelling an SMS add-on) still work.
+  // Native app-store builds must not expose the web/Stripe purchase path for digital services.
+  // The matching native API routes are blocked in nativeApiRouting.ts. Read-only
+  // status and existing entitlements (including cancelling an SMS add-on) still work.
   const nativePurchasesUnavailable = isNativeApp()
   const showExternalPaymentCopy = showExternalPaymentFaq(nativePurchasesUnavailable)
 
