@@ -1,0 +1,159 @@
+name: iDogs iOS TestFlight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  archive-and-upload:
+    name: Sign iOS archive and upload TestFlight
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+      APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+      APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      IOS_BUNDLE_ID: au.com.idogs.app
+      IOS_MARKETING_VERSION: 0.1.0
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Fail closed when Apple signing credentials are missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in APPLE_KEY_ID APPLE_ISSUER_ID APPLE_API_KEY_P8_BASE64 APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test -- --run
+
+      - name: Verify native production environment guard
+        run: npm run test:native-release-env
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Install Capacitor dependencies
+        run: npm --prefix mobile install --no-audit --no-fund
+
+      - name: Prepare iDogs branding
+        run: npm --prefix mobile run branding
+
+      - name: Generate iOS project
+        run: npm --prefix mobile run add:ios
+
+      - name: Sync web build into iOS
+        run: npm --prefix mobile run sync:ios
+
+      - name: Generate iOS assets
+        run: npm --prefix mobile run assets:ios
+
+      - name: Verify iOS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f mobile/ios/App/App.xcodeproj/project.pbxproj
+          grep -q "$IOS_BUNDLE_ID" mobile/ios/App/App.xcodeproj/project.pbxproj
+          test -d mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset
+          find mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset -type f -name '*.png' | grep -q .
+
+      - name: Install App Store Connect API key
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$KEY_DIR"
+          KEY_PATH="$KEY_DIR/AuthKey_${APPLE_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          grep -q "BEGIN PRIVATE KEY" "$KEY_PATH"
+          echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Archive signed iPhone app
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE_PATH="$RUNNER_TEMP/iDogs.xcarchive"
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          xcodebuild             -project mobile/ios/App/App.xcodeproj             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             -archivePath "$ARCHIVE_PATH"             PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Automatic             MARKETING_VERSION="$IOS_MARKETING_VERSION"             CURRENT_PROJECT_VERSION="$BUILD_NUMBER"             -allowProvisioningUpdates             -authenticationKeyPath "$ASC_KEY_PATH"             -authenticationKeyID "$APPLE_KEY_ID"             -authenticationKeyIssuerID "$APPLE_ISSUER_ID"             archive
+          test -d "$ARCHIVE_PATH"
+          echo "IOS_ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
+          echo "IOS_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Export signed App Store IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPORT_DIR="$RUNNER_TEMP/idogs-export"
+          EXPORT_OPTIONS="$RUNNER_TEMP/ExportOptions.plist"
+          cat > "$EXPORT_OPTIONS" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>teamID</key>
+            <string>$APPLE_TEAM_ID</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild             -exportArchive             -archivePath "$IOS_ARCHIVE_PATH"             -exportPath "$EXPORT_DIR"             -exportOptionsPlist "$EXPORT_OPTIONS"             -allowProvisioningUpdates             -authenticationKeyPath "$ASC_KEY_PATH"             -authenticationKeyID "$APPLE_KEY_ID"             -authenticationKeyIssuerID "$APPLE_ISSUER_ID"
+
+          IPA_PATH=$(find "$EXPORT_DIR" -maxdepth 1 -type f -name '*.ipa' -print -quit)
+          test -n "$IPA_PATH"
+          test -s "$IPA_PATH"
+          echo "IOS_IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+
+      - name: Validate signed archive identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$IOS_ARCHIVE_PATH/Products/Applications/App.app"
+          test -d "$APP_PATH"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -qx "$IOS_BUNDLE_ID"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist" | grep -qx "$IOS_MARKETING_VERSION"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist" | grep -qx "$IOS_BUILD_NUMBER"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Upload to App Store Connect TestFlight
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun altool             --upload-app             --type ios             --file "$IOS_IPA_PATH"             --apiKey "$APPLE_KEY_ID"             --apiIssuer "$APPLE_ISSUER_ID"
+
+      - name: Upload signed IPA evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-ios-testflight-ipa-${{ github.sha }}-build-${{ github.run_number }}
+          path: ${{ env.IOS_IPA_PATH }}
+          if-no-files-found: error
+          retention-days: 7
