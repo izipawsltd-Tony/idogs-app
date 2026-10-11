@@ -1,0 +1,98 @@
+name: iDogs iOS Build
+
+on:
+  push:
+    branches:
+      - fix/android-v20-qa-blockers
+    paths:
+      - 'mobile/**'
+      - 'src/**'
+      - 'public/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/mobile-ios-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-unsigned-simulator:
+    name: Build unsigned iOS simulator app
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test -- --run
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Install Capacitor dependencies
+        run: npm --prefix mobile install --no-audit --no-fund
+
+      - name: Prepare iDogs branding
+        run: npm --prefix mobile run branding
+
+      - name: Generate iOS project
+        run: npm --prefix mobile run add:ios
+
+      - name: Sync web build into iOS
+        run: npm --prefix mobile run sync:ios
+
+      - name: Generate iOS assets
+        run: npm --prefix mobile run assets:ios
+
+      - name: Verify iOS identity and assets
+        shell: bash
+        run: |
+          test -f mobile/ios/App/App.xcodeproj/project.pbxproj
+          grep -q "au.com.idogs.app" mobile/ios/App/App.xcodeproj/project.pbxproj
+          test -d mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset
+          find mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset -type f -name '*.png' | grep -q .
+          test -f mobile/ios/App/App/Info.plist
+          echo "iOS identity and assets verified"
+
+      - name: Compile unsigned iOS simulator app
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild             -project mobile/ios/App/App.xcodeproj             -scheme App             -configuration Debug             -sdk iphonesimulator             -destination 'generic/platform=iOS Simulator'             -derivedDataPath "$RUNNER_TEMP/idogs-derived"             CODE_SIGNING_ALLOWED=NO             build
+          APP_PATH="$RUNNER_TEMP/idogs-derived/Build/Products/Debug-iphonesimulator/App.app"
+          test -d "$APP_PATH"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -qx 'au.com.idogs.app'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist" | grep -qx 'iDogs'
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" idogs-ios-simulator-${GITHUB_SHA}.zip
+
+      - name: Upload compiled iOS simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-ios-simulator-${{ github.sha }}
+          path: idogs-ios-simulator-${{ github.sha }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload generated iOS project
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-ios-project-${{ github.sha }}
+          path: mobile/ios
+          if-no-files-found: error
+          retention-days: 7

@@ -6,7 +6,7 @@ import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '..
 import { getInitials, AU_STATES, isDogEligibleForCap, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../../lib/utils'
 import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
 import { SUPER_ADMIN_EMAILS } from '../../lib/superAdmin'
-import { isAndroidNativeApp } from '../../lib/nativePlatform'
+import { isNativeApp } from '../../lib/nativePlatform'
 import { sidebarPurchasesUnavailableNotice } from '../../lib/nativeUpgradeCopy'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
@@ -542,7 +542,7 @@ export default function AppLayout({ toast }: Props) {
               </div>
             )}
             {planCfg.upgrade && (
-              isAndroidNativeApp() ? (
+              isNativeApp() ? (
                 <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mid)', textAlign: 'center' }}>
                   {sidebarPurchasesUnavailableNotice()}
                 </div>

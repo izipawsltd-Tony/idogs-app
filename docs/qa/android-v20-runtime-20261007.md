@@ -101,3 +101,10 @@ Native UI source/behavior confirms:
 - Creating that history through Transfer Ownership would send an email and create an irreversible transfer, which is explicitly outside the approved QA guardrails.
 
 Result: **archive/restore native QA BLOCKED by the current no-email/no-real-transfer guardrail, not failed**. No backend bypass, direct Firestore mutation, email, SMS, or irreversible ownership transfer was performed.
+
+
+## Android physical-device QA deferred — 2026-10-11
+
+Tony currently has no physical Android device. Android v22 emulator regression evidence is retained, but physical-device QA and the native archive/restore case that requires a safe transfer-history fixture are explicitly deferred. Android must not be called Production ready on the basis of emulator QA alone.
+
+Current priority moves to iOS/iPhone development. Android physical-device QA will be resumed later before any Android public Production rollout.

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
-import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { isNativeApp } from '../lib/nativePlatform'
 import { showLandingPaidPromotion } from '../lib/landingPageAndroidGate'
 
 // ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
@@ -30,7 +30,7 @@ export default function LandingPage() {
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const pageContentRef = useRef<HTMLDivElement>(null)
-  const showPaidPromotion = showLandingPaidPromotion(isAndroidNativeApp())
+  const showPaidPromotion = showLandingPaidPromotion(isNativeApp())
 
   useEffect(() => {
     if (!loading && user) navigate('/app/dashboard')

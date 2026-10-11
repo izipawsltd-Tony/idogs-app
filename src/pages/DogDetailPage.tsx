@@ -29,7 +29,7 @@ import { sendTransferEmail } from '../lib/email'
 import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
 import { db, auth } from '../lib/firebase'
 import { emitDogUsageChanged } from '../lib/dogUsageEvents'
-import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { isNativeApp } from '../lib/nativePlatform'
 import { restrictedBreederIdMessage, restrictedSaleAvailabilityMessage } from '../lib/nativeUpgradeCopy'
 
 interface Props {
@@ -998,7 +998,7 @@ export default function DogDetailPage({ toast }: Props) {
             <div style={{ marginTop: 10, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span>
                 🔒 This dog is over your plan's limit and is read-only — the record, Dog ID, and QR Passport all still work, and it can still be transferred.
-                {isAndroidNativeApp()
+                {isNativeApp()
                   ? ' Activate it in place of another dog to edit it.'
                   : (<>{' '}<Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>Upgrade to Plus</Link> or activate it in place of another dog.</>)}
               </span>
@@ -1454,7 +1454,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
     // the ✎/+ Add trigger below, which already prevents reaching this
     // form at all for a restricted dog.
     if (isRestricted) {
-      toast(restrictedBreederIdMessage(isAndroidNativeApp()), 'error')
+      toast(restrictedBreederIdMessage(isNativeApp()), 'error')
       return
     }
     setSavingBreederId(true)
@@ -1710,7 +1710,7 @@ function SaleAvailabilityPanel({ dog, onSave, toast, isRestricted }: {
     // isn't a denied write at all, since no write is attempted; the
     // plan-limit explanation is what's true here.
     if (isRestricted) {
-      toast(restrictedSaleAvailabilityMessage(isAndroidNativeApp()), 'error')
+      toast(restrictedSaleAvailabilityMessage(isNativeApp()), 'error')
       return
     }
     setSaving(true)
@@ -1804,7 +1804,7 @@ function SaleAvailabilityPanel({ dog, onSave, toast, isRestricted }: {
 
       {isRestricted && (
         <div style={{ marginBottom: 14, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10 }}>
-          {'🔒 '}{restrictedSaleAvailabilityMessage(isAndroidNativeApp())}
+          {'🔒 '}{restrictedSaleAvailabilityMessage(isNativeApp())}
         </div>
       )}
 
