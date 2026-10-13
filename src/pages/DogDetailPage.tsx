@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import {
   getDog, getDogs, getVaccineRecords, getWormingRecords, getHealthTests,
   getReminders, getActivityNotes, addActivityNote, updateActivityNote, deleteActivityNote,
-  addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder,
+  addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder, addReminder, updateReminder,
   addWormingRecord, deleteWormingRecord,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, updateDocument, logAudit, syncLifeStage,
   getAuditLogs, type AuditEntry, isCurrentOwner, safeReadFirestoreErrorCode
@@ -3449,11 +3449,34 @@ function toWritableHeatCycleFields(cycle: HeatCycle): WritableHeatCycleFields {
   return clean
 }
 
+function addDaysIso(dateIso: string, days: number): string {
+  const [y, m, d] = dateIso.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dt.toISOString().slice(0, 10)
+}
+
 function calcWhelpingEstimate(matingDate: string): string {
-  if (!matingDate) return ''
-  const d = new Date(matingDate)
-  d.setDate(d.getDate() + 63)
-  return d.toISOString().split('T')[0]
+  return matingDate ? addDaysIso(matingDate, 63) : ''
+}
+
+type PregnancyMilestoneKey = 'ultrasound_day28' | 'xray_day45' | 'whelp_prep_day58' | 'due_day63'
+
+const PREGNANCY_MILESTONES: Array<{
+  key: PregnancyMilestoneKey
+  day: number
+  title: string
+  reminderType: Reminder['type']
+  icon: string
+}> = [
+  { key: 'ultrasound_day28', day: 28, title: 'Pregnancy ultrasound / confirmation', reminderType: 'pregnancy', icon: '🩺' },
+  { key: 'xray_day45', day: 45, title: 'Pregnancy X-ray / puppy count', reminderType: 'pregnancy', icon: '🩻' },
+  { key: 'whelp_prep_day58', day: 58, title: 'Prepare whelping box & start temperature checks', reminderType: 'whelping', icon: '🧺' },
+  { key: 'due_day63', day: 63, title: 'Estimated whelping due date', reminderType: 'whelping', icon: '🐾' },
+]
+
+function pregnancyMilestonesFor(matingDate: string) {
+  return PREGNANCY_MILESTONES.map(m => ({ ...m, dueDate: addDaysIso(matingDate, m.day) }))
 }
 
 // api/_lib/parent-eligibility.js's validateBreedingParent() returns a
@@ -3499,6 +3522,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const [editingCycle, setEditingCycle] = useState<HeatCycle | null>(null)
   const [saving, setSaving] = useState(false)
   const [allDogs, setAllDogs] = useState<Dog[]>([])
+  const [breedingReminders, setBreedingReminders] = useState<Reminder[]>([])
+  const [reminderSavingKey, setReminderSavingKey] = useState('')
   // Codex round 13: distinct from allDogs being genuinely empty of
   // eligible Sires — a failed load must never render through the same
   // "No male dogs currently eligible" copy the dropdown shows for a
@@ -3559,14 +3584,16 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     // WRONG dog's heat cycles or the wrong account's Sire options.
     setHeatCycles([])
     setAllDogs([])
+    setBreedingReminders([])
     setSireLoadError(false)
     if (!dogId) return
     const req = beginRequest()
     setLoadingCycles(true)
     async function load() {
-      const [cyclesResult, dogsResult] = await Promise.allSettled([
+      const [cyclesResult, dogsResult, remindersResult] = await Promise.allSettled([
         getDocs(query(collection(db, 'heatCycles'), where('dogId', '==', dogId))),
         getDogs(),
+        getReminders(dogId, user?.uid || '', dog),
       ])
       if (!req.isCurrent()) return
       if (cyclesResult.status === 'fulfilled') {
@@ -3584,6 +3611,11 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         console.error('BreedingTab: failed to load dogs for sire selector', { code: safeReadFirestoreErrorCode(dogsResult.reason) })
         setSireLoadError(true)
         toast('Failed to load your dogs for the Sire selector', 'error')
+      }
+      if (remindersResult.status === 'fulfilled') {
+        setBreedingReminders(remindersResult.value.filter(r => r.source === 'breeding_timeline'))
+      } else {
+        console.error('BreedingTab: failed to load breeding reminders', { code: safeReadFirestoreErrorCode(remindersResult.reason) })
       }
       setLoadingCycles(false)
     }
@@ -3700,6 +3732,52 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     finally { setSaving(false) }
   }
 
+  function linkedReminder(cycleId: string, milestoneKey: PregnancyMilestoneKey) {
+    return breedingReminders.find(r =>
+      r.source === 'breeding_timeline'
+      && r.sourceRef === cycleId
+      && r.milestoneKey === milestoneKey
+    )
+  }
+
+  async function addPregnancyReminders(
+    cycle: HeatCycle,
+    milestones: ReturnType<typeof pregnancyMilestonesFor>,
+  ) {
+    if (!user?.uid || !cycle.id || !cycle.matingDate) return
+    const missing = milestones.filter(m => !linkedReminder(cycle.id!, m.key))
+    if (missing.length === 0) {
+      toast('These pregnancy reminders are already added.', 'info')
+      return
+    }
+
+    const savingKey = missing.length === 1
+      ? `${cycle.id}:${missing[0].key}`
+      : `${cycle.id}:all`
+    setReminderSavingKey(savingKey)
+    try {
+      await Promise.all(missing.map(m => addReminder({
+        dogId,
+        tenantId: user.uid,
+        source: 'breeding_timeline',
+        sourceRef: cycle.id,
+        milestoneKey: m.key,
+        type: m.reminderType,
+        title: `${m.title} (Day ${m.day})`,
+        dueDate: m.dueDate,
+        notifyDaysBefore: 3,
+        status: 'pending',
+      })))
+      const refreshed = await getReminders(dogId, user.uid, dog)
+      setBreedingReminders(refreshed.filter(r => r.source === 'breeding_timeline'))
+      toast(missing.length === 1 ? 'Reminder added ✓' : `${missing.length} pregnancy reminders added ✓`, 'success')
+    } catch {
+      toast('Failed to add pregnancy reminder. Please try again.', 'error')
+    } finally {
+      setReminderSavingKey('')
+    }
+  }
+
   // Codex round 3, Blocker 1 — saving a heat cycle must verify the Dam
   // (on create) and any Sire reference "meets actual minimum breeding
   // maturity", which needs real date arithmetic Firestore Rules has no
@@ -3713,6 +3791,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       if (!auth.currentUser) throw new Error('Not signed in')
       const idToken = await auth.currentUser.getIdToken()
       const cycleId = cycle.id
+      const previousCycle = cycleId ? heatCycles.find(c => c.id === cycleId) : undefined
       // Explicit writable DTO, not a spread of the fetched record: when
       // editing an existing heat cycle, `cycle` originates from
       // heatCycles state ({ id: d.id, ...d.data() } — see the load effect
@@ -3748,6 +3827,37 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         // zero-actual-records fallback view, set only via "+ Add first
         // heat date" below.
       }
+      // If a breeder changes the mating date after adding pregnancy
+      // reminders, offer to keep those linked dates in sync. Completed
+      // reminders are historical records and are never moved.
+      if (
+        cycleId
+        && previousCycle?.matingDate
+        && cycleFields.matingDate
+        && previousCycle.matingDate !== cycleFields.matingDate
+      ) {
+        const linked = breedingReminders.filter(r =>
+          r.source === 'breeding_timeline'
+          && r.sourceRef === cycleId
+          && r.status !== 'completed'
+        )
+        if (linked.length > 0 && confirm('Mating date changed. Update the linked pregnancy reminders too?')) {
+          const nextMilestones = new Map(
+            pregnancyMilestonesFor(cycleFields.matingDate).map(m => [m.key, m])
+          )
+          await Promise.all(linked.map(r => {
+            const milestone = nextMilestones.get(r.milestoneKey as PregnancyMilestoneKey)
+            return milestone ? updateReminder(r.id, { dueDate: milestone.dueDate }) : Promise.resolve()
+          }))
+          setBreedingReminders(prev => prev.map(r => {
+            if (r.sourceRef !== cycleId || r.status === 'completed') return r
+            const milestone = nextMilestones.get(r.milestoneKey as PregnancyMilestoneKey)
+            return milestone ? { ...r, dueDate: milestone.dueDate } : r
+          }))
+          toast('Linked pregnancy reminders updated ✓', 'success')
+        }
+      }
+
       // Auto-update litter count if whelping recorded
       if (cycle.whelpingActual && cycle.whelpingMethod) {
         const isCS = cycle.whelpingMethod?.startsWith('csection')
@@ -4002,6 +4112,70 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
                     ))}
                   </div>
                   {cycle.notes && <div style={{ padding: '0 14px 10px', fontSize: 12, color: 'var(--mid)', fontStyle: 'italic' }}>📝 {cycle.notes}</div>}
+
+                  {cycle.id && cycle.matingDate && (() => {
+                    const milestones = pregnancyMilestonesFor(cycle.matingDate)
+                    const addedCount = milestones.filter(m => !!linkedReminder(cycle.id!, m.key)).length
+                    const allAdded = addedCount === milestones.length
+                    const cycleSaving = reminderSavingKey.startsWith(`${cycle.id}:`)
+                    return (
+                      <div style={{ margin: '4px 14px 14px', border: '1px solid #cfe4dd', borderRadius: 12, overflow: 'hidden', background: '#fbfdfc' }}>
+                        <div style={{ padding: '12px 14px', background: '#eef7f4', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--dark)' }}>Pregnancy timeline</div>
+                            <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>
+                              Based on mating date {formatDate(cycle.matingDate)} · typical whelping window Day 58–68
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className={allAdded ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
+                            disabled={allAdded || cycleSaving}
+                            onClick={() => addPregnancyReminders(cycle, milestones)}
+                            style={{ fontSize: 11 }}
+                          >
+                            {allAdded ? 'Added all ✓' : reminderSavingKey === `${cycle.id}:all` ? 'Adding…' : `Add all to reminders`}
+                          </button>
+                        </div>
+                        <div>
+                          {milestones.map((m, idx) => {
+                            const linked = linkedReminder(cycle.id!, m.key)
+                            const savingKey = `${cycle.id}:${m.key}`
+                            const completed = linked?.status === 'completed'
+                            return (
+                              <div
+                                key={m.key}
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'minmax(0, 1fr) auto',
+                                  gap: 12,
+                                  alignItems: 'center',
+                                  padding: '11px 14px',
+                                  borderTop: idx === 0 ? 'none' : '1px solid var(--border)',
+                                }}
+                              >
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--dark)' }}>
+                                    {m.icon} Day {m.day} · {m.title}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>{formatDate(m.dueDate)}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-sm"
+                                  disabled={!!linked || cycleSaving}
+                                  onClick={() => addPregnancyReminders(cycle, [m])}
+                                  style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                                >
+                                  {completed ? 'Completed ✓' : linked ? 'Added ✓' : reminderSavingKey === savingKey ? 'Adding…' : 'Remind me'}
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })}

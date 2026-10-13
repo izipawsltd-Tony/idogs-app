@@ -200,6 +200,10 @@ export interface HealthTest {
 export interface Reminder {
   id: string
   dogId: string
+  tenantId?: string
+  source?: 'breeding_timeline' | string
+  sourceRef?: string
+  milestoneKey?: 'ultrasound_day28' | 'xray_day45' | 'whelp_prep_day58' | 'due_day63' | string
   type: 'vaccination' | 'worming' | 'vet_appointment' | 'heat_cycle' | 'mating' | 'pregnancy' | 'whelping' | 'custom' | 'vaccine' | 'heat'
   title: string
   dueDate: string
