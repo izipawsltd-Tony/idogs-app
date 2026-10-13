@@ -4154,7 +4154,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
                             onClick={() => addPregnancyReminders(cycle, milestones)}
                             style={{ fontSize: 11 }}
                           >
-                            {allSynced ? 'Added all ✓' : reminderSavingKey === `${cycle.id}:all` ? 'Saving…' : addedCount > 0 ? 'Sync reminders' : 'Add all to reminders'}
+                            {allSynced ? 'Added all ✓' : reminderSavingKey === `${cycle.id}:all` ? 'Saving…' : addedCount > 0 ? 'Update reminders' : 'Add all to reminders'}
                           </button>
                         </div>
                         <div>
