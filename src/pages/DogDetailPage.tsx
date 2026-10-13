@@ -3796,7 +3796,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   // full validation via api/_lib/parent-eligibility.js) instead of
   // writing to Firestore directly — firestore.rules denies a direct
   // client create/update outright, so this is the only path.
-  async function saveHeatCycle(cycle: HeatCycle) {
+  async function saveHeatCycle(cycle: HeatCycle, reminderKeys: PregnancyMilestoneKey[] = []) {
     setSaving(true)
     try {
       if (!auth.currentUser) throw new Error('Not signed in')
@@ -3867,6 +3867,12 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
           }))
           toast('Linked pregnancy reminders updated ✓', 'success')
         }
+      }
+
+      if (cycleFields.matingDate && reminderKeys.length > 0) {
+        const selectedMilestones = pregnancyMilestonesFor(cycleFields.matingDate)
+          .filter(m => reminderKeys.includes(m.key))
+        await addPregnancyReminders(savedData, selectedMilestones)
       }
 
       // Auto-update litter count if whelping recorded
@@ -4270,6 +4276,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
           onClose={() => { setShowAddHeat(false); setEditingCycle(null) }}
           onSave={saveHeatCycle}
           saving={saving}
+          breedingReminders={breedingReminders}
         />
       )}
     </div>
@@ -4278,16 +4285,34 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
 
 // ── HEAT CYCLE MODAL ─────────────────────────────────────────
 
-function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving }: {
+function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving, breedingReminders }: {
   cycle: HeatCycle
   allDogs: Dog[]
   sireLoadError: boolean
   onClose: () => void
-  onSave: (c: HeatCycle) => Promise<void>
+  onSave: (c: HeatCycle, reminderKeys?: PregnancyMilestoneKey[]) => Promise<void>
   saving: boolean
+  breedingReminders: Reminder[]
 }) {
   const [form, setForm] = useState<HeatCycle>({ ...cycle })
   const [sireMode, setSireMode] = useState<'list' | 'manual'>(cycle.sireName ? 'manual' : 'list')
+  const existingReminderKeys = new Set<PregnancyMilestoneKey>(
+    breedingReminders
+      .filter(r => cycle.id && r.source === 'breeding_timeline' && r.sourceRef === cycle.id)
+      .map(r => r.milestoneKey as PregnancyMilestoneKey)
+      .filter(Boolean)
+  )
+  const [reminderKeys, setReminderKeys] = useState<PregnancyMilestoneKey[]>(Array.from(existingReminderKeys))
+  const pregnancyMilestones = form.matingDate ? pregnancyMilestonesFor(form.matingDate) : []
+
+  function toggleReminderKey(key: PregnancyMilestoneKey) {
+    if (existingReminderKeys.has(key)) return
+    setReminderKeys(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+  }
+
+  function selectAllPregnancyReminders() {
+    setReminderKeys(pregnancyMilestones.map(m => m.key))
+  }
 
   // Eligible Sire candidates — living, currently-owned, non-puppy males
   // (same predicate LittersPage uses for its own Sire dropdown)
@@ -4463,16 +4488,77 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
                 <label htmlFor="pregnant" style={{ fontSize: 13, color: 'var(--dark)', cursor: 'pointer' }}>Pregnancy confirmed (ultrasound)</label>
               </div>
               <div className="form-group">
-                <label className="form-label">Ultrasound date</label>
+                <label className="form-label">Ultrasound date (actual)</label>
                 <input className="form-input" type="date" value={form.ultrasoundDate || ''} onChange={e => set('ultrasoundDate', e.target.value)} />
+                {form.matingDate && (
+                  <span className="form-hint">Suggested ultrasound: {formatDate(addDaysIso(form.matingDate, 28))} (Day 28)</span>
+                )}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Estimated ultrasound (auto)</label>
+                <input className="form-input" type="date" value={form.matingDate ? addDaysIso(form.matingDate, 28) : ''} readOnly style={{ background: 'var(--sand)' }} />
+                <span className="form-hint">Auto-calculated: mating date + 28 days</span>
               </div>
               <div className="form-group">
                 <label className="form-label">Whelping estimate (auto)</label>
-                <input className="form-input" type="date" value={form.whelpingEstimate || ''} onChange={e => set('whelpingEstimate', e.target.value)} style={{ background: 'var(--sand)' }} />
+                <input className="form-input" type="date" value={form.whelpingEstimate || ''} readOnly style={{ background: 'var(--sand)' }} />
                 <span className="form-hint">Auto-calculated: mating date + 63 days</span>
               </div>
-              <div />
             </div>
+
+            {form.matingDate && (
+              <div style={{ marginTop: 14, border: '1px solid #cfe4dd', borderRadius: 12, overflow: 'hidden', background: '#fbfdfc' }}>
+                <div style={{ padding: '11px 12px', background: '#eef7f4', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--dark)' }}>Pregnancy timeline</div>
+                    <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>Based on mating date {formatDate(form.matingDate)} · typical whelping window Day 58–68</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={selectAllPregnancyReminders}
+                    disabled={pregnancyMilestones.length > 0 && pregnancyMilestones.every(m => reminderKeys.includes(m.key))}
+                    style={{ fontSize: 11 }}
+                  >
+                    {pregnancyMilestones.length > 0 && pregnancyMilestones.every(m => reminderKeys.includes(m.key)) ? 'Added all ✓' : 'Add all to reminders'}
+                  </button>
+                </div>
+                {pregnancyMilestones.map((m, idx) => {
+                  const alreadySaved = existingReminderKeys.has(m.key)
+                  const selected = reminderKeys.includes(m.key)
+                  return (
+                    <div
+                      key={m.key}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(0,1fr) auto',
+                        gap: 10,
+                        alignItems: 'center',
+                        padding: '10px 12px',
+                        borderTop: idx === 0 ? 'none' : '1px solid var(--border)',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--dark)' }}>{m.icon} Day {m.day} · {m.title}</div>
+                        <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>{formatDate(m.dueDate)}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => toggleReminderKey(m.key)}
+                        disabled={alreadySaved}
+                        style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                      >
+                        {alreadySaved ? 'Added ✓' : selected ? 'Selected ✓' : 'Remind me'}
+                      </button>
+                    </div>
+                  )
+                })}
+                <div style={{ padding: '9px 12px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--mid)', background: '#fff' }}>
+                  Selected reminders are created when you save this heat cycle. Default alert: 3 days before.
+                </div>
+              </div>
+            )}
           </section>
 
           {/* WHELPING */}
@@ -4509,8 +4595,8 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 4 }}>
             <button onClick={onClose} className="btn btn-secondary" disabled={saving}>Cancel</button>
-            <button onClick={() => onSave(form)} className="btn btn-primary" disabled={!form.heatStartDate || saving}>
-              {saving ? <span className="spinner" /> : cycle.id ? 'Save changes' : 'Add heat cycle'}
+            <button onClick={() => onSave(form, reminderKeys)} className="btn btn-primary" disabled={!form.heatStartDate || saving}>
+              {saving ? <span className="spinner" /> : cycle.id ? 'Save changes' : reminderKeys.length > 0 ? 'Add heat cycle + reminders' : 'Add heat cycle'}
             </button>
           </div>
         </div>
