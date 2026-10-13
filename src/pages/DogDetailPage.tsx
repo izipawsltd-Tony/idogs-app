@@ -3746,31 +3746,42 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   ) {
     if (!user?.uid || !cycle.id || !cycle.matingDate) return
     const missing = milestones.filter(m => !linkedReminder(cycle.id!, m.key))
-    if (missing.length === 0) {
-      toast('These pregnancy reminders are already added.', 'info')
+    const stale = milestones.filter(m => {
+      const linked = linkedReminder(cycle.id!, m.key)
+      return !!linked && linked.status !== 'completed' && linked.dueDate !== m.dueDate
+    })
+    if (missing.length === 0 && stale.length === 0) {
+      toast('These pregnancy reminders are already up to date.', 'info')
       return
     }
 
-    const savingKey = missing.length === 1
-      ? `${cycle.id}:${missing[0].key}`
+    const savingKey = milestones.length === 1
+      ? `${cycle.id}:${milestones[0].key}`
       : `${cycle.id}:all`
     setReminderSavingKey(savingKey)
     try {
-      await Promise.all(missing.map(m => addReminder({
-        dogId,
-        tenantId: user.uid,
-        source: 'breeding_timeline',
-        sourceRef: cycle.id,
-        milestoneKey: m.key,
-        type: m.reminderType,
-        title: `${m.title} (Day ${m.day})`,
-        dueDate: m.dueDate,
-        notifyDaysBefore: 3,
-        status: 'pending',
-      })))
+      await Promise.all([
+        ...missing.map(m => addReminder({
+          dogId,
+          tenantId: user.uid,
+          source: 'breeding_timeline',
+          sourceRef: cycle.id,
+          milestoneKey: m.key,
+          type: m.reminderType,
+          title: `${m.title} (Day ${m.day})`,
+          dueDate: m.dueDate,
+          notifyDaysBefore: 3,
+          status: 'pending',
+        })),
+        ...stale.map(m => {
+          const linked = linkedReminder(cycle.id!, m.key)!
+          return updateReminder(linked.id, { dueDate: m.dueDate })
+        }),
+      ])
       const refreshed = await getReminders(dogId, user.uid, dog)
       setBreedingReminders(refreshed.filter(r => r.source === 'breeding_timeline'))
-      toast(missing.length === 1 ? 'Reminder added ✓' : `${missing.length} pregnancy reminders added ✓`, 'success')
+      const changed = missing.length + stale.length
+      toast(changed === 1 ? 'Pregnancy reminder saved ✓' : `${changed} pregnancy reminders saved ✓`, 'success')
     } catch {
       toast('Failed to add pregnancy reminder. Please try again.', 'error')
     } finally {
@@ -4116,7 +4127,10 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
                   {cycle.id && cycle.matingDate && (() => {
                     const milestones = pregnancyMilestonesFor(cycle.matingDate)
                     const addedCount = milestones.filter(m => !!linkedReminder(cycle.id!, m.key)).length
-                    const allAdded = addedCount === milestones.length
+                    const allSynced = milestones.every(m => {
+                      const linked = linkedReminder(cycle.id!, m.key)
+                      return !!linked && (linked.status === 'completed' || linked.dueDate === m.dueDate)
+                    })
                     const cycleSaving = reminderSavingKey.startsWith(`${cycle.id}:`)
                     return (
                       <div style={{ margin: '4px 14px 14px', border: '1px solid #cfe4dd', borderRadius: 12, overflow: 'hidden', background: '#fbfdfc' }}>
@@ -4129,12 +4143,12 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
                           </div>
                           <button
                             type="button"
-                            className={allAdded ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
-                            disabled={allAdded || cycleSaving}
+                            className={allSynced ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
+                            disabled={allSynced || cycleSaving}
                             onClick={() => addPregnancyReminders(cycle, milestones)}
                             style={{ fontSize: 11 }}
                           >
-                            {allAdded ? 'Added all ✓' : reminderSavingKey === `${cycle.id}:all` ? 'Adding…' : `Add all to reminders`}
+                            {allSynced ? 'Added all ✓' : reminderSavingKey === `${cycle.id}:all` ? 'Saving…' : addedCount > 0 ? 'Sync reminders' : 'Add all to reminders'}
                           </button>
                         </div>
                         <div>
@@ -4142,6 +4156,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
                             const linked = linkedReminder(cycle.id!, m.key)
                             const savingKey = `${cycle.id}:${m.key}`
                             const completed = linked?.status === 'completed'
+                            const needsSync = !!linked && !completed && linked.dueDate !== m.dueDate
                             return (
                               <div
                                 key={m.key}
@@ -4163,11 +4178,11 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
                                 <button
                                   type="button"
                                   className="btn btn-ghost btn-sm"
-                                  disabled={!!linked || cycleSaving}
+                                  disabled={(!!linked && !needsSync) || cycleSaving}
                                   onClick={() => addPregnancyReminders(cycle, [m])}
                                   style={{ fontSize: 11, whiteSpace: 'nowrap' }}
                                 >
-                                  {completed ? 'Completed ✓' : linked ? 'Added ✓' : reminderSavingKey === savingKey ? 'Adding…' : 'Remind me'}
+                                  {completed ? 'Completed ✓' : reminderSavingKey === savingKey ? 'Saving…' : needsSync ? 'Update reminder' : linked ? 'Added ✓' : 'Remind me'}
                                 </button>
                               </div>
                             )
