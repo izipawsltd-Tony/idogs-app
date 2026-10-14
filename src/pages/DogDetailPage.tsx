@@ -1251,8 +1251,8 @@ export default function DogDetailPage({ toast }: Props) {
           <AIScan onResult={handleScanResult} toast={toast} dogId={dog.id} tenantId={user?.uid} />
         </div>
       )}
-      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} onRetry={retryVaccines} />}
-      {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} />}
+      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} onRetry={retryVaccines} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
       {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} onRetry={retryHealthTests} />}
       {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} onRetry={retryReminders} />}
       {/* scanCount === null unambiguously means "failed to load" (never
@@ -2040,7 +2040,7 @@ function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode
 
 // ── VACCINES TAB ──────────────────────────────────────────────
 
-function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc, onReminderSaved, error, onRetry }: {
+function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc, onReminderSaved, error, onRetry, canEdit }: {
   dogId: string; dogName: string; tenantId: string; userEmail: string;
   vaccines: VaccineRecord[];
   setVaccines: (v: VaccineRecord[]) => void;
@@ -2050,6 +2050,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
   onReminderSaved: () => void | Promise<void>
   error?: boolean
   onRetry?: () => void
+  canEdit: boolean
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
@@ -2152,9 +2153,9 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Vaccination records</h2>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>+ Add vaccine</button>
+        {canEdit && <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>+ Add vaccine</button>}
       </div>
-      {!error && showForm && (
+      {!error && canEdit && showForm && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div className="form-group">
@@ -2289,8 +2290,10 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
                       📄 View
                     </button>
                   )}
-                  <button onClick={() => startEdit(v)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
-                  <button onClick={() => handleDelete(v.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+                  {canEdit && <>
+                    <button onClick={() => startEdit(v)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
+                    <button onClick={() => handleDelete(v.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+                  </>}
                 </div>
               )
             })
@@ -2303,7 +2306,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
 
 // ── WORMING TAB ───────────────────────────────────────────────
 
-function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error, onRetry }: {
+function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error, onRetry, canEdit }: {
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -2313,6 +2316,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
   toast: (msg: string, type?: ToastMessage['type']) => void
   error?: boolean
   onRetry?: () => void
+  canEdit: boolean
 }) {
   const latestGivenDate = wormings.reduce((max, w) => (w.dateGiven > max ? w.dateGiven : max), '')
   const [showForm, setShowForm] = useState(false)
@@ -2374,12 +2378,12 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Worming</h2>
-        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
+        {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
           {showForm ? 'Cancel' : '+ Add manually'}
-        </button>
+        </button>}
       </div>
 
-      {!error && showForm && (
+      {!error && canEdit && showForm && (
         <div className="card" style={{ marginBottom: 16, padding: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}>
@@ -2433,7 +2437,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
               ) : w.nextDue ? (
                 <span className={`badge ${isOverdue(w.nextDue) ? 'badge-red' : 'badge-green'}`}>{isOverdue(w.nextDue) ? 'Overdue' : 'Current'}</span>
               ) : null}
-              <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+              {canEdit && <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>}
             </div>
           ))}
         </div>
