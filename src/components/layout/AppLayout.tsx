@@ -578,12 +578,21 @@ export default function AppLayout({ toast }: Props) {
         flexDirection: 'column',
       }}>
         {pendingClaimCount !== null && pendingClaimCount > 0 && (
-          <div style={{ background: 'var(--brand-600)', color: '#fff', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 45 }}>
-            <div style={{ fontSize: 14, fontWeight: 500 }}>
-              🐾 You have {pendingClaimCount} dog{pendingClaimCount !== 1 ? 's' : ''} waiting to be claimed!
+          <div style={{
+            background: 'var(--brand-600)', color: '#fff', padding: '14px 24px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: 16, flexWrap: 'wrap', zIndex: 45, boxShadow: '0 2px 10px rgba(0,0,0,0.12)'
+          }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>
+                🐾 Ownership transfer waiting for you
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.9, marginTop: 2 }}>
+                {pendingClaimCount} dog{pendingClaimCount !== 1 ? 's have' : ' has'} been transferred to this iDogs account. Accept to add {pendingClaimCount !== 1 ? 'them' : 'it'} to My Dogs.
+              </div>
             </div>
-            <Link to="/app/claim-dogs" className="btn btn-sm" style={{ background: '#fff', color: 'var(--brand-600)', border: 'none' }}>
-              Review transfer
+            <Link to="/app/claim-dogs" className="btn btn-sm" style={{ background: '#fff', color: 'var(--brand-600)', border: 'none', fontWeight: 700, padding: '8px 14px' }}>
+              Accept transfer
             </Link>
           </div>
         )}

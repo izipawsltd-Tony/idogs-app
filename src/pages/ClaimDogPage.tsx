@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { claimTransferredDogs } from '../lib/db'
+import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 import type { ToastMessage } from '../types'
 
 interface Props {
@@ -54,8 +55,9 @@ export default function ClaimDogPage({ toast }: Props) {
     try {
       const claimed = await claimTransferredDogs(user.uid, user.email, 'claim')
       if (claimed > 0) {
-        toast(`Successfully claimed ${claimed} dog${claimed !== 1 ? 's' : ''}!`, 'success')
-        navigate('/app/dogs')
+        emitDogUsageChanged(user.uid)
+        toast(`Transfer accepted — ${claimed} dog${claimed !== 1 ? 's are' : ' is'} now in My Dogs.`, 'success')
+        navigate('/app/dogs', { replace: true })
       } else {
         toast('No dogs found to claim.', 'info')
         setDogs([])
@@ -105,7 +107,7 @@ export default function ClaimDogPage({ toast }: Props) {
 
   return (
     <div style={{ padding: 32, maxWidth: 700, margin: '0 auto' }}>
-      <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>Claim Transferred Dogs</h1>
+      <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>Accept ownership transfer</h1>
       <p style={{ fontSize: 15, color: 'var(--mid)', marginBottom: 24, lineHeight: 1.5 }}>
         A breeder has transferred ownership of the following dog(s) to your email address (<strong>{user?.email}</strong>). Accept the transfer to add them to your account.
       </p>
@@ -128,7 +130,7 @@ export default function ClaimDogPage({ toast }: Props) {
                 {dog.breed}
               </div>
             </div>
-            <span className="badge badge-gray">Pending Claim</span>
+            <span className="badge badge-gold">Waiting for acceptance</span>
           </div>
         ))}
       </div>
@@ -144,7 +146,7 @@ export default function ClaimDogPage({ toast }: Props) {
           disabled={claiming}
           style={{ minWidth: 140 }}
         >
-          {claiming ? <span className="spinner" /> : `Accept ${dogs.length} dog${dogs.length !== 1 ? 's' : ''}`}
+          {claiming ? <span className="spinner" /> : `Accept transfer${dogs.length !== 1 ? 's' : ''}`}
         </button>
       </div>
     </div>
