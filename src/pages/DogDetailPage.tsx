@@ -201,15 +201,30 @@ export default function DogDetailPage({ toast }: Props) {
   const remindersGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
   const timelineGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
 
-  function visibleToFormerOwner(recordDate: string | undefined): boolean {
+  function visibleToFormerOwner(createdAt: unknown): boolean {
     if (!dog || !user?.uid) return true
     const isFormerOwner = dog.tenantId === user.uid
       && !!dog.currentOwnerId
       && dog.currentOwnerId !== user.uid
     if (!isFormerOwner) return true
-    const transferDate = (dog.transferredAt || '').slice(0, 10)
-    if (!transferDate || !recordDate) return false
-    return recordDate.slice(0, 10) <= transferDate
+
+    // Privacy boundary is WHEN the record was actually created, not the
+    // clinical "date given". A new owner can legitimately backdate a
+    // vaccine/worming entry, so comparing dateGiven to transferredAt
+    // leaked post-transfer records to the former breeder.
+    const transferTime = Date.parse(dog.transferredAt || '')
+    if (!Number.isFinite(transferTime) || !createdAt) return false
+
+    let createdTime = Number.NaN
+    if (typeof createdAt === 'string') {
+      createdTime = Date.parse(createdAt)
+    } else if (typeof (createdAt as any)?.toDate === 'function') {
+      createdTime = (createdAt as any).toDate().getTime()
+    } else if (typeof (createdAt as any)?.seconds === 'number') {
+      createdTime = (createdAt as any).seconds * 1000
+    }
+
+    return Number.isFinite(createdTime) && createdTime <= transferTime
   }
 
   function retryVaccines() {
@@ -218,7 +233,7 @@ export default function DogDetailPage({ toast }: Props) {
     setVaccinesError(false)
     getVaccineRecords(dogId).then(data => {
       if (!req.isCurrent()) return
-      setVaccines(data.filter(v => visibleToFormerOwner(v.dateGiven))); setVaccinesError(false)
+      setVaccines(data.filter(v => visibleToFormerOwner(v.createdAt))); setVaccinesError(false)
     }).catch(err => {
       if (!req.isCurrent()) return
       console.error('DogDetailPage: vaccines retry failed', { code: safeReadFirestoreErrorCode(err) })
@@ -231,7 +246,7 @@ export default function DogDetailPage({ toast }: Props) {
     setWormingError(false)
     getWormingRecords(dogId).then(data => {
       if (!req.isCurrent()) return
-      setWormings(data.filter(w => visibleToFormerOwner(w.dateGiven))); setWormingError(false)
+      setWormings(data.filter(w => visibleToFormerOwner(w.createdAt))); setWormingError(false)
     }).catch(err => {
       if (!req.isCurrent()) return
       console.error('DogDetailPage: worming retry failed', { code: safeReadFirestoreErrorCode(err) })
@@ -401,8 +416,8 @@ export default function DogDetailPage({ toast }: Props) {
             }),
         ])
         if (!req.isCurrent()) return
-        setVaccines(vRes.data.filter(v => visibleToFormerOwner(v.dateGiven))); setVaccinesError(!vRes.ok)
-        setWormings(wRes.data.filter(w => visibleToFormerOwner(w.dateGiven))); setWormingError(!wRes.ok)
+        setVaccines(vRes.data.filter(v => visibleToFormerOwner(v.createdAt))); setVaccinesError(!vRes.ok)
+        setWormings(wRes.data.filter(w => visibleToFormerOwner(w.createdAt))); setWormingError(!wRes.ok)
         setHealthTests(hRes.data); setHealthTestsError(!hRes.ok)
         // A user who's no longer the current owner (e.g. the original
         // breeder after a buyer claims the dog) must not see this dog's
