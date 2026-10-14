@@ -485,9 +485,19 @@ service cloud.firestore {
       allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     match /activityNotes/{id} {
-      allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
+      // Transfer privacy boundary:
+      // - the effective current owner can read the dog's full activity story;
+      // - a former breeder may only read notes they created themselves.
+      // This prevents post-transfer notes/photos uploaded by the new owner
+      // from remaining visible to the original breeder.
+      allow read: if resource == null
+        || dogWriteAccess(resource.data.dogId)
+        || (isSignedIn()
+            && resource.data.get('createdBy', '') == request.auth.uid
+            && dogBelongsToUser(resource.data.dogId));
       allow update, delete: if dogWriteAccess(resource.data.dogId);
-      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
+      allow create: if dogAllowsNewRecords(request.resource.data.dogId)
+        && request.resource.data.createdBy == request.auth.uid;
     }
 
     // ── heatCycles — read/delete use the same dogBelongsToUser access

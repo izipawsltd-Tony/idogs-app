@@ -925,8 +925,24 @@ export async function deleteReminder(id: string): Promise<void> {
 
 // ── ACTIVITY NOTES ────────────────────────────────────────────
 
-export async function getActivityNotes(dogId: string): Promise<ActivityNote[]> {
-  const q = query(collection(db, 'activityNotes'), where('dogId', '==', dogId))
+export async function getActivityNotes(
+  dogId: string,
+  viewerUid?: string,
+  dog?: Pick<Dog, 'tenantId' | 'currentOwnerId'>
+): Promise<ActivityNote[]> {
+  const isFormerBreeder = !!viewerUid
+    && !!dog
+    && dog.tenantId === viewerUid
+    && !!dog.currentOwnerId
+    && dog.currentOwnerId !== viewerUid
+
+  // Privacy after transfer: the current owner can read the full story,
+  // but a former breeder may only read activity notes they themselves
+  // created before/while they owned the dog. Without this creator filter,
+  // a dogId-only query exposed the new owner's private notes/photos.
+  const q = isFormerBreeder
+    ? query(collection(db, 'activityNotes'), where('dogId', '==', dogId), where('createdBy', '==', viewerUid))
+    : query(collection(db, 'activityNotes'), where('dogId', '==', dogId))
   const snap = await getDocs(q)
   // FIX (crash: "(l.date || '').localeCompare is not a function" when
   // building the Timeline): createdAt comes back from Firestore as a

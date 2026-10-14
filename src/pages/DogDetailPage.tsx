@@ -290,7 +290,7 @@ export default function DogDetailPage({ toast }: Props) {
     setNotesError(false)
     setAuditError(false)
     Promise.all([
-      getActivityNotes(dogId)
+      getActivityNotes(dogId, user?.uid || '', dog)
         .then(data => ({ ok: true as const, data }))
         .catch((err: unknown) => {
           console.error('DogDetailPage: timeline (notes) retry failed', { code: safeReadFirestoreErrorCode(err) })
@@ -364,7 +364,7 @@ export default function DogDetailPage({ toast }: Props) {
           safeLoad(getVaccineRecords(dogId!), [] as VaccineRecord[]),
           safeLoad(getWormingRecords(dogId!), [] as WormingRecord[]),
           safeLoad(getHealthTests(dogId!), [] as HealthTest[]),
-          safeLoad(getActivityNotes(dogId!), [] as ActivityNote[]),
+          safeLoad(getActivityNotes(dogId!, user?.uid || '', d), [] as ActivityNote[]),
           safeLoad(getScanCount(dogId!), null as number | null),
           safeLoad(getDogDocuments(dogId!), [] as any[]),
           // Query with the VIEWER's own uid, not d.tenantId (the dog's
@@ -1236,7 +1236,7 @@ export default function DogDetailPage({ toast }: Props) {
           explicit Retry action alongside it. */}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />}
       {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} onRetry={retryDocuments} />}
-      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} />}
+      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
 
       {tab === 'breeding' && !isOwner && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
         await updateDog(dogId!, updates)
@@ -3039,7 +3039,7 @@ const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
   note: 'var(--brand-600)',
 }
 
-function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast, notesError, auditError, vaccinesError, wormingError, healthTestsError, onRetry, dogId, onNoteChanged }: {
+function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast, notesError, auditError, vaccinesError, wormingError, healthTestsError, onRetry, dogId, onNoteChanged, canEdit }: {
   dog: Dog; notes: ActivityNote[]; newNote: string; setNewNote: (v: string) => void;
   newNoteDate: string; setNewNoteDate: (v: string) => void;
   onAddNote: () => void; saving: boolean;
@@ -3052,6 +3052,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
   onRetry?: () => void
   dogId: string | undefined; onNoteChanged: () => Promise<void>
+  canEdit: boolean
 }) {
   const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -3148,6 +3149,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>{dog.name}'s story</h2>
       <p style={{ fontSize: 13, color: 'var(--light)', marginBottom: 16 }}>Every milestone, automatically gathered in one place.</p>
 
+      {canEdit ? (
       <div className="card" style={{ marginBottom: 20 }}>
         <label style={{ fontSize: 12, color: 'var(--light)', display: 'block', marginBottom: 4 }}>When did this happen?</label>
         <input
@@ -3190,6 +3192,11 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
           )}
         </div>
       </div>
+      ) : (
+        <div style={{ marginBottom: 20, padding: '10px 12px', borderRadius: 8, background: 'var(--sand)', color: 'var(--mid)', fontSize: 12 }}>
+          This dog has been transferred. New owner's private notes and photos are hidden from the previous owner.
+        </div>
+      )}
 
       {hasIncompleteData && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#FFF8E8', border: '1px solid #F0D590', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 13, color: '#8A6D1F' }}>
@@ -3253,7 +3260,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
                   ) : (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div style={{ fontSize: 12, color: 'var(--light)' }}>{formatDate(e.date)}</div>
-                      {e.kind === 'note' && e.id && (
+                      {canEdit && e.kind === 'note' && e.id && (
                         <div style={{ display: 'flex', gap: 10 }}>
                           <button type="button" onClick={() => { setEditingId(e.id!); setEditText(e.title); setEditDate((e.date || '').slice(0, 10)) }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>
                           <button type="button" onClick={async () => {
