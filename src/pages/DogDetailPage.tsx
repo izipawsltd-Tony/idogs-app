@@ -201,13 +201,24 @@ export default function DogDetailPage({ toast }: Props) {
   const remindersGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
   const timelineGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
 
+  function visibleToFormerOwner(recordDate: string | undefined): boolean {
+    if (!dog || !user?.uid) return true
+    const isFormerOwner = dog.tenantId === user.uid
+      && !!dog.currentOwnerId
+      && dog.currentOwnerId !== user.uid
+    if (!isFormerOwner) return true
+    const transferDate = (dog.transferredAt || '').slice(0, 10)
+    if (!transferDate || !recordDate) return false
+    return recordDate.slice(0, 10) <= transferDate
+  }
+
   function retryVaccines() {
     if (!dogId) return
     const req = vaccinesGuard.beginRequest()
     setVaccinesError(false)
     getVaccineRecords(dogId).then(data => {
       if (!req.isCurrent()) return
-      setVaccines(data); setVaccinesError(false)
+      setVaccines(data.filter(v => visibleToFormerOwner(v.dateGiven))); setVaccinesError(false)
     }).catch(err => {
       if (!req.isCurrent()) return
       console.error('DogDetailPage: vaccines retry failed', { code: safeReadFirestoreErrorCode(err) })
@@ -220,7 +231,7 @@ export default function DogDetailPage({ toast }: Props) {
     setWormingError(false)
     getWormingRecords(dogId).then(data => {
       if (!req.isCurrent()) return
-      setWormings(data); setWormingError(false)
+      setWormings(data.filter(w => visibleToFormerOwner(w.dateGiven))); setWormingError(false)
     }).catch(err => {
       if (!req.isCurrent()) return
       console.error('DogDetailPage: worming retry failed', { code: safeReadFirestoreErrorCode(err) })
@@ -390,8 +401,8 @@ export default function DogDetailPage({ toast }: Props) {
             }),
         ])
         if (!req.isCurrent()) return
-        setVaccines(vRes.data); setVaccinesError(!vRes.ok)
-        setWormings(wRes.data); setWormingError(!wRes.ok)
+        setVaccines(vRes.data.filter(v => visibleToFormerOwner(v.dateGiven))); setVaccinesError(!vRes.ok)
+        setWormings(wRes.data.filter(w => visibleToFormerOwner(w.dateGiven))); setWormingError(!wRes.ok)
         setHealthTests(hRes.data); setHealthTestsError(!hRes.ok)
         // A user who's no longer the current owner (e.g. the original
         // breeder after a buyer claims the dog) must not see this dog's
