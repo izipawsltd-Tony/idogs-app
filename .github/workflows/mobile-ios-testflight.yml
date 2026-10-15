@@ -102,7 +102,7 @@ jobs:
           set -euo pipefail
           ARCHIVE_PATH="$RUNNER_TEMP/iDogs.xcarchive"
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
-          xcodebuild             -project mobile/ios/App/App.xcodeproj             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             -archivePath "$ARCHIVE_PATH"             PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Automatic             MARKETING_VERSION="$IOS_MARKETING_VERSION"             CURRENT_PROJECT_VERSION="$BUILD_NUMBER"             -allowProvisioningUpdates             -authenticationKeyPath "$ASC_KEY_PATH"             -authenticationKeyID "$APPLE_KEY_ID"             -authenticationKeyIssuerID "$APPLE_ISSUER_ID"             archive
+          xcodebuild             -project mobile/ios/App/App.xcodeproj             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             -archivePath "$ARCHIVE_PATH"             PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Automatic             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             MARKETING_VERSION="$IOS_MARKETING_VERSION"             CURRENT_PROJECT_VERSION="$BUILD_NUMBER"             archive
           test -d "$ARCHIVE_PATH"
           echo "IOS_ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
           echo "IOS_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
