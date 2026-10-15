@@ -899,6 +899,11 @@ export default function DogDetailPage({ toast }: Props) {
       pedigreeRegister: pedigreeUpdate.pedigreeRegister,
       breedingEligibility: pedigreeUpdate.breedingEligibility,
     })
+    // Transfer committed: remove every editing surface immediately. The
+    // historical view must be loaded from the saved snapshot, not the
+    // current-owner object that was mounted before the transfer.
+    setLoading(true)
+    setShowTransfer(false)
     await sendTransferEmail({
       buyerEmail,
       buyerName,
@@ -915,9 +920,8 @@ export default function DogDetailPage({ toast }: Props) {
       performedBy: user?.uid || '',
       performedByEmail: user?.email || '',
     }).catch(err => console.error('Transfer audit log failed (transfer itself already succeeded):', err))
-    setDog(prev => prev ? { ...prev, status: 'transferred', transferStatus: 'pendingClaim', buyerName, buyerEmail, buyerPhone, ...pedigreeUpdate } as any : prev)
-    setShowTransfer(false)
     toast(`${dog.name} transferred to ${buyerName} ✓`, 'success')
+    window.location.reload()
   }
 
   function openEditProfile() {
