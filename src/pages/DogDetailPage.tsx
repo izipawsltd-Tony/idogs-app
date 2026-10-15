@@ -172,6 +172,7 @@ export default function DogDetailPage({ toast }: Props) {
   })
   const [documents, setDocuments] = useState<any[]>([])
   const [documentsError, setDocumentsError] = useState(false)
+  const [historicalSnapshot, setHistoricalSnapshot] = useState<any | null>(null)
 
   // Codex round 15: keyed on both dogId AND user?.uid — the same
   // combined-key pattern as BreedingTab above. Without this, a slow
@@ -349,6 +350,7 @@ export default function DogDetailPage({ toast }: Props) {
     setQrUrl('')
     setScanCount(null); setScanCountError(false)
     setDocuments([]); setDocumentsError(false)
+    setHistoricalSnapshot(null)
     if (!dogId) return
     const req = beginRequest()
     setLoading(true)
@@ -374,6 +376,30 @@ export default function DogDetailPage({ toast }: Props) {
         if (!req.isCurrent()) return
         if (!d) { navigate('/app/dogs'); return }
         setDog(d)
+        const history = (d as any)._historySnapshot || null
+        setHistoricalSnapshot(history)
+
+        // Former-owner view is served exclusively from the immutable
+        // transfer snapshot. Never query the live dog child collections:
+        // those now belong only to the current owner.
+        if (history) {
+          setVaccines(history.vaccineRecords || []); setVaccinesError(false)
+          setWormings(history.wormingRecords || []); setWormingError(false)
+          setHealthTests(history.healthTests || []); setHealthTestsError(false)
+          setNotes(history.activityNotes || []); setNotesError(false)
+          setDocuments(history.documents || []); setDocumentsError(false)
+          setReminders(history.reminders || []); setRemindersError(false)
+          setLifeStageEvents([]); setAuditError(false)
+          setScanCount(typeof history.scanCount === 'number' ? history.scanCount : 0); setScanCountError(false)
+          const publicUrl = `${window.location.origin}/p/${d.passportId}`
+          const url = await QRCode.toDataURL(publicUrl, {
+            width: 200, margin: 2, errorCorrectionLevel: 'H',
+            color: { dark: '#1A3A2A', light: '#FFFFFF' }
+          })
+          if (req.isCurrent()) setQrUrl(url)
+          return
+        }
+
         // Re-sync lifeStage in case it's drifted out of date (dogs were
         // previously assigned a fixed lifeStage at creation time with
         // nothing updating it afterwards as they aged).
@@ -1065,12 +1091,21 @@ export default function DogDetailPage({ toast }: Props) {
 
       {/* Dog header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, marginTop: 16, marginBottom: 28 }}>
-        <PhotoUpload
-          dogId={dog.id}
-          currentPhoto={dog.profilePhoto}
-          onUpload={url => setDog(prev => prev ? { ...prev, profilePhoto: url } : prev)}
-          toast={toast}
-        />
+        {historicalSnapshot ? (
+          <div style={{
+            width: 72, height: 72, borderRadius: '50%',
+            background: dog.profilePhoto ? `url(${dog.profilePhoto}) center/cover` : 'var(--green-light)',
+            border: '2px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 28, flexShrink: 0,
+          }}>{!dog.profilePhoto && '🐕'}</div>
+        ) : (
+          <PhotoUpload
+            dogId={dog.id}
+            currentPhoto={dog.profilePhoto}
+            onUpload={url => setDog(prev => prev ? { ...prev, profilePhoto: url } : prev)}
+            toast={toast}
+          />
+        )}
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.name}</h1>
@@ -1100,6 +1135,11 @@ export default function DogDetailPage({ toast }: Props) {
           {isTransferred && (
             <div style={{ marginTop: 8, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', padding: '6px 10px', borderRadius: 8, display: 'inline-block' }}>
               Transferred to <strong>{(dog as any).buyerName}</strong> · {(dog as any).buyerEmail}
+            </div>
+          )}
+          {historicalSnapshot && (
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--mid)', background: '#F7F4EC', border: '1px solid var(--border)', padding: '8px 10px', borderRadius: 8 }}>
+              🔒 Historical snapshot — frozen at transfer. Updates made by the new owner are private and are not shown here.
             </div>
           )}
           {isRestricted && !isRestrictedLitterPuppyCandidate && (
@@ -1253,18 +1293,19 @@ export default function DogDetailPage({ toast }: Props) {
       )}
       {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} onRetry={retryVaccines} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
       {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
-      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} onRetry={retryHealthTests} />}
-      {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} onRetry={retryReminders} />}
+      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} onRetry={retryHealthTests} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} onRetry={retryReminders} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
       {/* scanCount === null unambiguously means "failed to load" (never
           "still loading", since the page-level loading gate has already
           cleared by the time any tab renders) — PassportTab's own
           "Unavailable" copy covers that (round 13); round 17 adds an
           explicit Retry action alongside it. */}
       {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />}
-      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} onRetry={retryDocuments} />}
+      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} onRetry={retryDocuments} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
       {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
 
-      {tab === 'breeding' && !isOwner && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
+      {tab === 'breeding' && !isOwner && historicalSnapshot && <HistoricalBreedingTab heatCycles={historicalSnapshot.heatCycles || []} />}
+      {tab === 'breeding' && !isOwner && !historicalSnapshot && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
         await updateDog(dogId!, updates)
         setDog(prev => prev ? { ...prev, ...updates } : prev)
         toast('Breeding record updated')
@@ -2461,7 +2502,7 @@ function formatHealthResult(result: unknown): string {
   return ''
 }
 
-function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast, error, onRetry }: {
+function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast, error, onRetry, canEdit }: {
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -2471,6 +2512,7 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
   toast: (msg: string, type?: ToastMessage['type']) => void
   error?: boolean
   onRetry?: () => void
+  canEdit: boolean
 }) {
   const { user } = useAuth()
   const [showForm, setShowForm] = useState(false)
@@ -2582,12 +2624,12 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Health testing</h2>
-        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
+        {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
           {showForm ? 'Cancel' : '+ Add manually'}
-        </button>
+        </button>}
       </div>
 
-      {!error && showForm && (
+      {!error && canEdit && showForm && (
         <div className="card" style={{ marginBottom: 16, padding: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div className="form-group">
@@ -2698,8 +2740,10 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
                     📄 View
                   </button>
                 )}
-                <button onClick={() => startEdit(h)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
-                <button onClick={() => handleDelete(h.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+                {canEdit && <>
+                  <button onClick={() => startEdit(h)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
+                  <button onClick={() => handleDelete(h.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+                </>}
               </div>
             </div>
             )
@@ -2712,12 +2756,13 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
 
 // ── REMINDERS TAB ─────────────────────────────────────────────
 
-function RemindersTab({ reminders, setReminders, toast, error, onRetry }: {
+function RemindersTab({ reminders, setReminders, toast, error, onRetry, canEdit }: {
   reminders: Reminder[];
   setReminders: (r: Reminder[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
   error?: boolean
   onRetry?: () => void
+  canEdit: boolean
 }) {
   async function handleComplete(id: string) {
     try {
@@ -2750,7 +2795,7 @@ function RemindersTab({ reminders, setReminders, toast, error, onRetry }: {
                   <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{r.title}</div>
                   <div style={{ fontSize: 12, color: overdue ? 'var(--error)' : 'var(--light)' }}>{overdue ? 'Overdue · ' : 'Due · '}{formatDate(r.dueDate)}</div>
                 </div>
-                <button className="btn btn-secondary btn-sm" onClick={() => handleComplete(r.id)}>Done ✓</button>
+                {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => handleComplete(r.id)}>Done ✓</button>}
               </div>
             )
           })}
@@ -2832,7 +2877,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetry
 
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
-function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void }) {
+function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry, canEdit }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void; canEdit: boolean }) {
   const [editingDocId, setEditingDocId] = useState<string | null>(null)
   const [editDocName, setEditDocName] = useState('')
   const { user } = useAuth()
@@ -2904,7 +2949,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       {doc.name || getDocLabel(doc.documentType)}
-                      <button type="button" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || '') }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>
+                      {canEdit && <button type="button" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || '') }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>}
                     </span>
                   )}
                 </div>
@@ -2929,7 +2974,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
                 >
                   View ↗
                 </button>
-                <button
+                {canEdit && <button
                   onClick={async () => {
                     if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
                       try {
@@ -2945,7 +2990,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
                   style={{ color: 'var(--error)' }}
                 >
                   Delete
-                </button>
+                </button>}
               </div>
             </div>
           ))}
@@ -3306,6 +3351,35 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
               </div>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HistoricalBreedingTab({ heatCycles }: { heatCycles: any[] }) {
+  const cycles = (heatCycles || []).slice().sort((a, b) => String(a.heatStartDate || '').localeCompare(String(b.heatStartDate || '')))
+  return (
+    <div style={{ maxWidth: 800 }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>Breeding history</h2>
+      <div style={{ fontSize: 12, color: 'var(--mid)', background: 'var(--sand)', padding: '8px 12px', borderRadius: 8, marginBottom: 16 }}>
+        🔒 Historical snapshot frozen at ownership transfer.
+      </div>
+      {cycles.length === 0 ? (
+        <div className="empty-state"><div className="empty-state-title">No breeding records before transfer</div></div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {cycles.map((cycle, i) => (
+            <div key={cycle.id || i} className="card" style={{ padding: 14 }}>
+              <div style={{ fontWeight: 600 }}>Heat cycle {cycle.heatNumber || i + 1}</div>
+              <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>
+                Heat: {cycle.heatStartDate ? formatDate(cycle.heatStartDate) : '—'}
+                {cycle.matingDate ? ` · Mating: ${formatDate(cycle.matingDate)}` : ''}
+                {cycle.whelpingActual ? ` · Whelped: ${formatDate(cycle.whelpingActual)}` : ''}
+              </div>
+              {cycle.notes && <div style={{ fontSize: 13, color: 'var(--mid)', marginTop: 6 }}>{cycle.notes}</div>}
+            </div>
+          ))}
         </div>
       )}
     </div>
