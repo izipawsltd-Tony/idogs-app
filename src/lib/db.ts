@@ -373,12 +373,7 @@ export function isCurrentOwner(dog: Pick<Dog, 'currentOwnerId'>, userId: string)
 }
 
 export async function getDog(id: string): Promise<Dog | null> {
-  try {
-    const snap = await getDoc(doc(db, 'dogs', id))
-    if (!snap.exists()) return null
-    return normalizeDog({ ...snap.data(), id: snap.id } as Dog)
-  } catch (err) {
-    if (safeReadFirestoreErrorCode(err) !== 'permission-denied') throw err
+  const historicalDog = async () => {
     const snapshot = await getHistoricalDogSnapshot(id)
     if (!snapshot?.dog) return null
     return normalizeDog({
@@ -393,6 +388,25 @@ export async function getDog(id: string): Promise<Dog | null> {
       buyerEmail: snapshot.toOwnerEmail,
       _historySnapshot: snapshot,
     } as any)
+  }
+
+  try {
+    const snap = await getDoc(doc(db, 'dogs', id))
+    if (!snap.exists()) return historicalDog()
+    const dog = normalizeDog({ ...snap.data(), id: snap.id } as Dog)
+    const currentUid = uid()
+
+    // During rollout the deployed Rules may still temporarily permit the
+    // original breeder to read the live Dog document. Never trust that
+    // broader read for rendering: if currentOwnerId moved away, switch to
+    // the immutable former-owner snapshot immediately.
+    if (dog.currentOwnerId && dog.currentOwnerId !== currentUid) {
+      return historicalDog()
+    }
+    return dog
+  } catch (err) {
+    if (safeReadFirestoreErrorCode(err) !== 'permission-denied') throw err
+    return historicalDog()
   }
 }
 
