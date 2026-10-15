@@ -137,11 +137,16 @@ jobs:
           test -s "$IPA_PATH"
           echo "IOS_IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
 
-      - name: Validate signed archive identity
+      - name: Validate signed IPA identity
         shell: bash
         run: |
           set -euo pipefail
-          APP_PATH="$IOS_ARCHIVE_PATH/Products/Applications/App.app"
+          VALIDATE_DIR="$RUNNER_TEMP/idogs-ipa-validate"
+          rm -rf "$VALIDATE_DIR"
+          mkdir -p "$VALIDATE_DIR"
+          unzip -q "$IOS_IPA_PATH" -d "$VALIDATE_DIR"
+          APP_PATH=$(find "$VALIDATE_DIR/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP_PATH"
           test -d "$APP_PATH"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -qx "$IOS_BUNDLE_ID"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist" | grep -qx "$IOS_MARKETING_VERSION"
