@@ -310,43 +310,53 @@ export function safeReadFirestoreErrorCode(err: unknown): string {
   return 'unknown'
 }
 
+async function getHistoricalDogsForCurrentUser(): Promise<Dog[]> {
+  if (!auth.currentUser) return []
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/get-dog-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ action: 'list' }),
+  })
+  if (!res.ok) throw new GetDogsError()
+  const data = await res.json()
+  return (data.dogs || []).map((d: Dog) => normalizeDog(d))
+}
+
+export async function getHistoricalDogSnapshot(dogId: string): Promise<any | null> {
+  if (!auth.currentUser) return null
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/get-dog-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ action: 'detail', dogId }),
+  })
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error('History load failed')
+  const data = await res.json()
+  return data.snapshot || null
+}
+
 export async function getDogs(): Promise<Dog[]> {
   const currentUid = uid()
   if (!currentUid) return []
 
-  let breederSnap, ownerSnap
   try {
-    [breederSnap, ownerSnap] = await Promise.all([
-      getDocs(query(collection(db, 'dogs'), where('tenantId', '==', currentUid))),
-      getDocs(query(collection(db, 'dogs'), where('currentOwnerId', '==', currentUid)))
+    const [ownerSnap, historical] = await Promise.all([
+      getDocs(query(collection(db, 'dogs'), where('currentOwnerId', '==', currentUid))),
+      getHistoricalDogsForCurrentUser(),
     ])
+
+    const dogMap = new Map<string, Dog>()
+    ownerSnap.docs.forEach(d => dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog)))
+    historical.forEach(d => {
+      if (!dogMap.has(d.id)) dogMap.set(d.id, d)
+    })
+    return Array.from(dogMap.values())
   } catch (err) {
-    // Codex round 14: neither the console log nor the thrown error may
-    // carry the raw Firestore error — only a fixed operation name plus a
-    // normalized, allowlisted code goes to the console; the THROWN error
-    // is always the same fixed, sanitized message.
     console.error('getDogs: load failed', { code: safeReadFirestoreErrorCode(err) })
     throw new GetDogsError()
   }
-
-  const dogMap = new Map<string, Dog>()
-
-  breederSnap.docs.forEach(d => {
-    dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
-  })
-  ownerSnap.docs.forEach(d => {
-    dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
-  })
-
-  return Array.from(dogMap.values()).map(dog => {
-    // If the current user is the breeder (tenantId) but not the current owner,
-    // they should see the dog as "transferred" regardless of its actual DB status
-    // (which might have been set to 'active' when the new owner claimed it).
-    if (dog.tenantId === currentUid && dog.currentOwnerId !== currentUid) {
-      return { ...dog, status: 'transferred' }
-    }
-    return dog
-  })
 }
 
 // Production-verified ownership check (currentOwnerId is the source of
@@ -363,16 +373,27 @@ export function isCurrentOwner(dog: Pick<Dog, 'currentOwnerId'>, userId: string)
 }
 
 export async function getDog(id: string): Promise<Dog | null> {
-  const snap = await getDoc(doc(db, 'dogs', id))
-  if (!snap.exists()) return null
-  const dog = normalizeDog({ ...snap.data(), id: snap.id } as Dog)
-
-  const currentUid = uid()
-  if (dog.tenantId === currentUid && dog.currentOwnerId !== currentUid) {
-    dog.status = 'transferred'
+  try {
+    const snap = await getDoc(doc(db, 'dogs', id))
+    if (!snap.exists()) return null
+    return normalizeDog({ ...snap.data(), id: snap.id } as Dog)
+  } catch (err) {
+    if (safeReadFirestoreErrorCode(err) !== 'permission-denied') throw err
+    const snapshot = await getHistoricalDogSnapshot(id)
+    if (!snapshot?.dog) return null
+    return normalizeDog({
+      ...snapshot.dog,
+      id,
+      status: 'transferred',
+      currentOwnerId: '__historical__',
+      historicalSnapshot: true,
+      historySnapshotId: snapshot.id,
+      transferredAt: snapshot.transferredAt,
+      buyerName: snapshot.toOwnerName,
+      buyerEmail: snapshot.toOwnerEmail,
+      _historySnapshot: snapshot,
+    } as any)
   }
-
-  return dog
 }
 
 export async function getDogByPassportId(passportId: string): Promise<Dog | null> {
@@ -536,29 +557,28 @@ export async function transferDogOwnership(
     buyerPhone?: string
     transferredAt: string
     microchipCertUrl?: string | null
-    // Optional — set by both transfer modals via nextPedigreeRegisterUpdate()
-    // (src/lib/breedingCompliance.ts) so the breeder's explicit pedigree
-    // choice at the moment of transfer lands in this SAME write, not a
-    // separate one. Omitted entirely (not just falsy) when the breeder
-    // didn't change anything, which leaves the dog's existing value alone —
-    // this must never be defaulted to 'main' here or anywhere else.
     pedigreeRegister?: string
     breedingEligibility?: 'eligible' | 'not_eligible' | 'unknown'
   }
 ): Promise<void> {
-  await updateDoc(doc(db, 'dogs', dogId), {
-    status: 'transferred',
-    transferStatus: 'pendingClaim',
-    previousOwnerId: uid(),
-    buyerName: transfer.buyerName,
-    buyerEmail: transfer.buyerEmail.trim().toLowerCase(),
-    ...(transfer.buyerPhone ? { buyerPhone: transfer.buyerPhone } : {}),
-    transferredAt: transfer.transferredAt,
-    ...(transfer.microchipCertUrl ? { microchipCertUrl: transfer.microchipCertUrl } : {}),
-    ...(transfer.pedigreeRegister !== undefined ? { pedigreeRegister: transfer.pedigreeRegister } : {}),
-    ...(transfer.breedingEligibility !== undefined ? { breedingEligibility: transfer.breedingEligibility } : {}),
-    updatedAt: serverTimestamp(),
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/transfer-dog', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({
+      dogId,
+      buyerName: transfer.buyerName,
+      buyerEmail: transfer.buyerEmail,
+      buyerPhone: transfer.buyerPhone,
+      pedigreeRegister: transfer.pedigreeRegister,
+      breedingEligibility: transfer.breedingEligibility,
+    }),
   })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Transfer failed (${res.status})`)
+  }
 }
 
 export async function getDogsByBuyerEmail(email: string): Promise<Dog[]> {
