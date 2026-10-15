@@ -161,10 +161,34 @@ await checkAsync('former breeder CANNOT delete the current owner\'s document rec
   }
 })
 
+const inheritedReminderId = `privacy_reminders_${R}`
+for (const [operation, perform] of [
+  ['create', () => setDoc(doc(db, 'reminders', `forged_${R}`), { dogId, tenantId: formerBreederUid, status: 'pending' })],
+  ['update', () => updateDoc(doc(db, 'reminders', inheritedReminderId), { status: 'completed' })],
+  ['delete', () => deleteDoc(doc(db, 'reminders', inheritedReminderId))],
+]) {
+  await checkAsync(`former breeder CANNOT ${operation} reminders after claim`, async () => {
+    try { await perform(); return false } catch (err) { return isDenied(err) }
+  })
+}
+
 // =========================================================================
 // SECTION 2 — Effective current owner: full read/write access
 // =========================================================================
 await as('current-owner')
+await checkAsync('current owner CAN complete an inherited reminder with the old tenantId', async () => {
+  await updateDoc(doc(db, 'reminders', inheritedReminderId), { status: 'completed' })
+  return (await getDoc(doc(db, 'reminders', inheritedReminderId))).data().status === 'completed'
+})
+await checkAsync('current owner CAN create their own reminder', async () => {
+  await setDoc(doc(db, 'reminders', `buyer_${R}`), { dogId, tenantId: currentOwnerUid, status: 'pending' })
+  return true
+})
+await checkAsync('current owner CANNOT retarget a reminder to an unrelated dog', async () => {
+  try { await updateDoc(doc(db, 'reminders', inheritedReminderId), { dogId: 'unrelated-dog' }); return false }
+  catch (err) { return isDenied(err) }
+})
+
 
 await checkAsync('current owner CAN read their own vaccine record', async () => {
   const snap = await getDoc(doc(db, 'vaccineRecords', vaccineId))

@@ -67,7 +67,9 @@ export default function ReportsPage({ toast }: Props) {
       ])
       if (!req.isCurrent()) return
       const state = (profile as { state?: string } | null)?.state || 'SA'
-      const healthArrays = await Promise.all(dogs.map(d => getHealthTests(d.id)))
+      const healthArrays = await Promise.all(dogs.map(d => d.status === 'transferred'
+        ? Promise.resolve([] as HealthTest[])
+        : getHealthTests(d.id)))
       if (!req.isCurrent()) return
       const healthByDog = new Map<string, HealthTest[]>(
         dogs.map((d, i) => [d.id, healthArrays[i]]),
@@ -403,3 +405,4 @@ function SalesSection({ data }: { data: SalesReport | null }) {
     </SectionCard>
   )
 }
+

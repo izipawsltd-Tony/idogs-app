@@ -575,10 +575,17 @@ service cloud.firestore {
         && dogBelongsToUser(resource.data.dogId);
 
       allow create: if isSignedIn()
-        && request.resource.data.tenantId == request.auth.uid;
+        && request.resource.data.tenantId == request.auth.uid
+        && dogAllowsNewRecords(request.resource.data.dogId);
 
-      allow update, delete: if isSignedIn()
-        && resource.data.tenantId == request.auth.uid;
+      // tenantId may retain the original breeder after claim. It is not
+      // an ongoing write grant. Only the current dog owner can complete,
+      // edit or delete a reminder; an update cannot move it to another dog.
+      allow update: if dogWriteAccess(resource.data.dogId)
+        && request.resource.data.dogId == resource.data.dogId
+        && (request.resource.data.tenantId == resource.data.tenantId
+            || request.resource.data.tenantId == request.auth.uid);
+      allow delete: if dogWriteAccess(resource.data.dogId);
     }
     // Codex round 4, Blocker 3: direct client update/delete are now
     // BOTH denied outright, not just create. Round 3 left update/delete
@@ -816,3 +823,4 @@ service cloud.firestore {
     }
   }
 }
+
