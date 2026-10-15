@@ -61,11 +61,14 @@ if (!created.name.startsWith(expectedPrefix)) {
 const releaseName = `projects/${STAGING_FIREBASE_PROJECT_ID}/releases/cloud.firestore`
 console.log('[rules-once] Updating staging cloud.firestore release...')
 const releaseRes = await fetch(
-  `${RULES_API_BASE}/${releaseName}?updateMask=rulesetName`,
+  `${RULES_API_BASE}/${releaseName}`,
   {
     method: 'PATCH',
     headers: authHeaders,
-    body: JSON.stringify({ name: releaseName, rulesetName: created.name }),
+    body: JSON.stringify({
+      release: { name: releaseName, rulesetName: created.name },
+      updateMask: 'rulesetName',
+    }),
   }
 )
 const release = await releaseRes.json().catch(() => null)
