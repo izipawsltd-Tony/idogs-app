@@ -2,6 +2,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
+import { legacyTransferHistory } from './_lib/ownership-history.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -64,39 +65,44 @@ export default async function handler(req, res) {
   }
 
   const { action = 'list', dogId } = req.body || {}
+  if (!['list', 'detail'].includes(action)) return res.status(400).json({ error: 'Invalid action' })
+  if (action === 'detail' && (!dogId || typeof dogId !== 'string')) {
+    return res.status(400).json({ error: 'dogId required' })
+  }
   const db = getFirestore()
 
   try {
+    // One owner-scoped query avoids requiring an undeployed composite
+    // index, and never reads a current owner's dog or child collections.
+    const snapshots = await db.collection(SNAPSHOT_COLLECTION).where('fromOwnerId', '==', uid).get()
+    const ownAudit = await db.collection('auditLogs').where('tenantId', '==', uid).get()
+    const legacy = legacyTransferHistory(ownAudit.docs.map(d => jsonValue({ ...d.data(), id: d.id })), uid)
     if (action === 'detail') {
-      if (!dogId || typeof dogId !== 'string') return res.status(400).json({ error: 'dogId required' })
-      const snap = await db.collection(SNAPSHOT_COLLECTION)
-        .where('dogId', '==', dogId)
-        .where('fromOwnerId', '==', uid)
-        .get()
-      if (snap.empty) return res.status(404).json({ error: 'History not found' })
-
-      const docs = snap.docs.slice().sort((a, b) =>
+      const docs = snapshots.docs.filter(d => d.data().dogId === dogId).sort((a, b) =>
         String(b.data().transferredAt || '').localeCompare(String(a.data().transferredAt || ''))
       )
-      return res.status(200).json({ snapshot: publicSnapshot(docs[0]) })
+      const snapshot = docs.length ? publicSnapshot(docs[0]) : legacy.find(s => s.dogId === dogId)
+      if (!snapshot) return res.status(404).json({ error: 'History not found' })
+      return res.status(200).json({ snapshot })
     }
 
-    const snap = await db.collection(SNAPSHOT_COLLECTION).where('fromOwnerId', '==', uid).get()
     const latestByDog = new Map()
-    for (const doc of snap.docs) {
+    for (const doc of snapshots.docs) {
       const current = latestByDog.get(doc.data().dogId)
       if (!current || String(doc.data().transferredAt || '') > String(current.data().transferredAt || '')) {
         latestByDog.set(doc.data().dogId, doc)
       }
     }
-    const dogs = Array.from(latestByDog.values()).map(doc => {
-      const s = publicSnapshot(doc)
+    const histories = Array.from(latestByDog.values()).map(publicSnapshot)
+    histories.push(...legacy.filter(s => !latestByDog.has(s.dogId)))
+    const dogs = histories.map(s => {
       return {
         ...s.dog,
         id: s.dogId,
         status: 'transferred',
         currentOwnerId: '__historical__',
         historicalSnapshot: true,
+        historyAvailability: s.historyAvailability || 'snapshot',
         historySnapshotId: s.id,
         transferredAt: s.transferredAt,
         buyerName: s.toOwnerName,
@@ -109,3 +115,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'History load failed' })
   }
 }
+

@@ -383,6 +383,10 @@ export default function DogDetailPage({ toast }: Props) {
         // transfer snapshot. Never query the live dog child collections:
         // those now belong only to the current owner.
         if (history) {
+          // An old transfer can have an audit trail without a frozen
+          // clinical record. Do not label missing records as zero or query
+          // live data to fill the gap.
+          if (history.historyAvailability === 'audit_only') return
           setVaccines(history.vaccineRecords || []); setVaccinesError(false)
           setWormings(history.wormingRecords || []); setWormingError(false)
           setHealthTests(history.healthTests || []); setHealthTestsError(false)
@@ -679,7 +683,7 @@ export default function DogDetailPage({ toast }: Props) {
   }
 
   async function handleScanResult(result: any, filePath?: string) {
-    if (!dogId || !dog) return
+    if (!dogId || !dog || historicalSnapshot || !isCurrentOwner(dog, user?.uid || '')) return
 
     // The upload endpoint commits the private object and its Firestore
     // document before AIScan calls this handler. Refresh immediately so
@@ -966,6 +970,23 @@ export default function DogDetailPage({ toast }: Props) {
   if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
   if (!dog) return null
 
+  if (historicalSnapshot?.historyAvailability === 'audit_only') {
+    return <div style={{ padding: 32 }}>
+      <Link to="/app/dogs">← My dogs</Link>
+      <h1 style={{ marginTop: 20 }}>{dog.name}</h1>
+      <p>Transferred · Read-only history</p>
+      <div role="status" style={{ padding: 16, margin: '16px 0', background: 'var(--sand)', borderRadius: 12 }}>
+        A full historical record was not saved for this transfer. Only activity recorded by your account is available here.
+        Health records, documents, photos and breeding records from before the transfer cannot be verified from this activity alone.
+        Updates made by the new owner remain private.
+      </div>
+      <h2>Your activity up to transfer</h2>
+      <ul>{(historicalSnapshot.auditEntries || []).map((entry: any) => <li key={entry.id} style={{ margin: '12px 0' }}>
+        <time>{formatDate(entry.createdAt)}</time>{' — '}{entry.details || entry.action}
+      </li>)}</ul>
+    </div>
+  }
+
   const publicUrl = `${window.location.origin}/p/${dog.passportId}`
 
   // Only consider the latest record per vaccine group for the header status.
@@ -1061,7 +1082,7 @@ export default function DogDetailPage({ toast }: Props) {
   // itself, so it needs the same error-vs-genuinely-empty distinction.
   const TABS: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
-    { id: 'scan', label: '📸 iDogs Scan' },
+    ...(!historicalSnapshot ? [{ id: 'scan' as Tab, label: '📸 iDogs Scan' }] : []),
     { id: 'vaccines', label: `Vaccines (${vaccinesError ? '?' : vaccines.length})` },
     { id: 'worming', label: `Worming (${wormingError ? '?' : wormings.length})` },
     { id: 'health', label: 'Health tests' },
@@ -1193,7 +1214,7 @@ export default function DogDetailPage({ toast }: Props) {
           )}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">View passport ↗</a>
+          {!historicalSnapshot && <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">View passport ↗</a>}
           {canEditProfile && (
             <button onClick={openEditProfile} className="btn btn-secondary btn-sm">✎ Edit profile</button>
           )}
@@ -1284,7 +1305,7 @@ export default function DogDetailPage({ toast }: Props) {
           throw err
         }
       }} />}
-      {tab === 'scan' && (
+      {tab === 'scan' && !historicalSnapshot && isCurrentOwner(dog, user?.uid || '') && (
         <div style={{ maxWidth: 480 }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>iDogs Document Scan</h2>
           <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 20 }}>Photograph a Pedigree Certificate, Health Certificate, Hip and Elbow Dysplasia Report, or Vaccination Record. AI reads it and adds the records automatically.</p>
@@ -1300,7 +1321,9 @@ export default function DogDetailPage({ toast }: Props) {
           cleared by the time any tab renders) — PassportTab's own
           "Unavailable" copy covers that (round 13); round 17 adds an
           explicit Retry action alongside it. */}
-      {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />}
+      {tab === 'passport' && (historicalSnapshot
+        ? <div className="card" style={{ padding: 20 }}><h2>Passport at transfer</h2><p>{dog.passportId || 'Not recorded'}</p><p>This history does not open the current owner's live passport.</p></div>
+        : <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />)}
       {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} onRetry={retryDocuments} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
       {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
 
@@ -4715,3 +4738,4 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
     </div>
   )
 }
+

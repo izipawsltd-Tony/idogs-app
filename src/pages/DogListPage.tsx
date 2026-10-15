@@ -178,10 +178,11 @@ export default function DogListPage({ toast }: Props) {
     if (!missingTest || dogs.length === 0) { setHealthMap(null); return }
     let active = true
     setHealthLoading(true)
-    Promise.all(dogs.map(d => getHealthTests(d.id)))
+    const ownedDogs = dogs.filter(d => d.status !== 'transferred' && (d as any).transferStatus !== 'pendingClaim')
+    Promise.all(ownedDogs.map(d => getHealthTests(d.id)))
       .then(results => {
         if (!active) return
-        setHealthMap(new Map(dogs.map((d, i) => [d.id, results[i]])))
+        setHealthMap(new Map(ownedDogs.map((d, i) => [d.id, results[i]])))
       })
       .catch(() => { if (active) toast('Failed to load health records', 'error') })
       .finally(() => { if (active) setHealthLoading(false) })
@@ -418,6 +419,7 @@ export default function DogListPage({ toast }: Props) {
 }
 
 function DogCard({ dog }: { dog: Dog }) {
+  const isAuditOnly = (dog as any).historyAvailability === 'audit_only'
   const isTransferred = dog.status === 'transferred' || (dog as any).transferStatus === 'pendingClaim'
   // iDogs Pricing v1.1 §3.2/§3.3 — over the account's plan cap after a
   // downgrade. Read-only: viewable, transferable, but no edits/new
@@ -464,7 +466,7 @@ function DogCard({ dog }: { dog: Dog }) {
           </div>
         ) : (
           <div className="dog-list-photo-fallback" role="img" aria-label={`No photo available for ${dog.name}`}>
-            <span className="dog-list-photo-fallback-emoji" aria-hidden="true">{LIFE_STAGE_EMOJI[actualStage]}</span>
+            <span className="dog-list-photo-fallback-emoji" aria-hidden="true">{isAuditOnly ? '📋' : LIFE_STAGE_EMOJI[actualStage]}</span>
             <span>No photo</span>
           </div>
         )}
@@ -473,16 +475,16 @@ function DogCard({ dog }: { dog: Dog }) {
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.name}</div>
-              <div style={{ fontSize: 13, color: 'var(--light)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.breed}</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{isAuditOnly ? 'Your transfer activity' : dog.breed}</div>
             </div>
-            <span style={{ fontSize: 13, color: 'var(--mid)' }}>{dog.sex === 'female' ? '♀' : '♂'}</span>
+            {!isAuditOnly && <span style={{ fontSize: 13, color: 'var(--mid)' }}>{dog.sex === 'female' ? '♀' : '♂'}</span>}
           </div>
 
           <div className="dog-card-meta">
-            <div style={{ fontSize: 12, color: 'var(--light)' }}>{getDogAge(dog.dateOfBirth)}</div>
+            <div style={{ fontSize: 12, color: 'var(--light)' }}>{isAuditOnly ? 'Full historical record unavailable' : getDogAge(dog.dateOfBirth)}</div>
             <div className="dog-card-badges">
               {isTransferred ? (
-                <span className="badge badge-gray" style={{ fontSize: 10 }}>→ {(dog as any).buyerName}</span>
+                <span className="badge badge-gray" style={{ fontSize: 10 }}>{isAuditOnly ? 'Read-only' : `→ ${(dog as any).buyerName || ''}`}</span>
               ) : isRestricted ? (
                 <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)' }}>🔒 Restricted</span>
               ) : (
@@ -505,9 +507,9 @@ function DogCard({ dog }: { dog: Dog }) {
               {(dog as any).breederIdType && (dog as any).breederIdType !== 'NONE' && (dog as any).breederIdValue && (
                 <span className="badge badge-gold" style={{ fontSize: 10 }}>🏷️ {(dog as any).breederIdValue}</span>
               )}
-              <span className="badge badge-gray" style={{ fontSize: 10 }}>
+              {!isAuditOnly && <span className="badge badge-gray" style={{ fontSize: 10 }}>
                 {LIFE_STAGE_EMOJI[actualStage]} {LIFE_STAGE_LABELS[actualStage]}
-              </span>
+              </span>}
             </div>
           </div>
         </div>
@@ -515,3 +517,4 @@ function DogCard({ dog }: { dog: Dog }) {
     </Link>
   )
 }
+

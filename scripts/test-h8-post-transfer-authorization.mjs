@@ -1,8 +1,7 @@
 // scripts/test-h8-post-transfer-authorization.mjs — Codex H8: a former
 // breeder (tenantId) must not be able to create/update/delete the CURRENT
 // owner's vaccine/worming/health-test/activity-note/document records
-// merely because tenantId still points at them, post-transfer. Read
-// (provenance/history) access is preserved for the former breeder.
+// merely because tenantId still points at them, post-transfer. Live reads are denied; former-owner history is served by the snapshot API.
 //
 // Emulator-only regression test — real firestore.rules evaluation, not a
 // hand-simulation of the intended logic.
@@ -93,15 +92,29 @@ await adminDb.collection('documents').doc(documentId).set({
 })
 
 // =========================================================================
-// SECTION 1 — Former breeder (tenantId only, post-transfer): READ allowed
-// (provenance), WRITE denied
+// SECTION 1 — Former breeder (tenantId only, post-transfer): live READ/WRITE denied
 // =========================================================================
 await as('former-breeder')
 
-await checkAsync('former breeder CAN read the current owner\'s vaccine record (provenance/history preserved)', async () => {
-  const snap = await getDoc(doc(db, 'vaccineRecords', vaccineId))
-  return snap.exists()
+await checkAsync('former breeder CANNOT read the current owner vaccine record', async () => {
+  try {
+    await getDoc(doc(db, 'vaccineRecords', vaccineId))
+    return false
+  } catch (err) {
+    return isDenied(err)
+  }
 })
+
+for (const collectionName of ['dogs', 'wormingRecords', 'healthTests', 'activityNotes', 'documents', 'heatCycles', 'reminders', 'scanLogs']) {
+  const id = collectionName === 'dogs' ? dogId : `privacy_${collectionName}_${R}`
+  if (collectionName !== 'dogs') await adminDb.collection(collectionName).doc(id).set({
+    dogId, tenantId: formerBreederUid, createdBy: formerBreederUid,
+    createdAt: '2026-02-01T00:00:00.000Z',
+  })
+  await checkAsync(`former breeder CANNOT read live ${collectionName} even with old tenantId`, async () => {
+    try { await getDoc(doc(db, collectionName, id)); return false } catch (err) { return isDenied(err) }
+  })
+}
 
 await checkAsync('former breeder CANNOT update the current owner\'s vaccine record', async () => {
   try {
@@ -259,3 +272,4 @@ await checkAsync('a stranger CANNOT update the vaccine record', async () => {
 }
 
 await summary()
+
