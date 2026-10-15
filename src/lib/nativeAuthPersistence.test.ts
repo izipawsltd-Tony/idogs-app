@@ -23,7 +23,8 @@ describe('Android auth persistence selection', () => {
   it('prefers an embedded build marker and leaves regular web unchanged', () => {
     expect(resolveNativePlatform('ios', { isNativePlatform: () => true, getPlatform: () => 'android' })).toBe('ios')
     expect(resolveNativePlatform(undefined, { isNativePlatform: () => false, getPlatform: () => 'android' })).toBe('')
-    expect(shouldUseBrowserLocalAuthPersistence('ios')).toBe(false)
+    expect(shouldUseBrowserLocalAuthPersistence('ios')).toBe(true)
+    expect(shouldUseBrowserLocalAuthPersistence(' IOS ')).toBe(true)
     expect(shouldUseBrowserLocalAuthPersistence('')).toBe(false)
   })
 
