@@ -26,6 +26,10 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       IOS_BUNDLE_ID: au.com.idogs.app
       IOS_MARKETING_VERSION: 0.1.0
+      IDOGS_MOBILE_APP_ID: au.com.idogs.app
+      IDOGS_MOBILE_APP_NAME: iDogs
+      VITE_IDOGS_NATIVE_PLATFORM: ios
+      VITE_IDOGS_NATIVE_MODE: production
 
     steps:
       - name: Checkout exact commit
@@ -56,6 +60,44 @@ jobs:
 
       - name: Verify native production environment guard
         run: npm run test:native-release-env
+
+      - name: Pull production client env and fail closed on staging
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${VERCEL_TOKEN:-}" || { echo 'FAIL CLOSED: VERCEL_TOKEN missing'; exit 1; }
+          rm -rf .vercel
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-production-pull.log 2>&1
+          test -f .vercel/.env.production.local
+          ENV_FILE=.vercel/.env.production.local GITHUB_ENV_FILE="$GITHUB_ENV" node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          import { assertNativeProductionEnvironment } from './scripts/validate-native-production-env.mjs'
+          const text = fs.readFileSync(process.env.ENV_FILE, 'utf8')
+          function read(name) {
+            const line = text.split(/\r?\n/).find(l => l.startsWith(name + '='))
+            if (!line) return null
+            let v = line.slice(name.length + 1).trim()
+            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+            return v.replace(/\\n/g, '\n')
+          }
+          const required = [
+            'VITE_FIREBASE_API_KEY',
+            'VITE_FIREBASE_AUTH_DOMAIN',
+            'VITE_FIREBASE_PROJECT_ID',
+            'VITE_FIREBASE_STORAGE_BUCKET',
+            'VITE_FIREBASE_MESSAGING_SENDER_ID',
+            'VITE_FIREBASE_APP_ID',
+          ]
+          const values = Object.fromEntries(required.map(k => [k, read(k)]))
+          assertNativeProductionEnvironment(values)
+          for (const [k, v] of Object.entries(values)) fs.appendFileSync(process.env.GITHUB_ENV_FILE, `${k}=${v}\n`)
+          fs.appendFileSync(process.env.GITHUB_ENV_FILE, 'VITE_EXTRA_LITTER_CHECKOUT_ENABLED=false\n')
+          console.log('Production Firebase identity PASS: idogs-app / idogs-app.firebaseapp.com')
+          NODE
 
       - name: Build web app
         run: npm run build
