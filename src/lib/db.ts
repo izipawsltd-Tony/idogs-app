@@ -1,11 +1,16 @@
 import {
-  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
+  collection, doc, getDoc, getDocsFromServer as getDocs, addDoc, updateDoc, deleteDoc,
   query, where, serverTimestamp, setDoc, Timestamp, deleteField
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import { confirmedCreatedDogId, DogCreationUnconfirmedError } from './dogCreationResponse'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage, LitterShowcase, ShowcaseAvailability, ShowcasePuppyEntry } from '../types'
 import { calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
+
+// These lists feed counts and ownership decisions. Firestore's default
+// getDocs can resolve an empty cache while offline, which looks like a
+// confirmed empty account. Require a server response so existing error/Retry
+// states render unavailable data rather than misleading zeroes.
 
 function uid(): string {
   return auth.currentUser?.uid ?? ''
@@ -651,7 +656,8 @@ export async function getWormingRecords(dogId: string): Promise<WormingRecord[]>
 }
 
 export async function addWormingRecord(data: Omit<WormingRecord, 'id' | 'createdAt'>): Promise<string> {
-  const ref = await addDoc(collection(db, 'wormingRecords'), { ...data, createdAt: serverTimestamp() })
+  const fields = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined))
+  const ref = await addDoc(collection(db, 'wormingRecords'), { ...fields, createdAt: serverTimestamp() })
   return ref.id
 }
 

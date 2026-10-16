@@ -585,3 +585,12 @@ h1, h2, h3, h4, h5, h6 {
     padding: 14px calc(14px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
   }
 }
+
+@media (max-width: 600px) {
+  .documents-list-card { display: grid !important; grid-template-columns: 48px minmax(0, 1fr); align-items: start !important; }
+  .documents-list-content { overflow-wrap: anywhere; }
+  .documents-list-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  .dog-document-card { flex-wrap: wrap; align-items: flex-start !important; }
+  .dog-document-card .dog-document-content { flex-basis: calc(100% - 60px) !important; }
+  .dog-document-card .dog-document-actions { width: 100%; justify-content: flex-end; }
+}

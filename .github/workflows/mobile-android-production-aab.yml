@@ -55,7 +55,7 @@ jobs:
 
       - name: Verify native guards before production packaging
         run: |
-          npm test -- src/lib/nativeApiRouting.test.ts src/lib/nativeAuthPersistence.test.ts src/lib/nativePlatform.test.ts src/lib/billingPageAndroidGate.test.ts src/lib/landingPageAndroidGate.test.ts src/lib/nativeUpgradeCopy.test.ts
+          npm test -- src/lib/publicLinks.test.ts src/lib/documentViewer.test.ts src/lib/manualDocumentUpload.test.ts src/lib/wormingRecord.test.ts src/lib/nativeApiRouting.test.ts src/lib/nativeAuthPersistence.test.ts src/lib/nativePlatform.test.ts src/lib/billingPageAndroidGate.test.ts src/lib/landingPageAndroidGate.test.ts src/lib/nativeUpgradeCopy.test.ts
           npm run test:native-release-env
 
       - name: Pull production client env and fail closed on staging

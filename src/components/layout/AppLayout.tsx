@@ -6,7 +6,7 @@ import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '..
 import { getInitials, AU_STATES, isDogEligibleForCap, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../../lib/utils'
 import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
 import { SUPER_ADMIN_EMAILS } from '../../lib/superAdmin'
-import { isAndroidNativeApp } from '../../lib/nativePlatform'
+import { isNativeApp } from '../../lib/nativePlatform'
 import { sidebarPurchasesUnavailableNotice } from '../../lib/nativeUpgradeCopy'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
@@ -542,7 +542,7 @@ export default function AppLayout({ toast }: Props) {
               </div>
             )}
             {planCfg.upgrade && (
-              isAndroidNativeApp() ? (
+              isNativeApp() ? (
                 <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mid)', textAlign: 'center' }}>
                   {sidebarPurchasesUnavailableNotice()}
                 </div>
@@ -777,9 +777,12 @@ export default function AppLayout({ toast }: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ height: 28, width: 96, objectFit: 'contain' }} />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Link to="/app/billing" style={{ fontSize: 13, color: 'var(--mid)', textDecoration: 'none' }}>
               💳 Billing
+            </Link>
+            <Link to="/app/settings" style={{ fontSize: 13, color: 'var(--mid)', textDecoration: 'none' }}>
+              ⚙️ Settings
             </Link>
             <button onClick={handleLogout} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--mid)', cursor: 'pointer' }}>
               Sign out

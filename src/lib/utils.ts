@@ -454,7 +454,7 @@ export function getEffectivePlanClient(
 export const LIFE_STAGE_LABELS: Record<LifeStage, string> = {
   whelp: 'Born',
   puppy: 'Puppy',
-  young_adult: 'Passport',
+  young_adult: 'Young',
   adult: 'Adult',
   senior: 'Senior',
   remembered: 'Forever',

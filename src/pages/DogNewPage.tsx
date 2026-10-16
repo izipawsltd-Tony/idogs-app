@@ -6,7 +6,7 @@ import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
-import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { isNativeApp } from '../lib/nativePlatform'
 import { dogLimitReachedBody } from '../lib/nativeUpgradeCopy'
 import { DogCreationUnconfirmedError } from '../lib/dogCreationResponse'
 
@@ -558,10 +558,10 @@ export default function DogNewPage({ toast }: Props) {
             The free plan supports up to {FREE_DOG_LIMIT} dogs.
           </p>
           <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 28, lineHeight: 1.6 }}>
-            {dogLimitReachedBody(isAndroidNativeApp())}
+            {dogLimitReachedBody(isNativeApp())}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-            {!isAndroidNativeApp() && (
+            {!isNativeApp() && (
               <Link to="/app/billing" className="btn btn-primary">
                 Upgrade — from $5/mo
               </Link>
