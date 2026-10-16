@@ -33,6 +33,11 @@ function publicSnapshot(doc) {
   return jsonValue({
     id: doc.id,
     snapshotVersion: data.snapshotVersion || 1,
+    historyAvailability: data.historyAvailability || 'snapshot',
+    recoveredAt: data.recoveredAt || null,
+    recoveryMethod: data.recoveryMethod || null,
+    recoveredMedia: (data.recoveredMedia || []).map((_, index) => ({ id: String(index) })),
+    auditEntries: data.auditEntries || [],
     dogId: data.dogId,
     fromOwnerId: data.fromOwnerId,
     transferredAt: data.transferredAt,
