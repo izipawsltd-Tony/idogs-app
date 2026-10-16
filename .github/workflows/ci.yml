@@ -35,7 +35,9 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Unit tests
-        run: npm test
+        run: |
+          npm test
+          node --test scripts/test-legacy-history-recovery.mjs
 
       - name: Production build
         run: npm run build
