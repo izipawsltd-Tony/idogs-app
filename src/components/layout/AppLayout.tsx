@@ -777,9 +777,12 @@ export default function AppLayout({ toast }: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ height: 28, width: 96, objectFit: 'contain' }} />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Link to="/app/billing" style={{ fontSize: 13, color: 'var(--mid)', textDecoration: 'none' }}>
               💳 Billing
+            </Link>
+            <Link to="/app/settings" style={{ fontSize: 13, color: 'var(--mid)', textDecoration: 'none' }}>
+              ⚙️ Settings
             </Link>
             <button onClick={handleLogout} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--mid)', cursor: 'pointer' }}>
               Sign out
