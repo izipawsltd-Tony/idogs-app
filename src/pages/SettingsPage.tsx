@@ -1,7 +1,9 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
-import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
+import { BREEDER_ID_CONFIG, suggestBreederIdType, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../lib/utils'
+import { isNativeApp } from '../lib/nativePlatform'
 import type { ToastMessage } from '../types'
 
 interface Props {
@@ -27,6 +29,9 @@ export default function SettingsPage({ toast }: Props) {
   const [changingRole, setChangingRole] = useState(false)
 
   const isOwner = profile?.role === 'owner'
+  const effectivePlan = getEffectivePlanClient(profile)
+  const includedAccess = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())
+  const nativeApp = isNativeApp()
   const hideLitters = (profile as any)?.hideLitters === true
   const hideDocuments = (profile as any)?.hideDocuments === true
   const hideReminders = (profile as any)?.hideReminders === true
@@ -136,6 +141,27 @@ export default function SettingsPage({ toast }: Props) {
     <div style={{ padding: 32, maxWidth: 600 }}>
       <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>Settings</h1>
       <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 32 }}>Manage your account preferences.</p>
+
+      <section className="card" aria-labelledby="current-plan-heading" style={{ marginBottom: 16 }}>
+        <h2 id="current-plan-heading" style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px', color: 'var(--dark)' }}>Current plan</h2>
+        {profile ? (
+          <>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--green)', marginBottom: 8 }}>
+              {effectivePlan === 'plus' ? 'Plus' : 'Free'}{includedAccess ? ' · Included access' : ''}
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 8px' }}>
+              {includedAccess ? 'Unlimited dogs' : effectivePlan === 'plus' ? 'Up to 5 dogs' : 'Up to 2 dogs'} · Health records, reminders, documents and QR Passport
+            </p>
+            <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 12px' }}>
+              {effectivePlan === 'plus' ? '10 AI document scans per month' : '2 AI document scans for the life of your account'}. Dogs over your plan limit stay saved and become read-only.
+            </p>
+          </>
+        ) : (
+          <p role="status" style={{ fontSize: 13, color: 'var(--mid)' }}>Your plan is temporarily unavailable. Please try again after reconnecting.</p>
+        )}
+        {nativeApp && <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 12px' }}>Purchases are unavailable in this app. Your existing plan access remains available.</p>}
+        <Link to="/app/billing" className="btn btn-secondary" style={{ display: 'inline-flex', minHeight: 44, alignItems: 'center', textDecoration: 'none' }}>View plan details</Link>
+      </section>
 
       {/* ── PROFILE ── */}
       <div className="card" style={{ marginBottom: 16 }}>
@@ -278,7 +304,6 @@ export default function SettingsPage({ toast }: Props) {
                 </span>
               </div>
             )}
-            <SettingRow label="Plan" value={profile?.plan === 'trial' ? 'Free' : profile?.plan || '—'} />
           </div>
         )}
       </div>

@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import type { ToastMessage } from '../types'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
 import { isNativeApp } from '../lib/nativePlatform'
+import { getEffectivePlanClient, hasValidInternalEntitlementClient } from '../lib/utils'
 import {
   androidPlanUnavailableNotice,
   billingIntroCopy,
@@ -101,7 +102,8 @@ export default function BillingPage({ toast }: Props) {
   // profile is only a pre-load fallback so this page cannot remain stuck on
   // a stale client-side Free value after a successful Plus activation.
   const verifiedEntitlement = billingDetails?.entitlement
-  const isPlus = verifiedEntitlement ? verifiedEntitlement.plan === 'plus' : profile?.plan === 'plus'
+  const isPlus = verifiedEntitlement ? verifiedEntitlement.plan === 'plus' : getEffectivePlanClient(profile) === 'plus'
+  const includedAccess = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())
   const isOwner = profile?.role === 'owner'
   const billingInterval = verifiedEntitlement?.billingInterval
     ?? ((profile as any)?.billingInterval as 'monthly' | 'annual' | undefined)
@@ -305,7 +307,7 @@ export default function BillingPage({ toast }: Props) {
         <div>
           <span style={{ fontSize: 14, fontWeight: 600, color: isPastDue ? 'var(--gold)' : isPlus ? 'var(--green)' : 'var(--dark)' }}>
             {isPastDue ? '⚠️ ' : isPlus ? '✓ ' : '🐾 '}
-            Current plan: {isPlus ? `Plus (${billingInterval === 'annual' ? 'Annual' : 'Monthly'})` : 'Free'}
+            Current plan: {isPlus ? includedAccess ? 'Plus · Included access' : billingInterval ? `Plus (${billingInterval === 'annual' ? 'Annual' : 'Monthly'})` : 'Plus' : 'Free'}
           </span>
           {isPastDue && (
             <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 2 }}>
