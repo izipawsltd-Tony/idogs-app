@@ -22,6 +22,14 @@ BillingPage's payment history exposed hosted Stripe invoice links even when nati
 - Candidate unsigned iOS simulator and ARM64 build: https://github.com/izipawsltd-Tony/idogs-app/actions/runs/39170329189
 - Signed TestFlight pipeline: https://github.com/izipawsltd-Tony/idogs-app/actions/runs/39170329191
 
+## TestFlight outcome
+
+Build 17 pipeline completed successfully. Job `117802045813` logs confirm `UPLOAD SUCCEEDED with no errors` at 2026-10-18T22:06:41Z and `Internal tester assignment PASS for build 17 (1 tester(s))` at 2026-10-18T22:08:48Z. The assignment step requires processingState VALID and verifies the tester-build relationship after writing it.
+
+IPA artifact: `12151858198`; archive digest `sha256:4e6d1a4c32b163e6308d7748ed47a7e4bfa5eb43c3444a8a3fd99115fd421a59`. Artifact expires 2026-10-25.
+
+The subsequent evidence/test-only commits do not change app runtime code from the signed candidate.
+
 ## Limits and remaining acceptance criteria
 
 Component rendering is not an installed iPhone test. This execution environment has no controllable iPhone, macOS simulator, or Appium device session. An attempted local WebKit installation did not complete; no browser or device PASS is claimed.
