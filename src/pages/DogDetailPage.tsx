@@ -22,7 +22,9 @@ import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode
 import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
 import { isHeicFile } from '../lib/heic'
+import { saveNoteWithPhoto, TimelinePhotoError } from '../lib/timelineNoteSave'
 import PhotoUpload from '../components/ui/PhotoUpload'
+import RecoveredDogHistory from '../components/ui/RecoveredDogHistory'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
 import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
@@ -386,7 +388,7 @@ export default function DogDetailPage({ toast }: Props) {
           // An old transfer can have an audit trail without a frozen
           // clinical record. Do not label missing records as zero or query
           // live data to fill the gap.
-          if (history.historyAvailability === 'audit_only') return
+          if (['audit_only', 'recovered_partial'].includes(history.historyAvailability)) return
           setVaccines(history.vaccineRecords || []); setVaccinesError(false)
           setWormings(history.wormingRecords || []); setWormingError(false)
           setHealthTests(history.healthTests || []); setHealthTestsError(false)
@@ -487,12 +489,12 @@ export default function DogDetailPage({ toast }: Props) {
     if (!newNote.trim() || !dogId) return
     setSavingNote(true)
     try {
-      let photoUrl: string | undefined
-      if (notePhoto && user?.uid) {
-        setUploadingNotePhoto(true)
-        try {
+      if (notePhoto && !user?.uid) throw new TimelinePhotoError()
+      await saveNoteWithPhoto(notePhoto ? async () => {
+          setUploadingNotePhoto(true)
+          if (!user) throw new TimelinePhotoError()
           const idToken = await user.getIdToken()
-          const res = await fetch('/api/upload?type=note', {
+          return fetch('/api/upload?type=note', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
             body: JSON.stringify({
@@ -501,28 +503,17 @@ export default function DogDetailPage({ toast }: Props) {
               dogId,
             }),
           })
-          if (res.ok) {
-            const data = await res.json()
-            photoUrl = data.fileUrl
-          } else {
-            toast('Photo upload failed — note saved without photo', 'info')
-          }
-        } catch {
-          toast('Photo upload failed — note saved without photo', 'info')
-        } finally {
-          setUploadingNotePhoto(false)
-        }
-      }
-      await addActivityNote(dogId, newNote.trim(), photoUrl, newNoteDate)
+      } : null, photoUrl => addActivityNote(dogId, newNote.trim(), photoUrl, newNoteDate))
       const n = await getActivityNotes(dogId)
       setNotes(n)
       setNewNote('')
       setNewNoteDate(new Date().toISOString().split('T')[0])
       setNotePhoto(null)
       toast('Note added')
-    } catch {
-      toast('Failed to add note', 'error')
+    } catch (err) {
+      toast(err instanceof TimelinePhotoError ? err.message : 'Failed to add note', 'error')
     } finally {
+      setUploadingNotePhoto(false)
       setSavingNote(false)
     }
   }
@@ -973,6 +964,8 @@ export default function DogDetailPage({ toast }: Props) {
 
   if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
   if (!dog) return null
+
+  if (historicalSnapshot?.historyAvailability === 'recovered_partial') return <RecoveredDogHistory key={`${user?.uid}:${dogId}`} history={historicalSnapshot} />
 
   if (historicalSnapshot?.historyAvailability === 'audit_only') {
     return <div style={{ padding: 32 }}>
