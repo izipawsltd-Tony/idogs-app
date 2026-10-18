@@ -249,8 +249,8 @@ jobs:
           test -n "$BUILD_ID" || { echo "::error::Timed out waiting for App Store Connect build $IOS_BUILD_NUMBER"; exit 1; }
 
           JWT_TOKEN="$(make_jwt)"
-          BODY="$(printf '{"data":[{"type":"betaGroups","id":"%s"}]}' "$ASC_INTERNAL_BETA_GROUP_ID")"
-          curl --fail-with-body --silent --show-error             -X POST             "https://api.appstoreconnect.apple.com/v1/builds/$BUILD_ID/relationships/betaGroups"             -H "Authorization: Bearer $JWT_TOKEN"             -H "Content-Type: application/json"             --data "$BODY"
+          BODY="$(printf '{"data":[{"type":"builds","id":"%s"}]}' "$BUILD_ID")"
+          curl --fail-with-body --silent --show-error             -X POST             "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID/relationships/builds"             -H "Authorization: Bearer $JWT_TOKEN"             -H "Content-Type: application/json"             --data "$BODY"
 
           JWT_TOKEN="$(make_jwt)"
           VERIFY="$(
