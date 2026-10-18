@@ -41,5 +41,5 @@ This is partial recovery: previously edited/deleted records and the exact origin
 ## Staging dry-run fix, 18 October
 
 - Real staging transfers save `dogs.transferredAt` before the `dog_transferred` audit event, which is written after the buyer email (observed 0.5–15 s later). The exact-equality boundary check refused every real legacy dog.
-- The helper now requires both values to describe the same transfer (within 10 minutes) and uses the earlier one as the cutoff, so buyer writes in that gap stay excluded. The plan records the audit time as `evidence.auditTransferredAt`; staging apply recomputes the same cutoff inside its transaction.
+- `dogs.transferredAt` is always the cutoff. The audit event only corroborates it and must fall within 10 minutes after it; an earlier or distant audit is refused. Buyer writes between the two stay excluded, and the readable period is never extended. The plan records the audit time as `evidence.auditTransferredAt`; staging apply recomputes the same cutoff inside its transaction.
 - Staging QA dog `o53A8OydufIeS2peNbb8` (former owner `iQnWhp…`) was recovered: 1 pre-transfer note and its photo; 1 vaccine, 2 worming, 1 reminder and 1 note created by the buyer after transfer were excluded. A second apply was refused with `HISTORY_ALREADY_EXISTS`.

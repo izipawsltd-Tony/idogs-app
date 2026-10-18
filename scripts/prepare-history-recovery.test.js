@@ -34,8 +34,11 @@ test('missing ownership evidence, existing history and missing storage metadata 
   await expect(prepareRecovery({ ...fixture({ boundary: false }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
   await expect(prepareRecovery({ ...fixture({ dogTime: '2026-10-07T11:00:00.000Z' }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
   await expect(prepareRecovery({ ...fixture({ dogTime: null }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
+  // An audit event before the dog boundary cannot corroborate it, and the
+  // later dog time must never become a wider cutoff.
+  await expect(prepareRecovery({ ...fixture({ dogTime: '2026-10-07T11:26:40.000Z' }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
 })
-test('the earlier of the dog boundary and its later audit event is the cutoff', async () => {
+test('the verified dog boundary is the cutoff; the later audit event only corroborates it', async () => {
   const plan = await prepareRecovery({ ...fixture(), dogId: 'dog', fromOwnerId: 'former' })
   expect(plan.snapshot.transferredAt).toBe(cutoff)
   expect(plan.evidence).toEqual({ auditTransferredAt: audited })
