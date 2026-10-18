@@ -263,6 +263,7 @@ jobs:
           '
 
       - name: Upload signed IPA evidence
+        if: always() && env.IOS_IPA_PATH != ''
         uses: actions/upload-artifact@v4
         with:
           name: idogs-ios-testflight-ipa-${{ github.sha }}-build-${{ github.run_number }}
