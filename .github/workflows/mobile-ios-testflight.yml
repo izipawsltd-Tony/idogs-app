@@ -213,7 +213,7 @@ jobs:
           set -euo pipefail
           xcrun altool             --upload-app             --type ios             --file "$IOS_IPA_PATH"             --apiKey "$APPLE_KEY_ID"             --apiIssuer "$APPLE_ISSUER_ID"
 
-      - name: Add processed build to iDogs Internal QA
+      - name: Verify build reaches iDogs Internal QA automatically
         shell: bash
         run: |
           set -euo pipefail
@@ -232,11 +232,34 @@ jobs:
             '
           }
 
+          JWT_TOKEN="$(make_jwt)"
+          PATCH_BODY="$(printf '{"data":{"type":"betaGroups","id":"%s","attributes":{"hasAccessToAllBuilds":true}}}' "$ASC_INTERNAL_BETA_GROUP_ID")"
+          curl --fail-with-body --silent --show-error \
+            -X PATCH \
+            "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID" \
+            -H "Authorization: Bearer $JWT_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$PATCH_BODY" >/tmp/idogs-beta-group.json
+
+          ruby -rjson -e '
+            j = JSON.parse(File.read("/tmp/idogs-beta-group.json"))
+            attrs = j.dig("data", "attributes") || {}
+            abort("Internal QA group is not configured for all builds") unless attrs["hasAccessToAllBuilds"] == true
+            abort("Unexpected beta group type") unless attrs["isInternalGroup"] == true
+            puts "Internal QA automatic-build access enabled"
+          '
+
           BUILD_ID=""
           for attempt in $(seq 1 40); do
             JWT_TOKEN="$(make_jwt)"
             RESPONSE="$(
-              curl --fail-with-body --silent --show-error --get                 "https://api.appstoreconnect.apple.com/v1/builds"                 -H "Authorization: Bearer $JWT_TOKEN"                 --data-urlencode "filter[app]=$ASC_APP_ID"                 --data-urlencode "filter[version]=$IOS_BUILD_NUMBER"                 --data-urlencode "filter[processingState]=VALID"                 --data-urlencode "limit=1"
+              curl --fail-with-body --silent --show-error --get \
+                "https://api.appstoreconnect.apple.com/v1/builds" \
+                -H "Authorization: Bearer $JWT_TOKEN" \
+                --data-urlencode "filter[app]=$ASC_APP_ID" \
+                --data-urlencode "filter[version]=$IOS_BUILD_NUMBER" \
+                --data-urlencode "filter[processingState]=VALID" \
+                --data-urlencode "limit=1"
             )"
             BUILD_ID="$(printf '%s' "$RESPONSE" | ruby -rjson -e 'j=JSON.parse(STDIN.read); print(j.dig("data",0,"id").to_s)')"
             if [ -n "$BUILD_ID" ]; then
@@ -248,19 +271,26 @@ jobs:
 
           test -n "$BUILD_ID" || { echo "::error::Timed out waiting for App Store Connect build $IOS_BUILD_NUMBER"; exit 1; }
 
-          JWT_TOKEN="$(make_jwt)"
-          BODY="$(printf '{"data":[{"type":"builds","id":"%s"}]}' "$BUILD_ID")"
-          curl --fail-with-body --silent --show-error             -X POST             "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID/relationships/builds"             -H "Authorization: Bearer $JWT_TOKEN"             -H "Content-Type: application/json"             --data "$BODY"
+          for attempt in $(seq 1 20); do
+            JWT_TOKEN="$(make_jwt)"
+            VERIFY="$(
+              curl --fail-with-body --silent --show-error \
+                "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID/relationships/builds?limit=200" \
+                -H "Authorization: Bearer $JWT_TOKEN"
+            )"
+            if printf '%s' "$VERIFY" | BUILD_ID="$BUILD_ID" ruby -rjson -e '
+              ids = JSON.parse(STDIN.read).fetch("data", []).map { |x| x["id"] }
+              exit(ids.include?(ENV.fetch("BUILD_ID")) ? 0 : 1)
+            '; then
+              echo "Internal QA assignment PASS for build $IOS_BUILD_NUMBER"
+              exit 0
+            fi
+            echo "Build $IOS_BUILD_NUMBER not linked to Internal QA yet (attempt $attempt/20); waiting 15s..."
+            sleep 15
+          done
 
-          JWT_TOKEN="$(make_jwt)"
-          VERIFY="$(
-            curl --fail-with-body --silent --show-error               "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID/relationships/builds?limit=200"               -H "Authorization: Bearer $JWT_TOKEN"
-          )"
-          printf '%s' "$VERIFY" | BUILD_ID="$BUILD_ID" ruby -rjson -e '
-            ids = JSON.parse(STDIN.read).fetch("data", []).map { |x| x["id"] }
-            abort("Build not present in iDogs Internal QA") unless ids.include?(ENV.fetch("BUILD_ID"))
-            puts "Internal QA assignment PASS for build #{ENV.fetch("BUILD_ID")}"
-          '
+          echo "::error::Build $IOS_BUILD_NUMBER did not appear in iDogs Internal QA"
+          exit 1
 
       - name: Upload signed IPA evidence
         if: always() && env.IOS_IPA_PATH != ''
