@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { legacyTransferHistory } from '../api/_lib/ownership-history.js'
-import { RECOVERY_COLLECTIONS, makeRecoveredHistory } from '../api/_lib/legacy-history-recovery.js'
+import { RECOVERY_COLLECTIONS, makeRecoveredHistory, transferCutoff } from '../api/_lib/legacy-history-recovery.js'
 export function ownedMediaPath(raw, bucketName, prefix) {
   if (typeof raw !== 'string') return null
   try {
@@ -21,14 +21,15 @@ export function ownedMediaPath(raw, bucketName, prefix) {
 export async function prepareRecovery({ db, bucket, dogId, fromOwnerId }) {
   const json = v => v?.toDate ? v.toDate().toISOString() : Array.isArray(v) ? v.map(json) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, json(x)])) : v
   const ownAudit = await db.collection('auditLogs').where('tenantId', '==', fromOwnerId).get()
-  const legacy = legacyTransferHistory(ownAudit.docs.map(d => json({ ...d.data(), id: d.id })), fromOwnerId).find(s => s.dogId === dogId)
-  if (!legacy) throw Error('NO_OWNER_SCOPED_TRANSFER_EVIDENCE')
+  const audit = legacyTransferHistory(ownAudit.docs.map(d => json({ ...d.data(), id: d.id })), fromOwnerId).find(s => s.dogId === dogId)
+  if (!audit) throw Error('NO_OWNER_SCOPED_TRANSFER_EVIDENCE')
   const dog = await db.collection('dogs').doc(dogId).get()
   const data = dog.exists ? dog.data() : {}
   // Caller-owned audit text alone must never authorize reading another
   // dog's history. Cross-check the server-managed ownership boundary.
-  if (!dog.exists || ![data.previousOwnerId, data.tenantId].includes(fromOwnerId)
-    || json(data.transferredAt) !== legacy.transferredAt) throw Error('TRANSFER_BOUNDARY_MISMATCH')
+  const cutoff = dog.exists ? transferCutoff(json(data.transferredAt), audit.transferredAt) : null
+  if (!cutoff || ![data.previousOwnerId, data.tenantId].includes(fromOwnerId)) throw Error('TRANSFER_BOUNDARY_MISMATCH')
+  const legacy = { ...audit, transferredAt: cutoff }
   const existing = await db.collection('ownershipHistorySnapshots').where('fromOwnerId', '==', fromOwnerId).get()
   if (existing.docs.some(d => d.data().dogId === dogId)) throw Error('HISTORY_ALREADY_EXISTS')
   const records = {}
@@ -51,7 +52,7 @@ export async function prepareRecovery({ db, bucket, dogId, fromOwnerId }) {
   }
   const snapshot = makeRecoveredHistory({ legacy, records, media, recoveredAt: new Date().toISOString() })
   const id = `recovered-${dogId}-${createHash('sha256').update(fromOwnerId + ':' + legacy.transferredAt).digest('hex').slice(0, 16)}`
-  return { id, snapshot }
+  return { id, evidence: { auditTransferredAt: audit.transferredAt }, snapshot }
 }
 export async function applyStagingRecovery({ db, project, plan }) {
   if (project !== 'idogs-app-staging') throw Error('PRODUCTION_WRITES_NOT_SUPPORTED')
@@ -60,7 +61,8 @@ export async function applyStagingRecovery({ db, project, plan }) {
     const dog = await tx.get(db.collection('dogs').doc(plan.snapshot.dogId))
     const current = dog.exists ? dog.data() : {}
     const time = current.transferredAt?.toDate ? current.transferredAt.toDate().toISOString() : current.transferredAt
-    if (![current.previousOwnerId, current.tenantId].includes(plan.snapshot.fromOwnerId) || time !== plan.snapshot.transferredAt) throw Error('TRANSFER_BOUNDARY_MISMATCH')
+    if (![current.previousOwnerId, current.tenantId].includes(plan.snapshot.fromOwnerId)
+      || transferCutoff(time, plan.evidence?.auditTransferredAt) !== plan.snapshot.transferredAt) throw Error('TRANSFER_BOUNDARY_MISMATCH')
     const existing = await tx.get(db.collection('ownershipHistorySnapshots').where('fromOwnerId', '==', plan.snapshot.fromOwnerId))
     if (existing.docs.some(d => d.data().dogId === plan.snapshot.dogId)) throw Error('HISTORY_ALREADY_EXISTS')
     tx.create(db.collection('ownershipHistorySnapshots').doc(plan.id), plan.snapshot)

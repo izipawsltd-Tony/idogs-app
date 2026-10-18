@@ -37,3 +37,9 @@ This is partial recovery: previously edited/deleted records and the exact origin
 - The staging apply helper verifies the actual Firestore project and rechecks the transfer boundary and absence of existing history inside the create transaction.
 - Firestore emulator integration reproduced and fixed a real serialization failure: old audit entries can lack optional `details`. Undefined properties are now removed before snapshot persistence.
 - `scripts/test-legacy-recovery-e2e.mjs` exercises actual Firestore create/update metadata, candidate persistence, frozen history after further buyer edits, former-owner listing, buyer/stranger denial and duplicate-recovery refusal. Authentication and Storage metadata are stubbed; this is not authenticated browser or live Storage QA.
+
+## Staging dry-run fix, 18 October
+
+- Real staging transfers save `dogs.transferredAt` before the `dog_transferred` audit event, which is written after the buyer email (observed 0.5–15 s later). The exact-equality boundary check refused every real legacy dog.
+- The helper now requires both values to describe the same transfer (within 10 minutes) and uses the earlier one as the cutoff, so buyer writes in that gap stay excluded. The plan records the audit time as `evidence.auditTransferredAt`; staging apply recomputes the same cutoff inside its transaction.
+- Staging QA dog `o53A8OydufIeS2peNbb8` (former owner `iQnWhp…`) was recovered: 1 pre-transfer note and its photo; 1 vaccine, 2 worming, 1 reminder and 1 note created by the buyer after transfer were excluded. A second apply was refused with `HISTORY_ALREADY_EXISTS`.

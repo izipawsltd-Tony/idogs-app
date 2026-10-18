@@ -12,6 +12,17 @@ export function existedAtTransfer(created, updated, cutoff) {
   const c = instant(created), u = instant(updated), t = instant(cutoff)
   return c !== null && u !== null && t !== null && c <= u && u <= t
 }
+// Legacy transfers saved dogs.transferredAt before the audit event was
+// written (after the buyer email), so the two differ by seconds. Both must
+// describe the same transfer; the earlier one is the conservative cutoff.
+export const TRANSFER_EVIDENCE_WINDOW_MS = 10 * 60 * 1000
+export function transferCutoff(dogTransferredAt, auditTransferredAt) {
+  const d = instant(dogTransferredAt), a = instant(auditTransferredAt)
+  if (d === null || a === null) return null
+  const gap = d > a ? d - a : a - d
+  if (gap > BigInt(TRANSFER_EVIDENCE_WINDOW_MS) * 1000000n) return null
+  return d <= a ? dogTransferredAt : auditTransferredAt
+}
 export function allowedHistoricalMedia(media, uid, dogId) {
   return typeof media?.path === 'string' && media.path.startsWith(`dogs/${uid}/${dogId}/`)
     && !media.path.includes('..') && /^\d+$/.test(media.generation)

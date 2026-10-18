@@ -1,19 +1,21 @@
 import { expect, test } from 'vitest'
 import { prepareRecovery, ownedMediaPath, applyStagingRecovery } from './prepare-legacy-history-recovery.mjs'
 const cutoff = '2026-10-07T11:26:32.444Z'
+// Legacy flows wrote the audit event seconds after dogs.transferredAt.
+const audited = '2026-10-07T11:26:36.901Z'
 const before = '2026-08-01T00:00:00Z'
 const after = '2026-10-08T00:00:00Z'
-function fixture({ evidence = true, existing = false, metadataFailure = false, boundary = true } = {}) {
+function fixture({ evidence = true, existing = false, metadataFailure = false, boundary = true, dogTime = cutoff } = {}) {
   const reads = [], writes = []
   const rows = {
-    auditLogs: evidence ? [{ id: 'transfer', tenantId: 'former', dogId: 'dog', dogName: 'Old name', action: 'dog_transferred', createdAt: cutoff }] : [],
+    auditLogs: evidence ? [{ id: 'transfer', tenantId: 'former', dogId: 'dog', dogName: 'Old name', action: 'dog_transferred', createdAt: audited }] : [],
     ownershipHistorySnapshots: existing ? [{ id: 'saved', fromOwnerId: 'former', dogId: 'dog' }] : [],
-    vaccineRecords: [{ id: 'old', dogId: 'dog', name: 'Old vaccine' }, { id: 'new', dogId: 'dog', name: 'New private vaccine', dateGiven: '2020-01-01' }],
+    vaccineRecords: [{ id: 'old', dogId: 'dog', name: 'Old vaccine' }, { id: 'new', dogId: 'dog', name: 'New private vaccine', dateGiven: '2020-01-01' }, { id: 'gap', dogId: 'dog', name: 'Private buyer edit before audit' }],
   }
-  const wrap = data => ({ id: data.id, createTime: before, updateTime: data.id === 'new' ? after : before, data: () => data })
+  const wrap = data => ({ id: data.id, createTime: before, updateTime: data.id === 'new' ? after : data.id === 'gap' ? '2026-10-07T11:26:34.000Z' : before, data: () => data })
   const db = { collection: name => ({
     where: (key, op, value) => ({ get: async () => { reads.push({ name, key, op, value }); return { docs: (rows[name] || []).filter(x => x[key] === value).map(wrap) } } }),
-    doc: () => ({ get: async () => ({ exists: true, data: () => ({ previousOwnerId: boundary ? 'former' : 'other', transferredAt: cutoff, name: 'Private current name', notes: 'Private notes', photos: [{ path: 'dogs/former/dog/photos/old.jpg' }, { path: 'dogs/buyer/dog/photos/new.jpg' }] }) }), create: value => writes.push(value) }),
+    doc: () => ({ get: async () => ({ exists: true, data: () => ({ previousOwnerId: boundary ? 'former' : 'other', transferredAt: dogTime, name: 'Private current name', notes: 'Private notes', photos: [{ path: 'dogs/former/dog/photos/old.jpg' }, { path: 'dogs/buyer/dog/photos/new.jpg' }] }) }), create: value => writes.push(value) }),
   }) }
   const bucket = { name: 'bucket', file: path => ({ getMetadata: async () => { if (metadataFailure) throw Error('metadata unavailable'); return [{ generation: '123', timeCreated: before, updated: before }] } }) }
   return { db, bucket, reads, writes }
@@ -30,6 +32,15 @@ test('missing ownership evidence, existing history and missing storage metadata 
   await expect(prepareRecovery({ ...fixture({ existing: true }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('HISTORY_ALREADY_EXISTS')
   await expect(prepareRecovery({ ...fixture({ metadataFailure: true }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('metadata unavailable')
   await expect(prepareRecovery({ ...fixture({ boundary: false }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
+  await expect(prepareRecovery({ ...fixture({ dogTime: '2026-10-07T11:00:00.000Z' }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
+  await expect(prepareRecovery({ ...fixture({ dogTime: null }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
+})
+test('the earlier of the dog boundary and its later audit event is the cutoff', async () => {
+  const plan = await prepareRecovery({ ...fixture(), dogId: 'dog', fromOwnerId: 'former' })
+  expect(plan.snapshot.transferredAt).toBe(cutoff)
+  expect(plan.evidence).toEqual({ auditTransferredAt: audited })
+  expect(plan.snapshot.auditEntries.map(e => e.createdAt)).toEqual([audited])
+  expect(JSON.stringify(plan)).not.toContain('Private buyer edit')
 })
 test('recognizes same-bucket historical profile/note URLs while rejecting foreign media', () => {
   const prefix = 'dogs/former/dog/'
@@ -59,7 +70,9 @@ test('staging application rechecks ownership and existing history inside the tra
     get: async ref => ref.name === 'dogs' ? { exists: true, data: () => ({ previousOwnerId: 'former', transferredAt: cutoff }) } : { docs: duplicate ? [{ data: () => ({ dogId: 'dog' }) }] : [] },
     create: (ref, data) => writes.push({ ref, data }),
   }) }
-  const plan = { id: 'recovered', snapshot: { fromOwnerId: 'former', dogId: 'dog', transferredAt: cutoff } }
+  const plan = { id: 'recovered', evidence: { auditTransferredAt: audited }, snapshot: { fromOwnerId: 'former', dogId: 'dog', transferredAt: cutoff } }
+  await expect(applyStagingRecovery({ db, project: db.projectId, plan: { ...plan, evidence: undefined } })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
+  await expect(applyStagingRecovery({ db, project: db.projectId, plan: { ...plan, snapshot: { ...plan.snapshot, transferredAt: audited } } })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
   await expect(applyStagingRecovery({ db, project: db.projectId, plan })).rejects.toThrow('HISTORY_ALREADY_EXISTS')
   expect(writes).toEqual([])
   duplicate = false
