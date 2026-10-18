@@ -471,7 +471,7 @@ export default function BillingPage({ toast }: Props) {
                 <div><div style={{ fontWeight: 600, color: 'var(--dark)' }}>{invoice.number || 'Stripe invoice'}</div><div style={{ color: 'var(--light)', marginTop: 2 }}>{formatBillingDate(invoice.createdAt)}</div></div>
                 <div style={{ color: 'var(--mid)', textTransform: 'capitalize' }}>{invoice.status.replaceAll('_', ' ')}</div>
                 <div style={{ fontWeight: 600, color: 'var(--dark)' }}>{formatMoney(invoice.amountPaid || invoice.amountDue, invoice.currency)}</div>
-                <div style={{ display: 'flex', gap: 8 }}>{invoice.hostedInvoiceUrl && <a className="btn btn-secondary btn-sm" href={invoice.hostedInvoiceUrl} target="_blank" rel="noreferrer">View</a>}{invoice.invoicePdf && <a className="btn btn-secondary btn-sm" href={invoice.invoicePdf} target="_blank" rel="noreferrer">PDF</a>}</div>
+                {!nativePurchasesUnavailable && <div style={{ display: 'flex', gap: 8 }}>{invoice.hostedInvoiceUrl && <a className="btn btn-secondary btn-sm" href={invoice.hostedInvoiceUrl} target="_blank" rel="noreferrer">View</a>}{invoice.invoicePdf && <a className="btn btn-secondary btn-sm" href={invoice.invoicePdf} target="_blank" rel="noreferrer">PDF</a>}</div>}
               </div>
             ))}
           </div>
