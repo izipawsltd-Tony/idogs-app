@@ -30,3 +30,10 @@ This is partial recovery: previously edited/deleted records and the exact origin
 - Recovery tests exercise transfer evidence, immutable timestamp filtering, backdated/edited records, cross-dog/owner exclusion, mutable URL stripping and nanosecond boundaries.
 - React tests exercise section navigation, old records, explicit missing history, no edit controls, signed photo requests and failure/retry behavior.
 - A real authenticated staging browser check and a staging recovery fixture remain separate from these automated tests. Production Pink Girl is unchanged until an approved backfill.
+
+## Follow-up hardening, 18 October
+
+- Recover eligible same-bucket profile photos and both supported note-photo URL shapes, with the same pre-transfer generation evidence as gallery images. A later profile overwrite remains excluded.
+- The staging apply helper verifies the actual Firestore project and rechecks the transfer boundary and absence of existing history inside the create transaction.
+- Firestore emulator integration reproduced and fixed a real serialization failure: old audit entries can lack optional `details`. Undefined properties are now removed before snapshot persistence.
+- `scripts/test-legacy-recovery-e2e.mjs` exercises actual Firestore create/update metadata, candidate persistence, frozen history after further buyer edits, former-owner listing, buyer/stranger denial and duplicate-recovery refusal. Authentication and Storage metadata are stubbed; this is not authenticated browser or live Storage QA.

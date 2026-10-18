@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { prepareRecovery } from './prepare-legacy-history-recovery.mjs'
+import { prepareRecovery, ownedMediaPath, applyStagingRecovery } from './prepare-legacy-history-recovery.mjs'
 const cutoff = '2026-10-07T11:26:32.444Z'
 const before = '2026-08-01T00:00:00Z'
 const after = '2026-10-08T00:00:00Z'
@@ -30,4 +30,39 @@ test('missing ownership evidence, existing history and missing storage metadata 
   await expect(prepareRecovery({ ...fixture({ existing: true }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('HISTORY_ALREADY_EXISTS')
   await expect(prepareRecovery({ ...fixture({ metadataFailure: true }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('metadata unavailable')
   await expect(prepareRecovery({ ...fixture({ boundary: false }), dogId: 'dog', fromOwnerId: 'former' })).rejects.toThrow('TRANSFER_BOUNDARY_MISMATCH')
+})
+test('recognizes same-bucket historical profile/note URLs while rejecting foreign media', () => {
+  const prefix = 'dogs/former/dog/'
+  expect(ownedMediaPath('https://storage.googleapis.com/bucket/dogs/former/dog/profile.jpg', 'bucket', prefix)).toBe(prefix + 'profile.jpg')
+  expect(ownedMediaPath('https://firebasestorage.googleapis.com/v0/b/bucket/o/dogs%2Fformer%2Fdog%2Fnotes%2Fold.jpg?alt=media', 'bucket', prefix)).toBe(prefix + 'notes/old.jpg')
+  for (const url of ['https://storage.googleapis.com/other/dogs/former/dog/x.jpg', 'https://example.test/dogs/former/dog/x.jpg', 'https://storage.googleapis.com/bucket/dogs/buyer/dog/x.jpg', 'http://storage.googleapis.com/bucket/dogs/former/dog/x.jpg']) expect(ownedMediaPath(url, 'bucket', prefix)).toBeNull()
+})
+test('an old profile photo is recovered but a post-transfer overwrite is excluded', async () => {
+  const f = fixture()
+  f.db.collection = ((base) => name => {
+    const col = base(name)
+    return name === 'dogs' ? { ...col, doc: () => ({ get: async () => ({ exists: true, data: () => ({ previousOwnerId: 'former', transferredAt: cutoff, profilePhoto: 'https://storage.googleapis.com/bucket/dogs/former/dog/profile.jpg' }) }) }) } : col
+  })(f.db.collection)
+  const plan = await prepareRecovery({ ...f, dogId: 'dog', fromOwnerId: 'former' })
+  expect(plan.snapshot.recoveredMedia.map(m => m.path)).toEqual(['dogs/former/dog/profile.jpg'])
+  f.bucket.file = () => ({ getMetadata: async () => [{ generation: '222', timeCreated: before, updated: after }] })
+  expect((await prepareRecovery({ ...f, dogId: 'dog', fromOwnerId: 'former' })).snapshot.recoveredMedia).toEqual([])
+})
+test('apply refuses production before requesting a database transaction', async () => {
+  await expect(applyStagingRecovery({ db: { runTransaction() { throw Error('must not run') } }, project: 'idogs-app', plan: {} })).rejects.toThrow('PRODUCTION_WRITES_NOT_SUPPORTED')
+  await expect(applyStagingRecovery({ db: { projectId: 'idogs-app', runTransaction() { throw Error('must not run') } }, project: 'idogs-app-staging', plan: {} })).rejects.toThrow('PROJECT_MISMATCH')
+})
+test('staging application rechecks ownership and existing history inside the transaction', async () => {
+  const writes = []
+  let duplicate = true
+  const db = { projectId: 'idogs-app-staging', collection: name => ({ doc: id => ({ name, id }), where: () => ({ name }) }), runTransaction: async fn => fn({
+    get: async ref => ref.name === 'dogs' ? { exists: true, data: () => ({ previousOwnerId: 'former', transferredAt: cutoff }) } : { docs: duplicate ? [{ data: () => ({ dogId: 'dog' }) }] : [] },
+    create: (ref, data) => writes.push({ ref, data }),
+  }) }
+  const plan = { id: 'recovered', snapshot: { fromOwnerId: 'former', dogId: 'dog', transferredAt: cutoff } }
+  await expect(applyStagingRecovery({ db, project: db.projectId, plan })).rejects.toThrow('HISTORY_ALREADY_EXISTS')
+  expect(writes).toEqual([])
+  duplicate = false
+  await applyStagingRecovery({ db, project: db.projectId, plan })
+  expect(writes).toEqual([{ ref: { name: 'ownershipHistorySnapshots', id: 'recovered' }, data: plan.snapshot }])
 })

@@ -36,3 +36,8 @@ test('retains nanosecond precision at transfer boundary for REST and SDK metadat
   assert.equal(existedAtTransfer('2026-08-01T00:00:00Z', '2026-10-07T11:26:32.443999999Z', cutoff), true)
   assert.equal(existedAtTransfer({ seconds: 1, nanoseconds: 1 }, { seconds: 2, nanoseconds: 1 }, '1970-01-01T00:00:02.000000000Z'), false)
 })
+test('old audit entries with absent optional fields produce Firestore-safe snapshots', () => {
+  const s = makeRecoveredHistory({ legacy: { ...legacy, auditEntries: [{ id: 'audit', details: undefined, action: 'dog_transferred', createdAt: cutoff }] }, records: {}, media: [], recoveredAt: cutoff })
+  assert.equal(Object.hasOwn(s.auditEntries[0], 'details'), false)
+  assert.deepEqual(s, JSON.parse(JSON.stringify(s)))
+})

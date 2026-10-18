@@ -20,7 +20,7 @@ const liveReferenceKeys = new Set(['photoUrl', 'fileUrl', 'url', 'documentUrl', 
 function withoutLiveReferences(value) {
   if (Array.isArray(value)) return value.map(withoutLiveReferences)
   if (!value || typeof value !== 'object') return value
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !liveReferenceKeys.has(key)).map(([key, item]) => [key, withoutLiveReferences(item)]))
+  return Object.fromEntries(Object.entries(value).filter(([key, item]) => item !== undefined && !liveReferenceKeys.has(key)).map(([key, item]) => [key, withoutLiveReferences(item)]))
 }
 export function makeRecoveredHistory({ legacy, records, media, recoveredAt }) {
   if (legacy?.historyAvailability !== 'audit_only' || !legacy.fromOwnerId || !legacy.dogId || instant(legacy.transferredAt) === null) throw Error('INVALID_TRANSFER_EVIDENCE')
@@ -31,7 +31,7 @@ export function makeRecoveredHistory({ legacy, records, media, recoveredAt }) {
     recoveryMethod: 'verified_server_metadata',
     // Today's profile is not evidence of its state at the transfer boundary.
     dog: { id: legacy.dogId, tenantId: legacy.fromOwnerId, name: legacy.dog.name },
-    auditEntries: legacy.auditEntries || [], recoveredMedia: [], recoveryOmissions: {},
+    auditEntries: withoutLiveReferences(legacy.auditEntries || []), recoveredMedia: [], recoveryOmissions: {},
   }
   for (const collection of RECOVERY_COLLECTIONS) {
     const all = records[collection] || []

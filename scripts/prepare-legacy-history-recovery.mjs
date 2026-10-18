@@ -4,6 +4,20 @@ import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { legacyTransferHistory } from '../api/_lib/ownership-history.js'
 import { RECOVERY_COLLECTIONS, makeRecoveredHistory } from '../api/_lib/legacy-history-recovery.js'
+export function ownedMediaPath(raw, bucketName, prefix) {
+  if (typeof raw !== 'string') return null
+  try {
+    const url = new URL(raw)
+    let path = null
+    if (url.protocol !== 'https:') return null
+    if (url.hostname === 'storage.googleapis.com' && url.pathname.startsWith('/' + bucketName + '/')) path = decodeURIComponent(url.pathname.slice(bucketName.length + 2))
+    if (url.hostname === 'firebasestorage.googleapis.com') {
+      const match = url.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/)
+      if (match && decodeURIComponent(match[1]) === bucketName) path = decodeURIComponent(match[2])
+    }
+    return path?.startsWith(prefix) && !path.includes('..') ? path : null
+  } catch { return null }
+}
 export async function prepareRecovery({ db, bucket, dogId, fromOwnerId }) {
   const json = v => v?.toDate ? v.toDate().toISOString() : Array.isArray(v) ? v.map(json) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, json(x)])) : v
   const ownAudit = await db.collection('auditLogs').where('tenantId', '==', fromOwnerId).get()
@@ -24,13 +38,11 @@ export async function prepareRecovery({ db, bucket, dogId, fromOwnerId }) {
   }
   const prefix = `dogs/${fromOwnerId}/${dogId}/`
   const paths = new Set((data.photos || []).map(m => m.path).filter(p => typeof p === 'string' && p.startsWith(prefix)))
+  const profilePath = ownedMediaPath(data.profilePhoto, bucket.name, prefix)
+  if (profilePath) paths.add(profilePath)
   for (const note of records.activityNotes || []) {
-    if (typeof note.data.photoUrl !== 'string') continue
-    try {
-      const url = new URL(note.data.photoUrl)
-      const path = url.hostname === 'storage.googleapis.com' && url.pathname.startsWith('/' + bucket.name + '/') ? decodeURIComponent(url.pathname.slice(bucket.name.length + 2)) : null
-      if (path?.startsWith(prefix)) paths.add(path)
-    } catch {}
+    const path = ownedMediaPath(note.data.photoUrl, bucket.name, prefix)
+    if (path) paths.add(path)
   }
   const media = []
   for (const path of paths) {
@@ -40,6 +52,19 @@ export async function prepareRecovery({ db, bucket, dogId, fromOwnerId }) {
   const snapshot = makeRecoveredHistory({ legacy, records, media, recoveredAt: new Date().toISOString() })
   const id = `recovered-${dogId}-${createHash('sha256').update(fromOwnerId + ':' + legacy.transferredAt).digest('hex').slice(0, 16)}`
   return { id, snapshot }
+}
+export async function applyStagingRecovery({ db, project, plan }) {
+  if (project !== 'idogs-app-staging') throw Error('PRODUCTION_WRITES_NOT_SUPPORTED')
+  if (db.projectId !== project) throw Error('PROJECT_MISMATCH')
+  return db.runTransaction(async tx => {
+    const dog = await tx.get(db.collection('dogs').doc(plan.snapshot.dogId))
+    const current = dog.exists ? dog.data() : {}
+    const time = current.transferredAt?.toDate ? current.transferredAt.toDate().toISOString() : current.transferredAt
+    if (![current.previousOwnerId, current.tenantId].includes(plan.snapshot.fromOwnerId) || time !== plan.snapshot.transferredAt) throw Error('TRANSFER_BOUNDARY_MISMATCH')
+    const existing = await tx.get(db.collection('ownershipHistorySnapshots').where('fromOwnerId', '==', plan.snapshot.fromOwnerId))
+    if (existing.docs.some(d => d.data().dogId === plan.snapshot.dogId)) throw Error('HISTORY_ALREADY_EXISTS')
+    tx.create(db.collection('ownershipHistorySnapshots').doc(plan.id), plan.snapshot)
+  })
 }
 async function main() {
   const args = process.argv.slice(2), value = key => args[args.indexOf(key) + 1]
@@ -54,7 +79,7 @@ async function main() {
   const db = getFirestore(app)
   const plan = await prepareRecovery({ db, bucket: getStorage(app).bucket(), dogId: value('--dog'), fromOwnerId: value('--former') })
   await writeFile(value('--output'), JSON.stringify({ project, ...plan }, null, 2), { flag: 'wx', mode: 0o600 })
-  if (args.includes('--apply-staging')) await db.collection('ownershipHistorySnapshots').doc(plan.id).create(plan.snapshot)
+  if (args.includes('--apply-staging')) await applyStagingRecovery({ db, project, plan })
   console.log(JSON.stringify({ project, id: plan.id, applied: args.includes('--apply-staging'), counts: Object.fromEntries(RECOVERY_COLLECTIONS.map(c => [c, plan.snapshot[c].length])), photos: plan.snapshot.recoveredMedia.length }))
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(e => { console.error(e.message); process.exitCode = 1 })
