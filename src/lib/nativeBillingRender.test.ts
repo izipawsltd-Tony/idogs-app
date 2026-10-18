@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import BillingPage from '../pages/BillingPage'
+import ExtraLitterButton from '../components/ExtraLitterButton'
 
 vi.mock('../hooks/useAuth', () => { const auth = {
   user: { getIdToken: async () => 'synthetic-token' },
@@ -48,5 +49,29 @@ describe('rendered native Billing with unpaid invoice', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0][0]).toBe('/api/billing-summary')
     act(() => renderer.unmount())
+  })
+})
+
+// The API can report checkoutEnabled=true: native UI must still fail closed.
+describe('exhausted Plus litter allowance', () => {
+  it.each(['ios', 'android', 'web'])('gates extra-litter purchase on %s', async platform => {
+    vi.stubGlobal('document', {documentElement:{dataset:{idogsNativePlatform:platform}}})
+    const fetchMock=vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      plan:'plus',unlimited:false,includedLimit:2,includedUsed:2,extraCreditsAvailable:0,
+      extraLitterPriceAud:39,checkoutEnabled:true,
+    })))
+    vi.stubGlobal('fetch',fetchMock)
+    let renderer!: ReturnType<typeof create>
+    await act(async()=>{renderer=create(createElement(ExtraLitterButton,{toast:vi.fn()}))})
+    const buttons=renderer.root.findAllByType('button')
+    if(platform==='web') expect(buttons[0].children.join('')).toContain('A$39')
+    else {
+      expect(buttons).toHaveLength(0)
+      expect(JSON.stringify(renderer.toJSON())).not.toContain('A$39')
+      expect(JSON.stringify(renderer.toJSON())).toContain('Purchases are unavailable in this app.')
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/litter-quota-summary')
+    act(()=>renderer.unmount())
   })
 })
