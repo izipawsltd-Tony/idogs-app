@@ -30,6 +30,8 @@ jobs:
       IDOGS_MOBILE_APP_NAME: iDogs
       VITE_IDOGS_NATIVE_PLATFORM: ios
       VITE_IDOGS_NATIVE_MODE: production
+      ASC_APP_ID: 6823094602
+      ASC_INTERNAL_BETA_GROUP_ID: ede79b3f-5c6b-4ccc-9224-7eb0c1aac44e
 
     steps:
       - name: Checkout exact commit
@@ -113,6 +115,16 @@ jobs:
 
       - name: Sync web build into iOS
         run: npm --prefix mobile run sync:ios
+
+      - name: Declare exempt encryption for TestFlight
+        shell: bash
+        run: |
+          set -euo pipefail
+          INFO_PLIST="mobile/ios/App/App/Info.plist"
+          test -f "$INFO_PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :ITSAppUsesNonExemptEncryption" "$INFO_PLIST" >/dev/null 2>&1 || true
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$INFO_PLIST"
+          /usr/libexec/PlistBuddy -c "Print :ITSAppUsesNonExemptEncryption" "$INFO_PLIST" | grep -qx "false"
 
       - name: Generate iOS assets
         run: npm --prefix mobile run assets:ios
@@ -200,6 +212,55 @@ jobs:
         run: |
           set -euo pipefail
           xcrun altool             --upload-app             --type ios             --file "$IOS_IPA_PATH"             --apiKey "$APPLE_KEY_ID"             --apiIssuer "$APPLE_ISSUER_ID"
+
+      - name: Add processed build to iDogs Internal QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          gem install jwt --no-document >/dev/null
+
+          make_jwt() {
+            ruby -rjwt -ropenssl -e '
+              key = OpenSSL::PKey::EC.new(File.read(ENV.fetch("ASC_KEY_PATH")))
+              payload = {
+                iss: ENV.fetch("APPLE_ISSUER_ID"),
+                iat: Time.now.to_i,
+                exp: Time.now.to_i + 1200,
+                aud: "appstoreconnect-v1"
+              }
+              print JWT.encode(payload, key, "ES256", { kid: ENV.fetch("APPLE_KEY_ID"), typ: "JWT" })
+            '
+          }
+
+          BUILD_ID=""
+          for attempt in $(seq 1 40); do
+            JWT_TOKEN="$(make_jwt)"
+            RESPONSE="$(
+              curl --fail-with-body --silent --show-error --get                 "https://api.appstoreconnect.apple.com/v1/builds"                 -H "Authorization: Bearer $JWT_TOKEN"                 --data-urlencode "filter[app]=$ASC_APP_ID"                 --data-urlencode "filter[version]=$IOS_BUILD_NUMBER"                 --data-urlencode "filter[processingState]=VALID"                 --data-urlencode "limit=1"
+            )"
+            BUILD_ID="$(printf '%s' "$RESPONSE" | ruby -rjson -e 'j=JSON.parse(STDIN.read); print(j.dig("data",0,"id").to_s)')"
+            if [ -n "$BUILD_ID" ]; then
+              break
+            fi
+            echo "Build $IOS_BUILD_NUMBER not VALID yet (attempt $attempt/40); waiting 30s..."
+            sleep 30
+          done
+
+          test -n "$BUILD_ID" || { echo "::error::Timed out waiting for App Store Connect build $IOS_BUILD_NUMBER"; exit 1; }
+
+          JWT_TOKEN="$(make_jwt)"
+          BODY="$(printf '{"data":[{"type":"betaGroups","id":"%s"}]}' "$ASC_INTERNAL_BETA_GROUP_ID")"
+          curl --fail-with-body --silent --show-error             -X POST             "https://api.appstoreconnect.apple.com/v1/builds/$BUILD_ID/relationships/betaGroups"             -H "Authorization: Bearer $JWT_TOKEN"             -H "Content-Type: application/json"             --data "$BODY"
+
+          JWT_TOKEN="$(make_jwt)"
+          VERIFY="$(
+            curl --fail-with-body --silent --show-error               "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID/relationships/builds?limit=200"               -H "Authorization: Bearer $JWT_TOKEN"
+          )"
+          printf '%s' "$VERIFY" | BUILD_ID="$BUILD_ID" ruby -rjson -e '
+            ids = JSON.parse(STDIN.read).fetch("data", []).map { |x| x["id"] }
+            abort("Build not present in iDogs Internal QA") unless ids.include?(ENV.fetch("BUILD_ID"))
+            puts "Internal QA assignment PASS for build #{ENV.fetch("BUILD_ID")}"
+          '
 
       - name: Upload signed IPA evidence
         uses: actions/upload-artifact@v4
