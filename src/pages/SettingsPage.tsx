@@ -13,6 +13,7 @@ const REMINDER_OPTIONS = [3, 7, 14, 30]
 
 export default function SettingsPage({ toast }: Props) {
   const { user, profile, refreshProfile } = useAuth()
+  const [showReminderTypes, setShowReminderTypes] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
   const [editingProfile, setEditingProfile] = useState(false)
   const [profileForm, setProfileForm] = useState({
@@ -367,8 +368,12 @@ export default function SettingsPage({ toast }: Props) {
             onToggle={() => setEmailSetting('manualReminderEmails', profile?.manualReminderEmails !== true)}
           />
           <div style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Manual reminder email types</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <button type="button" aria-expanded={showReminderTypes} aria-controls="manual-reminder-types" onClick={() => setShowReminderTypes(value => !value)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, width: '100%', padding: '8px 0', border: 0, background: 'transparent', color: 'var(--dark)', cursor: 'pointer', textAlign: 'left' }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>Manual reminder email types</span>
+              <span style={{ fontSize: 13, color: 'var(--green)', whiteSpace: 'nowrap' }}>{showReminderTypes ? 'Hide ▴' : 'Show ▾'}</span>
+            </button>
+            {showReminderTypes && <div id="manual-reminder-types" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {REMINDER_TYPES.map(({ value, label }) => <ToggleRow key={value}
                 icon="" label={label}
                 description="Emails for manually added reminders."
@@ -376,8 +381,8 @@ export default function SettingsPage({ toast }: Props) {
                 saving={saving !== null || !emailReminders}
                 onToggle={() => setCareEmailType(value, profile?.careEmailTypes?.[value] === false)}
               />)}
-            </div>
-            <p style={{ fontSize: 12, color: 'var(--mid)', marginTop: 12 }}>These type choices apply to manually added reminder emails. Recorded next-dose reminders use the main Email Reminders setting. In-app reminders stay visible. iPhone push notifications are not enabled by these settings. Once-only manual emails can catch up up to 14 days after the due date; daily manual emails stop after it.</p>
+            </div>}
+            {showReminderTypes && <p style={{ fontSize: 12, color: 'var(--mid)', marginTop: 12 }}>These type choices apply to manually added reminder emails. Recorded next-dose reminders use the main Email Reminders setting. In-app reminders stay visible. iPhone push notifications are not enabled by these settings. Once-only manual emails can catch up up to 14 days after the due date; daily manual emails stop after it.</p>}
           </div>
 
           {/* Reminder lead time */}
