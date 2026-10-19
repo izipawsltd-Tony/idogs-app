@@ -5,6 +5,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { computeEffectivePlan } from './_lib/entitlements.js'
+import { hasDogWriteAccess } from './_lib/dog-access.js'
 
 // Bounded staging-isolation safety patch: this endpoint never touches
 // Firebase Storage (it only reads Firestore and returns generated HTML/
@@ -36,56 +37,74 @@ function formatDate(str) {
 
 // ── DATA FETCHERS ─────────────────────────────────────────────
 
-async function fetchDogFull(dogId) {
-  const [dogSnap, vaccines, health, worming, litters] = await Promise.all([
-    db.collection('dogs').doc(dogId).get(),
+function privacyError(status, message) {
+  return Object.assign(new Error(message), { status })
+}
+
+async function exportDogIdentity(dogId, uid) {
+  if (typeof dogId !== 'string' || !dogId || dogId.includes('/')) throw privacyError(400, 'Dog ID required')
+  const dogSnap = await db.collection('dogs').doc(dogId).get()
+  if (dogSnap.exists) {
+    const dog = { ...dogSnap.data(), id: dogSnap.id }
+    if (hasDogWriteAccess(dog, uid) && dog.status !== 'transferred' && dog.transferStatus !== 'pendingClaim') return { dog, history: null }
+  }
+  // Authorize the history independently. tenantId on a live dog is
+  // provenance, never permission to export a buyer's new health data.
+  const snapshots = await db.collection('ownershipHistorySnapshots').where('fromOwnerId', '==', uid).get()
+  const matching = snapshots.docs.filter(d => d.data().dogId === dogId).sort((a, b) =>
+    String(b.data().transferredAt || '').localeCompare(String(a.data().transferredAt || '')))
+  if (!matching.length) throw privacyError(403, 'Only current-owner records or a saved transfer snapshot can be exported')
+  const history = matching[0].data()
+  return { history, dog: { ...history.dog, id: dogId, status: 'transferred',
+    buyerName: history.toOwnerName, buyerEmail: history.toOwnerEmail, transferredAt: history.transferredAt } }
+}
+
+async function fetchDogFull(dogId, uid) {
+  const { dog, history } = await exportDogIdentity(dogId, uid)
+  if (history) return { ...dog, vaccines: history.vaccineRecords || [], healthTests: history.healthTests || [], wormings: history.wormingRecords || [], litter: null }
+  const [vaccines, health, worming, litters] = await Promise.all([
     db.collection('vaccineRecords').where('dogId', '==', dogId).get(),
     db.collection('healthTests').where('dogId', '==', dogId).get(),
     db.collection('wormingRecords').where('dogId', '==', dogId).get(),
-    db.collection('litters').where('puppyIds', 'array-contains', dogId).get(),
+    db.collection('litters').where('tenantId', '==', uid).where('puppyIds', 'array-contains', dogId).get(),
   ])
-  if (!dogSnap.exists) return null
-  return {
-    ...dogSnap.data(), id: dogSnap.id,
-    vaccines: vaccines.docs.map(d => ({ ...d.data(), id: d.id })),
+  return { ...dog, vaccines: vaccines.docs.map(d => ({ ...d.data(), id: d.id })),
     healthTests: health.docs.map(d => ({ ...d.data(), id: d.id })),
-    wormings: worming.docs.map(d => ({ ...d.data(), id: d.id })),
-    litter: litters.docs[0]?.data() || null,
-  }
+    wormings: worming.docs.map(d => ({ ...d.data(), id: d.id })), litter: litters.docs[0]?.data() || null }
 }
 
-async function fetchLitterFull(litterId) {
+async function fetchLitterFull(litterId, uid) {
   const litterSnap = await db.collection('litters').doc(litterId).get()
   if (!litterSnap.exists) return null
   const litter = { ...litterSnap.data(), id: litterSnap.id }
-  const puppies = await Promise.all((litter.puppyIds || []).map(id => fetchDogFull(id)))
-  return { ...litter, puppies: puppies.filter(Boolean) }
+  if (litter.tenantId !== uid) throw privacyError(403, 'Not your litter')
+  // Missing historical snapshots fail explicitly instead of returning a
+  // partial report or substituting the puppy's new owner's live records.
+  const puppies = await Promise.all((litter.puppyIds || []).map(id => fetchDogFull(id, uid)))
+  return { ...litter, puppies }
 }
 
 async function fetchKennelFull(tenantId) {
-  const [userSnap, dogsSnap, littersSnap] = await Promise.all([
+  const [userSnap, legacyDogs, ownedDogs, littersSnap] = await Promise.all([
     db.collection('users').doc(tenantId).get(),
     db.collection('dogs').where('tenantId', '==', tenantId).get(),
+    db.collection('dogs').where('currentOwnerId', '==', tenantId).get(),
     db.collection('litters').where('tenantId', '==', tenantId).get(),
   ])
-  const dogs = await Promise.all(dogsSnap.docs.map(d => fetchDogFull(d.id)))
-  return {
-    profile: userSnap.data(),
-    dogs: dogs.filter(Boolean),
-    litters: littersSnap.docs.map(d => ({ ...d.data(), id: d.id })),
+  const current = new Map()
+  for (const doc of [...legacyDogs.docs, ...ownedDogs.docs]) {
+    const dog = doc.data()
+    if (hasDogWriteAccess(dog, tenantId) && dog.status !== 'transferred' && dog.transferStatus !== 'pendingClaim') current.set(doc.id, doc)
   }
+  const dogs = await Promise.all(Array.from(current.keys()).map(id => fetchDogFull(id, tenantId)))
+  return { profile: userSnap.data(), dogs, litters: littersSnap.docs.map(d => ({ ...d.data(), id: d.id })) }
 }
 
-async function fetchBreedingFull(dogId) {
-  const [dogSnap, heatCyclesSnap] = await Promise.all([
-    db.collection('dogs').doc(dogId).get(),
-    db.collection('heatCycles').where('dogId', '==', dogId).get(),
-  ])
-  if (!dogSnap.exists) return null
-  const heatCycles = heatCyclesSnap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .sort((a, b) => a.heatNumber - b.heatNumber)
-  return { ...dogSnap.data(), id: dogSnap.id, heatCycles }
+async function fetchBreedingFull(dogId, uid) {
+  const { dog, history } = await exportDogIdentity(dogId, uid)
+  if (history) return { ...dog, heatCycles: history.heatCycles || [] }
+  const heatCyclesSnap = await db.collection('heatCycles').where('dogId', '==', dogId).get()
+  return { ...dog, heatCycles: heatCyclesSnap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.heatNumber - b.heatNumber) }
 }
 
 // ── CSV GENERATORS ────────────────────────────────────────────
@@ -233,7 +252,7 @@ function generatePDFHTML(data, scope, profile) {
         <tr><th>Total Dogs</th><td>${data.dogs?.length || 0}</td><th>Total Litters</th><td>${data.litters?.length || 0}</td></tr>
       </table>
 
-      <h2>Dog Records</h2>
+      <h2>Current Dog Records</h2>
       ${(data.dogs || []).map(dog => `<div class="dog-section">${dogHTML(dog)}</div><div class="page-break"></div>`).join('')}
 
       ${data.litters?.length > 0 ? `
@@ -613,13 +632,13 @@ export default async function handler(req, res) {
     }
 
     if (scope === 'dog') {
-      data = await fetchDogFull(id)
+      data = await fetchDogFull(id, uid)
       if (!data) return res.status(404).json({ error: 'Dog not found' })
       if (data.tenantId !== uid && data.currentOwnerId !== uid) {
         return res.status(403).json({ error: 'Not your dog' })
       }
     } else if (scope === 'litter') {
-      data = await fetchLitterFull(id)
+      data = await fetchLitterFull(id, uid)
       if (!data) return res.status(404).json({ error: 'Litter not found' })
       if (data.tenantId !== uid) {
         return res.status(403).json({ error: 'Not your litter' })
@@ -627,7 +646,7 @@ export default async function handler(req, res) {
     } else if (scope === 'kennel') {
       data = await fetchKennelFull(tenantId)
     } else if (scope === 'breeding') {
-      data = await fetchBreedingFull(id)
+      data = await fetchBreedingFull(id, uid)
       if (!data) return res.status(404).json({ error: 'Dog not found' })
       if (data.tenantId !== uid && data.currentOwnerId !== uid) {
         return res.status(403).json({ error: 'Not your dog' })
@@ -666,7 +685,9 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid format' })
 
   } catch (err) {
-    console.error('Export error:', err)
-    return res.status(500).json({ error: 'Export failed', message: String(err) })
+    if ([400, 403].includes(err?.status)) return res.status(err.status).json({ error: err.message })
+    console.error('Export failed')
+    return res.status(500).json({ error: 'Export failed' })
   }
 }
+

@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocsFromServer as getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, setDoc, Timestamp, deleteField
+  query, where, serverTimestamp, setDoc, Timestamp, deleteField, runTransaction
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import { confirmedCreatedDogId, DogCreationUnconfirmedError } from './dogCreationResponse'
@@ -289,43 +289,54 @@ export function safeReadFirestoreErrorCode(err: unknown): string {
   return 'unknown'
 }
 
+async function getHistoricalDogsForCurrentUser(): Promise<Dog[]> {
+  if (!auth.currentUser) return []
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/get-dog-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ action: 'list' }),
+  })
+  if (!res.ok) throw new GetDogsError()
+  const data = await res.json()
+  return (data.dogs || []).map((d: Dog) => normalizeDog(d))
+}
+
+export async function getHistoricalDogSnapshot(dogId: string): Promise<any | null> {
+  if (!auth.currentUser) return null
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/get-dog-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ action: 'detail', dogId }),
+  })
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error('History load failed')
+  const data = await res.json()
+  return data.snapshot || null
+}
+
 export async function getDogs(): Promise<Dog[]> {
   const currentUid = uid()
   if (!currentUid) return []
 
-  let breederSnap, ownerSnap
   try {
-    [breederSnap, ownerSnap] = await Promise.all([
-      getDocs(query(collection(db, 'dogs'), where('tenantId', '==', currentUid))),
-      getDocs(query(collection(db, 'dogs'), where('currentOwnerId', '==', currentUid)))
+    const [ownerSnap, historical] = await Promise.all([
+      getDocs(query(collection(db, 'dogs'), where('currentOwnerId', '==', currentUid))),
+      getHistoricalDogsForCurrentUser(),
     ])
+
+    const dogMap = new Map<string, Dog>()
+    ownerSnap.docs.forEach(d => dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog)))
+    historical.forEach(d => {
+      const existing = dogMap.get(d.id)
+      if (!existing || existing.status === 'transferred' || (existing as any).transferStatus === 'pendingClaim') dogMap.set(d.id, d)
+    })
+    return Array.from(dogMap.values())
   } catch (err) {
-    // Codex round 14: neither the console log nor the thrown error may
-    // carry the raw Firestore error — only a fixed operation name plus a
-    // normalized, allowlisted code goes to the console; the THROWN error
-    // is always the same fixed, sanitized message.
     console.error('getDogs: load failed', { code: safeReadFirestoreErrorCode(err) })
     throw new GetDogsError()
   }
-
-  const dogMap = new Map<string, Dog>()
-
-  breederSnap.docs.forEach(d => {
-    dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
-  })
-  ownerSnap.docs.forEach(d => {
-    dogMap.set(d.id, normalizeDog({ ...d.data(), id: d.id } as Dog))
-  })
-
-  return Array.from(dogMap.values()).map(dog => {
-    // If the current user is the breeder (tenantId) but not the current owner,
-    // they should see the dog as "transferred" regardless of its actual DB status
-    // (which might have been set to 'active' when the new owner claimed it).
-    if (dog.tenantId === currentUid && dog.currentOwnerId !== currentUid) {
-      return { ...dog, status: 'transferred' }
-    }
-    return dog
-  })
 }
 
 // Production-verified ownership check (currentOwnerId is the source of
@@ -342,16 +353,42 @@ export function isCurrentOwner(dog: Pick<Dog, 'currentOwnerId'>, userId: string)
 }
 
 export async function getDog(id: string): Promise<Dog | null> {
-  const snap = await getDoc(doc(db, 'dogs', id))
-  if (!snap.exists()) return null
-  const dog = normalizeDog({ ...snap.data(), id: snap.id } as Dog)
-
-  const currentUid = uid()
-  if (dog.tenantId === currentUid && dog.currentOwnerId !== currentUid) {
-    dog.status = 'transferred'
+  const historicalDog = async () => {
+    const snapshot = await getHistoricalDogSnapshot(id)
+    if (!snapshot?.dog) return null
+    return normalizeDog({
+      ...snapshot.dog,
+      id,
+      status: 'transferred',
+      currentOwnerId: '__historical__',
+      historicalSnapshot: true,
+      historySnapshotId: snapshot.id,
+      transferredAt: snapshot.transferredAt,
+      buyerName: snapshot.toOwnerName,
+      buyerEmail: snapshot.toOwnerEmail,
+      _historySnapshot: snapshot,
+    } as any)
   }
 
-  return dog
+  try {
+    const snap = await getDoc(doc(db, 'dogs', id))
+    if (!snap.exists()) return historicalDog()
+    const dog = normalizeDog({ ...snap.data(), id: snap.id } as Dog)
+    const currentUid = uid()
+
+    // During rollout the deployed Rules may still temporarily permit the
+    // original breeder to read the live Dog document. Never trust that
+    // broader read for rendering: if currentOwnerId moved away, switch to
+    // the immutable former-owner snapshot immediately.
+    if ((dog.currentOwnerId && dog.currentOwnerId !== currentUid)
+      || dog.status === 'transferred' || (dog as any).transferStatus === 'pendingClaim') {
+      return historicalDog()
+    }
+    return dog
+  } catch (err) {
+    if (safeReadFirestoreErrorCode(err) !== 'permission-denied') throw err
+    return historicalDog()
+  }
 }
 
 export async function getDogByPassportId(passportId: string): Promise<Dog | null> {
@@ -515,29 +552,28 @@ export async function transferDogOwnership(
     buyerPhone?: string
     transferredAt: string
     microchipCertUrl?: string | null
-    // Optional — set by both transfer modals via nextPedigreeRegisterUpdate()
-    // (src/lib/breedingCompliance.ts) so the breeder's explicit pedigree
-    // choice at the moment of transfer lands in this SAME write, not a
-    // separate one. Omitted entirely (not just falsy) when the breeder
-    // didn't change anything, which leaves the dog's existing value alone —
-    // this must never be defaulted to 'main' here or anywhere else.
     pedigreeRegister?: string
     breedingEligibility?: 'eligible' | 'not_eligible' | 'unknown'
   }
 ): Promise<void> {
-  await updateDoc(doc(db, 'dogs', dogId), {
-    status: 'transferred',
-    transferStatus: 'pendingClaim',
-    previousOwnerId: uid(),
-    buyerName: transfer.buyerName,
-    buyerEmail: transfer.buyerEmail.trim().toLowerCase(),
-    ...(transfer.buyerPhone ? { buyerPhone: transfer.buyerPhone } : {}),
-    transferredAt: transfer.transferredAt,
-    ...(transfer.microchipCertUrl ? { microchipCertUrl: transfer.microchipCertUrl } : {}),
-    ...(transfer.pedigreeRegister !== undefined ? { pedigreeRegister: transfer.pedigreeRegister } : {}),
-    ...(transfer.breedingEligibility !== undefined ? { breedingEligibility: transfer.breedingEligibility } : {}),
-    updatedAt: serverTimestamp(),
+  if (!auth.currentUser) throw new Error('Not signed in')
+  const idToken = await auth.currentUser.getIdToken()
+  const res = await fetch('/api/transfer-dog', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({
+      dogId,
+      buyerName: transfer.buyerName,
+      buyerEmail: transfer.buyerEmail,
+      buyerPhone: transfer.buyerPhone,
+      pedigreeRegister: transfer.pedigreeRegister,
+      breedingEligibility: transfer.breedingEligibility,
+    }),
   })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Transfer failed (${res.status})`)
+  }
 }
 
 export async function getDogsByBuyerEmail(email: string): Promise<Dog[]> {
@@ -630,8 +666,37 @@ export async function getWormingRecords(dogId: string): Promise<WormingRecord[]>
 
 export async function addWormingRecord(data: Omit<WormingRecord, 'id' | 'createdAt'>): Promise<string> {
   const fields = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined))
-  const ref = await addDoc(collection(db, 'wormingRecords'), { ...fields, createdAt: serverTimestamp() })
+  const ref = doc(collection(db, 'wormingRecords'))
+  const ownerId = uid()
+  await runTransaction(db, async tx => {
+    const dog = await tx.get(doc(db, 'dogs', data.dogId))
+    if (!ownerId || !dog.exists() || (dog.data().currentOwnerId || dog.data().tenantId) !== ownerId || dog.data().status === 'transferred') throw new Error('Current owner required')
+    tx.set(ref, { ...fields, createdAt: serverTimestamp() })
+    if (data.nextDue) tx.set(doc(db, 'reminders', `worming_${data.dogId}_${ref.id}`), {
+      dogId: data.dogId, tenantId: ownerId, type: 'worming', wormingId: ref.id,
+      title: `Worming: ${data.product}`, dueDate: data.nextDue,
+      notifyDaysBefore: 3, status: 'pending', createdAt: serverTimestamp(),
+    })
+  })
   return ref.id
+}
+
+// Same deterministic ID as the daily scheduler: retries never create duplicates.
+export async function addWormingReminder(dogId: string, wormingId: string, dueDate: string): Promise<void> {
+  const ownerId = uid()
+  await runTransaction(db, async tx => {
+    const dog = await tx.get(doc(db, 'dogs', dogId))
+    const worm = await tx.get(doc(db, 'wormingRecords', wormingId))
+    const ref = doc(db, 'reminders', `worming_${dogId}_${wormingId}`)
+    const existing = await tx.get(ref)
+    if (!ownerId || !dog.exists() || (dog.data().currentOwnerId || dog.data().tenantId) !== ownerId || dog.data().status === 'transferred' || !worm.exists() || worm.data().dogId !== dogId) throw new Error('Current owner required')
+    if (existing.exists()) return
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new Error('Choose a due date')
+    tx.update(doc(db, 'wormingRecords', wormingId), { nextDue: dueDate })
+    tx.set(ref, { dogId, tenantId: ownerId, type: 'worming', wormingId,
+      title: `Worming: ${worm.data().product}`, dueDate, notifyDaysBefore: 3,
+      status: 'pending', createdAt: serverTimestamp() })
+  })
 }
 
 export async function deleteWormingRecord(id: string): Promise<void> {
@@ -647,7 +712,8 @@ export async function getHealthTests(dogId: string): Promise<HealthTest[]> {
 }
 
 export async function addHealthTest(data: Omit<HealthTest, 'id' | 'createdAt'>): Promise<string> {
-  const ref = await addDoc(collection(db, 'healthTests'), { ...data, createdAt: serverTimestamp() })
+  const fields = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined))
+  const ref = await addDoc(collection(db, 'healthTests'), { ...fields, createdAt: serverTimestamp() })
   return ref.id
 }
 
@@ -716,25 +782,10 @@ async function upsertVaccineReminder(
   }
 }
 
-// Production bug fix: firestore.rules' reminders `get`/`list` rules now
-// also grant read access via dogBelongsToUser(resource.data.dogId) (the
-// same trust boundary already used for vaccineRecords/healthTests/etc —
-// see the "Production bug fix" comment there), so a claimed dog's
-// current owner CAN now read its reminders even before the original
-// breeder's tenantId on that reminder doc gets reassigned. That grant
-// falls through to a per-document get() on dogs/{dogId} whenever the
-// reminder's tenantId doesn't already match the caller — and Firestore
-// caps a single query's rule evaluation at 20 such get()/exists() calls
-// (empirically confirmed via the Rules emulator: 20 dogIds in one `in`
-// query succeeds, 21 is denied outright — see
-// scripts/test-reminders-rules-emulator.mjs). That is a DIFFERENT, lower
-// ceiling than Firestore's own native `in`-operator value limit (30),
-// which is what claimedDogIds used to be capped to — so a single
-// unbatched query is not safe here even within Firestore's own query
-// limits. queryRemindersByDogIds() below batches into chunks of 20,
-// queried in parallel, so every claimed dog is covered, not just the
-// first 20 or 30.
-const REMINDER_DOG_ID_QUERY_BATCH_SIZE = 20
+// Query by dogs the caller currently owns. A tenantId-only query is
+// no longer safe: old reminder documents retain the former tenantId,
+// while Rules correctly authorize by the dog's CURRENT owner.
+const REMINDER_DOG_ID_QUERY_BATCH_SIZE = 10
 
 export function chunk<T>(items: T[], size: number): T[][] {
   const batches: T[][] = []
@@ -742,152 +793,63 @@ export function chunk<T>(items: T[], size: number): T[][] {
   return batches
 }
 
-// Queries reminders for ALL given dogIds, batched to stay within the
-// Rules get()-call budget described above. Batches run in parallel via
-// Promise.all, which is also what gives this its fail-closed contract:
-// if ANY batch's query rejects, the whole call rejects immediately and
-// none of the other batches' (possibly already-resolved) data is used —
-// callers must never treat a partial batch success as a complete result.
 async function queryRemindersByDogIds(dogIds: string[]) {
-  const batches = chunk(dogIds, REMINDER_DOG_ID_QUERY_BATCH_SIZE)
-  const snaps = await Promise.all(
-    batches.map(batch => getDocs(query(collection(db, 'reminders'), where('dogId', 'in', batch))))
-  )
-  return snaps.flatMap(snap => snap.docs)
+  const docs = []
+  // Each equality query uses one dog's Rules lookup. Keep concurrency
+  // bounded; a failed query rejects the entire result, never a partial list.
+  for (const batch of chunk([...new Set(dogIds)], REMINDER_DOG_ID_QUERY_BATCH_SIZE)) {
+    const snaps = await Promise.all(batch.map(dogId =>
+      getDocs(query(collection(db, 'reminders'), where('dogId', '==', dogId)))
+    ))
+    docs.push(...snaps.flatMap(snap => snap.docs))
+  }
+  return docs
 }
 
-// Per-dog reminders (used in DogDetailPage). Always runs the tenantId-scoped
-// query first. The optional `dog` param mirrors the claimed-dog merge also
-// used by getAllRemindersForUser() below: when the caller is the dog's
-// current owner via a claim rather than the original tenant, a claimed
-// dog's older reminder doc still carries the original breeder's tenantId
-// until the next vaccine save or cron run reassigns it, so a second query
-// (now Rules-permitted via dogBelongsToUser — see above) is attempted to
-// catch that case.
 export async function getReminders(
   dogId: string,
   userId: string,
   dog?: Pick<Dog, 'tenantId' | 'currentOwnerId'>
 ): Promise<Reminder[]> {
-  const tenantSnap = await getDocs(
-    query(collection(db, 'reminders'), where('dogId', '==', dogId), where('tenantId', '==', userId))
-  )
-  const tenantReminders = tenantSnap.docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+  if (!userId || userId !== uid()) throw new GetRemindersError()
+  const currentDog = dog || await getDog(dogId)
+  if (!currentDog) throw new GetRemindersError()
+  if (!isCurrentOwner(currentDog, userId)) {
+    const history = await getHistoricalDogSnapshot(dogId)
+    if (!history || history.historyAvailability === 'audit_only') throw new GetRemindersError()
+    return history.reminders || []
+  }
+  const docs = await queryRemindersByDogIds([dogId])
+  return docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+}
 
-  const isClaimedByCaller = !!dog && dog.currentOwnerId === userId && dog.tenantId !== userId
-  if (!isClaimedByCaller) return tenantReminders
-
-  // Codex round 16: ANY claimed-reminder query failure — including
-  // permission-denied — rejects the whole call. Completeness is UNKNOWN
-  // on failure, never assumed zero; callers must show an explicit,
-  // retryable error rather than a confident "all caught up".
-  let claimedReminders: Reminder[]
+export async function getAllRemindersForUser(userId: string): Promise<Reminder[]> {
+  if (!userId || userId !== uid()) throw new GetRemindersError()
+  const dogs = await getDogs()
+  const ownedIds = dogs.filter(d => isCurrentOwner(d, userId)
+    && d.status !== 'transferred' && (d as any).transferStatus !== 'pendingClaim').map(d => d.id)
   try {
-    const claimedDocs = await queryRemindersByDogIds([dogId])
-    claimedReminders = claimedDocs.map(d => ({ ...d.data(), id: d.id } as Reminder))
+    const docs = await queryRemindersByDogIds(ownedIds)
+    return docs.map(d => ({ ...d.data(), id: d.id } as Reminder))
   } catch (err) {
-    console.error('getReminders: claimed-dog reminder query failed', { code: safeReadFirestoreErrorCode(err) })
+    console.error('getAllRemindersForUser: owned-dog query failed', { code: safeReadFirestoreErrorCode(err) })
     throw new GetRemindersError()
   }
-
-  const merged = new Map<string, Reminder>()
-  for (const r of [...tenantReminders, ...claimedReminders]) merged.set(r.id, r)
-  return Array.from(merged.values())
 }
 
-// All reminders for current user across all dogs (used in RemindersPage).
-// Cross-checked against getDogs() (same pattern as getAllPendingReminders
-// below) so a dog the user has transferred away drops out immediately —
-// the reminders collection itself still tags old docs with the original
-// breeder's tenantId until the next cron run reassigns them. getDogs()
-// already overrides status to 'transferred' for a former breeder, so this
-// filter is correct without needing a separate currentOwnerId check here.
-export async function getAllRemindersForUser(userId: string): Promise<Reminder[]> {
-  const [snap, dogs] = await Promise.all([
-    getDocs(query(collection(db, 'reminders'), where('tenantId', '==', userId))),
-    getDogs(),
-  ])
-  const ownedDogIds = new Set(dogs.filter(d => d.status !== 'transferred').map(d => d.id))
-  const tenantReminders = snap.docs
-    .map(d => ({ ...d.data(), id: d.id } as Reminder))
-    .filter(r => ownedDogIds.has(r.dogId))
-
-  // A claimed dog's reminder doc keeps the original breeder's tenantId
-  // until the next vaccine save or daily cron run reassigns it — this
-  // query (now Rules-permitted via dogBelongsToUser — see
-  // queryRemindersByDogIds() above) finds those anyway so a buyer sees a
-  // claimed dog's reminders immediately, without waiting for that
-  // reassignment. Reuses the `dogs` array from getDogs() above (already
-  // includes claimed dogs via the currentOwnerId union) instead of a
-  // second Firestore query. Batched internally — every claimed dog is
-  // queried, not just the first 20 or 30.
-  const claimedDogIds = dogs
-    .filter(d => d.currentOwnerId === userId && d.tenantId !== userId)
-    .map(d => d.id)
-  // Codex round 16: see the matching comment in getReminders() above —
-  // completeness of the claimed-reminder segment is UNKNOWN on any query
-  // failure, never assumed zero. Every failure (including the previously
-  // exempted permission-denied) now rejects the whole call.
-  let claimedReminders: Reminder[] = []
-  if (claimedDogIds.length > 0) {
-    try {
-      const claimedDocs = await queryRemindersByDogIds(claimedDogIds)
-      claimedReminders = claimedDocs.map(d => ({ ...d.data(), id: d.id } as Reminder))
-    } catch (err) {
-      console.error('getAllRemindersForUser: claimed-dog reminder query failed', { code: safeReadFirestoreErrorCode(err) })
-      throw new GetRemindersError()
-    }
-  }
-
-  const merged = new Map<string, Reminder>()
-  for (const r of [...tenantReminders, ...claimedReminders]) merged.set(r.id, r)
-  return Array.from(merged.values())
-}
-
-// Used in DashboardPage. Mirrors the claimed-dog merge in
-// getAllRemindersForUser() above so a claimed dog's reminder — still
-// tagged with the original breeder's tenantId until the next vaccine
-// edit or cron run reassigns it — shows up on the current owner's
-// Dashboard too, not just on /app/reminders and Dog Detail.
 export async function getAllPendingReminders(): Promise<Reminder[]> {
-  const userId = uid()
-  const dogs = await getDogs()
-  const dogIds = new Set(dogs.filter(d => d.status !== 'transferred').map(d => d.id))
-
-  const tenantSnap = dogIds.size > 0
-    ? await getDocs(query(collection(db, 'reminders'), where('tenantId', '==', userId)))
-    : null
-  const tenantReminders = (tenantSnap?.docs ?? [])
-    .map(d => ({ ...d.data(), id: d.id } as Reminder))
-    .filter(r => dogIds.has(r.dogId) && ['pending', 'overdue'].includes(r.status))
-
-  const claimedDogIds = dogs
-    .filter(d => d.currentOwnerId === userId && d.tenantId !== userId)
-    .map(d => d.id)
-  // Codex round 16: see the matching comment in getReminders() above —
-  // fails closed on ANY claimed-reminder query failure, permission-denied
-  // included. Batched internally (queryRemindersByDogIds) — every claimed
-  // dog is queried, not just the first 20 or 30.
-  let claimedReminders: Reminder[] = []
-  if (claimedDogIds.length > 0) {
-    try {
-      const claimedDocs = await queryRemindersByDogIds(claimedDogIds)
-      claimedReminders = claimedDocs
-        .map(d => ({ ...d.data(), id: d.id } as Reminder))
-        .filter(r => ['pending', 'overdue'].includes(r.status))
-    } catch (err) {
-      console.error('getAllPendingReminders: claimed-dog reminder query failed', { code: safeReadFirestoreErrorCode(err) })
-      throw new GetRemindersError()
-    }
-  }
-
-  const merged = new Map<string, Reminder>()
-  for (const r of [...tenantReminders, ...claimedReminders]) merged.set(r.id, r)
-  return Array.from(merged.values())
+  return (await getAllRemindersForUser(uid())).filter(r => ['pending', 'overdue'].includes(r.status))
 }
 
 export async function addReminder(data: Omit<Reminder, 'id' | 'createdAt'>): Promise<string> {
-  const ref = await addDoc(collection(db, 'reminders'), { ...data, createdAt: serverTimestamp() })
+  const ownerId = uid()
+  if (!ownerId || data.tenantId !== ownerId || !data.title.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(data.dueDate)) throw new Error('Invalid reminder')
+  const ref = doc(collection(db, 'reminders'))
+  await runTransaction(db, async tx => {
+    const dog = await tx.get(doc(db, 'dogs', data.dogId))
+    if (!dog.exists() || (dog.data().currentOwnerId || dog.data().tenantId) !== ownerId || dog.data().status === 'transferred') throw new Error('Current owner required')
+    tx.set(ref, { ...data, tenantId: ownerId, title: data.title.trim(), createdAt: serverTimestamp() })
+  })
   return ref.id
 }
 
@@ -905,8 +867,24 @@ export async function deleteReminder(id: string): Promise<void> {
 
 // ── ACTIVITY NOTES ────────────────────────────────────────────
 
-export async function getActivityNotes(dogId: string): Promise<ActivityNote[]> {
-  const q = query(collection(db, 'activityNotes'), where('dogId', '==', dogId))
+export async function getActivityNotes(
+  dogId: string,
+  viewerUid?: string,
+  dog?: Pick<Dog, 'tenantId' | 'currentOwnerId'>
+): Promise<ActivityNote[]> {
+  const isFormerBreeder = !!viewerUid
+    && !!dog
+    && dog.tenantId === viewerUid
+    && !!dog.currentOwnerId
+    && dog.currentOwnerId !== viewerUid
+
+  // Privacy after transfer: the current owner can read the full story,
+  // but a former breeder may only read activity notes they themselves
+  // created before/while they owned the dog. Without this creator filter,
+  // a dogId-only query exposed the new owner's private notes/photos.
+  const q = isFormerBreeder
+    ? query(collection(db, 'activityNotes'), where('dogId', '==', dogId), where('createdBy', '==', viewerUid))
+    : query(collection(db, 'activityNotes'), where('dogId', '==', dogId))
   const snap = await getDocs(q)
   // FIX (crash: "(l.date || '').localeCompare is not a function" when
   // building the Timeline): createdAt comes back from Firestore as a

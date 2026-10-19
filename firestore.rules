@@ -168,19 +168,21 @@ service cloud.firestore {
     // also stay put forces any status change through the full,
     // strictly-validated transition instead.
     function dogTransferProvenanceValid() {
-      return isLegitimateNewTransferTransition(resource.data) ||
-        (
-          (resource.data.get('buyerEmail', null) == null ||
-           request.resource.data.get('buyerEmail', null) == resource.data.get('buyerEmail', null)) &&
-          (resource.data.get('buyerName', null) == null ||
-           request.resource.data.get('buyerName', null) == resource.data.get('buyerName', null)) &&
-          (resource.data.get('transferredAt', null) == null ||
-           request.resource.data.get('transferredAt', null) == resource.data.get('transferredAt', null)) &&
-          (resource.data.get('previousOwnerId', null) == null ||
-           request.resource.data.get('previousOwnerId', null) == resource.data.get('previousOwnerId', null)) &&
-          request.resource.data.get('status', null) == resource.data.get('status', 'active') &&
-          request.resource.data.get('transferStatus', null) == resource.data.get('transferStatus', null)
-        );
+      // Ownership transfers now run only through api/transfer-dog.js,
+      // which atomically writes the immutable former-owner snapshot and
+      // the transfer state in one trusted Admin SDK transaction. Direct
+      // client changes to transfer state are therefore always denied.
+      return
+        (resource.data.get('buyerEmail', null) == null ||
+         request.resource.data.get('buyerEmail', null) == resource.data.get('buyerEmail', null)) &&
+        (resource.data.get('buyerName', null) == null ||
+         request.resource.data.get('buyerName', null) == resource.data.get('buyerName', null)) &&
+        (resource.data.get('transferredAt', null) == null ||
+         request.resource.data.get('transferredAt', null) == resource.data.get('transferredAt', null)) &&
+        (resource.data.get('previousOwnerId', null) == null ||
+         request.resource.data.get('previousOwnerId', null) == resource.data.get('previousOwnerId', null)) &&
+        request.resource.data.get('status', null) == resource.data.get('status', 'active') &&
+        request.resource.data.get('transferStatus', null) == resource.data.get('transferStatus', null);
     }
 
     // A dog "belongs to" whoever is its breeder (tenantId) or its current
@@ -190,9 +192,14 @@ service cloud.firestore {
     // history), but — see dogWriteAccess below — never an ongoing
     // management right over the CURRENT owner's data.
     function dogBelongsToUser(dogId) {
+      // Live dog data is current-owner-only. Former owners/breeders read
+      // immutable transfer snapshots exclusively through trusted server APIs.
       let dog = get(/databases/$(database)/documents/dogs/$(dogId)).data;
-      return isSignedIn() &&
-        (dog.tenantId == request.auth.uid || dog.currentOwnerId == request.auth.uid);
+      return isSignedIn() && (
+        ('currentOwnerId' in dog)
+          ? dog.currentOwnerId == request.auth.uid
+          : (('tenantId' in dog) && dog.tenantId == request.auth.uid)
+      );
     }
 
     // Codex H8 — write access (create/update/delete of a dog's
@@ -332,7 +339,7 @@ service cloud.firestore {
       // relaxing a check. A missing document exposes no data either way.
       // Same pattern already used below for reminders/{id}'s get.
       allow read: if isSignedIn() &&
-        (resource == null || resource.data.tenantId == request.auth.uid || resource.data.currentOwnerId == request.auth.uid);
+        (resource == null || isEffectiveDogOwner(resource.data));
 
       // Only the effective owner may write (see isEffectiveDogOwner above —
       // currentOwnerId when present, tenantId fallback only for legacy
@@ -485,9 +492,19 @@ service cloud.firestore {
       allow create: if dogAllowsNewRecords(request.resource.data.dogId);
     }
     match /activityNotes/{id} {
-      allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
+      // Transfer privacy boundary:
+      // - the effective current owner can read the dog's full activity story;
+      // - a former breeder may only read notes they created themselves.
+      // This prevents post-transfer notes/photos uploaded by the new owner
+      // from remaining visible to the original breeder.
+      allow read: if resource == null
+        || dogWriteAccess(resource.data.dogId)
+        || (isSignedIn()
+            && resource.data.get('createdBy', '') == request.auth.uid
+            && dogBelongsToUser(resource.data.dogId));
       allow update, delete: if dogWriteAccess(resource.data.dogId);
-      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
+      allow create: if dogAllowsNewRecords(request.resource.data.dogId)
+        && request.resource.data.createdBy == request.auth.uid;
     }
 
     // ── heatCycles — read/delete use the same dogBelongsToUser access
@@ -552,19 +569,23 @@ service cloud.firestore {
     // already-reassigned reminder) never pays the extra get() cost.
     match /reminders/{id} {
       allow get: if isSignedIn()
-        && (resource == null
-            || resource.data.tenantId == request.auth.uid
-            || dogBelongsToUser(resource.data.dogId));
+        && (resource == null || dogBelongsToUser(resource.data.dogId));
 
       allow list: if isSignedIn()
-        && (resource.data.tenantId == request.auth.uid
-            || dogBelongsToUser(resource.data.dogId));
+        && dogBelongsToUser(resource.data.dogId);
 
       allow create: if isSignedIn()
-        && request.resource.data.tenantId == request.auth.uid;
+        && request.resource.data.tenantId == request.auth.uid
+        && dogAllowsNewRecords(request.resource.data.dogId);
 
-      allow update, delete: if isSignedIn()
-        && resource.data.tenantId == request.auth.uid;
+      // tenantId may retain the original breeder after claim. It is not
+      // an ongoing write grant. Only the current dog owner can complete,
+      // edit or delete a reminder; an update cannot move it to another dog.
+      allow update: if dogWriteAccess(resource.data.dogId)
+        && request.resource.data.dogId == resource.data.dogId
+        && (request.resource.data.tenantId == resource.data.tenantId
+            || request.resource.data.tenantId == request.auth.uid);
+      allow delete: if dogWriteAccess(resource.data.dogId);
     }
     // Codex round 4, Blocker 3: direct client update/delete are now
     // BOTH denied outright, not just create. Round 3 left update/delete
@@ -734,6 +755,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ── ownershipHistorySnapshots — immutable transfer-time privacy archive.
+    // Browser clients never read these directly. Former-owner history is
+    // exposed only by authenticated allowlisted server projections.
+    match /ownershipHistorySnapshots/{id} {
+      allow read, write: if false;
+    }
+
     // ── auditLogs — append-only, never editable/deletable by clients ──
     match /auditLogs/{id} {
       allow read: if isSignedIn() && resource.data.tenantId == request.auth.uid;
@@ -795,3 +823,4 @@ service cloud.firestore {
     }
   }
 }
+

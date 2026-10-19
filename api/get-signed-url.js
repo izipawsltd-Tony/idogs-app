@@ -96,20 +96,29 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Dog not found' })
     }
     const dog = dogSnap.data()
-    const isAuthorized = dog.tenantId === uid || dog.currentOwnerId === uid
-    if (!isAuthorized) {
+    const isCurrentOwner = (Object.prototype.hasOwnProperty.call(dog, 'currentOwnerId')
+      ? dog.currentOwnerId === uid
+      : dog.tenantId === uid)
+
+    let historicalPathAllowed = false
+    if (!isCurrentOwner) {
+      const historySnap = await getFirestore().collection('ownershipHistorySnapshots')
+        .where('dogId', '==', dogId)
+        .where('fromOwnerId', '==', uid)
+        .get()
+      historicalPathAllowed = historySnap.docs.some(s =>
+        (s.data().documents || []).some(d => d.filePath === filePath || d.storagePath === filePath)
+      )
+    }
+
+    if (!isCurrentOwner && !historicalPathAllowed) {
       return res.status(403).json({ error: 'Not authorized to view this document' })
     }
-    // Sanity check: the path's tenant segment should match whoever
-    // actually has access to this dog — either its breeder (tenantId)
-    // or its current owner (currentOwnerId). NOTE: upload-document.js
-    // writes this path segment using the uid of whoever was logged in
-    // at scan time, which can be the owner rather than the breeder (e.g.
-    // an Owner account scanning a vaccine card for a dog transferred to
-    // them) — so this must NOT be a strict dog.tenantId-only match, or
-    // it incorrectly blocks legitimate owners from viewing their own
-    // scans.
-    if (pathTenantId !== dog.tenantId && pathTenantId !== dog.currentOwnerId) {
+
+    // Current-owner paths must belong to one of the dog's known owner
+    // namespaces. Historical viewers are authorized only by exact path
+    // membership in their immutable snapshot above.
+    if (isCurrentOwner && pathTenantId !== dog.tenantId && pathTenantId !== dog.currentOwnerId) {
       return res.status(403).json({ error: 'Path does not match dog record' })
     }
 

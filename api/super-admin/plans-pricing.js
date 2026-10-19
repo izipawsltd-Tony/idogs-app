@@ -5,7 +5,7 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { verifySuperAdmin } from './_auth.js'
 import { computeEffectivePlan, hasValidInternalEntitlement } from '../_lib/entitlements.js'
-import { SUPER_ADMIN_DATA_MODEL_NOTICE, SUPER_ADMIN_PLAN_CATALOGUE, getEstimatedMonthlyPrice } from './_pricing.js'
+import { PRICING_POLICY_VERSION, SUPER_ADMIN_DATA_MODEL_NOTICE, SUPER_ADMIN_PLAN_CATALOGUE, getEstimatedMonthlyPrice } from './_pricing.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -44,11 +44,16 @@ export default async function handler(req, res) {
         id: planMeta.id,
         name: planMeta.name,
         estimatedMonthlyPrice: planMeta.price,
+        annualPrice: planMeta.annualPrice,
+        dogCap: planMeta.dogCap,
+        scanQuota: planMeta.scanQuota,
+        litterQuota: planMeta.litterQuota,
+        extraLitterPrice: planMeta.extraLitterPrice,
         description: planMeta.description,
         accountsCount: accountsOnPlan.length,
         activePaidAccountsCount: activePaidAccounts.length,
         estimatedMrrContribution,
-        status: 'display-only',
+        status: 'synced',
       }
     })
 
@@ -66,6 +71,7 @@ export default async function handler(req, res) {
         internalEntitlementAccounts,
       },
       dataModelNotice: SUPER_ADMIN_DATA_MODEL_NOTICE,
+      pricingPolicyVersion: PRICING_POLICY_VERSION,
     })
   } catch (error) {
     console.error('Failed to compile plans & pricing overview:', error)

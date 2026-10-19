@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { makeChecker } from './_lib/test-check.mjs'
 import { createFakeFirestore } from './test-helpers/fake-firestore.mjs'
 import { createWebhookHandler, claimEvent, runFencedTransaction, evaluateSubscriptionEvent } from '../api/_lib/webhook-handler.js'
-import { CHECKOUT_PRICE_IDS } from '../api/_lib/checkout-handler.js'
+import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS } from '../api/_lib/checkout-handler.js'
 
 const { check, checkAsync, summary } = makeChecker()
 
@@ -92,6 +92,29 @@ await checkAsync('checkout.session.completed grants Plus and initializes scan-qu
     user.plusScansUsed === 0 &&
     user.scanPeriodAnchorDay === 24 &&
     user.pastDueSince === null
+})
+
+await checkAsync('legacy Basic/Pro/Kennel paid renewals remain Plus-compatible after the Free/Plus pricing migration', async () => {
+  for (const [legacyPlan, priceId] of Object.entries(LEGACY_PAID_PRICE_IDS)) {
+    const seeded = createFakeFirestore({ users: { 'user-1': { plan: 'free' } } })
+    const subscription = subFixture({ id: 'sub_' + legacyPlan, priceId, status: 'active' })
+    const { process } = makeHandler({ db: seeded, subscriptions: { [subscription.id]: subscription } })
+    const res = await fire(process, subUpdatedEvent({ evtId: 'evt_' + legacyPlan, subscription, created: 1200 }))
+    const user = (await seeded.collection('users').doc('user-1').get()).data()
+    if (!(res.status === 200 && user.plan === 'plus' && user.billingInterval === 'monthly' && user.subscriptionStatus === 'active')) {
+      return false
+    }
+  }
+  return true
+})
+
+await checkAsync('an unrelated or SMS-only price still cannot grant Plus', async () => {
+  const seeded = createFakeFirestore({ users: { 'user-1': { plan: 'free' } } })
+  const subscription = subFixture({ id: 'sub_unknown', priceId: 'price_not_a_paid_base_plan', status: 'active' })
+  const { process } = makeHandler({ db: seeded, subscriptions: { sub_unknown: subscription } })
+  const res = await fire(process, subUpdatedEvent({ evtId: 'evt_unknown', subscription, created: 1300 }))
+  const user = (await seeded.collection('users').doc('user-1').get()).data()
+  return res.status === 200 && user.plan === 'free'
 })
 
 await checkAsync('a processing failure marks the event FAILED, not completed, and returns 500', async () => {

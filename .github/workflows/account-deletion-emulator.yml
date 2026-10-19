@@ -2,7 +2,7 @@ name: Account deletion emulator integration
 
 on:
   push:
-    branches: [fix/android-v20-qa-blockers, fix/account-deletion-backend-20261019]
+    branches: [fix/android-v20-qa-blockers, fix/account-deletion-backend-20261019, fix/ios-production-integration-20261019]
     paths:
       - api/account-deletion.js
       - api/_lib/account-deletion.js
@@ -36,3 +36,10 @@ jobs:
         env:
           GCLOUD_PROJECT: demo-idogs-account-deletion
         run: npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-account-deletion --only auth,firestore 'node --test scripts/test-account-deletion-emulator.mjs'
+
+      - name: Transfer privacy and historical records; synthetic demo project only
+        env:
+          GCLOUD_PROJECT: demo-idogs-h8
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-h8 --only auth,firestore
+          'node scripts/test-h8-post-transfer-authorization.mjs && node --experimental-test-module-mocks scripts/test-transfer-privacy-e2e.mjs && node --experimental-test-module-mocks scripts/test-legacy-recovery-e2e.mjs'

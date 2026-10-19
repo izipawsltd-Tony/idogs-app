@@ -8,6 +8,7 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
 import { canAddDogRecord } from './_lib/dog-access.js'
+import { documentExtension, documentMetadata } from './_lib/document-upload-metadata.js'
 
 // Init Firebase Admin (once)
 //
@@ -66,7 +67,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
 
-  const { base64, mediaType, dogId, documentType, extractedData } = req.body
+  const { base64, mediaType, dogId, documentType, extractedData, title, notes, source, originalFileName } = req.body
 
   if (!base64 || !dogId) {
     return res.status(400).json({ error: 'Missing required fields' })
@@ -90,8 +91,9 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: 'Not authorized to upload documents for this dog' })
     }
 
-    const ext = mediaType === 'application/pdf' ? 'pdf' : 'jpg'
-    const fileName = `${documentType || 'document'}_${Date.now()}.${ext}`
+    const ext = documentExtension(mediaType)
+    const safeBaseName = String(originalFileName || '').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 80)
+    const fileName = `${safeBaseName || documentType || 'document'}_${Date.now()}.${ext}`
     // Use the verified uid (not a client-supplied tenantId) for the path —
     // this can legitimately be the dog's breeder OR its current owner,
     // whichever account is doing the scanning.
@@ -115,22 +117,11 @@ export default async function handler(req, res) {
     // name/address). Files now stay private; viewing requires
     // /api/get-signed-url, which checks the requester actually
     // owns/breeds the dog and issues a short-lived (10 min) signed URL.
-    const fileUrl = null
-
     // Save metadata to Firestore
-    await db.collection('documents').add({
-      dogId,
-      tenantId: uid,
-      fileName,
-      fileUrl,
-      filePath,
-      fileType: ext === 'pdf' ? 'pdf' : 'image',
-      documentType: documentType || 'other',
-      uploadedAt: new Date(),
-      extractedData: extractedData || {},
-    })
+    const metadata = documentMetadata({ uid, dogId, documentType, title, notes, source, extractedData, fileName, filePath, mediaType, uploadedAt: new Date() })
+    const docRef = await db.collection('documents').add(metadata)
 
-    return res.status(200).json({ success: true, filePath })
+    return res.status(200).json({ success: true, filePath, documentId: docRef.id, fileType: metadata.fileType })
   } catch (err) {
     // Round 19: the previous version logged AND returned err.message/
     // err.code/a stack slice to the client — any of which can carry the

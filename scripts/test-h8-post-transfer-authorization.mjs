@@ -1,8 +1,7 @@
 // scripts/test-h8-post-transfer-authorization.mjs — Codex H8: a former
 // breeder (tenantId) must not be able to create/update/delete the CURRENT
 // owner's vaccine/worming/health-test/activity-note/document records
-// merely because tenantId still points at them, post-transfer. Read
-// (provenance/history) access is preserved for the former breeder.
+// merely because tenantId still points at them, post-transfer. Live reads are denied; former-owner history is served by the snapshot API.
 //
 // Emulator-only regression test — real firestore.rules evaluation, not a
 // hand-simulation of the intended logic.
@@ -93,15 +92,29 @@ await adminDb.collection('documents').doc(documentId).set({
 })
 
 // =========================================================================
-// SECTION 1 — Former breeder (tenantId only, post-transfer): READ allowed
-// (provenance), WRITE denied
+// SECTION 1 — Former breeder (tenantId only, post-transfer): live READ/WRITE denied
 // =========================================================================
 await as('former-breeder')
 
-await checkAsync('former breeder CAN read the current owner\'s vaccine record (provenance/history preserved)', async () => {
-  const snap = await getDoc(doc(db, 'vaccineRecords', vaccineId))
-  return snap.exists()
+await checkAsync('former breeder CANNOT read the current owner vaccine record', async () => {
+  try {
+    await getDoc(doc(db, 'vaccineRecords', vaccineId))
+    return false
+  } catch (err) {
+    return isDenied(err)
+  }
 })
+
+for (const collectionName of ['dogs', 'wormingRecords', 'healthTests', 'activityNotes', 'documents', 'heatCycles', 'reminders', 'scanLogs']) {
+  const id = collectionName === 'dogs' ? dogId : `privacy_${collectionName}_${R}`
+  if (collectionName !== 'dogs') await adminDb.collection(collectionName).doc(id).set({
+    dogId, tenantId: formerBreederUid, createdBy: formerBreederUid,
+    createdAt: '2026-02-01T00:00:00.000Z',
+  })
+  await checkAsync(`former breeder CANNOT read live ${collectionName} even with old tenantId`, async () => {
+    try { await getDoc(doc(db, collectionName, id)); return false } catch (err) { return isDenied(err) }
+  })
+}
 
 await checkAsync('former breeder CANNOT update the current owner\'s vaccine record', async () => {
   try {
@@ -148,10 +161,34 @@ await checkAsync('former breeder CANNOT delete the current owner\'s document rec
   }
 })
 
+const inheritedReminderId = `privacy_reminders_${R}`
+for (const [operation, perform] of [
+  ['create', () => setDoc(doc(db, 'reminders', `forged_${R}`), { dogId, tenantId: formerBreederUid, status: 'pending' })],
+  ['update', () => updateDoc(doc(db, 'reminders', inheritedReminderId), { status: 'completed' })],
+  ['delete', () => deleteDoc(doc(db, 'reminders', inheritedReminderId))],
+]) {
+  await checkAsync(`former breeder CANNOT ${operation} reminders after claim`, async () => {
+    try { await perform(); return false } catch (err) { return isDenied(err) }
+  })
+}
+
 // =========================================================================
 // SECTION 2 — Effective current owner: full read/write access
 // =========================================================================
 await as('current-owner')
+await checkAsync('current owner CAN complete an inherited reminder with the old tenantId', async () => {
+  await updateDoc(doc(db, 'reminders', inheritedReminderId), { status: 'completed' })
+  return (await getDoc(doc(db, 'reminders', inheritedReminderId))).data().status === 'completed'
+})
+await checkAsync('current owner CAN create their own reminder', async () => {
+  await setDoc(doc(db, 'reminders', `buyer_${R}`), { dogId, tenantId: currentOwnerUid, status: 'pending' })
+  return true
+})
+await checkAsync('current owner CANNOT retarget a reminder to an unrelated dog', async () => {
+  try { await updateDoc(doc(db, 'reminders', inheritedReminderId), { dogId: 'unrelated-dog' }); return false }
+  catch (err) { return isDenied(err) }
+})
+
 
 await checkAsync('current owner CAN read their own vaccine record', async () => {
   const snap = await getDoc(doc(db, 'vaccineRecords', vaccineId))
@@ -259,3 +296,4 @@ await checkAsync('a stranger CANNOT update the vaccine record', async () => {
 }
 
 await summary()
+

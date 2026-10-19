@@ -15,6 +15,87 @@ const MISSING_TEST_LABEL: Record<CoverageType, string> = {
 // the count shown in Insights always matches the dogs this filter surfaces.
 const HEALTH_ELIGIBLE_STAGES: LifeStage[] = ['young_adult', 'adult', 'senior']
 
+const DOG_LIST_CSS = `
+  .dog-list-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+    margin-bottom: 20px;
+  }
+  .dog-list-search {
+    flex: 0 0 260px;
+    max-width: 260px;
+  }
+  .dog-list-filters {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 4px;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .dog-list-photo-fallback {
+    height: 96px;
+    background: linear-gradient(135deg, var(--brand-50), var(--sand));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--mid);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .dog-list-photo-fallback-emoji { font-size: 30px; }
+  .dog-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+  }
+  .dog-card-badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  @media (max-width: 600px) {
+    .dog-list-controls {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .dog-list-search {
+      flex: none;
+      width: 100%;
+      max-width: none;
+    }
+    .dog-list-filters {
+      flex: none;
+      width: 100%;
+    }
+    .dog-list-photo-fallback { height: 68px; }
+    .dog-list-photo-fallback-emoji { font-size: 26px; }
+    .dog-card-meta {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .dog-card-badges {
+      width: 100%;
+      justify-content: flex-start;
+    }
+  }
+`
+
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
 }
@@ -97,10 +178,11 @@ export default function DogListPage({ toast }: Props) {
     if (!missingTest || dogs.length === 0) { setHealthMap(null); return }
     let active = true
     setHealthLoading(true)
-    Promise.all(dogs.map(d => getHealthTests(d.id)))
+    const ownedDogs = dogs.filter(d => d.status !== 'transferred' && (d as any).transferStatus !== 'pendingClaim')
+    Promise.all(ownedDogs.map(d => getHealthTests(d.id)))
       .then(results => {
         if (!active) return
-        setHealthMap(new Map(dogs.map((d, i) => [d.id, results[i]])))
+        setHealthMap(new Map(ownedDogs.map((d, i) => [d.id, results[i]])))
       })
       .catch(() => { if (active) toast('Failed to load health records', 'error') })
       .finally(() => { if (active) setHealthLoading(false) })
@@ -193,6 +275,7 @@ export default function DogListPage({ toast }: Props) {
 
   return (
     <div style={{ padding: 32 }}>
+      <style>{DOG_LIST_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>My dogs</h1>
@@ -209,16 +292,15 @@ export default function DogListPage({ toast }: Props) {
           transferred filters against stale or incomplete `dogs` data
           would be misleading, and the Transferred(N) count is stale too. */}
       {!loadError && (
-      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className="dog-list-controls">
         <input
-          className="form-input"
-          style={{ maxWidth: 260 }}
+          className="form-input dog-list-search"
           type="text"
           placeholder="Search name or breed…"
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', maxWidth: '100%', minWidth: 0, paddingBottom: 2 }}>
+        <div className="dog-list-filters" aria-label="Filter dogs">
           {filterTabs.map(tab => (
             <button
               key={tab.key}
@@ -337,12 +419,21 @@ export default function DogListPage({ toast }: Props) {
 }
 
 function DogCard({ dog }: { dog: Dog }) {
+  const isAuditOnly = (dog as any).historyAvailability === 'audit_only'
   const isTransferred = dog.status === 'transferred' || (dog as any).transferStatus === 'pendingClaim'
   // iDogs Pricing v1.1 §3.2/§3.3 — over the account's plan cap after a
   // downgrade. Read-only: viewable, transferable, but no edits/new
   // records/AI scans until the user upgrades or swaps it back to active.
   const isRestricted = dog.status === 'restricted'
   const actualStage = dog.isDeceased ? 'remembered' : calculateLifeStage(dog.dateOfBirth, dog.breed)
+  const profilePhoto = typeof dog.profilePhoto === 'string' ? dog.profilePhoto.trim() : ''
+  const [photoFailed, setPhotoFailed] = useState(false)
+
+  useEffect(() => {
+    setPhotoFailed(false)
+  }, [profilePhoto])
+
+  const showPhoto = Boolean(profilePhoto) && !photoFailed
   return (
     <Link to={`/app/dogs/${dog.id}`} style={{ textDecoration: 'none' }}>
       <div className="card" style={{
@@ -354,12 +445,13 @@ function DogCard({ dog }: { dog: Dog }) {
         onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'none' }}
       >
         {/* Photo banner */}
-        {dog.profilePhoto ? (
+        {showPhoto ? (
           <div style={{ position: 'relative', height: 160, overflow: 'hidden' }}>
             <img
-              src={dog.profilePhoto}
+              src={profilePhoto}
               alt={dog.name}
               style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block' }}
+              onError={() => setPhotoFailed(true)}
             />
             {isTransferred && (
               <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
@@ -373,8 +465,9 @@ function DogCard({ dog }: { dog: Dog }) {
             )}
           </div>
         ) : (
-          <div style={{ height: 160, background: 'linear-gradient(135deg, var(--brand-50), var(--sand))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 44 }}>
-            {LIFE_STAGE_EMOJI[actualStage]}
+          <div className="dog-list-photo-fallback" role="img" aria-label={`No photo available for ${dog.name}`}>
+            <span className="dog-list-photo-fallback-emoji" aria-hidden="true">{isAuditOnly ? '📋' : LIFE_STAGE_EMOJI[actualStage]}</span>
+            <span>No photo</span>
           </div>
         )}
 
@@ -382,16 +475,16 @@ function DogCard({ dog }: { dog: Dog }) {
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--dark)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.name}</div>
-              <div style={{ fontSize: 13, color: 'var(--light)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.breed}</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{isAuditOnly ? 'Your transfer activity' : dog.breed}</div>
             </div>
-            <span style={{ fontSize: 13, color: 'var(--mid)' }}>{dog.sex === 'female' ? '♀' : '♂'}</span>
+            {!isAuditOnly && <span style={{ fontSize: 13, color: 'var(--mid)' }}>{dog.sex === 'female' ? '♀' : '♂'}</span>}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ fontSize: 12, color: 'var(--light)' }}>{getDogAge(dog.dateOfBirth)}</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <div className="dog-card-meta">
+            <div style={{ fontSize: 12, color: 'var(--light)' }}>{isAuditOnly ? 'Full historical record unavailable' : getDogAge(dog.dateOfBirth)}</div>
+            <div className="dog-card-badges">
               {isTransferred ? (
-                <span className="badge badge-gray" style={{ fontSize: 10 }}>→ {(dog as any).buyerName}</span>
+                <span className="badge badge-gray" style={{ fontSize: 10 }}>{isAuditOnly ? 'Read-only' : `→ ${(dog as any).buyerName || ''}`}</span>
               ) : isRestricted ? (
                 <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 20, background: 'var(--gold-light)', color: 'var(--gold)', border: '1px solid rgba(200,151,31,0.3)' }}>🔒 Restricted</span>
               ) : (
@@ -414,9 +507,9 @@ function DogCard({ dog }: { dog: Dog }) {
               {(dog as any).breederIdType && (dog as any).breederIdType !== 'NONE' && (dog as any).breederIdValue && (
                 <span className="badge badge-gold" style={{ fontSize: 10 }}>🏷️ {(dog as any).breederIdValue}</span>
               )}
-              <span className="badge badge-gray" style={{ fontSize: 10 }}>
+              {!isAuditOnly && <span className="badge badge-gray" style={{ fontSize: 10 }}>
                 {LIFE_STAGE_EMOJI[actualStage]} {LIFE_STAGE_LABELS[actualStage]}
-              </span>
+              </span>}
             </div>
           </div>
         </div>
@@ -424,3 +517,4 @@ function DogCard({ dog }: { dog: Dog }) {
     </Link>
   )
 }
+

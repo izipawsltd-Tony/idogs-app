@@ -352,7 +352,7 @@ export default function SuperAdminAiCeoPage() {
           <MetricCard label="TEST MRR" value={`A$${data.revenueTruth.verifiedTestMrrAud}`} note="Never counted as customer revenue" />
           <MetricCard label="Plus Monthly truth" value={formatPrice(data.revenueTruth.canonicalPrices.monthly)} note={`Canonical price · ${data.revenueTruth.canonicalPriceStatus.monthly}`} />
           <MetricCard label="Plus Annual truth" value={formatPrice(data.revenueTruth.canonicalPrices.annual)} note={`Canonical price · ${data.revenueTruth.canonicalPriceStatus.annual}`} />
-          <MetricCard label="Legacy estimate" value={`A$${data.revenueTruth.legacyStoredEstimateAud}`} note="Old A$5/A$49 display math — diagnostic only" />
+          <MetricCard label="Stored-profile estimate" value={`A$${data.revenueTruth.legacyStoredEstimateAud}`} note="Current pricing-policy estimate from stored billing interval — diagnostic only" />
           <MetricCard label="Failed Stripe reads" value={data.revenueTruth.failedSubscriptionReads} note={`${data.revenueTruth.retrievedSubscriptions}/${data.revenueTruth.uniqueStoredSubscriptionIds} subscription IDs retrieved`} />
         </div>
         {data.revenueTruth.observedLivePrices.length > 0 && <div style={{ marginTop: 14 }}>
