@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ profile: { role: 'owner', emailReminders: true, manualReminderEmails: false, careEmailTypes: {} } as any, update: vi.fn(), refresh: vi.fn() }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'qa' }, profile: state.profile, refreshProfile: state.refresh }) }))
+vi.mock('../lib/nativePlatform', () => ({ isNativeApp: () => false }))
 vi.mock('../lib/db', () => ({ updateUserProfile: state.update, addReminder: vi.fn() }))
 import SettingsPage from './SettingsPage'
 
