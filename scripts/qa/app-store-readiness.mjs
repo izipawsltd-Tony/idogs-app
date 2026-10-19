@@ -38,13 +38,13 @@ const list = value => Array.isArray(value) ? value : []
 
 const app = await get(`/v1/apps/${APP_ID}`, true)
 if (app.id !== APP_ID || app.attributes?.bundleId !== EXPECTED_BUNDLE) throw new Error('ASC_APP_IDENTITY_MISMATCH')
-const builds = list(await get(`/v1/builds?filter[app]=${APP_ID}&filter[version]=20&limit=10`))
+const builds = list(await get(`/v1/builds?filter[app]=${APP_ID}&sort=-uploadedDate&limit=5`))
 const infos = list(await get(`/v1/apps/${APP_ID}/appInfos?limit=20`))
 const versions = list(await get(`/v1/apps/${APP_ID}/appStoreVersions?filter[platform]=IOS&limit=20`))
 const report = {
   checkedAt: new Date().toISOString(), method: 'GET_ONLY',
   app: { id: app.id, bundleId: app.attributes.bundleId, name: app.attributes.name, primaryLocale: app.attributes.primaryLocale },
-  build20: builds.map(b => ({ id: b.id, version: b.attributes.version, processingState: b.attributes.processingState,
+  recentBuilds: builds.map(b => ({ id: b.id, version: b.attributes.version, processingState: b.attributes.processingState,
     expired: b.attributes.expired, usesNonExemptEncryption: b.attributes.usesNonExemptEncryption })),
   appInfos: [], versions: [], errors,
   notVerified: ['App Privacy labels and legal agreements in the portal', 'App Store availability and pricing', 'Actual reviewer login success', 'Screenshot visual content'],

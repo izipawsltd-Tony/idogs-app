@@ -33,6 +33,10 @@ export default function AccountDeletion() {
         await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, currentPassword))
       }
       const idToken = await user.getIdToken(!!action)
+      // Once a status read or mutation starts, the previous receipt is stale.
+      // A lost response may follow a committed request/cancellation on the server.
+      setStatus(null)
+      setConfirmed(false)
       const response = await fetch('/api/account-deletion', {
         method: action ? 'POST' : 'GET',
         headers: { Authorization: `Bearer ${idToken}`, ...(action ? { 'Content-Type': 'application/json' } : {}) },
