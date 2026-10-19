@@ -1,0 +1,68 @@
+{
+  "checkedAt": "2026-10-19T00:14:16.536Z",
+  "method": "GET_ONLY",
+  "app": {
+    "id": "6823094602",
+    "bundleId": "au.com.idogs.app",
+    "name": "iDogs",
+    "primaryLocale": "en-AU"
+  },
+  "build20": [
+    {
+      "id": "b36f008e-2bd4-4c4a-970e-6455eb01ec61",
+      "version": "20",
+      "processingState": "VALID",
+      "expired": false,
+      "usesNonExemptEncryption": false
+    }
+  ],
+  "appInfos": [
+    {
+      "id": "7f47327d-1ed0-4a09-9e68-c13fdaa0d169",
+      "state": "PREPARE_FOR_SUBMISSION",
+      "ageRatingDeclarationPresent": true,
+      "locales": [
+        {
+          "locale": "en-AU",
+          "namePresent": true,
+          "subtitlePresent": false,
+          "privacyPolicyUrlPresent": false
+        }
+      ]
+    }
+  ],
+  "versions": [
+    {
+      "id": "68af6b5a-44d6-494a-9a7a-8e595face3e9",
+      "version": "1.0",
+      "state": "PREPARE_FOR_SUBMISSION",
+      "releaseType": "AFTER_APPROVAL",
+      "copyrightPresent": false,
+      "selectedBuildVersion": null,
+      "review": {
+        "exists": false,
+        "contactConfigured": false,
+        "demoAccountRequired": null,
+        "demoCredentialsConfigured": false,
+        "notesPresent": false
+      },
+      "locales": [
+        {
+          "locale": "en-AU",
+          "descriptionPresent": false,
+          "keywordsPresent": false,
+          "supportUrlPresent": false,
+          "marketingUrlPresent": false,
+          "screenshots": []
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "notVerified": [
+    "App Privacy labels and legal agreements in the portal",
+    "App Store availability and pricing",
+    "Actual reviewer login success",
+    "Screenshot visual content"
+  ]
+}
