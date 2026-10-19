@@ -1,10 +1,11 @@
+import ReminderForm from '../components/ui/ReminderForm'
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../hooks/useAuth'
 import {
   getDog, getDogs, getVaccineRecords, getWormingRecords, getHealthTests,
-  getReminders, getActivityNotes, addActivityNote, updateActivityNote, deleteActivityNote,
+  addWormingReminder, getReminders, getActivityNotes, addActivityNote, updateActivityNote, deleteActivityNote,
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder, addReminder, updateReminder,
   addWormingRecord, deleteWormingRecord,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, updateDocument, logAudit, syncLifeStage,
@@ -21,7 +22,7 @@ import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityN
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
 import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
-import { isHeicFile } from '../lib/heic'
+import { prepareImageForUpload } from '../lib/imageCompression'
 import { saveNoteWithPhoto, TimelinePhotoError } from '../lib/timelineNoteSave'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import RecoveredDogHistory from '../components/ui/RecoveredDogHistory'
@@ -1310,9 +1311,9 @@ export default function DogDetailPage({ toast }: Props) {
         </div>
       )}
       {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} onRetry={retryVaccines} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
-      {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'worming' && <WormingTab onReminderSaved={refreshReminders} dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
       {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} onRetry={retryHealthTests} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
-      {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} onRetry={retryReminders} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'reminders' && <RemindersTab dog={dog} tenantId={user?.uid || ''} onSaved={refreshReminders} reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} onRetry={retryReminders} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
       {/* scanCount === null unambiguously means "failed to load" (never
           "still loading", since the page-level loading gate has already
           cleared by the time any tab renders) — PassportTab's own
@@ -2228,7 +2229,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
               <input className="form-input" type="date" value={form.dateGiven} onChange={e => setForm(p => ({ ...p, dateGiven: e.target.value }))} />
             </div>
             <div className="form-group">
-              <label className="form-label">Next due date</label>
+              <label className="form-label">Add reminder for next dose (optional date)</label>
               <input className="form-input" type="date" value={form.nextDue} onChange={e => setForm(p => ({ ...p, nextDue: e.target.value }))} />
             </div>
             <div className="form-group">
@@ -2367,7 +2368,8 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
 
 // ── WORMING TAB ───────────────────────────────────────────────
 
-function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error, onRetry, canEdit }: {
+function WormingTab({ onReminderSaved, dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error, onRetry, canEdit }: {
+  onReminderSaved: () => Promise<void>;
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -2384,6 +2386,19 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
   const [form, setForm] = useState({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
   const [saving, setSaving] = useState(false)
 
+  const [reminderRecord, setReminderRecord] = useState<WormingRecord | null>(null)
+  const [reminderDate, setReminderDate] = useState('')
+  async function saveReminder() {
+    if (!reminderRecord || !reminderDate || saving) return
+    setSaving(true)
+    try {
+      await addWormingReminder(dogId, reminderRecord.id, reminderDate)
+      await onReminderSaved()
+      setReminderRecord(null)
+      toast('Reminder saved ✓')
+    } catch { toast('Could not save reminder', 'error') }
+    finally { setSaving(false) }
+  }
   async function handleAdd() {
     if (!form.product || !form.dateGiven) {
       toast('Please fill in product and date given', 'error')
@@ -2407,6 +2422,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
         performedBy: tenantId,
         performedByEmail: userEmail,
       })
+      await onReminderSaved()
       const updated = await getWormingRecords(dogId)
       setWormings(updated)
       setForm({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
@@ -2444,6 +2460,13 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
         </button>}
       </div>
 
+      {canEdit && reminderRecord && <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+        <label className="form-label" htmlFor="worm-reminder-date">Next worming reminder — {reminderRecord.product}</label>
+        <input id="worm-reminder-date" className="form-input" type="date" value={reminderDate} onChange={e => setReminderDate(e.target.value)} disabled={saving} />
+        <p>Choose the date using product instructions or veterinary advice.</p>
+        <button className="btn btn-primary btn-sm" disabled={saving || !reminderDate} onClick={saveReminder}>Save reminder</button>
+        <button className="btn btn-ghost btn-sm" disabled={saving} onClick={() => setReminderRecord(null)}>Cancel</button>
+      </div>}
       {!error && canEdit && showForm && (
         <div className="card" style={{ marginBottom: 16, padding: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
@@ -2456,7 +2479,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
               <input className="form-input" type="date" value={form.dateGiven} onChange={e => setForm(p => ({ ...p, dateGiven: e.target.value }))} max={new Date().toISOString().split('T')[0]} />
             </div>
             <div className="form-group">
-              <label className="form-label">Next due date</label>
+              <label className="form-label">Add reminder for next dose (optional date)</label>
               <input className="form-input" type="date" value={form.nextDue} onChange={e => setForm(p => ({ ...p, nextDue: e.target.value }))} />
             </div>
             <div className="form-group">
@@ -2498,6 +2521,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
               ) : w.nextDue ? (
                 <span className={`badge ${isOverdue(w.nextDue) ? 'badge-red' : 'badge-green'}`}>{isOverdue(w.nextDue) ? 'Overdue' : 'Current'}</span>
               ) : null}
+              {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => { setReminderRecord(w); setReminderDate(w.nextDue || '') }}>Add reminder</button>}
               {canEdit && <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>}
             </div>
           ))}
@@ -2776,7 +2800,8 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
 
 // ── REMINDERS TAB ─────────────────────────────────────────────
 
-function RemindersTab({ reminders, setReminders, toast, error, onRetry, canEdit }: {
+function RemindersTab({ dog, tenantId, onSaved, reminders, setReminders, toast, error, onRetry, canEdit }: {
+  dog: Dog; tenantId: string; onSaved: () => Promise<void>;
   reminders: Reminder[];
   setReminders: (r: Reminder[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -2784,6 +2809,7 @@ function RemindersTab({ reminders, setReminders, toast, error, onRetry, canEdit 
   onRetry?: () => void
   canEdit: boolean
 }) {
+  const [showAdd, setShowAdd] = useState(false)
   async function handleComplete(id: string) {
     try {
       await completeReminder(id)
@@ -2800,6 +2826,8 @@ function RemindersTab({ reminders, setReminders, toast, error, onRetry, canEdit 
   return (
     <div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Reminders</h2>
+      {canEdit && !error && <button className="btn btn-secondary btn-sm" style={{ marginBottom: 16 }} onClick={() => setShowAdd(true)}>+ Add reminder</button>}
+      {canEdit && !error && showAdd && <ReminderForm key={`${tenantId}:${dog.id}`} dogs={[dog]} tenantId={tenantId} onCancel={() => setShowAdd(false)} onSaved={async () => { setShowAdd(false); await onSaved(); toast('Reminder added ✓') }} />}
       {error ? (
         <div className="card"><div className="empty-state"><div className="empty-state-icon">⚠️</div><div className="empty-state-title">Couldn't load reminders</div><div className="empty-state-desc">This is a loading error, not an empty list.</div>{onRetry && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={onRetry}>Retry</button>}</div></div>
       ) : active.length === 0 ? (
@@ -3172,70 +3200,15 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   // re-encoding as JPEG at a reasonable quality keeps note photos small
   // without a visible quality loss at the sizes they're displayed.
 
-  function resizeImage(file: File | Blob, maxDimension = 1600, quality = 0.82): Promise<{ base64: string; mediaType: string; preview: string }> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const img = new Image()
-        img.onload = () => {
-          let { width, height } = img
-          if (width > maxDimension || height > maxDimension) {
-            if (width > height) {
-              height = Math.round((height * maxDimension) / width)
-              width = maxDimension
-            } else {
-              width = Math.round((width * maxDimension) / height)
-              height = maxDimension
-            }
-          }
-          const canvas = document.createElement('canvas')
-          canvas.width = width
-          canvas.height = height
-          const ctx = canvas.getContext('2d')
-          if (!ctx) { reject(new Error('Canvas not supported')); return }
-          ctx.drawImage(img, 0, 0, width, height)
-          const dataUrl = canvas.toDataURL('image/jpeg', quality)
-          resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg', preview: dataUrl })
-        }
-        img.onerror = () => reject(new Error('Failed to load image'))
-        img.src = reader.result as string
-      }
-      reader.onerror = () => reject(new Error('Failed to read file'))
-      reader.readAsDataURL(file)
-    })
-  }
-
   async function handlePhotoSelect(e: { target: { files: FileList | null } }) {
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (isHeicFile(file)) {
-      // Send raw HEIC to server \u2014 sharp handles conversion server-side
-      const reader = new FileReader()
-      reader.onload = () => {
-        const result = reader.result as string
-        setNotePhoto({ base64: result.split(',')[1], mediaType: file.type || 'image/heic', preview: result })
-      }
-      reader.readAsDataURL(file)
-      return
-    }
-
     try {
-      const resized = await resizeImage(file)
-      setNotePhoto(resized)
+      const prepared = await prepareImageForUpload(file)
+      setNotePhoto({ ...prepared, preview: `data:${prepared.mediaType};base64,${prepared.base64}` })
     } catch {
-      // Fall back to the original unresized file rather than silently
-      // failing — better to attempt the original upload than block the
-      // user entirely if canvas resizing fails for some reason. (HEIC is
-      // already handled above by this point, so this fallback is only
-      // for non-HEIC formats the canvas couldn't process.)
-      const reader = new FileReader()
-      reader.onload = () => {
-        const result = reader.result as string
-        const base64 = result.split(',')[1]
-        setNotePhoto({ base64, mediaType: file.type, preview: result })
-      }
-      reader.readAsDataURL(file)
+      toast('This photo could not be processed. Please try another image.', 'error')
     }
   }
 

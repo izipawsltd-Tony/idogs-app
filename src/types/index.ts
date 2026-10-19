@@ -204,7 +204,7 @@ export interface Reminder {
   source?: 'breeding_timeline' | string
   sourceRef?: string
   milestoneKey?: 'ultrasound_day28' | 'xray_day45' | 'whelp_prep_day58' | 'due_day63' | string
-  type: 'vaccination' | 'worming' | 'vet_appointment' | 'heat_cycle' | 'mating' | 'pregnancy' | 'whelping' | 'custom' | 'vaccine' | 'heat'
+  type: 'flea_tick' | 'medication' | 'grooming' | 'weight_check' | 'dental_care' | 'nail_trim' | 'vaccination' | 'worming' | 'vet_appointment' | 'heat_cycle' | 'mating' | 'pregnancy' | 'whelping' | 'custom' | 'vaccine' | 'heat'
   title: string
   dueDate: string
   notifyDaysBefore: number
