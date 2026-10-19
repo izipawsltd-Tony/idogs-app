@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
@@ -57,4 +58,13 @@ describe('unpublished legal policy review', () => {
       expect(http.mock.calls[0]?.[1]?.method).toBe('GET')
     } finally { act(() => renderer.unmount()); globalThis.fetch = original }
   })
+})
+
+// Audit the remaining product surfaces without importing Firebase/provider side effects.
+it('removes unverified residency/compliance promises from Settings, signup and passports', () => {
+  for (const page of ['SettingsPage','SignupPage','DogDetailPage','PassportPublicPage']) {
+    const source=readFileSync(new URL(`../pages/${page}.tsx`,import.meta.url),'utf8')
+    expect(source).toContain('DATA_PROCESSING_SUMMARY')
+    expect(source).not.toMatch(/stored securely in (?:the )?Asia-Pacific|Data stored in Australia|fully compliant with|Privacy Act 1988 compliant|handled securely, in line with/)
+  }
 })

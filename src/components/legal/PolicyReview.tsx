@@ -1,4 +1,5 @@
 // Review-only candidate. No effective date or operational feature is enabled here.
+export const DATA_PROCESSING_SUMMARY = 'iDogs uses service providers that may process information outside Australia.'
 export const POLICY_REVIEW_VERSION = '19 October 2026 — draft, not effective'
 export const CONSUMER_RIGHTS = 'Nothing in these Terms or our refund policy excludes, restricts or modifies consumer guarantees, remedies or other rights that cannot lawfully be excluded under the Australian Consumer Law or other applicable law.'
 
