@@ -114,7 +114,7 @@ export async function reserveSmsDelivery({
       idempotencyKey,
       segmentCount,
       status: 'reserved',
-      provider: 'aws_sns',
+      provider: 'clicksend',
       periodStart: profile.smsPeriodStart,
       createdAt: deliverySnap.exists ? (deliverySnap.data().createdAt || nowIso) : nowIso,
       reservedAt: nowIso,
@@ -195,8 +195,13 @@ export async function sendSmsWithQuota({
 
   let providerResult
   try {
-    providerResult = await sendProvider(e164, message)
-  } catch {
+    providerResult = await sendProvider(e164, message, { deliveryId: reservation.deliveryId })
+  } catch (error) {
+    if (error?.definitive !== true) {
+      // Keep reserved (and charged) until reconciled with ClickSend history.
+      // The next cron sees DUPLICATE and cannot send the same event again.
+      return { sent: false, reason: 'SMS_DELIVERY_UNKNOWN', deliveryId: reservation.deliveryId, segmentCount }
+    }
     await markSmsDeliveryFailed({
       db,
       tenantId,
@@ -211,12 +216,12 @@ export async function sendSmsWithQuota({
     await markSmsDeliverySent({
       db,
       deliveryId: reservation.deliveryId,
-      providerMessageId: providerResult?.MessageId,
+      providerMessageId: providerResult?.providerMessageId || providerResult?.MessageId,
       now,
     })
-    return { sent: true, deliveryId: reservation.deliveryId, segmentCount, providerMessageId: providerResult?.MessageId || null }
+    return { sent: true, deliveryId: reservation.deliveryId, segmentCount, providerMessageId: providerResult?.providerMessageId || providerResult?.MessageId || null }
   } catch {
-    // AWS already accepted the message. Keep the reservation charged and
+    // The provider already accepted the message. Keep the reservation charged and
     // unresolved rather than refunding/retrying and risking a duplicate SMS.
     return { sent: true, acceptedUnconfirmed: true, deliveryId: reservation.deliveryId, segmentCount }
   }

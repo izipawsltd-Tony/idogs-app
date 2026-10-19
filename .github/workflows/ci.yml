@@ -37,6 +37,7 @@ jobs:
       - name: Unit tests
         run: |
           npm test
+          node scripts/test-sms-addon-v1.mjs
           node --test scripts/test-legacy-history-recovery.mjs
 
       - name: Production build

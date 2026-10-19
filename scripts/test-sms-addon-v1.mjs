@@ -8,6 +8,7 @@ import {
   SMS_MONTHLY_CREDITS,
 } from '../api/_lib/sms-addon.js'
 import { createSmsAddonCheckoutHandler, createSmsAddonRemoveHandler } from '../api/_lib/sms-checkout-handler.js'
+import { SmsProviderError } from '../api/_lib/clicksend-sms.js'
 
 let passed = 0
 async function check(name, fn) {
@@ -146,7 +147,7 @@ await check('provider failure refunds reserved credits', async () => {
   const r=await sendSmsWithQuota({
     db,tenantId:'u1',phone:'0412345678',message:'iDogs: Bella worming due 25 Aug 2026.',
     dogId:'d1',eventType:'worming',sourceRecordId:'w1',milestoneKey:'2026-08-25',
-    idempotencyKey:'provider-fail',now:NOW,sendProvider:async()=>{throw new Error('provider')},
+    idempotencyKey:'provider-fail',now:NOW,sendProvider:async()=>{throw new SmsProviderError('SMS_PROVIDER_REJECTED', true)},
   })
   assert.equal(r.sent,false)
   assert.equal(r.reason,'PROVIDER_FAILED')
@@ -158,7 +159,7 @@ await check('accepted provider send is charged once and marked sent', async () =
   const args={
     db,tenantId:'u1',phone:'0412345678',message:'iDogs: Bella vaccination due 25 Aug 2026.',
     dogId:'d1',eventType:'vaccination',sourceRecordId:'v1',milestoneKey:'2026-08-25',
-    idempotencyKey:'provider-ok',now:NOW,sendProvider:async()=>{sends++;return {MessageId:'m1'}},
+    idempotencyKey:'provider-ok',now:NOW,sendProvider:async(phone,message,context)=>{sends++;assert.match(context.deliveryId,/^[a-f0-9]{64}$/);return {providerMessageId:'m1'}},
   }
   assert.equal((await sendSmsWithQuota(args)).sent,true)
   const retry=await sendSmsWithQuota(args)
@@ -166,6 +167,21 @@ await check('accepted provider send is charged once and marked sent', async () =
   assert.equal(retry.reason,'DUPLICATE')
   assert.equal(sends,1)
   assert.equal(db.store.users.u1.smsCreditsUsed,1)
+  const delivery=Object.values(db.store.smsDeliveries)[0]
+  assert.equal(delivery.provider,'clicksend')
+  assert.equal(delivery.providerMessageId,'m1')
+})
+await check('ambiguous ClickSend send retains reservation and blocks retry', async () => {
+  const db=new FakeDb({users:{u1:activeProfile(0)}})
+  let sends=0
+  const args={db,tenantId:'u1',phone:'0412345678',message:'iDogs QA',eventType:'worming',
+    sourceRecordId:'w1',milestoneKey:'2026-08-25',idempotencyKey:'timeout',now:NOW,
+    sendProvider:async()=>{sends++;throw new SmsProviderError('SMS_DELIVERY_UNKNOWN')}}
+  assert.equal((await sendSmsWithQuota(args)).reason,'SMS_DELIVERY_UNKNOWN')
+  assert.equal((await sendSmsWithQuota(args)).reason,'DUPLICATE')
+  assert.equal(sends,1)
+  assert.equal(db.store.users.u1.smsCreditsUsed,1)
+  assert.equal(Object.values(db.store.smsDeliveries)[0].status,'reserved')
 })
 await check('manual failure refund never drops below zero', async () => {
   const db=new FakeDb({
