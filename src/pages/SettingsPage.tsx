@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
 import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
-import type { ToastMessage } from '../types'
+import { REMINDER_TYPES } from '../components/ui/ReminderForm'
+import type { Reminder, ToastMessage } from '../types'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -47,6 +48,29 @@ export default function SettingsPage({ toast }: Props) {
     } finally {
       setSaving(null)
     }
+  }
+
+  async function setEmailSetting(field: 'emailReminders' | 'manualReminderEmails', enabled: boolean) {
+    if (!user || saving) return
+    setSaving(field)
+    try {
+      await updateUserProfile(user.uid, { [field]: enabled })
+      await refreshProfile()
+      toast(enabled ? 'Email reminders enabled' : 'Email reminders disabled')
+    } catch { toast('Failed to save setting', 'error') }
+    finally { setSaving(null) }
+  }
+
+  async function setCareEmailType(type: Reminder['type'], enabled: boolean) {
+    if (!user || saving) return
+    setSaving(`careEmailTypes.${type}`)
+    try {
+      // Merge one nested key so concurrent edits to another category survive.
+      await updateUserProfile(user.uid, { careEmailTypes: { [type]: enabled } })
+      await refreshProfile()
+      toast('Email preference saved')
+    } catch { toast('Failed to save setting', 'error') }
+    finally { setSaving(null) }
   }
 
   async function setReminderDays(days: number) {
@@ -329,17 +353,38 @@ export default function SettingsPage({ toast }: Props) {
           {/* Email reminders toggle */}
           <ToggleRow
             icon="✉️" label="Email Reminders"
-            description="Receive email notifications for upcoming vaccine and worming due dates."
+            description="Receive scheduled emails. Turning this off also pauses existing scheduled SMS; saved in-app reminders remain."
             enabled={emailReminders}
-            saving={saving === 'emailReminders'}
-            onToggle={() => toggle('emailReminders', !emailReminders, 'Email reminders enabled', 'Email reminders disabled')}
+            saving={saving !== null}
+            onToggle={() => setEmailSetting('emailReminders', !emailReminders)}
           />
+
+          <ToggleRow
+            icon="📋" label="Manual reminder emails"
+            description="Email reminders you add yourself. Off by default. Uses each reminder’s lead time; checked once daily, not at a chosen hour."
+            enabled={profile?.manualReminderEmails === true}
+            saving={saving !== null || !emailReminders}
+            onToggle={() => setEmailSetting('manualReminderEmails', profile?.manualReminderEmails !== true)}
+          />
+          <div style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Manual reminder email types</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {REMINDER_TYPES.map(({ value, label }) => <ToggleRow key={value}
+                icon="" label={label}
+                description="Emails for manually added reminders."
+                enabled={profile?.careEmailTypes?.[value] !== false}
+                saving={saving !== null || !emailReminders}
+                onToggle={() => setCareEmailType(value, profile?.careEmailTypes?.[value] === false)}
+              />)}
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--mid)', marginTop: 12 }}>These type choices apply to manually added reminder emails. Recorded next-dose reminders use the main Email Reminders setting. In-app reminders stay visible. iPhone push notifications are not enabled by these settings. Once-only manual emails can catch up up to 14 days after the due date; daily manual emails stop after it.</p>
+          </div>
 
           {/* Reminder lead time */}
           {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>⏰ Reminder lead time</div>
-              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How many days before due date to send reminders.</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>Default lead time for recorded health reminders. Manual reminders use their own lead time.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 {REMINDER_OPTIONS.map(days => (
                   <button
@@ -480,6 +525,9 @@ function ToggleRow({ icon, label, description, enabled, saving, onToggle }: {
       </div>
       <button
         onClick={onToggle}
+        role="switch"
+        aria-checked={enabled}
+        aria-label={label}
         disabled={saving}
         style={{
           width: 48, height: 26, borderRadius: 13, flexShrink: 0,
