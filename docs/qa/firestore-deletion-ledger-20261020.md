@@ -1,82 +1,82 @@
-# Firestore deletion ledger, backup/retention and Preview QA
+# Firestore deletion ledger, retention/backup and Preview QA
 
-Review candidate, 20 October 2026 (Australia/Adelaide). No production deletion, subscription mutation or Rules/Storage/env change is enabled.
+20 October 2026 — review candidate, not production activation.
 
-## Implemented Firestore progress
+## Current result
 
-`api/_lib/account-deletion-ledger.js` stores request progress and per-operation receipts in Firestore transactions. The factory rejects any project other than `demo-idogs-account-deletion` and any Firestore host outside the expected loopback emulator. It is not imported by a route or scheduler.
+| Area | Evidence | Outcome |
+| --- | --- | --- |
+| Durable progress | 23 real Firestore/Auth emulator integration cases; request revision, receipts, leases/epochs and restart after Auth deletion | PASS in emulator only |
+| Global write freeze | Valid current-owner client writes still succeed with a frozen fence under repository Rules; direct Admin SDK writes bypass cooperative guards | NOT READY; permanent processing remains disabled |
+| Production backup/retention | GET-only audit could not obtain a verified Firebase identity/credential combination from the existing Vercel connection | UNVERIFIED; no settings read or inferred as enabled/disabled |
+| Public policy UI | Exact-source protected Preview rendered Privacy/Terms; reciprocal navigation returns to draft notice after smooth scrolling | PASS for tested desktop views |
+| Authenticated Settings | Secure sign-in verified; open → GET “No request” → Refresh → expand billing/retention → Close | PASS for these read-only checks on source 2a4c614… |
+| Residual privacy copy | Removed unverified residency/compliance promises in Settings, Signup, Dog Detail and public passport; shared neutral processing summary | 246 app tests and local build PASS; final exact-source cloud evidence below |
 
-- Request revision, immutable manifest fingerprint, current freeze state and worker lease/epoch are checked in transactions.
-- Manifest digest covers operation identities, evidence and policy/billing approvals. Those fixture approvals are synthetic, not actual legal approval.
-- Deletes require the approved manifest entry, exact nanosecond document version, current owner and no pending transfer. Linked private documents are processed before their owner dog.
-- Record deletion and its minimal receipt commit atomically. Receipts contain operation type/status/epoch/time, not document bodies, passwords, tokens or private messages.
-- A new worker can resume persisted receipts after an expired lease; old workers fail the epoch/lease check. Cancellation before claim prevents processing.
-- Completion requires all cleanup receipts and a persisted successful Auth outcome. Lost completion after Auth deletion is retried as `already_absent`; a request is never marked completed from request submission alone.
-- The fence remains after completion as a synthetic restore/tombstone precaution. This does not establish an actual production backup restore process.
+No live deletion request, subscription mutation, Rules/Storage/env change, production deploy, TestFlight upload, merge or App Store submission occurred.
 
-## Write freeze finding
+## Durable Firestore implementation
 
-The cooperative Admin SDK write helper checks the same Firestore fence transaction. A direct Admin SDK write can bypass that helper; this is explicitly demonstrated with synthetic fixtures. Existing repository Firestore Rules do not reference this deletion fence. A dedicated emulator case verifies whether an authenticated current owner can still edit their synthetic dog while a fence exists. This is a coverage finding, not a claimed live enforcement guarantee.
+`api/_lib/account-deletion-ledger.js` is an emulator-only candidate with no API route/scheduler caller. Before any RPC it rejects a project other than `demo-idogs-account-deletion`, a non-loopback Firestore host, a non-synthetic UID and invalid worker/revision arguments.
 
-Do not enable permanent deletion until every client/Storage/Admin SDK mutation path, uploads/grants, transfer/claim, scheduled reminders and provider dispatch is covered. Disabling Auth or revoking refresh tokens alone is not proof of a freeze. Active deployed Rules were not retrieved by the metadata audit, and repository `storage.rules` remains an emulator-only fixture; neither root Rules file was modified or deployed.
+Transactions validate request revision/status, immutable manifest digest, freeze state, worker ID/epoch and lease. Deletion requires the exact approved manifest entry, nanosecond document version, current owner and no pending transfer. Linked private records must precede their owning dog. Record deletion and its minimal operation receipt commit atomically. Receipts exclude document bodies, passwords, tokens and private messages.
 
-## Production retention/backup verification attempt
+A new worker resumes persisted receipts after lease expiry; previous workers are fenced out. Cancellation committed before claim blocks cleanup. Completion requires every operation receipt and persisted Auth success. The coordinator test deletes actual emulator Auth after Firestore cleanup, simulates loss of the completion receipt, then resumes through a fresh worker and persists `already_absent` before completion. A request receipt alone cannot become completion.
 
-A GET-only GitHub Actions audit uses the existing Vercel connection to inspect the exact production project's configuration in memory and attempts Google metadata reads only after strict Firebase identity validation. No raw config, credential, private key, token or env file is logged or uploaded.
+### New server-only paths
 
-At source `c4735f0228aa4721250d805db8a30f2e80759a73`, run `39329550256`, metadata job `118323987015`, the API did not supply a verified production Firebase identity/bucket/private key combination. The guard stopped before any Google metadata call. This may reflect omitted/non-readable values or connection scope; it is NOT evidence that the working production runtime is misconfigured. The audit job running successfully does not mean backup/retention verification passed.
+| Path | Purpose | Retention |
+| --- | --- | --- |
+| `accountDeletionManifests/{uid}/revisions/{revision}` | Reviewed operation identities, versions and evidence references | Unapproved; no TTL configured |
+| `accountDeletionFences/{uid}` | Cooperative write guard and restore tombstone | Restore/reapply window must be verified before disposal |
+| `accountDeletionProgress/{uid}/revisions/{revision}` | Lease, epoch, fingerprint, Auth outcome and completion | Required during all retries; post-completion schedule unapproved |
+| `.../operations/{operationHash}` | Minimal idempotency receipts | Must cover retry/restore windows; exact duration unverified |
 
-Unverified: database region/PITR/history window, backup schedules/expiry/restore viability, bucket location/versioning/soft deletion/lifecycle/retention, active Rules and all external provider/contractual retention. No backup was created, restored, enabled, disabled or deleted. No IAM scope was broadened.
+Fixture approval/evidence values are synthetic, not actual legal or backup approval. Workflow artifact retention and worker lease duration are not personal-data retention policies.
 
-A direct Google Cloud console attempt returned “Site Unavailable” in this browser. Firebase's official plugin was discovered but was not installed/connected at this checkpoint. The next access step is an owner-authorized Firebase connection to project `idogs-app`, used for read-only configuration review. Never ask the owner to paste service-account keys or tokens.
+## Write-freeze finding and release block
 
-## Preview observations
+The cooperative Admin SDK write helper checks the same fence transaction. It does not automatically protect existing mutation APIs. A direct Admin SDK bypass is demonstrated by a synthetic test. A valid active-dog fixture allows a baseline client update with an open fence, then another update with a frozen fence under the same repository Rules. Therefore a fence document alone does not protect against current-owner writes. Client reads of the server-only ledger/manifest/fence are denied in the emulator.
 
-Earlier exact-source Preview `3e64bda540314dbc08b4a3171396913773f0f72c` became accessible through the existing Vercel connection, HTTP 200; public Privacy and Terms rendered in the cloud browser. Draft notices, shared deletion/billing/retention wording and both cross-links were observed. Desktop viewport/page width both 1357 px; no horizontal overflow observed on Terms. This is desktop browser evidence, not physical iPhone evidence.
+Before enabling deletion, cover direct client Firestore/Storage writes, Admin SDK APIs, uploads/grants, transfer/claim, scheduled reminders/provider dispatch and restore/reapply behavior. Disabling Auth or revoking refresh tokens alone is not proof of a freeze. Active deployed Rules were not retrieved; repository Rules evidence is not a claim of exact live configuration. Neither root Rules file was modified or deployed. The existing repository Storage Rules fixture must not be applied as live policy.
 
-Found navigation defect: Privacy/Terms kept the previous page's scroll position, potentially skipping the draft notice. Both legal pages now reset scroll on mount. No legal clause, price, auth or subscription behavior was changed by this fix. Final Preview retest is recorded below when complete.
+## Production retention/backup access attempt
 
-Navigating to `/app/settings` redirected to `/login?next=%2Fapp%2Fsettings`. There is no authenticated iDogs session in this browser, so Settings/deletion UI end-to-end QA requires secure sign-in. No real deletion request or password reauthentication was attempted.
+The audit is GET-only. It accesses the exact Vercel production project `prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo` in team `team_oZF1Z0BUEceb9fAXdmFV1Saz`, selects only the existing four Firebase config variables in memory and requires an exact verified Firebase project/bucket before any Google metadata request. No raw config, credential, key, token or env file is logged or uploaded.
 
-## Validation checkpoint (superseded by final evidence below)
+At `c4735f0228aa4721250d805db8a30f2e80759a73`, run `39329550256`, metadata job `118323987015`, the returned config did not supply a verifiable production Firebase identity/bucket/private-key combination. The guard stopped before Google requests. Omitted/non-readable values or connection scope can cause this; it is NOT evidence that the working production runtime is misconfigured. A successful audit job means the script executed, not that backup or retention verification passed.
 
-- Local: 40 Node request/inventory/processor checks PASS; 245 app tests PASS; TypeScript/Vite production build PASS (existing bundle-size warning).
-- Firestore/Auth emulator: run `39329436045`, ledger job `118323598076`, 21 integration cases PASS, including new coordinator recovery after Auth succeeds but completion receipt is lost.
-- The additional client Rules isolation/freeze-gap cases and latest exact-source CI/Preview results are pending at this checkpoint. Do not infer their result from earlier runs.
-- No new TestFlight upload, PR merge, public policy publication or App Store submission.
+Still unverified: database location/PITR/version history, backup schedules/expiry/restore viability, bucket location/versioning/soft deletion/lifecycle/retention, active Rules, operator exports and external provider contractual retention. No backup was created, restored, enabled, disabled or deleted; no IAM was broadened.
 
-## New server-only data and retention decisions
+The Google Cloud console returned “Site Unavailable” in this browser. The official Firebase plugin was discovered and suggested; connection remains unconfirmed. Owner-authorised Firebase access to project `idogs-app` is the remaining read-only configuration gate. Do not request service-account keys or tokens in chat.
 
-| Candidate collection | Purpose | Data minimisation | Retention status |
-| --- | --- | --- | --- |
-| `accountDeletionManifests/{uid}/revisions/{revision}` | Immutable reviewed work inventory | Record/object identities, versions and approved evidence references; no source document bodies | Duration and restricted archival/disposal policy unapproved; no TTL enabled |
-| `accountDeletionFences/{uid}` | Block cooperating writes and prevent accidental restoration | UID/revision and freeze state | Restore/reapply window must be known before removing a fence; not an indefinite legal-retention promise |
-| `accountDeletionProgress/{uid}/revisions/{revision}` | Durable lease, fencing epoch and completion state | Worker ID, epoch, deadline, fingerprint, Auth outcome/time | Required throughout processing/retry; post-completion schedule requires approval |
-| `.../operations/{operationHash}` | Idempotent per-operation receipts | Operation type, outcome, epoch and completion time | Must not expire while a job can resume or a backup can restore deleted data; exact schedule remains unverified |
+## Exact-source verification
 
-These paths supplement the older static collection register. A Firestore TTL policy is not configured or modified by this candidate. Provider/business/legal retention and backup expiry are separate from workflow-artifact retention (seven days) and worker lease duration (30 seconds).
+Source `2a4c614127964885fd97dd7a7854fe48bc601ed7`:
 
+- Push CI `39330233776`: SUCCESS; PR CI `39330242000`: SUCCESS.
+- Deletion run `39330233644`, ledger job `118326257224`: 40 unit/safety tests + 23 Firestore/Auth emulator cases PASS; zero failures.
+- Protected Preview `dpl_AMjhRuxUKhC8vKnr3FsofNm7CAUF`: READY at exact source SHA.
+- https://idogs-app-staging-y7tgy0f0q-izipawsltd-tonys-projects.vercel.app
+- Public browser checks: Privacy HTTP 200; both cross-links exercised; each destination heading at Y=104 px after existing smooth scrolling settled; viewport and page width both 1357 px. Draft notices visible. No physical iPhone claim.
+- Secure sign-in completed and a fresh Settings page positively identified the signed-in account. No credential values were read or recorded.
+- Account deletion UI: “No request”; password empty, confirmation unchecked, submit disabled. Refresh temporarily removed old controls while checking, then returned “No request”. Billing/retention disclosure opened; Close returned to the initial button. No POST request or account deletion confirmation was performed.
 
-## Final exact-source validation
+During authenticated QA, Settings still asserted Asia-Pacific residency/Privacy Act compliance. Source review found matching unsupported assertions in Signup, Dog Detail and public passport. Candidate `ace98516c813b42df057d1ab0226dfcf42566aeb` replaces these with `DATA_PROCESSING_SUMMARY`. It changes copy only, not signup acceptance state, auth, billing or deletion behavior. A regression checks these surfaces for the old assertions. Local: 246 app tests PASS; TypeScript/Vite build PASS (existing bundle-size warning). Backend ledger/processor files are unchanged from the emulator-verified source. Final candidate CI/Preview observations will be appended when complete.
 
-Candidate: `2a4c614127964885fd97dd7a7854fe48bc601ed7`.
+## Remaining gates
 
-- Push CI `39330233776`: SUCCESS. PR CI `39330242000`: SUCCESS.
-- Deletion verification run `39330233644`: SUCCESS as an execution run; ledger job `118326257224` reports 40 unit/safety tests and 23 Firestore/Auth integration tests PASS, zero failures. Metadata execution success does NOT establish verified backup settings.
-- The client isolation test passed. The valid active-dog baseline write succeeded with an open fence AND with a frozen fence, proving this repository Rules candidate has no deletion write-freeze enforcement. Direct Admin SDK bypass was also demonstrated. No assertion that global freeze passed.
-- Real emulator Auth was deleted after Firestore cleanup; a fresh worker resumed after a simulated lost completion receipt and persisted `already_absent` before marking completed.
-- Candidate app tests: 245 PASS and TypeScript/Vite build PASS. The legal navigation fix introduces no new dependency or data/subscription side effect.
-- Preview `dpl_AMjhRuxUKhC8vKnr3FsofNm7CAUF`: READY at exact source SHA. URL: https://idogs-app-staging-y7tgy0f0q-izipawsltd-tonys-projects.vercel.app
+- Confirm Firebase connection and read the actual configuration/active Rules. Do not infer retention or backup settings from code defaults.
+- Prepare and verify a scoped global write-freeze implementation before seeking approval to apply production Rules/API changes or enable permanent processing.
+- Confirm record-specific legal/business/provider retention and approved billing behavior before policy effectiveness. This is not solicitor approval or App Store readiness.
 
-### Required owner access and activation boundary
+### Final privacy-copy candidate
 
-1. Add and authorise the official Firebase plugin for read-only review of project `idogs-app` metadata and active Rules. No service-account key/token in chat. Do not expand IAM or enable paid backups without a separate reviewed decision.
-2. Sign in through the secure iDogs Preview login flow to permit Settings UI QA. No destructive account request is needed.
-3. Production freeze changes, live progress processing, retention/public policy and public App Store release remain unapproved. First verify active Rules/config and prepare a scoped candidate covering every write path; never deploy the emulator-only Rules or enable deletion simply because the ledger tests pass.
-
-
-### Final deployed browser retest
-
-At exact-source Preview above: Privacy GET returned HTTP 200. Both Privacy → Terms and Terms → Privacy cross-links were exercised in the cloud browser. After the existing smooth scrolling settles, each destination heading was observed at viewport Y=104 px, with the draft notice at the top. Page width and viewport width were both 1357 px; no horizontal overflow. Public desktop policy/navigation QA PASS for these checks only. No physical iPhone or authenticated Settings PASS is inferred.
-
-The latest `/app/settings` navigation again redirected to the app login page. Secure sign-in is the remaining UI access gate. The Firebase plugin was suggested but has not been confirmed connected; retention/backup remains unverified.
+- Exact source: `ace98516c813b42df057d1ab0226dfcf42566aeb`.
+- Push CI `39332071668`, job `118332449864`, and PR CI `39332076661`: SUCCESS. Cloud logs explicitly report 246 app tests and 40 Node safety checks PASS; typecheck/build successful.
+- Protected staging Preview `dpl_2oJxFEkjiumHFk7AHZU54WLPLaFd`: READY at exact source SHA.
+- https://idogs-app-staging-q202xnod5-izipawsltd-tonys-projects.vercel.app
+- Public Signup HTTP 200 and rendered browser view show the neutral shared processing summary both in the information box and agreement label; no old residency/compliance assertion, no account created or agreement ticked. Viewport/page width both 1357 px. Privacy and Terms headings and draft notices verified in the same final deployment.
+- Authenticated Settings behavior was verified on 2a4c614… as recorded above. The final Settings change is copy-only; the new summary also renders in existing Settings component regressions. No claim of a fresh authenticated session on the new deployment hostname.
+- Exact GitHub comparison from 2a4c614… to ace985… contains only this evidence document, shared policy copy, policy regression and four UI pages; no API, ledger, processor or Rules changes. Thus the 23-case emulator evidence applies to unchanged backend code, rather than claiming a new emulator run on the copy-only commit.
+- Remaining configuration access gate: Firebase connection is not confirmed. Global freeze and backup/retention are not marked PASS. See ../release/deletion-write-freeze-scope-20261020.md for the concrete mutation coverage required before production activation.
