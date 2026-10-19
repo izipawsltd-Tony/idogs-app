@@ -24,3 +24,18 @@ This proves reference behavior with deterministic memory adapters, not Firestore
 Finish the live store/subcollection/media/backup inventory and record-specific retention decisions. Approve billing behavior and verify provider account mapping/renewal races. A production implementation needs a durable transaction adapter, inventory fingerprint validation, leases/fencing across all mutation paths, exact generation preconditions, backup restore/reapply controls, completion delivery and device cache handling. No real user QA, external messages, Rules/Storage/env changes or live Stripe calls are authorized by these tests.
 
 This candidate does not establish App Store account-deletion readiness or legal approval. Build 34 is still the latest verified TestFlight binary; this change does not create a new iPhone runtime feature.
+
+## Exact-source cloud evidence
+
+Runtime/source candidate: `3e64bda540314dbc08b4a3171396913773f0f72c`.
+
+- Push CI run `39256986528`, job `118074648660`: SUCCESS. All typecheck, unit/server, account deletion safety, native environment guard and production build steps succeeded. Job log explicitly reports `tests 40`, `pass 40`, `fail 0`.
+- PR CI run `39256991450`: SUCCESS for the same head SHA.
+- Protected staging Preview `dpl_GzC9vWEgTmY2qpNAMtXBSWmuhJWA`: READY at the exact candidate SHA, Preview target (not production).
+- Preview URL: https://idogs-app-staging-eqwbzddxp-izipawsltd-tonys-projects.vercel.app
+- Staging project protection verified enabled, `all_except_custom_domains`, before deployment. No alias promotion or protection weakening.
+- Authenticated Vercel fetch of `/privacy` failed with `deployment_authentication_required`, HTTP 302 at `/sso-api`; generated share-link access was not accepted. No token/share URL is recorded here. Therefore no deployed browser/UI QA PASS is claimed. Rendered policy/component regressions passed in the 245-test suite.
+- Production read-only recheck: `dpl_Fe5XxYFrDzhw2hNXL7MxLLwHKHkw`, READY, source `8941cff8737140c024f35e8bde115107fa84cc4c`. No production deploy performed.
+- No new TestFlight binary uploaded; latest previously verified binary remains 1.0 (34).
+
+The four-item review phase produced a tested rehearsal, mocked billing, an evidence/gap register and successful CI/Preview build. It did NOT complete a production-capable permanent deletion processor or a live data-retention/legal audit. Those remain blocked by the documented store/provider/write-freeze/retention requirements. Do not describe iOS as App Store core-ready from this evidence.
