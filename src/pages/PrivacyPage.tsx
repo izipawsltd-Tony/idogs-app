@@ -1,7 +1,11 @@
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { PolicyReviewNotice, POLICY_REVIEW_VERSION, DeletionPolicyDraft, BillingPolicyDraft, RetentionPolicyDraft, InternationalProcessingDraft, AIScanningDisclosure } from '../components/legal/PolicyReview'
 
 export default function PrivacyPage() {
+  useEffect(() => {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') window.scrollTo(0, 0)
+  }, [])
   const lastUpdated = POLICY_REVIEW_VERSION
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
