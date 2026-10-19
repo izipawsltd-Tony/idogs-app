@@ -1,0 +1,24 @@
+name: Approved deletion backend production smoke
+
+on:
+  push:
+    branches: [fix/android-v20-qa-blockers]
+    paths:
+      - scripts/qa/verify-deletion-production.mjs
+      - .github/workflows/deletion-production-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify approved backend with a synthetic request and cancellation
+        run: node scripts/qa/verify-deletion-production.mjs
