@@ -11,7 +11,7 @@ export const ACCOUNT_QUERIES = {
   dogPrivateAccess: ['ownerId', 'ownerUid'], passportReservations: ['tenantId', 'uid'],
   litterPuppyOperations: ['tenantId', 'uid'], litterQuotaCredits: ['tenantId', 'userId'],
   litterQuotaLedger: ['tenantId', 'userId'], mediaUploadGrants: ['uid', 'userId', 'tenantId'],
-  mediaUploadQuotas: ['uid', 'userId'], smsDeliveries: ['tenantId'], auditLogs: ['tenantId', 'userId'],
+  mediaUploadQuotas: ['uid', 'userId'], smsDeliveries: ['tenantId'], reminderEmailDeliveries: ['tenantId'], auditLogs: ['tenantId', 'userId'],
   supportConversations: ['ownerUid'], supportMessages: ['senderUid'], supportFaqFeedback: ['ownerUid'],
 }
 const DOG_COLLECTIONS = ['vaccineRecords', 'wormingRecords', 'healthTests', 'reminders', 'activityNotes',
