@@ -2,8 +2,9 @@ import { before, after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { initializeApp, deleteApp } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
+import { getAuth } from 'firebase-admin/auth'
 import { createDeletionLedger, manifestFingerprint, snapshotVersion } from '../api/_lib/account-deletion-ledger.js'
-import { operationKey } from './qa/deletion/processor.mjs'
+import { operationKey, runDeletionRehearsal } from './qa/deletion/processor.mjs'
 const projectId = 'demo-idogs-account-deletion'
 if (process.env.GCLOUD_PROJECT !== projectId || !/^(127\.0\.0\.1|localhost):8080$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')) throw new Error('emulator_only')
 let app, db, n = 0
@@ -97,4 +98,25 @@ test('completion cannot hide outstanding operations or failed Auth', async () =>
   await assert.rejects(f.worker.recordAuthOutcome('deleted'),/cleanup_incomplete/)
   await assert.rejects(f.worker.recordAuthOutcome('failed'),/auth_not_confirmed/)
   assert.equal((await f.request.get()).data().status,'processing')
+})
+
+test('coordinator resumes Firestore receipts and real emulator Auth after a lost completion receipt', async () => {
+  const f=await seed(), auth=getAuth(app)
+  await auth.createUser({uid:f.uid, email:`${f.uid}@example.invalid`, password:'Synthetic-only-123!'})
+  const makeAuth=()=>({kind:'synthetic-auth-emulator', async deleteExact(uid) {
+    try {await auth.deleteUser(uid);return 'deleted'} catch(error) {if(error.code==='auth/user-not-found')return 'already_absent';throw error}
+  }})
+  const billing={kind:'synthetic-memory',async listVerifiedSubscriptions(){return []}}
+  const objects={kind:'synthetic-memory'}
+  const complete=f.worker.complete
+  let lost=false
+  f.worker.complete=async (...args)=>{if(!lost){lost=true;throw new Error('completion_receipt_lost')}return complete(...args)}
+  await assert.rejects(runDeletionRehearsal({uid:f.uid,revision:1,store:f.worker,billing,objects,auth:makeAuth()}),/completion_receipt_lost/)
+  assert.equal((await f.request.get()).data().status,'processing')
+  await assert.rejects(auth.getUser(f.uid),error=>error.code==='auth/user-not-found')
+  // New adapter instance and worker: progress is read from Firestore, not memory.
+  f.advance();const restarted=f.make('restarted')
+  await runDeletionRehearsal({uid:f.uid,revision:1,store:restarted,billing,objects,auth:makeAuth()})
+  assert.equal((await f.request.get()).data().status,'completed')
+  assert.equal((await f.progress.get()).data().authOutcome,'already_absent')
 })
