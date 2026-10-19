@@ -1,119 +1,54 @@
-# iDogs iOS: PR review and App Store release preparation
+# iDogs iOS — current PR and App Store readiness
 
-Prepared 19 October 2026. Preparation only; no merge, public submission, release, account deletion or App Store metadata write has been performed.
+Updated 19 October 2026. This replaces the earlier Build 20 review as the current summary. No PR merge, App Store submission/release, public policy publication or permanent account deletion is performed by this pack.
 
-## Decision
+## Current candidate
 
-Build 20 is usable in Internal TestFlight and has passed the agreed core checklist. Public submission is **not yet ready**. Core functional QA and App Store submission readiness are different milestones.
+Source/runtime: 9c642e07a396e35233944dc8160a2575442550ae, marketing version 1.0, Build 34. See ../qa/ios-testflight-build34-20261019.md for final delivery states, runs, artifact and limitations. A version number alone is not delivery or physical-device QA evidence.
 
-Recommended path: close the deletion/privacy gaps, settle the native billing approach, finish the store assets, align the release version and verify an integrated release candidate. Then request separate exact-SHA merge and App Review submission approvals. Select manual release before submission so an approval cannot publish the app automatically.
+The candidate integrates current production source 8941cff8737140c024f35e8bde115107fa84cc4c with native Settings/auth/document/offline/billing gates, explicit AI consent, safe deletion initiation and current-owner/history isolation. Production remains separate; no mobile branch promotion is implied.
 
-## Verified baseline
+240 Vitest checks and the local TypeScript/Vite build passed. Exact-source CI 39247983761 / 39247987318 and emulator 39247983760 succeeded. Emulator checks cover real Auth/Firestore deletion request persistence/cancellation/isolation, actual ownership Rules, synthetic transfers/claims, frozen history/export and legacy recovery. Provider/email I/O is mocked. No destructive QA against real accounts/dogs.
 
-- Repository: izipawsltd-Tony/idogs-app; PR #25 remains open, draft and unmerged.
-- PR base: fix/android-dog-create-confirmation at af0074918efd60d2c6d5516d840ba665aea146ef. This is a stacked mobile PR, not a PR into the default branch.
-- Reviewed source/evidence head before preparation: 6140e6b0f2802611026f1f244660970a136850c8.
-- Installed candidate runtime: f2d563298b818de78dae9d72e5c9457cce2063b0, marketing version 0.1.0, Build 20.
-- TestFlight run 39173636771 succeeded, including signing, upload, processing VALID, verified assignment to 1 existing internal tester and signed IPA artifact 12153726057.
-- Local candidate: 133 tests, 4 native environment guards, build, 4 isolated component cases and structural checks passed. Both CI jobs on the evidence-only descendant passed.
-- Owner-reported device evidence: Build 17 Settings/edit/save/logout/login passed; Build 20 Billing page opened, QR/public passport passed, Litters/Activity and cold relaunch/session persistence passed. Screenshot IMG_7714 shows native purchases unavailable and an empty invoice history. This does not test an actual unpaid invoice on the device; that case is covered by mocked component regressions. Airplane-mode launch and all account classes have not been fully device-tested.
-- PR has no submitted reviews or review threads at inspection time. Absence of threads is not independent review approval.
+PR #25 remains draft and stacked on fix/android-dog-create-confirmation. Feature-branch integration commits preserve both histories; no force push/rebase/squash or PR merge. Reinspect the intended release base before any owner-approved merge. Do not assume master or this PR base is the deployed web branch.
 
-## Read-only App Store Connect inspection
+## Completed technical increments
 
-Audit run: https://github.com/izipawsltd-Tony/idogs-app/actions/runs/39179856690
+- Settings access, effective plan display, native purchase/portal/invoice gates; StoreKit remains absent.
+- Production API request/status/cancel, recent authentication, explicit confirmation, server-owned idempotency and atomic support task; unsafe client deletion helpers removed.
+- Failed refresh or lost request/cancel response clears stale controls until status reconciliation.
+- Per-document Anthropic scan permission with cancel/manual entry, before transmission.
+- Production HEIC, care reminders, Other type, notification preferences and collapsible category panel integrated for native. These controls do not enable native push.
 
-The audit uses existing configured Apple credentials, GET requests only and emits an allowlisted summary. It never exports review passwords, contacts, tokens or full raw responses.
+Historical device QA remains historical. IMG_7718 confirms the prior native UI reads No request after the backend fix. No agent full physical-iPhone regression of Build 34 is claimed.
 
-| Item | Observed state |
-| --- | --- |
-| App | iDogs; 6823094602; au.com.idogs.app; en-AU |
-| Build 20 | VALID, not expired, usesNonExemptEncryption=false |
-| App information | PREPARE_FOR_SUBMISSION; name present; subtitle absent; privacy policy URL absent |
-| Store version | 1.0; PREPARE_FOR_SUBMISSION |
-| Release setting | AFTER_APPROVAL: change to manual before any submission approval |
-| Selected build | None |
-| Description / keywords / support URL | All absent |
-| Screenshots | No screenshot sets |
-| Review contact / demo account / notes | Review detail absent; none configured |
-| Copyright | Absent |
-| Age-rating declaration | Resource exists; answers and final rating not verified |
-| App Privacy labels / agreements / pricing / territories | Not verified by this audit |
+## Remaining account deletion and policy gate
 
-The store version 1.0 and current binary marketing version 0.1.0 differ. Align them intentionally and upload a matching release candidate. Do not assume Build 20 is selectable for the 1.0 record.
+Permanent deletion is still disabled/incomplete. The read-only inventory reports explicit ownership/storage/provider/billing/retention/write-freeze holds; it is not cleanup authorization. Disabling Auth alone does not invalidate every already-issued Firestore token.
 
-## Submission gaps
+Concrete owner/legal proposals: deletion-fulfilment-owner-review-20261019.md. The proposed seven-calendar-day fulfilment target and cancellation of future renewal before permanent cleanup are not active. The already approved no-mandatory-30-day direction is not being re-requested. Finish safe fulfilment, retries/races, verified freeze, provider/backup coverage and completion receipts after the policy decision; production Rules/Storage and irreversible execution remain separately gated.
 
-### 1. In-app account deletion — confirmed code gap
+Apple permits manual fulfilment in a reasonable period, with an explained timeframe and completion confirmation; it does not require that every cleanup operation be automated. A request that nobody can safely fulfil is not submission readiness.
 
-Account creation is available. Settings has no user-accessible deletion initiation. Apple requires apps with account creation to support initiating deletion inside the app.
+## Privacy and native billing
 
-Existing useAuth.deleteAccount calls deleteUserData before Firebase Auth deletion. The helper queries dogs by tenantId, deletes linked collections by dogId, then deletes dog/profile records. It does not establish a safe current-owner/shared-history boundary, comprehensive Storage cleanup, billing handling or a resumable failure path. Auth deletion can require recent login after the earlier data writes. Do **not** simply connect this helper to a button.
+The in-app AI permission exists, but the published PrivacyPage still contains unverified Asia-Pacific/processor/compliance claims and an outdated automatic 30-day deletion promise. The factual Anthropic addition is drafted in ai-privacy-owner-review.md. Verify processing arrangements, retention and App Privacy answers before owner-approved publication; do not infer legal compliance from code tests.
 
-Required implementation/evidence:
+Native Stripe/web checkout is technically gated. This does not establish App Review acceptance of the existing-web-entitlement model. StoreKit, any applicable companion-service basis, subscription/refund treatment and final reviewer explanation remain review items; no pricing, Stripe or purchase action has been performed here.
 
-1. In-app deletion initiation with explicit confirmation and recent authentication, showing the actual retention/fulfilment policy.
-2. Server-owned request and durable idempotent processing, with a status visible to the requester. A contact-us link alone is not the proposed solution.
-3. Inventory by ownership and data provenance; protect new owners' records, transferred dog identities and other tenants' media. Resolve retention/anonymisation of shared historical records with the owner.
-4. Define subscription cancellation and legally retained records honestly; do not silently charge after promising cancellation.
-5. Synthetic emulator tests for transferred dogs, shared media, partial failure/retry, duplicate requests, reauthentication failure and tenant isolation. Never test deletion on real accounts/dogs.
-6. Policy wording must match the implemented deletion schedule. Legal statements/retention policy require owner confirmation before publication.
+## App Store Connect inventory
 
-### 2. Privacy and AI scanning — confirmed disclosure gap
+GET-only audit run 39246467134 at 2026-10-19T11:41:41.784Z verifies app 6823094602, au.com.idogs.app, en-AU. At audit time Build 29 was newest VALID; five recent builds were sampled, older-build pagination explicitly incomplete.
 
-api/scan.js sends uploaded documents to Anthropic. AIScan starts the request on file selection; the inspected UI has no provider-specific disclosure/explicit consent step before transmission. Documents can contain human contact details. The current PrivacyPage provider list does not mention Anthropic.
+Version 1.0: PREPARE_FOR_SUBMISSION, AFTER_APPROVAL, no selected build. Subtitle/privacy URL, version description/keywords/support/marketing URLs, screenshots, copyright and reviewer information were absent. App Privacy labels, agreements, age-rating answers, pricing/territories and reviewer-login success were not verified. No fields were changed. Set manual release before any future approved submission so App Review approval cannot automatically publish.
 
-Before submission: draft an accurate data-flow disclosure; obtain explicit permission before third-party AI transmission; provide a manual alternative without AI; confirm the account data, images/documents, purchase history and diagnostics declarations against actual server/SDK behavior. Dog veterinary records must not automatically be labelled as human HealthKit data. Do not assert all data stays in Asia-Pacific without verifying every processor.
+Listing and screenshot capture draft: ios-app-store-draft-20261019.md. Actual release-candidate assets must use synthetic/publication-approved data and the supported device-family sizes. Private owner QA screenshots are not marketing assets. Reviewer credentials must stay outside this public repository and logs.
 
-The exact App Privacy answers, privacy policy, support URL, age-rating answers and agreements remain review items. The app already has /privacy and /terms routes, but their presence does not establish accurate disclosure or a completed store form.
+## References rechecked 19 October 2026
 
-### 3. Native billing — technical gate passed, distribution approach unresolved
+- https://developer.apple.com/help/app-review/guideline-reference/5-1-1-account-deletion
+- https://developer.apple.com/app-store/review/guidelines/
+- https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy/
+- https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications
 
-Build 20 hides purchase controls, invoice links and extra-litter checkout on iOS; the native API router blocks external checkout endpoints. StoreKit is not implemented. Existing web entitlements can still be used.
-
-This establishes technical gating, **not** Apple's acceptance of the business model. Review guideline 3.1.3(b) on multiplatform services and the specifically scoped companion-app exception in 3.1.3(f). Do not claim a reader-app exception for iDogs. Decide whether the initial build fits an applicable exception or requires StoreKit. If StoreKit is required, include subscriptions, verified entitlements, restore/manage flows and sandbox QA in the schedule; no purchases or pricing changes are authorized here.
-
-### 4. Store assets and review access — absent in App Store Connect
-
-Draft listing and asset plan: ios-app-store-draft-20261019.md. Actual screenshots must show the release candidate using synthetic or publication-approved data. The screenshots in chat contain owner/account details and are QA evidence, not approved marketing assets.
-
-Configure a dedicated reviewer account securely; test login and representative synthetic records. Never put its password in this public repository or workflow logs. Complete reviewer contact and operational support details through the appropriate secure portal flow. Confirm supported device families and required screenshot sets, including iPad if the binary supports it.
-
-### 5. Integration and release provenance — confirmed branch divergence
-
-Default branch is master, inspected at bd3aa96db1ace02a6fe39407f0575a9dd2cfe9aa. Compared with the mobile baseline, the branches have 121 mobile-side and 35 master-side commits since the common ancestor. This does not establish which branch currently backs web production.
-
-Master-only changes affect breeding rights/compliance and five files: api/export-report.js, src/lib/breedingCompliance.ts, its tests, DogDetailPage and LittersPage.
-
-A git merge-tree simulation (no branch moved, no merge committed) reports one content conflict in LittersPage imports. The combined source must preserve both expanded breeding-compliance imports and native payment-gate helpers. A clean textual merge of DogDetailPage is not a semantic QA PASS.
-
-Merge plan for owner review:
-
-1. Confirm the intended release/web branch and stack; approval to merge #25 into its current base is not approval to deploy master or production.
-2. Prepare an isolated integration candidate preserving the recent compliance changes. No force push/rebase/squash.
-3. Run both mobile and current compliance/privacy regression suites; build and QA the exact integrated candidate.
-4. Produce the matching marketing-version IPA, TestFlight assignment and release evidence.
-5. Seek exact-SHA approval for the appropriate PR(s), then separate App Review submission approval; retain manual public release.
-
-## Estimate — planning ranges, not a release guarantee
-
-| Work | Indicative effort / elapsed time |
-| --- | --- |
-| This review pack and listing draft | Prepared in this session |
-| Deletion flow, AI permission/disclosure, integration and safe regression | Approximately 2–4 focused working days, subject to retention decisions and test results |
-| Screenshots, review login and remaining store fields | Approximately 0.5–1 working day, partly parallel |
-| Matching release build and final device QA | Approximately 0.5 working day if no new defects |
-| Apple review after owner-approved submission | Allow at least 1–2 days; may take longer or require resubmission |
-| Additional StoreKit implementation if required | Approximately 5–10 additional working days including sandbox and entitlement QA |
-
-A public launch in roughly 4–8 calendar days is a planning target only if the current billing approach is acceptable, owner decisions/access arrive promptly and no new blockers occur. If StoreKit is required, use a 2–3 week planning range. Internal TestFlight is available now.
-
-## Sources checked 19 October 2026
-
-- Account deletion: https://developer.apple.com/help/app-review/guideline-reference/5-1-1-account-deletion
-- App Review Guidelines (3.1.3, 4.2, 5.1): https://developer.apple.com/app-store/review/guidelines/
-- App Privacy: https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy/
-- Screenshot specifications: https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications
-- Build/version matching: https://developer.apple.com/help/glossary/version-number/
-- Manual release: https://developer.apple.com/help/app-store-connect/manage-your-apps-availability/select-an-app-store-version-release-option/
-- Review timing: https://developer.apple.com/help/app-review/after-submitting-for-review/review-status
+Public submission and release remain unapproved. This pack does not claim App Store readiness or a guaranteed launch date.

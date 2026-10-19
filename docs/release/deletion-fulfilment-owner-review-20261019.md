@@ -16,9 +16,11 @@ This seven-day target is a proposed service commitment, not a statement that eve
 
 ## Proposed billing disposition requiring owner approval
 
-Before permanent cleanup, establish whether a recurring subscription exists. Resolve its future-charge disposition explicitly, preserving the request and showing a billing hold until resolved. Do not treat account deletion as proof of cancellation or refund. No automatic refund, Stripe change, new payment, or financial-record retention period is authorized by this draft. Any cancellation/refund operation remains separately controlled until the applicable policy and execution scope are approved.
+Proposed rule: for a verified active web subscription, **cancel renewal at the end of the current paid period and verify that no next renewal charge is scheduled before permanent account cleanup**. Deletion itself need not wait until that period ends. Do not create a new charge or automatically promise a refund; assess refund requests separately, including any applicable rights. Preserve financial records pending a verified retention policy rather than deleting the Stripe customer or invoices.
 
-A request may be submitted even when a billing check is unresolved. Do not delete the Auth identity and leave the requester unable to resolve a recurring charge.
+If provider identity/status or cancellation cannot be verified, retain the request and show a billing hold; do not delete Auth and leave the requester unable to resolve a recurring charge. A request may be submitted while this check is unresolved. Give the requester an update within the proposed target rather than holding silently.
+
+Cancelling a deletion request would not restart a subscription already marked not to renew. Explain that consequence before applying cancellation. This is a proposed business rule requiring owner approval, not a change already made. No Stripe operation, refund, charge, customer deletion or financial retention period is authorized by this document alone; implementation and any production execution remain separately controlled.
 
 ## Factual privacy corrections for later review/publication
 

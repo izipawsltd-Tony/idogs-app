@@ -14,11 +14,11 @@ Super Admin → Account Deletions reads the operator queue and a conservative ow
 
 ## Remaining deployment and execution gates
 
-The native production shell calls `https://idogs.com.au/api/account-deletion`. The new backend is not deployed there until an exact-SHA production approval. Before then the app shows service-unavailable instead of falsely confirming a request. A TestFlight upload alone does not deploy backend code.
+The native production shell calls `https://idogs.com.au/api/account-deletion`. Tony approved isolated backend SHA c09f87f58808784334b8521c681dcbb95918f39e; it was deployed and live synthetic request/readback/duplicate/cancel QA passed in run 39204547050. Later production SHA 8941cff8737140c024f35e8bde115107fa84cc4c preserves that backend together with web improvements. Do not redeploy the older snapshot over newer production work. IMG_7718 confirms the native UI can read No request; it does not establish successful submission or deletion completion.
 
 Permanent processing still requires a complete records/media/provider inventory and a verified write freeze across Firestore Rules, Storage Rules and Admin-SDK APIs. Disabling Firebase Auth alone does not immediately stop already-issued Firestore tokens. Rules/Storage configuration and production changes remain owner-gated; none are bundled silently into this candidate. No permanent processor or scheduled deletion job is enabled. This boundary is NOT App Store-ready account deletion and must not be described as such.
 
-## Confirmed defect
+## Historical defect — destructive helpers now removed
 
 `useAuth.deleteAccount` calls `deleteUserData` before Firebase Auth deletion. A recent-login failure can therefore follow partial data deletion. The helper selects dogs by original `tenantId`, despite `currentOwnerId` being the current ownership source, and deletes linked records without checking their current ownership. It has no storage cleanup or durable retry ledger. Settings currently has no deletion initiation path. Do not connect this helper to a button.
 
