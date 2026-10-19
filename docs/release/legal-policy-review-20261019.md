@@ -28,11 +28,11 @@ The wording can be reviewed, but publication is not approved. Copy changes alone
 
 1. **Operator and IP:** verify legal name, ABN, contact mailbox operation, software/brand ownership and licences against records. Existing attribution is not proof of title. No corporate or trademark transfer is proposed.
 2. **Privacy Act scope:** establish entity/related-entity coverage, applicable exceptions and any opt-in. Confirm other obligations rather than claiming blanket exemption or compliance.
-3. **Provider register:** verified countries/regions, subprocessors, contract terms, purposes, personal-data categories, security and deletion/retention controls for each actual processor. Confirm full SDK/cookie/diagnostic inventory. No account contracts/settings were inspected in this review.
+3. **Provider register:** verified countries/regions, subprocessors, contract terms, purposes, personal-data categories, security and deletion/retention controls for each actual processor. Confirm full SDK/cookie/diagnostic inventory. No provider contracts or full processing, training, retention or backup settings were verified in this review. Read-only Vercel deployment metadata is recorded below; it is not a complete residency inventory.
 4. **Retention schedule:** for each collection, uploaded/public file, support/audit/delivery record, financial record, shared history, provider copy and backup, document purpose, legal basis, retention start/end/review, access controls and disposal. Financial obligations of the SaaS operator are not automatically the retention rule for every breeder's hosted data. State/territory and breeder-specific requirements need separate assessment.
 5. **Operational fulfilment:** safe complete inventory, verified write freeze, ownership/generation rechecks, resumable cleanup, legal/billing holds, completion receipt, backup restoration handling and synthetic race/retry/failure evidence. Current permanent processor is disabled. Do not activate a seven-day promise before the operation can meet it.
 6. **Billing:** implement/test prompt renewal cancellation and truthful status, failure escalation before next renewal, any law-required refund process and no automatic reactivation. No real subscription/payment changes are authorised by the draft.
-7. **Publication:** Australian solicitor review of the final text and unresolved clauses; owner approval of final policy/business rules; notice/effective-date plan consistent with existing commitments; exact-SHA deployment approval; App Privacy answers and reviewer materials aligned. No App Store submission or PR merge is approved.
+7. **Publication:** Resolve the documented legal/factual issues and obtain owner approval of final policy/business rules; independent Australian solicitor review of the final text and unresolved clauses is recommended; notice/effective-date plan consistent with existing commitments; exact-SHA deployment approval; App Privacy answers and reviewer materials aligned. No App Store submission or PR merge is approved.
 
 No seven-day deadline, automatic cancellation or completed deletion is represented as currently enabled. Do not simply remove the draft notice and deploy this candidate.
 
@@ -45,3 +45,12 @@ No seven-day deadline, automatic cancellation or completed deletion is represent
 - ASIC company records: https://www.asic.gov.au/for-business-and-companies/companies/company-building-blocks/company-record-keeping
 
 ATO's section-286 page failed to load during this review; no claim of a fresh successful retrieval is made. ASIC's current guidance was accessible. Provider terms, legal entity records and state-specific breeder-retention advice were not verified.
+
+## Exact-source technical evidence
+
+- Policy candidate: 9ad08515f39e80a02ca60dbb1ed2c2b194f7d24f; draft PR #29, base mobile branch. PR #25 is not merged.
+- 245 Vitest checks PASS; TypeScript/Vite build PASS. Exact-source CI 39252751280 and PR CI 39252798673 SUCCESS. Existing bundle-size warning remains.
+- Protected staging-project Preview dpl_B8XH2LTK3eXXUfxvdhH6xfYJKQo2 READY with the exact candidate SHA. Project SSO protection observed as all_except_custom_domains; no custom alias promotion or protection change. Preview: https://idogs-app-staging-ikb6q4kst-izipawsltd-tonys-projects.vercel.app/privacy and /terms.
+- Five new rendered-policy tests verify draft/current distinction, ACL preservation, AI choice and shared deletion/billing/retention sections in all three surfaces. Existing request/status/cancel and stale-response regressions also pass. These tests do not prove legal compliance or operational deletion/cancellation capability.
+- Read-only production metadata: deployment dpl_Fe5XxYFrDzhw2hNXL7MxLLwHKHkw, source 8941cff8737140c024f35e8bde115107fa84cc4c, READY, regions [iad1]. This is a deployment-region observation, not evidence of all storage, backups or subprocessor locations.
+- No API/Rules/Storage/env/Stripe/Resend mutation, real account/dog operation, TestFlight upload, public policy publication, PR merge or App Store submission was performed.
