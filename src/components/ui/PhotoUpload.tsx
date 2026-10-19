@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useAuth } from '../../hooks/useAuth'
-import { isHeicFile } from '../../lib/heic'
+import { prepareImageForUpload } from '../../lib/imageCompression'
 import type { ToastMessage } from '../../types'
 
 interface Props {
@@ -8,49 +8,6 @@ interface Props {
   currentPhoto?: string
   onUpload: (url: string) => void
   toast: (msg: string, type?: ToastMessage['type']) => void
-}
-
-async function resizeImage(file: File | Blob, maxPx = 800): Promise<{ base64: string; mediaType: string }> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-    // Safety net: if neither onload nor onerror fires within 10s (seen
-    // happen with some unsupported formats even beyond HEIC), fail
-    // instead of leaving the spinner stuck forever with no feedback.
-    const timeout = setTimeout(() => {
-      URL.revokeObjectURL(url)
-      reject(new Error('Image could not be read — it may be an unsupported format'))
-    }, 10000)
-    img.onload = () => {
-      clearTimeout(timeout)
-      URL.revokeObjectURL(url)
-      let { width, height } = img
-      if (width > maxPx || height > maxPx) {
-        if (width > height) { height = Math.round(height * maxPx / width); width = maxPx }
-        else { width = Math.round(width * maxPx / height); height = maxPx }
-      }
-      const canvas = document.createElement('canvas')
-      canvas.width = width; canvas.height = height
-      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
-      resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg' })
-    }
-    img.onerror = () => {
-      clearTimeout(timeout)
-      URL.revokeObjectURL(url)
-      reject(new Error('Image could not be read'))
-    }
-    img.src = url
-  })
-}
-
-function readAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve((reader.result as string).split(',')[1])
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
 }
 
 export default function PhotoUpload({ dogId, currentPhoto, onUpload, toast }: Props) {
@@ -63,18 +20,7 @@ export default function PhotoUpload({ dogId, currentPhoto, onUpload, toast }: Pr
 
     setUploading(true)
     try {
-      let base64: string
-      let mediaType: string
-
-      if (isHeicFile(file)) {
-        // Send raw HEIC to server \u2014 sharp handles conversion server-side
-        base64 = await readAsBase64(file)
-        mediaType = file.type || 'image/heic'
-      } else {
-        const resized = await resizeImage(file)
-        base64 = resized.base64
-        mediaType = resized.mediaType
-      }
+      const { base64, mediaType } = await prepareImageForUpload(file)
 
       const idToken = await user.getIdToken()
       const res = await fetch('/api/upload', {

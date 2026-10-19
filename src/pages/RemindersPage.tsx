@@ -1,3 +1,4 @@
+import ReminderForm from '../components/ui/ReminderForm'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -14,6 +15,8 @@ interface Props {
 export default function RemindersPage({ toast }: Props) {
   const { user } = useAuth()
   const [reminders, setReminders] = useState<(Reminder & { dogName: string })[]>([])
+  const [dogs, setDogs] = useState<Dog[]>([])
+  const [showAdd, setShowAdd] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [sending, setSending] = useState(false)
@@ -32,6 +35,8 @@ export default function RemindersPage({ toast }: Props) {
     // switch — stale overdue counts/reminder rows from a former account
     // must never linger into the new one's view.
     setReminders([])
+    setDogs([])
+    setShowAdd(false)
     setLoadError(false)
     loadData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -47,6 +52,7 @@ export default function RemindersPage({ toast }: Props) {
         getDogs(),
       ])
       if (!req.isCurrent()) return
+      setDogs(dogsData.filter(d => (d.currentOwnerId || d.tenantId) === user.uid && d.status !== 'transferred'))
       const dogMap: Record<string, string> = {}
       dogsData.forEach((d: Dog) => { dogMap[d.id] = d.name })
       const enriched = remindersData.map(r => ({
@@ -148,6 +154,7 @@ export default function RemindersPage({ toast }: Props) {
 
   return (
     <div style={{ padding: 32 }}>
+      {showAdd && user && <ReminderForm key={user.uid} dogs={dogs} tenantId={user.uid} onCancel={() => setShowAdd(false)} onSaved={async () => { setShowAdd(false); setFilter('all'); await loadData(); toast('Reminder added ✓') }} />}
       {/* Page header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -159,6 +166,7 @@ export default function RemindersPage({ toast }: Props) {
             {loadError ? 'Counts unavailable — load failed' : `${overdueCount > 0 ? `${overdueCount} overdue · ` : ''}${upcomingCount} due in next 7 days`}
           </p>
         </div>
+        <button className="btn btn-secondary btn-sm" disabled={loadError || dogs.length === 0} onClick={() => setShowAdd(true)}>+ Add reminder</button>
         <button
           className="btn btn-primary btn-sm"
           onClick={handleSendEmail}

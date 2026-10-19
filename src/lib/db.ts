@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, setDoc, Timestamp, deleteField
+  query, where, serverTimestamp, setDoc, Timestamp, deleteField, runTransaction
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage, LitterShowcase, ShowcaseAvailability, ShowcasePuppyEntry } from '../types'
@@ -687,8 +687,37 @@ export async function getWormingRecords(dogId: string): Promise<WormingRecord[]>
 
 export async function addWormingRecord(data: Omit<WormingRecord, 'id' | 'createdAt'>): Promise<string> {
   const fields = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined))
-  const ref = await addDoc(collection(db, 'wormingRecords'), { ...fields, createdAt: serverTimestamp() })
+  const ref = doc(collection(db, 'wormingRecords'))
+  const ownerId = uid()
+  await runTransaction(db, async tx => {
+    const dog = await tx.get(doc(db, 'dogs', data.dogId))
+    if (!ownerId || !dog.exists() || (dog.data().currentOwnerId || dog.data().tenantId) !== ownerId || dog.data().status === 'transferred') throw new Error('Current owner required')
+    tx.set(ref, { ...fields, createdAt: serverTimestamp() })
+    if (data.nextDue) tx.set(doc(db, 'reminders', `worming_${data.dogId}_${ref.id}`), {
+      dogId: data.dogId, tenantId: ownerId, type: 'worming', wormingId: ref.id,
+      title: `Worming: ${data.product}`, dueDate: data.nextDue,
+      notifyDaysBefore: 3, status: 'pending', createdAt: serverTimestamp(),
+    })
+  })
   return ref.id
+}
+
+// Same deterministic ID as the daily scheduler: retries never create duplicates.
+export async function addWormingReminder(dogId: string, wormingId: string, dueDate: string): Promise<void> {
+  const ownerId = uid()
+  await runTransaction(db, async tx => {
+    const dog = await tx.get(doc(db, 'dogs', dogId))
+    const worm = await tx.get(doc(db, 'wormingRecords', wormingId))
+    const ref = doc(db, 'reminders', `worming_${dogId}_${wormingId}`)
+    const existing = await tx.get(ref)
+    if (!ownerId || !dog.exists() || (dog.data().currentOwnerId || dog.data().tenantId) !== ownerId || dog.data().status === 'transferred' || !worm.exists() || worm.data().dogId !== dogId) throw new Error('Current owner required')
+    if (existing.exists()) return
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new Error('Choose a due date')
+    tx.update(doc(db, 'wormingRecords', wormingId), { nextDue: dueDate })
+    tx.set(ref, { dogId, tenantId: ownerId, type: 'worming', wormingId,
+      title: `Worming: ${worm.data().product}`, dueDate, notifyDaysBefore: 3,
+      status: 'pending', createdAt: serverTimestamp() })
+  })
 }
 
 export async function deleteWormingRecord(id: string): Promise<void> {
@@ -834,7 +863,14 @@ export async function getAllPendingReminders(): Promise<Reminder[]> {
 }
 
 export async function addReminder(data: Omit<Reminder, 'id' | 'createdAt'>): Promise<string> {
-  const ref = await addDoc(collection(db, 'reminders'), { ...data, createdAt: serverTimestamp() })
+  const ownerId = uid()
+  if (!ownerId || data.tenantId !== ownerId || !data.title.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(data.dueDate)) throw new Error('Invalid reminder')
+  const ref = doc(collection(db, 'reminders'))
+  await runTransaction(db, async tx => {
+    const dog = await tx.get(doc(db, 'dogs', data.dogId))
+    if (!dog.exists() || (dog.data().currentOwnerId || dog.data().tenantId) !== ownerId || dog.data().status === 'transferred') throw new Error('Current owner required')
+    tx.set(ref, { ...data, tenantId: ownerId, title: data.title.trim(), createdAt: serverTimestamp() })
+  })
   return ref.id
 }
 
