@@ -50,6 +50,7 @@ import SuperAdminAuditLogsPage from '../super-admin/pages/SuperAdminAuditLogsPag
 import SuperAdminAuditLogDetailPage from '../super-admin/pages/SuperAdminAuditLogDetailPage'
 import SuperAdminSettingsPage from '../super-admin/pages/SuperAdminSettingsPage'
 import SuperAdminSupportInboxPage from '../super-admin/pages/SuperAdminSupportInboxPage'
+import SuperAdminAccountDeletionsPage from '../super-admin/pages/SuperAdminAccountDeletionsPage'
 import SuperAdminFaqManagementPage from '../super-admin/pages/SuperAdminFaqManagementPage'
 
 import AppLayout from './layout/AppLayout'
@@ -125,6 +126,7 @@ export default function App() {
           <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
           <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
           <Route path="support-inbox" element={<SuperAdminSupportInboxPage />} />
+          <Route path="account-deletions" element={<SuperAdminAccountDeletionsPage />} />
           <Route path="support-faqs" element={<SuperAdminFaqManagementPage />} />
           <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
           <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />

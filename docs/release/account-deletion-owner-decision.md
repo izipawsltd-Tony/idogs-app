@@ -1,6 +1,22 @@
 # Account deletion: proposed scope for owner review
 
-Status: proposal only; no deletion endpoint, data mutation or legal policy has been enabled.
+Status: superseded by owner-approved v2 direction on 19 October 2026. The request/status/cancellation endpoint and operator review queue are implemented in the candidate. Permanent deletion is not enabled; no real account, billing or Rules changes have been performed.
+
+## Approved v2 direction
+
+Tony approved the revised recommendation in chat: no mandatory 30-day wait; request processing as soon as possible with honest status; explicit recent authentication and confirmation; protection of transferred/pending/shared records; separate cancellation/refund handling; public passport/media/backup inventory; explicit request cancellation rather than cancellation on login. The historical proposal below is retained for context only. Its 30-day default is NOT the approved behavior.
+
+## Concrete implementation boundary
+
+Settings now sends authenticated requests to `/api/account-deletion`, with server-owned idempotent state, five-minute `auth_time` checks and token revocation checking. `GET` returns only the caller's public request status; `POST` accepts request/cancel, never caller-supplied target UID. Transactions prevent duplicate requests and cancellation after processing starts. The old `useAuth.deleteAccount` and `deleteUserData` destructive helpers were removed.
+
+Super Admin → Account Deletions reads the operator queue and a conservative ownership classification. This is not a complete deletion inventory, is labelled incomplete, and has no fabricated completion button. Requests have explicit inventory/billing/write-freeze holds. Current Firestore default-deny protects the request collection without changing Rules.
+
+## Remaining deployment and execution gates
+
+The native production shell calls `https://idogs.com.au/api/account-deletion`. The new backend is not deployed there until an exact-SHA production approval. Before then the app shows service-unavailable instead of falsely confirming a request. A TestFlight upload alone does not deploy backend code.
+
+Permanent processing still requires a complete records/media/provider inventory and a verified write freeze across Firestore Rules, Storage Rules and Admin-SDK APIs. Disabling Firebase Auth alone does not immediately stop already-issued Firestore tokens. Rules/Storage configuration and production changes remain owner-gated; none are bundled silently into this candidate. No permanent processor or scheduled deletion job is enabled. This boundary is NOT App Store-ready account deletion and must not be described as such.
 
 ## Confirmed defect
 

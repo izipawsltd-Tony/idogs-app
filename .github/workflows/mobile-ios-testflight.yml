@@ -60,6 +60,9 @@ jobs:
       - name: Run unit tests
         run: npm test -- --run
 
+      - name: Account deletion safety regression
+        run: node --test scripts/test-account-deletion.mjs
+
       - name: Verify native production environment guard
         run: npm run test:native-release-env
 

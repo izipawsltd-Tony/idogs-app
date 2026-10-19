@@ -42,6 +42,9 @@ jobs:
       - name: Run unit tests
         run: npm test -- --run
 
+      - name: Account deletion safety regression
+        run: node --test scripts/test-account-deletion.mjs
+
       - name: Build web app
         run: npm run build
 

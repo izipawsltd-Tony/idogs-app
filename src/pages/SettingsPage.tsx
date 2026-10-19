@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
 import { BREEDER_ID_CONFIG, suggestBreederIdType, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../lib/utils'
 import { isNativeApp } from '../lib/nativePlatform'
+import AccountDeletion from '../components/ui/AccountDeletion'
 import type { ToastMessage } from '../types'
 
 interface Props {
@@ -465,6 +466,7 @@ export default function SettingsPage({ toast }: Props) {
       </div>
 
       {/* ── DATA & PRIVACY ── */}
+      <AccountDeletion />
       <div className="card">
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Data & Privacy</div>
         <div style={{ fontSize: 13, color: 'var(--green)', background: 'var(--green-light)', padding: '10px 14px', borderRadius: 8, marginBottom: 12 }}>

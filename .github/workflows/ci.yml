@@ -37,6 +37,9 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Account deletion safety regression
+        run: node --test scripts/test-account-deletion.mjs
+
       - name: Native production environment guard regression
         run: npm run test:native-release-env
 
