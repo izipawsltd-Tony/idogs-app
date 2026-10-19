@@ -7,7 +7,7 @@ const report = {checkedAt:new Date().toISOString(), source:process.env.GITHUB_SH
   'No IAM, Rules, Storage, environment, TTL, retention, schedule or provider setting is changed.',
   'External provider contractual retention and operator/offline exports remain unverified.',
 ]}
-let token
+let token, stage = 'vercel_connection'
 const record = (name, value) => {report.evidence[name] = value}
 async function get(url) {
   const response = await fetch(url,{method:'GET',headers:{Authorization:`Bearer ${token}`},redirect:'error',signal:AbortSignal.timeout(15000)})
@@ -24,15 +24,22 @@ try {
     method:'GET', headers:{Authorization:`Bearer ${process.env.VERCEL_TOKEN}`}, redirect:'error', signal:AbortSignal.timeout(15000)
   })
   if (!config.ok) {record('productionConfig',{verified:false,httpStatus:config.status});throw new Error('config_unavailable')}
+  stage = 'firebase_config_shape'
   const raw = await config.json(), env = {}
   const allowed = new Set(['FIREBASE_PROJECT_ID','FIREBASE_STORAGE_BUCKET','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY'])
   for (const item of raw.envs || []) if (allowed.has(item.key) && item.target?.includes('production') && !item.gitBranch) env[item.key]=item.value
   // Only the existing project's four Firebase variables are used in memory.
   // No raw values, env files or tokens are printed, persisted or uploaded.
+  record('productionConfig',{verified:true, selectedVariablesPresent:Object.fromEntries([...allowed].map(key=>[key,typeof env[key]==='string' && env[key].length>0])),
+    projectIdentityMatches:env.FIREBASE_PROJECT_ID==='idogs-app', bucketIdentityMatches:env.FIREBASE_STORAGE_BUCKET==='idogs-app.firebasestorage.app'})
+  stage = 'firebase_project_identity'
   if (env.FIREBASE_PROJECT_ID !== 'idogs-app' || env.FIREBASE_STORAGE_BUCKET !== 'idogs-app.firebasestorage.app') throw new Error('wrong_identity')
   if (!env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) throw new Error('credentials_unavailable')
+  stage = 'firebase_credential_parse'
   const credential=cert({projectId:env.FIREBASE_PROJECT_ID,clientEmail:env.FIREBASE_CLIENT_EMAIL,privateKey:env.FIREBASE_PRIVATE_KEY.replace(/\\n/g,'\n')})
+  stage = 'google_access_token'
   token=(await credential.getAccessToken()).access_token
+  stage = 'metadata'
   const database='https://firestore.googleapis.com/v1/projects/idogs-app/databases/(default)'
   await inspect('firestoreDatabase',database,d=>({locationId:d.locationId,type:d.type,
     pointInTimeRecoveryEnablement:d.pointInTimeRecoveryEnablement || 'UNSPECIFIED',
@@ -60,5 +67,5 @@ try {
         enforcement:'UNVERIFIED_reference_detection_is_not_authorization_proof'})
     } catch {record(label,{verified:false,reason:'rules_metadata_unavailable'})}
   }
-} catch {record('credentials',{verified:false,reason:'existing_credentials_missing_or_wrong_project_or_authentication_failed'})}
+} catch {record('credentials',{verified:false,reason:stage+'_unavailable'})}
 finally {token=undefined;await writeFile('retention-backup-audit.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report))}
