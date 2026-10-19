@@ -473,6 +473,10 @@ export default function SettingsPage({ toast }: Props) {
         <div style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6 }}>
           Your dog profiles, health records, and documents are private by default. Public passport pages only show information you choose to share via QR code.
         </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 12 }}>
+          <Link to="/privacy" style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center' }}>Privacy policy</Link>
+          <Link to="/terms" style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center' }}>Terms of use</Link>
+        </div>
       </div>
     </div>
   )

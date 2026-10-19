@@ -80,6 +80,8 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
   const [result, setResult] = useState<ScanResult | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [currentFile, setCurrentFile] = useState<File | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const scanInFlight = useRef(false)
 
   // Display-only mirror of api/_lib/entitlements.js's remainingScans() —
   // iDogs Pricing v1.1 §2.5/§3.1 (LOCKED). Enforcement happens server-side
@@ -97,7 +99,9 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
     : Math.max(0, 2 - (profile?.freeScansUsed || 0))
 
   async function handleFile(file: File) {
-    if (!file) return
+    if (scanInFlight.current) return
+    scanInFlight.current = true
+    setPendingFile(null)
     setResult(null)
     setScanning(true)
     setCurrentFile(file)
@@ -118,6 +122,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
       if (!user) {
         toast('Please sign in to scan documents', 'error')
         setScanning(false)
+        scanInFlight.current = false
         return
       }
 
@@ -206,6 +211,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
       toast(err instanceof Error ? err.message : 'Scan failed', 'error')
     } finally {
       setScanning(false)
+      scanInFlight.current = false
     }
   }
 
@@ -213,7 +219,12 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
     <div>
       {/* Upload area */}
       <div
-        onClick={() => !scanning && fileRef.current?.click()}
+        role="button"
+        tabIndex={scanning || pendingFile ? -1 : 0}
+        aria-label="Choose a document for AI scanning"
+        aria-disabled={scanning || !!pendingFile}
+        onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && !scanning && !pendingFile) { e.preventDefault(); fileRef.current?.click() } }}
+        onClick={() => !scanning && !pendingFile && fileRef.current?.click()}
         style={{
           border: '2px dashed var(--border)',
           borderRadius: 'var(--radius-lg)',
@@ -233,7 +244,12 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
           accept="image/*,application/pdf"
           capture="environment"
           style={{ display: 'none' }}
-          onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])}
+          disabled={scanning || !!pendingFile}
+          onChange={e => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            if (file && !scanInFlight.current) setPendingFile(file)
+          }}
         />
         {scanning ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
@@ -258,6 +274,22 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
         )}
       </div>
 
+      {pendingFile && (
+        <section aria-labelledby="ai-consent-heading" style={{ padding: 16, marginBottom: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--white)' }}>
+          <h3 id="ai-consent-heading">Allow AI processing of this document?</h3>
+          <p>{pendingFile.name}</p>
+          <p>iDogs will send the selected photo or PDF to Anthropic, a third-party AI provider, to extract dog and health record details. The full document may include personal information, such as names, addresses or vet details.</p>
+          <p>If this dog is selected, iDogs will also save the document to its profile. AI results can be incorrect; check all extracted details before saving records.</p>
+          <p>You can cancel and enter records manually without sending this document for AI processing.</p>
+          <a href="/privacy" target="_blank" rel="noopener noreferrer">iDogs privacy policy</a>
+          {' · '}<a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener noreferrer">Anthropic privacy policy</a>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 16 }}>
+            <button type="button" className="btn btn-primary" onClick={() => handleFile(pendingFile)}>Allow &amp; scan this document</button>
+            <button type="button" className="btn btn-secondary" onClick={() => setPendingFile(null)}>Cancel — enter manually</button>
+          </div>
+        </section>
+      )}
+
       <div style={{ fontSize: 12, color: scanQuotaRemaining > 0 ? 'var(--light)' : 'var(--error)', marginTop: -10, marginBottom: 16, textAlign: 'center' }}>
         {scanQuotaRemaining > 0
           ? isPlus
@@ -275,7 +307,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
       {!scanning && previewType === 'pdf' && (
         <div style={{ marginBottom: 16, padding: '12px 16px', background: 'var(--gold-light)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 24 }}>📄</span>
-          <span style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 500 }}>PDF uploaded — scanning…</span>
+          <span style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 500 }}>PDF selected</span>
         </div>
       )}
 

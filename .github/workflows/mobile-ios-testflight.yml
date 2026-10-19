@@ -25,7 +25,7 @@ jobs:
       APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       IOS_BUNDLE_ID: au.com.idogs.app
-      IOS_MARKETING_VERSION: 0.1.0
+      IOS_MARKETING_VERSION: '1.0'
       IDOGS_MOBILE_APP_ID: au.com.idogs.app
       IDOGS_MOBILE_APP_NAME: iDogs
       VITE_IDOGS_NATIVE_PLATFORM: ios
