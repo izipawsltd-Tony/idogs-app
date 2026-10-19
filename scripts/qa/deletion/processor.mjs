@@ -1,4 +1,4 @@
-// Candidate orchestration, deliberately outside api/. No runtime/provider adapter is installed.
+// Candidate orchestration, deliberately outside api/. No live runtime/provider adapter is installed.
 // The store contract requires atomic request/revision + ownership/version + ledger checks
 // for each document mutation; a lease or disabled Auth alone is NOT a write freeze.
 import { createHash } from 'node:crypto'
@@ -26,7 +26,9 @@ export async function stopRenewal({ request, billing }) {
 export async function runDeletionRehearsal({ uid, revision, store, billing, objects, auth }) {
   // Cannot target a real identity, database, object store or provider through this harness.
   if (!/^qa-deletion-[a-z0-9-]+$/.test(uid) || !Number.isSafeInteger(revision) || revision < 1
-    || [store, billing, objects, auth].some(adapter => adapter?.kind !== 'synthetic-memory')) {
+    || !['synthetic-memory', 'synthetic-firestore'].includes(store?.kind)
+    || !['synthetic-memory', 'synthetic-auth-emulator'].includes(auth?.kind)
+    || [billing, objects].some(adapter => adapter?.kind !== 'synthetic-memory')) {
     throw new Error('synthetic_only')
   }
   const request = await store.readRequest(uid)
@@ -37,8 +39,8 @@ export async function runDeletionRehearsal({ uid, revision, store, billing, obje
   // deletion request never calls a resubscribe operation.
   await stopRenewal({ request: { ...request, uid }, billing })
   const plan = await store.readApprovedPlan(uid, revision)
-  if (!plan?.complete || plan.holds?.length || !plan.policyApproved || !plan.providerRetentionVerified
-    || !plan.backupsVerified || !plan.writeFreezeVerified || !Array.isArray(plan.records)
+  if (!plan?.complete || plan.holds?.length || !(plan.policyApproved || plan.approvals?.policy) || !(plan.providerRetentionVerified || plan.evidence?.retention)
+    || !(plan.backupsVerified || plan.evidence?.backups) || !(plan.writeFreezeVerified || plan.evidence?.writeFreeze) || !Array.isArray(plan.records)
     || !Array.isArray(plan.objects)) throw new Error('plan_not_ready')
   // Store validates the exact revision, freeze, manifest digest and no pending transfer
   // atomically while claiming. Cancellation wins if it committed first.
@@ -62,7 +64,8 @@ export async function runDeletionRehearsal({ uid, revision, store, billing, obje
   }
   await store.assertFence(uid, revision, plan.fingerprint)
   await store.assertCleanupComplete(uid, revision, plan)
-  await auth.deleteExact(uid) // user-not-found on retry is success; other failures propagate.
+  const authOutcome = await auth.deleteExact(uid) // user-not-found on retry is success; other failures propagate.
+  if (store.recordAuthOutcome) await store.recordAuthOutcome(authOutcome)
   // A failure here retries Auth idempotently. Never mark completed before Auth succeeds.
   await store.complete(uid, revision)
   return { status: 'completed' }
