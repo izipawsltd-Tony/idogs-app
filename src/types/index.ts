@@ -470,6 +470,9 @@ export interface ActivityNote {
 }
 
 export interface UserProfile {
+  emailReminders?: boolean
+  manualReminderEmails?: boolean
+  careEmailTypes?: Partial<Record<Reminder['type'], boolean>>
   uid: string
   email: string
   firstName: string

@@ -11,13 +11,17 @@ vi.mock('./firebase', async () => {
   const app = initializeApp({ projectId: 'demo-idogs-offline-qa', apiKey: 'qa-only' }, 'qa-offline-read')
   const db = getFirestore(app)
   await disableNetwork(db)
-  return { db, auth: { currentUser: { uid: 'qa-offline-reader' } } }
+  return { db, auth: { currentUser: { uid: 'qa-offline-reader', getIdToken: async () => 'synthetic-offline-token' } } }
 })
+
+// Isolate history HTTP from the real disabled-network Firestore read.
+vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ dogs: [] }))))
 
 import { db } from './firebase'
 import { getDogs, getAllDocumentsForUser, getAllPendingReminders, getLitters, getAuditLogs, GetDogsError } from './db'
 
 afterAll(async () => {
+  vi.unstubAllGlobals()
   await terminate(db)
   await deleteApp(getApp('qa-offline-read'))
 })

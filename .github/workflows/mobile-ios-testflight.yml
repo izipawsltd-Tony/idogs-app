@@ -268,25 +268,41 @@ jobs:
           ASSIGNED=0
           while IFS= read -r TESTER_ID; do
             [ -n "$TESTER_ID" ] || continue
-            JWT_TOKEN="$(make_jwt)"
-            BODY="$(printf '{"data":[{"type":"builds","id":"%s"}]}' "$BUILD_ID")"
-            curl --fail-with-body --silent --show-error \
-              -X POST \
-              "https://api.appstoreconnect.apple.com/v1/betaTesters/$TESTER_ID/relationships/builds" \
-              -H "Authorization: Bearer $JWT_TOKEN" \
-              -H "Content-Type: application/json" \
-              --data "$BODY" >/dev/null
-
-            JWT_TOKEN="$(make_jwt)"
-            VERIFY="$(
-              curl --fail-with-body --silent --show-error \
+            VERIFIED=0
+            for assignment_attempt in $(seq 1 6); do
+              JWT_TOKEN="$(make_jwt)"
+              VERIFY="$(curl --fail-with-body --silent --show-error \
                 "https://api.appstoreconnect.apple.com/v1/betaTesters/$TESTER_ID/relationships/builds?limit=200" \
-                -H "Authorization: Bearer $JWT_TOKEN"
-            )"
-            printf '%s' "$VERIFY" | BUILD_ID="$BUILD_ID" ruby -rjson -e '
-              ids = JSON.parse(STDIN.read).fetch("data", []).map { |x| x["id"] }
-              abort("Build not individually assigned to tester") unless ids.include?(ENV.fetch("BUILD_ID"))
-            '
+                -H "Authorization: Bearer $JWT_TOKEN")"
+              if printf '%s' "$VERIFY" | BUILD_ID="$BUILD_ID" ruby -rjson -e '
+                ids = JSON.parse(STDIN.read).fetch("data", []).map { |x| x["id"] }
+                exit(ids.include?(ENV.fetch("BUILD_ID")) ? 0 : 1)
+              '; then
+                VERIFIED=1
+                break
+              fi
+              JWT_TOKEN="$(make_jwt)"
+              BODY="$(printf '{"data":[{"type":"builds","id":"%s"}]}' "$BUILD_ID")"
+              RESPONSE_FILE="$RUNNER_TEMP/testflight-assignment.json"
+              HTTP_STATUS="$(curl --silent --show-error --output "$RESPONSE_FILE" --write-out '%{http_code}' \
+                -X POST \
+                "https://api.appstoreconnect.apple.com/v1/betaTesters/$TESTER_ID/relationships/builds" \
+                -H "Authorization: Bearer $JWT_TOKEN" \
+                -H "Content-Type: application/json" --data "$BODY")"
+              if [[ "$HTTP_STATUS" != 2* ]]; then
+                # Emit only provider error codes; never the tester response/body.
+                ruby -rjson -e '
+                  j = JSON.parse(File.read(ARGV[0])) rescue {}
+                  codes = j.fetch("errors", []).map { |e| e["code"].to_s.gsub(/[^A-Z0-9_.-]/, "")[0,100] }
+                  puts "Assignment response HTTP #{ARGV[1]}: #{codes.join(",") }"
+                ' "$RESPONSE_FILE" "$HTTP_STATUS"
+                [[ "$HTTP_STATUS" == 409 || "$HTTP_STATUS" == 429 || "$HTTP_STATUS" == 5* ]] || exit 1
+              fi
+              # A conflict may race automatic assignment or build availability.
+              # Success requires a subsequent GET proving the relationship.
+              sleep 10
+            done
+            test "$VERIFIED" = 1 || { echo "::error::Build assignment not verified after bounded retries"; exit 1; }
             ASSIGNED=$((ASSIGNED + 1))
           done <<< "$TESTER_IDS"
 

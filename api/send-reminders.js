@@ -7,6 +7,7 @@ import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
 import { requireAppUrl, logConfigError } from './_lib/require-config.js'
 import { checkCronAuth } from './_lib/cron-auth.js'
 import { sendSmsWithQuota } from './_lib/sms-addon.js'
+import { deliverManualReminder } from './_lib/manual-reminder-delivery.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -198,6 +199,30 @@ export default async function handler(req, res) {
       const reminderFrequency = user.reminderFrequency || 'once' // 'once' | 'daily'
       const heatReminderDays = user.heatReminderDays || 14 // separate setting for heat cycles
       const phone = user.phone
+
+      // Manual care emails are explicitly opt-in. Query by tenant only and
+      // re-check reminder, profile and current dog owner inside each claim.
+      // No SMS and no native push are added by this path.
+      if (user.manualReminderEmails === true && process.env.RESEND_API_KEY) {
+        const manual = await db.collection('reminders').where('tenantId', '==', tenantId).get()
+        for (const item of manual.docs.filter(d => d.data().source === 'manual')) {
+          try {
+            const result = await deliverManualReminder({
+              db, reminderId: item.id, tenantId, now: new Date(), projectId: process.env.FIREBASE_PROJECT_ID, appUrl,
+              sendEmail: async (payload, key) => {
+                const response = await fetch('https://api.resend.com/emails', {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json', 'Idempotency-Key': `manual-reminder/${key}` },
+                  body: JSON.stringify(payload),
+                  signal: AbortSignal.timeout(15000),
+                })
+                return response.ok && Boolean((await response.json()).id)
+              },
+            })
+            if (result.sent) emailSent++
+          } catch { console.error('Manual reminder delivery failed') }
+        }
+      }
 
       // Get dogs currently owned by this user — see getReminderEligibleDogs()
       // for why this isn't a plain tenantId query.
