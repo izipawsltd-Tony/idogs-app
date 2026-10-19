@@ -1,0 +1,100 @@
+// Request lifecycle only. Never deletes data or mutates subscriptions.
+export const DELETION_COLLECTION = 'accountDeletionRequests'
+export const CANCELLABLE = ['requested', 'review_required']
+const fail = (message, status) => Object.assign(new Error(message), { status })
+
+export function requireRecentAuthentication(token, now = Date.now()) {
+  const age = now / 1000 - Number(token.auth_time)
+  if (!Number.isFinite(age) || age < -30 || age > 300) {
+    throw fail('Please sign in again before requesting account deletion.', 401)
+  }
+}
+
+export function deletionStatus(data) {
+  if (!data) return { status: 'none', canCancel: false }
+  return {
+    status: data.status,
+    requestedAt: data.requestedAt,
+    updatedAt: data.updatedAt,
+    canCancel: CANCELLABLE.includes(data.status),
+    // No internal notes, identity, billing identifiers or inventory leaks.
+    message: data.status === 'cancelled' ? 'Your deletion request was cancelled.'
+      : data.status === 'completed' ? 'Your account deletion has completed.'
+        : data.status === 'processing' ? 'Account deletion is being processed. Cancellation is no longer available.'
+          : 'Your request is saved for review. Your account has not been deleted. You can cancel before processing begins.',
+  }
+}
+
+export async function changeDeletionRequest({ db, token, body, now = Date.now() }) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || Object.keys(body).some(k => !['action', 'confirmation'].includes(k))) {
+    throw fail('Invalid request.', 400)
+  }
+  if (!['request', 'cancel'].includes(body.action)) throw fail('Invalid action.', 400)
+  requireRecentAuthentication(token, now)
+  if (body.action === 'request' && body.confirmation !== 'DELETE MY ACCOUNT') {
+    throw fail('Explicit account deletion confirmation is required.', 400)
+  }
+  const ref = db.collection(DELETION_COLLECTION).doc(token.uid)
+  const conversationRef = db.collection('supportConversations').doc(`account_deletion_${token.uid}`)
+  const result = await db.runTransaction(async tx => {
+    const snap = await tx.get(ref)
+    const previous = snap.exists ? snap.data() : null
+    if (body.action === 'cancel') {
+      if (previous?.status === 'cancelled') return previous
+      if (!previous || !CANCELLABLE.includes(previous.status)) throw fail('This request cannot be cancelled.', 409)
+      const conversation = await tx.get(conversationRef)
+      const next = { ...previous, status: 'cancelled', updatedAt: new Date(now).toISOString() }
+      tx.set(ref, next)
+      if (conversation.exists) tx.set(conversationRef, { ...conversation.data(),
+        status: 'closed', updatedAt: next.updatedAt, lastMessageAt: next.updatedAt,
+        lastMessagePreview: 'Account deletion request cancelled by the account holder.',
+        adminUnreadCount: Number(conversation.data().adminUnreadCount || 0) + 1,
+      })
+      tx.set(db.collection('supportMessages').doc(`account_deletion_${token.uid}_${previous.revision}_cancel`), {
+        conversationId: conversationRef.id, senderUid: token.uid, senderType: 'user',
+        text: 'Account deletion request cancelled. Do not process this request.', createdAt: next.updatedAt,
+      })
+      return next
+    }
+    // Duplicate requests are receipts, never a second job or reset of processing.
+    if (previous && previous.status !== 'cancelled') return previous
+    if (previous && now - Date.parse(previous.updatedAt) < 60000) throw fail('Please wait a minute before requesting again.', 429)
+    const conversation = await tx.get(conversationRef)
+    const next = {
+      uid: token.uid, status: 'requested', revision: Number(previous?.revision || 0) + 1,
+      requestedAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
+      mode: 'as_soon_as_possible', policyVersion: '2026-10-19-v2',
+      // Explicitly tracked holds; no fabricated deletion deadline or paid action.
+      holds: ['ownership_inventory', 'billing_review', 'write_freeze_verification'],
+      supportConversationId: conversationRef.id,
+    }
+    tx.set(ref, next)
+    const message = 'Account deletion requested. Review ownership, pending transfers, billing and record retention before processing. No permanent deletion is confirmed.'
+    tx.set(conversationRef, {
+      ...(conversation.exists ? conversation.data() : {}),
+      ownerUid: token.uid, ownerEmail: token.email || null, ownerName: token.name || null,
+      organisationId: null, organisationName: null,
+      subject: 'Account deletion request', category: 'account_deletion', status: 'new',
+      assigneeUid: null, assigneeEmail: null,
+      createdAt: conversation.exists ? conversation.data().createdAt : next.requestedAt,
+      updatedAt: next.updatedAt, lastMessageAt: next.updatedAt, lastMessagePreview: message,
+      adminUnreadCount: Number(conversation.data()?.adminUnreadCount || 0) + 1,
+      userUnreadCount: Number(conversation.data()?.userUnreadCount || 0),
+    })
+    tx.set(db.collection('supportMessages').doc(`account_deletion_${token.uid}_${next.revision}_request`), {
+      conversationId: conversationRef.id, senderUid: token.uid, senderType: 'user',
+      text: message, createdAt: next.requestedAt,
+    })
+    return next
+  })
+  return deletionStatus(result)
+}
+
+// Conservative classification. A tenant match never authorizes deletion.
+export function classifyDeletionDog(dog, uid) {
+  if (dog.transferStatus === 'pendingClaim' || dog.status === 'transferred') return 'review_pending_transfer'
+  if (dog.currentOwnerId && dog.currentOwnerId !== uid) return 'preserve_other_owner'
+  if (!dog.currentOwnerId) return 'review_legacy_ownership'
+  return dog.currentOwnerId === uid ? 'review_owned_data' : 'unrelated'
+}

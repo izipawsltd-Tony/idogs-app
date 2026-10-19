@@ -1,0 +1,38 @@
+name: Account deletion emulator integration
+
+on:
+  push:
+    branches: [fix/android-v20-qa-blockers, fix/account-deletion-backend-20261019]
+    paths:
+      - api/account-deletion.js
+      - api/_lib/account-deletion.js
+      - api/_lib/account-deletion-inventory.js
+      - scripts/test-account-deletion-emulator.mjs
+      - scripts/test-account-deletion.mjs
+      - .github/workflows/account-deletion-emulator.yml
+      - firestore.rules
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: node --test scripts/test-account-deletion.mjs
+      - name: Test synthetic demo project only; no cloud credentials
+        env:
+          GCLOUD_PROJECT: demo-idogs-account-deletion
+        run: npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-account-deletion --only auth,firestore 'node --test scripts/test-account-deletion-emulator.mjs'
