@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 
 interface QueueRow { uid: string; status: string; requestedAt: string }
-interface Inventory { complete: boolean; reason: string; dogQueryTruncated: boolean; billingReviewRequired: boolean; dogs: { id: string; disposition: string }[] }
+interface Inventory { complete: boolean; reason: string; truncated: string[]; holds: string[]; fingerprint: string; counts: { records: number }; billingReviewRequired: boolean; dogs: { id: string; disposition: string }[] }
 
 export default function SuperAdminAccountDeletionsPage() {
   const { user } = useAuth()
@@ -42,7 +42,11 @@ export default function SuperAdminAccountDeletionsPage() {
       <h2>Review: {selected}</h2>
       <p>{inventory.reason}</p>
       <p>Billing review: {inventory.billingReviewRequired ? 'Required' : 'No profile billing identifiers found; provider verification still required'}</p>
-      {inventory.dogQueryTruncated && <p role="alert">Dog inventory is truncated. Do not process deletion.</p>}
+      <p>Related records found: {inventory.counts.records}. This count does not confirm a complete inventory.</p>
+      <p style={{ overflowWrap: 'anywhere' }}>Inventory fingerprint: {inventory.fingerprint}</p>
+      {inventory.truncated.length > 0 && <p role="alert">Inventory is truncated. Do not process deletion.</p>}
+      <h3>Outstanding checks</h3>
+      <ul>{inventory.holds.map(hold => <li key={hold}>{hold.replaceAll('_', ' ')}</li>)}</ul>
       <ul>{inventory.dogs.map(dog => <li key={dog.id}>{dog.id}: {dog.disposition.replaceAll('_', ' ')}</li>)}</ul>
     </section>}
   </div>

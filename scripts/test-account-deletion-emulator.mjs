@@ -8,6 +8,7 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { makeDeletionHandler } from '../api/account-deletion.js'
+import { buildDeletionInventory } from '../api/_lib/account-deletion-inventory.js'
 
 // No fallback to live Firebase, Google credentials, project or bucket.
 const PROJECT = 'demo-idogs-account-deletion'
@@ -83,6 +84,9 @@ test('real Auth token and Firestore transactions persist exactly one request und
   assert.equal(stored.uid, first.localId)
   assert.equal(stored.mode, 'as_soon_as_possible')
   assert.equal((await call(first)).body.requestedAt, stored.requestedAt)
+  assert.equal((await db.collection('supportConversations').doc(stored.supportConversationId).get()).data().status, 'new')
+  const messages = await db.collection('supportMessages').where('conversationId', '==', stored.supportConversationId).get()
+  assert.equal(messages.size, 1)
 })
 test('another authenticated account cannot read or redirect the first account request', async () => {
   assert.equal((await call(second)).body.status, 'none')
@@ -106,6 +110,7 @@ test('receiving and cancelling a request never removes owned or transferred dog 
   assert.equal(cancel.status, 200)
   assert.equal(cancel.body.status, 'cancelled')
   assert.equal((await call(first, 'POST', { action: 'cancel' })).body.status, 'cancelled')
+  assert.equal((await db.collection('supportConversations').doc(`account_deletion_${first.localId}`).get()).data().status, 'closed')
   assert.equal((await owned.get()).exists, true)
   assert.equal((await transferred.get()).data().currentOwnerId, second.localId)
 })
@@ -116,6 +121,21 @@ test('processing state cannot be cancelled or reset through the public API', asy
   assert.equal(duplicate.body.status, 'processing')
   assert.equal(duplicate.body.canCancel, false)
   assert.equal((await ref().get()).data().status, 'processing')
+})
+test('read-only inventory discovers related records and preserves current-owner isolation in real Firestore', async () => {
+  await db.collection('users').doc(first.localId).set({ email: 'deletion-owner@example.invalid' })
+  const record = db.collection('documents').doc('synthetic-shared-document')
+  await record.set({ dogId: 'synthetic-transferred', filePath: `documents/${first.localId}/synthetic-transferred/one.pdf`, notes: 'synthetic-private-content' })
+  await db.collection('supportConversations').doc('synthetic-thread').set({ ownerUid: first.localId })
+  await db.collection('supportMessages').doc('synthetic-reply').set({ conversationId: 'synthetic-thread', text: 'synthetic-private-message', senderUid: 'operator' })
+  const before = (await record.get()).updateTime.toMillis()
+  const report = await buildDeletionInventory({ db, uid: first.localId })
+  assert.equal(report.records.find(r => r.path === record.path).disposition, 'preserve_other_owner')
+  assert.ok(report.records.find(r => r.path === 'supportMessages/synthetic-reply'))
+  assert.doesNotMatch(JSON.stringify(report), /synthetic-private-content|synthetic-private-message/)
+  assert.equal((await record.get()).updateTime.toMillis(), before)
+  assert.equal(report.readyForDeletion, false)
+  assert.deepEqual(report.errors, [])
 })
 test('revoked identity token is rejected by real emulator Auth checks', async () => {
   // auth_time and tokensValidAfterTime have second precision.
