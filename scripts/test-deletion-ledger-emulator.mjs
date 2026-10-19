@@ -3,13 +3,20 @@ import assert from 'node:assert/strict'
 import { initializeApp, deleteApp } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
+import { readFileSync } from 'node:fs'
+import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing'
+import { doc, getDoc, updateDoc } from 'firebase/firestore'
 import { createDeletionLedger, manifestFingerprint, snapshotVersion } from '../api/_lib/account-deletion-ledger.js'
 import { operationKey, runDeletionRehearsal } from './qa/deletion/processor.mjs'
 const projectId = 'demo-idogs-account-deletion'
 if (process.env.GCLOUD_PROJECT !== projectId || !/^(127\.0\.0\.1|localhost):8080$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')) throw new Error('emulator_only')
-let app, db, n = 0
-before(() => { app = initializeApp({projectId}, 'durable-ledger'); db = getFirestore(app) })
-after(async () => { await db?.terminate(); if (app) await deleteApp(app) })
+let app, db, rules, n = 0
+before(async () => {
+  app = initializeApp({projectId}, 'durable-ledger'); db = getFirestore(app)
+  rules = await initializeTestEnvironment({projectId, firestore:{host:'127.0.0.1',port:8080,
+    rules:readFileSync(new URL('../firestore.rules',import.meta.url),'utf8')}})
+})
+after(async () => { await rules?.cleanup(); await db?.terminate(); if (app) await deleteApp(app) })
 async function seed() {
   const uid = `qa-deletion-ledger-${++n}`
   const dogPath = `dogs/${uid}`, documentPath = `documents/${uid}`
@@ -119,4 +126,14 @@ test('coordinator resumes Firestore receipts and real emulator Auth after a lost
   await runDeletionRehearsal({uid:f.uid,revision:1,store:restarted,billing,objects,auth:makeAuth()})
   assert.equal((await f.request.get()).data().status,'completed')
   assert.equal((await f.progress.get()).data().authOutcome,'already_absent')
+})
+
+test('requester client cannot read server ledger, manifest or fence', async () => {
+  const f=await seed(), client=rules.authenticatedContext(f.uid).firestore()
+  for (const path of [f.progress.path,f.manifest.path,f.fence.path]) await assertFails(getDoc(doc(client,path)))
+})
+test('repository Rules do not freeze owner client writes merely because a fence exists', async () => {
+  const f=await seed(), client=rules.authenticatedContext(f.uid).firestore()
+  await assertSucceeds(updateDoc(doc(client,f.dogPath),{name:'synthetic-fence-gap-proof'}))
+  assert.equal((await db.doc(f.dogPath).get()).data().name,'synthetic-fence-gap-proof')
 })
