@@ -20,7 +20,7 @@ after(async () => { await rules?.cleanup(); await db?.terminate(); if (app) awai
 async function seed() {
   const uid = `qa-deletion-ledger-${++n}`
   const dogPath = `dogs/${uid}`, documentPath = `documents/${uid}`
-  await db.doc(dogPath).set({currentOwnerId:uid, tenantId:'original-breeder'})
+  await db.doc(dogPath).set({currentOwnerId:uid, tenantId:'original-breeder', status:'active', name:'Synthetic QA dog'})
   await db.doc(documentPath).set({dogId:uid, tenantId:'original-breeder', privateBody:'never-copy-this-body'})
   const plan = {complete:true, holds:[], evidence:{retention:'synthetic-only', backups:'synthetic-only', writeFreeze:'cooperative-test-only'}, approvals:{policy:'synthetic-only', billing:'synthetic-only'},
     records:[{path:documentPath, ownerPath:dogPath, version:snapshotVersion(await db.doc(documentPath).get()), disposition:'delete_exclusive'},
@@ -134,6 +134,9 @@ test('requester client cannot read server ledger, manifest or fence', async () =
 })
 test('repository Rules do not freeze owner client writes merely because a fence exists', async () => {
   const f=await seed(), client=rules.authenticatedContext(f.uid).firestore()
+  await f.fence.update({state:'open'})
+  await assertSucceeds(updateDoc(doc(client,f.dogPath),{name:'synthetic-unfrozen-baseline'}))
+  await f.fence.update({state:'frozen'})
   await assertSucceeds(updateDoc(doc(client,f.dogPath),{name:'synthetic-fence-gap-proof'}))
   assert.equal((await db.doc(f.dogPath).get()).data().name,'synthetic-fence-gap-proof')
 })
