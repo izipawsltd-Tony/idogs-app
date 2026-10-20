@@ -1,0 +1,428 @@
+{
+  "status": "source_discovery_only_not_complete_inventory",
+  "sourceBase": "156a134ec8d66e85cdbafefdd66de9222d75272e",
+  "limitations": [
+    "Literal collection references only; computed paths, subcollections, SDK-managed data, provider stores and backups require separate enumeration.",
+    "No live account, region, contract or retention setting verified.",
+    "Each collection requires purpose, ownership, lawful retention basis, duration, deletion method and operator approval before activation."
+  ],
+  "collections": [
+    {
+      "name": "activityNotes",
+      "sourceFiles": [
+        "api/transfer-dog.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "auditLogs",
+      "sourceFiles": [
+        "api/get-dog-history.js",
+        "api/super-admin/audit-logs/[id].js",
+        "api/super-admin/audit-logs/index.js",
+        "api/super-admin/dashboard.js",
+        "api/super-admin/organisations/[id].js",
+        "api/super-admin/organisations/index.js",
+        "api/super-admin/support-conversation.js",
+        "api/super-admin/support-faqs.js",
+        "api/super-admin/support.js",
+        "api/super-admin/users/[uid].js",
+        "api/super-admin/users/[uid]/operations.js",
+        "api/super-admin/users/[uid]/password-reset.js",
+        "api/super-admin/users/[uid]/verification-email.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "documents",
+      "sourceFiles": [
+        "api/private-dog-view.js",
+        "api/transfer-dog.js",
+        "api/upload-document.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "dogPrivateAccess",
+      "sourceFiles": [
+        "api/manage-private-dog-access.js",
+        "api/private-dog-view.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "dogs",
+      "sourceFiles": [
+        "api/_lib/ai-ceo-v12.js",
+        "api/_lib/dog-cap.js",
+        "api/_lib/manual-reminder-delivery.js",
+        "api/_lib/showcase-media-access.js",
+        "api/breeder-finance-documents.js",
+        "api/claim-transferred-dogs.js",
+        "api/confirm-showcase-media-upload.js",
+        "api/create-dog.js",
+        "api/create-litter-puppy.js",
+        "api/create-litter.js",
+        "api/delete-litter.js",
+        "api/export-report.js",
+        "api/get-showcase-media-urls.js",
+        "api/get-signed-url.js",
+        "api/manage-private-dog-access.js",
+        "api/passport.js",
+        "api/private-dog-view.js",
+        "api/reconcile-litter-puppy.js",
+        "api/remove-litter-puppy.js",
+        "api/repair-tenant-ids.js",
+        "api/request-showcase-media-upload.js",
+        "api/save-heat-cycle.js",
+        "api/scan-count.js",
+        "api/send-reminders.js",
+        "api/set-dog-status.js",
+        "api/showcase-public.js",
+        "api/super-admin/organisations/[id].js",
+        "api/super-admin/organisations/index.js",
+        "api/super-admin/users/[uid].js",
+        "api/super-admin/users/index.js",
+        "api/transfer-dog.js",
+        "api/update-litter.js",
+        "api/update-showcase-media.js",
+        "api/upload-document.js",
+        "api/upload-showcase-media.js",
+        "api/upload.js",
+        "src/lib/db.ts",
+        "src/lib/offlineReads.test.ts",
+        "src/pages/AdminAuditPage.tsx",
+        "src/pages/LittersPage.tsx"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "financeCounters",
+      "sourceFiles": [
+        "api/breeder-finance-documents.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "financeDocuments",
+      "sourceFiles": [
+        "api/breeder-finance-documents.js",
+        "api/send-finance-document.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "healthTests",
+      "sourceFiles": [
+        "api/export-report.js",
+        "api/passport.js",
+        "api/transfer-dog.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "heatCycles",
+      "sourceFiles": [
+        "api/export-report.js",
+        "api/save-heat-cycle.js",
+        "api/send-reminders.js",
+        "api/transfer-dog.js",
+        "src/pages/DogDetailPage.tsx"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "litterPuppyOperations",
+      "sourceFiles": [
+        "api/create-litter-puppy.js",
+        "src/pages/LittersPage.tsx"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "litterQuotaCredits",
+      "sourceFiles": [
+        "api/_lib/extra-litter-webhook.js",
+        "api/_lib/litter-quota.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "litterQuotaLedger",
+      "sourceFiles": [
+        "api/_lib/litter-quota.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "litterShowcases",
+      "sourceFiles": [
+        "api/_lib/showcase-access.js",
+        "api/bulk-update-showcase-puppies.js",
+        "api/create-showcase-enquiry.js",
+        "api/create-showcase.js",
+        "api/rotate-showcase-share.js",
+        "api/set-showcase-enabled.js",
+        "api/showcase-media.js",
+        "api/showcase-public.js",
+        "api/update-showcase-puppy.js",
+        "api/update-showcase-share.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "litters",
+      "sourceFiles": [
+        "api/_lib/ai-ceo-v12.js",
+        "api/_lib/litter-quota.js",
+        "api/_lib/showcase-access.js",
+        "api/create-litter-puppy.js",
+        "api/create-litter.js",
+        "api/create-showcase-enquiry.js",
+        "api/delete-litter.js",
+        "api/export-report.js",
+        "api/reconcile-litter-puppy.js",
+        "api/remove-litter-puppy.js",
+        "api/send-reminders.js",
+        "api/showcase-media.js",
+        "api/showcase-public.js",
+        "api/super-admin/organisations/[id].js",
+        "api/super-admin/organisations/index.js",
+        "api/super-admin/users/[uid].js",
+        "api/update-litter.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "ownershipHistorySnapshots",
+      "sourceFiles": [
+        "api/export-report.js",
+        "api/get-history-media.js",
+        "api/get-showcase-media-urls.js",
+        "api/get-signed-url.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "passportReservations",
+      "sourceFiles": [
+        "api/_lib/create-dog-core.js",
+        "api/create-litter-puppy.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "processedStripeEvents",
+      "sourceFiles": [
+        "api/_lib/webhook-handler.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "reminderEmailDeliveries",
+      "sourceFiles": [
+        "api/_lib/manual-reminder-delivery.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "reminders",
+      "sourceFiles": [
+        "api/_lib/manual-reminder-delivery.js",
+        "api/send-reminders.js",
+        "api/transfer-dog.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "scanLogs",
+      "sourceFiles": [
+        "api/passport.js",
+        "api/scan-count.js",
+        "api/transfer-dog.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "showcaseEnquiries",
+      "sourceFiles": [
+        "api/_lib/ai-ceo-v12.js",
+        "api/create-showcase-enquiry.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "smsDeliveries",
+      "sourceFiles": [
+        "api/_lib/sms-addon.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "supportConversations",
+      "sourceFiles": [
+        "api/_lib/account-deletion.js",
+        "api/_lib/ai-ceo-v12.js",
+        "api/super-admin/support-conversation.js",
+        "api/super-admin/support-inbox.js",
+        "api/support/conversations/[id].js",
+        "api/support/index.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "supportFaqFeedback",
+      "sourceFiles": [
+        "api/support/index.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "supportFaqs",
+      "sourceFiles": [
+        "api/super-admin/support-faqs.js",
+        "api/support/index.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "supportMessages",
+      "sourceFiles": [
+        "api/_lib/account-deletion.js",
+        "api/super-admin/support-conversation.js",
+        "api/support/conversations/[id].js",
+        "api/support/index.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "supportRateLimits",
+      "sourceFiles": [
+        "api/support/_shared.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "surveyResponses",
+      "sourceFiles": [
+        "api/survey.js",
+        "src/pages/AdminSurveyPage.tsx"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "users",
+      "sourceFiles": [
+        "api/_lib/account-deletion-inventory.js",
+        "api/_lib/ai-ceo-v12.js",
+        "api/_lib/billing-reconcile.js",
+        "api/_lib/breeder-finance-auth.js",
+        "api/_lib/breeder-profile.js",
+        "api/_lib/extra-litter-webhook.js",
+        "api/_lib/manual-reminder-delivery.js",
+        "api/_lib/sms-addon.js",
+        "api/_lib/webhook-handler.js",
+        "api/billing-summary.js",
+        "api/bulk-update-showcase-puppies.js",
+        "api/claim-transferred-dogs.js",
+        "api/create-billing-portal.js",
+        "api/create-dog.js",
+        "api/create-extra-litter-checkout.js",
+        "api/create-litter.js",
+        "api/create-showcase-enquiry.js",
+        "api/create-showcase.js",
+        "api/create-sms-addon-checkout.js",
+        "api/enforce-billing-grace.js",
+        "api/export-report.js",
+        "api/litter-quota-summary.js",
+        "api/reconcile-dog-cap.js",
+        "api/remove-sms-addon.js",
+        "api/rotate-showcase-share.js",
+        "api/scan.js",
+        "api/send-reminders.js",
+        "api/set-dog-status.js",
+        "api/set-showcase-enabled.js",
+        "api/showcase-media.js",
+        "api/showcase-public.js",
+        "api/super-admin/audit-logs/[id].js",
+        "api/super-admin/audit-logs/index.js",
+        "api/super-admin/dashboard.js",
+        "api/super-admin/organisations/[id].js",
+        "api/super-admin/organisations/index.js",
+        "api/super-admin/plans-pricing.js",
+        "api/super-admin/subscriptions.js",
+        "api/super-admin/support.js",
+        "api/super-admin/users/[uid].js",
+        "api/super-admin/users/[uid]/operations.js",
+        "api/super-admin/users/[uid]/password-reset.js",
+        "api/super-admin/users/[uid]/verification-email.js",
+        "api/super-admin/users/index.js",
+        "api/support/_shared.js",
+        "api/update-litter.js",
+        "api/update-showcase-puppy.js",
+        "api/update-showcase-share.js"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "vaccineRecords",
+      "sourceFiles": [
+        "api/export-report.js",
+        "api/passport.js",
+        "api/send-reminders.js",
+        "api/transfer-dog.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    },
+    {
+      "name": "wormingRecords",
+      "sourceFiles": [
+        "api/export-report.js",
+        "api/send-reminders.js",
+        "api/transfer-dog.js",
+        "src/lib/db.ts"
+      ],
+      "retention": "unverified",
+      "deletion": "blocked_pending_classification"
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { DATA_PROCESSING_SUMMARY } from '../components/legal/PolicyReview'
 import { useState, FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -207,7 +208,7 @@ export default function SignupPage({ toast }: Props) {
             )}
 
             <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--green-light)', fontSize: 12, color: 'var(--green)' }}>
-              🇦🇺 Your data is stored securely in Asia-Pacific and is fully compliant with the Australian Privacy Act 1988.
+              {DATA_PROCESSING_SUMMARY}
             </div>
 
             <button type="submit" className="btn btn-primary" style={{ width: '100%', height: 48, fontSize: 15, marginTop: 4, opacity: !agreedToTerms ? 0.6 : 1 }} disabled={loading || !agreedToTerms}>
@@ -226,7 +227,7 @@ export default function SignupPage({ toast }: Props) {
                 <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--green)', fontWeight: 600 }}>Terms of Service</a>
                 {' '}and{' '}
                 <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--green)', fontWeight: 600 }}>Privacy Policy</a>.
-                {' '}I understand my data will be stored securely in Asia-Pacific in compliance with the Australian Privacy Act 1988.
+                {' '}{DATA_PROCESSING_SUMMARY}
               </span>
             </label>
           </form>

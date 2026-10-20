@@ -16,7 +16,7 @@ This seven-day target is a proposed service commitment, not a statement that eve
 
 ## Proposed billing disposition requiring owner approval
 
-Proposed rule: for a verified active web subscription, **cancel renewal at the end of the current paid period and verify that no next renewal charge is scheduled before permanent account cleanup**. Deletion itself need not wait until that period ends. Do not create a new charge or automatically promise a refund; assess refund requests separately, including any applicable rights. Preserve financial records pending a verified retention policy rather than deleting the Stripe customer or invoices.
+Proposed rule: for a verified active web subscription, **arrange and verify cancellation of future renewal as soon as a valid deletion request is accepted, without waiting for cleanup; the subscription cancellation takes effect at the end of the current paid period**. Deletion itself need not wait until that period ends. Do not create a new charge or automatically promise a refund; assess refund requests separately, including any applicable rights. Preserve financial records pending a verified retention policy rather than deleting the Stripe customer or invoices.
 
 If provider identity/status or cancellation cannot be verified, retain the request and show a billing hold; do not delete Auth and leave the requester unable to resolve a recurring charge. A request may be submitted while this check is unresolved. Give the requester an update within the proposed target rather than holding silently.
 
@@ -39,3 +39,7 @@ Finish the ownership/media/provider inventory; implement a resumable processor w
 - https://developer.apple.com/app-store/review/guidelines/
 
 Apple permits manual processing over a reasonable period, but requires users to be told how long it will take and receive confirmation on completion. This does not establish the proposed target's legal sufficiency or Apple approval of this implementation.
+
+## Coordinated review revision
+
+Tony authorised preparation of the coordinated draft on 19 October 2026, not publication or activation. The current source-based assessment and unresolved release checks are in legal-policy-review-20261019.md. Shared candidate wording lives in src/components/legal/PolicyReview.tsx and is reused by Privacy, Terms and the app. Seven days is a proposed service target; absolute partial-month refund exclusions, automatic 30-day deletion, blanket Asia-Pacific residency and unsupported compliance certification are removed in the review candidate. None of these copy changes implements permanent deletion or automatic renewal cancellation.

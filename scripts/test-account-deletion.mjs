@@ -150,3 +150,14 @@ test('inventory fingerprint is deterministic and changes when a discovered recor
   const third = await buildDeletionInventory({ db: inventoryDb({ ...seed, 'documents/new': { tenantId: 'qa' } }), uid: 'qa' })
   assert.notEqual(first.fingerprint, third.fingerprint)
 })
+test('reminder delivery inventory includes only requester metadata, never message payloads', async () => {
+  const report = await buildDeletionInventory({ uid: 'qa', db: inventoryDb({
+    'users/qa': {},
+    'reminderEmailDeliveries/own': {tenantId: 'qa', payload: {to: ['private@example.invalid'], html: 'secret-reminder-body'}},
+    'reminderEmailDeliveries/other': {tenantId: 'other', payload: {html: 'other-secret'}},
+  }) })
+  assert.ok(report.records.some(r => r.path === 'reminderEmailDeliveries/own'))
+  assert.ok(!report.records.some(r => r.path === 'reminderEmailDeliveries/other'))
+  assert.doesNotMatch(JSON.stringify(report), /private@example|secret-reminder|other-secret/)
+  assert.equal(report.complete, false); assert.equal(report.readyForDeletion, false)
+})
