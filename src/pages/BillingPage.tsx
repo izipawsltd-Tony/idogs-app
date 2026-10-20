@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import type { ToastMessage } from '../types'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
 import { isAndroidNativeApp } from '../lib/nativePlatform'
+import SmsUsageStatus from '../components/ui/SmsUsageStatus'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -427,15 +428,8 @@ export default function BillingPage({ toast }: Props) {
           <div style={{ minWidth: 220, flex: '0 1 260px' }}>
             {detailsLoading ? <div style={{ fontSize: 13, color: 'var(--light)' }}>Loading SMS status…</div> : detailsError ? <div role="alert" style={{ fontSize: 13, color: 'var(--danger, #C0392B)' }}>SMS status temporarily unavailable.</div> : (
               <>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>Status: <span style={{ textTransform: 'capitalize' }}>{billingDetails?.sms.status || 'inactive'}</span></div>
-                {billingDetails?.sms.status === 'active' && (
-                  <>
-                    <div style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 6 }}>Usage: <strong>{billingDetails.sms.creditsUsed} / {billingDetails.sms.creditsLimit}</strong> credits</div>
-                    <div style={{ height: 8, borderRadius: 999, background: 'var(--sand)', overflow: 'hidden', marginBottom: 8 }}><div style={{ width: `${Math.min(100, (billingDetails.sms.creditsUsed / Math.max(1, billingDetails.sms.creditsLimit)) * 100)}%`, height: '100%', background: 'var(--green)' }} /></div>
-                    {billingDetails.sms.creditsUsed >= billingDetails.sms.creditsLimit && <div role="alert" style={{ fontSize: 12, color: 'var(--danger, #C0392B)', marginBottom: 8 }}>SMS credits exhausted. Email and in-app reminders continue normally.</div>}
-                    {billingDetails.sms.creditsUsed < billingDetails.sms.creditsLimit && billingDetails.sms.creditsUsed >= billingDetails.sms.creditsLimit * 0.8 && <div style={{ fontSize: 12, color: 'var(--gold)', marginBottom: 8 }}>You have used at least 80% of this month's SMS credits.</div>}
-                  </>
-                )}
+                <SmsUsageStatus sms={{ ...billingDetails?.sms, phone: profile?.phone,
+                  emailReminders: profile?.emailReminders }} />
                 {billingDetails?.sms.status === 'active' || billingDetails?.sms.status === 'past_due' ? (
                   <button className="btn btn-secondary" type="button" onClick={handleSmsRemove} disabled={smsRemoveLoading}>{smsRemoveLoading ? 'Removing SMS…' : 'Remove SMS add-on'}</button>
                 ) : androidPurchasesUnavailable ? (

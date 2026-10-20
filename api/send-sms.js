@@ -1,16 +1,9 @@
-// api/send-sms.js — trusted internal SMS relay via AWS SNS.
+// api/send-sms.js — trusted internal SMS relay via ClickSend.
 // V1 deliberately rejects browser/user-originated arbitrary SMS sends.
 // The reminder engine sends structured, server-generated messages only.
-import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
+import { sendClickSendSms } from './_lib/clicksend-sms.js'
 import { checkCronAuth } from './_lib/cron-auth.js'
 
-const sns = new SNSClient({
-  region: process.env.AWS_SNS_REGION || 'ap-southeast-2',
-  credentials: {
-    accessKeyId: process.env.AWS_SNS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SNS_SECRET_ACCESS_KEY,
-  },
-})
 
 export default async function handler(req, res) {
   const auth = checkCronAuth(req)
@@ -32,17 +25,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const result = await sns.send(new PublishCommand({
-      Message: message,
-      PhoneNumber: phone,
-      MessageAttributes: {
-        'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: 'iDogs' },
-        'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },
-      },
-    }))
-    return res.status(200).json({ success: true, messageId: result.MessageId })
-  } catch {
+    const result = await sendClickSendSms(phone, message)
+    return res.status(200).json({ success: true, messageId: result.providerMessageId, provider: 'clicksend', status: 'accepted' })
+  } catch (error) {
     console.error('send-sms: provider send failed')
+    if (error?.definitive === false) return res.status(502).json({ error: 'SMS outcome unknown; do not retry before checking delivery', code: 'SMS_DELIVERY_UNKNOWN' })
     return res.status(502).json({ error: 'Failed to send SMS' })
   }
 }

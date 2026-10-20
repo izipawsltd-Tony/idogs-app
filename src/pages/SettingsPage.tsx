@@ -3,6 +3,8 @@ import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
 import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
 import { REMINDER_TYPES } from '../components/ui/ReminderForm'
+import StagingSmsQa from '../components/ui/StagingSmsQa'
+import SmsUsageStatus from '../components/ui/SmsUsageStatus'
 import type { Reminder, ToastMessage } from '../types'
 
 interface Props {
@@ -478,13 +480,13 @@ export default function SettingsPage({ toast }: Props) {
               heat, mating, pregnancy and whelping. Your account mobile number is
               <strong> {profile?.phone || 'not set'}</strong>.
             </div>
-            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--mid)' }}>
-              Status: <strong style={{ textTransform: 'capitalize' }}>{profile?.smsAddonStatus || 'inactive'}</strong>
-              {' · '}20 credits/month. A long or Unicode SMS can use more than one credit.
-            </div>
+            <SmsUsageStatus sms={{ status: profile?.smsAddonStatus, creditsUsed: profile?.smsCreditsUsed,
+              creditsLimit: profile?.smsCreditsLimit, periodStart: profile?.smsPeriodStart,
+              periodEnd: profile?.smsPeriodEnd, phone: profile?.phone, emailReminders }} />
             <a className="btn btn-secondary btn-sm" href="/app/billing" style={{ marginTop: 10, display: 'inline-flex' }}>
               {profile?.smsAddonStatus === 'active' ? 'Manage SMS add-on' : 'View SMS add-on'}
             </a>
+            <StagingSmsQa />
           </div>
         </div>
       </div>

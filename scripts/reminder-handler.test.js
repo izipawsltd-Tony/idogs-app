@@ -33,7 +33,7 @@ async function call(headers = { 'x-cron-secret': 'synthetic-cron-secret' }, meth
   const result = {}; const res = { status: code => { result.status = code; return res }, json: body => { result.body = body; return result } }
   await handler({ headers, method }, res); return result
 }
-it('imports the full scheduler with its declared SNS dependency; rejects unauthenticated and wrong methods before I/O', async () => {
+it('imports the full scheduler with ClickSend; rejects unauthenticated and wrong methods before I/O', async () => {
   expect((await call({})).status).toBe(401)
   expect((await call(undefined, 'GET')).status).toBe(405)
   expect(state.io).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled()
