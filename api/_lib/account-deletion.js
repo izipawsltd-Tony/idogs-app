@@ -1,4 +1,5 @@
 // Request lifecycle only. Never deletes data or mutates subscriptions.
+import { deletionCommitment, newRenewalTask, publicDeletionCommitment, RENEWAL_TASK_COLLECTION } from './account-deletion-policy.js'
 export const DELETION_COLLECTION = 'accountDeletionRequests'
 export const CANCELLABLE = ['requested', 'review_required']
 const fail = (message, status) => Object.assign(new Error(message), { status })
@@ -17,6 +18,7 @@ export function deletionStatus(data) {
     requestedAt: data.requestedAt,
     updatedAt: data.updatedAt,
     canCancel: CANCELLABLE.includes(data.status),
+    ...publicDeletionCommitment(data),
     // No internal notes, identity, billing identifiers or inventory leaks.
     message: data.status === 'cancelled' ? 'Your deletion request was cancelled.'
       : data.status === 'completed' ? 'Your account deletion has completed.'
@@ -61,15 +63,22 @@ export async function changeDeletionRequest({ db, token, body, now = Date.now() 
     if (previous && previous.status !== 'cancelled') return previous
     if (previous && now - Date.parse(previous.updatedAt) < 60000) throw fail('Please wait a minute before requesting again.', 429)
     const conversation = await tx.get(conversationRef)
+    const commitment = deletionCommitment(now)
     const next = {
       uid: token.uid, status: 'requested', revision: Number(previous?.revision || 0) + 1,
       requestedAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
-      mode: 'as_soon_as_possible', policyVersion: '2026-10-19-v2',
-      // Explicitly tracked holds; no fabricated deletion deadline or paid action.
+      mode: 'as_soon_as_possible', ...commitment,
+      renewalStatus: 'pending_verification',
+      // A service target is not a completion receipt or billing cancellation.
       holds: ['ownership_inventory', 'billing_review', 'write_freeze_verification'],
       supportConversationId: conversationRef.id,
     }
     tx.set(ref, next)
+    // The task and receipt commit atomically. Duplicate requests do not reset
+    // dates or enqueue another task. Cancellation preserves this task and never
+    // requests a subscription restart. Provider execution remains disabled.
+    tx.set(db.collection(RENEWAL_TASK_COLLECTION).doc(`${token.uid}_${next.revision}`),
+      newRenewalTask({ uid: token.uid, revision: next.revision, commitment }))
     const message = 'Account deletion requested. Review ownership, pending transfers, billing and record retention before processing. No permanent deletion is confirmed.'
     tx.set(conversationRef, {
       ...(conversation.exists ? conversation.data() : {}),

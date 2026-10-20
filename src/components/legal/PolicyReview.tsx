@@ -6,7 +6,7 @@ export const CONSUMER_RIGHTS = 'Nothing in these Terms or our refund policy excl
 export function PolicyReviewNotice() {
   return <aside role="note" aria-label="Draft policy status" style={{ margin: '16px 0', padding: 16, border: '2px solid #9a6700', borderRadius: 10, background: '#fff8df', color: '#493600', overflowWrap: 'anywhere' }}>
     <strong>Draft for review — not effective</strong>
-    <p>Deletion requests can currently be submitted and cancelled before processing. Permanent deletion, automatic cancellation of subscription renewal and the proposed seven-day fulfilment target are not yet enabled. This preview does not change your subscription.</p>
+    <p>The owner has approved the seven-day service target and stopping future renewal on acceptance for implementation. These changes are not yet enabled. Deletion requests can currently be submitted and cancelled before processing. Permanent deletion and automatic cancellation of subscription renewal remain unavailable. This preview does not change your subscription.</p>
   </aside>
 }
 

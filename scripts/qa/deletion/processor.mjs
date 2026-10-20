@@ -10,6 +10,13 @@ export async function stopRenewal({ request, billing }) {
   // Enumerate all base/add-on subscriptions at the provider, not just profile fields.
   const subscriptions = await billing.listVerifiedSubscriptions(request.uid)
   if (!Array.isArray(subscriptions)) throw new Error('billing_unverified')
+  const ids = new Set()
+  // Validate every identity and status before the first external mutation.
+  for (const subscription of subscriptions) {
+    if (!subscription || subscription.ownerUid !== request.uid || !subscription.id || ids.has(subscription.id)) throw new Error('billing_identity')
+    ids.add(subscription.id)
+    if (!['canceled', 'incomplete_expired', 'active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(subscription.status)) throw new Error('billing_status')
+  }
   for (const subscription of subscriptions) {
     if (subscription.ownerUid !== request.uid || !subscription.id) throw new Error('billing_identity')
     if (['canceled', 'incomplete_expired'].includes(subscription.status)) continue
@@ -18,7 +25,7 @@ export async function stopRenewal({ request, billing }) {
     // Read-before-write, stable retry key, and readback. No customer/invoice deletion/refund.
     if (!subscription.cancelAtPeriodEnd) await billing.cancelAtPeriodEnd(subscription.id, key)
     const current = await billing.readSubscription(subscription.id)
-    if (current.ownerUid !== request.uid || !(current.cancelAtPeriodEnd || current.status === 'canceled')) throw new Error('billing_not_confirmed')
+    if (current?.id !== subscription.id || current.ownerUid !== request.uid || !(current.cancelAtPeriodEnd || current.status === 'canceled')) throw new Error('billing_not_confirmed')
   }
   return { verified: true, subscriptions: subscriptions.length }
 }

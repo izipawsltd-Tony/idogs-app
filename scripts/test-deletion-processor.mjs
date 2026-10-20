@@ -82,6 +82,14 @@ test('foreign customer mapping fails closed', async () => {
   const f = fixture(); f.state.subscriptions[0].ownerUid = 'qa-deletion-other'
   await assert.rejects(run(f), /billing_identity/); assert.equal(f.state.events.length, 0)
 })
+test('invalid later subscription is rejected before cancelling an earlier valid subscription', async () => {
+  for (const change of [s => { s.ownerUid = 'qa-deletion-other' }, s => { s.status = 'unknown' }, (s, first) => { s.id = first.id }]) {
+    const f = fixture(); change(f.state.subscriptions[1], f.state.subscriptions[0])
+    await assert.rejects(run(f), /billing_/)
+    assert.deepEqual(f.state.events, [])
+    assert.ok(f.state.subscriptions.every(s => !s.cancelAtPeriodEnd))
+  }
+})
 test('lost billing response reconciles without duplicate cancellation', async () => {
   const f = fixture(); const original = f.billing.cancelAtPeriodEnd; let lost = false
   f.billing.cancelAtPeriodEnd = async (...args) => { await original(...args); if (!lost) { lost = true; throw new Error('billing_response_lost') } }
