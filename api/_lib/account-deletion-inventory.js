@@ -11,8 +11,9 @@ export const ACCOUNT_QUERIES = {
   dogPrivateAccess: ['ownerId', 'ownerUid'], passportReservations: ['tenantId', 'uid'],
   litterPuppyOperations: ['tenantId', 'uid'], litterQuotaCredits: ['tenantId', 'userId'],
   litterQuotaLedger: ['tenantId', 'userId'], mediaUploadGrants: ['uid', 'userId', 'tenantId'],
-  mediaUploadQuotas: ['uid', 'userId'], smsDeliveries: ['tenantId'], auditLogs: ['tenantId', 'userId'],
+  mediaUploadQuotas: ['uid', 'userId'], smsDeliveries: ['tenantId'], reminderEmailDeliveries: ['tenantId'], auditLogs: ['tenantId', 'userId'],
   supportConversations: ['ownerUid'], supportMessages: ['senderUid'], supportFaqFeedback: ['ownerUid'],
+  accountDeletionRenewalTasks: ['uid'],
 }
 const DOG_COLLECTIONS = ['vaccineRecords', 'wormingRecords', 'healthTests', 'reminders', 'activityNotes',
   'documents', 'heatCycles', 'dogPrivateAccess', 'scanLogs', 'mediaUploadGrants', 'passportReservations']
@@ -95,6 +96,7 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     const dogId = collection === 'dogs' ? document.id : data.dogId
     const dogState = dogId ? dogStates.get(dogId) : null
     let disposition = 'review_account_record'
+    if (collection === 'accountDeletionRenewalTasks') disposition = 'review_workflow_retention'
     if (dogState === 'preserve_other_owner') disposition = 'preserve_other_owner'
     else if (dogState === 'review_pending_transfer') disposition = 'review_pending_transfer'
     else if (dogState === 'review_legacy_ownership') disposition = 'review_legacy_ownership'
