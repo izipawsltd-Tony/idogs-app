@@ -1,6 +1,10 @@
-# iOS release checkpoint — Build 36 delivered
+# iOS release checkpoint — Build 39 delivered
 
-Build 36 is delivered to existing internal TestFlight testers. Evidence: `../qa/ios-testflight-build36-20261021.md`. Latest read-only App Store inventory: `app-store-readiness-20261021.json` (audit run `39513045804`). This checkpoint does not authorize PR merge, production deployment, legal publication, App Store submission or public release.
+Build 39 is delivered to an existing internal TestFlight tester. Evidence: `../qa/ios-testflight-build39-20261021.md`. Latest read-only App Store inventory: `app-store-readiness-20261021.json` (audit run `39513045804`, before Build 39). This checkpoint does not authorize PR merge, production deployment, legal publication, App Store submission or public release.
+
+## Next concrete owner gate
+
+Approve deployment of isolated request-policy backend SHA `4145b0cef610777a7069fbe9ba5bc79991bb89ec` to `idogs.com.au`, if desired after reviewing draft PR #31: https://github.com/izipawsltd-Tony/idogs-app/pull/31. Exact-source CI/emulator checks and Preview READY are recorded in the Build 39 evidence. This would persist request targets and disabled renewal tasks only. No live cancellation, permanent processing, policy publication or Rules/Storage change is included. Recheck current production before deploying.
 
 ## Business-policy decision approved
 
@@ -15,7 +19,7 @@ This approval does **not** authorize a live Stripe change, charge, refund, real-
 
 - Finish exclusive current-ownership and media inventory, protected shared history, resumable cleanup and effective write fencing across clients/Admin/providers. Current emulator-only ledger cannot be enabled in production.
 - Verify backup expiry/restore replay and provider retention; daily Firestore seven-day retention was re-observed saved during this session. Firebase's page does not show completed backup instances. A first completed backup, restore rehearsal and Storage media protection remain unverified.
-- Final physical-iPhone QA of Build 36, then a final release binary after functionality and effective policies agree.
+- Final physical-iPhone QA of Build 39, then a final release binary after functionality and effective policies agree.
 - Complete listing, real synthetic-data screenshots, reviewer credentials, privacy declarations, agreements, pricing/availability and manual release setting. Current ASC version remains unsubmitted with substantial missing fields.
 - Obtain owner/legal approval of final effective wording and separate owner approval of submission/release and any PR merge.
 
