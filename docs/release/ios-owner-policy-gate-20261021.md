@@ -2,14 +2,14 @@
 
 Build 36 is delivered to existing internal TestFlight testers. Evidence: `../qa/ios-testflight-build36-20261021.md`. Latest read-only App Store inventory: `app-store-readiness-20261021.json` (audit run `39513045804`). This checkpoint does not authorize PR merge, production deployment, legal publication, App Store submission or public release.
 
-## Concrete business-policy decision
+## Business-policy decision approved
 
-The earlier approval covered preparing coordinated drafts and the no-mandatory-30-day direction. It did not activate the following proposed operating commitments. They appear explicitly as proposals in this internal binary:
+Tony explicitly approved both principles below on 21 October 2026. This clears the business-rule decision for implementation and synthetic QA. It does not activate the operating service or make the draft effective in production:
 
 1. Aim to complete a valid authenticated deletion request within **seven calendar days**, with an explanation of outstanding checks and a next update date within that period if completion is blocked. This is a service target, not a statutory deadline or a new mandatory waiting period.
 2. Arrange and verify stopping future renewal of an active web subscription when a valid deletion request is accepted, without waiting for permanent cleanup. Cancellation takes effect at the end of the paid period; earlier account deletion can end access sooner. Cancelling the deletion request does not restart renewal. No automatic refund promise; statutory consumer remedies remain preserved.
 
-Owner approval here would approve the business rules for implementation and synthetic testing. It would **not** authorize a live Stripe change, charge, refund, real-data deletion, new Rules/Storage deployment or publication of legal terms. Each consequential production action remains separately controlled. The exact production candidate must be prepared and tested before that later approval request.
+This approval does **not** authorize a live Stripe change, charge, refund, real-data deletion, new Rules/Storage deployment or publication of legal terms. Each consequential production action remains separately controlled. The exact production candidate must be prepared and tested before that later approval request. See `deletion-policy-approval-20261021.md` for the implementation increment and its limitations.
 
 ## Remaining engineering and release evidence
 

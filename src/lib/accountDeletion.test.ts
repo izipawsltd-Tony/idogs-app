@@ -10,6 +10,45 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks() })
 const reply = (status: string, canCancel = false) => new Response(JSON.stringify({ status, canCancel }))
 
 describe('Account deletion confirmation UI', () => {
+  it('shows server targets and pending renewal without claiming cancellation or deletion', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'requested', canCancel: true, targetAt: '2026-10-28T00:00:00Z',
+      nextUpdateDueAt: '2026-10-28T00:00:00Z', renewalStatus: 'pending_verification',
+    }))))
+    const renderer = create(createElement(AccountDeletion))
+    await act(async () => renderer.root.findByType('button').props.onClick())
+    const text = JSON.stringify(renderer.toJSON())
+    expect(text).toContain('Processing target:')
+    expect(text).toContain('Next update due:')
+    expect(text).toContain('No subscription cancellation is confirmed yet.')
+    expect(text).toContain('does not restart subscription renewal')
+    act(() => renderer.unmount())
+  })
+  it('cancelled receipts hide obsolete deletion targets but retain verified renewal outcome', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'cancelled', canCancel: false, targetAt: '2026-10-28T00:00:00Z',
+      nextUpdateDueAt: '2026-10-28T00:00:00Z', renewalStatus: 'verified_stopped',
+    }))))
+    const renderer = create(createElement(AccountDeletion))
+    await act(async () => renderer.root.findByType('button').props.onClick())
+    const text = JSON.stringify(renderer.toJSON())
+    expect(text).not.toContain('Processing target:')
+    expect(text).not.toContain('Next update due:')
+    expect(text).toContain('Future renewal has been verified as stopped')
+    act(() => renderer.unmount())
+  })
+  it('legacy or malformed status adds no invented target or billing success', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'requested', canCancel: true, targetAt: 'invalid', renewalStatus: 'unknown',
+    }))))
+    const renderer = create(createElement(AccountDeletion))
+    await act(async () => renderer.root.findByType('button').props.onClick())
+    const text = JSON.stringify(renderer.toJSON())
+    expect(text).not.toContain('Invalid Date')
+    expect(text).not.toContain('Processing target:')
+    expect(text).not.toContain('Future renewal has been verified')
+    act(() => renderer.unmount())
+  })
   it('does not request deletion on mount/open and fails closed if backend is unavailable', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('<html/>', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
