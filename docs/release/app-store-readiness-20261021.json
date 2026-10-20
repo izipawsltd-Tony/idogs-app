@@ -1,0 +1,101 @@
+{
+  "checkedAt": "2026-10-20T23:08:58.959Z",
+  "method": "GET_ONLY",
+  "app": {
+    "id": "6823094602",
+    "bundleId": "au.com.idogs.app",
+    "name": "iDogs",
+    "primaryLocale": "en-AU"
+  },
+  "recentBuilds": [
+    {
+      "id": "906df32d-dcf8-403c-b14d-aa0ba467f712",
+      "version": "34",
+      "processingState": "VALID",
+      "expired": false,
+      "usesNonExemptEncryption": false
+    },
+    {
+      "id": "e4b5b7db-51ef-4f03-bdc6-a9fbaae878dd",
+      "version": "33",
+      "processingState": "VALID",
+      "expired": false,
+      "usesNonExemptEncryption": false
+    },
+    {
+      "id": "fd91201e-0672-45e4-bb6a-7fdc64d8033a",
+      "version": "29",
+      "processingState": "VALID",
+      "expired": false,
+      "usesNonExemptEncryption": false
+    },
+    {
+      "id": "20d48c71-e67e-4eab-826b-8d1b55f7bffe",
+      "version": "26",
+      "processingState": "VALID",
+      "expired": false,
+      "usesNonExemptEncryption": false
+    },
+    {
+      "id": "5237dc97-4953-4811-9d80-186363789530",
+      "version": "24",
+      "processingState": "VALID",
+      "expired": false,
+      "usesNonExemptEncryption": false
+    }
+  ],
+  "appInfos": [
+    {
+      "id": "7f47327d-1ed0-4a09-9e68-c13fdaa0d169",
+      "state": "PREPARE_FOR_SUBMISSION",
+      "ageRatingDeclarationPresent": true,
+      "locales": [
+        {
+          "locale": "en-AU",
+          "namePresent": true,
+          "subtitlePresent": false,
+          "privacyPolicyUrlPresent": false
+        }
+      ]
+    }
+  ],
+  "versions": [
+    {
+      "id": "68af6b5a-44d6-494a-9a7a-8e595face3e9",
+      "version": "1.0",
+      "state": "PREPARE_FOR_SUBMISSION",
+      "releaseType": "AFTER_APPROVAL",
+      "copyrightPresent": false,
+      "selectedBuildVersion": null,
+      "review": {
+        "exists": false,
+        "contactConfigured": false,
+        "demoAccountRequired": null,
+        "demoCredentialsConfigured": false,
+        "notesPresent": false
+      },
+      "locales": [
+        {
+          "locale": "en-AU",
+          "descriptionPresent": false,
+          "keywordsPresent": false,
+          "supportUrlPresent": false,
+          "marketingUrlPresent": false,
+          "screenshots": []
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "path": "/v1/builds",
+      "status": "PAGINATED_NOT_COMPLETE"
+    }
+  ],
+  "notVerified": [
+    "App Privacy labels and legal agreements in the portal",
+    "App Store availability and pricing",
+    "Actual reviewer login success",
+    "Screenshot visual content"
+  ]
+}
