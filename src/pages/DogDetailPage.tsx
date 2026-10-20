@@ -1,3 +1,4 @@
+import { DATA_PROCESSING_SUMMARY } from '../components/legal/PolicyReview'
 import { publicAppOrigin } from '../lib/publicLinks'
 import { viewDocument } from '../lib/documentViewer'
 import ReminderForm from '../components/ui/ReminderForm'
@@ -2868,7 +2869,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetry
         <div className="card">
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--mid)', marginBottom: 8 }}>Privacy</div>
           <div style={{ fontSize: 13, color: 'var(--brand-600)', background: 'var(--brand-50)', padding: '8px 12px', borderRadius: 8 }}>
-            ✓ Data stored in Australia · Australian Privacy Act 1988 compliant
+            {DATA_PROCESSING_SUMMARY}
           </div>
         </div>
       </div>

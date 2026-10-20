@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth'
 import { useAuth } from '../../hooks/useAuth'
+import { PolicyReviewNotice, DeletionPolicyDraft, BillingPolicyDraft, RetentionPolicyDraft } from '../legal/PolicyReview'
 
 interface Status {
   status: string
@@ -68,11 +69,14 @@ export default function AccountDeletion() {
       <p>Request permanent deletion of your iDogs account and associated personal data.</p>
       {!open ? <button type="button" className="btn btn-secondary" onClick={() => { setOpen(true); void call() }}>Delete account…</button> : (
         <div>
-          <p>Records belonging to another current owner must be protected. Shared history, pending transfers, billing and any required record retention need review before processing.</p>
-          <p>Deleting your account does not itself confirm subscription cancellation or a refund. Billing status must be checked separately.</p>
-          <p>There is no mandatory 30-day waiting period. Your request asks us to process deletion as soon as possible after the necessary checks. No completion date is confirmed here.</p>
+          <PolicyReviewNotice />
+          <DeletionPolicyDraft />
+          <details><summary>Subscriptions, refunds and retained records</summary>
+            <BillingPolicyDraft />
+            <RetentionPolicyDraft />
+          </details>
           {error && <p role="alert">{error}</p>}
-          <div aria-live="polite">
+          <div aria-live="polite" aria-label="Account deletion request status">
             {busy ? <p role="status">Checking…</p> : status && <>
               <p><strong>Status: {status.status === 'none' ? 'No request' : status.status.replaceAll('_', ' ')}</strong></p>
               {status.message && <p>{status.message}</p>}
