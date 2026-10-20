@@ -45,3 +45,21 @@ relay call. The scheduler sends through the quota/ledger path directly.
    newer production changes if needed. Production requires Tony's exact-SHA approval.
 
 Official API reference: https://developers.clicksend.com/docs/messaging/sms
+# Bounded staging QA reminder (20 October)
+
+Settings contains a temporary control backed by `/api/staging-sms-qa`.
+It requires all of: the exact staging Vercel project, Preview environment,
+staging Firebase credentials/app, authenticated allowlisted QA UID, the approved
+account mobile, a current active entitlement with exactly one unused credit,
+and a time before 21 October 2026 00:00 UTC. Production fails closed with 404.
+Neither phone nor message can be supplied by the browser. No production release
+or subscription purchase is needed to exercise this owner-approved staging test.
+
+GET only reports state. An explicit POST sends one fixed GSM-7 reminder with no
+URL or real animal health information. A shared Firestore attempt document is
+claimed transactionally before the normal SMS quota/delivery ledger is used.
+The attempt remains consumed on success, rejection, timeout or uncertain result;
+do not delete/reset it to retry without reconciling provider history and renewed
+owner approval. No scheduler or unrelated tenant is invoked. Acceptance still
+requires handset confirmation and does not verify link-bearing templates.
+

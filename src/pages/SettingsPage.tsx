@@ -3,6 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
 import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
 import { REMINDER_TYPES } from '../components/ui/ReminderForm'
+import StagingSmsQa from '../components/ui/StagingSmsQa'
 import type { Reminder, ToastMessage } from '../types'
 
 interface Props {
@@ -485,6 +486,7 @@ export default function SettingsPage({ toast }: Props) {
             <a className="btn btn-secondary btn-sm" href="/app/billing" style={{ marginTop: 10, display: 'inline-flex' }}>
               {profile?.smsAddonStatus === 'active' ? 'Manage SMS add-on' : 'View SMS add-on'}
             </a>
+            <StagingSmsQa />
           </div>
         </div>
       </div>
