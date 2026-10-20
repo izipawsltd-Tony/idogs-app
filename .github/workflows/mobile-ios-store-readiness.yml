@@ -4,6 +4,8 @@ on:
   push:
     branches: [fix/android-v20-qa-blockers]
     paths:
+      # Refresh the GET-only inventory when a new internal candidate is recorded.
+      - docs/release/ios-candidate-*.md
       - scripts/qa/app-store-readiness.mjs
       - .github/workflows/mobile-ios-store-readiness.yml
   workflow_dispatch:
