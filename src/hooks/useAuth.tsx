@@ -10,7 +10,7 @@ import {
   User
 } from 'firebase/auth'
 import { auth } from '../lib/firebase'
-import { createUserProfile, getUserProfile, updateUserProfile, deleteUserData } from '../lib/db'
+import { createUserProfile, getUserProfile, updateUserProfile } from '../lib/db'
 import type { UserProfile, SignupFormData } from '../types'
 
 interface AuthContextType {
@@ -25,7 +25,6 @@ interface AuthContextType {
   upgradeToBreeder: () => Promise<void>
   resendVerificationEmail: () => Promise<void>
   checkEmailVerified: () => Promise<boolean>
-  deleteAccount: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | null>(null)
@@ -113,13 +112,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await sendEmailVerification(auth.currentUser)
   }
 
-  async function deleteAccount() {
-    if (!user) return
-    await deleteUserData(user.uid)
-    await user.delete()
-    setProfile(null)
-  }
-
   // Reloads the Firebase user and reports whether email is now verified.
   // Also forces a state update so ProtectedRoute re-evaluates immediately.
   //
@@ -155,7 +147,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signup, login, logout, resetPassword, refreshProfile, upgradeToBreeder, resendVerificationEmail, checkEmailVerified, deleteAccount }}>
+    <AuthContext.Provider value={{ user, profile, loading, signup, login, logout, resetPassword, refreshProfile, upgradeToBreeder, resendVerificationEmail, checkEmailVerified }}>
       {children}
     </AuthContext.Provider>
   )

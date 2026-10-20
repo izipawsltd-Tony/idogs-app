@@ -69,6 +69,11 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
     label: 'Operations',
     items: [
       {
+        label: 'Account Deletions',
+        path: `${SUPER_ADMIN_BASE_PATH}/account-deletions`,
+        description: 'Review account deletion requests and ownership safeguards',
+      },
+      {
         label: 'Support Inbox',
         path: `${SUPER_ADMIN_BASE_PATH}/support-inbox`,
         description: 'Reply to and manage user conversations',

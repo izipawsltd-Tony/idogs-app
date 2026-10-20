@@ -6,9 +6,10 @@ import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
-import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { isNativeApp } from '../lib/nativePlatform'
 import { dogLimitReachedBody } from '../lib/nativeUpgradeCopy'
 import { DogCreationUnconfirmedError } from '../lib/dogCreationResponse'
+import { PLUS_MONTHLY_PRICE_AUD } from '../lib/pricingCopy'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -398,14 +399,15 @@ export default function DogNewPage({ toast }: Props) {
         for (const f of pendingFilesSnapshot) {
           if (!req.isCurrent()) return
           try {
+            const idToken = await user.getIdToken()
+            if (!req.isCurrent()) return
             const uploadRes = await fetch('/api/upload-document', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
               body: JSON.stringify({
                 base64: f.base64,
                 mediaType: f.mediaType,
                 dogId,
-                tenantId: user.uid,
                 documentType: f.documentType,
                 extractedData: { dogName: formSnapshot.name },
               }),
@@ -558,12 +560,12 @@ export default function DogNewPage({ toast }: Props) {
             The free plan supports up to {FREE_DOG_LIMIT} dogs.
           </p>
           <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 28, lineHeight: 1.6 }}>
-            {dogLimitReachedBody(isAndroidNativeApp())}
+            {dogLimitReachedBody(isNativeApp())}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-            {!isAndroidNativeApp() && (
+            {!isNativeApp() && (
               <Link to="/app/billing" className="btn btn-primary">
-                Upgrade — from $5/mo
+                {`Upgrade — from A$${PLUS_MONTHLY_PRICE_AUD}/mo`}
               </Link>
             )}
             <Link to="/app/dogs" className="btn btn-secondary">

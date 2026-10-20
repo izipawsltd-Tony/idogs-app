@@ -72,5 +72,5 @@ export function restrictedPuppyMediaMessage(isAndroid: boolean, puppyName: strin
 }
 
 export function sidebarPurchasesUnavailableNotice(): string {
-  return 'Purchases are unavailable in this Android app.'
+  return 'Purchases are unavailable in this app.'
 }

@@ -6,7 +6,7 @@ import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '..
 import { getInitials, AU_STATES, isDogEligibleForCap, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../../lib/utils'
 import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
 import { SUPER_ADMIN_EMAILS } from '../../lib/superAdmin'
-import { isAndroidNativeApp } from '../../lib/nativePlatform'
+import { isNativeApp } from '../../lib/nativePlatform'
 import { sidebarPurchasesUnavailableNotice } from '../../lib/nativeUpgradeCopy'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
@@ -80,6 +80,7 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
     items: [
       { path: '/app/dogs?stage=puppies', label: 'Puppies', icon: '🐾', breederOnly: true },
       { path: '/app/buyers',  label: 'Buyers',  icon: '👥', breederOnly: true },
+      { path: '/app/finance', label: 'Invoices & Payments', icon: '🧾', breederOnly: true },
     ],
   },
   {
@@ -542,7 +543,7 @@ export default function AppLayout({ toast }: Props) {
               </div>
             )}
             {planCfg.upgrade && (
-              isAndroidNativeApp() ? (
+              isNativeApp() ? (
                 <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mid)', textAlign: 'center' }}>
                   {sidebarPurchasesUnavailableNotice()}
                 </div>
@@ -577,12 +578,21 @@ export default function AppLayout({ toast }: Props) {
         flexDirection: 'column',
       }}>
         {pendingClaimCount !== null && pendingClaimCount > 0 && (
-          <div style={{ background: 'var(--brand-600)', color: '#fff', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 45 }}>
-            <div style={{ fontSize: 14, fontWeight: 500 }}>
-              🐾 You have {pendingClaimCount} dog{pendingClaimCount !== 1 ? 's' : ''} waiting to be claimed!
+          <div style={{
+            background: 'var(--brand-600)', color: '#fff', padding: '14px 24px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: 16, flexWrap: 'wrap', zIndex: 45, boxShadow: '0 2px 10px rgba(0,0,0,0.12)'
+          }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>
+                🐾 Ownership transfer waiting for you
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.9, marginTop: 2 }}>
+                {pendingClaimCount} dog{pendingClaimCount !== 1 ? 's have' : ' has'} been transferred to this iDogs account. Accept to add {pendingClaimCount !== 1 ? 'them' : 'it'} to My Dogs.
+              </div>
             </div>
-            <Link to="/app/claim-dogs" className="btn btn-sm" style={{ background: '#fff', color: 'var(--brand-600)', border: 'none' }}>
-              Review transfer
+            <Link to="/app/claim-dogs" className="btn btn-sm" style={{ background: '#fff', color: 'var(--brand-600)', border: 'none', fontWeight: 700, padding: '8px 14px' }}>
+              Accept transfer
             </Link>
           </div>
         )}
@@ -777,9 +787,12 @@ export default function AppLayout({ toast }: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ height: 28, width: 96, objectFit: 'contain' }} />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Link to="/app/billing" style={{ fontSize: 13, color: 'var(--mid)', textDecoration: 'none' }}>
               💳 Billing
+            </Link>
+            <Link to="/app/settings" style={{ fontSize: 13, color: 'var(--mid)', textDecoration: 'none' }}>
+              ⚙️ Settings
             </Link>
             <button onClick={handleLogout} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--mid)', cursor: 'pointer' }}>
               Sign out

@@ -1,8 +1,13 @@
+import { DATA_PROCESSING_SUMMARY } from '../components/legal/PolicyReview'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
-import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
-import type { ToastMessage } from '../types'
+import { BREEDER_ID_CONFIG, suggestBreederIdType, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../lib/utils'
+import { isNativeApp } from '../lib/nativePlatform'
+import AccountDeletion from '../components/ui/AccountDeletion'
+import { REMINDER_TYPES } from '../components/ui/ReminderForm'
+import type { Reminder, ToastMessage } from '../types'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -12,6 +17,7 @@ const REMINDER_OPTIONS = [3, 7, 14, 30]
 
 export default function SettingsPage({ toast }: Props) {
   const { user, profile, refreshProfile } = useAuth()
+  const [showReminderTypes, setShowReminderTypes] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
   const [editingProfile, setEditingProfile] = useState(false)
   const [profileForm, setProfileForm] = useState({
@@ -27,6 +33,9 @@ export default function SettingsPage({ toast }: Props) {
   const [changingRole, setChangingRole] = useState(false)
 
   const isOwner = profile?.role === 'owner'
+  const effectivePlan = getEffectivePlanClient(profile)
+  const includedAccess = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())
+  const nativeApp = isNativeApp()
   const hideLitters = (profile as any)?.hideLitters === true
   const hideDocuments = (profile as any)?.hideDocuments === true
   const hideReminders = (profile as any)?.hideReminders === true
@@ -47,6 +56,29 @@ export default function SettingsPage({ toast }: Props) {
     } finally {
       setSaving(null)
     }
+  }
+
+  async function setEmailSetting(field: 'emailReminders' | 'manualReminderEmails', enabled: boolean) {
+    if (!user || saving) return
+    setSaving(field)
+    try {
+      await updateUserProfile(user.uid, { [field]: enabled })
+      await refreshProfile()
+      toast(enabled ? 'Email reminders enabled' : 'Email reminders disabled')
+    } catch { toast('Failed to save setting', 'error') }
+    finally { setSaving(null) }
+  }
+
+  async function setCareEmailType(type: Reminder['type'], enabled: boolean) {
+    if (!user || saving) return
+    setSaving(`careEmailTypes.${type}`)
+    try {
+      // Merge one nested key so concurrent edits to another category survive.
+      await updateUserProfile(user.uid, { careEmailTypes: { [type]: enabled } })
+      await refreshProfile()
+      toast('Email preference saved')
+    } catch { toast('Failed to save setting', 'error') }
+    finally { setSaving(null) }
   }
 
   async function setReminderDays(days: number) {
@@ -136,6 +168,27 @@ export default function SettingsPage({ toast }: Props) {
     <div style={{ padding: 32, maxWidth: 600 }}>
       <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>Settings</h1>
       <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 32 }}>Manage your account preferences.</p>
+
+      <section className="card" aria-labelledby="current-plan-heading" style={{ marginBottom: 16 }}>
+        <h2 id="current-plan-heading" style={{ fontSize: 16, fontWeight: 600, margin: '0 0 12px', color: 'var(--dark)' }}>Current plan</h2>
+        {profile ? (
+          <>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--green)', marginBottom: 8 }}>
+              {effectivePlan === 'plus' ? 'Plus' : 'Free'}{includedAccess ? ' · Included access' : ''}
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 8px' }}>
+              {includedAccess ? 'Unlimited dogs' : effectivePlan === 'plus' ? 'Up to 5 dogs' : 'Up to 2 dogs'} · Health records, reminders, documents and QR Passport
+            </p>
+            <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 12px' }}>
+              {effectivePlan === 'plus' ? '10 AI document scans per month' : '2 AI document scans for the life of your account'}. Dogs over your plan limit stay saved and become read-only.
+            </p>
+          </>
+        ) : (
+          <p role="status" style={{ fontSize: 13, color: 'var(--mid)' }}>Your plan is temporarily unavailable. Please try again after reconnecting.</p>
+        )}
+        {nativeApp && <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 12px' }}>Purchases are unavailable in this app. Your existing plan access remains available.</p>}
+        <Link to="/app/billing" className="btn btn-secondary" style={{ display: 'inline-flex', minHeight: 44, alignItems: 'center', textDecoration: 'none' }}>View plan details</Link>
+      </section>
 
       {/* ── PROFILE ── */}
       <div className="card" style={{ marginBottom: 16 }}>
@@ -278,7 +331,6 @@ export default function SettingsPage({ toast }: Props) {
                 </span>
               </div>
             )}
-            <SettingRow label="Plan" value={profile?.plan === 'trial' ? 'Free' : profile?.plan || '—'} />
           </div>
         )}
       </div>
@@ -329,17 +381,42 @@ export default function SettingsPage({ toast }: Props) {
           {/* Email reminders toggle */}
           <ToggleRow
             icon="✉️" label="Email Reminders"
-            description="Receive email notifications for upcoming vaccine and worming due dates."
+            description="Receive scheduled emails. Turning this off also pauses existing scheduled SMS; saved in-app reminders remain."
             enabled={emailReminders}
-            saving={saving === 'emailReminders'}
-            onToggle={() => toggle('emailReminders', !emailReminders, 'Email reminders enabled', 'Email reminders disabled')}
+            saving={saving !== null}
+            onToggle={() => setEmailSetting('emailReminders', !emailReminders)}
           />
+
+          <ToggleRow
+            icon="📋" label="Manual reminder emails"
+            description="Email reminders you add yourself. Off by default. Uses each reminder’s lead time; checked once daily, not at a chosen hour."
+            enabled={profile?.manualReminderEmails === true}
+            saving={saving !== null || !emailReminders}
+            onToggle={() => setEmailSetting('manualReminderEmails', profile?.manualReminderEmails !== true)}
+          />
+          <div style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <button type="button" aria-expanded={showReminderTypes} aria-controls="manual-reminder-types" onClick={() => setShowReminderTypes(value => !value)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, width: '100%', padding: '8px 0', border: 0, background: 'transparent', color: 'var(--dark)', cursor: 'pointer', textAlign: 'left' }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>Manual reminder email types</span>
+              <span style={{ fontSize: 13, color: 'var(--green)', whiteSpace: 'nowrap' }}>{showReminderTypes ? 'Hide ▴' : 'Show ▾'}</span>
+            </button>
+            {showReminderTypes && <div id="manual-reminder-types" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {REMINDER_TYPES.map(({ value, label }) => <ToggleRow key={value}
+                icon="" label={label}
+                description="Emails for manually added reminders."
+                enabled={profile?.careEmailTypes?.[value] !== false}
+                saving={saving !== null || !emailReminders}
+                onToggle={() => setCareEmailType(value, profile?.careEmailTypes?.[value] === false)}
+              />)}
+            </div>}
+            {showReminderTypes && <p style={{ fontSize: 12, color: 'var(--mid)', marginTop: 12 }}>These type choices apply to manually added reminder emails. Recorded next-dose reminders use the main Email Reminders setting. In-app reminders stay visible. iPhone push notifications are not enabled by these settings. Once-only manual emails can catch up up to 14 days after the due date; daily manual emails stop after it.</p>}
+          </div>
 
           {/* Reminder lead time */}
           {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>⏰ Reminder lead time</div>
-              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How many days before due date to send reminders.</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>Default lead time for recorded health reminders. Manual reminders use their own lead time.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 {REMINDER_OPTIONS.map(days => (
                   <button
@@ -440,13 +517,18 @@ export default function SettingsPage({ toast }: Props) {
       </div>
 
       {/* ── DATA & PRIVACY ── */}
+      <AccountDeletion />
       <div className="card">
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Data & Privacy</div>
         <div style={{ fontSize: 13, color: 'var(--green)', background: 'var(--green-light)', padding: '10px 14px', borderRadius: 8, marginBottom: 12 }}>
-          🔒 Your data is stored securely in the Asia-Pacific region and is compliant with the Australian Privacy Act 1988.
+          🔒 {DATA_PROCESSING_SUMMARY}
         </div>
         <div style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6 }}>
           Your dog profiles, health records, and documents are private by default. Public passport pages only show information you choose to share via QR code.
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 12 }}>
+          <Link to="/privacy" style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center' }}>Privacy policy</Link>
+          <Link to="/terms" style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center' }}>Terms of use</Link>
         </div>
       </div>
     </div>
@@ -480,6 +562,9 @@ function ToggleRow({ icon, label, description, enabled, saving, onToggle }: {
       </div>
       <button
         onClick={onToggle}
+        role="switch"
+        aria-checked={enabled}
+        aria-label={label}
         disabled={saving}
         style={{
           width: 48, height: 26, borderRadius: 13, flexShrink: 0,

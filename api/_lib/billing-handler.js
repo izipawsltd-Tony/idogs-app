@@ -51,12 +51,25 @@ function mapInvoice(invoice) {
   }
 }
 
+function profileEntitlement(profile) {
+  return {
+    plan: profile?.plan === 'plus' ? 'plus' : 'free',
+    billingInterval: profile?.billingInterval === 'annual'
+      ? 'annual'
+      : profile?.billingInterval === 'monthly' ? 'monthly' : null,
+    subscriptionStatus: typeof profile?.subscriptionStatus === 'string'
+      ? profile.subscriptionStatus
+      : null,
+  }
+}
+
 export function createBillingSummaryHandler({
   verifyIdToken,
   getProfile,
   retrieveSubscription,
   listInvoices,
   isSmsConfigured = () => false,
+  reconcileVerifiedPlus = async () => false,
 } = {}) {
   return async function billingSummaryHandler(req, res) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
@@ -76,10 +89,11 @@ export function createBillingSummaryHandler({
         periodStart: typeof profile.smsPeriodStart === 'string' ? profile.smsPeriodStart : null,
         periodEnd: typeof profile.smsPeriodEnd === 'string' ? profile.smsPeriodEnd : null,
       }
+      let entitlement = profileEntitlement(profile)
       const customerId = typeof profile.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
       const subscriptionId = typeof profile.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : null
       if (!customerId) {
-        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms })
+        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms, entitlement })
       }
 
       let subscription = null
@@ -89,6 +103,23 @@ export function createBillingSummaryHandler({
           logSanitizedError('billing-summary', 'SUBSCRIPTION_CUSTOMER_MISMATCH')
           return res.status(409).json({ error: 'Billing account mismatch' })
         }
+
+        const reconciled = await reconcileVerifiedPlus({
+          subscription: stripeSubscription,
+          userId: auth.uid,
+        })
+        if (reconciled && typeof reconciled === 'object') {
+          entitlement = {
+            plan: reconciled.plan === 'plus' ? 'plus' : 'free',
+            billingInterval: reconciled.billingInterval === 'annual'
+              ? 'annual'
+              : reconciled.billingInterval === 'monthly' ? 'monthly' : null,
+            subscriptionStatus: typeof reconciled.subscriptionStatus === 'string'
+              ? reconciled.subscriptionStatus
+              : null,
+          }
+        }
+
         subscription = {
           id: stripeSubscription.id,
           status: stripeSubscription.status || profile.subscriptionStatus || 'unknown',
@@ -99,7 +130,7 @@ export function createBillingSummaryHandler({
 
       const result = await listInvoices({ customer: customerId, limit: 12 })
       const invoices = (result?.data || []).map(mapInvoice).filter(invoice => invoice.id)
-      return res.status(200).json({ subscription, invoices, canManageBilling: true, sms })
+      return res.status(200).json({ subscription, invoices, canManageBilling: true, sms, entitlement })
     } catch {
       logSanitizedError('billing-summary', 'BILLING_SUMMARY_FAILED')
       return res.status(500).json({ error: 'Failed to load billing details' })

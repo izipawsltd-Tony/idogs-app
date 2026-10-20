@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getDogs, getLitters } from '../lib/db'
 import type { Dog, Litter, ToastMessage } from '../types'
-import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { isNativeApp } from '../lib/nativePlatform'
 import { exportPlanGateMessage } from '../lib/nativeUpgradeCopy'
 
 interface Props {
@@ -96,7 +96,7 @@ export default function ExportPage({ toast }: Props) {
         if (res.status === 403) {
           const body = await res.json().catch(() => ({}))
           if (body.reason === 'EXPORT_PLAN_GATE') {
-            toast(exportPlanGateMessage(isAndroidNativeApp()), 'error')
+            toast(exportPlanGateMessage(isNativeApp()), 'error')
             return
           }
         }

@@ -21,11 +21,11 @@
     padding-top: 40px !important;
   }
 
-  /* Native QA has no payment credentials, and Google Play production must not
-     expose Stripe purchase/portal entry points for digital services. Web billing
-     remains unchanged. */
-  html[data-idogs-native-api='dedicated-staging-qa'] a[href='/app/billing'],
-  html[data-idogs-native-api='production'] a[href='/app/billing'] {
+  /* Keep the compact native top bar focused on Settings and sign-out. Plan
+     details remain reachable from Settings; BillingPage and native API routing
+     enforce the purchase gate independently of link visibility. */
+  html[data-idogs-native-api='dedicated-staging-qa'] .mobile-topbar a[href='/app/billing'],
+  html[data-idogs-native-api='production'] .mobile-topbar a[href='/app/billing'] {
     display: none !important;
   }
 }

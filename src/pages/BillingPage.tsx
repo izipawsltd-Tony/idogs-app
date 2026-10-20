@@ -3,7 +3,8 @@ import { useAuth } from '../hooks/useAuth'
 import { useSearchParams } from 'react-router-dom'
 import type { ToastMessage } from '../types'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
-import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { isNativeApp } from '../lib/nativePlatform'
+import { getEffectivePlanClient, hasValidInternalEntitlementClient } from '../lib/utils'
 import {
   androidPlanUnavailableNotice,
   billingIntroCopy,
@@ -101,19 +102,19 @@ export default function BillingPage({ toast }: Props) {
   // profile is only a pre-load fallback so this page cannot remain stuck on
   // a stale client-side Free value after a successful Plus activation.
   const verifiedEntitlement = billingDetails?.entitlement
-  const isPlus = verifiedEntitlement ? verifiedEntitlement.plan === 'plus' : profile?.plan === 'plus'
+  const isPlus = verifiedEntitlement ? verifiedEntitlement.plan === 'plus' : getEffectivePlanClient(profile) === 'plus'
+  const includedAccess = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())
   const isOwner = profile?.role === 'owner'
   const billingInterval = verifiedEntitlement?.billingInterval
     ?? ((profile as any)?.billingInterval as 'monthly' | 'annual' | undefined)
   const subscriptionStatus = verifiedEntitlement?.subscriptionStatus
     ?? ((profile as any)?.subscriptionStatus as string | undefined)
   const isPastDue = isPlus && subscriptionStatus === 'past_due'
-  // Google Play does not allow purchase/subscription UI for digital services
-  // inside the Android app; the matching server-side calls are already
-  // blocked in nativeApiRouting.ts. Read-only status and existing
-  // entitlements (including cancelling an SMS add-on) still work.
-  const androidPurchasesUnavailable = isAndroidNativeApp()
-  const showExternalPaymentCopy = showExternalPaymentFaq(androidPurchasesUnavailable)
+  // Native app-store builds must not expose the web/Stripe purchase path for digital services.
+  // The matching native API routes are blocked in nativeApiRouting.ts. Read-only
+  // status and existing entitlements (including cancelling an SMS add-on) still work.
+  const nativePurchasesUnavailable = isNativeApp()
+  const showExternalPaymentCopy = showExternalPaymentFaq(nativePurchasesUnavailable)
 
   useEffect(() => {
     if (searchParams.get('success')) {
@@ -293,7 +294,7 @@ export default function BillingPage({ toast }: Props) {
           Billing & Plans
         </h1>
         <p style={{ fontSize: 14, color: 'var(--light)' }}>
-          {billingIntroCopy(androidPurchasesUnavailable)}
+          {billingIntroCopy(nativePurchasesUnavailable)}
         </p>
       </div>
 
@@ -306,7 +307,7 @@ export default function BillingPage({ toast }: Props) {
         <div>
           <span style={{ fontSize: 14, fontWeight: 600, color: isPastDue ? 'var(--gold)' : isPlus ? 'var(--green)' : 'var(--dark)' }}>
             {isPastDue ? '⚠️ ' : isPlus ? '✓ ' : '🐾 '}
-            Current plan: {isPlus ? `Plus (${billingInterval === 'annual' ? 'Annual' : 'Monthly'})` : 'Free'}
+            Current plan: {isPlus ? includedAccess ? 'Plus · Included access' : billingInterval ? `Plus (${billingInterval === 'annual' ? 'Annual' : 'Monthly'})` : 'Plus' : 'Free'}
           </span>
           {isPastDue && (
             <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 2 }}>
@@ -334,7 +335,7 @@ export default function BillingPage({ toast }: Props) {
               )}
             </div>
             {billingDetails?.canManageBilling && (
-              androidPurchasesUnavailable ? (
+              nativePurchasesUnavailable ? (
                 <span style={{ fontSize: 12, color: 'var(--light)' }}>{androidPlanUnavailableNotice()}</span>
               ) : (
                 <button type="button" className="btn btn-secondary" onClick={handleOpenPortal} disabled={portalLoading}>
@@ -352,7 +353,7 @@ export default function BillingPage({ toast }: Props) {
         </div>
       )}
 
-      {showPlanPricingUI(androidPurchasesUnavailable) && (
+      {showPlanPricingUI(nativePurchasesUnavailable) && (
         <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 24 }}>
           <div style={{ display: 'inline-flex', background: 'var(--sand)', borderRadius: 10, padding: 4 }}>
             <button
@@ -385,14 +386,14 @@ export default function BillingPage({ toast }: Props) {
         </div>
 
         <div style={{ background: '#fff', border: '2px solid var(--green)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 4px 20px rgba(8,80,65,0.12)' }}>
-          {showPlanPricingUI(androidPurchasesUnavailable) && (
+          {showPlanPricingUI(nativePurchasesUnavailable) && (
             <div style={{ background: 'var(--green)', color: '#fff', fontSize: 11, fontWeight: 700, textAlign: 'center', padding: 5, letterSpacing: '0.05em' }}>MOST POPULAR</div>
           )}
           <div style={{ padding: 20 }}>
             <div style={{ fontSize: 24, marginBottom: 6 }}>🏆</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Plus</div>
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>For active breeders with a growing kennel</div>
-            {showPlanPricingUI(androidPurchasesUnavailable) && (
+            {showPlanPricingUI(nativePurchasesUnavailable) && (
               <>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
                   <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>
@@ -404,11 +405,11 @@ export default function BillingPage({ toast }: Props) {
               </>
             )}
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {plusFeatureList(androidPurchasesUnavailable).map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
+              {plusFeatureList(nativePurchasesUnavailable).map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
             </ul>
             {isPlus ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan</div>
-            ) : androidPurchasesUnavailable ? (
+            ) : nativePurchasesUnavailable ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>{androidPlanUnavailableNotice()}</div>
             ) : (
               <button onClick={() => handleSubscribe(interval)} disabled={loading} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
@@ -427,7 +428,7 @@ export default function BillingPage({ toast }: Props) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 320px' }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>SMS Add-on</div>
-            {showSmsAddonPrice(androidPurchasesUnavailable) && (
+            {showSmsAddonPrice(nativePurchasesUnavailable) && (
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}><span style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color: 'var(--dark)' }}>$3</span><span style={{ fontSize: 13, color: 'var(--light)' }}>AUD / month</span></div>
             )}
             <div style={{ fontSize: 13, color: 'var(--mid)', lineHeight: 1.6 }}>20 SMS credits each billing month for vaccination, worming and breeding reminders: heat cycle, mating, pregnancy and whelping.</div>
@@ -448,7 +449,7 @@ export default function BillingPage({ toast }: Props) {
                 )}
                 {billingDetails?.sms.status === 'active' || billingDetails?.sms.status === 'past_due' ? (
                   <button className="btn btn-secondary" type="button" onClick={handleSmsRemove} disabled={smsRemoveLoading}>{smsRemoveLoading ? 'Removing SMS…' : 'Remove SMS add-on'}</button>
-                ) : androidPurchasesUnavailable ? (
+                ) : nativePurchasesUnavailable ? (
                   <div style={{ fontSize: 12, color: 'var(--light)' }}>{androidPlanUnavailableNotice()}</div>
                 ) : !isPlus ? (
                   <div style={{ fontSize: 12, color: 'var(--light)' }}>Upgrade to iDogs Plus before adding SMS reminders.</div>
@@ -472,7 +473,7 @@ export default function BillingPage({ toast }: Props) {
                 <div><div style={{ fontWeight: 600, color: 'var(--dark)' }}>{invoice.number || 'Stripe invoice'}</div><div style={{ color: 'var(--light)', marginTop: 2 }}>{formatBillingDate(invoice.createdAt)}</div></div>
                 <div style={{ color: 'var(--mid)', textTransform: 'capitalize' }}>{invoice.status.replaceAll('_', ' ')}</div>
                 <div style={{ fontWeight: 600, color: 'var(--dark)' }}>{formatMoney(invoice.amountPaid || invoice.amountDue, invoice.currency)}</div>
-                <div style={{ display: 'flex', gap: 8 }}>{invoice.hostedInvoiceUrl && <a className="btn btn-secondary btn-sm" href={invoice.hostedInvoiceUrl} target="_blank" rel="noreferrer">View</a>}{invoice.invoicePdf && <a className="btn btn-secondary btn-sm" href={invoice.invoicePdf} target="_blank" rel="noreferrer">PDF</a>}</div>
+                {!nativePurchasesUnavailable && <div style={{ display: 'flex', gap: 8 }}>{invoice.hostedInvoiceUrl && <a className="btn btn-secondary btn-sm" href={invoice.hostedInvoiceUrl} target="_blank" rel="noreferrer">View</a>}{invoice.invoicePdf && <a className="btn btn-secondary btn-sm" href={invoice.invoicePdf} target="_blank" rel="noreferrer">PDF</a>}</div>}
               </div>
             ))}
           </div>

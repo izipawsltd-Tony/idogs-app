@@ -58,7 +58,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
 
-  const { to_email, to_name, subject, message, action_url } = req.body
+  const { to_email, to_name, subject, message, action_url, action_label } = req.body
 
   if (!to_email || !subject || !message) {
     return res.status(400).json({ error: 'Missing required fields' })
@@ -82,7 +82,7 @@ export default async function handler(req, res) {
             </div>
             <p style="font-size: 16px; color: #5C5A54; margin-bottom: 20px;">Hi ${to_name || 'there'},</p>
             <div style="font-size: 15px; line-height: 1.7; color: #1A1917; white-space: pre-line; margin-bottom: 24px;">${message}</div>
-            ${action_url ? `<div style="margin-bottom: 32px;"><a href="${action_url}" style="display: inline-block; background: #085041; color: white; font-size: 14px; font-weight: 600; padding: 12px 24px; border-radius: 10px; text-decoration: none;">Open iDogs →</a></div>` : ''}
+            ${action_url ? `<div style="margin-bottom: 32px;"><a href="${action_url}" style="display: inline-block; background: #085041; color: white; font-size: 14px; font-weight: 600; padding: 12px 24px; border-radius: 10px; text-decoration: none;">${action_label || 'Open iDogs →'}</a></div>` : ''}
             <hr style="border: none; border-top: 1px solid #E2DFD8; margin: 24px 0;" />
             <p style="font-size: 12px; color: #9A9891;">iDogs · Every dog's story, forever · <a href="https://idogs.com.au" style="color: #085041;">idogs.com.au</a></p>
           </div>

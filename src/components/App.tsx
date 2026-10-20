@@ -34,6 +34,7 @@ import NotFoundPage from '../pages/NotFoundPage'
 import ComingSoonPage from '../pages/ComingSoonPage'
 import ReportsPage from '../pages/ReportsPage'
 import BuyersPage from '../pages/BuyersPage'
+import FinanceDocumentsPage from '../pages/FinanceDocumentsPage'
 import ClaimDogPage from '../pages/ClaimDogPage'
 import PrivateDogPage from '../pages/PrivateDogPage'
 import SuperAdminRoute from '../super-admin/SuperAdminRoute'
@@ -50,6 +51,7 @@ import SuperAdminAuditLogsPage from '../super-admin/pages/SuperAdminAuditLogsPag
 import SuperAdminAuditLogDetailPage from '../super-admin/pages/SuperAdminAuditLogDetailPage'
 import SuperAdminSettingsPage from '../super-admin/pages/SuperAdminSettingsPage'
 import SuperAdminSupportInboxPage from '../super-admin/pages/SuperAdminSupportInboxPage'
+import SuperAdminAccountDeletionsPage from '../super-admin/pages/SuperAdminAccountDeletionsPage'
 import SuperAdminFaqManagementPage from '../super-admin/pages/SuperAdminFaqManagementPage'
 
 import AppLayout from './layout/AppLayout'
@@ -125,6 +127,7 @@ export default function App() {
           <Route path="subscriptions" element={<SuperAdminSubscriptionsPage />} />
           <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
           <Route path="support-inbox" element={<SuperAdminSupportInboxPage />} />
+          <Route path="account-deletions" element={<SuperAdminAccountDeletionsPage />} />
           <Route path="support-faqs" element={<SuperAdminFaqManagementPage />} />
           <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
           <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
@@ -154,6 +157,7 @@ export default function App() {
           <Route path="admin/landing-media" element={<LandingMediaAdminPage toast={toast} />} />
           <Route path="puppies" element={<Navigate to="/app/dogs?stage=puppies" replace />} />
           <Route path="buyers"  element={<BreederOnlyRoute><BuyersPage /></BreederOnlyRoute>} />
+          <Route path="finance" element={<BreederOnlyRoute><FinanceDocumentsPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="reports" element={<BreederOnlyRoute><ReportsPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="claim-dogs" element={<ClaimDogPage toast={toast} />} />
           <Route path="shared-dogs/:dogId" element={<PrivateDogPage />} />

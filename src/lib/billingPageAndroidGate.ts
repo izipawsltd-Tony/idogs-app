@@ -33,7 +33,7 @@ export function plusFeatureList(isAndroid: boolean): string[] {
 }
 
 export function androidPlanUnavailableNotice(): string {
-  return 'Purchases are unavailable in this Android app.'
+  return 'Purchases are unavailable in this app.'
 }
 
 // Governs the SMS add-on's "$3 AUD / month" price line.

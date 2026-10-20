@@ -1,0 +1,318 @@
+name: iDogs iOS TestFlight
+
+on:
+  push:
+    branches:
+      - fix/android-v20-qa-blockers
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  archive-and-upload:
+    name: Sign iOS archive and upload TestFlight
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[testflight]')
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+      APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+      APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      IOS_BUNDLE_ID: au.com.idogs.app
+      IOS_MARKETING_VERSION: '1.0'
+      IDOGS_MOBILE_APP_ID: au.com.idogs.app
+      IDOGS_MOBILE_APP_NAME: iDogs
+      VITE_IDOGS_NATIVE_PLATFORM: ios
+      VITE_IDOGS_NATIVE_MODE: production
+      ASC_APP_ID: 6823094602
+      ASC_INTERNAL_BETA_GROUP_ID: ede79b3f-5c6b-4ccc-9224-7eb0c1aac44e
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Fail closed when Apple signing credentials are missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in APPLE_KEY_ID APPLE_ISSUER_ID APPLE_API_KEY_P8_BASE64 APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test -- --run
+
+      - name: Account deletion safety regression
+        run: node --test scripts/test-account-deletion.mjs
+
+      - name: Verify native production environment guard
+        run: npm run test:native-release-env
+
+      - name: Pull production client env and fail closed on staging
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${VERCEL_TOKEN:-}" || { echo 'FAIL CLOSED: VERCEL_TOKEN missing'; exit 1; }
+          rm -rf .vercel
+          mkdir -p .vercel
+          printf '%s\n' '{"projectId":"prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo","orgId":"team_oZF1Z0BUEceb9fAXdmFV1Saz","projectName":"idogs-app"}' > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope=izipawsltd-tonys-projects >/tmp/vercel-production-pull.log 2>&1
+          test -f .vercel/.env.production.local
+          ENV_FILE=.vercel/.env.production.local GITHUB_ENV_FILE="$GITHUB_ENV" node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          import { assertNativeProductionEnvironment } from './scripts/validate-native-production-env.mjs'
+          const text = fs.readFileSync(process.env.ENV_FILE, 'utf8')
+          function read(name) {
+            const line = text.split(/\r?\n/).find(l => l.startsWith(name + '='))
+            if (!line) return null
+            let v = line.slice(name.length + 1).trim()
+            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+            return v.replace(/\\n/g, '\n')
+          }
+          const required = [
+            'VITE_FIREBASE_API_KEY',
+            'VITE_FIREBASE_AUTH_DOMAIN',
+            'VITE_FIREBASE_PROJECT_ID',
+            'VITE_FIREBASE_STORAGE_BUCKET',
+            'VITE_FIREBASE_MESSAGING_SENDER_ID',
+            'VITE_FIREBASE_APP_ID',
+          ]
+          const values = Object.fromEntries(required.map(k => [k, read(k)]))
+          assertNativeProductionEnvironment(values)
+          for (const [k, v] of Object.entries(values)) fs.appendFileSync(process.env.GITHUB_ENV_FILE, `${k}=${v}\n`)
+          fs.appendFileSync(process.env.GITHUB_ENV_FILE, 'VITE_EXTRA_LITTER_CHECKOUT_ENABLED=false\n')
+          console.log('Production Firebase identity PASS: idogs-app / idogs-app.firebaseapp.com')
+          NODE
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Install Capacitor dependencies
+        run: npm --prefix mobile install --no-audit --no-fund
+
+      - name: Prepare iDogs branding
+        run: npm --prefix mobile run branding
+
+      - name: Generate iOS project
+        run: npm --prefix mobile run add:ios
+
+      - name: Sync web build into iOS
+        run: npm --prefix mobile run sync:ios
+
+      - name: Declare exempt encryption for TestFlight
+        shell: bash
+        run: |
+          set -euo pipefail
+          INFO_PLIST="mobile/ios/App/App/Info.plist"
+          test -f "$INFO_PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :ITSAppUsesNonExemptEncryption" "$INFO_PLIST" >/dev/null 2>&1 || true
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$INFO_PLIST"
+          /usr/libexec/PlistBuddy -c "Print :ITSAppUsesNonExemptEncryption" "$INFO_PLIST" | grep -qx "false"
+
+      - name: Generate iOS assets
+        run: npm --prefix mobile run assets:ios
+
+      - name: Verify iOS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f mobile/ios/App/App.xcodeproj/project.pbxproj
+          grep -q "$IOS_BUNDLE_ID" mobile/ios/App/App.xcodeproj/project.pbxproj
+          test -d mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset
+          find mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset -type f -name '*.png' | grep -q .
+
+      - name: Install App Store Connect API key
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$KEY_DIR"
+          KEY_PATH="$KEY_DIR/AuthKey_${APPLE_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          grep -q "BEGIN PRIVATE KEY" "$KEY_PATH"
+          echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Archive signed iPhone app
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE_PATH="$RUNNER_TEMP/iDogs.xcarchive"
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          xcodebuild             -project mobile/ios/App/App.xcodeproj             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             -archivePath "$ARCHIVE_PATH"             PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Automatic             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             MARKETING_VERSION="$IOS_MARKETING_VERSION"             CURRENT_PROJECT_VERSION="$BUILD_NUMBER"             archive
+          test -d "$ARCHIVE_PATH"
+          echo "IOS_ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
+          echo "IOS_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Export signed App Store IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPORT_DIR="$RUNNER_TEMP/idogs-export"
+          EXPORT_OPTIONS="$RUNNER_TEMP/ExportOptions.plist"
+          cat > "$EXPORT_OPTIONS" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>teamID</key>
+            <string>$APPLE_TEAM_ID</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild             -exportArchive             -archivePath "$IOS_ARCHIVE_PATH"             -exportPath "$EXPORT_DIR"             -exportOptionsPlist "$EXPORT_OPTIONS"             -allowProvisioningUpdates             -authenticationKeyPath "$ASC_KEY_PATH"             -authenticationKeyID "$APPLE_KEY_ID"             -authenticationKeyIssuerID "$APPLE_ISSUER_ID"
+
+          IPA_PATH=$(find "$EXPORT_DIR" -maxdepth 1 -type f -name '*.ipa' -print -quit)
+          test -n "$IPA_PATH"
+          test -s "$IPA_PATH"
+          echo "IOS_IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+
+      - name: Validate signed IPA identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          VALIDATE_DIR="$RUNNER_TEMP/idogs-ipa-validate"
+          rm -rf "$VALIDATE_DIR"
+          mkdir -p "$VALIDATE_DIR"
+          unzip -q "$IOS_IPA_PATH" -d "$VALIDATE_DIR"
+          APP_PATH=$(find "$VALIDATE_DIR/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP_PATH"
+          test -d "$APP_PATH"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -qx "$IOS_BUNDLE_ID"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist" | grep -qx "$IOS_MARKETING_VERSION"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist" | grep -qx "$IOS_BUILD_NUMBER"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Upload to App Store Connect TestFlight
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun altool             --upload-app             --type ios             --file "$IOS_IPA_PATH"             --apiKey "$APPLE_KEY_ID"             --apiIssuer "$APPLE_ISSUER_ID"
+
+      - name: Assign processed build to existing internal testers
+        shell: bash
+        run: |
+          set -euo pipefail
+          gem install jwt --no-document >/dev/null
+
+          make_jwt() {
+            ruby -rjwt -ropenssl -e '
+              key = OpenSSL::PKey::EC.new(File.read(ENV.fetch("ASC_KEY_PATH")))
+              payload = {
+                iss: ENV.fetch("APPLE_ISSUER_ID"),
+                iat: Time.now.to_i,
+                exp: Time.now.to_i + 1200,
+                aud: "appstoreconnect-v1"
+              }
+              print JWT.encode(payload, key, "ES256", { kid: ENV.fetch("APPLE_KEY_ID"), typ: "JWT" })
+            '
+          }
+
+          BUILD_ID=""
+          for attempt in $(seq 1 40); do
+            JWT_TOKEN="$(make_jwt)"
+            RESPONSE="$(
+              curl --fail-with-body --silent --show-error --get \
+                "https://api.appstoreconnect.apple.com/v1/builds" \
+                -H "Authorization: Bearer $JWT_TOKEN" \
+                --data-urlencode "filter[app]=$ASC_APP_ID" \
+                --data-urlencode "filter[version]=$IOS_BUILD_NUMBER" \
+                --data-urlencode "filter[processingState]=VALID" \
+                --data-urlencode "limit=1"
+            )"
+            BUILD_ID="$(printf '%s' "$RESPONSE" | ruby -rjson -e 'j=JSON.parse(STDIN.read); print(j.dig("data",0,"id").to_s)')"
+            if [ -n "$BUILD_ID" ]; then
+              break
+            fi
+            echo "Build $IOS_BUILD_NUMBER not VALID yet (attempt $attempt/40); waiting 30s..."
+            sleep 30
+          done
+          test -n "$BUILD_ID" || { echo "::error::Timed out waiting for App Store Connect build $IOS_BUILD_NUMBER"; exit 1; }
+
+          JWT_TOKEN="$(make_jwt)"
+          TESTERS="$(
+            curl --fail-with-body --silent --show-error \
+              "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID/relationships/betaTesters?limit=200" \
+              -H "Authorization: Bearer $JWT_TOKEN"
+          )"
+          TESTER_IDS="$(printf '%s' "$TESTERS" | ruby -rjson -e 'j=JSON.parse(STDIN.read); puts j.fetch("data",[]).map{|x| x["id"]}.compact')"
+          test -n "$TESTER_IDS" || { echo "::error::No internal testers found in iDogs Internal QA"; exit 1; }
+
+          ASSIGNED=0
+          while IFS= read -r TESTER_ID; do
+            [ -n "$TESTER_ID" ] || continue
+            VERIFIED=0
+            for assignment_attempt in $(seq 1 6); do
+              JWT_TOKEN="$(make_jwt)"
+              VERIFY="$(curl --fail-with-body --silent --show-error \
+                "https://api.appstoreconnect.apple.com/v1/betaTesters/$TESTER_ID/relationships/builds?limit=200" \
+                -H "Authorization: Bearer $JWT_TOKEN")"
+              if printf '%s' "$VERIFY" | BUILD_ID="$BUILD_ID" ruby -rjson -e '
+                ids = JSON.parse(STDIN.read).fetch("data", []).map { |x| x["id"] }
+                exit(ids.include?(ENV.fetch("BUILD_ID")) ? 0 : 1)
+              '; then
+                VERIFIED=1
+                break
+              fi
+              JWT_TOKEN="$(make_jwt)"
+              BODY="$(printf '{"data":[{"type":"builds","id":"%s"}]}' "$BUILD_ID")"
+              RESPONSE_FILE="$RUNNER_TEMP/testflight-assignment.json"
+              HTTP_STATUS="$(curl --silent --show-error --output "$RESPONSE_FILE" --write-out '%{http_code}' \
+                -X POST \
+                "https://api.appstoreconnect.apple.com/v1/betaTesters/$TESTER_ID/relationships/builds" \
+                -H "Authorization: Bearer $JWT_TOKEN" \
+                -H "Content-Type: application/json" --data "$BODY")"
+              if [[ "$HTTP_STATUS" != 2* ]]; then
+                # Emit only provider error codes; never the tester response/body.
+                ruby -rjson -e '
+                  j = JSON.parse(File.read(ARGV[0])) rescue {}
+                  codes = j.fetch("errors", []).map { |e| e["code"].to_s.gsub(/[^A-Z0-9_.-]/, "")[0,100] }
+                  puts "Assignment response HTTP #{ARGV[1]}: #{codes.join(",") }"
+                ' "$RESPONSE_FILE" "$HTTP_STATUS"
+                [[ "$HTTP_STATUS" == 409 || "$HTTP_STATUS" == 429 || "$HTTP_STATUS" == 5* ]] || exit 1
+              fi
+              # A conflict may race automatic assignment or build availability.
+              # Success requires a subsequent GET proving the relationship.
+              sleep 10
+            done
+            test "$VERIFIED" = 1 || { echo "::error::Build assignment not verified after bounded retries"; exit 1; }
+            ASSIGNED=$((ASSIGNED + 1))
+          done <<< "$TESTER_IDS"
+
+          echo "Internal tester assignment PASS for build $IOS_BUILD_NUMBER ($ASSIGNED tester(s))"
+
+      - name: Upload signed IPA evidence
+        if: always() && env.IOS_IPA_PATH != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-ios-testflight-ipa-${{ github.sha }}-build-${{ github.run_number }}
+          path: ${{ env.IOS_IPA_PATH }}
+          if-no-files-found: error
+          retention-days: 7

@@ -11,6 +11,7 @@
     "test:native-release-env": "node --test scripts/test-native-production-env.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-sns": "3.1152.0",
     "@emailjs/browser": "^4.4.1",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",

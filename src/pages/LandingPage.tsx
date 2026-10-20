@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
-import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { isNativeApp } from '../lib/nativePlatform'
 import { showLandingPaidPromotion } from '../lib/landingPageAndroidGate'
+import { PLUS_MONTHLY_PRICE_AUD, LITTER_QUOTA_PLUS_ROLLING_12_MONTHS, EXTRA_LITTER_PRICE_AUD } from '../lib/pricingCopy'
 
 // ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
 // Ported from the approved design-review package:
@@ -25,12 +26,27 @@ import { showLandingPaidPromotion } from '../lib/landingPageAndroidGate'
 // rest of the app's existing global stylesheet (index.css already
 // defines its own unrelated .btn/.btn-primary/etc. — confirmed by
 // direct inspection before writing this file).
+const FAST_LANDING_MEDIA: Partial<Record<LandingSlotId, { localSrc: string; publishedUrl: string }>> = {
+  'dog-profile': {
+    localSrc: '/landing-media-fast/dog-profile.webp',
+    publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/dog-profile/published/8eab97d1-5e79-4852-ab53-5c508e11a868.jpg',
+  },
+  'puppy-showcase': {
+    localSrc: '/landing-media-fast/puppy-showcase.webp',
+    publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/puppy-showcase/published/2a6c4588-21bd-4ee3-87e6-e4346a579353.png',
+  },
+  'digital-passport': {
+    localSrc: '/landing-media-fast/digital-passport.webp',
+    publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/digital-passport/published/bc56f60a-f899-46c8-82c6-415c2c12dd37.jpg',
+  },
+}
+
 export default function LandingPage() {
   const { user, loading } = useAuth()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const pageContentRef = useRef<HTMLDivElement>(null)
-  const showPaidPromotion = showLandingPaidPromotion(isAndroidNativeApp())
+  const showPaidPromotion = showLandingPaidPromotion(isNativeApp())
 
   useEffect(() => {
     if (!loading && user) navigate('/app/dashboard')
@@ -134,31 +150,37 @@ export default function LandingPage() {
             <div className="shots">
               <div>
                 <div className="frame-desktop"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="dog-profile"
+                  <img
+                    src="/landing-media-fast/dog-profile.webp"
                     className="ph ph-desktop"
-                    ariaLabel="Dog records in one organised profile"
-                    fallback={<div className="ph ph-desktop" role="img" aria-label="Dog records in one organised profile (product screenshot to follow)">Dog Profile &amp; records</div>}
+                    alt="Dog records in one organised profile"
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority="high"
                   /></div>
                 <div className="shot-cap">Dog records in one organised profile</div>
               </div>
               <div>
                 <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="puppy-showcase"
+                  <img
+                    src="/landing-media-fast/puppy-showcase.webp"
                     className="ph ph-mobile"
-                    ariaLabel="A mobile-friendly Puppy Showcase"
-                    fallback={<div className="ph ph-mobile" role="img" aria-label="A mobile-friendly Puppy Showcase (product screenshot to follow)">Puppy Showcase</div>}
+                    alt="A mobile-friendly Puppy Showcase"
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority="high"
                   /></div>
                 <div className="shot-cap">A mobile-friendly Puppy Showcase</div>
               </div>
               <div>
                 <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="digital-passport"
+                  <img
+                    src="/landing-media-fast/digital-passport.webp"
                     className="ph ph-mobile"
-                    ariaLabel="A limited public Passport view"
-                    fallback={<div className="ph ph-mobile" role="img" aria-label="A limited public Passport view (product screenshot to follow)">Digital Passport / QR</div>}
+                    alt="A limited public Passport view"
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority="high"
                   /></div>
                 <div className="shot-cap">A limited public Passport view</div>
               </div>
@@ -273,7 +295,7 @@ export default function LandingPage() {
                   <div className="pricing-card-head">
                     <div>
                       <p className="pricing-label">iDogs Plus</p>
-                      <p className="pricing-price"><span>A$7</span><small>/month</small></p>
+                      <p className="pricing-price"><span>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</span><small>/month</small></p>
                     </div>
                     <span className="pricing-badge">Most popular</span>
                   </div>
@@ -281,8 +303,8 @@ export default function LandingPage() {
                   <ul className="pricing-list">
                     <li>Dog profiles, health records and documents</li>
                     <li>Breeder tools for dogs, litters and puppies</li>
-                    <li>2 litters per rolling 12 months included</li>
-                    <li>Extra litters A$39 each</li>
+                    <li>{LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} litters per rolling 12 months included</li>
+                    <li>{`Extra litters A$${EXTRA_LITTER_PRICE_AUD} each`}</li>
                     <li>Digital Passport and QR sharing</li>
                   </ul>
                   <Link className="btn btn-primary pricing-cta" to="/signup">Start Free</Link>
@@ -454,11 +476,12 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
     return () => { cancelled = true }
   }, [slotId])
 
-  if (!media || failed) return <>{fallback}</>
+  const fastMedia = FAST_LANDING_MEDIA[slotId]
+  if (failed && !fastMedia) return <>{fallback}</>
 
   const fillStyle: CSSProperties = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
 
-  if (media.kind === 'video') {
+  if (media?.kind === 'video' && !failed) {
     return (
       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
         <video
@@ -490,12 +513,21 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
     )
   }
 
+  const imageSrc = media?.kind === 'image' && !failed
+    ? (fastMedia && media.url === fastMedia.publishedUrl ? fastMedia.localSrc : media.url)
+    : fastMedia?.localSrc
+
+  if (!imageSrc) return <>{fallback}</>
+
   return (
     <img
       className={className}
       style={fillStyle}
-      src={media.url}
+      src={imageSrc}
       alt={ariaLabel}
+      loading="eager"
+      decoding="async"
+      fetchPriority="high"
       onError={() => setFailed(true)}
     />
   )

@@ -1,3 +1,4 @@
+import { publicAppOrigin } from '../lib/publicLinks'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -22,7 +23,7 @@ import { centsToMoneyText, parseMoneyLive, parseMoneyCommit } from '../lib/showc
 import { describeSaleAvailabilitySaveFailure } from '../lib/saleAvailabilityError'
 import { enquiryMatchesReservation, hasConflictingReservation, buildAssignBuyerUpdate, buildAssignBuyerConfirmMessage, toFirestoreAssignBuyerUpdate } from '../lib/assignBuyer'
 import { resolvePedigreeRegister, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
-import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { isNativeApp } from '../lib/nativePlatform'
 import {
   litterShowcasePlanGateMessage,
   puppyAddedRestrictedMessage,
@@ -463,7 +464,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
   async function handleAssignBuyer(enq: ShowcaseEnquiry, puppy: Dog) {
     if (assignBuyerBusy[enq.id]) return
     if ((puppy as any).status === 'restricted') {
-      toast(restrictedPuppyAssignBuyerMessage(isAndroidNativeApp()), 'error')
+      toast(restrictedPuppyAssignBuyerMessage(isNativeApp()), 'error')
       return
     }
     const reservedLike = puppy.availabilityStatus === 'reserved' || puppy.availabilityStatus === 'sold'
@@ -819,7 +820,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
       // failed with an unexplained error. Tell them immediately instead.
       toast(
         createdStatus === 'restricted'
-          ? puppyAddedRestrictedMessage(isAndroidNativeApp(), finalName)
+          ? puppyAddedRestrictedMessage(isNativeApp(), finalName)
           : (alreadyExisted ? `${finalName} was already added — no duplicate created` : `${finalName} added — QR Passport created!`)
       )
     } catch (err) {
@@ -885,7 +886,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     // are untouched — this only short-circuits a write Rules would deny
     // anyway.
     if ((puppy as any).status === 'restricted') {
-      toast(restrictedPuppyEditMessage(isAndroidNativeApp()), 'error')
+      toast(restrictedPuppyEditMessage(isNativeApp()), 'error')
       return
     }
     try {
@@ -951,7 +952,6 @@ export default function LittersPage({ toast, dismissAll }: Props) {
     setTransferring(true)
     setTransferError('')
     try {
-      const passportUrl = `${window.location.origin}/p/${transferPuppy.passportId}`
       // Same canonical rule as DogDetailPage's edit control — never a second,
       // parallel implementation of "what does selecting Limited/Main/Not
       // recorded actually persist".
@@ -975,7 +975,6 @@ export default function LittersPage({ toast, dismissAll }: Props) {
         dogName: transferPuppy.name,
         breed: transferPuppy.breed,
         breederName: user?.displayName || 'Your breeder',
-        passportUrl,
       }).catch(err => console.error('Transfer email failed (transfer itself already succeeded):', err))
       const updatedDogs = await getDogs()
       setDogs(updatedDogs.filter(d => !d.isDeceased))
@@ -1436,7 +1435,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                                   <div style={{ padding: '14px 16px', borderTop: '1px solid var(--border)', background: 'var(--sand)' }}>
                                     {isPuppyRestricted && (
                                       <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10 }}>
-                                        {isAndroidNativeApp()
+                                        {isNativeApp()
                                           ? "🔒 This puppy is over your plan's dog limit and is read-only — free up a slot to edit it."
                                           : (<>🔒 This puppy is over your plan's dog limit and is read-only — <Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>upgrade to Plus</Link> or free up a slot to edit it.</>)}
                                       </div>
@@ -1463,7 +1462,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
                       <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 10 }}>🎪 Litter Showcase</div>
                       {getEffectivePlanClient(profile) !== 'plus' ? (
                         <div style={{ fontSize: 13, color: 'var(--light)' }}>
-                          {litterShowcasePlanGateMessage(isAndroidNativeApp())}
+                          {litterShowcasePlanGateMessage(isNativeApp())}
                         </div>
                       ) : showcaseLoading[litter.id] ? (
                         <div style={{ display: 'flex', justifyContent: 'center', padding: 12 }}><div className="spinner" /></div>
@@ -1577,19 +1576,13 @@ export default function LittersPage({ toast, dismissAll }: Props) {
       )}
       {/* Transfer Modal */}
       {transferPuppy && (
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(26,25,23,0.55)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem' }}
-          onClick={() => setTransferPuppy(null)}
-        >
-          <div
-            style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 460, boxShadow: '0 24px 64px rgba(0,0,0,0.18)', overflow: 'hidden' }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+        <div className="transfer-modal-overlay" onClick={() => setTransferPuppy(null)}>
+          <div className="transfer-modal-shell" onClick={e => e.stopPropagation()}>
+            <div className="transfer-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', fontWeight: 600, color: 'var(--dark)' }}>Transfer Ownership</div>
               <button onClick={() => setTransferPuppy(null)} style={{ background: 'none', border: 'none', fontSize: '1rem', color: 'var(--mid)', cursor: 'pointer', padding: '4px 8px' }}>✕</button>
             </div>
-            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div className="transfer-modal-body">
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--brand-50)', borderRadius: 10, padding: '0.875rem 1rem' }}>
                 <span style={{ fontSize: '1.5rem' }}>🐾</span>
                 <div>
@@ -1631,7 +1624,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
               <div className="form-group">
                 <label className="form-label">Buyer's Email Address</label>
                 <input className="form-input" type="email" placeholder="e.g. jane@example.com" value={transferEmail} onChange={e => setTransferEmail(e.target.value)} />
-                <p className="form-hint">They'll receive an email with the passport link and signup instructions.</p>
+                <p className="form-hint">They'll receive an email with secure iDogs access and sign-in instructions.</p>
               </div>
               <div className="form-group">
                 <label className="form-label">Buyer phone (optional)</label>
@@ -1643,7 +1636,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
               </label>
               {transferError && <p className="form-error">{transferError}</p>}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--gray-100)' }}>
+            <div className="transfer-modal-footer">
               <button className="btn btn-secondary btn-sm" onClick={() => setTransferPuppy(null)} disabled={transferring}>Cancel</button>
               <button
                 className="btn btn-sm"
@@ -2256,7 +2249,7 @@ function ShowcaseManager({
   }
 
   async function copyPrivateAccessLink(puppy: Dog) {
-    const url = `${window.location.origin}/app/shared-dogs/${puppy.id}`
+    const url = `${publicAppOrigin()}/app/shared-dogs/${puppy.id}`
     try {
       await navigator.clipboard.writeText(url)
       toast(`Private link copied for ${puppy.name}`)
@@ -2403,13 +2396,13 @@ function ShowcaseManager({
                   <input
                     className="form-input"
                     readOnly
-                    value={`${window.location.origin}/s/${shareLastRotatedToken}`}
+                    value={`${publicAppOrigin()}/s/${shareLastRotatedToken}`}
                     style={{ fontSize: 12 }}
                     onFocus={e => e.target.select()}
                   />
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/s/${shareLastRotatedToken}`) }}
+                    onClick={() => { navigator.clipboard?.writeText(`${publicAppOrigin()}/s/${shareLastRotatedToken}`) }}
                   >Copy link</button>
                 </div>
                 <p style={{ fontSize: 11, color: 'var(--mid)', marginTop: 5 }}>Use the same link for all interested buyers.</p>
@@ -2692,7 +2685,7 @@ function ShowcaseManager({
                             </button>
                           </>
                         ) : (
-                          <span>{restrictedPuppyMediaMessage(isAndroidNativeApp(), puppy.name)}</span>
+                          <span>{restrictedPuppyMediaMessage(isNativeApp(), puppy.name)}</span>
                         )}
                       </div>
                     )}
