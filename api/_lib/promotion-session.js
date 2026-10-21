@@ -4,12 +4,12 @@ import { PLUS_PROMOTION_END } from '../../shared/plus-promotion.js'
 // same timestamp and Stripe idempotency key, including after an ambiguous I/O.
 export function promotionSessionStore(db) {
   return {
-    getPromotionAttempt: (uid, now) => db.runTransaction(async tx => {
+    getPromotionAttempt: (uid, now, verifiedCustomer = null) => db.runTransaction(async tx => {
       const ref = db.collection('plusPromotionCheckouts').doc(uid)
       const snapshot = await tx.get(db.collection('users').doc(uid))
       const ledger = await tx.get(ref)
       const profile = snapshot.data()
-      if (!snapshot.exists || profile.stripeSubscriptionId || profile.stripeCustomerId) throw new Error('Billing account requires review')
+      if (!snapshot.exists || profile.stripeSubscriptionId || (profile.stripeCustomerId || null) !== verifiedCustomer || ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(profile.subscriptionStatus)) throw new Error('Billing account requires review')
       const previous = ledger.data()
       if (previous && Number.isFinite(previous.createdAt) && previous.expiresAt > now + 31 * 60_000) return previous
       // Do not replace a still-open checkout just because it is close to

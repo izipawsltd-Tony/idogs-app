@@ -12,8 +12,20 @@ import { isPlusPromotionActive, PLUS_PROMOTION_ID, PLUS_PROMOTION_END, PLUS_PROM
 // The $40 launch-offer price mentioned in §1.1 of the record is explicitly
 // NOT implemented per this round's scope.
 export const CHECKOUT_PRICE_IDS = Object.freeze({
-  plus_monthly: 'price_1TxaNJGHgBd6ZgJEpAhrWark',
-  plus_annual: 'price_1TxMJ8GHgBd6ZgJEt56IzJJd',
+  // Read-only verified in the iDogs Stripe account: AUD700/month and
+  // AUD7000/year, both active on the existing iDogs Plus product.
+  plus_monthly: 'price_1UAInbGHgBd6ZgJE0NAikQgm',
+  plus_annual: 'price_1UAIngGHgBd6ZgJEh3njs6hZ',
+})
+
+// Never strand existing/older Plus subscriptions when new Checkout moves to
+// the verified A$7/A$70 prices. These are recognition-only, not new checkout.
+export const LEGACY_PLUS_PRICE_INTERVALS = Object.freeze({
+  price_1TxaNJGHgBd6ZgJEpAhrWark: 'monthly',
+  price_1TxMJ9GHgBd6ZgJEcwyahH58: 'monthly',
+  price_1TxMJ8GHgBd6ZgJEt56IzJJd: 'annual',
+  price_1U9i9EGHgBd6ZgJEMoELFmE5: 'monthly',
+  price_1U9i9LGHgBd6ZgJEdQWL2WTN: 'annual',
 })
 
 // Legacy paid subscriptions remain entitlement-compatible for renewals.
@@ -52,6 +64,9 @@ export function createCheckoutHandler({
   getProfile,
   getPromotionAttempt,
   savePromotionSession,
+  canReusePromotionCustomer,
+  checkoutPriceIds = CHECKOUT_PRICE_IDS,
+  promotionCheckoutEnabled = true,
   now = Date.now,
 } = {}) {
   return async function checkoutHandler(req, res) {
@@ -96,13 +111,14 @@ export function createCheckoutHandler({
     }
 
     const { plan: planKey } = body
-    const priceId = CHECKOUT_PRICE_IDS[planKey]
+    const priceId = checkoutPriceIds[planKey]
     if (!priceId) {
       return res.status(400).json({ error: 'Invalid plan' })
     }
     const interval = INTERVAL_BY_PLAN_KEY[planKey]
 
     const promotion = body.promotion !== undefined
+    if (promotion && !promotionCheckoutEnabled) return res.status(503).json({ error: 'Promotion checkout is not configured for this environment. No payment has been taken.' })
     let timestamp = now()
     if (promotion && (body.promotion !== PLUS_PROMOTION_ID || planKey !== 'plus_monthly' || body.acceptPromotionTerms !== true)) {
       return res.status(400).json({ error: 'Please accept the monthly promotion terms.' })
@@ -120,11 +136,14 @@ export function createCheckoutHandler({
         if (!getProfile) throw new Error('Promotion profile verification unavailable')
         profile = await getProfile(uid)
         if (!profile) return res.status(409).json({ error: 'Account details are not ready. Please refresh Billing.' })
-        if (profile.stripeSubscriptionId || profile.stripeCustomerId || ['active', 'trialing', 'past_due'].includes(profile.subscriptionStatus)) {
+        if (profile.stripeSubscriptionId || ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(profile.subscriptionStatus)) {
           return res.status(409).json({ error: 'Your existing billing account must be reviewed for this offer. Please use Manage subscription; do not create another subscription.' })
         }
+        if (profile.stripeCustomerId && (!canReusePromotionCustomer || !await canReusePromotionCustomer(profile.stripeCustomerId))) {
+          return res.status(409).json({ error: 'Your existing billing account must be reviewed before starting another subscription.' })
+        }
         if (!getPromotionAttempt || !savePromotionSession) throw new Error('Promotion session verification unavailable')
-        attempt = await getPromotionAttempt(uid, timestamp)
+        attempt = await getPromotionAttempt(uid, timestamp, profile.stripeCustomerId || null)
         if (attempt.url) return res.status(200).json({ url: attempt.url })
         timestamp = attempt.createdAt
       }
@@ -135,7 +154,7 @@ export function createCheckoutHandler({
           expires_at: Math.floor(Math.min(timestamp + 23 * 60 * 60_000, PLUS_PROMOTION_END - 60_000) / 1000),
           custom_text: { submit: { message: PLUS_PROMOTION_TERMS } },
         } : {}),
-        customer_email: email,
+        ...(promotion && profile?.stripeCustomerId ? { customer: profile.stripeCustomerId } : { customer_email: email }),
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${appUrl}/app/billing?success=1`,
         cancel_url: `${appUrl}/app/billing?cancelled=1`,
