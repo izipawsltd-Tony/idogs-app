@@ -1,0 +1,24 @@
+{
+  "name": "idogs-agent-runner-pilot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "eve build",
+    "dev": "eve dev",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "eve": "0.81.1",
+    "ai": "^7.0.137",
+    "zod": "4.5.4",
+    "@vercel/connect": "2.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.x",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}
