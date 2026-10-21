@@ -1,3 +1,4 @@
+import { queueGrantCleanup } from './_lib/media-cleanup.js'
 import { accountWritesAllowed, requireAccountWrites } from './_lib/account-write-fence.js'
 import { ApiError } from './_lib/http-helpers.js'
 // api/confirm-showcase-media-upload.js — Implementation Phase 1: the
@@ -16,7 +17,7 @@ import { ApiError } from './_lib/http-helpers.js'
 // reusing the EXACT SAME processImageForStorage()/processVideoForStorage()
 // pipeline functions the old proxy path uses, just fed by
 // `bucket.file(path).download()` instead of a request-body buffer. If
-// any of this fails, the just-uploaded object is deleted — an unproven
+// failures retain the object for durable cleanup review — an unproven
 // file must never be left referencing nothing, mirroring
 // upload-showcase-media.js's own orphan-cleanup behavior.
 //
@@ -52,16 +53,6 @@ if (!getApps().length) {
       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     }),
   })
-}
-
-// Best-effort delete of an unconfirmed/invalid upload — never lets a
-// cleanup failure mask the real error being returned to the client.
-async function deleteObjectQuietly(bucket, path) {
-  try {
-    await bucket.file(path).delete()
-  } catch {
-    logSanitizedError('confirm-showcase-media-upload (cleanup)', 'CLEANUP_FAILED')
-  }
 }
 
 async function handler(req, res) {
@@ -113,12 +104,10 @@ async function handler(req, res) {
     }
 
     if (new Date(grant.expiresAt).getTime() < Date.now()) {
-      // The grant window has closed — treat whatever (if anything) was
-      // uploaded to that path as abandoned. Best-effort delete now
-      // rather than leaving it for a future cleanup pass to discover,
-      // and mark the grant expired so it's not mistaken for still-open.
-      await deleteObjectQuietly(bucket, grant.path)
+      // Closing a signed URL window does not prove an in-flight PUT ended.
+      // Preserve its grant and queue cleanup review; never delete by path.
       await closePendingGrant(db, grantRef, 'expired', { expiredAt: new Date().toISOString() })
+      await queueGrantCleanup({ db, grantRef, bucket: bucketName })
       return res.status(410).json({ error: 'This upload window has expired — please try uploading again', reason: 'GRANT_EXPIRED' })
     }
 
@@ -127,32 +116,38 @@ async function handler(req, res) {
     // to have happened in between.
     const dogSnap = await db.collection('dogs').doc(grant.dogId).get()
     if (!dogSnap.exists) {
-      await deleteObjectQuietly(bucket, grant.path)
       await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
+      await queueGrantCleanup({ db, grantRef, bucket: bucketName })
       return res.status(404).json({ error: 'Dog not found' })
     }
     const dog = dogSnap.data()
     if (!canAddDogRecord(dog, uid)) {
       const reason = hasDogWriteAccess(dog, uid) && dog?.status === 'restricted' ? 'DOG_RESTRICTED' : 'NOT_OWNER'
-      await deleteObjectQuietly(bucket, grant.path)
       await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
+      await queueGrantCleanup({ db, grantRef, bucket: bucketName })
       return res.status(403).json({ error: 'Not authorized to upload media for this dog', reason })
     }
 
     const kind = grant.kind
     const existingItems = (kind === 'photo' ? dog.photos : dog.videos) || []
     if (existingItems.length >= MAX_MEDIA_ITEMS_PER_KIND) {
-      await deleteObjectQuietly(bucket, grant.path)
       await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
+      await queueGrantCleanup({ db, grantRef, bucket: bucketName })
       return res.status(409).json({ error: `This puppy already has the maximum of ${MAX_MEDIA_ITEMS_PER_KIND} ${kind}s`, reason: 'MEDIA_LIMIT_REACHED' })
     }
 
-    const file = bucket.file(grant.path)
+    let file = bucket.file(grant.path)
     const [exists] = await file.exists()
     if (!exists) {
       await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
+      await queueGrantCleanup({ db, grantRef, bucket: bucketName })
       return res.status(400).json({ error: 'No file was found at the expected upload location — please try uploading again', reason: 'OBJECT_NOT_UPLOADED' })
     }
+
+    const [objectMetadata] = await file.getMetadata()
+    const generation = String(objectMetadata.generation || '')
+    if (!/^[1-9][0-9]*$/.test(generation)) throw new Error('STORAGE_GENERATION_UNVERIFIED')
+    file = bucket.file(grant.path, { generation })
 
     // Independent, server-side size check against the REAL Storage
     // object — never the client-claimed expectedSizeBytes on the grant
@@ -166,8 +161,8 @@ async function handler(req, res) {
       const [metadata] = await file.getMetadata()
       const actualSize = Number(metadata.size)
       if (!Number.isFinite(actualSize) || actualSize > MAX_DIRECT_VIDEO_UPLOAD_BYTES) {
-        await deleteObjectQuietly(bucket, grant.path)
-        await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
+          await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
+      await queueGrantCleanup({ db, grantRef, bucket: bucketName })
         return res.status(400).json({
           error: `Video exceeds the ${Math.floor(MAX_DIRECT_VIDEO_UPLOAD_BYTES / (1024 * 1024))}MB direct-upload limit`,
           reason: 'FILE_TOO_LARGE',
@@ -186,8 +181,8 @@ async function handler(req, res) {
     try {
       processed = kind === 'photo' ? await processImageForStorage(rawBuffer) : await processVideoForStorage(rawBuffer)
     } catch (err) {
-      await deleteObjectQuietly(bucket, grant.path)
       await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
+      await queueGrantCleanup({ db, grantRef, bucket: bucketName })
       if (err instanceof ImagePipelineError) {
         return res.status(400).json({ error: err.message, reason: err.code })
       }
@@ -203,7 +198,7 @@ async function handler(req, res) {
     // "hash the PROCESSED bytes" dedup guard.
     const contentHash = createHash('sha256').update(processed.buffer).digest('hex')
     const arrayField = kind === 'photo' ? 'photos' : 'videos'
-    const mediaItem = { id: mediaId, path: grant.path, hash: contentHash }
+    const mediaItem = { id: mediaId, path: grant.path, generation, hash: contentHash }
     const dogRef = db.collection('dogs').doc(grant.dogId)
     const commitResult = await db.runTransaction(async tx => {
       const [freshGrantSnap, freshDogSnap] = await Promise.all([tx.get(grantRef), tx.get(dogRef)])
@@ -228,13 +223,13 @@ async function handler(req, res) {
       if (freshItems.some(item => item?.hash === contentHash)) return reject('DUPLICATE_MEDIA')
 
       tx.update(dogRef, { [arrayField]: [...freshItems, mediaItem], updatedAt: new Date() })
-      tx.update(grantRef, { status: 'confirmed', confirmedAt: new Date().toISOString() })
+      tx.update(grantRef, { status: 'confirmed', generation, confirmedAt: new Date().toISOString() })
       releasePendingQuota(tx, db, freshGrant)
       return { ok: true }
     })
 
     if (!commitResult.ok) {
-      if (!commitResult.preserveObject) await deleteObjectQuietly(bucket, grant.path)
+      if (!commitResult.preserveObject) await queueGrantCleanup({ db, grantRef, bucket: bucketName })
       const status = commitResult.reason === 'ACCOUNT_WRITES_FROZEN' || commitResult.reason === 'ALREADY_CONFIRMED' || commitResult.reason === 'MEDIA_LIMIT_REACHED' || commitResult.reason === 'DUPLICATE_MEDIA' ? 409
         : commitResult.reason === 'GRANT_EXPIRED' ? 410
           : commitResult.reason === 'DOG_NOT_FOUND' || commitResult.reason === 'GRANT_NOT_FOUND' ? 404 : 403

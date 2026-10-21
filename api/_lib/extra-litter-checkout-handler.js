@@ -1,7 +1,8 @@
+import { ApiError } from './http-helpers.js'
 import { computeEffectivePlan } from './entitlements.js'
 import { breederIdentity } from './breeder-profile.js'
-import { checkoutTaxRatesForStripeMode } from './checkout-handler.js'
-import { verifiedPlusInterval } from './billing-reconcile.js'
+import { checkoutTaxRatesForStripeMode } from './checkout-tax-rates.js'
+import { verifiedPaidInterval } from './billing-reconcile.js'
 import { requireAppUrl, logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 import { EXTRA_LITTER_PRICE_CENTS } from './litter-quota.js'
@@ -20,6 +21,7 @@ function customerIdOf(subscription) {
 
 export function createExtraLitterCheckoutHandler({
   verifyIdToken,
+  dispatch = async (_uid, invoke) => invoke(),
   getProfile,
   retrieveSubscription,
   getPurchaseEligibility,
@@ -89,7 +91,7 @@ export function createExtraLitterCheckoutHandler({
       if (customerIdOf(subscription) !== profile.stripeCustomerId) {
         return res.status(409).json({ error: 'Stripe customer mismatch' })
       }
-      if (!verifiedPlusInterval(subscription)) {
+      if (!verifiedPaidInterval(subscription)) {
         return res.status(409).json({ error: 'Verified iDogs Plus price not found on subscription' })
       }
 
@@ -121,7 +123,7 @@ export function createExtraLitterCheckoutHandler({
         breederProfileId,
         pricingVersion: '2026-09-01',
       }
-      const session = await createSession(
+      const session = await dispatch(uid, () => createSession(
         {
           mode: 'payment',
           payment_method_types: ['card'],
@@ -143,11 +145,12 @@ export function createExtraLitterCheckoutHandler({
           payment_intent_data: { metadata },
         },
         { idempotencyKey: `extra-litter:${uid}:${requestId}` },
-      )
+      ))
 
       if (!session?.url) throw new Error('CHECKOUT_URL_MISSING')
       return res.status(200).json({ url: session.url })
     } catch (err) {
+      if (err instanceof ApiError) return res.status(err.status).json({ error: err.message, ...err.extra })
       logSanitizedError('create-extra-litter-checkout', 'EXTRA_LITTER_CHECKOUT_FAILED', {
         code: err?.code,
         message: err?.message,

@@ -1,3 +1,4 @@
+import { dispatchAccountOperation } from './_lib/account-external-operations.js'
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -19,6 +20,7 @@ if (!getApps().length) {
 const db = getFirestore()
 
 export default createBillingPortalHandler({
+  dispatch: (uid, invoke) => dispatchAccountOperation({ db: getFirestore(), uid, kind: 'billing_create-billing-portal', invoke }),
   verifyIdToken: token => getAuth().verifyIdToken(token),
   getProfile: async uid => {
     const snap = await db.collection('users').doc(uid).get()

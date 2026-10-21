@@ -1,7 +1,8 @@
 import { makeChecker } from './_lib/test-check.mjs'
 import { createExtraLitterCheckoutHandler } from '../api/_lib/extra-litter-checkout-handler.js'
-import { LIVE_CHECKOUT_PRICE_IDS, LIVE_GST_TAX_RATE_ID } from '../api/_lib/checkout-handler.js'
+import { CHECKOUT_PRICE_IDS } from '../api/_lib/checkout-handler.js'
 
+process.env.STRIPE_GST_TAX_RATE_ID = 'txr_SyntheticQA'
 const { check, checkAsync, summary } = makeChecker()
 
 function resCapture() {
@@ -28,7 +29,7 @@ const profile = {
 }
 const subscription = {
   id: 'sub_1', status: 'active', customer: 'cus_1', livemode: true,
-  items: { data: [{ price: { id: LIVE_CHECKOUT_PRICE_IDS.plus_monthly } }] },
+  items: { data: [{ price: { id: CHECKOUT_PRICE_IDS.plus_monthly } }] },
 }
 const eligible = async () => ({ includedExhausted: true, availableCredits: 0 })
 
@@ -135,12 +136,12 @@ await checkAsync('valid exhausted-quota request creates fixed A$39 AUD GST-inclu
     line?.price_data?.currency === 'aud' &&
     line?.price_data?.unit_amount === 3900 &&
     line?.price_data?.tax_behavior === 'inclusive' &&
-    line?.tax_rates?.[0] === LIVE_GST_TAX_RATE_ID &&
+    line?.tax_rates?.[0] === 'txr_SyntheticQA' &&
     capturedParams?.metadata?.purchaseType === 'extra_litter' &&
     /^bp_[a-f0-9]{32}$/.test(capturedParams?.metadata?.breederProfileId || '') &&
     capturedOptions?.idempotencyKey === 'extra-litter:u1:request_1234567890'
 })
 
-check('test fixture still targets A$7 live Plus price', subscription.items.data[0].price.id === LIVE_CHECKOUT_PRICE_IDS.plus_monthly)
+check('test fixture uses configured Plus price allowlist', subscription.items.data[0].price.id === CHECKOUT_PRICE_IDS.plus_monthly)
 
 await summary()
