@@ -74,7 +74,7 @@ export function createCheckoutHandler({
       return res.status(405).json({ error: 'Method not allowed' })
     }
 
-    const appUrl = getAppUrl()
+    const appUrl = getAppUrl(req)
     if (!appUrl) {
       logConfigError('create-checkout', 'APP_URL_NOT_CONFIGURED')
       return res.status(500).json({ error: 'APP_URL not configured' })
@@ -143,7 +143,8 @@ export function createCheckoutHandler({
           return res.status(409).json({ error: 'Your existing billing account must be reviewed before starting another subscription.' })
         }
         if (!getPromotionAttempt || !savePromotionSession) throw new Error('Promotion session verification unavailable')
-        attempt = await getPromotionAttempt(uid, timestamp, profile.stripeCustomerId || null)
+        attempt = await getPromotionAttempt(uid, timestamp, profile.stripeCustomerId || null, appUrl)
+        if (attempt.returnOrigin !== appUrl) return res.status(409).json({ error: 'An earlier checkout uses a different page. Do not start another checkout. Reopen Billing where that checkout started or contact support.' })
         if (attempt.url) return res.status(200).json({ url: attempt.url })
         timestamp = attempt.createdAt
       }

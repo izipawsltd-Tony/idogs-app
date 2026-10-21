@@ -5,7 +5,8 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { createCheckoutHandler } from './_lib/checkout-handler.js'
 import { promotionSessionStore } from './_lib/promotion-session.js'
-import { promotionEnvironment } from './_lib/promotion-environment.js'
+import { promotionEnvironment, checkoutReturnOrigin } from './_lib/promotion-environment.js'
+import { requireAppUrl } from './_lib/require-config.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 const promotionConfig = promotionEnvironment({ environment: process.env.VERCEL_ENV, projectId: process.env.VERCEL_PROJECT_ID,
@@ -25,6 +26,8 @@ if (!getApps().length) {
 }
 
 export default createCheckoutHandler({
+  getAppUrl: req => checkoutReturnOrigin({ appUrl: requireAppUrl(), config: promotionConfig,
+    vercelUrl: process.env.VERCEL_URL, requestOrigin: req.headers?.origin }),
   ...promotionSessionStore(getFirestore()),
   ...(promotionConfig.prices ? { checkoutPriceIds: promotionConfig.prices } : {}),
   promotionCheckoutEnabled: promotionConfig.enabled,

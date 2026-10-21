@@ -1,6 +1,6 @@
 # Promotion engineering — 21 October 2026
 
-State: LOCAL_CHECKS_PASSED; preparing DRAFT PR. Final SHA/CI/Preview evidence belongs in the draft PR.
+State: CALLBACK_REGRESSION_FIX; DRAFT PR #32. Final SHA/CI/Preview evidence belongs in the draft PR.
 
 Owner priority supersedes the generic pilot's billing exclusion: implement Plus promotion, not unrelated UI smoke work. Earlier test-only pilot remains isolated and unpublished. Repository remote verified as `https://github.com/izipawsltd-Tony/idogs-app.git`; base `8941cff8737140c024f35e8bde115107fa84cc4c`; branch `feat/plus-promotion-20261021`. Original dirty worktrees preserved. No applicable AGENTS.md found. One implementation writer; investigation, QA and review read-only.
 
@@ -18,6 +18,8 @@ Owner priority supersedes the generic pilot's billing exclusion: implement Plus 
 - Browser read/click observation currently blocked after native credential delivery; one canonical-navigation recovery did not restore usable clicks. No bypass. Complete independent code/tests/review and preserve explicit browser QA blocker if still present.
 
 ## Decisions / execution
+- Owner reported apparent logout after card entry. Synthetic handler reproduction confirmed success_url uses stable staging alias, not the authenticated Preview origin. Actual post-Checkout URL/payment status remains unobserved; do not claim logout cause or payment completion proven.
+- Callback increment: only isolated staging/test may return to its strict server VERCEL_URL when the browser Origin exactly matches it. Alias visitors retain validated APP_URL; production behavior and global origin policy unchanged. Persist returnOrigin before Stripe creation; reject legacy/different-origin attempts without replacing payable sessions. No real transaction or record reset authorized.
 - Campaign end exclusive: `2027-01-31T13:30:00Z` = 1 February 2027 00:00 Adelaide.
 - Do not mark existing customers as discounted before their subscription migration is applied and verified.
 - Final live Stripe sandbox/integration, existing-subscriber migration, campaign send and production approval are separate from mocked verification; do not claim them complete.

@@ -3,9 +3,9 @@ import { createCheckoutHandler, CHECKOUT_PRICE_IDS, LEGACY_PLUS_PRICE_INTERVALS 
 import { verifiedPaidInterval } from '../api/_lib/billing-reconcile.js'
 import { promotionSessionStore } from '../api/_lib/promotion-session.js'
 import { PLUS_PROMOTION_ID, PLUS_PROMOTION_START, PLUS_PROMOTION_END, isPlusPromotionActive } from '../shared/plus-promotion.js'
-import { promotionEnvironment, STAGING_PLUS_MONTHLY_PRICE_ID } from '../api/_lib/promotion-environment.js'
+import { promotionEnvironment, checkoutReturnOrigin, STAGING_PLUS_MONTHLY_PRICE_ID } from '../api/_lib/promotion-environment.js'
 
-function fixture({ time = Date.parse('2026-10-21T00:00:00Z'), profile = {}, broken = false, reuseCustomer } = {}) {
+function fixture({ time = Date.parse('2026-10-21T00:00:00Z'), profile = {}, broken = false, reuseCustomer, getAppUrl = () => 'https://staging.example.invalid' } = {}) {
   const records = new Map([['users/synthetic-owner', profile]])
   let queue = Promise.resolve()
   const db = {
@@ -21,7 +21,7 @@ function fixture({ time = Date.parse('2026-10-21T00:00:00Z'), profile = {}, brok
   }
   const createSession = vi.fn().mockResolvedValue({ id: 'cs_synthetic', url: 'https://checkout.stripe.com/synthetic' })
   const handler = createCheckoutHandler({ verifyIdToken: async () => ({ uid: 'synthetic-owner', email: 'qa@example.invalid' }),
-    createSession, getAppUrl: () => 'https://staging.example.invalid', now: () => time,
+    createSession, getAppUrl, now: () => time,
     getProfile: async () => { if (broken) throw new Error('synthetic read failure'); return profile },
     canReusePromotionCustomer: reuseCustomer,
     ...promotionSessionStore(db),
@@ -36,6 +36,37 @@ function fixture({ time = Date.parse('2026-10-21T00:00:00Z'), profile = {}, brok
 }
 
 describe('Plus campaign boundaries and Checkout intent (mocked Stripe and Firestore)', () => {
+  const stagingOrigin = 'https://idogs-app-staging.vercel.app'
+  const previewHost = 'idogs-app-staging-synthetic-izipawsltd-tonys-projects.vercel.app'
+  const isolatedConfig = promotionEnvironment({ environment: 'preview', projectId: 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o', firebaseProjectId: 'idogs-app-staging', testKey: true })
+  it('returns exact Preview visitors to the same origin for success and cancel', async () => {
+    const origin = `https://${previewHost}`
+    const f = fixture({ getAppUrl: req => checkoutReturnOrigin({ appUrl: stagingOrigin, config: isolatedConfig, vercelUrl: previewHost, requestOrigin: req.headers.origin }) })
+    expect((await f.call({}, { authorization: 'Bearer synthetic', origin })).status).toBe(200)
+    const params = f.createSession.mock.calls[0][0]
+    expect(params.success_url).toBe(`${origin}/app/billing?success=1`)
+    expect(params.cancel_url).toBe(`${origin}/app/billing?cancelled=1`)
+    expect(f.records.get('plusPromotionCheckouts/synthetic-owner').returnOrigin).toBe(origin)
+  })
+  it('keeps alias visitors on the alias and leaves production behavior unchanged', () => {
+    expect(checkoutReturnOrigin({ appUrl: stagingOrigin, config: isolatedConfig, vercelUrl: previewHost, requestOrigin: stagingOrigin })).toBe(stagingOrigin)
+    expect(checkoutReturnOrigin({ appUrl: 'https://idogs.com.au', config: { enabled: true }, vercelUrl: previewHost, requestOrigin: `https://${previewHost}` })).toBe('https://idogs.com.au')
+    expect(checkoutReturnOrigin({ appUrl: null, config: isolatedConfig, vercelUrl: previewHost })).toBeNull()
+  })
+  it.each(['evil.example', `${previewHost}.evil.example`, `https://${previewHost}`, `${previewHost}/path`, `${previewHost}:443`, `user@${previewHost}`])('rejects invalid server deployment hostname %s', vercelUrl => {
+    expect(checkoutReturnOrigin({ appUrl: stagingOrigin, config: isolatedConfig, vercelUrl, requestOrigin: `https://${previewHost}` })).toBeNull()
+  })
+  it.each(['https://evil.example', 'https://idogs.com.au', `https://${previewHost}.evil.example`, `https://${previewHost}/path`])('rejects unrecognized request origin %s', requestOrigin => {
+    expect(checkoutReturnOrigin({ appUrl: stagingOrigin, config: isolatedConfig, vercelUrl: previewHost, requestOrigin })).toBeNull()
+  })
+  it.each([undefined, 'https://another.example.invalid'])('does not reuse or replace old/different-origin attempts (%s)', async returnOrigin => {
+    const f = fixture()
+    const previous = { createdAt: Date.parse('2026-10-20T23:00:00Z'), expiresAt: Date.parse('2026-10-21T22:00:00Z'), ...(returnOrigin ? { returnOrigin } : {}) }
+    f.records.set('plusPromotionCheckouts/synthetic-owner', previous)
+    expect((await f.call()).status).toBe(409)
+    expect(f.createSession).not.toHaveBeenCalled()
+    expect(f.records.get('plusPromotionCheckouts/synthetic-owner')).toEqual(previous)
+  })
   it('enables Preview checkout only on the exact staging project, staging Firebase and test key', () => {
     const config = { environment: 'preview', projectId: 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o', firebaseProjectId: 'idogs-app-staging', testKey: true, liveKey: false }
     expect(promotionEnvironment(config)).toEqual({ enabled: true, prices: { plus_monthly: STAGING_PLUS_MONTHLY_PRICE_ID } })
