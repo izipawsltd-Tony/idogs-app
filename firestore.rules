@@ -6,6 +6,20 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Keep this server-owned fence after Auth deletion; restored systems must
+    // replay it before serving traffic. Existing tokens
+    // retain read access but cannot mutate account data once processing freezes
+    // it. Unknown fence states fail closed; only an explicit open state or no
+    // fence preserves ordinary writes. Clients cannot create/change the fence.
+    function accountAllowsWrites(userId) {
+      let path = /databases/$(database)/documents/accountDeletionFences/$(userId);
+      return !exists(path) || get(path).data.get('state', '') == 'open';
+    }
+
+    function actorAllowsWrites() {
+      return isSignedIn() && accountAllowsWrites(request.auth.uid);
+    }
+
     // Format-level DOB validity — the strongest check Firestore Rules can
     // feasibly do (no generic date-arithmetic/formatting functions exist
     // here, so true age/maturity math stays a client+service-layer
@@ -216,7 +230,7 @@ service cloud.firestore {
     // else in this file that gates a WRITE).
     function dogWriteAccess(dogId) {
       let dog = get(/databases/$(database)/documents/dogs/$(dogId)).data;
-      return isSignedIn() && (
+      return actorAllowsWrites() && (
         ('currentOwnerId' in dog)
           ? dog.currentOwnerId == request.auth.uid
           : (('tenantId' in dog) && dog.tenantId == request.auth.uid)
@@ -307,16 +321,16 @@ service cloud.firestore {
     // ── users/{uid} — owners manage non-billing profile fields only ──
     match /users/{userId} {
       allow read: if isOwnerUser(userId);
-      allow create: if isOwnerUser(userId) &&
+      allow create: if isOwnerUser(userId) && actorAllowsWrites() &&
         !request.resource.data.keys().hasAny(userBillingFields());
-      allow update: if isOwnerUser(userId) &&
+      allow update: if isOwnerUser(userId) && actorAllowsWrites() &&
         !request.resource.data.diff(resource.data).affectedKeys()
           .hasAny(userBillingFields());
       // Deleting a document that contains protected fields would also delete
       // trusted billing state. Unbilled profiles retain the existing client
       // account-deletion path; billed profiles require a future trusted
       // cancellation/account-deletion service.
-      allow delete: if isOwnerUser(userId) &&
+      allow delete: if isOwnerUser(userId) && actorAllowsWrites() &&
         !resource.data.keys().hasAny(userBillingFields());
     }
 
@@ -380,7 +394,7 @@ service cloud.firestore {
       // with its own cap-aware check) — this clause only needs to stop an
       // ORDINARY client edit (name/breed/notes/etc) from landing on a
       // restricted dog.
-      allow update: if isEffectiveDogOwner(resource.data) &&
+      allow update: if actorAllowsWrites() && isEffectiveDogOwner(resource.data) &&
         dogProtectedFieldsUnchanged() &&
         dogTransferProvenanceValid() &&
         (resource.data.get('status', 'active') != 'restricted' || isLegitimateNewTransferTransition(resource.data)) &&
@@ -419,7 +433,7 @@ service cloud.firestore {
       // presence only, independent of the stored value — the exact same
       // semantics as api/_lib/litter-eligibility.js's isDogHistoryBearing,
       // which this rule is deliberately kept aligned with by hand.
-      allow delete: if isSignedIn() && resource.data.currentOwnerId == request.auth.uid &&
+      allow delete: if actorAllowsWrites() && resource.data.currentOwnerId == request.auth.uid &&
         resource.data.get('status', 'active') != 'transferred' &&
         resource.data.get('transferStatus', null) != 'pendingClaim' &&
         !('buyerEmail' in resource.data) &&
@@ -455,7 +469,7 @@ service cloud.firestore {
     // passportId must never be reassigned or freed for reuse.
     match /passportReservations/{id} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow create: if actorAllowsWrites() && request.resource.data.createdBy == request.auth.uid;
       allow update, delete: if false;
     }
 
@@ -498,7 +512,7 @@ service cloud.firestore {
       // This prevents post-transfer notes/photos uploaded by the new owner
       // from remaining visible to the original breeder.
       allow read: if resource == null
-        || dogWriteAccess(resource.data.dogId)
+        || dogBelongsToUser(resource.data.dogId)
         || (isSignedIn()
             && resource.data.get('createdBy', '') == request.auth.uid
             && dogBelongsToUser(resource.data.dogId));
@@ -765,18 +779,16 @@ service cloud.firestore {
     // ── auditLogs — append-only, never editable/deletable by clients ──
     match /auditLogs/{id} {
       allow read: if isSignedIn() && resource.data.tenantId == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+      allow create: if actorAllowsWrites() && request.resource.data.tenantId == request.auth.uid;
       allow update, delete: if false;
     }
 
-    // ── scanLogs — written whenever ANYONE scans a public QR passport, so
-    // create must stay open to unauthenticated requests. But scan logs
-    // should never be readable, editable, or deletable by clients (only via
-    // Admin SDK / a server route, if you ever need to show scan history to
-    // the breeder) — otherwise this becomes a stalking/tracking leak.
+    // Public passport requests already log through api/passport.js. Direct
+    // anonymous writes cannot prove ownership and could otherwise recreate
+    // account-associated records after freeze. The unused client logScan()
+    // helper is not an alternative grant; server writes require their own fence.
     match /scanLogs/{id} {
-      allow create: if true;
-      allow read, update, delete: if false;
+      allow read, write: if false;
     }
 
     // ── rateLimitCounters — durable, atomic rate-limit state for public
