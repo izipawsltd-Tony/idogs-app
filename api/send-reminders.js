@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
 import { accountWritesAllowed } from './_lib/account-write-fence.js'
-import { dispatchAccountOperation, writeReminderRecord } from './_lib/account-external-operations.js'
+import { sendScheduledReminderEmail } from './_lib/scheduled-reminder-email.js'
+import { writeReminderRecord } from './_lib/account-external-operations.js'
 // api/send-reminders.js — Daily cron: check due dates and send reminders
 // Called by GitHub Actions cron job daily at 8am AEST
 
@@ -108,6 +108,13 @@ async function sendReminderSms({
   })
 }
 
+function careReminderAlreadySent(record, tenantId) {
+  if (!record.lastReminderSentAt) return false
+  if (record.lastReminderDueDate && record.lastReminderDueDate !== record.nextDue) return false
+  const recipient = record.lastReminderOwnerId || record.tenantId
+  return !recipient || recipient === tenantId
+}
+
 function formatDate(str) {
   if (!str) return ''
   try {
@@ -200,7 +207,7 @@ export default async function handler(req, res) {
       const tenantId = userDoc.id
       if (!await db.runTransaction(tx => accountWritesAllowed(tx, db, tenantId))) continue
       const reminderDays = user.reminderDays || 7
-      const reminderFrequency = user.reminderFrequency || 'once' // 'once' | 'daily'
+      const reminderFrequency = user.reminderFrequency === 'daily' ? 'daily' : 'once' // 'once' | 'daily'
       const heatReminderDays = user.heatReminderDays || 14 // separate setting for heat cycles
       const phone = user.phone
 
@@ -234,13 +241,16 @@ export default async function handler(req, res) {
 
       for (const dog of dogs) {
         const guardedWrite = (ref, data, options = {}) => writeReminderRecord({ db, uid: tenantId, dogId: dog.id, ref, data, ...options })
-        const sendReminderEmail = async (...args) => {
-          const response = await dispatchAccountOperation({ db, uid: tenantId, dogId: dog.id, kind: 'reminder_email',
-            operationKey: createHash('sha256').update(JSON.stringify([process.env.FIREBASE_PROJECT_ID, tenantId, dog.id, today.toISOString().slice(0, 10), args[1]?.body])).digest('hex'),
-            invoke: () => fetch(...args), confirmed: response => response.ok })
-          if (!response.ok) throw new Error('REMINDER_EMAIL_UNCONFIRMED')
-          return response
-        }
+        const sendReminderEmail = (event, ...args) => sendScheduledReminderEmail({
+          db, projectId: process.env.FIREBASE_PROJECT_ID, uid: tenantId, dogId: dog.id,
+          frequency: reminderFrequency, now: today, ...event,
+          sendEmail: async () => {
+            const response = await fetch(...args)
+            if (!response.ok) return false
+            const receipt = await response.json()
+            return receipt.success === true && typeof receipt.id === 'string' && receipt.id.trim().length > 0
+          },
+        })
         // Birthday / join-anniversary check — separate from the vaccine
         // due-date logic below, this fires at most once per dog per day
         // regardless of how many vaccine records exist.
@@ -249,7 +259,7 @@ export default async function handler(req, res) {
           const milestone = getTodaysDogMilestone(dog.dateOfBirth, dogCreatedAt)
           if (milestone) {
             try {
-              await sendReminderEmail(`${appUrl}/api/send-email`, {
+              await sendReminderEmail({ eventType: milestone.kind, sourceId: milestone.kind, milestone: today.toISOString().slice(0, 10), frequency: 'daily' }, `${appUrl}/api/send-email`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                 body: JSON.stringify({
@@ -333,11 +343,11 @@ export default async function handler(req, res) {
           //
           // Whether we then re-send on subsequent days depends on the
           // user's reminderFrequency preference: 'once' sends a single
-          // email per vaccine record (any existing lastReminderSentAt
-          // blocks further sends), 'daily' sends every day the window is
+          // email per owner/due-date event. Legacy stamps without a due-date
+          // marker retain their old suppression behavior. 'daily' sends while the window is
           // active, capped at one per ~20h to avoid double-sends if the
           // cron job somehow runs twice in a day.
-          const hasSentBefore = Boolean(vaccine.lastReminderSentAt)
+          const hasSentBefore = careReminderAlreadySent(vaccine, tenantId)
           const sentWithinLast20h = hasSentBefore &&
             (today - new Date(vaccine.lastReminderSentAt)) < 1000 * 60 * 60 * 20
           const blockedByFrequencyPref = reminderFrequency === 'once' ? hasSentBefore : sentWithinLast20h
@@ -390,7 +400,7 @@ export default async function handler(req, res) {
               // Send email reminder
               if (user.email) {
                 try {
-                  await sendReminderEmail(`${appUrl}/api/send-email`, {
+                  await sendReminderEmail({ eventType: 'vaccination', sourceId: vDoc.id, milestone: vaccine.nextDue }, `${appUrl}/api/send-email`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                     body: JSON.stringify({
@@ -432,6 +442,7 @@ export default async function handler(req, res) {
               // Record when this reminder fired
               try {
                 await guardedWrite(db.collection('vaccineRecords').doc(vDoc.id), {
+                  lastReminderDueDate: vaccine.nextDue, lastReminderOwnerId: tenantId,
                   lastReminderSentAt: today.toISOString(),
                 }, { update: true })
               } catch (e) {
@@ -519,7 +530,7 @@ export default async function handler(req, res) {
               console.error('Failed to upsert worming reminder')
             }
 
-            const hasSentBefore = Boolean(activeWorming.lastReminderSentAt)
+            const hasSentBefore = careReminderAlreadySent(activeWorming, tenantId)
             const sentWithinLast20h = hasSentBefore &&
               (today - new Date(activeWorming.lastReminderSentAt)) < 1000 * 60 * 60 * 20
             const blockedByFrequencyPref = reminderFrequency === 'once' ? hasSentBefore : sentWithinLast20h
@@ -527,7 +538,7 @@ export default async function handler(req, res) {
             if (!blockedByFrequencyPref) {
               if (user.email) {
                 try {
-                  await sendReminderEmail(`${appUrl}/api/send-email`, {
+                  await sendReminderEmail({ eventType: 'worming', sourceId: activeWorming.id, milestone: activeWorming.nextDue }, `${appUrl}/api/send-email`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                     body: JSON.stringify({
@@ -564,6 +575,7 @@ export default async function handler(req, res) {
 
               try {
                 await guardedWrite(db.collection('wormingRecords').doc(activeWorming.id), {
+                  lastReminderDueDate: activeWorming.nextDue, lastReminderOwnerId: tenantId,
                   lastReminderSentAt: today.toISOString(),
                 }, { update: true })
               } catch {
@@ -837,7 +849,7 @@ export default async function handler(req, res) {
 
                 if (user.email) {
                   try {
-                    await sendReminderEmail(`${appUrl}/api/send-email`, {
+                    await sendReminderEmail({ eventType: 'heat_cycle', sourceId: `predicted-cycle-${heatNum}`, milestone: heatDate.toISOString().slice(0, 10), frequency: 'daily' }, `${appUrl}/api/send-email`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                       body: JSON.stringify({

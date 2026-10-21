@@ -1,3 +1,4 @@
+import { sendScheduledReminderEmail } from '../api/_lib/scheduled-reminder-email.js'
 import { before, after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { initializeApp, deleteApp } from 'firebase-admin/app'
@@ -192,4 +193,31 @@ test('manual opt-out committed after claim prevents dispatch despite the old pay
   const wrapped={collection:(...a)=>db.collection(...a),runTransaction:async cb=>{const result=await db.runTransaction(cb);if(++transactions===1)await db.doc(`users/${f.uid}`).update({manualReminderEmails:false});return result}}
   const result=await deliverManualReminder({db:wrapped,tenantId:f.uid,reminderId:f.reminderId,now,projectId,appUrl:'https://synthetic.invalid',sendEmail:async()=>{calls++;return true}})
   assert.equal(result.sent,false);assert.equal(calls,0)
+})
+
+function scheduled(f, sendEmail, at=now, frequency='once') {
+  return { db, projectId, uid:f.uid, dogId:f.dogId, eventType:'vaccination', sourceId:'synthetic-care', milestone:'2026-10-25', now:at, frequency, sendEmail }
+}
+test('concurrent scheduled care claims use one durable event admission',async()=>{
+  const f=await fixture();let calls=0
+  const args=scheduled(f,async()=>{calls++;return true})
+  const results=await Promise.allSettled([sendScheduledReminderEmail(args),sendScheduledReminderEmail(args)])
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(calls,1)
+  assert.equal((await rows('accountExternalOperations',f.uid)).length,1)
+})
+test('lost scheduled provider response cannot replay once-only care tomorrow',async()=>{
+  const f=await fixture();let calls=0
+  const sendEmail=async()=>{calls++;throw Error('synthetic lost response')}
+  await assert.rejects(sendScheduledReminderEmail(scheduled(f,sendEmail)),/lost response/)
+  await assert.rejects(sendScheduledReminderEmail(scheduled(f,sendEmail,new Date('2026-10-23T10:00:00Z'))),/already admitted/)
+  assert.equal(calls,1);assert.equal((await rows('accountExternalOperations',f.uid))[0].state,'review_required')
+})
+test('scheduled daily care has distinct day admissions and frozen next-day claims still fail closed',async()=>{
+  const f=await fixture();let calls=0
+  const sendEmail=async()=>{calls++;return true}
+  assert.equal((await sendScheduledReminderEmail(scheduled(f,sendEmail,now,'daily'))).sent,true)
+  assert.equal((await sendScheduledReminderEmail(scheduled(f,sendEmail,new Date('2026-10-23T10:00:00Z'),'daily'))).sent,true)
+  await f.freeze()
+  await assert.rejects(sendScheduledReminderEmail(scheduled(f,sendEmail,new Date('2026-10-24T10:00:00Z'),'daily')),/paused/)
+  assert.equal(calls,2);assert.equal((await rows('accountExternalOperations',f.uid)).length,2)
 })
