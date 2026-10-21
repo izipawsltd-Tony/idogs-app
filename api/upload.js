@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { uploadAccountMedia } from './_lib/account-media-writes.js'
+import { queueMediaCleanupTx } from './_lib/media-cleanup.js'
 // api/upload.js — unified photo upload endpoint.
 //
 // Merges the former api/upload-photo.js + api/upload-note-photo.js into
@@ -148,9 +149,15 @@ export default async function handler(req, res) {
     const filePath = `dogs/${uid}/${dogId}/profile-${randomUUID()}.${ext}`
     const fileUrl = `https://storage.googleapis.com/${bucket.name}/${filePath}`
     await uploadAccountMedia({ db, bucket, uid, dogId, path: filePath, kind: 'profile', buffer, contentType: finalMediaType, publicRead: true,
-      commit: (tx, dog, generation) => tx.update(db.collection('dogs').doc(dogId), {
-        profilePhoto: fileUrl, profilePhotoPath: filePath, profilePhotoGeneration: generation, updatedAt: new Date(),
-      }) })
+      commit: async (tx, dog, generation) => {
+        if (dog.profilePhotoPath && dog.profilePhotoPath !== filePath) {
+          await queueMediaCleanupTx(tx, db, { uid, dogId, bucket: bucket.name, path: dog.profilePhotoPath,
+            generation: dog.profilePhotoGeneration, source: `profile:${dogId}:${dog.profilePhotoPath}` })
+        }
+        tx.update(db.collection('dogs').doc(dogId), {
+          profilePhoto: fileUrl, profilePhotoPath: filePath, profilePhotoGeneration: generation, updatedAt: new Date(),
+        })
+      } })
 
     return res.status(200).json({ success: true, fileUrl })
   } catch (err) {

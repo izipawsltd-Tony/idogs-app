@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { accountWritesAllowed } from './_lib/account-write-fence.js'
+import { dispatchAccountOperation, writeReminderRecord } from './_lib/account-external-operations.js'
 // api/send-reminders.js — Daily cron: check due dates and send reminders
 // Called by GitHub Actions cron job daily at 8am AEST
 
@@ -195,6 +198,7 @@ export default async function handler(req, res) {
       // Skip users who have explicitly disabled email reminders
       if (user.emailReminders === false) continue
       const tenantId = userDoc.id
+      if (!await db.runTransaction(tx => accountWritesAllowed(tx, db, tenantId))) continue
       const reminderDays = user.reminderDays || 7
       const reminderFrequency = user.reminderFrequency || 'once' // 'once' | 'daily'
       const heatReminderDays = user.heatReminderDays || 14 // separate setting for heat cycles
@@ -229,6 +233,14 @@ export default async function handler(req, res) {
       const dogs = await getReminderEligibleDogs(tenantId)
 
       for (const dog of dogs) {
+        const guardedWrite = (ref, data, options = {}) => writeReminderRecord({ db, uid: tenantId, dogId: dog.id, ref, data, ...options })
+        const sendReminderEmail = async (...args) => {
+          const response = await dispatchAccountOperation({ db, uid: tenantId, dogId: dog.id, kind: 'reminder_email',
+            operationKey: createHash('sha256').update(JSON.stringify([process.env.FIREBASE_PROJECT_ID, tenantId, dog.id, today.toISOString().slice(0, 10), args[1]?.body])).digest('hex'),
+            invoke: () => fetch(...args), confirmed: response => response.ok })
+          if (!response.ok) throw new Error('REMINDER_EMAIL_UNCONFIRMED')
+          return response
+        }
         // Birthday / join-anniversary check — separate from the vaccine
         // due-date logic below, this fires at most once per dog per day
         // regardless of how many vaccine records exist.
@@ -237,7 +249,7 @@ export default async function handler(req, res) {
           const milestone = getTodaysDogMilestone(dog.dateOfBirth, dogCreatedAt)
           if (milestone) {
             try {
-              await fetch(`${appUrl}/api/send-email`, {
+              await sendReminderEmail(`${appUrl}/api/send-email`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                 body: JSON.stringify({
@@ -286,12 +298,12 @@ export default async function handler(req, res) {
               const reminderRef = db.collection('reminders').doc(reminderId)
               const existing = await reminderRef.get()
               if (existing.exists && existing.data()?.status !== 'completed') {
-                await reminderRef.update({
+                await guardedWrite(reminderRef, {
                   status: 'completed',
                   completedAt: today.toISOString(),
                   completedReason: 'superseded_by_newer_vaccine',
                   updatedAt: today.toISOString(),
-                })
+                }, { update: true })
               }
             } catch (e) {
               // non-critical
@@ -353,7 +365,7 @@ export default async function handler(req, res) {
 
               // Only create/update if not already completed by the user
               if (!existingReminder.exists || existingReminder.data()?.status !== 'completed') {
-                await reminderRef.set({
+                await guardedWrite(reminderRef, {
                   id: reminderId,
                   dogId: dog.id,
                   tenantId,
@@ -378,7 +390,7 @@ export default async function handler(req, res) {
               // Send email reminder
               if (user.email) {
                 try {
-                  await fetch(`${appUrl}/api/send-email`, {
+                  await sendReminderEmail(`${appUrl}/api/send-email`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                     body: JSON.stringify({
@@ -419,9 +431,9 @@ export default async function handler(req, res) {
 
               // Record when this reminder fired
               try {
-                await db.collection('vaccineRecords').doc(vDoc.id).update({
+                await guardedWrite(db.collection('vaccineRecords').doc(vDoc.id), {
                   lastReminderSentAt: today.toISOString(),
-                })
+                }, { update: true })
               } catch (e) {
                 console.error('Failed to record lastReminderSentAt:', e)
               }
@@ -434,7 +446,7 @@ export default async function handler(req, res) {
               const reminderRef = db.collection('reminders').doc(reminderId)
               const existing = await reminderRef.get()
               if (existing.exists && existing.data()?.status === 'overdue') {
-                await reminderRef.update({ status: 'pending', updatedAt: today.toISOString() })
+                await guardedWrite(reminderRef, { status: 'pending', updatedAt: today.toISOString() }, { update: true })
               }
             } catch (e) {
               // non-critical
@@ -466,12 +478,12 @@ export default async function handler(req, res) {
               const oldRef = db.collection('reminders').doc(`worming_${dog.id}_${old.id}`)
               const oldSnap = await oldRef.get()
               if (oldSnap.exists && oldSnap.data()?.status !== 'completed') {
-                await oldRef.update({
+                await guardedWrite(oldRef, {
                   status: 'completed',
                   completedAt: today.toISOString(),
                   completedReason: 'superseded_by_newer_worming',
                   updatedAt: today.toISOString(),
-                })
+                }, { update: true })
               }
             } catch {
               // non-critical
@@ -490,7 +502,7 @@ export default async function handler(req, res) {
               const reminderRef = db.collection('reminders').doc(reminderId)
               const existing = await reminderRef.get()
               if (!existing.exists || existing.data()?.status !== 'completed') {
-                await reminderRef.set({
+                await guardedWrite(reminderRef, {
                   id: reminderId,
                   dogId: dog.id,
                   tenantId,
@@ -515,7 +527,7 @@ export default async function handler(req, res) {
             if (!blockedByFrequencyPref) {
               if (user.email) {
                 try {
-                  await fetch(`${appUrl}/api/send-email`, {
+                  await sendReminderEmail(`${appUrl}/api/send-email`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                     body: JSON.stringify({
@@ -551,9 +563,9 @@ export default async function handler(req, res) {
               }
 
               try {
-                await db.collection('wormingRecords').doc(activeWorming.id).update({
+                await guardedWrite(db.collection('wormingRecords').doc(activeWorming.id), {
                   lastReminderSentAt: today.toISOString(),
-                })
+                }, { update: true })
               } catch {
                 console.error('Failed to record worming reminder sent')
               }
@@ -596,7 +608,7 @@ export default async function handler(req, res) {
             const ref = db.collection('reminders').doc(reminderId)
             const existing = await ref.get()
             if (!existing.exists || existing.data()?.status !== 'completed') {
-              await ref.set({
+              await guardedWrite(ref, {
                 id: reminderId,
                 dogId: dog.id,
                 tenantId,
@@ -790,7 +802,7 @@ export default async function handler(req, res) {
               const reminderRef = db.collection('reminders').doc(reminderId)
               const existing = await reminderRef.get()
               if (!existing.exists || existing.data()?.status !== 'completed') {
-                await reminderRef.set({
+                await guardedWrite(reminderRef, {
                   id: reminderId,
                   dogId: dog.id,
                   tenantId,
@@ -825,7 +837,7 @@ export default async function handler(req, res) {
 
                 if (user.email) {
                   try {
-                    await fetch(`${appUrl}/api/send-email`, {
+                    await sendReminderEmail(`${appUrl}/api/send-email`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET },
                       body: JSON.stringify({
@@ -863,9 +875,9 @@ export default async function handler(req, res) {
 
                 // Record send time on dog document
                 try {
-                  await db.collection('dogs').doc(dog.id).update({
+                  await guardedWrite(db.collection('dogs').doc(dog.id), {
                     [sentKey]: today.toISOString(),
-                  })
+                  }, { update: true })
                 } catch (e) {
                   console.error('Failed to record heat reminder sent:', e)
                 }
@@ -879,6 +891,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, smsSent, emailSent })
   } catch (err) {
     console.error('Reminders error:', err)
-    return res.status(500).json({ error: 'Failed to send reminders', message: String(err) })
+    return res.status(500).json({ error: 'Failed to send reminders' })
   }
 }

@@ -156,6 +156,13 @@ test('actual document, profile and note upload handlers retain their response co
   assert.equal(note.code, 200, JSON.stringify(note.body))
   assert.equal((await db.doc(`dogs/${f.dogId}`).get()).data().profilePhoto, profile.body.fileUrl)
   assert.notEqual(note.body.fileUrl, profile.body.fileUrl)
+  const oldProfile = (await db.doc(`dogs/${f.dogId}`).get()).data()
+  const replacement = await call('upload', f, { dogId: f.dogId, base64: jpeg.toString('base64') })
+  assert.equal(replacement.code, 200, JSON.stringify(replacement.body))
+  const queued = await db.collection('mediaCleanupTasks').where('uid', '==', f.uid).get()
+  assert.equal(queued.size, 1)
+  assert.equal(queued.docs[0].data().generation, oldProfile.profilePhotoGeneration)
+  assert.equal((await bucket.file(oldProfile.profilePhotoPath).exists())[0], true)
 })
 test('freeze during Storage upload prevents the reference commit and retains the file for reviewed cleanup', async () => {
   const f = await fixture(), ref = db.doc(`documents/${f.dogId}`)

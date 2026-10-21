@@ -1,3 +1,4 @@
+import { ApiError } from './http-helpers.js'
 import { requireAppUrl } from './require-config.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
@@ -45,6 +46,7 @@ function bodyOf(req) {
 
 export function createCheckoutHandler({
   verifyIdToken,
+  dispatch = async (_uid, invoke) => invoke(),
   createSession,
   getAppUrl = requireAppUrl,
 } = {}) {
@@ -97,9 +99,8 @@ export function createCheckoutHandler({
     const interval = INTERVAL_BY_PLAN_KEY[planKey]
 
     try {
-      const session = await createSession({
+      const session = await dispatch(uid, () => createSession({
         mode: 'subscription',
-        payment_method_types: ['card'],
         customer_email: email,
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${appUrl}/app/billing?success=1`,
@@ -108,9 +109,10 @@ export function createCheckoutHandler({
         subscription_data: {
           metadata: { userId: uid, plan: 'plus', interval, priceId },
         },
-      })
+      }))
       return res.status(200).json({ url: session.url })
     } catch (err) {
+      if (err instanceof ApiError) return res.status(err.status).json({ error: err.message, ...err.extra })
       logSanitizedError('create-checkout', 'CHECKOUT_SESSION_FAILED', {
         message: err?.message,
         code: err?.code,

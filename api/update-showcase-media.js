@@ -18,11 +18,8 @@ import { ApiError } from './_lib/http-helpers.js'
 // file. `order` is a list of MediaItem.id values (opaque, unguessable —
 // never a Storage path), not the items themselves.
 //
-// Any id present in the OLD array but absent from the new `order` is
-// being deleted — its underlying Storage object is removed too
-// (best-effort; a cleanup failure never blocks the Firestore update
-// itself, since the alternative — leaving the user's delete action
-// half-applied — is worse than a rare orphaned Storage object).
+// Removed gallery references queue durable cleanup review in the same commit.
+// No request-time object deletion is safe without shared-reference evidence.
 //
 // Deleting an item here does NOT automatically un-publish it from any
 // Showcase it may be part of — api/update-showcase-puppy.js's own
@@ -87,22 +84,7 @@ async function handler(req, res) {
 
   try {
     const arrayField = kind === 'photo' ? 'photos' : 'videos'
-    const { removedItems } = await reorderAccountMedia({ db, uid, dogId, arrayField, order })
-
-    // Best-effort Storage cleanup — never allowed to fail the request;
-    // the Firestore update above (the part the user actually asked for)
-    // has already succeeded by this point.
-    if (removedItems.length > 0) {
-      await Promise.all(removedItems.map(async item => {
-        try {
-          await bucket.file(item.path).delete()
-        } catch {
-          // Orphaned Storage object — logged, never surfaced to the
-          // caller, never retried synchronously here.
-          logSanitizedError('update-showcase-media (cleanup)', 'STORAGE_CLEANUP_FAILED')
-        }
-      }))
-    }
+    await reorderAccountMedia({ db, uid, dogId, arrayField, order, bucket: bucketName })
 
     const updatedSnap = await db.collection('dogs').doc(dogId).get()
     const updated = updatedSnap.data()

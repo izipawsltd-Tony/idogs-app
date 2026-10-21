@@ -1,3 +1,4 @@
+import { queueMediaCleanupTx } from './media-cleanup.js'
 import { ApiError } from './http-helpers.js'
 import { canAddDogRecord, hasDogWriteAccess } from './dog-access.js'
 import { requireAccountWrites } from './account-write-fence.js'
@@ -67,7 +68,7 @@ export async function uploadAccountMedia({ db, bucket, uid, dogId, path, kind, b
   }
 }
 
-export async function reorderAccountMedia({ db, uid, dogId, arrayField, order }) {
+export async function reorderAccountMedia({ db, uid, dogId, arrayField, order, bucket }) {
   if (!['photos', 'videos'].includes(arrayField) || !Array.isArray(order) || order.some(id => typeof id !== 'string')) throw new ApiError(400, 'Invalid media order')
   return db.runTransaction(async tx => {
     const dog = await writableDog(tx, db, uid, dogId)
@@ -75,7 +76,13 @@ export async function reorderAccountMedia({ db, uid, dogId, arrayField, order })
     const ids = new Set(order)
     if (ids.size !== order.length) throw new ApiError(400, 'order must not contain duplicate entries')
     if (order.some(id => !byId.has(id))) throw new ApiError(400, 'order contains an unknown media item', { reason: 'UNKNOWN_MEDIA_ITEM' })
+    const removedItems = current.filter(item => !ids.has(item.id))
+    if (removedItems.length && !bucket) throw new Error('CLEANUP_BUCKET_REQUIRED')
+    const queued = []
+    const readThenWrite = { get: ref => tx.get(ref), set: (...args) => queued.push(args) }
+    for (const item of removedItems) await queueMediaCleanupTx(readThenWrite, db, { uid, dogId, bucket, path: item.path, generation: item.generation, source: `gallery:${dogId}:${item.id}` })
+    for (const args of queued) tx.set(...args)
     tx.update(db.collection('dogs').doc(dogId), { [arrayField]: order.map(id => byId.get(id)), updatedAt: new Date() })
-    return { removedItems: current.filter(item => !ids.has(item.id)) }
+    return { removedItems }
   })
 }

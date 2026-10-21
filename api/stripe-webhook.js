@@ -6,7 +6,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { createWebhookHandler } from './_lib/webhook-handler.js'
 import { grantExtraLitterCreditFromVerifiedEvent } from './_lib/extra-litter-webhook.js'
-import { reconcileVerifiedPlusSubscription, verifiedPlusInterval } from './_lib/billing-reconcile.js'
+import { reconcileVerifiedPaidSubscription, verifiedPaidInterval } from './_lib/billing-reconcile.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 
@@ -64,10 +64,10 @@ async function reconcileActivePlusFromVerifiedEvent(event) {
   const subscription = event.type.startsWith('customer.subscription.')
     ? event.data.object
     : await getSubscription(subscriptionId)
-  if (!verifiedPlusInterval(subscription)) return
+  if (!verifiedPaidInterval(subscription)) return
   const userId = subscription?.metadata?.userId
   if (!userId) return
-  await reconcileVerifiedPlusSubscription({ db, subscription, userId, eventCreated: event.created })
+  await reconcileVerifiedPaidSubscription({ db, subscription, userId, eventCreated: event.created, event })
 }
 
 export default async function handler(req, res) {

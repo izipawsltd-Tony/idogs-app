@@ -1,3 +1,6 @@
+import { accountWritesAllowed } from './account-write-fence.js'
+import { ApiError } from './http-helpers.js'
+import { dispatchAccountOperation } from './account-external-operations.js'
 import { createHash, randomUUID } from 'node:crypto'
 
 export const CARE_TYPES = ['worming', 'vaccination', 'flea_tick', 'medication', 'vet_appointment', 'custom', 'grooming', 'weight_check', 'dental_care', 'nail_trim']
@@ -32,6 +35,7 @@ export async function deliverManualReminder({ db, reminderId, tenantId, now, sen
   const userRef = db.collection('users').doc(tenantId)
   const leaseId = randomUUID()
   const claim = await db.runTransaction(async tx => {
+    if (!await accountWritesAllowed(tx, db, tenantId)) return null
     const reminder = (await tx.get(reminderRef)).data()
     const user = (await tx.get(userRef)).data()
     if (!reminder?.dogId) return null
@@ -62,11 +66,17 @@ export async function deliverManualReminder({ db, reminderId, tenantId, now, sen
     }
     const delivery = { status: 'sending', leaseId, leaseUntil: +now + 5 * 60000, startedAt: previous?.startedAt ?? +now, payload, tenantId, reminderId }
     tx.set(ref, delivery)
-    return { ref, key, payload }
+    return { ref, key, payload, dogId: reminder.dogId, reminderVersion: JSON.stringify(reminder) }
   })
   if (!claim) return { sent: false, reason: 'SKIPPED' }
   let sent = false
-  try { sent = (await sendEmail(claim.payload, claim.key)) === true } catch { /* ambiguous: retry same key within 23h only */ }
+  try { sent = (await dispatchAccountOperation({ db, uid: tenantId, dogId: claim.dogId, kind: 'reminder_manual',
+    validate: async tx => {
+      const reminder = (await tx.get(reminderRef)).data()
+      const user = (await tx.get(userRef)).data()
+      const dog = (await tx.get(db.collection('dogs').doc(claim.dogId))).data()
+      if (!manualReminderEligible({ user, reminder, dog, tenantId, now }) || user.email !== claim.payload.to[0] || JSON.stringify(reminder) !== claim.reminderVersion) throw new ApiError(409, 'Reminder changed before dispatch')
+    }, invoke: () => sendEmail(claim.payload, claim.key), confirmed: value => value === true })) === true } catch { /* ambiguous: retry same key within 23h only */ }
   await db.runTransaction(async tx => {
     const current = (await tx.get(claim.ref)).data()
     if (current?.leaseId !== leaseId) return

@@ -1,11 +1,12 @@
 name: Deletion server and media fence verification
 on:
   push:
-    branches: [fix/deletion-server-media-fence-20261021]
+    branches: [fix/deletion-server-media-fence-20261021, fix/deletion-cleanup-billing-reminders-20261022]
   pull_request:
     paths:
       - api/**
       - scripts/test-deletion-server-media-emulator.mjs
+      - scripts/test-deletion-final-guards-emulator.mjs
       - .github/workflows/deletion-server-media-qa.yml
 permissions:
   contents: read
@@ -27,7 +28,16 @@ jobs:
           java-version: '21'
       - run: npm ci
       - run: node scripts/test-create-dog-core.mjs
+      - name: Billing and reminder synthetic regressions
+        run: |
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-billing-legacy-reconcile.mjs
+          node scripts/test-billing-p0-security.mjs
+          node scripts/test-billing-payments-phase1.mjs
+          node scripts/test-extra-litter-webhook.mjs
+          node scripts/test-extra-litter-checkout.mjs
+          node scripts/test-sms-addon-v1.mjs
       - name: Actual handlers, Auth tokens, Firestore transactions and Storage failures; synthetic project only
         env:
           GCLOUD_PROJECT: demo-idogs-account-deletion
-        run: npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-account-deletion --only auth,firestore,storage 'node --test scripts/test-account-deletion-emulator.mjs scripts/test-deletion-ledger-emulator.mjs scripts/test-deletion-renewal-emulator.mjs scripts/test-deletion-fence-rules-emulator.mjs scripts/test-deletion-scan-fence-emulator.mjs scripts/test-deletion-server-media-emulator.mjs'
+        run: npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-account-deletion --only auth,firestore,storage 'node --test --test-concurrency=1 scripts/test-account-deletion-emulator.mjs scripts/test-deletion-ledger-emulator.mjs scripts/test-deletion-renewal-emulator.mjs scripts/test-deletion-fence-rules-emulator.mjs scripts/test-deletion-scan-fence-emulator.mjs scripts/test-deletion-server-media-emulator.mjs scripts/test-deletion-final-guards-emulator.mjs'

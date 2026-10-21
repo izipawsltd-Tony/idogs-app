@@ -177,15 +177,15 @@ for (const field of protectedFields) {
 
 check(
   'user creates reject every protected billing field',
-  /allow create: if isOwnerUser\(userId\) &&\s*!request\.resource\.data\.keys\(\)\.hasAny\(userBillingFields\(\)\);/s.test(rules),
+  /allow create: if isOwnerUser\(userId\) &&\s*actorAllowsWrites\(\) &&\s*!request\.resource\.data\.keys\(\)\.hasAny\(userBillingFields\(\)\);/s.test(rules),
 )
 check(
   'user updates reject adding, changing, or removing protected billing fields',
-  /allow update: if isOwnerUser\(userId\) &&\s*!request\.resource\.data\.diff\(resource\.data\)\.affectedKeys\(\)\s*\.hasAny\(userBillingFields\(\)\);/s.test(rules),
+  /allow update: if isOwnerUser\(userId\) &&\s*actorAllowsWrites\(\) &&\s*!request\.resource\.data\.diff\(resource\.data\)\.affectedKeys\(\)\s*\.hasAny\(userBillingFields\(\)\);/s.test(rules),
 )
 check(
   'client deletion cannot remove trusted billing fields',
-  /allow delete: if isOwnerUser\(userId\) &&\s*!resource\.data\.keys\(\)\.hasAny\(userBillingFields\(\)\);/s.test(rules),
+  /allow delete: if isOwnerUser\(userId\) &&\s*actorAllowsWrites\(\) &&\s*!resource\.data\.keys\(\)\.hasAny\(userBillingFields\(\)\);/s.test(rules),
 )
 check(
   'ordinary owner profile updates remain permitted through the protected-field diff gate',
