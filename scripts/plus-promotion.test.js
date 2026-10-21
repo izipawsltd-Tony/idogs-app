@@ -77,6 +77,8 @@ describe('Plus campaign boundaries and Checkout intent (mocked Stripe and Firest
     expect(promotionEnvironment({ ...config, environment: 'production' }).enabled).toBe(false)
   })
   it('uses the read-only verified A$7/A$70 prices and recognizes older Plus subscriptions', () => {
+    expect(STAGING_PLUS_MONTHLY_PRICE_ID).toBe('price_1U9YwuGHgBd6ZgJEX1Bdjz5x')
+    expect(verifiedPaidInterval({ status: 'trialing', items: { data: [{ price: { id: STAGING_PLUS_MONTHLY_PRICE_ID } }] } })).toBe('monthly')
     expect(CHECKOUT_PRICE_IDS.plus_monthly).toBe('price_1UAInbGHgBd6ZgJE0NAikQgm')
     expect(CHECKOUT_PRICE_IDS.plus_annual).toBe('price_1UAIngGHgBd6ZgJEh3njs6hZ')
     for (const [id, interval] of Object.entries(LEGACY_PLUS_PRICE_INTERVALS)) {

@@ -21,6 +21,8 @@ export const CHECKOUT_PRICE_IDS = Object.freeze({
 // Never strand existing/older Plus subscriptions when new Checkout moves to
 // the verified A$7/A$70 prices. These are recognition-only, not new checkout.
 export const LEGACY_PLUS_PRICE_INTERVALS = Object.freeze({
+  // Existing staging A$7 test Price, also used by isolated promotion QA.
+  price_1U9YwuGHgBd6ZgJEX1Bdjz5x: 'monthly',
   price_1TxaNJGHgBd6ZgJEpAhrWark: 'monthly',
   price_1TxMJ9GHgBd6ZgJEcwyahH58: 'monthly',
   price_1TxMJ8GHgBd6ZgJEt56IzJJd: 'annual',
