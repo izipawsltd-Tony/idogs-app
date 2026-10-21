@@ -1,0 +1,37 @@
+name: Deletion Firestore fence verification
+on:
+  push:
+    branches: [fix/deletion-firestore-fence-20261021]
+  pull_request:
+    paths:
+      - firestore.rules
+      - scripts/test-deletion-fence-rules-emulator.mjs
+      - scripts/test-deletion-ledger-emulator.mjs
+      - api/_lib/account-write-fence.js
+      - api/passport.js
+      - scripts/test-deletion-scan-fence-emulator.mjs
+      - .github/workflows/deletion-fence-qa.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  firestore-fence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - name: Synthetic request, ledger, renewal and client-fence regression
+        env:
+          GCLOUD_PROJECT: demo-idogs-account-deletion
+        run: npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-account-deletion --only auth,firestore 'node --test scripts/test-account-deletion-emulator.mjs scripts/test-deletion-ledger-emulator.mjs scripts/test-deletion-renewal-emulator.mjs scripts/test-deletion-fence-rules-emulator.mjs scripts/test-deletion-scan-fence-emulator.mjs'

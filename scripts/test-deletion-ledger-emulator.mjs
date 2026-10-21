@@ -132,11 +132,11 @@ test('requester client cannot read server ledger, manifest or fence', async () =
   const f=await seed(), client=rules.authenticatedContext(f.uid).firestore()
   for (const path of [f.progress.path,f.manifest.path,f.fence.path]) await assertFails(getDoc(doc(client,path)))
 })
-test('repository Rules do not freeze owner client writes merely because a fence exists', async () => {
+test('repository Rules freeze an existing owner client while preserving the last committed data', async () => {
   const f=await seed(), client=rules.authenticatedContext(f.uid).firestore()
   await f.fence.update({state:'open'})
   await assertSucceeds(updateDoc(doc(client,f.dogPath),{name:'synthetic-unfrozen-baseline'}))
   await f.fence.update({state:'frozen'})
-  await assertSucceeds(updateDoc(doc(client,f.dogPath),{name:'synthetic-fence-gap-proof'}))
-  assert.equal((await db.doc(f.dogPath).get()).data().name,'synthetic-fence-gap-proof')
+  await assertFails(updateDoc(doc(client,f.dogPath),{name:'synthetic-fence-gap-proof'}))
+  assert.equal((await db.doc(f.dogPath).get()).data().name,'synthetic-unfrozen-baseline')
 })
