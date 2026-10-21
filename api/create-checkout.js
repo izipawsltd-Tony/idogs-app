@@ -2,7 +2,9 @@
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
+import { getFirestore } from 'firebase-admin/firestore'
 import { createCheckoutHandler } from './_lib/checkout-handler.js'
+import { promotionSessionStore } from './_lib/promotion-session.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 
@@ -17,6 +19,11 @@ if (!getApps().length) {
 }
 
 export default createCheckoutHandler({
+  ...promotionSessionStore(getFirestore()),
   verifyIdToken: token => getAuth().verifyIdToken(token),
-  createSession: params => stripe.checkout.sessions.create(params),
+  createSession: (params, options) => stripe.checkout.sessions.create(params, options),
+  getProfile: async uid => {
+    const snapshot = await getFirestore().collection('users').doc(uid).get()
+    return snapshot.exists ? snapshot.data() : null
+  },
 })

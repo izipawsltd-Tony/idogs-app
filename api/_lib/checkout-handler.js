@@ -1,6 +1,8 @@
 import { requireAppUrl } from './require-config.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
+import { createHash } from 'node:crypto'
+import { isPlusPromotionActive, PLUS_PROMOTION_ID, PLUS_PROMOTION_END, PLUS_PROMOTION_TERMS } from '../../shared/plus-promotion.js'
 
 // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED). Only two
 // real Stripe Checkout price ids exist for iDogs — Plus Monthly and Plus
@@ -47,6 +49,10 @@ export function createCheckoutHandler({
   verifyIdToken,
   createSession,
   getAppUrl = requireAppUrl,
+  getProfile,
+  getPromotionAttempt,
+  savePromotionSession,
+  now = Date.now,
 } = {}) {
   return async function checkoutHandler(req, res) {
     if (req.method !== 'POST') {
@@ -96,19 +102,52 @@ export function createCheckoutHandler({
     }
     const interval = INTERVAL_BY_PLAN_KEY[planKey]
 
+    const promotion = body.promotion !== undefined
+    let timestamp = now()
+    if (promotion && (body.promotion !== PLUS_PROMOTION_ID || planKey !== 'plus_monthly' || body.acceptPromotionTerms !== true)) {
+      return res.status(400).json({ error: 'Please accept the monthly promotion terms.' })
+    }
+    if (promotion && (!isPlusPromotionActive(timestamp) || PLUS_PROMOTION_END - timestamp <= 32 * 60_000)) {
+      return res.status(409).json({ error: 'This offer can no longer be started. No payment has been taken. Refresh Billing to view available plans.' })
+    }
+
     try {
+      let profile
+      let attempt
+      if (promotion) {
+        // Server-owned profile only: never accept subscription/customer IDs
+        // from the browser. Existing subscribers need their own migration.
+        if (!getProfile) throw new Error('Promotion profile verification unavailable')
+        profile = await getProfile(uid)
+        if (!profile) return res.status(409).json({ error: 'Account details are not ready. Please refresh Billing.' })
+        if (profile.stripeSubscriptionId || profile.stripeCustomerId || ['active', 'trialing', 'past_due'].includes(profile.subscriptionStatus)) {
+          return res.status(409).json({ error: 'Your existing billing account must be reviewed for this offer. Please use Manage subscription; do not create another subscription.' })
+        }
+        if (!getPromotionAttempt || !savePromotionSession) throw new Error('Promotion session verification unavailable')
+        attempt = await getPromotionAttempt(uid, timestamp)
+        if (attempt.url) return res.status(200).json({ url: attempt.url })
+        timestamp = attempt.createdAt
+      }
       const session = await createSession({
         mode: 'subscription',
-        payment_method_types: ['card'],
+        ...(promotion ? {
+          payment_method_collection: 'always',
+          expires_at: Math.floor(Math.min(timestamp + 23 * 60 * 60_000, PLUS_PROMOTION_END - 60_000) / 1000),
+          custom_text: { submit: { message: PLUS_PROMOTION_TERMS } },
+        } : {}),
         customer_email: email,
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${appUrl}/app/billing?success=1`,
         cancel_url: `${appUrl}/app/billing?cancelled=1`,
-        metadata: { userId: uid, plan: 'plus', interval, priceId },
+        metadata: { userId: uid, plan: 'plus', interval, priceId, ...(promotion ? { promotion: PLUS_PROMOTION_ID } : {}) },
         subscription_data: {
-          metadata: { userId: uid, plan: 'plus', interval, priceId },
+          metadata: { userId: uid, plan: 'plus', interval, priceId, ...(promotion ? { promotion: PLUS_PROMOTION_ID, promotionConsent: 'accepted-v1' } : {}) },
+          ...(promotion ? (PLUS_PROMOTION_END - timestamp >= 48 * 60 * 60_000
+            ? { trial_end: Math.floor(PLUS_PROMOTION_END / 1000), trial_settings: { end_behavior: { missing_payment_method: 'cancel' } } }
+            : { billing_cycle_anchor: Math.floor(PLUS_PROMOTION_END / 1000), proration_behavior: 'none' }) : {}),
         },
-      })
+      }, promotion ? { idempotencyKey: `plus-promotion-${createHash('sha256').update(`${uid}/${PLUS_PROMOTION_ID}/${timestamp}`).digest('hex')}` } : undefined)
+      if (promotion) await savePromotionSession(uid, attempt, session)
       return res.status(200).json({ url: session.url })
     } catch (err) {
       logSanitizedError('create-checkout', 'CHECKOUT_SESSION_FAILED', {

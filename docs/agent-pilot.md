@@ -1,0 +1,30 @@
+# Promotion engineering — 21 October 2026
+
+State: LOCAL_CHECKS_PASSED; preparing DRAFT PR. Final SHA/CI/Preview evidence belongs in the draft PR.
+
+Owner priority supersedes the generic pilot's billing exclusion: implement Plus promotion, not unrelated UI smoke work. Earlier test-only pilot remains isolated and unpublished. Repository remote verified as `https://github.com/izipawsltd-Tony/idogs-app.git`; base `8941cff8737140c024f35e8bde115107fa84cc4c`; branch `feat/plus-promotion-20261021`. Original dirty worktrees preserved. No applicable AGENTS.md found. One implementation writer; investigation, QA and review read-only.
+
+## Contract
+- Before: landing and monthly checkout advertise/charge A$7 without this campaign.
+- Intended: prominent crossed-out A$7 / A$0 monthly offer through 31 January 2027 inclusive, Australia/Adelaide; monthly A$7 automatic renewal from 1 February 2027 with explicit prior agreement and payment method collection.
+- Existing paying customers included by owner decision, but no live subscription mutation without a reviewed account-specific migration. Preserve prepaid time, cancellation choices and separately paid SMS. Prepare invitation email for registered unpaid users; no bulk send in this implementation run.
+- Runtime scope: shared campaign definition, landing/Billing offer UI, authenticated monthly Checkout preparation. Existing trusted webhooks remain entitlement authority; redirect never grants Plus. No global price/plan/quota changes, Rules, env, Storage, SMS or production release.
+- Acceptance: shared exact Adelaide cutoff; consent required; no surprise immediate payment from stale A$0 CTA; no duplicate subscription for known existing subscribers; original paid/annual path unchanged when not claiming campaign; meaningful mocked Checkout/UI tests; exact-SHA CI and staging Preview READY; browser journey evidence separately recorded.
+- Verification: existing `npm test`, typecheck, build and CI commands; independent QA/review. No lint script configured. No secrets/session/customer data in Git.
+
+## Investigation
+- Inspected remotes, branches, dirty status, worktrees, package/CI, open PRs and issues. Current production checked READY at base; active SMS, deletion and mobile PRs excluded.
+- Existing webhook/reconciliation already accepts trialing on known Plus price. Stripe hosted Checkout supports fixed trial_end, requires minimum 48h future, and collects payment methods by default. No new Stripe Price needed for new subscriptions.
+- Browser read/click observation currently blocked after native credential delivery; one canonical-navigation recovery did not restore usable clicks. No bypass. Complete independent code/tests/review and preserve explicit browser QA blocker if still present.
+
+## Decisions / execution
+- Campaign end exclusive: `2027-01-31T13:30:00Z` = 1 February 2027 00:00 Adelaide.
+- Do not mark existing customers as discounted before their subscription migration is applied and verified.
+- Final live Stripe sandbox/integration, existing-subscriber migration, campaign send and production approval are separate from mocked verification; do not claim them complete.
+- Commands executed: `npm test` (185 PASS), `node scripts/test-sms-addon-v1.mjs` (25/25 PASS), `node --test scripts/test-legacy-history-recovery.mjs` (8 PASS), `npx tsc --noEmit` PASS, `npm run build` PASS (existing bundle-size warning). No lint script exists.
+- New coverage: 24 policy/Checkout/session tests and 3 component Billing tests PASS. Mocks prove consent, date boundaries, final48h branch, persisted retry/concurrent attempt, and UI request shape; not live provider acceptance or real Firestore concurrency.
+- UI test fixture initially looped because mocked user identity changed per render; corrected stable fixture and promise-returning profile refresh, then tests PASS. No product workaround added for this fixture issue.
+- Investigator verified Stripe's trial/anchor constraints. Independent QA/reviewer each ran the initial 23 backend tests; QA also ran typecheck. Reviewer accepted DRAFT with real integration/existing-paid rollout outstanding. Added actual parallel-request coverage per review; root ran final 27 targeted tests and full checks. QA agent later became unavailable due usage limit, so final UI verification is root-run component coverage.
+- React review: shared terms/date logic, labelled consent, timer cleanup, responsive card grid, server-side expired-offer checks, no entitlement grant on redirect. Checkout/store, all changed pages, new tests and docs reviewed before staged diff check.
+- Existing paying-customer plan and unpaid-account email draft are in `docs/promotion-release-review.md`; neither applied/sent. A known former Stripe customer is deliberately held for review rather than creating another customer/subscription.
+- Known safe-failure limitation: an ambiguous trial creation retried after the 48-hour minimum boundary can be refused by Stripe until the saved attempt expires; no paid fallback. Live sandbox needs to verify this and the closing-window branch.

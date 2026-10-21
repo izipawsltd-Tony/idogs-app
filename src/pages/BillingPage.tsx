@@ -4,6 +4,8 @@ import { useSearchParams } from 'react-router-dom'
 import type { ToastMessage } from '../types'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
 import { isAndroidNativeApp } from '../lib/nativePlatform'
+import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
+import { PLUS_PROMOTION_ID, PLUS_PROMOTION_TERMS } from '../../shared/plus-promotion.js'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -86,6 +88,8 @@ const PLUS_FEATURES = [
 type IntervalKey = 'plus_monthly' | 'plus_annual'
 
 export default function BillingPage({ toast }: Props) {
+  const promotionActive = usePlusPromotion()
+  const [promotionConsent, setPromotionConsent] = useState(false)
   const { user, profile, refreshProfile } = useAuth()
   const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(false)
@@ -117,7 +121,7 @@ export default function BillingPage({ toast }: Props) {
 
   useEffect(() => {
     if (searchParams.get('success')) {
-      toast('🎉 Subscription activated! Welcome to iDogs Plus.', 'success')
+      toast('Checkout completed. Plus access appears after Stripe confirms your subscription.', 'info')
     }
     if (searchParams.get('cancelled')) {
       toast('Checkout cancelled — you can try again anytime.', 'info')
@@ -202,6 +206,8 @@ export default function BillingPage({ toast }: Props) {
 
   async function handleSubscribe(planKey: IntervalKey) {
     if (!user) return
+    const claimingPromotion = promotionActive && planKey === 'plus_monthly'
+    if (claimingPromotion && !promotionConsent) return
     setLoading(true)
     try {
       const idToken = await user.getIdToken()
@@ -211,10 +217,11 @@ export default function BillingPage({ toast }: Props) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ plan: planKey }),
+        body: JSON.stringify({ plan: planKey, ...(claimingPromotion ? { promotion: PLUS_PROMOTION_ID, acceptPromotionTerms: true } : {}) }),
       })
-      if (!res.ok) throw new Error('Failed to create checkout')
-      const { url } = await res.json()
+      const body = await res.json()
+      if (!res.ok) { toast(body.error || 'Failed to start checkout.', 'error'); return }
+      const { url } = body
       window.location.href = url
     } catch {
       toast('Failed to start checkout. Please try again.', 'error')
@@ -368,7 +375,7 @@ export default function BillingPage({ toast }: Props) {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 32 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 16, marginBottom: 32 }}>
         <div style={{ background: '#fff', border: '2px solid var(--border)', borderRadius: 16, padding: 20 }}>
           <div style={{ fontSize: 24, marginBottom: 6 }}>🐾</div>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Free</div>
@@ -388,23 +395,30 @@ export default function BillingPage({ toast }: Props) {
             <div style={{ fontSize: 24, marginBottom: 6 }}>🏆</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Plus</div>
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>For active breeders with a growing kennel</div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
+            {promotionActive && interval === 'plus_monthly' && <PlusPromotion />}
+            {!(promotionActive && interval === 'plus_monthly') && <><div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
               <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>
               <span style={{ fontSize: 12, color: 'var(--light)' }}>{interval === 'plus_annual' ? 'AUD/year' : 'AUD/month'}</span>
             </div>
             <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 16 }}>
               {interval === 'plus_annual' ? `≈ $${(PLUS_ANNUAL_PRICE_AUD / 12).toFixed(2)}/month, billed annually` : `$${PLUS_MONTHLY_PRICE_AUD * 12} AUD/year if paid monthly`}
             </div>
+            </>}
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               {PLUS_FEATURES.map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
             </ul>
+            {promotionActive && interval === 'plus_monthly' && !isPlus && !androidPurchasesUnavailable && <label style={{ display: 'flex', gap: 10, fontSize: 12, lineHeight: 1.6, marginBottom: 16 }}>
+              <input type="checkbox" checked={promotionConsent} onChange={event => setPromotionConsent(event.target.checked)} />
+              <span>I agree: {PLUS_PROMOTION_TERMS}</span>
+            </label>}
+            {promotionActive && isPlus && <p style={{ fontSize: 12, lineHeight: 1.6 }}>Already subscribed? The offer also includes existing customers. Your current billing continues until your account’s promotion adjustment is confirmed. Do not start another subscription.</p>}
             {isPlus ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan</div>
             ) : androidPurchasesUnavailable ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>Purchases are unavailable in this Android app.</div>
             ) : (
-              <button onClick={() => handleSubscribe(interval)} disabled={loading} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
-                {loading ? <><span className="spinner" style={{ width: 13, height: 13, borderTopColor: '#fff' }} /> Processing…</> : `Upgrade to Plus — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}
+              <button onClick={() => handleSubscribe(interval)} disabled={loading || detailsLoading || !!detailsError || (promotionActive && interval === 'plus_monthly' && !promotionConsent)} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
+                {loading ? <><span className="spinner" style={{ width: 13, height: 13, borderTopColor: '#fff' }} /> Processing…</> : promotionActive && interval === 'plus_monthly' ? 'Get Plus for A$0' : `Upgrade to Plus — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}
               </button>
             )}
           </div>
