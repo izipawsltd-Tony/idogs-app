@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/set-dog-status.js — trusted server-side dog status transitions for
 // iDogs Pricing v1.1/v1.2 (Pricing_Decision_Record_v1.1.md §3.2/§3.3,
 // LOCKED, plus the v1.2 litter-puppy cap-eligibility change — see
@@ -112,6 +113,7 @@ async function handler(req, res) {
   const userRef = db.collection('users').doc(uid)
 
   const result = await db.runTransaction(async tx => {
+    await requireAccountWrites(tx, db, uid)
     // ── Reads first (transaction rule: all reads precede all writes) ──
     const dogSnap = await tx.get(dogRef)
     if (!dogSnap.exists) {

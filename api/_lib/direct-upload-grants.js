@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
 import { FieldValue } from 'firebase-admin/firestore'
+import { requireAccountWrites } from './account-write-fence.js'
+import { canAddDogRecord } from './dog-access.js'
+import { ApiError } from './http-helpers.js'
 import {
   MEDIA_UPLOAD_GRANTS_COLLECTION,
   MEDIA_UPLOAD_QUOTAS_COLLECTION,
@@ -19,6 +22,10 @@ export async function createPendingGrant(db, mediaId, grant) {
   const grantRef = db.collection(MEDIA_UPLOAD_GRANTS_COLLECTION).doc(mediaId)
   const refs = quotaRefs(db, grant.uid, grant.dogId)
   return db.runTransaction(async tx => {
+    await requireAccountWrites(tx, db, grant.uid)
+    const ownerSnap = await tx.get(db.collection('dogs').doc(grant.dogId))
+    if (!ownerSnap.exists || !canAddDogRecord(ownerSnap.data(), grant.uid)) throw new ApiError(403, 'Not authorized to upload media for this dog')
+    if (ownerSnap.data().status === 'transferred' || ownerSnap.data().transferStatus === 'pendingClaim') throw new ApiError(403, 'Dog transfer is pending', { reason: 'DOG_TRANSFER_IN_PROGRESS' })
     const [userSnap, dogSnap] = await Promise.all([tx.get(refs.user), tx.get(refs.dog)])
     const userCount = userSnap.exists ? Number(userSnap.data()?.pendingCount || 0) : 0
     const dogCount = dogSnap.exists ? Number(dogSnap.data()?.pendingCount || 0) : 0

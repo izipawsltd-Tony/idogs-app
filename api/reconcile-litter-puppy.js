@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/reconcile-litter-puppy.js — Codex fix-round (Finding 3, HIGH):
 // explicit, scoped, authenticated reconciliation for a SINGLE legacy
 // litter puppy that may have been mis-restricted by the old (pre-Pricing
@@ -80,6 +81,7 @@ async function handler(req, res) {
   const dogRef = db.collection('dogs').doc(dogId)
 
   const result = await db.runTransaction(async tx => {
+    await requireAccountWrites(tx, db, uid)
     // ── Reads first (transaction rule: all reads precede all writes) ──
     const dogSnap = await tx.get(dogRef)
     if (!dogSnap.exists) {

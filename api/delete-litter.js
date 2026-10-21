@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/delete-litter.js — trusted server-side litter deletion (Codex
 // round 4, Blocker 3; hardened Codex round 5, Blocker 2).
 //
@@ -102,6 +103,7 @@ async function handler(req, res) {
   const litterRef = db.collection('litters').doc(litterId)
 
   const outcome = await db.runTransaction(async (tx) => {
+    await requireAccountWrites(tx, db, uid)
     const litterSnap = await tx.get(litterRef)
     if (!litterSnap.exists) {
       return { deletedCount: 0, preservedCount: 0, ambiguousCount: 0, litterDeleted: false, litterArchived: false, notFound: true }
