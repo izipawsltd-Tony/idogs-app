@@ -1,3 +1,5 @@
+import { accountWritesAllowed } from './account-write-fence.js'
+import { dispatchAccountOperation } from './account-external-operations.js'
 import { createHash } from 'node:crypto'
 
 export const SMS_MONTHLY_CREDITS = 20
@@ -77,6 +79,7 @@ export async function reserveSmsDelivery({
   const deliveryRef = db.collection('smsDeliveries').doc(deliveryId)
 
   return db.runTransaction(async tx => {
+    if (!await accountWritesAllowed(tx, db, tenantId)) return { allowed: false, reason: 'ACCOUNT_WRITES_FROZEN' }
     const [userSnap, deliverySnap] = await Promise.all([tx.get(userRef), tx.get(deliveryRef)])
     const profile = userSnap.exists ? userSnap.data() : {}
 
@@ -146,6 +149,7 @@ export async function markSmsDeliveryFailed({ db, tenantId, deliveryId, errorCod
   const userRef = db.collection('users').doc(tenantId)
 
   await db.runTransaction(async tx => {
+    const accountOpen = await accountWritesAllowed(tx, db, tenantId)
     const [deliverySnap, userSnap] = await Promise.all([tx.get(deliveryRef), tx.get(userRef)])
     if (!deliverySnap.exists || deliverySnap.data().status !== 'reserved') return
 
@@ -158,7 +162,7 @@ export async function markSmsDeliveryFailed({ db, tenantId, deliveryId, errorCod
 
     // Never refund an old-period reservation into a newly reset period.
     // A provider response can race a Stripe renewal webhook at month-end.
-    if (sameBillingPeriod) {
+    if (accountOpen && userSnap.exists && sameBillingPeriod) {
       tx.set(userRef, { smsCreditsUsed: Math.max(0, used - segments) }, { merge: true })
     }
     tx.set(deliveryRef, {
@@ -195,17 +199,14 @@ export async function sendSmsWithQuota({
 
   let providerResult
   try {
-    providerResult = await sendProvider(e164, message)
+    providerResult = await dispatchAccountOperation({ db, uid: tenantId, dogId, kind: 'reminder_sms', invoke: () => sendProvider(e164, message), confirmed: value => Boolean(value?.MessageId) })
   } catch {
-    await markSmsDeliveryFailed({
-      db,
-      tenantId,
-      deliveryId: reservation.deliveryId,
-      errorCode: 'PROVIDER_FAILED',
-      now,
-    })
-    return { sent: false, reason: 'PROVIDER_FAILED', deliveryId: reservation.deliveryId, segmentCount }
+    // SNS has no provider idempotency guarantee. A thrown/lost response may
+    // already have sent: retain the charged reservation and drain hold.
+    return { sent: false, reason: 'PROVIDER_REVIEW_REQUIRED', deliveryId: reservation.deliveryId, segmentCount }
   }
+
+  if (!providerResult?.MessageId) return { sent: false, reason: 'PROVIDER_REVIEW_REQUIRED', deliveryId: reservation.deliveryId, segmentCount }
 
   try {
     await markSmsDeliverySent({

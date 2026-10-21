@@ -1,3 +1,4 @@
+import { ApiError } from './http-helpers.js'
 import { requireAppUrl } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 
@@ -140,6 +141,7 @@ export function createBillingSummaryHandler({
 
 export function createBillingPortalHandler({
   verifyIdToken,
+  dispatch = async (_uid, invoke) => invoke(),
   getProfile,
   createPortalSession,
   getAppUrl = requireAppUrl,
@@ -158,13 +160,14 @@ export function createBillingPortalHandler({
       const customerId = typeof profile?.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
       if (!customerId) return res.status(409).json({ error: 'No Stripe billing account is linked' })
 
-      const session = await createPortalSession({
+      const session = await dispatch(auth.uid, () => createPortalSession({
         customer: customerId,
         return_url: `${appUrl}/app/billing`,
-      })
+      }))
       if (!session?.url) throw new Error('Portal URL missing')
       return res.status(200).json({ url: session.url })
     } catch (error) {
+      if (error instanceof ApiError) return res.status(error.status).json({ error: error.message, ...error.extra })
       if (error?.message === 'Portal URL missing') {
         logSanitizedError('billing-portal', 'PORTAL_URL_MISSING')
       } else {

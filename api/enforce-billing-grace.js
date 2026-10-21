@@ -1,3 +1,4 @@
+import { accountWritesAllowed } from './_lib/account-write-fence.js'
 // api/enforce-billing-grace.js — daily cron: downgrade any account whose
 // §4.2 7-day past_due grace period has expired (Pricing_Decision_Record_
 // v1.1.md, LOCKED). Stripe's own dunning/retry schedule does not reliably
@@ -61,11 +62,15 @@ export default async function handler(req, res) {
 
     const uid = docSnap.id
     try {
-      await db.runTransaction(async tx => {
+      const applied = await db.runTransaction(async tx => {
+        if (!await accountWritesAllowed(tx, db, uid)) return false
+        const fresh = await tx.get(docSnap.ref)
+        if (!fresh.exists || fresh.data().plan !== 'plus' || !isPastDueGraceExpired(fresh.data())) return false
         await reconcileDogCapTx(tx, db, uid, 'free')
-        tx.set(docSnap.ref, { plan: 'free' }, { merge: true })
+        tx.update(docSnap.ref, { plan: 'free' })
+        return true
       })
-      downgraded++
+      if (applied) downgraded++
     } catch (err) {
       errors.push(uid)
       console.error('enforce-billing-grace: downgrade failed', { uid })

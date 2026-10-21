@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/save-heat-cycle.js — trusted server-side heat cycle create/update
 // (Codex round 3, Blocker 1; hardened Codex round 4, Blocker 1; hardened
 // Codex round 5, Blocker 5).
@@ -99,6 +100,7 @@ async function handler(req, res) {
     const cycleRef = db.collection('heatCycles').doc()
 
     const result = await db.runTransaction(async (tx) => {
+      await requireAccountWrites(tx, db, uid)
       const damSnap = await tx.get(damRef)
       const sireSnap = sireRef ? await tx.get(sireRef) : null
 
@@ -138,6 +140,7 @@ async function handler(req, res) {
   const sireRef = safeCycle.sireId ? db.collection('dogs').doc(safeCycle.sireId) : null
 
   const result = await db.runTransaction(async (tx) => {
+    await requireAccountWrites(tx, db, uid)
     const existingSnap = await tx.get(existingRef)
     const damSnap = await tx.get(damRef)
     const sireSnap = sireRef ? await tx.get(sireRef) : null

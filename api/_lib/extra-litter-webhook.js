@@ -1,3 +1,4 @@
+import { billingAccountWritable } from './account-external-operations.js'
 import { breederIdentity } from './breeder-profile.js'
 import { EXTRA_LITTER_PRICE_CENTS } from './litter-quota.js'
 
@@ -7,7 +8,7 @@ function customerIdOf(value) {
 }
 
 export function isExtraLitterCheckoutEvent(event) {
-  return event?.type === 'checkout.session.completed' &&
+  return ['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event?.type) &&
     event?.data?.object?.metadata?.purchaseType === 'extra_litter'
 }
 
@@ -38,6 +39,7 @@ export async function grantExtraLitterCreditFromVerifiedEvent({ db, event, now =
   const userRef = db.collection('users').doc(userId)
 
   const result = await db.runTransaction(async tx => {
+    if (!await billingAccountWritable(tx, db, userId, event)) return { created: false, suppressed: true }
     const creditSnap = await tx.get(creditRef)
     const userSnap = await tx.get(userRef)
 

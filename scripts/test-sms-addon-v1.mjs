@@ -29,7 +29,7 @@ class Collection {
   doc(id) { return new Ref(this.db, this.name, id) }
 }
 class FakeDb {
-  constructor(seed={}) { this.store=structuredClone(seed) }
+  constructor(seed={}) { this.store=structuredClone({ dogs: { d1: { currentOwnerId: 'u1', status: 'active' } }, ...seed }) }
   collection(name) { return new Collection(this,name) }
   async runTransaction(fn) {
     const staged=[]
@@ -141,7 +141,7 @@ await check('invalid billing period fails closed', async () => {
   assert.equal(r.allowed,false)
   assert.equal(r.reason,'SMS_BILLING_PERIOD_INVALID')
 })
-await check('provider failure refunds reserved credits', async () => {
+await check('ambiguous provider failure retains charged reservation for review', async () => {
   const db=new FakeDb({users:{u1:activeProfile(0)}})
   const r=await sendSmsWithQuota({
     db,tenantId:'u1',phone:'0412345678',message:'iDogs: Bella worming due 25 Aug 2026.',
@@ -149,8 +149,9 @@ await check('provider failure refunds reserved credits', async () => {
     idempotencyKey:'provider-fail',now:NOW,sendProvider:async()=>{throw new Error('provider')},
   })
   assert.equal(r.sent,false)
-  assert.equal(r.reason,'PROVIDER_FAILED')
-  assert.equal(db.store.users.u1.smsCreditsUsed,0)
+  assert.equal(r.reason,'PROVIDER_REVIEW_REQUIRED')
+  assert.equal(db.store.users.u1.smsCreditsUsed,1)
+  assert.equal(Object.values(db.store.accountExternalOperations)[0].state,'review_required')
 })
 await check('accepted provider send is charged once and marked sent', async () => {
   const db=new FakeDb({users:{u1:activeProfile(0)}})

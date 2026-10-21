@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './account-write-fence.js'
 // api/_lib/create-dog-core.js — the atomic passportId-reservation +
 // dog-write transaction, factored out of api/create-dog.js so its
 // collision/retry behavior is directly testable (Codex Medium item:
@@ -35,6 +36,7 @@ export async function createDogWithRetry({ db, dogRef, reservationCreatedBy, nam
     const reservationRef = db.collection('passportReservations').doc(candidate)
     try {
       return await db.runTransaction(async tx => {
+        await requireAccountWrites(tx, db, reservationCreatedBy)
         const reservationSnap = await tx.get(reservationRef)
         if (reservationSnap.exists) {
           throw new Error('PASSPORT_ID_TAKEN')

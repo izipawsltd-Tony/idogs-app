@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/create-litter-puppy.js — trusted server-side, safely-idempotent
 // puppy creation for a litter (Codex round 4, Blockers 3 + 4; hardened
 // Codex round 5, Blocker 4; hardened further Codex round 6, Blockers 4 + 5).
@@ -178,6 +179,7 @@ async function handler(req, res) {
 
     try {
       const result = await db.runTransaction(async (tx) => {
+        await requireAccountWrites(tx, db, uid)
         const opSnap = await tx.get(operationRef)
 
         if (opSnap.exists) {

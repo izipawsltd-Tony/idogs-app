@@ -9,16 +9,17 @@ export const ACCOUNT_QUERIES = {
   activityNotes: ['tenantId', 'createdBy'], documents: ['tenantId'], heatCycles: ['tenantId'],
   litters: ['tenantId'], litterShowcases: ['tenantId'], showcaseEnquiries: ['tenantId'],
   dogPrivateAccess: ['ownerId', 'ownerUid'], passportReservations: ['tenantId', 'uid'],
-  litterPuppyOperations: ['tenantId', 'uid'], litterQuotaCredits: ['tenantId', 'userId'],
+  litterPuppyOperations: ['tenantId', 'uid'], litterQuotaCredits: ['tenantId', 'userId', 'purchasedByUid'],
   litterQuotaLedger: ['tenantId', 'userId'], mediaUploadGrants: ['uid', 'userId', 'tenantId'],
   mediaUploadQuotas: ['uid', 'userId'], smsDeliveries: ['tenantId'], reminderEmailDeliveries: ['tenantId'], auditLogs: ['tenantId', 'userId'],
   supportConversations: ['ownerUid'], supportMessages: ['senderUid'], supportFaqFeedback: ['ownerUid'],
   accountDeletionRenewalTasks: ['uid'],
+  accountMediaOperations: ['uid'], mediaCleanupTasks: ['uid'], accountExternalOperations: ['uid'], accountBillingEvents: ['uid'],
 }
 const DOG_COLLECTIONS = ['vaccineRecords', 'wormingRecords', 'healthTests', 'reminders', 'activityNotes',
-  'documents', 'heatCycles', 'dogPrivateAccess', 'scanLogs', 'mediaUploadGrants', 'passportReservations']
+  'documents', 'heatCycles', 'dogPrivateAccess', 'scanLogs', 'mediaUploadGrants', 'passportReservations', 'accountMediaOperations', 'mediaCleanupTasks', 'accountExternalOperations']
 const LITTER_COLLECTIONS = ['litterShowcases', 'showcaseEnquiries', 'litterPuppyOperations', 'smsDeliveries']
-const PATH_KEYS = new Set(['path', 'filePath', 'documentPath', 'storagePath', 'microchipCertPath'])
+const PATH_KEYS = new Set(['path', 'filePath', 'documentPath', 'storagePath', 'microchipCertPath', 'profilePhotoPath'])
 const URL_KEYS = new Set(['url', 'fileUrl', 'documentUrl', 'photoUrl', 'profilePhoto', 'microchipCertUrl'])
 const EXPECTED_GLOBAL_COLLECTIONS = new Set(['supportFaqs', 'supportRateLimits', 'processedStripeEvents',
   'accountDeletionRequests', 'surveyResponses', 'scanLogs', 'landingMediaDrafts', 'landingMediaPublished',
@@ -105,8 +106,18 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     // Discovery of unscanned nested data always blocks a complete-inventory claim.
     try { for (const c of await document.ref.listCollections()) subcollections.add(c.path) }
     catch { errors.add(`${collection}:subcollections`) }
+    const mediaOperation = collection === 'accountMediaOperations'
+      ? { state: ['uploading', 'committed', 'cleanup_required', 'cleaned'].includes(data.state) ? data.state : 'unknown',
+        generation: typeof data.generation === 'string' && /^[1-9][0-9]*$/.test(data.generation) ? data.generation : null } : null
+    // A signed PUT cannot be revoked by changing its Firestore grant. Keep
+    // the window visible even if a separate cleanup marked it rejected.
+    const liveUploadWindow = collection === 'mediaUploadGrants' && (!Number.isFinite(Date.parse(data.expiresAt)) || Date.parse(data.expiresAt) >= now)
+    const externalOperation = collection === 'accountExternalOperations' ? { state: data.state || 'unknown' } : null
+    const cleanupReview = collection === 'mediaCleanupTasks' && data.state !== 'cleaned'
+    const billingReview = collection === 'accountBillingEvents' && data.state !== 'resolved'
+    const reminderUnsettled = (collection === 'reminderEmailDeliveries' && !['sent', 'cancelled'].includes(data.status)) || (collection === 'smsDeliveries' && !['sent', 'failed', 'cancelled'].includes(data.status))
     records.push({ path: document.ref.path, version: document.updateTime?.toDate?.().toISOString() || null,
-      disposition, media: mediaReferences(data) })
+      disposition, media: mediaReferences(data), ...(externalOperation ? { externalOperation } : {}), ...(cleanupReview ? { cleanupReview: true } : {}), ...(billingReview ? { billingReview: true } : {}), ...(reminderUnsettled ? { reminderUnsettled: true } : {}), ...(mediaOperation ? { mediaOperation } : {}), ...(liveUploadWindow ? { liveUploadWindow: true } : {}) })
   }
   records.sort((a, b) => a.path.localeCompare(b.path))
   const unknownCollections = rootCollections.filter(c => !EXPECTED_GLOBAL_COLLECTIONS.has(c) && c !== 'users').sort()
@@ -116,6 +127,12 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
   if (truncated.size) holds.push('query_truncated')
   if (subcollections.size) holds.push('nested_collections_not_scanned')
   if (unknownCollections.length) holds.push('unclassified_collections')
+  if (records.some(r => r.mediaOperation && !['committed', 'cleaned'].includes(r.mediaOperation.state))) holds.push('media_operations_unsettled')
+  if (records.some(r => r.externalOperation && !['settled', 'cancelled'].includes(r.externalOperation.state))) holds.push('external_operations_unsettled')
+  if (records.some(r => r.cleanupReview)) holds.push('media_cleanup_review')
+  if (records.some(r => r.billingReview)) holds.push('billing_events_review')
+  if (records.some(r => r.reminderUnsettled)) holds.push('reminder_delivery_unsettled')
+  if (records.some(r => r.liveUploadWindow)) holds.push('signed_upload_window_open')
   if (records.some(r => r.media.legacyUrlCount)) holds.push('legacy_media_review')
   if (records.some(r => !r.version)) holds.push('record_version_missing')
   return {

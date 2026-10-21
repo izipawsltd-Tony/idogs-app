@@ -1,3 +1,5 @@
+import { getFirestore } from 'firebase-admin/firestore'
+import { dispatchAccountOperation } from './_lib/account-external-operations.js'
 // api/create-checkout.js — Authenticated Stripe Checkout session creation.
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
@@ -17,6 +19,7 @@ if (!getApps().length) {
 }
 
 export default createCheckoutHandler({
+  dispatch: (uid, invoke) => dispatchAccountOperation({ db: getFirestore(), uid, kind: 'billing_create-checkout', invoke }),
   verifyIdToken: token => getAuth().verifyIdToken(token),
   createSession: params => stripe.checkout.sessions.create(params),
 })

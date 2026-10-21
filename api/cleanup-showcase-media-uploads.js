@@ -1,6 +1,6 @@
+import { queueGrantCleanup } from './_lib/media-cleanup.js'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
-import { getStorage } from 'firebase-admin/storage'
 import { checkCronAuth } from './_lib/cron-auth.js'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
@@ -28,34 +28,29 @@ export default async function handler(req, res) {
   }
 
   const db = getFirestore()
-  const bucket = getStorage().bucket(bucketName)
-  let cleaned = 0
+  let queued = 0
   let failed = 0
   try {
     // Single-field query: no composite index required. Terminal grants
     // cannot crowd abandoned uploads out of the batch.
     const expired = await db.collection(MEDIA_UPLOAD_GRANTS_COLLECTION)
-      .where('status', 'in', ['pending', 'expired']).limit(200).get()
+      .where('status', 'in', ['pending', 'expired', 'rejected', 'duplicate']).limit(200).get()
     for (const doc of expired.docs) {
       const grant = doc.data()
-      if (new Date(grant.expiresAt).getTime() > Date.now()) continue
+      if (!Number.isFinite(Date.parse(grant.expiresAt)) || Date.parse(grant.expiresAt) > Date.now()) continue
       try {
         if (grant.status === 'pending') {
           const claimed = await closePendingGrant(db, doc.ref, 'expired', { expiredAt: new Date().toISOString() })
           if (!claimed) continue
         }
-        await bucket.file(grant.path).delete({ ignoreNotFound: true })
-        // Only remove the grant after object deletion succeeds. If GCS
-        // is temporarily unavailable, status=expired remains queryable
-        // and the next cron run retries the orphan cleanup.
-        await doc.ref.delete()
-        cleaned += 1
+        await queueGrantCleanup({ db, grantRef: doc.ref, bucket: bucketName })
+        queued += 1
       } catch {
         failed += 1
         logSanitizedError('cleanup-showcase-media-uploads', 'GRANT_CLEANUP_FAILED')
       }
     }
-    return res.status(failed ? 207 : 200).json({ success: failed === 0, scanned: expired.size, cleaned, failed })
+    return res.status(failed ? 207 : 200).json({ success: failed === 0, scanned: expired.size, cleaned: 0, queued, failed })
   } catch {
     logSanitizedError('cleanup-showcase-media-uploads', 'CLEANUP_FAILED')
     return res.status(500).json({ error: 'Could not clean expired uploads' })

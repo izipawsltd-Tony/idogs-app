@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/rotate-showcase-share.js — trusted server-side generation of a
 // NEW public share link for a Litter Showcase (Slice 2).
 //
@@ -79,6 +80,7 @@ async function handler(req, res) {
   const tokenHash = hashShareToken(rawToken)
 
   const result = await db.runTransaction(async (tx) => {
+    await requireAccountWrites(tx, db, uid)
     const userSnap = await tx.get(db.collection('users').doc(uid))
     const profile = userSnap.exists ? userSnap.data() : {}
     const accessError = checkBreederPlusAccess(profile)

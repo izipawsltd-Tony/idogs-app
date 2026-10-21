@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { describe, it, expect } from 'vitest'
 import { CARE_TYPES, categoryEmailEnabled, manualReminderEligible, deliverManualReminder } from '../api/_lib/manual-reminder-delivery.js'
 
@@ -9,11 +10,11 @@ function fixture() {
   const records = new Map([['users/owner', user], ['reminders/r', reminder], ['dogs/dog', dog]])
   let tail = Promise.resolve()
   const db = {
-    collection: name => ({ doc: id => ({ path: `${name}/${id}` }) }),
+    collection: name => ({ doc: id => ({ path: `${name}/${id || randomUUID()}` }) }),
     runTransaction: cb => {
       const run = tail.then(async () => {
         const writes = []
-        const value = await cb({ get: async ref => ({ data: () => records.get(ref.path) }), set: (ref, data) => writes.push([ref.path, data]) })
+        const value = await cb({ get: async ref => ({ exists: records.has(ref.path), data: () => records.get(ref.path) }), set: (ref, data) => writes.push([ref.path, data]), update: (ref, data) => writes.push([ref.path, { ...records.get(ref.path), ...data }]) })
         writes.forEach(([key, value]) => records.set(key, value))
         return value
       })

@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/create-litter.js — trusted server-side litter creation.
 //
 // POST /api/create-litter
@@ -81,6 +82,7 @@ async function handler(req, res) {
   const litterRef = db.collection('litters').doc()
 
   const result = await db.runTransaction(async (tx) => {
+    await requireAccountWrites(tx, db, uid)
     // All reads intentionally precede every write.
     const damSnap = await tx.get(damRef)
     const sireSnap = sireRef ? await tx.get(sireRef) : null

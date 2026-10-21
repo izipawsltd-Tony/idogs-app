@@ -1,3 +1,4 @@
+import { billingAccountWritable } from './account-external-operations.js'
 // api/_lib/webhook-handler.js — trusted Stripe webhook processing for
 // iDogs Pricing v1.1 (Pricing_Decision_Record_v1.1.md, LOCKED). Factored
 // out of api/stripe-webhook.js (same pattern as
@@ -420,6 +421,7 @@ export function createWebhookHandler({
         // Reads (eventRef fencing check, profile + reactivateUpToCapTx's
         // dog query) must precede writes in this transaction.
         await runFencedTransaction(db, eventRef, leaseToken, async tx => {
+          if (!await billingAccountWritable(tx, db, userId, event)) return
           const snap = await tx.get(userRef)
           const profile = snap.exists ? snap.data() : {}
           const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId: session.subscription, eventCreated: event.created, eventCustomerId })
@@ -461,6 +463,7 @@ export function createWebhookHandler({
           const interval = resolveInterval(subscription)
           if (!interval) return
           await runFencedTransaction(db, eventRef, leaseToken, async tx => {
+            if (!await billingAccountWritable(tx, db, userId, event)) return
             const snap = await tx.get(userRef)
             const profile = snap.exists ? snap.data() : {}
             const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
@@ -497,6 +500,7 @@ export function createWebhookHandler({
           // delivery must not push pastDueSince forward and re-extend
           // the grace window.
           await runFencedTransaction(db, eventRef, leaseToken, async tx => {
+            if (!await billingAccountWritable(tx, db, userId, event)) return
             const snap = await tx.get(userRef)
             const profile = snap.exists ? snap.data() : {}
             const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
@@ -510,6 +514,7 @@ export function createWebhookHandler({
           })
         } else if (DOWNGRADE_STATUSES.has(status)) {
           await runFencedTransaction(db, eventRef, leaseToken, async tx => {
+            if (!await billingAccountWritable(tx, db, userId, event)) return
             const snap = await tx.get(userRef)
             const profile = snap.exists ? snap.data() : {}
             const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
@@ -532,6 +537,7 @@ export function createWebhookHandler({
           })
         } else {
           await runFencedTransaction(db, eventRef, leaseToken, async tx => {
+            if (!await billingAccountWritable(tx, db, userId, event)) return
             const snap = await tx.get(userRef)
             const profile = snap.exists ? snap.data() : {}
             const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
@@ -554,6 +560,7 @@ export function createWebhookHandler({
         const subscriptionId = subscription.id
         const eventCustomerId = customerIdOf(subscription)
         await runFencedTransaction(db, eventRef, leaseToken, async tx => {
+          if (!await billingAccountWritable(tx, db, userId, event)) return
           const snap = await tx.get(userRef)
           const profile = snap.exists ? snap.data() : {}
           const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
@@ -599,6 +606,7 @@ export function createWebhookHandler({
         // extra round of shape-handling on the fetched subscription.
         const eventCustomerId = customerIdOf(invoice) || customerIdOf(subscription)
         await runFencedTransaction(db, eventRef, leaseToken, async tx => {
+          if (!await billingAccountWritable(tx, db, userId, event)) return
           const snap = await tx.get(userRef)
           const profile = snap.exists ? snap.data() : {}
           const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })

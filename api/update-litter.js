@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/update-litter.js — trusted server-side litter field edits, with
 // DOB propagation to still-owned puppies and Breeder Profile quota enforcement.
 //
@@ -76,6 +77,7 @@ async function handler(req, res) {
   const litterRef = db.collection('litters').doc(litterId)
 
   const result = await db.runTransaction(async (tx) => {
+    await requireAccountWrites(tx, db, uid)
     const litterSnap = await tx.get(litterRef)
     if (!litterSnap.exists) {
       return { ok: false, status: 404, body: { error: 'Litter not found' } }
