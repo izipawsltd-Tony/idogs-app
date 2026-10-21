@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/transfer-dog.js — atomic ownership transfer + immutable privacy snapshot
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -49,6 +50,7 @@ export default async function handler(req, res) {
 
   try {
     const result = await db.runTransaction(async tx => {
+      await requireAccountWrites(tx, db, uid)
       const dogSnap = await tx.get(dogRef)
       if (!dogSnap.exists) throw Object.assign(new Error('DOG_NOT_FOUND'), { status: 404 })
 
@@ -115,6 +117,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ success: true, ...result })
   } catch (err) {
+    if (err?.code === 'account_writes_frozen') return res.status(409).json({ error: err.message, reason: 'ACCOUNT_WRITES_FROZEN' })
     const code = err?.message || 'TRANSFER_FAILED'
     const status = err?.status || 500
     if (status >= 500) console.error('transfer-dog failed:', code)

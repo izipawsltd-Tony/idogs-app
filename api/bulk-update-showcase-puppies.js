@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/bulk-update-showcase-puppies.js — trusted server-side deliberate
 // bulk visibility actions for a Litter Showcase (iDogs Litter Showcase
 // MVP, Slice 1 requirement 6: "Select all" / "Clear all" / "Show
@@ -70,6 +71,7 @@ async function handler(req, res) {
   const showcaseRef = db.collection('litterShowcases').doc(litterId)
 
   const result = await db.runTransaction(async (tx) => {
+    await requireAccountWrites(tx, db, uid)
     const userSnap = await tx.get(db.collection('users').doc(uid))
     const profile = userSnap.exists ? userSnap.data() : {}
     const accessError = checkBreederPlusAccess(profile)

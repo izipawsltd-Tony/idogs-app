@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { uploadAccountMedia } from './_lib/account-media-writes.js'
 // api/upload-document.js — Vercel serverless
 // Receives file as base64, uploads to Firebase Storage via Admin SDK
 
@@ -93,7 +95,7 @@ export default async function handler(req, res) {
 
     const ext = documentExtension(mediaType)
     const safeBaseName = String(originalFileName || '').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 80)
-    const fileName = `${safeBaseName || documentType || 'document'}_${Date.now()}.${ext}`
+    const fileName = `${safeBaseName || 'document'}_${randomUUID()}.${ext}`
     // Use the verified uid (not a client-supplied tenantId) for the path —
     // this can legitimately be the dog's breeder OR its current owner,
     // whichever account is doing the scanning.
@@ -101,12 +103,7 @@ export default async function handler(req, res) {
 
     // Upload to Firebase Storage
     const bucket = getStorage().bucket(bucketName)
-    const file = bucket.file(filePath)
     const buffer = Buffer.from(base64, 'base64')
-
-    await file.save(buffer, {
-      metadata: { contentType: mediaType || 'image/jpeg' },
-    })
 
     // SECURITY FIX (separate from the auth fix above): files used to be
     // made public via file.makePublic(), which generates a permanent,
@@ -119,7 +116,9 @@ export default async function handler(req, res) {
     // owns/breeds the dog and issues a short-lived (10 min) signed URL.
     // Save metadata to Firestore
     const metadata = documentMetadata({ uid, dogId, documentType, title, notes, source, extractedData, fileName, filePath, mediaType, uploadedAt: new Date() })
-    const docRef = await db.collection('documents').add(metadata)
+    const docRef = db.collection('documents').doc()
+    await uploadAccountMedia({ db, bucket, uid, dogId, path: filePath, kind: 'document', buffer, contentType: mediaType || 'image/jpeg',
+      commit: (tx, dog, generation) => tx.create(docRef, { ...metadata, generation }) })
 
     return res.status(200).json({ success: true, filePath, documentId: docRef.id, fileType: metadata.fileType })
   } catch (err) {
@@ -128,6 +127,8 @@ export default async function handler(req, res) {
     // storage path, bucket name, or other config/provider detail. Never
     // echo any of it; log only a fixed operation label + allowlisted
     // code.
+    if (err?.code === 'account_writes_frozen') return res.status(409).json({ error: err.message, reason: 'ACCOUNT_WRITES_FROZEN' })
+    if (err?.status === 403 || err?.status === 404) return res.status(err.status).json({ error: err.message })
     logSanitizedError('upload-document', 'UPLOAD_FAILED')
     return res.status(500).json({ error: 'Upload failed' })
   }

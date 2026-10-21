@@ -1,11 +1,13 @@
+import { randomUUID } from 'node:crypto'
+import { uploadAccountMedia } from './_lib/account-media-writes.js'
 // api/upload.js — unified photo upload endpoint.
 //
 // Merges the former api/upload-photo.js + api/upload-note-photo.js into
 // one function to stay within Vercel's Hobby plan limit of 12 serverless
 // functions. Differentiated via ?type= query param:
 //
-//   ?type=profile (default) — dog's profile picture. Fixed path
-//     (dogs/{uid}/{dogId}/profile.{ext}), OVERWRITES on every call,
+//   ?type=profile (default) — dog's profile picture. Immutable path per upload
+//     (dogs/{uid}/{dogId}/profile-{uuid}.{ext}),
 //     and updates the dog's `profilePhoto` field in Firestore.
 //
 //   ?type=note — a photo attached to an ActivityNote (timeline/story
@@ -134,30 +136,21 @@ export default async function handler(req, res) {
 
     if (uploadType === 'note') {
       // ── Note photo: unique filename, no Firestore writes here ──
-      const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+      const uniqueName = `${randomUUID()}.${ext}`
       const filePath = `dogs/${uid}/${dogId}/notes/${uniqueName}`
-      const file = bucket.file(filePath)
-
-      await file.save(buffer, { metadata: { contentType: finalMediaType } })
-      await file.makePublic()
+      await uploadAccountMedia({ db, bucket, uid, dogId, path: filePath, kind: 'note', buffer, contentType: finalMediaType, publicRead: true })
 
       const fileUrl = `https://storage.googleapis.com/${bucket.name}/${filePath}`
       return res.status(200).json({ success: true, fileUrl })
     }
 
-    // ── Profile photo: fixed path, overwrites on every call, updates dog.profilePhoto ──
-    const filePath = `dogs/${uid}/${dogId}/profile.${ext}`
-    const file = bucket.file(filePath)
-
-    await file.save(buffer, { metadata: { contentType: finalMediaType } })
-    await file.makePublic()
-
-    const fileUrl = `https://storage.googleapis.com/${bucket.name}/${filePath}?t=${Date.now()}`
-
-    await db.collection('dogs').doc(dogId).update({
-      profilePhoto: fileUrl,
-      updatedAt: new Date(),
-    })
+    // ── Profile photo: immutable object, atomic current-owner reference update ──
+    const filePath = `dogs/${uid}/${dogId}/profile-${randomUUID()}.${ext}`
+    const fileUrl = `https://storage.googleapis.com/${bucket.name}/${filePath}`
+    await uploadAccountMedia({ db, bucket, uid, dogId, path: filePath, kind: 'profile', buffer, contentType: finalMediaType, publicRead: true,
+      commit: (tx, dog, generation) => tx.update(db.collection('dogs').doc(dogId), {
+        profilePhoto: fileUrl, profilePhotoPath: filePath, profilePhotoGeneration: generation, updatedAt: new Date(),
+      }) })
 
     return res.status(200).json({ success: true, fileUrl })
   } catch (err) {
@@ -165,6 +158,8 @@ export default async function handler(req, res) {
     // bucket/file path) to the client, and log only a fixed operation
     // label + allowlisted code — never the raw error. uploadType is one
     // of exactly two server-controlled values (never raw request text).
+    if (err?.code === 'account_writes_frozen') return res.status(409).json({ error: err.message, reason: 'ACCOUNT_WRITES_FROZEN' })
+    if (err?.status === 403 || err?.status === 404) return res.status(err.status).json({ error: err.message })
     logSanitizedError(`upload (${uploadType})`, 'UPLOAD_FAILED')
     return res.status(500).json({ error: 'Upload failed' })
   }

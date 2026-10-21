@@ -1,3 +1,5 @@
+import { accountWritesAllowed, requireAccountWrites } from './_lib/account-write-fence.js'
+import { ApiError } from './_lib/http-helpers.js'
 // api/confirm-showcase-media-upload.js — Implementation Phase 1: the
 // second half of the direct-upload flow (see
 // api/request-showcase-media-upload.js for the first half and the
@@ -102,6 +104,10 @@ async function handler(req, res) {
       return res.status(403).json({ error: 'Not authorized to confirm this upload', reason: 'NOT_GRANT_OWNER' })
     }
 
+    // A frozen confirmation preserves the pending grant and its expiry. A
+    // previously signed PUT remains valid until expiry and must be inventoried.
+    await db.runTransaction(tx => requireAccountWrites(tx, db, uid))
+
     if (grant.status !== 'pending') {
       return res.status(409).json({ error: 'This upload has already been confirmed', reason: 'ALREADY_CONFIRMED' })
     }
@@ -205,6 +211,8 @@ async function handler(req, res) {
       const freshGrant = freshGrantSnap.data()
       if (freshGrant.status !== 'pending') return { ok: false, reason: 'ALREADY_CONFIRMED', preserveObject: freshGrant.status === 'confirmed' }
 
+      if (!await accountWritesAllowed(tx, db, uid)) return { ok: false, reason: 'ACCOUNT_WRITES_FROZEN', preserveObject: true }
+
       const reject = reason => {
         tx.update(grantRef, { status: reason === 'DUPLICATE_MEDIA' ? 'duplicate' : 'rejected', rejectedAt: new Date().toISOString() })
         releasePendingQuota(tx, db, freshGrant)
@@ -214,6 +222,7 @@ async function handler(req, res) {
       if (!freshDogSnap.exists) return reject('DOG_NOT_FOUND')
       const freshDog = freshDogSnap.data()
       if (!canAddDogRecord(freshDog, uid)) return reject(hasDogWriteAccess(freshDog, uid) && freshDog?.status === 'restricted' ? 'DOG_RESTRICTED' : 'NOT_OWNER')
+      if (freshDog.status === 'transferred' || freshDog.transferStatus === 'pendingClaim') return reject('DOG_TRANSFER_IN_PROGRESS')
       const freshItems = (kind === 'photo' ? freshDog.photos : freshDog.videos) || []
       if (freshItems.length >= MAX_MEDIA_ITEMS_PER_KIND) return reject('MEDIA_LIMIT_REACHED')
       if (freshItems.some(item => item?.hash === contentHash)) return reject('DUPLICATE_MEDIA')
@@ -226,7 +235,7 @@ async function handler(req, res) {
 
     if (!commitResult.ok) {
       if (!commitResult.preserveObject) await deleteObjectQuietly(bucket, grant.path)
-      const status = commitResult.reason === 'ALREADY_CONFIRMED' || commitResult.reason === 'MEDIA_LIMIT_REACHED' || commitResult.reason === 'DUPLICATE_MEDIA' ? 409
+      const status = commitResult.reason === 'ACCOUNT_WRITES_FROZEN' || commitResult.reason === 'ALREADY_CONFIRMED' || commitResult.reason === 'MEDIA_LIMIT_REACHED' || commitResult.reason === 'DUPLICATE_MEDIA' ? 409
         : commitResult.reason === 'GRANT_EXPIRED' ? 410
           : commitResult.reason === 'DOG_NOT_FOUND' || commitResult.reason === 'GRANT_NOT_FOUND' ? 404 : 403
       return res.status(status).json({ error: 'Upload could not be confirmed', reason: commitResult.reason })
@@ -240,6 +249,7 @@ async function handler(req, res) {
     ])
     return res.status(200).json({ success: true, mediaId, photos, videos })
   } catch (err) {
+    if (err instanceof ApiError) return res.status(err.status).json({ error: err.message, ...err.extra })
     logSanitizedError('confirm-showcase-media-upload', 'CONFIRM_UPLOAD_FAILED')
     return res.status(500).json({ error: 'Could not confirm upload' })
   }

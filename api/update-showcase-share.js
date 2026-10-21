@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/update-showcase-share.js — trusted server-side toggle for an
 // EXISTING Litter Showcase share link (Slice 2): pause/resume public
 // access, or change its expiry, WITHOUT rotating the token itself — the
@@ -77,6 +78,7 @@ async function handler(req, res) {
   const showcaseRef = db.collection('litterShowcases').doc(litterId)
 
   const result = await db.runTransaction(async (tx) => {
+    await requireAccountWrites(tx, db, uid)
     const userSnap = await tx.get(db.collection('users').doc(uid))
     const profile = userSnap.exists ? userSnap.data() : {}
     const accessError = checkBreederPlusAccess(profile)

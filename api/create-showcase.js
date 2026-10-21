@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/create-showcase.js — trusted server-side creation of a Litter
 // Showcase (iDogs Litter Showcase MVP, Slice 1).
 //
@@ -70,6 +71,7 @@ async function handler(req, res) {
   const showcaseRef = db.collection('litterShowcases').doc(litterId)
 
   const result = await db.runTransaction(async (tx) => {
+    await requireAccountWrites(tx, db, uid)
     // Reads must precede writes in a transaction.
     const userSnap = await tx.get(db.collection('users').doc(uid))
     const profile = userSnap.exists ? userSnap.data() : {}

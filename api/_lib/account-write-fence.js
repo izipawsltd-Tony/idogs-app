@@ -1,6 +1,8 @@
 // Read the server-owned fence in the SAME transaction as the protected write.
 // A standalone preflight read is insufficient: freeze could commit between it
 // and the mutation. This helper does not enable any deletion processing.
+import { ApiError } from './http-helpers.js'
+
 export async function accountWritesAllowed(tx, db, uid) {
   if (typeof uid !== 'string' || !uid || uid.includes('/')) return false
   const snap = await tx.get(db.collection('accountDeletionFences').doc(uid))
@@ -9,8 +11,8 @@ export async function accountWritesAllowed(tx, db, uid) {
 
 export async function requireAccountWrites(tx, db, uid) {
   if (!await accountWritesAllowed(tx, db, uid)) {
-    throw Object.assign(new Error('Account changes are paused while deletion is being processed.'),
-      { status: 409, code: 'account_writes_frozen' })
+    throw Object.assign(new ApiError(409, 'Account changes are paused while deletion is being processed.',
+      { reason: 'ACCOUNT_WRITES_FROZEN' }), { code: 'account_writes_frozen' })
   }
 }
 

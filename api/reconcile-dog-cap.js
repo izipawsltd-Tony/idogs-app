@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/reconcile-dog-cap.js — trusted server-side cap correction for iDogs
 // Pricing v1.1 (Pricing_Decision_Record_v1.1.md §3.2, LOCKED).
 //
@@ -63,6 +64,7 @@ async function handler(req, res) {
   const userRef = db.collection('users').doc(uid)
 
   const result = await db.runTransaction(async tx => {
+    await requireAccountWrites(tx, db, uid)
     const userSnap = await tx.get(userRef)
     const profile = userSnap.exists ? userSnap.data() : {}
     const plan = computeEffectivePlan(profile)
