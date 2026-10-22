@@ -18,6 +18,7 @@ export default function SignupPage({ toast }: Props) {
   const [error, setError] = useState('')
   const [accountType, setAccountType] = useState<'breeder' | 'owner'>('breeder')
   const [agreedToTerms, setAgreedToTerms] = useState(false)
+  const [marketingOptIn, setMarketingOptIn] = useState(false)
   const [form, setForm] = useState({
     firstName: '', lastName: '', kennelName: '',
     email: '', password: '', confirmPassword: '',
@@ -54,6 +55,7 @@ export default function SignupPage({ toast }: Props) {
         role: accountType,
         state: form.state,
         breederNumber: form.breederNumber || undefined,
+        marketingOptIn,
       })
       toast('Account created! Please check your email to verify your address.')
       navigate(`/verify-email?next=${encodeURIComponent(returnTo)}`)
@@ -209,6 +211,11 @@ export default function SignupPage({ toast }: Props) {
             <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--green-light)', fontSize: 12, color: 'var(--green)' }}>
               🇦🇺 Your data is stored securely in Asia-Pacific and is fully compliant with the Australian Privacy Act 1988.
             </div>
+
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13, color: 'var(--mid)' }}>
+              <input type="checkbox" checked={marketingOptIn} onChange={e => setMarketingOptIn(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>Email me iDogs product news and promotional offers (optional). I can unsubscribe at any time. This is separate from account and dog-care messages.</span>
+            </label>
 
             <button type="submit" className="btn btn-primary" style={{ width: '100%', height: 48, fontSize: 15, marginTop: 4, opacity: !agreedToTerms ? 0.6 : 1 }} disabled={loading || !agreedToTerms}>
               {loading ? <span className="spinner" /> : 'Create free account'}
