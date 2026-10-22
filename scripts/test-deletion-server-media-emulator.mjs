@@ -6,7 +6,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getStorage } from 'firebase-admin/storage'
 import sharp from 'sharp'
 import { uploadAccountMedia, reorderAccountMedia, MEDIA_OPERATIONS } from '../api/_lib/account-media-writes.js'
-import { createPendingGrant } from '../api/_lib/direct-upload-grants.js'
+import { createPendingGrant, closePendingGrant } from '../api/_lib/direct-upload-grants.js'
 import { buildDeletionInventory } from '../api/_lib/account-deletion-inventory.js'
 
 const projectId = 'demo-idogs-account-deletion', bucketName = `${projectId}.firebasestorage.app`
@@ -240,4 +240,32 @@ test('a rejected signed grant still blocks deletion until the signed PUT window 
   const f = await fixture()
   await db.doc(`mediaUploadGrants/${f.dogId}`).set({ uid: f.uid, dogId: f.dogId, status: 'rejected', expiresAt: new Date(Date.now() + 600000).toISOString(), path: 'synthetic' })
   assert.ok((await buildDeletionInventory({ db, uid: f.uid })).holds.includes('signed_upload_window_open'))
+})
+
+
+test('full upload quota reclaims only expired own-dog slots, retaining Storage bytes and cleanup obligations', async () => {
+  const f = await fixture(), other = await fixture()
+  const future = new Date(Date.now() + 600000).toISOString()
+  const past = new Date(Date.now() - 60000).toISOString()
+  const grant = suffix => ({ uid: f.uid, dogId: f.dogId, kind: 'photo', status: 'pending', quotaReserved: true,
+    path: `dogs/${f.uid}/${f.dogId}/${suffix}.jpg`, expiresAt: future })
+  for (let i = 0; i < 3; i++) assert.equal((await createPendingGrant(db, `${f.dogId}-${i}`, grant(i))).created, true)
+  await db.doc(`mediaUploadGrants/${f.dogId}-0`).update({ expiresAt: past })
+  await bucket.file(grant(0).path).save(jpeg)
+  await db.doc(`mediaUploadGrants/${other.dogId}-foreign`).set({ ...grant('foreign'), uid: other.uid, expiresAt: past })
+  await db.doc(`mediaUploadGrants/${f.dogId}-invalid`).set({ ...grant('invalid'), expiresAt: 'invalid' })
+  await f.freeze()
+  await assert.rejects(createPendingGrant(db, `${f.dogId}-frozen`, grant('frozen')), e => e.code === 'account_writes_frozen')
+  assert.equal((await db.doc(`mediaUploadGrants/${f.dogId}-0`).get()).data().status, 'pending')
+  await f.open()
+  const outcomes = await Promise.all(['a', 'b'].map(i => createPendingGrant(db, `${f.dogId}-${i}`, grant(i))))
+  assert.equal(outcomes.filter(x => x.created).length, 1)
+  assert.equal((await db.doc(`mediaUploadGrants/${f.dogId}-0`).get()).data().status, 'expired')
+  assert.equal((await db.doc(`mediaUploadGrants/${other.dogId}-foreign`).get()).data().status, 'pending')
+  assert.equal((await db.doc(`mediaUploadGrants/${f.dogId}-invalid`).get()).data().status, 'pending')
+  assert.equal((await bucket.file(grant(0).path).exists())[0], true)
+  assert.equal(await closePendingGrant(db, db.doc(`mediaUploadGrants/${f.dogId}-0`), 'expired'), false)
+  const quotas = await db.collection('mediaUploadQuotas').where('uid', '==', f.uid).get()
+  assert.equal(quotas.size, 2)
+  for (const q of quotas.docs) assert.equal(q.data().pendingCount, 3)
 })
