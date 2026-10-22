@@ -71,3 +71,14 @@ Owner priority supersedes the generic pilot's billing exclusion: implement Plus 
 - Executed4regressionsfailed before fix;65targetedPASS after. Full npm test,36billingsecurity,88webhook,26deletion/history and npm run build(typecheck/Vite) PASS; existing size warning/no lint script. Independent reviewer65targetedPASS, no blocking code finding.
 - Stripe Test only: existing Tax Settings active AU and configured SaaS-business code txcd_10103001 preserved; recorded owner-confirmed standard AU registration, active. Real Test calculation AU gross700/inclusiveGST64/net636/standard_rated; NZ gross700/tax0/not_collecting. No Live configuration or tax-code change.
 - Provider Checkout creation accepted automatic_tax, but hosted link from Workbench rendered incomplete; not marked journeyPASS. Expire the unused synthetic session before separate provider-only renewal fixture. Final exact-SHA deployment evidence belongs in PR without a follow-up evidence commit.
+
+
+## iDogs scan naming — 22 October 2026
+- State: copy implementation and local checks complete on pilot/idogs-scan-copy-20261022. Base production e4daa0e0246f418e362a36d890a6376811c713b2; isolated worktree, original checkouts preserved.
+- Reproduction: owner screenshots and source show AI Document Scan on Landing, AI Document Scans and AI scans in Billing feature lists/FAQ.
+- Contract: Landing heading and scan-step accessible name use iDogs Document Scan; Billing long labels use iDogs Document Scans, short labels use iDogs Scan. Preserve quotas, pricing, campaign consent/expiry and scan behavior.
+- Allowed: src/pages/LandingPage.tsx, src/pages/BillingPage.tsx and this append-only log. Excluded: backend, Stripe/config/env, other app screens, production deployment and merge.
+- Verification: inspect full diff; existing typecheck/tests/build and exact-SHA CI/Preview; browser Landing journey, Billing authenticated if supported session exists. Report any authentication blocker honestly. No new tests for static copy.
+- Executed: git remote -v, status --short, worktree list, fetch exact production SHA, source rg, package/CI reads; GitHub open-PR search returned no items (not assumed exhaustive), production Vercel metadata verified exact base; git worktree add.
+- Next: checks, read-only review, normal scoped commit/push and one DRAFT PR; final deployment evidence goes in PR without an evidence-only commit.
+- Local evidence: npm test231/231 PASS; npm run build(typecheck/Vite) PASS, existing bundle-size warning; git diff --check PASS; no lint script. No new tests for static copy. Final CI/READY/browser evidence will be recorded in DRAFT PR.
