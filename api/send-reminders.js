@@ -396,6 +396,7 @@ export default async function handler(req, res) {
             // Only send email/SMS once (or per frequency pref) —
             // but always upsert the Firestore record above regardless
             if (!blockedByFrequencyPref) {
+              const deliveriesBefore = emailSent + smsSent
               const msg = `🐾 iDogs Reminder: ${dog.name}'s ${vaccine.name} is ${dueLabelShort} (${formatDate(vaccine.nextDue)}). Book your vet now.`
 
               // Send email reminder
@@ -440,8 +441,9 @@ export default async function handler(req, res) {
                 }
               }
 
-              // Record when this reminder fired
-              try {
+              // A skipped/unconfirmed delivery must not consume the once-only
+              // source stamp; re-enabling email can still admit this event.
+              if (emailSent + smsSent > deliveriesBefore) try {
                 await guardedWrite(db.collection('vaccineRecords').doc(vDoc.id), {
                   lastReminderDueDate: vaccine.nextDue, lastReminderOwnerId: tenantId,
                   lastReminderSentAt: today.toISOString(),
@@ -537,6 +539,7 @@ export default async function handler(req, res) {
             const blockedByFrequencyPref = reminderFrequency === 'once' ? hasSentBefore : sentWithinLast20h
 
             if (!blockedByFrequencyPref) {
+              const deliveriesBefore = emailSent + smsSent
               if (user.email) {
                 try {
                   await sendReminderEmail({ eventType: 'worming', sourceId: activeWorming.id, milestone: activeWorming.nextDue }, `${appUrl}/api/send-email`, {
@@ -574,7 +577,7 @@ export default async function handler(req, res) {
                 }
               }
 
-              try {
+              if (emailSent + smsSent > deliveriesBefore) try {
                 await guardedWrite(db.collection('wormingRecords').doc(activeWorming.id), {
                   lastReminderDueDate: activeWorming.nextDue, lastReminderOwnerId: tenantId,
                   lastReminderSentAt: today.toISOString(),

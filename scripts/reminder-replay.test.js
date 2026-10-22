@@ -83,8 +83,10 @@ it('the next recorded due date is a new care event, while content/email edits ar
   expect(fetch).toHaveBeenCalledTimes(2)
 })
 it('HTTP 200 without a provider receipt remains unconfirmed and is not counted as sent',async()=>{
+  state.failStamp=false
   care('vaccination');fetch.mockResolvedValue({ok:true,json:async()=>({success:true})})
   expect((await call()).emailSent).toBe(0)
+  expect(state.records.get('vaccineRecords/care').lastReminderSentAt).toBeUndefined()
   const operations=[...state.records].filter(([path])=>path.startsWith('accountExternalOperations/'))
   expect(operations[0][1].state).toBe('review_required')
 })
@@ -116,8 +118,11 @@ it('a new owner gets their own event; the frozen former owner cannot receive lat
 })
 for (const type of ['vaccination', 'worming']) it(`${type}: category opt-out suppresses scheduled email while retaining in-app care`, async () => {
   care(type)
+  state.failStamp = false
   state.records.get('users/owner').careEmailTypes = { [type]: false }
   expect((await call()).emailSent).toBe(0)
   expect(fetch).not.toHaveBeenCalled()
   expect([...state.records.keys()].some(path => path.startsWith('reminders/'))).toBe(true)
+  state.records.get('users/owner').careEmailTypes[type] = true
+  expect((await call()).emailSent).toBe(1)
 })
