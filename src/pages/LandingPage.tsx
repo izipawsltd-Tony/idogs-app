@@ -262,11 +262,11 @@ export default function LandingPage() {
           <div className="wrap">
             <div className="ai-card">
               <div>
-                <h3>AI Document Scan</h3>
+                <h3>iDogs Document Scan</h3>
                 <p>Turn dog documents into organised records faster. Upload a supported document and iDogs will extract key details for you to review before saving.</p>
                 <span className="ai-note">Review extracted information before saving.</span>
               </div>
-              <ol className="ai-flow" aria-label="AI Document Scan steps">
+              <ol className="ai-flow" aria-label="iDogs Document Scan steps">
                 <li><span className="n">1</span> Upload a supported document</li>
                 <li><span className="n">2</span> iDogs extracts key details</li>
                 <li><span className="n">3</span> You review and edit</li>
