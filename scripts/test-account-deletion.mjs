@@ -142,7 +142,10 @@ function inventoryDb(seed, { failCollection, nested = [] } = {}) {
   return {
     listCollections: async () => [...new Set([...records.keys()].map(p => p.split('/')[0]))].map(id => ({ id })),
     collection: collection => ({
-      doc: id => ({ get: async () => snapshot(`${collection}/${id}`) }),
+      doc: id => ({ get: async () => {
+        if (collection === failCollection) throw new Error('private provider detail must not leak')
+        return snapshot(`${collection}/${id}`)
+      } }),
       where: (field, operator, value) => ({ limit: size => ({ get: async () => {
         if (collection === failCollection) throw new Error('private provider detail must not leak')
         const paths = [...records].filter(([path, data]) => path.startsWith(collection + '/') && data[field] === value).map(([path]) => path).slice(0, size)
@@ -197,4 +200,35 @@ test('reminder delivery inventory includes only requester metadata, never messag
   assert.ok(!report.records.some(r => r.path === 'reminderEmailDeliveries/other'))
   assert.doesNotMatch(JSON.stringify(report), /private@example|secret-reminder|other-secret/)
   assert.equal(report.complete, false); assert.equal(report.readyForDeletion, false)
+})
+
+test('promotion Checkout inventory discovers only the UID-keyed ledger and requires billing retention review', async () => {
+  const seed = {
+    'users/qa': {},
+    'plusPromotionCheckouts/qa': { sessionId: 'cs_private_fixture', url: 'https://checkout.stripe.com/private-fixture' },
+    'plusPromotionCheckouts/other': { uid: 'qa', sessionId: 'cs_other_fixture' },
+  }
+  const before = JSON.stringify(seed)
+  const report = await buildDeletionInventory({ uid: 'qa', db: inventoryDb(seed) })
+  const ledger = report.records.filter(r => r.path.startsWith('plusPromotionCheckouts/'))
+  assert.equal(ledger.length, 1)
+  assert.equal(ledger[0].path, 'plusPromotionCheckouts/qa')
+  assert.equal(ledger[0].disposition, 'review_billing_retention')
+  assert.deepEqual(ledger[0].media, { paths: [], legacyUrlCount: 0 })
+  assert.equal(report.billingReviewRequired, true)
+  assert.ok(!report.unknownCollections.includes('plusPromotionCheckouts'))
+  assert.ok(!report.holds.includes('legacy_media_review'))
+  assert.ok(report.holds.includes('billing_provider_verification'))
+  assert.equal(report.complete, false)
+  assert.equal(report.readyForDeletion, false)
+  assert.doesNotMatch(JSON.stringify(report), /cs_private_fixture|cs_other_fixture|checkout\.stripe\.com/)
+  assert.equal(JSON.stringify(seed), before)
+})
+
+test('promotion Checkout document lookup failure remains an explicit redacted hold', async () => {
+  const report = await buildDeletionInventory({ uid: 'qa', db: inventoryDb({ 'users/qa': {} }, { failCollection: 'plusPromotionCheckouts' }) })
+  assert.ok(report.errors.includes('plusPromotionCheckouts:document'))
+  assert.ok(report.holds.includes('query_failed'))
+  assert.equal(report.readyForDeletion, false)
+  assert.doesNotMatch(JSON.stringify(report), /private provider detail/)
 })

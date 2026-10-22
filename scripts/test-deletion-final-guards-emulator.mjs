@@ -20,6 +20,7 @@ import { sendSmsWithQuota } from '../api/_lib/sms-addon.js'
 import { reorderAccountMedia } from '../api/_lib/account-media-writes.js'
 import { queueGrantCleanup } from '../api/_lib/media-cleanup.js'
 import { buildDeletionInventory } from '../api/_lib/account-deletion-inventory.js'
+import { promotionSessionStore } from '../api/_lib/promotion-session.js'
 
 const projectId = 'demo-idogs-account-deletion', bucketName = `${projectId}.firebasestorage.app`
 for (const [key, port] of [['FIRESTORE_EMULATOR_HOST','8080'],['FIREBASE_AUTH_EMULATOR_HOST','9099'],['FIREBASE_STORAGE_EMULATOR_HOST','9199']]) {
@@ -46,6 +47,20 @@ async function fixture() {
   return { uid, dogId, profile, reminderId, freeze: (state = 'frozen') => db.doc(`accountDeletionFences/${uid}`).set({ state }), subscription: { id: `sub_${n}`, customer:`cus_${n}`,status:'active',metadata:{userId:uid},items:{data:[{price:{id:CHECKOUT_PRICE_IDS.plus_monthly}}]} } }
 }
 const rows = async (collection, uid) => (await db.collection(collection).where('uid','==',uid).get()).docs.map(d => d.data())
+test('frozen promotion attempt creates no checkout ledger', async () => {
+  const f = await fixture(); await f.freeze()
+  await assert.rejects(promotionSessionStore(db).getPromotionAttempt(f.uid, +now, null, 'https://synthetic.invalid', 'synthetic-policy'), /paused/)
+  assert.equal((await db.doc(`plusPromotionCheckouts/${f.uid}`).get()).exists, false)
+})
+test('promotion session response after freeze cannot recreate a removed checkout ledger', async () => {
+  const f = await fixture()
+  await db.doc(`users/${f.uid}`).set({ email: f.profile.email })
+  const store = promotionSessionStore(db)
+  const attempt = await store.getPromotionAttempt(f.uid, +now, null, 'https://synthetic.invalid', 'synthetic-policy')
+  await f.freeze(); await db.doc(`plusPromotionCheckouts/${f.uid}`).delete()
+  await assert.rejects(store.savePromotionSession(f.uid, attempt, { id: 'cs_synthetic', url: 'https://synthetic.invalid/session' }), /paused/)
+  assert.equal((await db.doc(`plusPromotionCheckouts/${f.uid}`).get()).exists, false)
+})
 async function call(handler) {
   const res = { code:200,status(c){this.code=c;return this},json(body){this.body=body;return this} }
   await handler({method:'POST',headers:{'x-cron-secret':'synthetic-final-guards'}},res);return res

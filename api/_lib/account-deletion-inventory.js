@@ -22,7 +22,7 @@ const LITTER_COLLECTIONS = ['litterShowcases', 'showcaseEnquiries', 'litterPuppy
 const PATH_KEYS = new Set(['path', 'filePath', 'documentPath', 'storagePath', 'microchipCertPath', 'profilePhotoPath'])
 const URL_KEYS = new Set(['url', 'fileUrl', 'documentUrl', 'photoUrl', 'profilePhoto', 'microchipCertUrl'])
 const EXPECTED_GLOBAL_COLLECTIONS = new Set(['supportFaqs', 'supportRateLimits', 'processedStripeEvents',
-  'accountDeletionRequests', 'surveyResponses', 'scanLogs', 'landingMediaDrafts', 'landingMediaPublished',
+  'accountDeletionRequests', 'plusPromotionCheckouts', 'surveyResponses', 'scanLogs', 'landingMediaDrafts', 'landingMediaPublished',
   'mediaUploadGrants', 'mediaUploadQuotas', ...Object.keys(ACCOUNT_QUERIES)])
 
 function mediaReferences(data) {
@@ -64,6 +64,11 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     else errors.add('users:missing_profile')
     rootCollections = (await db.listCollections()).map(c => c.id)
   } catch { errors.add('collection_discovery') }
+  // Checkout ledgers are keyed by UID; their payload has no ownership field to query.
+  try {
+    const doc = await db.collection('plusPromotionCheckouts').doc(uid).get()
+    if (doc.exists) remember(doc)
+  } catch { errors.add('plusPromotionCheckouts:document') }
   // Bounded sequential batches limit load without claiming a global snapshot.
   for (const [collection, fields] of Object.entries(ACCOUNT_QUERIES)) {
     await Promise.all(fields.map(field => discover(collection, field, uid)))
@@ -98,6 +103,7 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     const dogState = dogId ? dogStates.get(dogId) : null
     let disposition = 'review_account_record'
     if (collection === 'accountDeletionRenewalTasks') disposition = 'review_workflow_retention'
+    if (collection === 'plusPromotionCheckouts') disposition = 'review_billing_retention'
     if (dogState === 'preserve_other_owner') disposition = 'preserve_other_owner'
     else if (dogState === 'review_pending_transfer') disposition = 'review_pending_transfer'
     else if (dogState === 'review_legacy_ownership') disposition = 'review_legacy_ownership'
@@ -117,7 +123,7 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     const billingReview = collection === 'accountBillingEvents' && data.state !== 'resolved'
     const reminderUnsettled = (collection === 'reminderEmailDeliveries' && !['sent', 'cancelled'].includes(data.status)) || (collection === 'smsDeliveries' && !['sent', 'failed', 'cancelled'].includes(data.status))
     records.push({ path: document.ref.path, version: document.updateTime?.toDate?.().toISOString() || null,
-      disposition, media: mediaReferences(data), ...(externalOperation ? { externalOperation } : {}), ...(cleanupReview ? { cleanupReview: true } : {}), ...(billingReview ? { billingReview: true } : {}), ...(reminderUnsettled ? { reminderUnsettled: true } : {}), ...(mediaOperation ? { mediaOperation } : {}), ...(liveUploadWindow ? { liveUploadWindow: true } : {}) })
+      disposition, media: collection === 'plusPromotionCheckouts' ? { paths: [], legacyUrlCount: 0 } : mediaReferences(data), ...(externalOperation ? { externalOperation } : {}), ...(cleanupReview ? { cleanupReview: true } : {}), ...(billingReview ? { billingReview: true } : {}), ...(reminderUnsettled ? { reminderUnsettled: true } : {}), ...(mediaOperation ? { mediaOperation } : {}), ...(liveUploadWindow ? { liveUploadWindow: true } : {}) })
   }
   records.sort((a, b) => a.path.localeCompare(b.path))
   const unknownCollections = rootCollections.filter(c => !EXPECTED_GLOBAL_COLLECTIONS.has(c) && c !== 'users').sort()
@@ -143,7 +149,7 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     counts: { records: records.length, dogs: dogs.length, litters: litters.length, conversations: conversations.length },
     holds, errors: [...errors].sort(), truncated: [...truncated].sort(),
     unscannedSubcollections: [...subcollections].sort(), unknownCollections,
-    billingReviewRequired: !!(profile?.stripeCustomerId || profile?.stripeSubscriptionId || profile?.smsStripeSubscriptionId || profile?.subscriptionStatus === 'active'),
+    billingReviewRequired: !!(found.has(`plusPromotionCheckouts/${uid}`) || profile?.stripeCustomerId || profile?.stripeSubscriptionId || profile?.smsStripeSubscriptionId || profile?.subscriptionStatus === 'active'),
     // Even false here is not provider confirmation of no subscription.
   }
 }

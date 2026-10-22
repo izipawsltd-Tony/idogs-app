@@ -1,9 +1,10 @@
 import { billingAccountWritable } from './account-external-operations.js'
-import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS } from './checkout-handler.js'
+import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS, LEGACY_PLUS_PRICE_INTERVALS } from './checkout-handler.js'
 import { reactivateUpToCapTx } from './dog-cap.js'
 import { anchorDayFromDate } from './entitlements.js'
 
 const PRICE_INTERVAL = Object.freeze({
+  ...LEGACY_PLUS_PRICE_INTERVALS,
   [CHECKOUT_PRICE_IDS.plus_monthly]: 'monthly',
   [CHECKOUT_PRICE_IDS.plus_annual]: 'annual',
   [LEGACY_PAID_PRICE_IDS.basic]: 'monthly',

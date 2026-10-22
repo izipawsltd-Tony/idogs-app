@@ -1,6 +1,6 @@
 # Isolated backend candidate from approved production
 
-Base: `4145b0cef610777a7069fbe9ba5bc79991bb89ec`, reverified READY on idogs.com.au before extraction. Runtime source: `64ebc8efdd85908f1dfe6754c41e2f8339acd2dd` (Draft PR #38). This is a candidate and QA task; production release remains separately owner-approved.
+Current production comparison base: `e4daa0e0246f418e362a36d890a6376811c713b2`, verified READY on idogs.com.au during follow-up. Original extraction base was `4145b0cef610777a7069fbe9ba5bc79991bb89ec`; runtime source was `64ebc8efdd85908f1dfe6754c41e2f8339acd2dd` (Draft PR #38). This is a candidate and QA task; production release remains separately owner-approved.
 
 ## Scope and extraction
 
@@ -39,3 +39,9 @@ The same regressions cover re-enabling a category before a delivery was admitted
 The revised local app suite passes 171 tests and TypeScript/Vite build. All 95 actual emulator cases pass with unchanged production Rules. Added actual-emulator races change category preference or email after admission and assert zero provider calls and a cancelled journal. Exact-source CI and Preview results for this revision must be recorded separately from the initial `bb908c3c` results.
 
 Initial candidate staging evidence: secure login, synthetic dog `QA39 Backend 20261022` / passport `QA3-2025-BDAT` creation and profile-note update visibly succeeded. Upload was not confirmed because the browser file chooser timed out. A fresh browser runtime subsequently reached the login form without an active session. Media, reminder edits, litter/Showcase, billing summary and dedicated transfer/fenced-state fixtures remain unverified on staging. Earlier visible checks belong to `bb908c3c`, not a later revision.
+
+## Current production integration
+
+Production advanced independently to `e4daa0e0` (Plus promotion/GST). Merge that approved production commit without rebasing or rewriting the candidate history. Resolve overlapping checkout, reconciliation, webhook and inventory changes by preserving promotion prices, inclusive-tax policy, legacy Plus recognition, session idempotency and the single webhook reconciliation path, together with server fences. Frontend, shared promotion constants, Rules and configuration remain exactly current production. The scope verifier now compares against that current production SHA.
+
+Promotion checkout ledgers are also fenced transactionally during attempt creation and response persistence; a late provider response cannot recreate a removed ledger after freeze. Added emulator checks cover both boundaries. Integrated local validation passes 244 app tests (including promotion/GST and webhook-entrypoint checks), 97 actual emulator cases and TypeScript/Vite build. Prior 171/95 results belong to the pre-integration revision; integration cloud CI/Preview results must be recorded separately. No production release or live Stripe configuration is performed by this merge.

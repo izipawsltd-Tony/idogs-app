@@ -2,7 +2,7 @@ name: Account deletion emulator integration
 
 on:
   push:
-    branches: [fix/android-v20-qa-blockers, fix/account-deletion-backend-20261019, fix/deletion-policy-backend-20261021]
+    branches: [fix/android-v20-qa-blockers, fix/account-deletion-backend-20261019, fix/deletion-policy-backend-20261021, feat/plus-promotion-20261021]
     paths:
       - api/account-deletion.js
       - api/_lib/account-deletion.js

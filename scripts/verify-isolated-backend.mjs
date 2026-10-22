@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import assert from 'node:assert/strict'
-const base = '4145b0cef610777a7069fbe9ba5bc79991bb89ec'
+const base = 'e4daa0e0246f418e362a36d890a6376811c713b2'
 const changed = execFileSync('git', ['diff', '--name-only', base, 'HEAD'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
 const allowed = path => path.startsWith('api/') || path.startsWith('scripts/') || path === '.github/workflows/isolated-backend-candidate.yml' || path === 'docs/qa/isolated-backend-candidate-20261022.md'
 assert.ok(changed.length > 0, 'Candidate has no changes')
