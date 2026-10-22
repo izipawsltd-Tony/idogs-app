@@ -1,7 +1,7 @@
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 import { computeEffectivePlan } from './entitlements.js'
-import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
+import { CHECKOUT_PRICE_IDS, LEGACY_PLUS_PRICE_INTERVALS } from './checkout-handler.js'
 
 // This is the verified iDogs Plus test-mode price in the iDogs Stripe Test mode
 // environment. It is accepted only on Vercel Preview for the isolated iDogs
@@ -25,7 +25,7 @@ function subscriptionPriceIds(subscription) {
 }
 
 function allowedBasePlusPriceIds() {
-  const allowed = [...Object.values(CHECKOUT_PRICE_IDS)]
+  const allowed = [...Object.values(CHECKOUT_PRICE_IDS), ...Object.keys(LEGACY_PLUS_PRICE_INTERVALS)]
   if (process.env.VERCEL_ENV === 'preview' && process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging') {
     allowed.push(STAGING_PLUS_PRICE_ID)
   }
