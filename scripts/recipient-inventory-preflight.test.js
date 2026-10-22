@@ -34,6 +34,12 @@ describe('private recipient inventory preflight, no sends', () => {
     const data=good();data.consent[0][key]=value
     expect(check(data)['eligible-for-owner-review']).toBeUndefined()
   })
+  it('accepts explicit settings opt-in, not care-reminder settings', () => {
+    const data=good(); data.consent[0].source='account_settings'
+    expect(check(data)['eligible-for-owner-review']).toBe(1)
+    data.consent[0].source='reminder_settings'
+    expect(check(data)['eligible-for-owner-review']).toBeUndefined()
+  })
   it('respects unsubscribe and never resets it', () => {
     const data=good();data.suppression[0].status='suppressed'
     expect(check(data)['excluded-opt-out']).toBe(1)
