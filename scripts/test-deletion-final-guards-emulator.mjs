@@ -196,8 +196,20 @@ test('manual opt-out committed after claim prevents dispatch despite the old pay
 })
 
 function scheduled(f, sendEmail, at=now, frequency='once') {
-  return { db, projectId, uid:f.uid, dogId:f.dogId, eventType:'vaccination', sourceId:'synthetic-care', milestone:'2026-10-25', now:at, frequency, sendEmail }
+  return { db, projectId, uid:f.uid, dogId:f.dogId, recipientEmail:f.profile.email, eventType:'vaccination', sourceId:'synthetic-care', milestone:'2026-10-25', now:at, frequency, sendEmail }
 }
+for (const change of ['category', 'recipient']) test(`scheduled ${change} change after admission cancels provider dispatch`, async () => {
+  const f = await fixture(); let transactions = 0, calls = 0
+  const wrapped = { collection: (...a) => db.collection(...a), runTransaction: async cb => {
+    const result = await db.runTransaction(cb)
+    if (++transactions === 1) await db.doc(`users/${f.uid}`).update(change === 'category'
+      ? { careEmailTypes: { vaccination: false } } : { email: 'changed@example.invalid' })
+    return result
+  } }
+  await assert.rejects(sendScheduledReminderEmail({ ...scheduled(f, async () => { calls++; return true }), db: wrapped }), /preferences or recipient changed/)
+  assert.equal(calls, 0)
+  assert.equal((await rows('accountExternalOperations', f.uid))[0].state, 'cancelled')
+})
 test('concurrent scheduled care claims use one durable event admission',async()=>{
   const f=await fixture();let calls=0
   const args=scheduled(f,async()=>{calls++;return true})

@@ -114,3 +114,10 @@ it('a new owner gets their own event; the frozen former owner cannot receive lat
   expect(fetch).toHaveBeenCalledTimes(2)
   expect(JSON.parse(fetch.mock.calls[1][1].body).to_email).toBe('buyer@example.invalid')
 })
+for (const type of ['vaccination', 'worming']) it(`${type}: category opt-out suppresses scheduled email while retaining in-app care`, async () => {
+  care(type)
+  state.records.get('users/owner').careEmailTypes = { [type]: false }
+  expect((await call()).emailSent).toBe(0)
+  expect(fetch).not.toHaveBeenCalled()
+  expect([...state.records.keys()].some(path => path.startsWith('reminders/'))).toBe(true)
+})

@@ -243,6 +243,7 @@ export default async function handler(req, res) {
         const guardedWrite = (ref, data, options = {}) => writeReminderRecord({ db, uid: tenantId, dogId: dog.id, ref, data, ...options })
         const sendReminderEmail = (event, ...args) => sendScheduledReminderEmail({
           db, projectId: process.env.FIREBASE_PROJECT_ID, uid: tenantId, dogId: dog.id,
+          recipientEmail: user.email,
           frequency: reminderFrequency, now: today, ...event,
           sendEmail: async () => {
             const response = await fetch(...args)
