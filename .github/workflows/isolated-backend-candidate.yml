@@ -27,6 +27,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - run: node scripts/verify-isolated-backend.mjs
+      - run: node scripts/check-api-syntax.mjs
       - run: npm ci
       - name: Backend contracts, billing and reminder regressions
         run: |

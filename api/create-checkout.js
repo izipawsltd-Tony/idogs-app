@@ -1,4 +1,3 @@
-import { getFirestore } from 'firebase-admin/firestore'
 import { dispatchAccountOperation } from './_lib/account-external-operations.js'
 // api/create-checkout.js — Authenticated Stripe Checkout session creation.
 import Stripe from 'stripe'
