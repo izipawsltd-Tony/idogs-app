@@ -30,6 +30,8 @@ npx vitest run scripts/promotion-emails.test.js
 
 Rendering refuses to overwrite existing files. Audit prints aggregate counts only, never recipient details. There is no send command and no database/provider connection. Generated outputs, private snapshots and permission evidence must stay outside Git. Preview builds alone expose synthetic HTML at `/__qa/promotion-emails/invitation.html` and `/__qa/promotion-emails/renewal.html`; normal/production builds create neither.
 
+The corresponding `invitation-narrow.html` and `renewal-narrow.html` use a 390px review canvas when cloud viewport emulation is unavailable. This demonstrates wrapping at a narrow content width, not actual iPhone/Gmail/Outlook delivery or client compatibility.
+
 ## Audience contract and final send gate
 
 The offline auditor accepts an array of **normalized, privately reviewed snapshots**, not raw Firestore user documents. These are not new database fields or evidence that users already consented:
