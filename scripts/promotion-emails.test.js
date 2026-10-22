@@ -97,5 +97,7 @@ it('emits only synthetic Preview artifacts and no production artifacts', async (
     expect(await readFile(join(dir, '__qa/promotion-emails/renewal.html'), 'utf8')).toContain('Manage or cancel subscription')
     expect(await readFile(join(dir, '__qa/promotion-emails/invitation-narrow.html'), 'utf8')).toContain('width:390px;max-width:100%')
     expect(await readFile(join(dir, '__qa/promotion-emails/renewal-narrow.html'), 'utf8')).toContain('width:390px;max-width:100%')
+    await writeEmailPreviews(dir, 'production')
+    await expect(readFile(join(dir, '__qa/promotion-emails/invitation.html'), 'utf8')).rejects.toThrow()
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
