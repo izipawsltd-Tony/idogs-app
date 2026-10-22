@@ -1,3 +1,4 @@
+import { ApiError } from './_lib/http-helpers.js'
 // api/request-showcase-media-upload.js — Implementation Phase 1: issues
 // a short-lived, single-object signed Storage PUT URL for a puppy's
 // Showcase gallery photo/video, so the browser can upload the file
@@ -191,6 +192,7 @@ async function handler(req, res) {
       expiresInSeconds: Math.floor(UPLOAD_URL_TTL_MS / 1000),
     })
   } catch (err) {
+    if (err instanceof ApiError) return res.status(err.status).json({ error: err.message, ...err.extra })
     logSanitizedError('request-showcase-media-upload', 'REQUEST_UPLOAD_FAILED')
     return res.status(500).json({ error: 'Could not prepare upload' })
   }

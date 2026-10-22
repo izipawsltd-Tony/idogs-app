@@ -1,3 +1,4 @@
+import { billingAccountWritable } from './account-external-operations.js'
 import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS, LEGACY_PLUS_PRICE_INTERVALS } from './checkout-handler.js'
 import { reactivateUpToCapTx } from './dog-cap.js'
 import { anchorDayFromDate } from './entitlements.js'
@@ -30,6 +31,7 @@ export async function reconcileVerifiedPaidSubscription({
   subscription,
   userId,
   eventCreated,
+  event,
   now = () => new Date(),
 }) {
   if (!userId || subscription?.metadata?.userId !== userId) {
@@ -49,10 +51,16 @@ export async function reconcileVerifiedPaidSubscription({
     : Math.floor(nowDate.getTime() / 1000)
   const userRef = db.collection('users').doc(userId)
 
-  await db.runTransaction(async tx => {
+  const applied = await db.runTransaction(async tx => {
+    if (!await billingAccountWritable(tx, db, userId, event)) return false
     const snap = await tx.get(userRef)
     const profile = snap.exists ? snap.data() : {}
 
+    if (!snap.exists) return false
+    if (profile.stripeCustomerId && profile.stripeCustomerId !== customerId) throw new Error('BILLING_RECONCILE_CUSTOMER_MISMATCH')
+    const last = profile.subscriptionEventTimestamps?.[subscription.id]
+    if (Number.isFinite(last) && eventTs < last) return false
+    if (profile.lastKnownSubscriptionId && profile.lastKnownSubscriptionId !== subscription.id && last !== undefined) return false
     await reactivateUpToCapTx(tx, db, userId, 'plus')
 
     const timestamps = {
@@ -90,7 +98,9 @@ export async function reconcileVerifiedPaidSubscription({
       scanPeriodAnchorDay: anchorDayFromDate(new Date(startSeconds * 1000)),
       ...quotaFields,
     }, { merge: true })
+    return true
   })
+  if (!applied) return false
 
   return {
     plan: 'plus',

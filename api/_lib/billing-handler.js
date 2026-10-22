@@ -1,3 +1,4 @@
+import { ApiError } from './http-helpers.js'
 import { requireAppUrl } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 
@@ -77,6 +78,7 @@ export function createBillingSummaryHandler({
     const auth = await authenticate(req, verifyIdToken)
     if (auth.error) return res.status(auth.error.status).json(auth.error.body)
 
+    let phase = 'profile'
     try {
       const profile = await getProfile(auth.uid)
       if (!profile) return res.status(404).json({ error: 'Profile not found' })
@@ -98,12 +100,14 @@ export function createBillingSummaryHandler({
 
       let subscription = null
       if (subscriptionId) {
+        phase = 'subscription'
         const stripeSubscription = await retrieveSubscription(subscriptionId)
         if (customerIdOf(stripeSubscription?.customer) !== customerId) {
           logSanitizedError('billing-summary', 'SUBSCRIPTION_CUSTOMER_MISMATCH')
           return res.status(409).json({ error: 'Billing account mismatch' })
         }
 
+        phase = 'reconciliation'
         const reconciled = await reconcileVerifiedPlus({
           subscription: stripeSubscription,
           userId: auth.uid,
@@ -128,11 +132,16 @@ export function createBillingSummaryHandler({
         }
       }
 
+      phase = 'invoices'
       const result = await listInvoices({ customer: customerId, limit: 12 })
       const invoices = (result?.data || []).map(mapInvoice).filter(invoice => invoice.id)
       return res.status(200).json({ subscription, invoices, canManageBilling: true, sms, entitlement })
-    } catch {
-      logSanitizedError('billing-summary', 'BILLING_SUMMARY_FAILED')
+    } catch (error) {
+      const diagnostic = ['resource_missing', 'rate_limit', 'api_key_expired'].includes(error?.code) ? error.code
+        : error?.type === 'StripeAuthenticationError' ? 'stripe_authentication_error' : 'unclassified'
+      // Fixed phase and allowlisted provider code only. Never log customer,
+      // subscription, invoice, key, URL, raw error message or provider payload.
+      logSanitizedError('billing-summary', 'BILLING_SUMMARY_FAILED', { message: phase, code: diagnostic })
       return res.status(500).json({ error: 'Failed to load billing details' })
     }
   }
@@ -140,6 +149,7 @@ export function createBillingSummaryHandler({
 
 export function createBillingPortalHandler({
   verifyIdToken,
+  dispatch = async (_uid, invoke) => invoke(),
   getProfile,
   createPortalSession,
   getAppUrl = requireAppUrl,
@@ -158,13 +168,14 @@ export function createBillingPortalHandler({
       const customerId = typeof profile?.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
       if (!customerId) return res.status(409).json({ error: 'No Stripe billing account is linked' })
 
-      const session = await createPortalSession({
+      const session = await dispatch(auth.uid, () => createPortalSession({
         customer: customerId,
         return_url: `${appUrl}/app/billing`,
-      })
+      }))
       if (!session?.url) throw new Error('Portal URL missing')
       return res.status(200).json({ url: session.url })
     } catch (error) {
+      if (error instanceof ApiError) return res.status(error.status).json({ error: error.message, ...error.extra })
       if (error?.message === 'Portal URL missing') {
         logSanitizedError('billing-portal', 'PORTAL_URL_MISSING')
       } else {

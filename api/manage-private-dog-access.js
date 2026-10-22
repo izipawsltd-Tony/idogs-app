@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // Breeder-managed, pre-transfer private access for one deposited puppy.
 // The grant never changes Dog ownership and never grants client Firestore
 // access. A buyer's verified email is checked server-side by
@@ -61,6 +62,7 @@ async function handler(req, res) {
     if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 254) throw new ApiError(400, 'A valid buyer email is required')
 
     const result = await db.runTransaction(async tx => {
+      await requireAccountWrites(tx, db, uid)
       const dogSnap = await tx.get(dogRef)
       if (!dogSnap.exists) return { status: 404, error: 'Dog not found' }
       const dog = dogSnap.data()
@@ -82,6 +84,7 @@ async function handler(req, res) {
   }
 
   const result = await db.runTransaction(async tx => {
+    await requireAccountWrites(tx, db, uid)
     const dogSnap = await tx.get(dogRef)
     if (!dogSnap.exists) return { status: 404, error: 'Dog not found' }
     if (!canManagePrivateDogAccess(dogSnap.data(), uid)) return { status: 403, error: 'Not authorized' }

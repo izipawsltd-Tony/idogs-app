@@ -1,3 +1,4 @@
+import { ApiError } from './http-helpers.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 import { computeEffectivePlan } from './entitlements.js'
@@ -48,6 +49,7 @@ function reject409(res, code, message) {
 
 export function createSmsAddonCheckoutHandler({
   verifyIdToken,
+  dispatch = async (_uid, invoke) => invoke(),
   getProfile,
   retrieveSubscription,
   updateSubscription,
@@ -104,12 +106,12 @@ export function createSmsAddonCheckoutHandler({
         return reject409(res, 'SMS_GUARD_ALREADY_PRESENT', 'SMS add-on already exists; manage it in Billing')
       }
 
-      const updated = await updateSubscription(subscription.id, {
+      const updated = await dispatch(identity.uid, () => updateSubscription(subscription.id, {
         items: [{ price: priceId, quantity: 1 }],
         proration_behavior: 'always_invoice',
         payment_behavior: 'pending_if_incomplete',
         expand: ['latest_invoice'],
-      })
+      }))
 
       const pending = Boolean(updated?.pending_update)
       const hostedInvoiceUrl = typeof updated?.latest_invoice === 'object'
@@ -122,6 +124,7 @@ export function createSmsAddonCheckoutHandler({
         hostedInvoiceUrl,
       })
     } catch (err) {
+      if (err instanceof ApiError) return res.status(err.status).json({ error: err.message, ...err.extra })
       logSanitizedError('create-sms-addon-checkout', 'SMS_ADDON_UPDATE_FAILED', { code: err?.code })
       return res.status(500).json({ error: 'Failed to add SMS to your Plus subscription' })
     }
@@ -131,6 +134,7 @@ export function createSmsAddonCheckoutHandler({
 
 export function createSmsAddonRemoveHandler({
   verifyIdToken,
+  dispatch = async (_uid, invoke) => invoke(),
   getProfile,
   retrieveSubscription,
   updateSubscription,
@@ -186,13 +190,14 @@ export function createSmsAddonRemoveHandler({
         return reject409(res, 'SMS_REMOVE_ALREADY_ABSENT', 'SMS add-on is already removed')
       }
 
-      await updateSubscription(subscription.id, {
+      await dispatch(identity.uid, () => updateSubscription(subscription.id, {
         items: [{ id: smsItem.id, deleted: true }],
         proration_behavior: 'always_invoice',
-      })
+      }))
 
       return res.status(200).json({ success: true, status: 'removing' })
     } catch (err) {
+      if (err instanceof ApiError) return res.status(err.status).json({ error: err.message, ...err.extra })
       logSanitizedError('remove-sms-addon', 'SMS_REMOVE_FAILED', { code: err?.code })
       return res.status(500).json({ error: 'Failed to remove SMS from your Plus subscription' })
     }

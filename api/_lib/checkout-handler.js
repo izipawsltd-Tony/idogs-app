@@ -1,4 +1,5 @@
 import { PROMOTION_TAX_POLICY } from './promotion-tax.js'
+import { ApiError } from './http-helpers.js'
 import { requireAppUrl } from './require-config.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
@@ -62,6 +63,7 @@ function bodyOf(req) {
 
 export function createCheckoutHandler({
   verifyIdToken,
+  dispatch = async (_uid, invoke) => invoke(),
   createSession,
   getAppUrl = requireAppUrl,
   getProfile,
@@ -154,7 +156,7 @@ export function createCheckoutHandler({
         if (attempt.url) return res.status(200).json({ url: attempt.url })
         timestamp = attempt.createdAt
       }
-      const session = await createSession({
+      const session = await dispatch(uid, () => createSession({
         mode: 'subscription',
         ...(promotion ? {
           automatic_tax: { enabled: true },
@@ -175,10 +177,11 @@ export function createCheckoutHandler({
             ? { trial_end: Math.floor(PLUS_PROMOTION_END / 1000), trial_settings: { end_behavior: { missing_payment_method: 'cancel' } } }
             : { billing_cycle_anchor: Math.floor(PLUS_PROMOTION_END / 1000), proration_behavior: 'none' }) : {}),
         },
-      }, promotion ? { idempotencyKey: `plus-promotion-${createHash('sha256').update(`${uid}/${PLUS_PROMOTION_ID}/${timestamp}/${attempt.checkoutPolicy}`).digest('hex')}` } : undefined)
+      }, promotion ? { idempotencyKey: `plus-promotion-${createHash('sha256').update(`${uid}/${PLUS_PROMOTION_ID}/${timestamp}/${attempt.checkoutPolicy}`).digest('hex')}` } : undefined))
       if (promotion) await savePromotionSession(uid, attempt, session)
       return res.status(200).json({ url: session.url })
     } catch (err) {
+      if (err instanceof ApiError) return res.status(err.status).json({ error: err.message, ...err.extra })
       logSanitizedError('create-checkout', 'CHECKOUT_SESSION_FAILED', {
         message: err?.message,
         code: err?.code,

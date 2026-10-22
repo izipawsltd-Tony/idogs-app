@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/claim-transferred-dogs.js — Auto-claim dogs transferred to this
 // buyer's email, run once whenever a signed-in user loads the dashboard.
 //
@@ -107,6 +108,7 @@ export default async function handler(req, res) {
     }
 
     const result = await db.runTransaction(async tx => {
+      await requireAccountWrites(tx, db, uid)
       // ── Reads first ──
       const dogsSnap = await tx.get(buildQuery())
       if (dogsSnap.empty) return { claimed: 0 }
@@ -118,6 +120,13 @@ export default async function handler(req, res) {
       const cap = capForPlan(plan, hasValidInternalEntitlement(profile))
       const currentActive = await getOwnedActiveDogsSorted(tx, db, uid)
       let room = Math.max(0, cap - currentActive.length)
+
+      // A claim must not move a dog out of an account already frozen for cleanup.
+      for (const d of dogsSnap.docs) {
+        const dog = d.data()
+        const owner = Object.hasOwn(dog, 'currentOwnerId') ? dog.currentOwnerId : dog.tenantId
+        await requireAccountWrites(tx, db, owner)
+      }
 
       const claimedDocs = dogsSnap.docs.slice().sort(
         (a, b) => String(a.data().transferredAt || '').localeCompare(String(b.data().transferredAt || ''))
@@ -147,6 +156,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ claimed: result.claimed })
   } catch (err) {
+    if (err?.code === 'account_writes_frozen') return res.status(409).json({ error: err.message, reason: 'ACCOUNT_WRITES_FROZEN' })
     console.error('claim-transferred-dogs error:', err)
     return res.status(500).json({ error: 'Internal error', message: err.message })
   }

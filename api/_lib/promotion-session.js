@@ -1,10 +1,12 @@
 import { PLUS_PROMOTION_END } from '../../shared/plus-promotion.js'
+import { requireAccountWrites } from './account-write-fence.js'
 
 // Transactional per-account checkout attempt; concurrent requests reuse the
 // same timestamp and Stripe idempotency key, including after an ambiguous I/O.
 export function promotionSessionStore(db) {
   return {
     getPromotionAttempt: (uid, now, verifiedCustomer = null, returnOrigin, checkoutPolicy) => db.runTransaction(async tx => {
+      await requireAccountWrites(tx, db, uid)
       const ref = db.collection('plusPromotionCheckouts').doc(uid)
       const snapshot = await tx.get(db.collection('users').doc(uid))
       const ledger = await tx.get(ref)
@@ -20,6 +22,7 @@ export function promotionSessionStore(db) {
       return attempt
     }),
     savePromotionSession: (uid, attempt, session) => db.runTransaction(async tx => {
+      await requireAccountWrites(tx, db, uid)
       const ref = db.collection('plusPromotionCheckouts').doc(uid)
       const snapshot = await tx.get(ref)
       if (snapshot.data()?.createdAt !== attempt.createdAt) throw new Error('Checkout attempt changed')

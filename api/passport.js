@@ -26,6 +26,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { checkRateLimit, getClientIp, hashClientKey } from './_lib/rate-limit.js'
+import { recordPassportScan } from './_lib/account-write-fence.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -127,12 +128,7 @@ export default async function handler(req, res) {
     // Log the scan (write-only — clients can never read scanLogs back
     // per firestore.rules, only this trusted server can).
     try {
-      await db.collection('scanLogs').add({
-        dogId: dogDoc.id,
-        passportId,
-        scannedAt: new Date().toISOString(),
-        result: 'public_view',
-      })
+      await recordPassportScan({ db, dogId: dogDoc.id, passportId })
     } catch (e) {
       console.error('scanLog write failed:', e)
     }

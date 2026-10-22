@@ -1,3 +1,5 @@
+import { uploadAccountMedia } from './_lib/account-media-writes.js'
+import { ApiError } from './_lib/http-helpers.js'
 // api/upload-showcase-media.js — trusted server-side photo/video upload
 // for a litter puppy's Showcase gallery (Slice 2). Appends the result to
 // the Dog document's `photos` or `videos` array — index 0 is the
@@ -37,7 +39,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getStorage } from 'firebase-admin/storage'
-import { getFirestore, FieldValue } from 'firebase-admin/firestore'
+import { getFirestore } from 'firebase-admin/firestore'
 import { randomUUID, createHash } from 'crypto'
 import { requireStorageBucket, logConfigError } from './_lib/require-config.js'
 import { logSanitizedError } from './_lib/http-helpers.js'
@@ -138,29 +140,16 @@ async function handler(req, res) {
     // no file.makePublic() call anywhere in this file.
     const mediaId = newMediaId()
     const filePath = `dogs/${uid}/${dogId}/${kind}s/${randomUUID()}.${processed.extension}`
-    const file = bucket.file(filePath)
-    await file.save(processed.buffer, { metadata: { contentType: processed.mimeType } })
-
     const arrayField = kind === 'photo' ? 'photos' : 'videos'
-    const mediaItem = { id: mediaId, path: filePath, hash: contentHash }
-    try {
-      await db.collection('dogs').doc(dogId).update({
-        [arrayField]: FieldValue.arrayUnion(mediaItem),
-        updatedAt: new Date(),
-      })
-    } catch (writeErr) {
-      // Upload consistency fix: the Storage write already succeeded —
-      // if the Firestore write that was supposed to reference it fails,
-      // the object is now unreferenced by anything and must not be left
-      // behind. Best-effort delete, then surface the ORIGINAL failure
-      // (never mask a real error with a cleanup-related one).
-      try {
-        await file.delete()
-      } catch {
-        logSanitizedError('upload-showcase-media (orphan cleanup)', 'ORPHAN_CLEANUP_FAILED')
-      }
-      throw writeErr
-    }
+    await uploadAccountMedia({ db, bucket, uid, dogId, path: filePath, kind: 'showcase', buffer: processed.buffer, contentType: processed.mimeType,
+      commit: (tx, freshDog, generation) => {
+        const items = freshDog[arrayField] || []
+        if (items.length >= MAX_MEDIA_ITEMS_PER_KIND) throw new ApiError(409, 'Media limit reached', { reason: 'MEDIA_LIMIT_REACHED' })
+        if (items.some(item => item?.hash === contentHash)) throw new ApiError(409, 'Media already uploaded', { reason: 'DUPLICATE_MEDIA' })
+        tx.update(db.collection('dogs').doc(dogId), {
+          [arrayField]: [...items, { id: mediaId, path: filePath, hash: contentHash, generation }], updatedAt: new Date(),
+        })
+      } })
 
     const updatedSnap = await db.collection('dogs').doc(dogId).get()
     const updated = updatedSnap.data()
@@ -170,6 +159,7 @@ async function handler(req, res) {
     ])
     return res.status(200).json({ success: true, mediaId, photos, videos })
   } catch (err) {
+    if (err instanceof ApiError) return res.status(err.status).json({ error: err.message, ...err.extra })
     logSanitizedError('upload-showcase-media', 'UPLOAD_FAILED')
     return res.status(500).json({ error: 'Upload failed' })
   }

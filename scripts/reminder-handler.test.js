@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { beforeEach, afterEach, it, expect, vi } from 'vitest'
 const state = vi.hoisted(() => ({ records: new Map(), io: vi.fn() }))
 vi.mock('firebase-admin/app', () => ({ getApps: () => [{}], initializeApp: vi.fn(), cert: vi.fn() }))
@@ -6,12 +7,12 @@ vi.mock('firebase-admin/firestore', () => ({ getFirestore: () => ({
     const query = { where: () => query, get: async () => {
       state.io(name)
       return { docs: name === 'users' ? [{ id: 'owner', data: () => state.records.get('users/owner') }] : name === 'reminders' ? [{ id: 'r', data: () => state.records.get('reminders/r') }] : [] }
-    }, doc: id => ({ path: `${name}/${id}` }) }
+    }, doc: id => ({ path: `${name}/${id || randomUUID()}` }) }
     return query
   },
   runTransaction: async cb => {
     const writes = []
-    const result = await cb({ get: async ref => ({ data: () => state.records.get(ref.path) }), set: (ref, data) => writes.push([ref.path, data]) })
+    const result = await cb({ get: async ref => ({ exists: state.records.has(ref.path), data: () => state.records.get(ref.path) }), set: (ref, data) => writes.push([ref.path, data]), update: (ref, data) => writes.push([ref.path, { ...state.records.get(ref.path), ...data }]) })
     writes.forEach(([key, value]) => state.records.set(key, value)); return result
   },
 }) }))
@@ -58,4 +59,12 @@ it('never calls a provider for legacy users without manual opt-in or an owner mi
 it('does not count rejected provider requests as success', async () => {
   fetch.mockResolvedValue({ ok: false })
   expect((await call()).body.emailSent).toBe(0)
+})
+
+it('skips a frozen account before delivery or reminder regeneration', async () => {
+  state.records.set('accountDeletionFences/owner', { state: 'frozen' })
+  const before = new Map(state.records)
+  expect((await call()).body.emailSent).toBe(0)
+  expect(fetch).not.toHaveBeenCalled()
+  expect(state.records).toEqual(before)
 })

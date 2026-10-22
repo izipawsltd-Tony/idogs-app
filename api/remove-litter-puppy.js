@@ -1,3 +1,4 @@
+import { requireAccountWrites } from './_lib/account-write-fence.js'
 // api/remove-litter-puppy.js — trusted server-side litter-puppy deletion
 // (Codex round 4, Blocker 3; hardened Codex round 5, Blocker 1; hardened
 // Codex round 6, Blocker 2).
@@ -128,6 +129,7 @@ async function handler(req, res) {
   const dogRef = db.collection('dogs').doc(puppyId)
 
   const result = await db.runTransaction(async (tx) => {
+    await requireAccountWrites(tx, db, uid)
     const litterSnap = await tx.get(litterRef)
     const dogSnap = await tx.get(dogRef)
 

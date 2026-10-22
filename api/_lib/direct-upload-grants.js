@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
 import { FieldValue } from 'firebase-admin/firestore'
+import { requireAccountWrites } from './account-write-fence.js'
+import { canAddDogRecord } from './dog-access.js'
+import { ApiError } from './http-helpers.js'
 import {
   MEDIA_UPLOAD_GRANTS_COLLECTION,
   MEDIA_UPLOAD_QUOTAS_COLLECTION,
@@ -19,11 +22,41 @@ export async function createPendingGrant(db, mediaId, grant) {
   const grantRef = db.collection(MEDIA_UPLOAD_GRANTS_COLLECTION).doc(mediaId)
   const refs = quotaRefs(db, grant.uid, grant.dogId)
   return db.runTransaction(async tx => {
+    await requireAccountWrites(tx, db, grant.uid)
+    const ownerSnap = await tx.get(db.collection('dogs').doc(grant.dogId))
+    if (!ownerSnap.exists || !canAddDogRecord(ownerSnap.data(), grant.uid)) throw new ApiError(403, 'Not authorized to upload media for this dog')
+    if (ownerSnap.data().status === 'transferred' || ownerSnap.data().transferStatus === 'pendingClaim') throw new ApiError(403, 'Dog transfer is pending', { reason: 'DOG_TRANSFER_IN_PROGRESS' })
     const [userSnap, dogSnap] = await Promise.all([tx.get(refs.user), tx.get(refs.dog)])
-    const userCount = userSnap.exists ? Number(userSnap.data()?.pendingCount || 0) : 0
-    const dogCount = dogSnap.exists ? Number(dogSnap.data()?.pendingCount || 0) : 0
-    if (userCount >= MAX_PENDING_UPLOADS_PER_USER) return { created: false, reason: 'USER_PENDING_LIMIT' }
-    if (dogCount >= MAX_PENDING_UPLOADS_PER_DOG) return { created: false, reason: 'DOG_PENDING_LIMIT' }
+    let userCount = userSnap.exists ? Number(userSnap.data()?.pendingCount || 0) : 0
+    let dogCount = dogSnap.exists ? Number(dogSnap.data()?.pendingCount || 0) : 0
+    // Recover expired slots only for this authorized dog. Preview deployments
+    // may not run the daily cron; waiting for it must not strand upload quota.
+    // Read before writing, so issuance/confirmation/cron races retry atomically.
+    // Keep expired grants as durable cleanup obligations; never delete bytes.
+    let released = 0
+    if (userCount >= MAX_PENDING_UPLOADS_PER_USER || dogCount >= MAX_PENDING_UPLOADS_PER_DOG) {
+      const pending = await tx.get(db.collection(MEDIA_UPLOAD_GRANTS_COLLECTION)
+        .where('dogId', '==', grant.dogId).where('status', '==', 'pending').limit(20))
+      const now = Date.now()
+      for (const doc of pending.docs) {
+        const prior = doc.data()
+        const expiry = Date.parse(prior.expiresAt)
+        if (prior.uid !== grant.uid || !Number.isFinite(expiry) || expiry > now) continue
+        tx.update(doc.ref, { status: 'expired', expiredAt: new Date(now).toISOString() })
+        if (prior.quotaReserved === true) released += 1
+      }
+      userCount = Math.max(0, userCount - released)
+      dogCount = Math.max(0, dogCount - released)
+    }
+    const reason = userCount >= MAX_PENDING_UPLOADS_PER_USER ? 'USER_PENDING_LIMIT'
+      : dogCount >= MAX_PENDING_UPLOADS_PER_DOG ? 'DOG_PENDING_LIMIT' : null
+    if (reason) {
+      if (released) {
+        tx.set(refs.user, { pendingCount: userCount, updatedAt: new Date() }, { merge: true })
+        tx.set(refs.dog, { pendingCount: dogCount, updatedAt: new Date() }, { merge: true })
+      }
+      return { created: false, reason }
+    }
     tx.create(grantRef, grant)
     tx.set(refs.user, { uid: grant.uid, pendingCount: userCount + 1, updatedAt: new Date() }, { merge: true })
     tx.set(refs.dog, { uid: grant.uid, dogId: grant.dogId, pendingCount: dogCount + 1, updatedAt: new Date() }, { merge: true })
