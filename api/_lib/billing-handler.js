@@ -78,6 +78,7 @@ export function createBillingSummaryHandler({
     const auth = await authenticate(req, verifyIdToken)
     if (auth.error) return res.status(auth.error.status).json(auth.error.body)
 
+    let phase = 'profile'
     try {
       const profile = await getProfile(auth.uid)
       if (!profile) return res.status(404).json({ error: 'Profile not found' })
@@ -99,12 +100,14 @@ export function createBillingSummaryHandler({
 
       let subscription = null
       if (subscriptionId) {
+        phase = 'subscription'
         const stripeSubscription = await retrieveSubscription(subscriptionId)
         if (customerIdOf(stripeSubscription?.customer) !== customerId) {
           logSanitizedError('billing-summary', 'SUBSCRIPTION_CUSTOMER_MISMATCH')
           return res.status(409).json({ error: 'Billing account mismatch' })
         }
 
+        phase = 'reconciliation'
         const reconciled = await reconcileVerifiedPlus({
           subscription: stripeSubscription,
           userId: auth.uid,
@@ -129,11 +132,16 @@ export function createBillingSummaryHandler({
         }
       }
 
+      phase = 'invoices'
       const result = await listInvoices({ customer: customerId, limit: 12 })
       const invoices = (result?.data || []).map(mapInvoice).filter(invoice => invoice.id)
       return res.status(200).json({ subscription, invoices, canManageBilling: true, sms, entitlement })
-    } catch {
-      logSanitizedError('billing-summary', 'BILLING_SUMMARY_FAILED')
+    } catch (error) {
+      const diagnostic = ['resource_missing', 'rate_limit', 'api_key_expired'].includes(error?.code) ? error.code
+        : error?.type === 'StripeAuthenticationError' ? 'stripe_authentication_error' : 'unclassified'
+      // Fixed phase and allowlisted provider code only. Never log customer,
+      // subscription, invoice, key, URL, raw error message or provider payload.
+      logSanitizedError('billing-summary', 'BILLING_SUMMARY_FAILED', { message: phase, code: diagnostic })
       return res.status(500).json({ error: 'Failed to load billing details' })
     }
   }
