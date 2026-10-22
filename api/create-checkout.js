@@ -6,6 +6,7 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { createCheckoutHandler } from './_lib/checkout-handler.js'
 import { promotionSessionStore } from './_lib/promotion-session.js'
 import { promotionEnvironment, checkoutReturnOrigin } from './_lib/promotion-environment.js'
+import { promotionTaxReady } from './_lib/promotion-tax.js'
 import { requireAppUrl } from './_lib/require-config.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
@@ -31,6 +32,7 @@ export default createCheckoutHandler({
   ...promotionSessionStore(getFirestore()),
   ...(promotionConfig.prices ? { checkoutPriceIds: promotionConfig.prices } : {}),
   promotionCheckoutEnabled: promotionConfig.enabled,
+  getPromotionTaxStatus: (priceId, customerId) => promotionTaxReady(stripe, priceId, /^(?:sk|rk)_live_/.test(process.env.STRIPE_SECRET_KEY || ''), customerId),
   verifyIdToken: token => getAuth().verifyIdToken(token),
   createSession: (params, options) => stripe.checkout.sessions.create(params, options),
   canReusePromotionCustomer: async customerId => {

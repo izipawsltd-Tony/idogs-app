@@ -1,3 +1,4 @@
+import { PROMOTION_TAX_POLICY } from './promotion-tax.js'
 import { requireAppUrl } from './require-config.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
@@ -64,6 +65,7 @@ export function createCheckoutHandler({
   createSession,
   getAppUrl = requireAppUrl,
   getProfile,
+  getPromotionTaxStatus,
   getPromotionAttempt,
   savePromotionSession,
   canReusePromotionCustomer,
@@ -145,7 +147,9 @@ export function createCheckoutHandler({
           return res.status(409).json({ error: 'Your existing billing account must be reviewed before starting another subscription.' })
         }
         if (!getPromotionAttempt || !savePromotionSession) throw new Error('Promotion session verification unavailable')
-        attempt = await getPromotionAttempt(uid, timestamp, profile.stripeCustomerId || null, appUrl)
+        if (!getPromotionTaxStatus || await getPromotionTaxStatus(priceId, profile.stripeCustomerId || null) !== true) return res.status(503).json({ error: 'Tax configuration or billing address requires review. No payment has been taken.' })
+        attempt = await getPromotionAttempt(uid, timestamp, profile.stripeCustomerId || null, appUrl, PROMOTION_TAX_POLICY)
+        if (attempt.checkoutPolicy !== PROMOTION_TAX_POLICY) return res.status(409).json({ error: 'An earlier checkout uses older tax terms. Wait until it expires or contact support; do not start another subscription.' })
         if (attempt.returnOrigin !== appUrl) return res.status(409).json({ error: 'An earlier checkout uses a different page. Do not start another checkout. Reopen Billing where that checkout started or contact support.' })
         if (attempt.url) return res.status(200).json({ url: attempt.url })
         timestamp = attempt.createdAt
@@ -153,6 +157,9 @@ export function createCheckoutHandler({
       const session = await createSession({
         mode: 'subscription',
         ...(promotion ? {
+          automatic_tax: { enabled: true },
+          billing_address_collection: 'required',
+          ...(profile?.stripeCustomerId ? { customer_update: { address: 'auto' } } : {}),
           payment_method_collection: 'always',
           expires_at: Math.floor(Math.min(timestamp + 23 * 60 * 60_000, PLUS_PROMOTION_END - 60_000) / 1000),
           custom_text: { submit: { message: PLUS_PROMOTION_TERMS } },
@@ -168,7 +175,7 @@ export function createCheckoutHandler({
             ? { trial_end: Math.floor(PLUS_PROMOTION_END / 1000), trial_settings: { end_behavior: { missing_payment_method: 'cancel' } } }
             : { billing_cycle_anchor: Math.floor(PLUS_PROMOTION_END / 1000), proration_behavior: 'none' }) : {}),
         },
-      }, promotion ? { idempotencyKey: `plus-promotion-${createHash('sha256').update(`${uid}/${PLUS_PROMOTION_ID}/${timestamp}`).digest('hex')}` } : undefined)
+      }, promotion ? { idempotencyKey: `plus-promotion-${createHash('sha256').update(`${uid}/${PLUS_PROMOTION_ID}/${timestamp}/${attempt.checkoutPolicy}`).digest('hex')}` } : undefined)
       if (promotion) await savePromotionSession(uid, attempt, session)
       return res.status(200).json({ url: session.url })
     } catch (err) {

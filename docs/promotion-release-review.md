@@ -1,6 +1,6 @@
 # Plus A$0 promotion — release review
 
-Implementation campaign: through 31 January 2027 inclusive, Adelaide; monthly A$7 including GST from 1 February, unless cancelled. Existing Plus caps/scan quotas remain; SMS and extra litters remain separately priced. No new global Stripe Price, tax configuration or automatic_tax changes.
+Implementation campaign: through 31 January 2027 inclusive, Adelaide; monthly A$7 including GST from 1 February, unless cancelled. Existing Plus caps/scan quotas remain; SMS and extra litters remain separately priced. No new global Stripe Price. Owner subsequently approved Stripe Tax Basic for this campaign; see the tax increment note below. Live configuration remains separately gated.
 
 ## New / unpaid accounts
 Hosted Checkout collects payment details and explicit campaign agreement. Reuses the verified A$7 monthly price. Trial end is fixed to Adelaide midnight, not a rolling number of free months. Final 48 hours use a waived initial partial billing period; session expiry precedes the charge anchor. Enrollment closes in the final 32 minutes because Stripe requires at least 30 minutes of session lifetime. Expired/stale claims never silently fall back to immediate payment. Ongoing subscriptions fail closed for review rather than create a duplicate. Former customers with a cleared subscription pointer can reuse their trusted customer after Stripe confirms terminal subscription history; incomplete/paginated history or lookup failure blocks checkout.
@@ -42,3 +42,9 @@ Official references:
 - https://docs.stripe.com/payments/checkout/free-trials?payment-ui=stripe-hosted
 - https://docs.stripe.com/api/checkout/sessions/create
 - https://docs.stripe.com/payments/checkout/billing-cycle.md?payment-ui=stripe-hosted
+
+## Owner-approved automatic GST — 22 October 2026
+- Monthly campaign only: automatic Stripe Tax, grossAUD7 retained; collect billing address and update it for trusted returning customers. Preflight requires active AU Tax configuration/registration valid through first renewal, correct-mode active inclusiveAUD700/month Price and existing configured taxable product code. Other active tax jurisdictions, saved shipping/exempt customer cases, incomplete catalogs and missing prerequisites hold for review. No automatic registration/classification mutation at runtime.
+- Configured SaaS-business product code is preserved, not newly legally classified. New Checkout inherits automatic tax for renewal; provider determines effective country and exemptions. Do not label foreign invoices as containing Australian GST. Future tax rules/classification are not frozen by the campaign policy version.
+- Old unexpired untaxed Checkout attempts are not reused/replaced; wait for expiry or separately review provider state. Existing subscriptions and finalized invoices are not migrated by this change. No SMS, annual/noncampaign, payment-email or fee-setting change.
+- Stripe Tax Basic paid approach approved for implementation/Test QA; Live registration/configuration/activation and production release still gated. Public Checkout/Billing tax pricing0.5%: https://stripe.com/au/tax/pricing . No fixed monthly Tax Complete subscription selected.

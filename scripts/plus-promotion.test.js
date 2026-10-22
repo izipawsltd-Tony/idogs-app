@@ -5,7 +5,7 @@ import { promotionSessionStore } from '../api/_lib/promotion-session.js'
 import { PLUS_PROMOTION_ID, PLUS_PROMOTION_START, PLUS_PROMOTION_END, isPlusPromotionActive } from '../shared/plus-promotion.js'
 import { promotionEnvironment, checkoutReturnOrigin, STAGING_PLUS_MONTHLY_PRICE_ID } from '../api/_lib/promotion-environment.js'
 
-function fixture({ time = Date.parse('2026-10-21T00:00:00Z'), profile = {}, broken = false, reuseCustomer, getAppUrl = () => 'https://staging.example.invalid' } = {}) {
+function fixture({ time = Date.parse('2026-10-21T00:00:00Z'), profile = {}, broken = false, reuseCustomer, taxReady = true, getAppUrl = () => 'https://staging.example.invalid' } = {}) {
   const records = new Map([['users/synthetic-owner', profile]])
   let queue = Promise.resolve()
   const db = {
@@ -21,7 +21,7 @@ function fixture({ time = Date.parse('2026-10-21T00:00:00Z'), profile = {}, brok
   }
   const createSession = vi.fn().mockResolvedValue({ id: 'cs_synthetic', url: 'https://checkout.stripe.com/synthetic' })
   const handler = createCheckoutHandler({ verifyIdToken: async () => ({ uid: 'synthetic-owner', email: 'qa@example.invalid' }),
-    createSession, getAppUrl, now: () => time,
+    createSession, getAppUrl, now: () => time, getPromotionTaxStatus: async () => taxReady,
     getProfile: async () => { if (broken) throw new Error('synthetic read failure'); return profile },
     canReusePromotionCustomer: reuseCustomer,
     ...promotionSessionStore(db),
@@ -99,6 +99,9 @@ describe('Plus campaign boundaries and Checkout intent (mocked Stripe and Firest
     const [params, options] = f.createSession.mock.calls[0]
     expect(params.line_items).toEqual([{ price: CHECKOUT_PRICE_IDS.plus_monthly, quantity: 1 }])
     expect(params.payment_method_collection).toBe('always')
+    expect(params.automatic_tax).toEqual({enabled:true})
+    expect(params.billing_address_collection).toBe('required')
+    expect(params.customer_update).toBeUndefined()
     expect(params.payment_method_types).toBeUndefined()
     expect(params.subscription_data.trial_end).toBe(PLUS_PROMOTION_END / 1000)
     expect(params.subscription_data.billing_cycle_anchor).toBeUndefined()
@@ -151,6 +154,7 @@ describe('Plus campaign boundaries and Checkout intent (mocked Stripe and Firest
     expect(verify).toHaveBeenCalledWith('cus_synthetic_former')
     expect(f.createSession.mock.calls[0][0].customer).toBe('cus_synthetic_former')
     expect(f.createSession.mock.calls[0][0].customer_email).toBeUndefined()
+    expect(f.createSession.mock.calls[0][0].customer_update).toEqual({address:'auto'})
   })
   it('does not bypass failed provider verification for a former customer', async () => {
     const f = fixture({ profile: { stripeCustomerId: 'cus_synthetic' }, reuseCustomer: vi.fn().mockRejectedValue(new Error('synthetic outage')) })
@@ -159,6 +163,20 @@ describe('Plus campaign boundaries and Checkout intent (mocked Stripe and Firest
   it('fails closed on profile read failure', async () => {
     const f = fixture({ broken: true }); expect((await f.call()).status).toBe(500)
     expect(f.createSession).not.toHaveBeenCalled()
+  })
+  it('blocks unready tax configuration before creating an attempt', async () => {
+    const f=fixture({taxReady:false})
+    expect((await f.call()).status).toBe(503)
+    expect(f.createSession).not.toHaveBeenCalled()
+    expect(f.records.has('plusPromotionCheckouts/synthetic-owner')).toBe(false)
+  })
+  it('never returns or replaces an untaxed still-open legacy Checkout', async () => {
+    const f=fixture()
+    const legacy={createdAt:Date.parse('2026-10-20T23:00:00Z'), expiresAt:Date.parse('2026-10-21T22:00:00Z'),returnOrigin:'https://staging.example.invalid',url:'https://checkout.stripe.com/legacy'}
+    f.records.set('plusPromotionCheckouts/synthetic-owner',legacy)
+    expect((await f.call()).status).toBe(409)
+    expect(f.createSession).not.toHaveBeenCalled()
+    expect(f.records.get('plusPromotionCheckouts/synthetic-owner')).toEqual(legacy)
   })
   it('reuses one persisted checkout on retry', async () => {
     const f = fixture(); const first = await f.call(); const retry = await f.call()
@@ -190,5 +208,7 @@ describe('Plus campaign boundaries and Checkout intent (mocked Stripe and Firest
     expect(params.line_items[0].price).toBe(CHECKOUT_PRICE_IDS.plus_annual)
     expect(params.subscription_data.trial_end).toBeUndefined()
     expect(params.custom_text).toBeUndefined()
+    expect(params.automatic_tax).toBeUndefined()
+    expect(params.billing_address_collection).toBeUndefined()
   })
 })
