@@ -1,6 +1,7 @@
 import { ApiError } from './http-helpers.js'
 import { requireAppUrl } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
+import { subscriptionPromotionStatus } from './subscription-promotion.js'
 
 function bearerToken(req) {
   const value = req.headers?.authorization || ''
@@ -129,6 +130,8 @@ export function createBillingSummaryHandler({
           status: stripeSubscription.status || profile.subscriptionStatus || 'unknown',
           cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end === true,
           currentPeriodEnd: isoFromSeconds(subscriptionPeriodEnd(stripeSubscription)),
+          trialEnd: isoFromSeconds(stripeSubscription.trial_end),
+          promotionStatus: subscriptionPromotionStatus(stripeSubscription, auth.uid),
         }
       }
 

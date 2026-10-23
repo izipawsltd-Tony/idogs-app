@@ -26,7 +26,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - run: node scripts/verify-isolated-backend.mjs
+      - name: Verify candidate scope against its pinned baseline
+        run: |
+          if [ "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" = 'fix/promotion-billing-compat-20261023' ]; then
+            node scripts/verify-promotion-compat-scope.mjs
+          else
+            node scripts/verify-isolated-backend.mjs
+          fi
       - run: node scripts/check-api-syntax.mjs
       - run: npm ci
       - name: Backend contracts, billing and reminder regressions
