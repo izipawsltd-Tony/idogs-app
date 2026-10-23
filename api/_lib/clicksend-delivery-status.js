@@ -45,18 +45,40 @@ const QA_DAY_START=Date.parse('2026-10-23T00:00:00Z')/1000
 // Never disclose recipient, body, API credentials or unrelated history.
 export async function findOwnerQaSmsInClickSendHistory({env=process.env,fetchImpl=fetch}={}) {
   if (!env.CLICKSEND_USERNAME || !env.CLICKSEND_API_KEY) return {status:'CONFIG_MISSING'}
+  // Bound to the authorized test date: at most three read-only GET pages.
+  const start=QA_DAY_START-12*3600
+  const end=QA_DAY_START+48*3600
+  const matches=[]
+  let inspected=0
+  let pageCount=0
   try {
-    const response=await fetchImpl(BASE+'/sms/history?limit=100&order_by=date:desc',{
-      method:'GET',headers:{Authorization:AUTH(env)},signal:AbortSignal.timeout(12000),
-    })
-    if (!response.ok) return {status:'HISTORY_UNAVAILABLE',httpStatus:response.status===401?401:response.status===403?403:0}
-    const result=await response.json()
-    if (result?.response_code!=='SUCCESS') return {status:'HISTORY_UNAVAILABLE'}
-    const messages=Array.isArray(result.data?.data)?result.data.data:Array.isArray(result.data)?result.data:[]
-    const matches=messages.filter(x=>x?.from==='iDogs' && x?.body===QA_BODY &&
-      Number(x?.date)>=QA_DAY_START && x?.direction==='out')
-    if (!matches.length) return {status:'NOT_FOUND_IN_RECENT_HISTORY',source:'HISTORY_FALLBACK',lockFound:false}
-    if (matches.length!==1) return {status:'MULTIPLE_QA_MATCHES',source:'HISTORY_FALLBACK',lockFound:false}
+    for(let page=1;page<=3;page++){
+      const url=BASE+'/sms/history?'+new URLSearchParams({
+        date_from:String(start),date_to:String(end),page:String(page),
+        limit:'100',order_by:'date:desc',
+      })
+      const response=await fetchImpl(url,{
+        method:'GET',headers:{Authorization:AUTH(env)},signal:AbortSignal.timeout(12000),
+      })
+      if(!response.ok) return {status:'HISTORY_UNAVAILABLE',
+        source:'HISTORY_FALLBACK',httpStatus:response.status===401?401:response.status===403?403:0}
+      const result=await response.json()
+      if(result?.response_code!=='SUCCESS') return {status:'HISTORY_UNAVAILABLE',source:'HISTORY_FALLBACK'}
+      const messages=Array.isArray(result.data?.data)?result.data.data:
+        Array.isArray(result.data)?result.data:[]
+      pageCount++
+      inspected+=messages.length
+      for(const x of messages){
+        if(x?.from==='iDogs' && x?.body===QA_BODY &&
+            Number(x?.date)>=start && Number(x?.date)<=end &&
+            (x?.direction==='out' || x?.direction==null)) matches.push(x)
+      }
+      if(messages.length<100) break
+    }
+    if(!matches.length) return {status:'NOT_FOUND_IN_RECENT_HISTORY',source:'HISTORY_FALLBACK',
+      lockFound:false,historyRecordsInspected:inspected,pagesChecked:pageCount}
+    if(matches.length!==1) return {status:'MULTIPLE_QA_MATCHES',source:'HISTORY_FALLBACK',
+      lockFound:false,matchCount:matches.length}
     const msg=matches[0]
     const code=String(msg.status_code||'')
     const status=SAFE_STATUS.has(msg.status)?msg.status:'UNKNOWN'
