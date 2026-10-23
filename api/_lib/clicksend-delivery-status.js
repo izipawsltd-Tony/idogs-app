@@ -75,8 +75,28 @@ export async function findOwnerQaSmsInClickSendHistory({env=process.env,fetchImp
       }
       if(messages.length<100) break
     }
-    if(!matches.length) return {status:'NOT_FOUND_IN_RECENT_HISTORY',source:'HISTORY_FALLBACK',
-      lockFound:false,historyRecordsInspected:inspected,pagesChecked:pageCount}
+    if(!matches.length) {
+      // Independent unfiltered diagnostic: distinguish empty account history
+      // from a date-filter problem without returning other customers' data.
+      const recent=await fetchImpl(BASE+'/sms/history?limit=15&page=1&order_by=date:desc',{
+        method:'GET',headers:{Authorization:AUTH(env)},signal:AbortSignal.timeout(12000),
+      })
+      let recentCount=null
+      let recentQaMatch=false
+      let recentResponse='UNAVAILABLE'
+      if(recent.ok) {
+        const body=await recent.json()
+        recentResponse=body?.response_code==='SUCCESS'?'SUCCESS':'UNEXPECTED'
+        const list=Array.isArray(body?.data?.data)?body.data.data:Array.isArray(body?.data)?body.data:[]
+        recentCount=list.length
+        recentQaMatch=list.some(x=>x?.from==='iDogs' && x?.body===QA_BODY &&
+          (x?.direction==='out'||x?.direction==null))
+      }
+      return {status:'NOT_FOUND_IN_RECENT_HISTORY',source:'HISTORY_FALLBACK',
+        lockFound:false,historyRecordsInspected:inspected,pagesChecked:pageCount,
+        unfilteredRecentCount:recentCount,unfilteredResponse:recentResponse,
+        unfilteredQaMatch:recentQaMatch}
+    }
     if(matches.length!==1) return {status:'MULTIPLE_QA_MATCHES',source:'HISTORY_FALLBACK',
       lockFound:false,matchCount:matches.length}
     const msg=matches[0]
