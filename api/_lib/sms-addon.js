@@ -114,7 +114,7 @@ export async function reserveSmsDelivery({
       idempotencyKey,
       segmentCount,
       status: 'reserved',
-      provider: 'aws_sns',
+      provider: 'clicksend',
       periodStart: profile.smsPeriodStart,
       createdAt: deliverySnap.exists ? (deliverySnap.data().createdAt || nowIso) : nowIso,
       reservedAt: nowIso,
