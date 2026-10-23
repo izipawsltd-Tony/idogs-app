@@ -5,7 +5,7 @@ export class SmsProviderError extends Error {
 }
 export async function sendClickSendSms(phone, body, { env = process.env, fetchImpl = fetch } = {}) {
   if (!env.CLICKSEND_USERNAME || !env.CLICKSEND_API_KEY) throw new SmsProviderError('CLICKSEND_CONFIG_MISSING')
-  if (!/^\\+614\\d{8}$/.test(phone) || typeof body !== 'string' || !body.trim() || body.length > 459)
+  if (!/^\+614\d{8}$/.test(phone) || typeof body !== 'string' || !body.trim() || body.length > 459)
     throw new SmsProviderError('INVALID_SMS_REQUEST')
   let response
   try {
