@@ -108,6 +108,26 @@ export default function SettingsPage({ toast }: Props) {
     finally { setClickSendQaBusy(false) }
   }
 
+  async function checkLiveSmsQa(method: 'GET' | 'POST') {
+    if (!user || clickSendQaBusy) return
+    setClickSendQaBusy(true)
+    setClickSendQaStatus(method === 'POST' ? 'Submitting one approved SMS...' : 'Reading ClickSend delivery...')
+    try {
+      const token = await user.getIdToken(true)
+      const response = await fetch('/api/qa-clicksend-live-20261024', {
+        method, headers: { Authorization:'Bearer '+token },
+      })
+      const data = await response.json()
+      const phase = String(data.phase || data.error || 'UNKNOWN').slice(0,90)
+      const delivery = String(data.delivery || 'NOT_YET_CHECKED').slice(0,90)
+      const ref = typeof data.providerMessageId === 'string'
+        ? ' | Message ID: '+data.providerMessageId.slice(0,100) : ''
+      setClickSendQaStatus('Live QA '+phase+' | delivery '+delivery+ref+' | NO AUTO RETRY')
+    } catch {
+      setClickSendQaStatus('Request outcome unknown. Do not send again. Read status only.')
+    } finally { setClickSendQaBusy(false) }
+  }
+
   async function setMarketingConsent(enabled: boolean) {
     if (!user || saving) return
     setSaving('marketingConsent')
@@ -622,6 +642,20 @@ export default function SettingsPage({ toast }: Props) {
             Check delivery (no resend)
           </button>
           {clickSendQaStatus && <p role="status" style={{ marginTop: 8, fontSize: 12 }}>{clickSendQaStatus}</p>}
+        </div>
+      )}
+
+      {db.app?.options?.projectId === 'idogs-app-staging' &&
+        user?.email?.toLowerCase() === 'idogsbreeder+qaa@gmail.com' && (
+        <div className="card" style={{ marginBottom:16, padding:20 }}>
+          <strong>ClickSend LIVE QA — 24 October (exactly one SMS)</strong>
+          <p style={{ fontSize:12 }}>Owner-approved: one fixed message to the configured QA phone. No retries or bulk sending. Message ID returned only after provider acceptance.</p>
+          <button type="button" className="btn btn-secondary btn-sm"
+            disabled={clickSendQaBusy} onClick={()=>checkLiveSmsQa('POST')}>Send ONE live QA SMS</button>
+          <button type="button" className="btn btn-secondary btn-sm"
+            style={{marginLeft:8}} disabled={clickSendQaBusy}
+            onClick={()=>checkLiveSmsQa('GET')}>Check LIVE delivery (no resend)</button>
+          {clickSendQaStatus && <p role="status" style={{marginTop:8,fontSize:12}}>{clickSendQaStatus}</p>}
         </div>
       )}
 
