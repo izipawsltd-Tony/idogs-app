@@ -95,7 +95,10 @@ export default function SettingsPage({ toast }: Props) {
         ? ' | filtered '+result.historyRecordsInspected+' records / '+result.pagesChecked+' pages'
           +(Number.isInteger(result.unfilteredRecentCount) ? ' | unfiltered recent '+result.unfilteredRecentCount : '')
           +(result.unfilteredResponse ? ' | history API '+result.unfilteredResponse : '')
-          +(result.unfilteredQaMatch === true ? ' | QA match in unfiltered history' : '') : ''
+          +(result.unfilteredQaMatch === true ? ' | QA match in unfiltered history' : '')
+          +(Number.isInteger(result.senderMatches)?' | sender matches '+result.senderMatches:'')
+          +(Number.isInteger(result.bodyMatches)?' | body matches '+result.bodyMatches:'')
+          +(typeof result.dateRange==='string'?' | date coverage '+result.dateRange:'') : ''
       setClickSendQaStatus(res.ok
         ? 'ClickSend delivery: '+status+(result.source ? ' ['+result.source+']' : '')+inspected+' (read-only; SMS will not be resent)'
         : 'Delivery check blocked: '+(code || 'HTTP_'+res.status)+' (SMS will not be resent)')
