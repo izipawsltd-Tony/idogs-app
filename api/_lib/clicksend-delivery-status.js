@@ -37,3 +37,34 @@ export async function getClickSendDeliveryStatus(messageId, {env=process.env,fet
       clicksendStatus:status, code, senderMatch:msg.from==='iDogs'}
   } catch {return {status:'CHECK_UNAVAILABLE'}}
 }
+
+const QA_BODY='iDogs QA: test of registered Sender ID iDogs. No action required.'
+const QA_DAY_START=Date.parse('2026-10-23T00:00:00Z')/1000
+// Recover a possibly accepted SMS when the Firestore QA lock is missing.
+// Search strictly by exact synthetic QA body, sender and target day.
+// Never disclose recipient, body, API credentials or unrelated history.
+export async function findOwnerQaSmsInClickSendHistory({env=process.env,fetchImpl=fetch}={}) {
+  if (!env.CLICKSEND_USERNAME || !env.CLICKSEND_API_KEY) return {status:'CONFIG_MISSING'}
+  try {
+    const response=await fetchImpl(BASE+'/sms/history?limit=100&order_by=date:desc',{
+      method:'GET',headers:{Authorization:AUTH(env)},signal:AbortSignal.timeout(12000),
+    })
+    if (!response.ok) return {status:'HISTORY_UNAVAILABLE',httpStatus:response.status===401?401:response.status===403?403:0}
+    const result=await response.json()
+    if (result?.response_code!=='SUCCESS') return {status:'HISTORY_UNAVAILABLE'}
+    const messages=Array.isArray(result.data?.data)?result.data.data:Array.isArray(result.data)?result.data:[]
+    const matches=messages.filter(x=>x?.from==='iDogs' && x?.body===QA_BODY &&
+      Number(x?.date)>=QA_DAY_START && x?.direction==='out')
+    if (!matches.length) return {status:'NOT_FOUND_IN_RECENT_HISTORY',source:'HISTORY_FALLBACK',lockFound:false}
+    if (matches.length!==1) return {status:'MULTIPLE_QA_MATCHES',source:'HISTORY_FALLBACK',lockFound:false}
+    const msg=matches[0]
+    const code=String(msg.status_code||'')
+    const status=SAFE_STATUS.has(msg.status)?msg.status:'UNKNOWN'
+    return {
+      status:code==='201'?'DELIVERED':code==='300'||code==='301'?'FAILED':
+        status==='Failed'||status==='Cancelled'?'FAILED':'PENDING',
+      source:'HISTORY_FALLBACK',lockFound:false,clicksendStatus:status,code,
+      messageIdPresent:typeof msg.message_id==='string' && !!msg.message_id,
+    }
+  } catch {return {status:'CHECK_UNAVAILABLE',source:'HISTORY_FALLBACK',lockFound:false}}
+}
