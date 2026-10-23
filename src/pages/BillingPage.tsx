@@ -29,6 +29,8 @@ interface BillingSummary {
     status: string
     cancelAtPeriodEnd: boolean
     currentPeriodEnd: string | null
+    trialEnd?: string | null
+    promotionStatus?: 'confirmed' | 'not_confirmed'
   } | null
   invoices: BillingInvoice[]
   canManageBilling: boolean
@@ -334,7 +336,12 @@ export default function BillingPage({ toast }: Props) {
                 <div role="alert" style={{ fontSize: 12, color: 'var(--danger, #C0392B)', marginTop: 4 }}>{detailsError}</div>
               ) : billingDetails?.subscription ? (
                 <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>
-                  {billingDetails.subscription.cancelAtPeriodEnd ? 'Access scheduled to end' : 'Next renewal'}: <strong>{formatBillingDate(billingDetails.subscription.currentPeriodEnd)}</strong>
+                  {billingDetails.subscription.cancelAtPeriodEnd ? 'Access scheduled to end' : billingDetails.subscription.status === 'trialing' ? 'Trial ends' : 'Next renewal'}: <strong>{formatBillingDate(billingDetails.subscription.status === 'trialing' ? billingDetails.subscription.trialEnd || billingDetails.subscription.currentPeriodEnd : billingDetails.subscription.currentPeriodEnd)}</strong>
+                  {promotionActive && <p style={{ marginTop: 8, marginBottom: 0 }}>
+                    {billingDetails.subscription.promotionStatus === 'confirmed'
+                      ? 'Your A$0 Plus offer is confirmed for this subscription. A$7/month including GST from 1 February 2027, unless cancelled. SMS and extra litters are separate.'
+                      : 'The A$0 Plus offer is not confirmed for this subscription. Your existing billing terms still apply. Review Manage subscription or contact support; do not start another subscription.'}
+                  </p>}
                 </div>
               ) : (
                 <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>Manage payment methods, invoices and cancellation securely in Stripe.</div>
