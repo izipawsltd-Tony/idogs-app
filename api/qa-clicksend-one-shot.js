@@ -6,7 +6,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { sendClickSendSms } from './_lib/clicksend-sms.js'
 import { verifyClickSendAccount } from './_lib/clicksend-health.js'
-import { getClickSendDeliveryStatus } from './_lib/clicksend-delivery-status.js'
+import { getClickSendDeliveryStatus, findOwnerQaSmsInClickSendHistory } from './_lib/clicksend-delivery-status.js'
 
 const PROJECT = 'idogs-app-staging'
 const QA_EMAIL = 'idogsbreeder+qaa@gmail.com'
@@ -39,7 +39,12 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     // GET checks only existing QA delivery; never creates locks, sends or refunds.
     const snap = await getFirestore().collection('smsQaOneShot').doc(LOCK).get()
-    if (!snap.exists) return res.status(404).json({error:'NO_QA_SMS_ATTEMPT'})
+    if (!snap.exists) {
+      // No lock in this Firestore: NEVER treat this as permission to resend.
+      // Reconcile one exact approved QA body from ClickSend History, read-only.
+      const fallback = await findOwnerQaSmsInClickSendHistory()
+      return res.status(200).json({...fallback,retryAllowed:false})
+    }
     const saved = snap.data()
     if (!saved?.providerMessageId) return res.status(200).json({
       status:'OUTCOME_UNKNOWN', retryAllowed:false,
