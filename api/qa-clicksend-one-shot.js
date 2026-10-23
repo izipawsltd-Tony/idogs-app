@@ -19,12 +19,8 @@ export default async function handler(req, res) {
   if (process.env.VERCEL_ENV !== 'preview' ||
       process.env.FIREBASE_PROJECT_ID !== PROJECT ||
       process.env.SMS_PROVIDER !== 'clicksend' ||
-      process.env.SMS_SENDER_ID !== 'iDogs' ||
-      process.env.SMS_QA_ONE_SHOT_ENABLED !== 'true')
+      process.env.SMS_SENDER_ID !== 'iDogs')
     return res.status(503).json({ error:'STAGING_QA_DISABLED' })
-  const phone = process.env.SMS_QA_TEST_RECIPIENT
-  if (typeof phone !== 'string' || !/^\+614\d{8}$/.test(phone))
-    return res.status(503).json({ error:'QA_RECIPIENT_NOT_CONFIGURED' })
   const authorization = req.headers?.authorization || ''
   if (!authorization.startsWith('Bearer ')) return res.status(401).json({error:'UNAUTHENTICATED'})
   if (!getApps().length) {
@@ -51,6 +47,12 @@ export default async function handler(req, res) {
     const delivery = await getClickSendDeliveryStatus(saved.providerMessageId)
     return res.status(200).json({...delivery,retryAllowed:false})
   }
+  // POST remains branch-gated. GET delivery status never enables sending.
+  if (process.env.SMS_QA_ONE_SHOT_ENABLED !== 'true')
+    return res.status(503).json({ error:'QA_SEND_DISABLED_ON_THIS_BRANCH' })
+  const phone = process.env.SMS_QA_TEST_RECIPIENT
+  if (typeof phone !== 'string' || !/^\+614\d{8}$/.test(phone))
+    return res.status(503).json({ error:'QA_RECIPIENT_NOT_CONFIGURED' })
   const verified = await verifyClickSendAccount()
   if (!verified.ok) return res.status(503).json({error:verified.reason})
   const db = getFirestore()
