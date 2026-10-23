@@ -105,7 +105,7 @@ export default function SettingsPage({ toast }: Props) {
           (enabled ? actual?.revokedAt != null : !actual?.revokedAt)) {
         throw new Error('MARKETING_CONSENT_NOT_PERSISTED')
       }
-      await refreshProfile()
+      await refreshProfile(true)
       if (db.app?.options?.projectId === 'idogs-app-staging') {
         setConsentServerStatus(`Staging server: ${actual.choice} | ${actual.source} | revokedAt: ${actual.revokedAt ? 'set' : 'null'}`)
       }
