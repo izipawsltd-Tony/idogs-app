@@ -58,7 +58,7 @@ export default function SettingsPage({ toast }: Props) {
 
   // Staging-only independent server read, for QA without exposing any user records.
   async function verifyMarketingConsentServer() {
-    if (!user || db.app.options.projectId !== 'idogs-app-staging') return
+    if (!user || db.app?.options?.projectId !== 'idogs-app-staging') return
     setConsentServerChecking(true)
     setConsentServerStatus(null)
     try {
@@ -106,7 +106,7 @@ export default function SettingsPage({ toast }: Props) {
         throw new Error('MARKETING_CONSENT_NOT_PERSISTED')
       }
       await refreshProfile()
-      if (db.app.options.projectId === 'idogs-app-staging') {
+      if (db.app?.options?.projectId === 'idogs-app-staging') {
         setConsentServerStatus(`Staging server: ${actual.choice} | ${actual.source} | revokedAt: ${actual.revokedAt ? 'set' : 'null'}`)
       }
       toast(enabled ? 'Marketing email preference saved' : 'Marketing emails disabled', 'success')
@@ -565,7 +565,7 @@ export default function SettingsPage({ toast }: Props) {
           onToggle={() => setMarketingConsent(!marketingEnabled)}
         />
         <p style={{ fontSize: 12, color: 'var(--light)', marginTop: 10 }}>Existing accounts are off unless they explicitly opt in. Unsubscribing from a promotional email also prevents future campaign sends.</p>
-        {db.app.options.projectId === 'idogs-app-staging' && (
+        {db.app?.options?.projectId === 'idogs-app-staging' && (
           <div style={{ marginTop: 12, padding: 10, background: 'var(--sand)', borderRadius: 8 }}>
             <div style={{ fontSize: 12, fontWeight: 600 }}>Staging QA · Firebase project: idogs-app-staging</div>
             <button type="button" className="btn btn-secondary btn-sm" disabled={consentServerChecking}
