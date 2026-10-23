@@ -470,6 +470,17 @@ export interface ActivityNote {
 }
 
 export interface UserProfile {
+  marketingConsent?: {
+    channel: 'email_marketing'
+    choice: 'opt_in' | 'opt_out'
+    source: 'explicit_checkbox' | 'account_settings'
+    checkboxDefault: false
+    policyVersion: string
+    optedInAt: string | null
+    revokedAt: string | null
+    email: string
+    evidenceRef: string
+  }
   emailReminders?: boolean
   manualReminderEmails?: boolean
   careEmailTypes?: Partial<Record<Reminder['type'], boolean>>
@@ -588,6 +599,7 @@ export interface AuthFormData {
 }
 
 export interface SignupFormData extends AuthFormData {
+  marketingOptIn?: boolean
   firstName: string
   lastName: string
   kennelName: string

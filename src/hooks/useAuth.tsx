@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsub
   }, [])
 
-  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber }: SignupFormData) {
+  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber, marketingOptIn = false }: SignupFormData) {
     const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password)
     try {
       await sendEmailVerification(newUser)
@@ -69,6 +69,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         kennelName,
         role: role || 'breeder',
         plan: 'trial',
+        marketingConsent: {
+          channel: 'email_marketing',
+          choice: marketingOptIn ? 'opt_in' : 'opt_out',
+          source: 'explicit_checkbox',
+          checkboxDefault: false,
+          policyVersion: 'marketing-v1-2026-10',
+          optedInAt: marketingOptIn ? new Date().toISOString() : null,
+          revokedAt: null,
+          email: newUser.email || email,
+          evidenceRef: 'signup-checkbox-v1',
+        },
         ...(state && { state: state as UserProfile['state'] }),
         ...(breederNumber?.trim() && { breederIdValue: breederNumber.trim() }),
       })

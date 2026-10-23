@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
+import { doc, getDocFromServer } from 'firebase/firestore'
+import { db } from '../lib/firebase'
 import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
 import { REMINDER_TYPES } from '../components/ui/ReminderForm'
 import type { Reminder, ToastMessage } from '../types'
@@ -28,6 +30,7 @@ export default function SettingsPage({ toast }: Props) {
   const [savingProfile, setSavingProfile] = useState(false)
   const [changingRole, setChangingRole] = useState(false)
 
+  const marketingEnabled = profile?.marketingConsent?.choice === 'opt_in' && !profile.marketingConsent.revokedAt && profile.marketingConsent.email?.toLowerCase() === user?.email?.toLowerCase()
   const isOwner = profile?.role === 'owner'
   const hideLitters = (profile as any)?.hideLitters === true
   const hideDocuments = (profile as any)?.hideDocuments === true
@@ -49,6 +52,42 @@ export default function SettingsPage({ toast }: Props) {
     } finally {
       setSaving(null)
     }
+  }
+
+  async function setMarketingConsent(enabled: boolean) {
+    if (!user || saving) return
+    setSaving('marketingConsent')
+    try {
+      const existing = profile?.marketingConsent
+      const now = new Date().toISOString()
+      await updateUserProfile(user.uid, {
+        marketingConsent: {
+          channel: 'email_marketing',
+          choice: enabled ? 'opt_in' : 'opt_out',
+          source: 'account_settings',
+          checkboxDefault: false,
+          policyVersion: 'marketing-v1-2026-10',
+          optedInAt: enabled ? now : existing?.optedInAt || null,
+          revokedAt: enabled ? null : now,
+          email: user.email || '',
+          evidenceRef: enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1',
+        },
+      })
+      // Do not trust a local-cache echo as evidence of remote persistence.
+      // Read back from Firestore server before reporting success.
+      const stored = await getDocFromServer(doc(db, 'users', user.uid))
+      const actual = stored.data()?.marketingConsent
+      if (!stored.exists() || actual?.choice !== (enabled ? 'opt_in' : 'opt_out') ||
+          actual?.source !== 'account_settings' ||
+          actual?.evidenceRef !== (enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1') ||
+          (enabled ? actual?.revokedAt != null : !actual?.revokedAt)) {
+        throw new Error('MARKETING_CONSENT_NOT_PERSISTED')
+      }
+      await refreshProfile()
+      toast(enabled ? 'Marketing email preference saved' : 'Marketing emails disabled', 'success')
+    } catch {
+      toast('Could not save marketing preference. Please try again.', 'error')
+    } finally { setSaving(null) }
   }
 
   async function setEmailSetting(field: 'emailReminders' | 'manualReminderEmails', enabled: boolean) {
@@ -487,6 +526,20 @@ export default function SettingsPage({ toast }: Props) {
             </a>
           </div>
         </div>
+      </div>
+
+      {/* Marketing emails are separate from transactional and care reminders. */}
+      <div className="card" style={{ marginBottom: 16, padding: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', marginBottom: 14 }}>Marketing emails</div>
+        <ToggleRow
+          icon="✉️"
+          label="iDogs news and promotional offers"
+          description="Optional product news and offers. You can turn this off at any time. Dog-care and account emails are separate."
+          enabled={Boolean(marketingEnabled)}
+          saving={saving === 'marketingConsent'}
+          onToggle={() => setMarketingConsent(!marketingEnabled)}
+        />
+        <p style={{ fontSize: 12, color: 'var(--light)', marginTop: 10 }}>Existing accounts are off unless they explicitly opt in. Unsubscribing from a promotional email also prevents future campaign sends.</p>
       </div>
 
       {/* ── DATA & PRIVACY ── */}

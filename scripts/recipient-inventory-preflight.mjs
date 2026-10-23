@@ -57,7 +57,7 @@ export function reconcileRecipientInventory(snapshot, now = Date.now()) {
     const suppression = suppressions.get(normalizedEmail(user.email))
     const permission = !duplicateUid && consent &&
       consent.choice === 'opt_in' && consent.channel === 'email_marketing' &&
-      consent.source === 'explicit_checkbox' && consent.checkboxDefault === false &&
+      ['explicit_checkbox', 'account_settings'].includes(consent.source) && consent.checkboxDefault === false &&
       validId(consent.policyVersion) && validId(consent.evidenceRef) &&
       finiteDate(consent.optedInAt) && Date.parse(consent.optedInAt) <= now &&
       consent.revokedAt == null && normalizedEmail(consent.email) === normalizedEmail(user.email)
