@@ -1,5 +1,9 @@
 name: Staging Firestore marketing consent read-only QA
 on:
+  push:
+    branches: [feat/firestore-staging-consent-qa-runner-20261023]
+    paths:
+      - .github/workflows/staging-consent-readonly-qa.yml
   workflow_dispatch:
     inputs:
       expected_choice:
@@ -47,5 +51,5 @@ jobs:
         env:
           GOOGLE_CLOUD_PROJECT: idogs-app-staging
           QA_UID: ${{ vars.STAGING_QA_UID }}
-          EXPECTED_CHOICE: ${{ inputs.expected_choice }}
+          EXPECTED_CHOICE: ${{ inputs.expected_choice || 'opt_out' }}
         run: node scripts/qa-firestore-marketing-consent.mjs
