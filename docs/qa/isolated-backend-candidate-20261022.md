@@ -57,3 +57,11 @@ Billing read-only QA rendered unavailable subscription/SMS/payment details and l
 Merged production 490717fe3786d1ec7a829363e2c83e1806f3e5a3 without rewriting history. Its Landing/Billing branding and agent-pilot documentation are preserved. Scope verification now compares against this production SHA; frontend, Rules, dependencies and platform configuration remain identical to production. Earlier staging evidence remains tied to its recorded SHA and is not evidence for a newer Preview.
 
 Open staging findings: billing subscription lookup returned resource_missing; gallery upload displayed Failed to fetch without a confirmed transport root cause. The separate Showcase rerender fix remains in Draft PR #41. The cancelled login request was not retried. No production promotion, provider dispatch or physical Storage deletion is authorized by these checks.
+
+## Upload quota recovery — 2026-10-23
+
+Authenticated stacked Preview 4c11ec44 passed the new-puppy Showcase regression (two synthetic puppies; old unsaved personality retained; both puppies private; Showcase disabled; no public link). Billing still logs subscription/resource_missing. A gallery retry returned the pending-upload quota error.
+
+Grant issuance now reclaims expired pending slots for the authorized dog when its quota is full. The bounded query and quota/grant transition run in the same fenced transaction as issuance; unexpired, invalid-expiry and foreign-user grants stay untouched. Expired records remain durable cleanup obligations for the existing review queue. No Storage bytes are deleted and no Rules, indexes, CORS, secrets or platform configuration are changed.
+
+Validation: 247 app tests and TypeScript/Vite build; syntax of 147 API modules; 98 actual Auth/Firestore/Storage emulator cases. The new case covers frozen-account no mutation, concurrent issuance for one reclaimed slot, invalid/foreign grants, exact quota counts, no double release and retained Storage bytes. Legacy static media assertions were corrected to the existing review-only cleanup contract (59 pass; separate optional direct-upload emulator section skipped, not counted as E2E). Cloud CI and current Preview must be verified separately after publication. Real Storage transport and valid Stripe test subscription remain staging gates.

@@ -118,8 +118,8 @@ const { check, checkAsync, skip, summary } = makeChecker()
     /file\.download\(\)/.test(confirmSrc) &&
     /processImageForStorage\(rawBuffer\)/.test(confirmSrc) &&
     /processVideoForStorage\(rawBuffer\)/.test(confirmSrc))
-  check('confirm-showcase-media-upload.js deletes the Storage object when validation fails (never leaves an unproven file referencing nothing)',
-    /await deleteObjectQuietly\(bucket, grant\.path\)/.test(confirmSrc))
+  check('failed confirmation queues reviewed cleanup without physical Storage deletion',
+    /queueGrantCleanup\(/.test(confirmSrc) && !/\.delete\(/.test(confirmSrc))
   check('confirm-showcase-media-upload.js still enforces the duplicate-content-hash guard inside the final transaction',
     /freshItems\.some\(item => item\?\.hash === contentHash\)/.test(confirmSrc) && /DUPLICATE_MEDIA/.test(confirmSrc))
   check('confirm-showcase-media-upload.js still enforces MAX_MEDIA_ITEMS_PER_KIND (re-checked, in case it was hit during the upload window)',
@@ -143,8 +143,8 @@ const { check, checkAsync, skip, summary } = makeChecker()
     /releasePendingQuota\(tx, db, freshGrant\)/.test(confirmSrc))
 
   const cleanupSrc = readFileSync(new URL('../api/cleanup-showcase-media-uploads.js', import.meta.url), 'utf8')
-  check('expired-upload cleanup is cron-authenticated and only claims pending grants before deleting objects',
-    /checkCronAuth\(req\)/.test(cleanupSrc) && /closePendingGrant\(db, doc\.ref, 'expired'/.test(cleanupSrc) && /ignoreNotFound: true/.test(cleanupSrc))
+  check('expired-upload cleanup is cron-authenticated and queues review after closing pending grants',
+    /checkCronAuth\(req\)/.test(cleanupSrc) && /closePendingGrant\(db, doc\.ref, 'expired'/.test(cleanupSrc) && /queueGrantCleanup\(/.test(cleanupSrc) && !/\.delete\(/.test(cleanupSrc))
   check('Vercel schedules expired-upload cleanup',
     /cleanup-showcase-media-uploads/.test(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')))
 
