@@ -10,7 +10,7 @@ import {
   User
 } from 'firebase/auth'
 import { auth } from '../lib/firebase'
-import { createUserProfile, getUserProfile, updateUserProfile, deleteUserData } from '../lib/db'
+import { createUserProfile, getUserProfile, getUserProfileFromServer, updateUserProfile, deleteUserData } from '../lib/db'
 import type { UserProfile, SignupFormData } from '../types'
 
 interface AuthContextType {
@@ -21,7 +21,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   resetPassword: (email: string) => Promise<void>
-  refreshProfile: () => Promise<void>
+  refreshProfile: (fromServer?: boolean) => Promise<void>
   upgradeToBreeder: () => Promise<void>
   resendVerificationEmail: () => Promise<void>
   checkEmailVerified: () => Promise<boolean>
@@ -113,9 +113,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(p)
   }
 
-  async function refreshProfile() {
+  async function refreshProfile(fromServer = false) {
     if (!user) return
-    const p = await getUserProfile(user.uid)
+    const p = await (fromServer ? getUserProfileFromServer(user.uid) : getUserProfile(user.uid))
     setProfile(p)
   }
 
