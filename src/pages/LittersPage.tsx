@@ -2018,7 +2018,7 @@ function buildDraftFields(entry: LitterShowcase['puppies'][string], fallbackColo
 // Strict validation runs on blur. Invalid raw text remains visible and
 // the last valid cents remain committed; Save is blocked until corrected.
 
-function ShowcaseManager({
+export function ShowcaseManager({
   litterId, showcase, puppyDogs, busy, saveError, onToggleEnabled, onSaveDraft,
   shareBusy, shareError, shareLastRotatedToken, onRotateShare, onToggleShareEnabled, toast, onPuppyReconciled,
 }: {
@@ -2048,13 +2048,8 @@ function ShowcaseManager({
   const [mediaOpenFor, setMediaOpenFor] = useState<string | null>(null)
   const [reconcilingFor, setReconcilingFor] = useState<string | null>(null)
 
-  // ── Draft state, one entry per puppy — built once when this litter's
-  // panel mounts. ShowcaseManager only renders while its litter row is
-  // expanded (see the call site below), so this is a genuinely fresh
-  // mount every time the panel opens; there is no stale-closure risk
-  // from a parent prop changing while it stays open, since a successful
-  // Save updates these SAME local structures directly (see handleSaveAll)
-  // rather than re-deriving from parent props. ──
+  // Initialize drafts on mount. Puppies can also arrive while this panel
+  // stays open; seed only missing entries without replacing unsaved edits.
   const [fields, setFields] = useState<Record<string, PuppyDraftFields>>(() =>
     Object.fromEntries(puppyDogs.map(p => [p.id, buildDraftFields(showcase.puppies?.[p.id], p.colour)])))
   // Raw, un-reformatted text the breeder is currently typing into the
@@ -2084,6 +2079,18 @@ function ShowcaseManager({
   const [privateAccessEmails, setPrivateAccessEmails] = useState<Record<string, string>>({})
   const [privateAccessBusy, setPrivateAccessBusy] = useState<Record<string, boolean>>({})
   const [privateAccessErrors, setPrivateAccessErrors] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    setFields(prev => puppyDogs.every(p => prev[p.id] !== undefined) ? prev : {
+      ...Object.fromEntries(puppyDogs.map(p => [p.id, buildDraftFields(showcase.puppies?.[p.id], p.colour)])), ...prev,
+    })
+    setPriceText(prev => puppyDogs.every(p => prev[p.id] !== undefined) ? prev : {
+      ...Object.fromEntries(puppyDogs.map(p => [p.id, centsToMoneyText(buildDraftFields(showcase.puppies?.[p.id], p.colour).priceCents)])), ...prev,
+    })
+    setDepositText(prev => puppyDogs.every(p => prev[p.id] !== undefined) ? prev : {
+      ...Object.fromEntries(puppyDogs.map(p => [p.id, centsToMoneyText(buildDraftFields(showcase.puppies?.[p.id], p.colour).depositCents)])), ...prev,
+    })
+  }, [puppyDogs, showcase.puppies])
 
   // Puppy Edit is the canonical gallery manager. Keep this Showcase draft
   // synchronized when Edit adds, removes, reorders, or changes the cover so
@@ -2490,7 +2497,7 @@ function ShowcaseManager({
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {puppyDogs.map(puppy => {
-              const puppyFields = fields[puppy.id]
+              const puppyFields = fields[puppy.id] ?? buildDraftFields(showcase.puppies?.[puppy.id], puppy.colour)
               const checkboxId = `showcase-visible-${puppy.id}`
               const photoOrder = photoOrders[puppy.id] || []
               const videoOrder = videoOrders[puppy.id] || []

@@ -1,3 +1,4 @@
+import { withUploadNetworkError } from './directUploadNetwork'
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
   query, where, serverTimestamp, setDoc, Timestamp, deleteField, runTransaction
@@ -1311,27 +1312,27 @@ export async function uploadShowcaseMediaDirect(dogId: string, kind: 'photo' | '
   // only discovering it after the PUT has already happened.
   const body = typeof fileOrBase64 === 'string' ? base64ToBlob(fileOrBase64, contentType) : fileOrBase64
 
-  const requestRes = await fetch('/api/request-showcase-media-upload', {
+  const requestRes = await withUploadNetworkError('request', () => fetch('/api/request-showcase-media-upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
     body: JSON.stringify({ dogId, kind, contentType, sizeBytes: body.size }),
-  })
+  }))
   if (!requestRes.ok) {
     const err = await requestRes.json().catch(() => ({}))
     throw new Error(err.error || `Upload request failed (${requestRes.status})`)
   }
   const { mediaId, uploadUrl, requiredHeaders } = await requestRes.json()
 
-  const putRes = await fetch(uploadUrl, { method: 'PUT', headers: requiredHeaders, body })
+  const putRes = await withUploadNetworkError('storage', () => fetch(uploadUrl, { method: 'PUT', headers: requiredHeaders, body }))
   if (!putRes.ok) {
     throw new Error(`Upload failed (${putRes.status}) — please try again`)
   }
 
-  const confirmRes = await fetch('/api/confirm-showcase-media-upload', {
+  const confirmRes = await withUploadNetworkError('confirmation', () => fetch('/api/confirm-showcase-media-upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
     body: JSON.stringify({ mediaId }),
-  })
+  }))
   if (!confirmRes.ok) {
     const err = await confirmRes.json().catch(() => ({}))
     throw new Error(err.error || `Upload confirmation failed (${confirmRes.status})`)
