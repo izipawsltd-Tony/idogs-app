@@ -27,6 +27,19 @@ async function main() {
   try {
     const snapshot = await getFirestore(app).doc('users/' + uid).get()
     if (!snapshot.exists) throw Error('QA_USER_NOT_FOUND')
+    // Output only fixed-schema non-PII values, to diagnose stale or different
+    // consent records without logging identifiers or other user fields.
+    const c = snapshot.data()?.marketingConsent
+    const safeChoice = ['opt_in','opt_out'].includes(c?.choice) ? c.choice : 'unknown'
+    const safeSource = ['explicit_checkbox','account_settings'].includes(c?.source) ? c.source : 'unknown'
+    console.log(JSON.stringify({
+      project: PROJECT_ID, documentExists: true, expected,
+      observedChoice: safeChoice, observedSource: safeSource,
+      revokedAtPresent: typeof c?.revokedAt === 'string' && Number.isFinite(Date.parse(c.revokedAt)),
+      evidence: c?.evidenceRef === 'settings-opt-out-v1' ? 'settings_opt_out'
+        : c?.evidenceRef === 'settings-opt-in-v1' ? 'settings_opt_in'
+        : c?.evidenceRef === 'signup-checkbox-v1' ? 'signup' : 'unknown',
+    }))
     const result = evaluateConsent(snapshot.data(), expected)
     console.log(JSON.stringify(result))
     if (process.env.GITHUB_STEP_SUMMARY) {
