@@ -84,6 +84,7 @@ export async function findOwnerQaSmsInClickSendHistory({env=process.env,fetchImp
       let recentCount=null
       let recentQaMatch=false
       let recentResponse='UNAVAILABLE'
+      let senderMatches=0, bodyMatches=0, dateRange='UNKNOWN'
       if(recent.ok) {
         const body=await recent.json()
         recentResponse=body?.response_code==='SUCCESS'?'SUCCESS':'UNEXPECTED'
@@ -91,11 +92,20 @@ export async function findOwnerQaSmsInClickSendHistory({env=process.env,fetchImp
         recentCount=list.length
         recentQaMatch=list.some(x=>x?.from==='iDogs' && x?.body===QA_BODY &&
           (x?.direction==='out'||x?.direction==null))
+        senderMatches=list.filter(x=>x?.from==='iDogs').length
+        bodyMatches=list.filter(x=>x?.body===QA_BODY).length
+        const dates=list.map(x=>Number(x?.date)).filter(x=>Number.isFinite(x)&&x>0)
+        if(dates.length) {
+          const min=Math.min(...dates),max=Math.max(...dates)
+          dateRange=max<start?'BEFORE_QA_WINDOW':min>end?'AFTER_QA_WINDOW':
+            'OVERLAPS_QA_WINDOW'
+        } else if(recentCount===0) dateRange='EMPTY'
+
       }
       return {status:'NOT_FOUND_IN_RECENT_HISTORY',source:'HISTORY_FALLBACK',
         lockFound:false,historyRecordsInspected:inspected,pagesChecked:pageCount,
         unfilteredRecentCount:recentCount,unfilteredResponse:recentResponse,
-        unfilteredQaMatch:recentQaMatch}
+        unfilteredQaMatch:recentQaMatch,senderMatches,bodyMatches,dateRange}
     }
     if(matches.length!==1) return {status:'MULTIPLE_QA_MATCHES',source:'HISTORY_FALLBACK',
       lockFound:false,matchCount:matches.length}
