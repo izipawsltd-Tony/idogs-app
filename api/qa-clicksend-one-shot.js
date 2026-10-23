@@ -6,6 +6,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { sendClickSendSms } from './_lib/clicksend-sms.js'
 import { verifyClickSendAccount } from './_lib/clicksend-health.js'
+import { getClickSendDeliveryStatus } from './_lib/clicksend-delivery-status.js'
 
 const PROJECT = 'idogs-app-staging'
 const QA_EMAIL = 'idogsbreeder+qaa@gmail.com'
@@ -14,7 +15,7 @@ const RESPONSE_HEADERS = { 'Cache-Control': 'no-store' }
 
 export default async function handler(req, res) {
   Object.entries(RESPONSE_HEADERS).forEach(([k,v]) => res.setHeader(k,v))
-  if (req.method !== 'POST') return res.status(405).json({ error:'METHOD_NOT_ALLOWED' })
+  if (req.method !== 'POST' && req.method !== 'GET') return res.status(405).json({ error:'METHOD_NOT_ALLOWED' })
   if (process.env.VERCEL_ENV !== 'preview' ||
       process.env.FIREBASE_PROJECT_ID !== PROJECT ||
       process.env.SMS_PROVIDER !== 'clicksend' ||
@@ -39,6 +40,17 @@ export default async function handler(req, res) {
   if (!decoded.email_verified || decoded.email?.toLowerCase() !== QA_EMAIL)
     return res.status(403).json({error:'QA_ACCOUNT_ONLY'})
 
+  if (req.method === 'GET') {
+    // GET checks only existing QA delivery; never creates locks, sends or refunds.
+    const snap = await getFirestore().collection('smsQaOneShot').doc(LOCK).get()
+    if (!snap.exists) return res.status(404).json({error:'NO_QA_SMS_ATTEMPT'})
+    const saved = snap.data()
+    if (!saved?.providerMessageId) return res.status(200).json({
+      status:'OUTCOME_UNKNOWN', retryAllowed:false,
+    })
+    const delivery = await getClickSendDeliveryStatus(saved.providerMessageId)
+    return res.status(200).json({...delivery,retryAllowed:false})
+  }
   const verified = await verifyClickSendAccount()
   if (!verified.ok) return res.status(503).json({error:verified.reason})
   const db = getFirestore()
