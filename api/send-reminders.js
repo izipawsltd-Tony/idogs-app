@@ -7,6 +7,7 @@ import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
 import { requireAppUrl, logConfigError } from './_lib/require-config.js'
 import { checkCronAuth } from './_lib/cron-auth.js'
 import { sendSmsWithQuota } from './_lib/sms-addon.js'
+import { smsSendGate } from './_lib/sms-sender-readiness.js'
 import { deliverManualReminder } from './_lib/manual-reminder-delivery.js'
 
 if (!getApps().length) {
@@ -89,6 +90,8 @@ async function sendReminderSms({
   now,
 }) {
   if (!phone) return { sent: false, reason: 'NO_PHONE' }
+  const gate = smsSendGate()
+  if (!gate.ready) return { sent: false, reason: gate.reason }
   return sendSmsWithQuota({
     db,
     tenantId,

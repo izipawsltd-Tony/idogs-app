@@ -3,6 +3,7 @@
 // The reminder engine sends structured, server-generated messages only.
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
 import { checkCronAuth } from './_lib/cron-auth.js'
+import { smsSendGate } from './_lib/sms-sender-readiness.js'
 
 const sns = new SNSClient({
   region: process.env.AWS_SNS_REGION || 'ap-southeast-2',
@@ -31,12 +32,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Message too long' })
   }
 
+  const gate = smsSendGate()
+  if (!gate.ready) return res.status(503).json({ error: gate.reason })
+
   try {
     const result = await sns.send(new PublishCommand({
       Message: message,
       PhoneNumber: phone,
       MessageAttributes: {
-        'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: 'iDogs' },
+        'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: gate.senderId },
         'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },
       },
     }))

@@ -29,6 +29,8 @@ export default function SettingsPage({ toast }: Props) {
   })
   const [savingProfile, setSavingProfile] = useState(false)
   const [changingRole, setChangingRole] = useState(false)
+  const [consentServerStatus, setConsentServerStatus] = useState<string | null>(null)
+  const [consentServerChecking, setConsentServerChecking] = useState(false)
 
   const marketingEnabled = profile?.marketingConsent?.choice === 'opt_in' && !profile.marketingConsent.revokedAt && profile.marketingConsent.email?.toLowerCase() === user?.email?.toLowerCase()
   const isOwner = profile?.role === 'owner'
@@ -54,9 +56,29 @@ export default function SettingsPage({ toast }: Props) {
     }
   }
 
+  // Staging-only independent server read, for QA without exposing any user records.
+  async function verifyMarketingConsentServer() {
+    if (!user || db.app?.options?.projectId !== 'idogs-app-staging') return
+    setConsentServerChecking(true)
+    setConsentServerStatus(null)
+    try {
+      const snap = await getDocFromServer(doc(db, 'users', user.uid))
+      const consent = snap.data()?.marketingConsent
+      const choice = consent?.choice === 'opt_in' || consent?.choice === 'opt_out'
+        ? consent.choice : 'missing'
+      const source = consent?.source === 'account_settings' || consent?.source === 'explicit_checkbox'
+        ? consent.source : 'unknown'
+      const revoked = typeof consent?.revokedAt === 'string' && !!Date.parse(consent.revokedAt)
+      setConsentServerStatus(`Staging server: ${choice} | ${source} | revokedAt: ${revoked ? 'set' : 'null'}`)
+    } catch {
+      setConsentServerStatus('Staging server read failed — consent unverified')
+    } finally { setConsentServerChecking(false) }
+  }
+
   async function setMarketingConsent(enabled: boolean) {
     if (!user || saving) return
     setSaving('marketingConsent')
+    setConsentServerStatus(null)
     try {
       const existing = profile?.marketingConsent
       const now = new Date().toISOString()
@@ -84,6 +106,9 @@ export default function SettingsPage({ toast }: Props) {
         throw new Error('MARKETING_CONSENT_NOT_PERSISTED')
       }
       await refreshProfile()
+      if (db.app?.options?.projectId === 'idogs-app-staging') {
+        setConsentServerStatus(`Staging server: ${actual.choice} | ${actual.source} | revokedAt: ${actual.revokedAt ? 'set' : 'null'}`)
+      }
       toast(enabled ? 'Marketing email preference saved' : 'Marketing emails disabled', 'success')
     } catch {
       toast('Could not save marketing preference. Please try again.', 'error')
@@ -540,6 +565,16 @@ export default function SettingsPage({ toast }: Props) {
           onToggle={() => setMarketingConsent(!marketingEnabled)}
         />
         <p style={{ fontSize: 12, color: 'var(--light)', marginTop: 10 }}>Existing accounts are off unless they explicitly opt in. Unsubscribing from a promotional email also prevents future campaign sends.</p>
+        {db.app?.options?.projectId === 'idogs-app-staging' && (
+          <div style={{ marginTop: 12, padding: 10, background: 'var(--sand)', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600 }}>Staging QA · Firebase project: idogs-app-staging</div>
+            <button type="button" className="btn btn-secondary btn-sm" disabled={consentServerChecking}
+              onClick={verifyMarketingConsentServer} style={{ marginTop: 8 }}>
+              {consentServerChecking ? 'Checking…' : 'Verify saved consent on server'}
+            </button>
+            {consentServerStatus && <div role="status" style={{ fontSize: 12, marginTop: 8 }}>{consentServerStatus}</div>}
+          </div>
+        )}
       </div>
 
       {/* ── DATA & PRIVACY ── */}
