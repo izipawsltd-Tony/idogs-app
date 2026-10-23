@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
+import { doc, getDocFromServer } from 'firebase/firestore'
+import { db } from '../lib/firebase'
 import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
 import { REMINDER_TYPES } from '../components/ui/ReminderForm'
 import type { Reminder, ToastMessage } from '../types'
@@ -71,6 +73,16 @@ export default function SettingsPage({ toast }: Props) {
           evidenceRef: enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1',
         },
       })
+      // Do not trust a local-cache echo as evidence of remote persistence.
+      // Read back from Firestore server before reporting success.
+      const stored = await getDocFromServer(doc(db, 'users', user.uid))
+      const actual = stored.data()?.marketingConsent
+      if (!stored.exists() || actual?.choice !== (enabled ? 'opt_in' : 'opt_out') ||
+          actual?.source !== 'account_settings' ||
+          actual?.evidenceRef !== (enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1') ||
+          (enabled ? actual?.revokedAt != null : !actual?.revokedAt)) {
+        throw new Error('MARKETING_CONSENT_NOT_PERSISTED')
+      }
       await refreshProfile()
       toast(enabled ? 'Marketing email preference saved' : 'Marketing emails disabled', 'success')
     } catch {
