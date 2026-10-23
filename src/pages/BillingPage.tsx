@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import type { ToastMessage } from '../types'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
 import { isNativeApp } from '../lib/nativePlatform'
+import { subscriptionStatusCopy } from '../lib/subscriptionStatusCopy'
 import { getEffectivePlanClient, hasValidInternalEntitlementClient } from '../lib/utils'
 import {
   androidPlanUnavailableNotice,
@@ -36,6 +37,8 @@ interface BillingSummary {
     status: string
     cancelAtPeriodEnd: boolean
     currentPeriodEnd: string | null
+    trialEnd?: string | null
+    promotionStatus?: 'confirmed' | 'not_confirmed'
   } | null
   invoices: BillingInvoice[]
   canManageBilling: boolean
@@ -115,6 +118,7 @@ export default function BillingPage({ toast }: Props) {
   // status and existing entitlements (including cancelling an SMS add-on) still work.
   const nativePurchasesUnavailable = isNativeApp()
   const showExternalPaymentCopy = showExternalPaymentFaq(nativePurchasesUnavailable)
+  const subscriptionCopy = billingDetails?.subscription ? subscriptionStatusCopy(billingDetails.subscription) : null
 
   useEffect(() => {
     if (searchParams.get('success')) {
@@ -328,7 +332,8 @@ export default function BillingPage({ toast }: Props) {
                 <div role="alert" style={{ fontSize: 12, color: 'var(--danger, #C0392B)', marginTop: 4 }}>{detailsError}</div>
               ) : billingDetails?.subscription ? (
                 <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>
-                  {billingDetails.subscription.cancelAtPeriodEnd ? 'Access scheduled to end' : 'Next renewal'}: <strong>{formatBillingDate(billingDetails.subscription.currentPeriodEnd)}</strong>
+                  {subscriptionCopy?.label}: <strong>{formatBillingDate(subscriptionCopy?.date ?? null)}</strong>
+                  {subscriptionCopy?.promotion && <p style={{ marginTop: 8, marginBottom: 0 }}>{subscriptionCopy?.promotion}</p>}
                 </div>
               ) : (
                 <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>Manage payment methods, invoices and cancellation securely in Stripe.</div>
