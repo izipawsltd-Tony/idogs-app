@@ -77,6 +77,22 @@ export default function SettingsPage({ toast }: Props) {
     } finally { setConsentServerChecking(false) }
   }
 
+  async function checkClickSendDelivery() {
+    if (!user || clickSendQaBusy) return
+    setClickSendQaBusy(true)
+    try {
+      const token = await user.getIdToken()
+      const res = await fetch('/api/qa-clicksend-one-shot', {
+        method:'GET',headers:{ Authorization:'Bearer '+token },
+      })
+      const result = await res.json()
+      const status = ['DELIVERED','FAILED','PENDING','OUTCOME_UNKNOWN','NOT_FOUND_IN_RECENT_HISTORY',
+        'CHECK_UNAVAILABLE','HISTORY_UNAVAILABLE'].includes(result.status) ? result.status : 'UNVERIFIED'
+      setClickSendQaStatus('ClickSend delivery: '+status+' (read-only; SMS will not be resent)')
+    } catch {setClickSendQaStatus('Delivery status unavailable. SMS will not be resent.')}
+    finally { setClickSendQaBusy(false) }
+  }
+
   async function runSingleClickSendQa() {
     if (!user || clickSendQaBusy) return
     setClickSendQaBusy(true)
@@ -609,6 +625,11 @@ export default function SettingsPage({ toast }: Props) {
           <button type="button" className="btn btn-secondary btn-sm"
             disabled={clickSendQaBusy} onClick={runSingleClickSendQa}>
             {clickSendQaBusy ? 'Submitting once…' : 'Send one approved SMS test'}
+          </button>
+          <button type="button" className="btn btn-secondary btn-sm"
+            style={{ marginLeft: 8 }} disabled={clickSendQaBusy}
+            onClick={checkClickSendDelivery}>
+            Check delivery (no resend)
           </button>
           {clickSendQaStatus && <p role="status" style={{ marginTop: 8, fontSize: 12 }}>{clickSendQaStatus}</p>}
         </div>
