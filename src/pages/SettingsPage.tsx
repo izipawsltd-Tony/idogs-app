@@ -92,7 +92,10 @@ export default function SettingsPage({ toast }: Props) {
       const code = ['STAGING_QA_DISABLED','UNAUTHENTICATED','INVALID_AUTH','QA_ACCOUNT_ONLY',
         'NO_QA_SMS_ATTEMPT','QA_LOCK_FAILED'].includes(result.error) ? result.error : null
       const inspected = Number.isInteger(result.historyRecordsInspected)
-        ? ' | inspected '+result.historyRecordsInspected+' history records across '+result.pagesChecked+' pages' : ''
+        ? ' | filtered '+result.historyRecordsInspected+' records / '+result.pagesChecked+' pages'
+          +(Number.isInteger(result.unfilteredRecentCount) ? ' | unfiltered recent '+result.unfilteredRecentCount : '')
+          +(result.unfilteredResponse ? ' | history API '+result.unfilteredResponse : '')
+          +(result.unfilteredQaMatch === true ? ' | QA match in unfiltered history' : '') : ''
       setClickSendQaStatus(res.ok
         ? 'ClickSend delivery: '+status+(result.source ? ' ['+result.source+']' : '')+inspected+' (read-only; SMS will not be resent)'
         : 'Delivery check blocked: '+(code || 'HTTP_'+res.status)+' (SMS will not be resent)')
