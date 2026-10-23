@@ -4,8 +4,6 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
-import { sendClickSendSms } from './_lib/clicksend-sms.js'
-import { verifyClickSendAccount } from './_lib/clicksend-health.js'
 import { getClickSendDeliveryStatus, findOwnerQaSmsInClickSendHistory } from './_lib/clicksend-delivery-status.js'
 
 const PROJECT = 'idogs-app-staging'
@@ -40,48 +38,20 @@ export default async function handler(req, res) {
     // GET checks only existing QA delivery; never creates locks, sends or refunds.
     const snap = await getFirestore().collection('smsQaOneShot').doc(LOCK).get()
     if (!snap.exists) {
+      // No stored provider call evidence in this Firebase project.
       // No lock in this Firestore: NEVER treat this as permission to resend.
       // Reconcile one exact approved QA body from ClickSend History, read-only.
       const fallback = await findOwnerQaSmsInClickSendHistory()
-      return res.status(200).json({...fallback,retryAllowed:false})
+      return res.status(200).json({...fallback,firestoreLock:'ABSENT',providerMessageIdStored:false,deliveryVerified:false,retryAllowed:false})
     }
     const saved = snap.data()
     if (!saved?.providerMessageId) return res.status(200).json({
-      status:'OUTCOME_UNKNOWN', retryAllowed:false,
+      status:'OUTCOME_UNKNOWN', firestoreLock:'PRESENT',providerMessageIdStored:false,deliveryVerified:false,retryAllowed:false,
     })
     const delivery = await getClickSendDeliveryStatus(saved.providerMessageId)
-    return res.status(200).json({...delivery,retryAllowed:false})
+    return res.status(200).json({...delivery,firestoreLock:'PRESENT',providerMessageIdStored:true,deliveryVerified:delivery.status==='DELIVERED',retryAllowed:false})
   }
-  // POST remains branch-gated. GET delivery status never enables sending.
-  if (process.env.SMS_QA_ONE_SHOT_ENABLED !== 'true')
-    return res.status(503).json({ error:'QA_SEND_DISABLED_ON_THIS_BRANCH' })
-  const phone = process.env.SMS_QA_TEST_RECIPIENT
-  if (typeof phone !== 'string' || !/^\+614\d{8}$/.test(phone))
-    return res.status(503).json({ error:'QA_RECIPIENT_NOT_CONFIGURED' })
-  const verified = await verifyClickSendAccount()
-  if (!verified.ok) return res.status(503).json({error:verified.reason})
-  const db = getFirestore()
-  const ref = db.collection('smsQaOneShot').doc(LOCK)
-  try {
-    await ref.create({
-      status:'reserved',
-      purpose:'owner-approved-single-clicksend-qa',
-      provider:'clicksend',
-      senderId:'iDogs',
-      createdAt:new Date().toISOString(),
-    })
-  } catch (err) {
-    if (err?.code === 6 || err?.code === 'already-exists')
-      return res.status(409).json({error:'QA_SMS_ALREADY_ATTEMPTED'})
-    return res.status(503).json({error:'QA_LOCK_FAILED'})
-  }
-  try {
-    const result = await sendClickSendSms(phone, 'iDogs QA: test of registered Sender ID iDogs. No action required.')
-    await ref.set({status:'queued', providerMessageId:result.MessageId, queuedAt:new Date().toISOString()},{merge:true})
-    return res.status(200).json({result:'QUEUED', messageId:result.MessageId})
-  } catch(err) {
-    // No automatic unlock; even network failure can mean delivery was queued.
-    await ref.set({status:'unresolved', reason:err?.code || 'PROVIDER_ERROR'},{merge:true}).catch(()=>{})
-    return res.status(502).json({error:'QA_SEND_UNCONFIRMED', retryDisabled:true})
-  }
+  // Historical one-shot test has closed. Never re-enable this POST via an env flag.
+  // A new SMS would require a separate owner approval and a distinct audited endpoint.
+  return res.status(410).json({ error:'QA_ONE_SHOT_CLOSED', retryDisabled:true })
 }
