@@ -99,33 +99,13 @@ export default function SettingsPage({ toast }: Props) {
           +(Number.isInteger(result.senderMatches)?' | sender matches '+result.senderMatches:'')
           +(Number.isInteger(result.bodyMatches)?' | body matches '+result.bodyMatches:'')
           +(typeof result.dateRange==='string'?' | date coverage '+result.dateRange:'') : ''
+      const evidence = ' | Firestore lock '+(result.firestoreLock || 'UNKNOWN')
+        +' | provider Message ID stored '+(result.providerMessageIdStored===true?'YES':'NO')
       setClickSendQaStatus(res.ok
-        ? 'ClickSend delivery: '+status+(result.source ? ' ['+result.source+']' : '')+inspected+' (read-only; SMS will not be resent)'
+        ? 'ClickSend delivery: '+status+(result.source ? ' ['+result.source+']' : '')+inspected+evidence+' (read-only; SMS will not be resent)'
         : 'Delivery check blocked: '+(code || 'HTTP_'+res.status)+' (SMS will not be resent)')
     } catch {setClickSendQaStatus('Delivery status unavailable. SMS will not be resent.')}
     finally { setClickSendQaBusy(false) }
-  }
-
-  async function runSingleClickSendQa() {
-    if (!user || clickSendQaBusy) return
-    setClickSendQaBusy(true)
-    setClickSendQaStatus('Checking one-time SMS...')
-    try {
-      const token = await user.getIdToken()
-      const result = await fetch('/api/qa-clicksend-one-shot', {
-        method: 'POST', headers: { Authorization: 'Bearer ' + token },
-      })
-      const data = await result.json()
-      if (result.ok && data.result === 'QUEUED') {
-        setClickSendQaStatus('One SMS queued with ClickSend. Check delivery on your phone.')
-      } else {
-        setClickSendQaStatus(data.error === 'QA_SMS_ALREADY_ATTEMPTED'
-          ? 'Single SMS test already attempted; no repeat allowed.'
-          : 'Test blocked or unconfirmed (' + (data.error || 'error') + '). No automatic retry.')
-      }
-    } catch {
-      setClickSendQaStatus('Request unconfirmed. Do not retry: delivery may have been queued.')
-    } finally { setClickSendQaBusy(false) }
   }
 
   async function setMarketingConsent(enabled: boolean) {
@@ -634,11 +614,8 @@ export default function SettingsPage({ toast }: Props) {
         user?.email?.toLowerCase() === 'idogsbreeder+qaa@gmail.com' && (
         <div className="card" style={{ marginBottom: 16, padding: 20 }}>
           <strong>iDogs ClickSend — one-time owner QA</strong>
-          <p style={{ fontSize: 12 }}>Sends exactly one approved test SMS to the owner's preconfigured phone; no bulk sending. No automatic retry.</p>
-          <button type="button" className="btn btn-secondary btn-sm"
-            disabled={clickSendQaBusy} onClick={runSingleClickSendQa}>
-            {clickSendQaBusy ? 'Submitting once…' : 'Send one approved SMS test'}
-          </button>
+          <p style={{ fontSize: 12 }}>Read-only audit of historical one-shot test. Sending is permanently disabled on this preview.</p>
+          <p style={{ fontSize: 12 }}>Historical SMS QA is closed. No new SMS can be sent here.</p>
           <button type="button" className="btn btn-secondary btn-sm"
             style={{ marginLeft: 8 }} disabled={clickSendQaBusy}
             onClick={checkClickSendDelivery}>
