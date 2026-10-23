@@ -4,6 +4,7 @@ on:
     branches: [feat/firestore-staging-consent-qa-runner-20261023]
     paths:
       - .github/workflows/staging-consent-readonly-qa.yml
+      - scripts/qa-firestore-marketing-consent.mjs
   workflow_dispatch:
     inputs:
       expected_choice:
