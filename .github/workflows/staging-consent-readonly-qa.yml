@@ -1,7 +1,7 @@
 name: Staging Firestore marketing consent read-only QA
 on:
   push:
-    branches: [feat/firestore-staging-consent-qa-runner-20261023]
+    branches: [feat/firestore-staging-consent-qa-runner-20261023, fix/consent-diagnostic-sms-sender-20261023]
     paths:
       - .github/workflows/staging-consent-readonly-qa.yml
       - scripts/qa-firestore-marketing-consent.mjs
