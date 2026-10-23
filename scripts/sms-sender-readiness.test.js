@@ -1,13 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { smsSendGate } from '../api/_lib/sms-sender-readiness.js'
-const ready = () => ({
- SMS_SENDING_ENABLED:'true', SMS_SENDER_ID:'iDogs',
- SMS_PROVIDER_ACCOUNT_VERIFIED:'true', AWS_SNS_REGION:'ap-southeast-2'
-})
-describe('iDogs sender ID guarded SMS readiness', () => {
- it('is disabled by default',()=>expect(smsSendGate({}).ready).toBe(false))
- it('uses the ACMA-approved exact case',()=>expect(smsSendGate({...ready(),SMS_SENDER_ID:'IZIPAWS'}).ready).toBe(false))
- it('requires explicit AWS account verification',()=>expect(smsSendGate({...ready(),SMS_PROVIDER_ACCOUNT_VERIFIED:'false'}).ready).toBe(false))
- it('requires Sydney region',()=>expect(smsSendGate({...ready(),AWS_SNS_REGION:'us-east-1'}).ready).toBe(false))
- it('accepts fully verified configuration',()=>expect(smsSendGate(ready()).senderId).toBe('iDogs'))
+const cfg=()=>({SMS_SENDING_ENABLED:'true',SMS_PROVIDER:'clicksend',SMS_SENDER_ID:'iDogs',SMS_PROVIDER_ACCOUNT_VERIFIED:'true',CLICKSEND_USERNAME:'qa',CLICKSEND_API_KEY:'test'})
+describe('ClickSend sender readiness',()=>{
+ it('disabled by default',()=>expect(smsSendGate({}).ready).toBe(false))
+ it('rejects AWS SNS',()=>expect(smsSendGate({...cfg(),SMS_PROVIDER:'aws'}).ready).toBe(false))
+ it('rejects unapproved sender',()=>expect(smsSendGate({...cfg(),SMS_SENDER_ID:'IZIPAWS'}).ready).toBe(false))
+ it('rejects unverified account',()=>expect(smsSendGate({...cfg(),SMS_PROVIDER_ACCOUNT_VERIFIED:'false'}).ready).toBe(false))
+ it('rejects missing keys',()=>expect(smsSendGate({...cfg(),CLICKSEND_API_KEY:''}).ready).toBe(false))
+ it('permits verified ClickSend config',()=>expect(smsSendGate(cfg()).ready).toBe(true))
 })

@@ -3,7 +3,7 @@
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
-import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
+import { sendClickSendSms } from './_lib/clicksend-sms.js'
 import { requireAppUrl, logConfigError } from './_lib/require-config.js'
 import { checkCronAuth } from './_lib/cron-auth.js'
 import { sendSmsWithQuota } from './_lib/sms-addon.js'
@@ -21,13 +21,6 @@ if (!getApps().length) {
 }
 
 const db = getFirestore()
-const sns = new SNSClient({
-  region: process.env.AWS_SNS_REGION || 'ap-southeast-2',
-  credentials: {
-    accessKeyId: process.env.AWS_SNS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SNS_SECRET_ACCESS_KEY,
-  },
-})
 
 // Dogs eligible for reminder processing under `tenantId` — mirrors the
 // ownership rule getDogs() uses client-side. tenantId permanently stays
@@ -66,15 +59,7 @@ async function getReminderEligibleDogs(tenantId) {
 }
 
 async function sendSmsProvider(phone, message) {
-  const command = new PublishCommand({
-    Message: message,
-    PhoneNumber: phone,
-    MessageAttributes: {
-      'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: 'iDogs' },
-      'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },
-    },
-  })
-  return sns.send(command)
+  return sendClickSendSms(phone, message)
 }
 
 async function sendReminderSms({
