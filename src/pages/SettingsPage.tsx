@@ -128,6 +128,23 @@ export default function SettingsPage({ toast }: Props) {
     } finally { setClickSendQaBusy(false) }
   }
 
+  async function runFirestoreQuotaQa(method: 'GET'|'POST') {
+    if(!user || clickSendQaBusy) return
+    setClickSendQaBusy(true)
+    try {
+      const token=await user.getIdToken(true)
+      const response=await fetch('/api/qa-sms-quota-firestore',{
+        method,headers:{Authorization:'Bearer '+token},
+      })
+      const result=await response.json()
+      const fields=['status','phase','error','firstQueued','duplicateReason','exhaustedReason',
+        'creditsAfterFirst','creditsAtLimit','deliveryStatus','providerCalls','transport']
+      setClickSendQaStatus('Firestore quota QA | '+fields.filter(k=>result[k]!==undefined)
+        .map(k=>k+'='+String(result[k])).join(' | '))
+    } catch {setClickSendQaStatus('Firestore QA status unknown; do not repeat.')}
+    finally {setClickSendQaBusy(false)}
+  }
+
   async function setMarketingConsent(enabled: boolean) {
     if (!user || saving) return
     setSaving('marketingConsent')
@@ -655,6 +672,22 @@ export default function SettingsPage({ toast }: Props) {
           <button type="button" className="btn btn-secondary btn-sm"
             style={{marginLeft:8}} disabled={clickSendQaBusy}
             onClick={()=>checkLiveSmsQa('GET')}>Check LIVE delivery (no resend)</button>
+          {clickSendQaStatus && <p role="status" style={{marginTop:8,fontSize:12}}>{clickSendQaStatus}</p>}
+        </div>
+      )}
+
+      {db.app?.options?.projectId === 'idogs-app-staging' &&
+        user?.email?.toLowerCase() === 'idogsbreeder+qaa@gmail.com' && (
+        <div className="card" style={{marginBottom:16,padding:20}}>
+          <strong>Firestore SMS Reminder Quota E2E — Staging only</strong>
+          <p style={{fontSize:12}}>Real Firestore QA transactions for 1/20, duplicate and 20/20 limit. Isolated synthetic collections. NO real SMS.</p>
+          <button type="button" className="btn btn-secondary btn-sm"
+            disabled={clickSendQaBusy} onClick={()=>runFirestoreQuotaQa('POST')}>
+            Run one-time Firestore quota QA
+          </button>
+          <button type="button" className="btn btn-secondary btn-sm"
+            style={{marginLeft:8}} disabled={clickSendQaBusy}
+            onClick={()=>runFirestoreQuotaQa('GET')}>Read quota QA result</button>
           {clickSendQaStatus && <p role="status" style={{marginTop:8,fontSize:12}}>{clickSendQaStatus}</p>}
         </div>
       )}
