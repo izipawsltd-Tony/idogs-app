@@ -31,6 +31,8 @@ export default function SettingsPage({ toast }: Props) {
   const [changingRole, setChangingRole] = useState(false)
   const [consentServerStatus, setConsentServerStatus] = useState<string | null>(null)
   const [consentServerChecking, setConsentServerChecking] = useState(false)
+  const [clickSendQaStatus, setClickSendQaStatus] = useState('')
+  const [clickSendQaBusy, setClickSendQaBusy] = useState(false)
 
   const marketingEnabled = profile?.marketingConsent?.choice === 'opt_in' && !profile.marketingConsent.revokedAt && profile.marketingConsent.email?.toLowerCase() === user?.email?.toLowerCase()
   const isOwner = profile?.role === 'owner'
@@ -73,6 +75,28 @@ export default function SettingsPage({ toast }: Props) {
     } catch {
       setConsentServerStatus('Staging server read failed — consent unverified')
     } finally { setConsentServerChecking(false) }
+  }
+
+  async function runSingleClickSendQa() {
+    if (!user || clickSendQaBusy) return
+    setClickSendQaBusy(true)
+    setClickSendQaStatus('Checking one-time SMS...')
+    try {
+      const token = await user.getIdToken()
+      const result = await fetch('/api/qa-clicksend-one-shot', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + token },
+      })
+      const data = await result.json()
+      if (result.ok && data.result === 'QUEUED') {
+        setClickSendQaStatus('One SMS queued with ClickSend. Check delivery on your phone.')
+      } else {
+        setClickSendQaStatus(data.error === 'QA_SMS_ALREADY_ATTEMPTED'
+          ? 'Single SMS test already attempted; no repeat allowed.'
+          : 'Test blocked or unconfirmed (' + (data.error || 'error') + '). No automatic retry.')
+      }
+    } catch {
+      setClickSendQaStatus('Request unconfirmed. Do not retry: delivery may have been queued.')
+    } finally { setClickSendQaBusy(false) }
   }
 
   async function setMarketingConsent(enabled: boolean) {
@@ -576,6 +600,19 @@ export default function SettingsPage({ toast }: Props) {
           </div>
         )}
       </div>
+
+      {db.app?.options?.projectId === 'idogs-app-staging' &&
+        user?.email?.toLowerCase() === 'idogsbreeder+qaa@gmail.com' && (
+        <div className="card" style={{ marginBottom: 16, padding: 20 }}>
+          <strong>iDogs ClickSend — one-time owner QA</strong>
+          <p style={{ fontSize: 12 }}>Sends exactly one approved test SMS to the owner's preconfigured phone; no bulk sending. No automatic retry.</p>
+          <button type="button" className="btn btn-secondary btn-sm"
+            disabled={clickSendQaBusy} onClick={runSingleClickSendQa}>
+            {clickSendQaBusy ? 'Submitting once…' : 'Send one approved SMS test'}
+          </button>
+          {clickSendQaStatus && <p role="status" style={{ marginTop: 8, fontSize: 12 }}>{clickSendQaStatus}</p>}
+        </div>
+      )}
 
       {/* ── DATA & PRIVACY ── */}
       <div className="card">
