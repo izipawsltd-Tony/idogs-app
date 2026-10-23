@@ -1,0 +1,56 @@
+name: Staging Firestore marketing consent read-only QA
+on:
+  push:
+    branches: [feat/firestore-staging-consent-qa-runner-20261023]
+    paths:
+      - .github/workflows/staging-consent-readonly-qa.yml
+      - scripts/qa-firestore-marketing-consent.mjs
+  workflow_dispatch:
+    inputs:
+      expected_choice:
+        description: Expected saved consent after manual QA toggle
+        type: choice
+        options: [opt_out, opt_in]
+        required: true
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: staging-consent-readonly
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: staging-qa
+    steps:
+      - name: Fail closed if staging credentials are missing
+        shell: bash
+        env:
+          PROVIDER: ${{ vars.STAGING_QA_WIF_PROVIDER }}
+          SERVICE_ACCOUNT: ${{ vars.STAGING_QA_SERVICE_ACCOUNT }}
+          QA_UID: ${{ vars.STAGING_QA_UID }}
+        run: |
+          test -n "$PROVIDER" && test -n "$SERVICE_ACCOUNT" && test -n "$QA_UID" || { echo "Missing staging QA configuration"; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Authenticate via short-lived OIDC (no JSON private key)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.STAGING_QA_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_QA_SERVICE_ACCOUNT }}
+          project_id: idogs-app-staging
+          create_credentials_file: true
+          export_environment_variables: true
+      - name: Read one synthetic user document, never write
+        env:
+          GOOGLE_CLOUD_PROJECT: idogs-app-staging
+          QA_UID: ${{ vars.STAGING_QA_UID }}
+          EXPECTED_CHOICE: ${{ inputs.expected_choice || 'opt_out' }}
+        run: node scripts/qa-firestore-marketing-consent.mjs
