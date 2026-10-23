@@ -1,12 +1,14 @@
 name: Read-only staging billing link
 on:
-  push:
-    branches: [fix/staging-billing-link-20261023]
+  pull_request:
+    paths:
+      - scripts/inspect-staging-billing-link.mjs
+      - .github/workflows/staging-billing-link.yml
 permissions:
   contents: read
 jobs:
   inspect:
-    if: github.repository == 'izipawsltd-Tony/idogs-app'
+    if: github.repository == 'izipawsltd-Tony/idogs-app' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/staging-billing-link-20261023'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
