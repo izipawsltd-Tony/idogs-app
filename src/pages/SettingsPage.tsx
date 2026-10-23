@@ -77,6 +77,35 @@ export default function SettingsPage({ toast }: Props) {
     } finally { setConsentServerChecking(false) }
   }
 
+  async function checkClickSendDelivery() {
+    if (!user || clickSendQaBusy) return
+    setClickSendQaBusy(true)
+    try {
+      const token = await user.getIdToken()
+      const res = await fetch('/api/qa-clicksend-one-shot', {
+        method:'GET',headers:{ Authorization:'Bearer '+token },
+      })
+      const result = await res.json()
+      const valid = ['DELIVERED','FAILED','PENDING','OUTCOME_UNKNOWN','NOT_FOUND_IN_RECENT_HISTORY',
+        'CHECK_UNAVAILABLE','HISTORY_UNAVAILABLE','CONFIG_MISSING','INVALID_MESSAGE_ID','MULTIPLE_QA_MATCHES']
+      const status = valid.includes(result.status) ? result.status : 'UNVERIFIED'
+      const code = ['STAGING_QA_DISABLED','UNAUTHENTICATED','INVALID_AUTH','QA_ACCOUNT_ONLY',
+        'NO_QA_SMS_ATTEMPT','QA_LOCK_FAILED'].includes(result.error) ? result.error : null
+      const inspected = Number.isInteger(result.historyRecordsInspected)
+        ? ' | filtered '+result.historyRecordsInspected+' records / '+result.pagesChecked+' pages'
+          +(Number.isInteger(result.unfilteredRecentCount) ? ' | unfiltered recent '+result.unfilteredRecentCount : '')
+          +(result.unfilteredResponse ? ' | history API '+result.unfilteredResponse : '')
+          +(result.unfilteredQaMatch === true ? ' | QA match in unfiltered history' : '')
+          +(Number.isInteger(result.senderMatches)?' | sender matches '+result.senderMatches:'')
+          +(Number.isInteger(result.bodyMatches)?' | body matches '+result.bodyMatches:'')
+          +(typeof result.dateRange==='string'?' | date coverage '+result.dateRange:'') : ''
+      setClickSendQaStatus(res.ok
+        ? 'ClickSend delivery: '+status+(result.source ? ' ['+result.source+']' : '')+inspected+' (read-only; SMS will not be resent)'
+        : 'Delivery check blocked: '+(code || 'HTTP_'+res.status)+' (SMS will not be resent)')
+    } catch {setClickSendQaStatus('Delivery status unavailable. SMS will not be resent.')}
+    finally { setClickSendQaBusy(false) }
+  }
+
   async function runSingleClickSendQa() {
     if (!user || clickSendQaBusy) return
     setClickSendQaBusy(true)
@@ -609,6 +638,11 @@ export default function SettingsPage({ toast }: Props) {
           <button type="button" className="btn btn-secondary btn-sm"
             disabled={clickSendQaBusy} onClick={runSingleClickSendQa}>
             {clickSendQaBusy ? 'Submitting once…' : 'Send one approved SMS test'}
+          </button>
+          <button type="button" className="btn btn-secondary btn-sm"
+            style={{ marginLeft: 8 }} disabled={clickSendQaBusy}
+            onClick={checkClickSendDelivery}>
+            Check delivery (no resend)
           </button>
           {clickSendQaStatus && <p role="status" style={{ marginTop: 8, fontSize: 12 }}>{clickSendQaStatus}</p>}
         </div>
