@@ -20,10 +20,13 @@ jobs:
     steps:
       - name: Verify exact OIDC QA configuration
         env:
-          PROVIDER: ${{ vars.STAGING_QA_WIF_PROVIDER }}
-          SERVICE_ACCOUNT: ${{ vars.STAGING_QA_SERVICE_ACCOUNT }}
+          PROVIDER: projects/530003937245/locations/global/workloadIdentityPools/github-sms-qa-writer/providers/github-actions
+          SERVICE_ACCOUNT: idogs-staging-sms-qa-writer@idogs-app-staging.iam.gserviceaccount.com
         run: |
-          test -n "$PROVIDER" && test -n "$SERVICE_ACCOUNT" || exit 1
+          test "$GITHUB_REPOSITORY" = 'izipawsltd-Tony/idogs-app'
+          test "$GITHUB_REF" = 'refs/heads/qa/staging-oidc-reminder-e2e-20261024'
+          test "$SERVICE_ACCOUNT" = 'idogs-staging-sms-qa-writer@idogs-app-staging.iam.gserviceaccount.com'
+          test "$PROVIDER" = 'projects/530003937245/locations/global/workloadIdentityPools/github-sms-qa-writer/providers/github-actions'
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -32,11 +35,15 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
+      - name: Build and reminder regression QA at this SHA
+        run: |
+          npm run build
+          npx vitest run scripts/sms-scheduler-handler-e2e.test.js scripts/sms-firestore-quota-e2e.test.js scripts/sms-reminder-scheduler-gates.test.js scripts/clicksend-sms.test.js
       - name: Obtain short-lived staging OIDC token (no private key)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.STAGING_QA_WIF_PROVIDER }}
-          service_account: ${{ vars.STAGING_QA_SERVICE_ACCOUNT }}
+          workload_identity_provider: projects/530003937245/locations/global/workloadIdentityPools/github-sms-qa-writer/providers/github-actions
+          service_account: idogs-staging-sms-qa-writer@idogs-app-staging.iam.gserviceaccount.com
           project_id: idogs-app-staging
           create_credentials_file: true
           export_environment_variables: true
@@ -44,3 +51,10 @@ jobs:
         env:
           GOOGLE_CLOUD_PROJECT: idogs-app-staging
         run: node scripts/qa-staging-oidc-reminder-e2e.mjs
+      - name: Preserve exact-SHA staging evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-sms-e2e-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qa-artifacts/staging-sms-e2e.json
+          if-no-files-found: warn
