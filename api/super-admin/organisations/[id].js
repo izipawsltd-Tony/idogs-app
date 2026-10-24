@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../../_lib/deletion-fence.js'
 // api/super-admin/organisations/[id].js — Get details for a single organisation
 import { getFirestore } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
@@ -6,7 +7,7 @@ import { getEstimatedMonthlyPrice } from '../_pricing.js'
 import { ALLOWED_ADMINS, verifySuperAdmin } from '../_auth.js'
 import { accountState, normalizeEntitlement } from '../_operations.js'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -156,3 +157,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to get organisation details', message: error.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/organisations/[id].js' })

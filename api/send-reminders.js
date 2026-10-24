@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/send-reminders.js — Daily cron: check due dates and send reminders
 // Called by GitHub Actions cron job daily at 8am AEST
 
@@ -159,7 +160,7 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
   return null
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   // Security: only allow from GitHub Actions or internal — fails closed
   // on a missing/empty CRON_SECRET (Codex H4). See api/_lib/cron-auth.js.
   const auth = checkCronAuth(req)
@@ -882,3 +883,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to send reminders', message: String(err) })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/send-reminders.js' })

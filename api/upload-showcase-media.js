@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/upload-showcase-media.js — trusted server-side photo/video upload
 // for a litter puppy's Showcase gallery (Slice 2). Appends the result to
 // the Dog document's `photos` or `videos` array — index 0 is the
@@ -175,4 +176,4 @@ async function handler(req, res) {
   }
 }
 
-export default handler
+export default withAccountMutationFence(handler, { route: 'api/upload-showcase-media.js' })

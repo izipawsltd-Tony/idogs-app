@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/get-showcase-media-urls.js — issues fresh, short-lived signed
 // URLs for a puppy's OWN Showcase gallery, for the breeder's own
 // authenticated workspace view (PuppyMediaManager in LittersPage.tsx).
@@ -106,4 +107,4 @@ async function handler(req, res) {
   }
 }
 
-export default handler
+export default withAccountMutationFence(handler, { route: 'api/get-showcase-media-urls.js' })

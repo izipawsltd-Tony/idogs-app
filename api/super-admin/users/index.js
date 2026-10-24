@@ -1,10 +1,11 @@
+import { withAccountMutationFence } from '../../_lib/deletion-fence.js'
 // api/super-admin/users/index.js — Get list of all platform users
 import { getFirestore } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
 import { computeEffectivePlan } from '../../_lib/entitlements.js'
 import { verifySuperAdmin } from '../_auth.js'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -91,3 +92,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to list platform users', message: error.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/users/index.js' })

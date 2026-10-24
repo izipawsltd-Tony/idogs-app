@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
@@ -5,7 +6,7 @@ import { getStorage } from 'firebase-admin/storage'
 import { requireStorageBucket } from './_lib/require-config.js'
 import { allowedHistoricalMedia } from './_lib/legacy-history-recovery.js'
 if (!getApps().length) initializeApp({ credential: cert({ projectId: process.env.FIREBASE_PROJECT_ID, clientEmail: process.env.FIREBASE_CLIENT_EMAIL, privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n') }) })
-export default async function handler(req, res) {
+  async function handler(req, res) {
   res.setHeader('Cache-Control', 'private, no-store')
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
   const token = (req.headers.authorization || '').match(/^Bearer (.+)$/)?.[1]
@@ -34,3 +35,5 @@ export default async function handler(req, res) {
     return res.status(200).json({ photos: photos.filter(Boolean), unavailable: photos.filter(p => !p).length })
   } catch { return res.status(500).json({ error: 'Historical photos unavailable' }) }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/get-history-media.js' })

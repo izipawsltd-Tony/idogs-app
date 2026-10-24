@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/upload-document.js — Vercel serverless
 // Receives file as base64, uploads to Firebase Storage via Admin SDK
 
@@ -33,7 +34,7 @@ if (!getApps().length) {
   })
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   // Fail closed BEFORE any Firebase/Storage request, and before even
@@ -132,3 +133,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Upload failed' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/upload-document.js' })

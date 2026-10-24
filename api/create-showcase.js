@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/create-showcase.js — trusted server-side creation of a Litter
 // Showcase (iDogs Litter Showcase MVP, Slice 1).
 //
@@ -113,4 +114,4 @@ async function handler(req, res) {
   return res.status(200).json({ showcase })
 }
 
-export default withApiErrorHandling('create-showcase', handler)
+export default withAccountMutationFence(withApiErrorHandling('create-showcase', handler), { route: 'api/create-showcase.js' })

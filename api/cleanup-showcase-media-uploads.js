@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { getStorage } from 'firebase-admin/storage'
@@ -17,7 +18,7 @@ if (!getApps().length) {
   })
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
   const auth = checkCronAuth(req)
   if (!auth.authorized) return res.status(auth.status).json(auth.body)
@@ -61,3 +62,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Could not clean expired uploads' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/cleanup-showcase-media-uploads.js' })

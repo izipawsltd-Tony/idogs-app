@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import { FieldValue } from 'firebase-admin/firestore'
 import { verifyBreeder, cleanText, cleanEmail, cleanMoneyCents } from './_lib/breeder-finance-auth.js'
 
@@ -60,7 +61,7 @@ function serialize(doc) {
   }
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   const auth = await verifyBreeder(req)
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error })
   const { uid, email, profile, db } = auth
@@ -162,3 +163,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to create finance document' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/breeder-finance-documents.js' })

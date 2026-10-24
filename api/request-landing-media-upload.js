@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/request-landing-media-upload.js — Super Admin -> Landing Page
 // Media. Issues a short-lived, single-object signed Storage PUT URL for
 // one of the four fixed landing-page slots, so the admin's browser can
@@ -142,4 +143,4 @@ async function handler(req, res) {
   }
 }
 
-export default handler
+export default withAccountMutationFence(handler, { route: 'api/request-landing-media-upload.js' })

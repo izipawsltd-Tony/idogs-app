@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/transfer-dog.js — atomic ownership transfer + immutable privacy snapshot
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -20,7 +21,7 @@ function cleanString(v, max = 500) {
   return typeof v === 'string' ? v.trim().slice(0, max) : ''
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const authHeader = req.headers.authorization || ''
@@ -121,3 +122,5 @@ export default async function handler(req, res) {
     return res.status(status).json({ error: code })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/transfer-dog.js' })

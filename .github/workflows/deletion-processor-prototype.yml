@@ -1,0 +1,32 @@
+name: Deletion processor prototype (emulators only)
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['api/**', 'scripts/test-deletion-processor-emulator.mjs', 'firestore.rules', '.github/workflows/deletion-processor-prototype.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: node --test scripts/test-account-deletion.mjs
+      - name: Synthetic Auth, Firestore and Storage only
+        env:
+          GCLOUD_PROJECT: demo-idogs-deletion
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-deletion --only auth,firestore,storage
+          'ACCOUNT_DELETION_MODE=prototype-emulator node --test scripts/test-deletion-processor-emulator.mjs'

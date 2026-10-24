@@ -2,6 +2,31 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Prototype deletion control model: accountDeletionLocks/{uid} is
+    // server-owned. Any existing lock (processing, completed or malformed)
+    // denies that actor's writes. Reads and other current owners are unchanged.
+    // No client can create, edit or clear locks/jobs/receipts/mutation leases.
+    function isValidDeletionMutation() {
+      return request.auth != null
+        && !exists(/databases/$(database)/documents/accountDeletionLocks/$(request.auth.uid));
+    }
+
+    function scanOwnerIsWritable(dogId) {
+      let dog = get(/databases/$(database)/documents/dogs/$(dogId)).data;
+      let owner = dog.get('currentOwnerId', dog.get('tenantId', ''));
+      return owner is string && owner.size() > 0
+        && !exists(/databases/$(database)/documents/accountDeletionLocks/$(owner));
+    }
+
+    function isValidPublicScan(data) {
+      return data.keys().hasOnly(['dogId', 'passportId', 'scannedAt', 'result'])
+        && data.keys().hasAll(['dogId', 'passportId', 'scannedAt', 'result'])
+        && data.dogId is string && data.dogId.size() > 0 && data.dogId.size() <= 128
+        && data.passportId is string && data.passportId.size() > 0 && data.passportId.size() <= 128
+        && data.result == 'public_view' && data.scannedAt == request.time
+        && scanOwnerIsWritable(data.dogId);
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -307,17 +332,17 @@ service cloud.firestore {
     // ── users/{uid} — owners manage non-billing profile fields only ──
     match /users/{userId} {
       allow read: if isOwnerUser(userId);
-      allow create: if isOwnerUser(userId) &&
-        !request.resource.data.keys().hasAny(userBillingFields());
-      allow update: if isOwnerUser(userId) &&
+      allow create: if isValidDeletionMutation() && (isOwnerUser(userId) &&
+        !request.resource.data.keys().hasAny(userBillingFields()));
+      allow update: if isValidDeletionMutation() && (isOwnerUser(userId) &&
         !request.resource.data.diff(resource.data).affectedKeys()
-          .hasAny(userBillingFields());
+          .hasAny(userBillingFields()));
       // Deleting a document that contains protected fields would also delete
       // trusted billing state. Unbilled profiles retain the existing client
       // account-deletion path; billed profiles require a future trusted
       // cancellation/account-deletion service.
-      allow delete: if isOwnerUser(userId) &&
-        !resource.data.keys().hasAny(userBillingFields());
+      allow delete: if isValidDeletionMutation() && (isOwnerUser(userId) &&
+        !resource.data.keys().hasAny(userBillingFields()));
     }
 
     // ── dogs/{dogId} ──
@@ -380,14 +405,14 @@ service cloud.firestore {
       // with its own cap-aware check) — this clause only needs to stop an
       // ORDINARY client edit (name/breed/notes/etc) from landing on a
       // restricted dog.
-      allow update: if isEffectiveDogOwner(resource.data) &&
+      allow update: if isValidDeletionMutation() && (isEffectiveDogOwner(resource.data) &&
         dogProtectedFieldsUnchanged() &&
         dogTransferProvenanceValid() &&
         (resource.data.get('status', 'active') != 'restricted' || isLegitimateNewTransferTransition(resource.data)) &&
         (resource.data.get('claimedAt', null) == null ||
          request.resource.data.get('claimedAt', null) == resource.data.get('claimedAt', null)) &&
         (resource.data.get('claimedBy', null) == null ||
-         request.resource.data.get('claimedBy', null) == resource.data.get('claimedBy', null));
+         request.resource.data.get('claimedBy', null) == resource.data.get('claimedBy', null)));
 
       // Codex round 4, Blocker 5: direct client deletion is now denied
       // for ANY dog carrying ownership history — not just a dog
@@ -419,14 +444,14 @@ service cloud.firestore {
       // presence only, independent of the stored value — the exact same
       // semantics as api/_lib/litter-eligibility.js's isDogHistoryBearing,
       // which this rule is deliberately kept aligned with by hand.
-      allow delete: if isSignedIn() && resource.data.currentOwnerId == request.auth.uid &&
+      allow delete: if isValidDeletionMutation() && (isSignedIn() && resource.data.currentOwnerId == request.auth.uid &&
         resource.data.get('status', 'active') != 'transferred' &&
         resource.data.get('transferStatus', null) != 'pendingClaim' &&
         !('buyerEmail' in resource.data) &&
         !('previousOwnerId' in resource.data) &&
         !('transferredAt' in resource.data) &&
         !('claimedAt' in resource.data) &&
-        !('claimedBy' in resource.data);
+        !('claimedBy' in resource.data));
 
       // Codex H2 — direct client create is now denied outright. Rules
       // cannot count how many dogs this uid already has 'active'
@@ -455,7 +480,7 @@ service cloud.firestore {
     // passportId must never be reassigned or freed for reuse.
     match /passportReservations/{id} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow create: if isValidDeletionMutation() && (isSignedIn() && request.resource.data.createdBy == request.auth.uid);
       allow update, delete: if false;
     }
 
@@ -478,18 +503,18 @@ service cloud.firestore {
     // safe and correct, and now consistent across every collection here.
     match /vaccineRecords/{id} {
       allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
-      allow update, delete: if dogWriteAccess(resource.data.dogId);
-      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
+      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId));
     }
     match /wormingRecords/{id} {
       allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
-      allow update, delete: if dogWriteAccess(resource.data.dogId);
-      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
+      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId));
     }
     match /healthTests/{id} {
       allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
-      allow update, delete: if dogWriteAccess(resource.data.dogId);
-      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
+      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId));
     }
     match /activityNotes/{id} {
       // Transfer privacy boundary:
@@ -502,9 +527,9 @@ service cloud.firestore {
         || (isSignedIn()
             && resource.data.get('createdBy', '') == request.auth.uid
             && dogBelongsToUser(resource.data.dogId));
-      allow update, delete: if dogWriteAccess(resource.data.dogId);
-      allow create: if dogAllowsNewRecords(request.resource.data.dogId)
-        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId)
+        && request.resource.data.createdBy == request.auth.uid);
     }
 
     // ── heatCycles — read/delete use the same dogBelongsToUser access
@@ -520,7 +545,7 @@ service cloud.firestore {
       allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
       // Codex H8: delete now requires dogWriteAccess (current owner only),
       // same rationale as the dogId-keyed collections above.
-      allow delete: if dogWriteAccess(resource.data.dogId);
+      allow delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
       allow create, update: if false;
     }
 
@@ -534,8 +559,8 @@ service cloud.firestore {
     // like dogBelongsToUser doesn't have that restriction.) ──
     match /documents/{id} {
       allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
-      allow update, delete: if dogWriteAccess(resource.data.dogId);
-      allow create: if dogAllowsNewRecords(request.resource.data.dogId);
+      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId));
     }
     // NOTE: get and list are split (rather than a combined `read`) so that
     // an existence-check on a not-yet-created reminder (e.g.
@@ -574,18 +599,18 @@ service cloud.firestore {
       allow list: if isSignedIn()
         && dogBelongsToUser(resource.data.dogId);
 
-      allow create: if isSignedIn()
+      allow create: if isValidDeletionMutation() && (isSignedIn()
         && request.resource.data.tenantId == request.auth.uid
-        && dogAllowsNewRecords(request.resource.data.dogId);
+        && dogAllowsNewRecords(request.resource.data.dogId));
 
       // tenantId may retain the original breeder after claim. It is not
       // an ongoing write grant. Only the current dog owner can complete,
       // edit or delete a reminder; an update cannot move it to another dog.
-      allow update: if dogWriteAccess(resource.data.dogId)
+      allow update: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId)
         && request.resource.data.dogId == resource.data.dogId
         && (request.resource.data.tenantId == resource.data.tenantId
-            || request.resource.data.tenantId == request.auth.uid);
-      allow delete: if dogWriteAccess(resource.data.dogId);
+            || request.resource.data.tenantId == request.auth.uid));
+      allow delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
     }
     // Codex round 4, Blocker 3: direct client update/delete are now
     // BOTH denied outright, not just create. Round 3 left update/delete
@@ -765,7 +790,7 @@ service cloud.firestore {
     // ── auditLogs — append-only, never editable/deletable by clients ──
     match /auditLogs/{id} {
       allow read: if isSignedIn() && resource.data.tenantId == request.auth.uid;
-      allow create: if isSignedIn() && request.resource.data.tenantId == request.auth.uid;
+      allow create: if isValidDeletionMutation() && (isSignedIn() && request.resource.data.tenantId == request.auth.uid);
       allow update, delete: if false;
     }
 
@@ -775,7 +800,7 @@ service cloud.firestore {
     // Admin SDK / a server route, if you ever need to show scan history to
     // the breeder) — otherwise this becomes a stalking/tracking leak.
     match /scanLogs/{id} {
-      allow create: if true;
+      allow create: if isValidPublicScan(request.resource.data);
       allow read, update, delete: if false;
     }
 

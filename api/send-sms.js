@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/send-sms.js — trusted internal SMS relay via AWS SNS.
 // V1 deliberately rejects browser/user-originated arbitrary SMS sends.
 // The reminder engine sends structured, server-generated messages only.
@@ -12,7 +13,7 @@ const sns = new SNSClient({
   },
 })
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   const auth = checkCronAuth(req)
   if (!auth.authorized) return res.status(auth.status).json(auth.body)
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -46,3 +47,5 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: 'Failed to send SMS' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/send-sms.js' })

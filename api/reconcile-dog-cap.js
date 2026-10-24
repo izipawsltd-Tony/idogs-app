@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/reconcile-dog-cap.js — trusted server-side cap correction for iDogs
 // Pricing v1.1 (Pricing_Decision_Record_v1.1.md §3.2, LOCKED).
 //
@@ -72,4 +73,4 @@ async function handler(req, res) {
   return res.status(200).json({ demoted: result.demoted })
 }
 
-export default withApiErrorHandling('reconcile-dog-cap', handler)
+export default withAccountMutationFence(withApiErrorHandling('reconcile-dog-cap', handler), { route: 'api/reconcile-dog-cap.js' })

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/remove-litter-puppy.js — trusted server-side litter-puppy deletion
 // (Codex round 4, Blocker 3; hardened Codex round 5, Blocker 1; hardened
 // Codex round 6, Blocker 2).
@@ -192,4 +193,4 @@ async function handler(req, res) {
   return res.status(200).json({ ok: true, deleted: result.deleted })
 }
 
-export default withApiErrorHandling('remove-litter-puppy', handler)
+export default withAccountMutationFence(withApiErrorHandling('remove-litter-puppy', handler), { route: 'api/remove-litter-puppy.js' })

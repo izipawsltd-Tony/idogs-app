@@ -12,11 +12,17 @@ export function requireRecentAuthentication(token, now = Date.now()) {
 
 export function deletionStatus(data) {
   if (!data) return { status: 'none', canCancel: false }
+  const stages = ['checking', 'waiting_for_writes', 'review_required', 'removing_data', 'verifying', 'completed']
+  const dates = Object.fromEntries(['targetAt', 'nextUpdateDueAt', 'completedAt'].filter(key => typeof data[key] === 'string' && Number.isFinite(Date.parse(data[key]))).map(key => [key,data[key]]))
   return {
     status: data.status,
     requestedAt: data.requestedAt,
     updatedAt: data.updatedAt,
     canCancel: CANCELLABLE.includes(data.status),
+    ...dates,
+    ...(stages.includes(data.processingStage) ? { processingStage: data.processingStage } : {}),
+    ...(['pending_verification','review_required','verified_stopped','verified_no_subscription'].includes(data.renewalStatus) ? {renewalStatus:data.renewalStatus} : {}),
+    ...(data.status === 'completed' && Array.isArray(data.retainedCategories) ? {retainedCategories:data.retainedCategories.filter(v => ['current_owner_history','reviewed_financial_record','reviewed_history'].includes(v))} : {}),
     // No internal notes, identity, billing identifiers or inventory leaks.
     message: data.status === 'cancelled' ? 'Your deletion request was cancelled.'
       : data.status === 'completed' ? 'Your account deletion has completed.'

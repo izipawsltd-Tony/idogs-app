@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/create-dog.js — trusted server-side dog creation (Codex H2).
 //
 // WHY THIS EXISTS: dog creation used to be a pure CLIENT-side Firestore
@@ -166,4 +167,4 @@ async function handler(req, res) {
   }
 }
 
-export default withApiErrorHandling('create-dog', handler)
+export default withAccountMutationFence(withApiErrorHandling('create-dog', handler), { route: 'api/create-dog.js' })

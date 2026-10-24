@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../_lib/deletion-fence.js'
 // api/super-admin/ai-ceo.js — authenticated AI CEO OS route
 //
 // V1.2 keeps the public Super Admin route thin. Authentication remains the
@@ -8,7 +9,7 @@
 import { verifySuperAdmin } from './_auth.js'
 import { buildAiCeoV12 } from '../_lib/ai-ceo-v12.js'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
   const actor = await verifySuperAdmin(req, res)
@@ -25,3 +26,5 @@ export default async function handler(req, res) {
     })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/ai-ceo.js' })

@@ -10,6 +10,27 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks() })
 const reply = (status: string, canCancel = false) => new Response(JSON.stringify({ status, canCancel }))
 
 describe('Account deletion confirmation UI', () => {
+  it.each(['waiting_for_writes', 'review_required', 'removing_data', 'verifying'])('keeps %s separate from completion and disables cancellation', async processingStage => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({status:'processing',canCancel:false,processingStage}))))
+    const renderer = create(createElement(AccountDeletion))
+    await act(async () => renderer.root.findByType('button').props.onClick())
+    const text = JSON.stringify(renderer.toJSON())
+    expect(text).not.toContain('Account deletion has completed.')
+    expect(text).not.toContain('Completed:')
+    expect(renderer.root.findAllByType('form')).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
+  it('shows confirmed completion with the reviewed retention limitation', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({status:'completed',canCancel:false,processingStage:'completed',completedAt:'2026-10-25T00:00:00Z',retainedCategories:['financial']}))))
+    const renderer = create(createElement(AccountDeletion))
+    await act(async () => renderer.root.findByType('button').props.onClick())
+    const text = JSON.stringify(renderer.toJSON())
+    expect(text).toContain('Account deletion has completed.')
+    expect(text).toContain('Completed:')
+    expect(text).toContain('Completion does not mean every historical record or backup was erased.')
+    expect(renderer.root.findAllByType('form')).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
   it('shows server targets and pending renewal without claiming cancellation or deletion', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       status: 'requested', canCancel: true, targetAt: '2026-10-28T00:00:00Z',

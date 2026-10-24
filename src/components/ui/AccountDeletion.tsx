@@ -11,6 +11,18 @@ interface Status {
   targetAt?: string
   nextUpdateDueAt?: string
   renewalStatus?: string
+  processingStage?: string
+  completedAt?: string
+  retainedCategories?: string[]
+}
+
+const stageCopy: Record<string,string> = {
+  checking: 'Checking ownership, billing and data safeguards. Your account has not been deleted.',
+  waiting_for_writes: 'Waiting for changes or uploads already in progress to finish. Deletion is not complete.',
+  review_required: 'A safeguard needs review before processing can continue. Deletion is not complete.',
+  removing_data: 'Removing account data. Deletion is not complete yet.',
+  verifying: 'Checking the result before confirming completion.',
+  completed: 'Account deletion has completed.',
 }
 
 const renewalCopy: Record<string, string> = {
@@ -91,6 +103,9 @@ export default function AccountDeletion() {
             {busy ? <p role="status">Checking…</p> : status && <>
               <p><strong>Status: {status.status === 'none' ? 'No request' : status.status.replaceAll('_', ' ')}</strong></p>
               {status.message && <p>{status.message}</p>}
+              {status.processingStage && stageCopy[status.processingStage] && <p>{stageCopy[status.processingStage]}</p>}
+              {status.status === 'completed' && displayDate(status.completedAt) && <p>Completed: {displayDate(status.completedAt)}</p>}
+              {status.status === 'completed' && status.retainedCategories?.length ? <p>Some reviewed financial or shared ownership records remain retained with restricted access. Completion does not mean every historical record or backup was erased.</p> : null}
               {status.requestedAt && <p>Requested: {new Date(status.requestedAt).toLocaleString()}</p>}
               {!['cancelled', 'completed'].includes(status.status) && <>
                 {displayDate(status.targetAt) && <p>Processing target: {displayDate(status.targetAt)}. This is a service target, not confirmation of completion.</p>}

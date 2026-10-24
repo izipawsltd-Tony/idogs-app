@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../../../_lib/deletion-fence.js'
 import { getAuth } from 'firebase-admin/auth'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { verifySuperAdmin } from '../../_auth.js'
@@ -23,7 +24,7 @@ function safeTarget(profile, authUser, uid) {
   }
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const actorToken = await verifySuperAdmin(req, res)
@@ -99,3 +100,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Administrative operation failed' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/users/[uid]/operations.js' })

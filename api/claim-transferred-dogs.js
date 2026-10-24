@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/claim-transferred-dogs.js — Auto-claim dogs transferred to this
 // buyer's email, run once whenever a signed-in user loads the dashboard.
 //
@@ -46,7 +47,7 @@ if (!getApps().length) {
   })
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -151,3 +152,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Internal error', message: err.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/claim-transferred-dogs.js' })

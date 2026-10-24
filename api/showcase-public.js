@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/showcase-public.js — public, unauthenticated Litter Showcase read
 // (Slice 2). Mirrors api/passport.js's established shape for this
 // codebase's "no-login, token-based, allowlisted-projection" pattern:
@@ -154,7 +155,7 @@ function publicPuppyProjection(token, litterId, dogId, dog, entry) {
   }
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -278,3 +279,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Internal error' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/showcase-public.js' })

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/passport.js — Public QR Passport lookup.
 //
 // WHY THIS EXISTS: after locking down firestore.rules so only a dog's
@@ -39,7 +40,7 @@ if (!getApps().length) {
 
 const db = getFirestore()
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -143,3 +144,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Internal error', message: String(err) })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/passport.js' })

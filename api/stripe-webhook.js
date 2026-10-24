@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/stripe-webhook.js — Stripe webhook entrypoint. All subscription
 // entitlement logic lives in api/_lib/webhook-handler.js; one-time Extra
 // Litter credit grants are verified/idempotent in extra-litter-webhook.js.
@@ -70,7 +71,7 @@ async function reconcileActivePlusFromVerifiedEvent(event) {
   await reconcileVerifiedPlusSubscription({ db, subscription, userId, eventCreated: event.created })
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
 
   const sig = req.headers['stripe-signature']
@@ -100,3 +101,5 @@ export default async function handler(req, res) {
   }
   return res.status(result.status).json(result.body)
 }
+
+export default withAccountMutationFence(handler, { route: 'api/stripe-webhook.js' })

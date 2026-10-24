@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/export-report.js — Universal Audit Report generator
 // Supports: per-dog, per-litter, full-kennel × PDF + CSV
 
@@ -581,7 +582,7 @@ function generateBreedingPDFHTML(dog, profile, userState) {
 
 // ── MAIN HANDLER ──────────────────────────────────────────────
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   // SECURITY FIX: this endpoint had NO auth check at all, and trusted
@@ -691,3 +692,5 @@ export default async function handler(req, res) {
   }
 }
 
+
+export default withAccountMutationFence(handler, { route: 'api/export-report.js' })

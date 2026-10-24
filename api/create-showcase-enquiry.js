@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/create-showcase-enquiry.js — public, unauthenticated "contact the
 // breeder" submission from a live Litter Showcase page (Slice 2).
 //
@@ -108,7 +109,7 @@ const db = getFirestore()
 const ENQUIRY_RATE_LIMIT_WINDOW_MS = Number(process.env.ENQUIRY_RATE_LIMIT_WINDOW_MS) || 10 * 60_000
 const ENQUIRY_RATE_LIMIT_MAX_REQUESTS = Number(process.env.ENQUIRY_RATE_LIMIT_MAX_REQUESTS) || 5
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -343,3 +344,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Internal error' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/create-showcase-enquiry.js' })
