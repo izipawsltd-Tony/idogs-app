@@ -1,0 +1,46 @@
+name: iDogs isolated staging SMS reminder E2E
+on:
+  push:
+    branches: [qa/staging-oidc-reminder-e2e-20261024]
+    paths:
+      - .github/workflows/staging-sms-reminder-oidc-e2e.yml
+      - scripts/qa-staging-oidc-reminder-e2e.mjs
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: staging-sms-e2e-20261024
+  cancel-in-progress: false
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging-qa
+    steps:
+      - name: Verify exact OIDC QA configuration
+        env:
+          PROVIDER: ${{ vars.STAGING_QA_WIF_PROVIDER }}
+          SERVICE_ACCOUNT: ${{ vars.STAGING_QA_SERVICE_ACCOUNT }}
+        run: |
+          test -n "$PROVIDER" && test -n "$SERVICE_ACCOUNT" || exit 1
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Obtain short-lived staging OIDC token (no private key)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.STAGING_QA_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_QA_SERVICE_ACCOUNT }}
+          project_id: idogs-app-staging
+          create_credentials_file: true
+          export_environment_variables: true
+      - name: Real staging Firestore QA E2E; provider is mocked
+        env:
+          GOOGLE_CLOUD_PROJECT: idogs-app-staging
+        run: node scripts/qa-staging-oidc-reminder-e2e.mjs
