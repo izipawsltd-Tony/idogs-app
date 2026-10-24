@@ -1,5 +1,6 @@
 // Real Firestore transactions. SMS transport is always an in-process mock.
 import assert from 'node:assert/strict'
+import {execFileSync} from 'node:child_process'
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs'
 import {initializeApp,applicationDefault,deleteApp} from 'firebase-admin/app'
 import {getFirestore} from 'firebase-admin/firestore'
@@ -8,11 +9,11 @@ const PROJECT='idogs-app-staging', DATABASE='qa-sms-reminder-e2e'
 const ACCOUNT='idogs-staging-sms-qa-writer@idogs-app-staging.iam.gserviceaccount.com'
 const PROVIDER='projects/530003937245/locations/global/workloadIdentityPools/github-sms-qa-writer/providers/github-actions'
 const RUN=`${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`
-const SHA=process.env.GITHUB_SHA, now=new Date('2026-10-24T00:00:00Z')
+const SHA=process.env.QA_SOURCE_SHA || process.env.GITHUB_SHA, now=new Date('2026-10-24T00:00:00Z')
 const QA={users:'qaSmsQuotaUsers',smsDeliveries:'qaSmsQuotaDeliveries'}
 let app,run,started=false,sends=0
 const checks={}
-const result={state:'FAIL',project:PROJECT,database:DATABASE,sha:SHA,run:RUN,
+const result={state:'FAIL',project:PROJECT,database:DATABASE,sha:SHA,workflowSha:process.env.GITHUB_SHA,run:RUN,
  realFirestore:true,provider:'MOCK_NO_REAL_SMS',syntheticDataOnly:true,checks}
 try {
  assert.equal(process.env.GOOGLE_CLOUD_PROJECT,PROJECT)
@@ -20,6 +21,7 @@ try {
  assert.equal(process.env.GITHUB_REPOSITORY,'izipawsltd-Tony/idogs-app')
  assert.equal(process.env.GITHUB_REF,'refs/heads/qa/staging-oidc-reminder-e2e-20261024')
  assert.match(SHA||'',/^[0-9a-f]{40}$/)
+ assert.equal(execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),SHA,'CHECKOUT_SHA_MISMATCH')
  assert.match(RUN,/^\d+-\d+$/)
  assert.equal(process.env.FIRESTORE_EMULATOR_HOST,undefined)
  const credentials=JSON.parse(readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,'utf8'))

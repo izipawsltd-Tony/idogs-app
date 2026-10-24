@@ -1,0 +1,65 @@
+name: SMS production candidate isolated staging E2E
+on:
+  push:
+    branches: [qa/staging-oidc-reminder-e2e-20261024]
+    paths: [.github/workflows/staging-sms-production-candidate.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: staging-sms-e2e-20261024
+  cancel-in-progress: false
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging-qa
+    env:
+      QA_SOURCE_SHA: 45b45a6850c604745eaf7e622090ea0ad7fc3bea
+    steps:
+      - name: Verify trusted runner branch
+        run: |
+          test "$GITHUB_REPOSITORY" = 'izipawsltd-Tony/idogs-app'
+          test "$GITHUB_REF" = 'refs/heads/qa/staging-oidc-reminder-e2e-20261024'
+      - uses: actions/checkout@v4
+        with:
+          ref: 45b45a6850c604745eaf7e622090ea0ad7fc3bea
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .qa-harness
+          persist-credentials: false
+      - name: Use QA harness with the release runtime
+        run: |
+          test "$(git rev-parse HEAD)" = "$QA_SOURCE_SHA"
+          cp .qa-harness/scripts/qa-staging-oidc-reminder-e2e.mjs scripts/
+          rm -rf .qa-harness
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Build and test exact release source
+        run: |
+          npm run build
+          npm test
+          node scripts/test-settings-role-gating.mjs
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/530003937245/locations/global/workloadIdentityPools/github-sms-qa-writer/providers/github-actions
+          service_account: idogs-staging-sms-qa-writer@idogs-app-staging.iam.gserviceaccount.com
+          project_id: idogs-app-staging
+          create_credentials_file: true
+          export_environment_variables: true
+      - name: Real QA database, mocked SMS transport
+        env:
+          GOOGLE_CLOUD_PROJECT: idogs-app-staging
+        run: node scripts/qa-staging-oidc-reminder-e2e.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-candidate-sms-e2e-${{ env.QA_SOURCE_SHA }}-${{ github.run_id }}
+          path: qa-artifacts/staging-sms-e2e.json
+          if-no-files-found: error
