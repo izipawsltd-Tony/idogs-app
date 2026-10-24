@@ -108,14 +108,14 @@ export default function SettingsPage({ toast }: Props) {
     finally { setClickSendQaBusy(false) }
   }
 
-  async function checkLiveSmsQa(method: 'GET' | 'POST') {
+  async function checkLiveSmsQa() {
     if (!user || clickSendQaBusy) return
     setClickSendQaBusy(true)
-    setClickSendQaStatus(method === 'POST' ? 'Submitting one approved SMS...' : 'Reading ClickSend delivery...')
+    setClickSendQaStatus('Reading ClickSend delivery...')
     try {
       const token = await user.getIdToken(true)
       const response = await fetch('/api/qa-clicksend-live-20261024', {
-        method, headers: { Authorization:'Bearer '+token },
+        method: 'GET', headers: { Authorization:'Bearer '+token },
       })
       const data = await response.json()
       const phase = String(data.phase || data.error || 'UNKNOWN').slice(0,90)
@@ -488,7 +488,7 @@ export default function SettingsPage({ toast }: Props) {
           {/* Email reminders toggle */}
           <ToggleRow
             icon="✉️" label="Email Reminders"
-            description="Receive scheduled emails. Turning this off also pauses existing scheduled SMS; saved in-app reminders remain."
+            description="Receive scheduled emails. Turning this off does not disable SMS or in-app reminders."
             enabled={emailReminders}
             saving={saving !== null}
             onToggle={() => setEmailSetting('emailReminders', !emailReminders)}
@@ -520,7 +520,6 @@ export default function SettingsPage({ toast }: Props) {
           </div>
 
           {/* Reminder lead time */}
-          {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>⏰ Reminder lead time</div>
               <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>Default lead time for recorded health reminders. Manual reminders use their own lead time.</div>
@@ -543,13 +542,11 @@ export default function SettingsPage({ toast }: Props) {
                 ))}
               </div>
             </div>
-          )}
 
           {/* Reminder frequency */}
-          {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>🔁 Reminder frequency</div>
-              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How often to remind you once a due date is approaching.</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How often to email you once a due date is approaching. SMS is sent once per due date, subject to your add-on and credits.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 {([
                   { id: 'once', label: 'Once' },
@@ -572,11 +569,10 @@ export default function SettingsPage({ toast }: Props) {
                 ))}
               </div>
             </div>
-          )}
 
           {/* Heat cycle reminder lead time — breeding-specific, not
               relevant to a Pet Owner account (see Litters above). */}
-          {emailReminders && !isOwner && (
+          {!isOwner && (
             <div style={{ paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 4 }}>🌸 Heat cycle reminder lead time</div>
               <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>
@@ -665,13 +661,11 @@ export default function SettingsPage({ toast }: Props) {
       {db.app?.options?.projectId === 'idogs-app-staging' &&
         user?.email?.toLowerCase() === 'idogsbreeder+qaa@gmail.com' && (
         <div className="card" style={{ marginBottom:16, padding:20 }}>
-          <strong>ClickSend LIVE QA — 24 October (exactly one SMS)</strong>
-          <p style={{ fontSize:12 }}>Owner-approved: one fixed message to the configured QA phone. No retries or bulk sending. Message ID returned only after provider acceptance.</p>
-          <button type="button" className="btn btn-secondary btn-sm"
-            disabled={clickSendQaBusy} onClick={()=>checkLiveSmsQa('POST')}>Send ONE live QA SMS</button>
+          <strong>Historical ClickSend QA — read-only</strong>
+          <p style={{ fontSize:12 }}>Read the status of an earlier QA attempt. Sending is disabled for the current staging QA.</p>
           <button type="button" className="btn btn-secondary btn-sm"
             style={{marginLeft:8}} disabled={clickSendQaBusy}
-            onClick={()=>checkLiveSmsQa('GET')}>Check LIVE delivery (no resend)</button>
+            onClick={checkLiveSmsQa}>Check LIVE delivery (no resend)</button>
           {clickSendQaStatus && <p role="status" style={{marginTop:8,fontSize:12}}>{clickSendQaStatus}</p>}
         </div>
       )}
