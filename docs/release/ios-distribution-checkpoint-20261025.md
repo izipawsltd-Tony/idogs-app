@@ -9,3 +9,9 @@ Availability remains UNSAVED. On a separate App Store Connect tab, prepared Spec
 Public distribution is the existing selected method. Apple Silicon Mac availability and Vision Pro boxes are existing checked defaults; version 1.0 is marked incompatible with Vision Pro. Only iPhone QA has been established. Confirm appropriate platform scope before final release; do not claim Mac/iPad QA.
 
 App remains Prepare for Submission. No final build selected, submission or public release. Permanent deletion fulfilment, effective privacy disclosures, real screenshots, reviewer login/contact phone, release-binary alignment and billing-policy review remain open. No backend, Rules/Storage, live subscription or real-data deletion change occurred in this increment.
+
+## Superseding portal confirmation
+
+Tony explicitly approved 'Duyệt miễn phí, Australia trước'. Confirm App Pricing was clicked successfully; readback shows Current Price schedule, base Australia (AUD), 175 zero-price storefront entries. Confirm Australia availability was clicked successfully; portal shows Availability (1 Country or Region), Australia 'Available on App Release', other storefronts Not Available. These supersede the UNSAVED paragraphs above. Do not request these approvals again or confuse the zero-price currency table with global territory availability. Plus/SMS billing unchanged.
+
+Next owner-input gate: App Review demo username/password and contact name/phone/email are blank. Need an existing verified synthetic-data, non-admin reviewer account; credentials should be entered directly in protected App Store Connect fields, not chat or repository. App still Prepare for Submission with no selected final binary and no review submission. Permanent deletion/accurate privacy/screenshot engineering work remains outstanding; this contact gate alone is not the final release blocker.
