@@ -5,6 +5,9 @@ on:
     paths:
       - .github/workflows/staging-sms-reminder-oidc-e2e.yml
       - scripts/qa-staging-oidc-reminder-e2e.mjs
+      - src/pages/SettingsPage.tsx
+      - scripts/settings-sms-preferences.test.js
+      - scripts/test-settings-role-gating.mjs
   workflow_dispatch:
 permissions:
   contents: read
@@ -38,7 +41,8 @@ jobs:
       - name: Build and reminder regression QA at this SHA
         run: |
           npm run build
-          npx vitest run scripts/sms-scheduler-handler-e2e.test.js scripts/sms-firestore-quota-e2e.test.js scripts/sms-reminder-scheduler-gates.test.js scripts/clicksend-sms.test.js
+          npx vitest run scripts/sms-scheduler-handler-e2e.test.js scripts/sms-firestore-quota-e2e.test.js scripts/sms-reminder-scheduler-gates.test.js scripts/clicksend-sms.test.js scripts/settings-sms-preferences.test.js
+          node scripts/test-settings-role-gating.mjs
       - name: Obtain short-lived staging OIDC token (no private key)
         uses: google-github-actions/auth@v2
         with:

@@ -488,7 +488,7 @@ export default function SettingsPage({ toast }: Props) {
           {/* Email reminders toggle */}
           <ToggleRow
             icon="✉️" label="Email Reminders"
-            description="Receive scheduled emails. Turning this off also pauses existing scheduled SMS; saved in-app reminders remain."
+            description="Receive scheduled emails. Turning this off does not disable SMS or in-app reminders."
             enabled={emailReminders}
             saving={saving !== null}
             onToggle={() => setEmailSetting('emailReminders', !emailReminders)}
@@ -520,7 +520,6 @@ export default function SettingsPage({ toast }: Props) {
           </div>
 
           {/* Reminder lead time */}
-          {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>⏰ Reminder lead time</div>
               <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>Default lead time for recorded health reminders. Manual reminders use their own lead time.</div>
@@ -543,13 +542,11 @@ export default function SettingsPage({ toast }: Props) {
                 ))}
               </div>
             </div>
-          )}
 
           {/* Reminder frequency */}
-          {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>🔁 Reminder frequency</div>
-              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How often to remind you once a due date is approaching.</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How often to email you once a due date is approaching. SMS is sent once per due date, subject to your add-on and credits.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 {([
                   { id: 'once', label: 'Once' },
@@ -572,11 +569,10 @@ export default function SettingsPage({ toast }: Props) {
                 ))}
               </div>
             </div>
-          )}
 
           {/* Heat cycle reminder lead time — breeding-specific, not
               relevant to a Pet Owner account (see Litters above). */}
-          {emailReminders && !isOwner && (
+          {!isOwner && (
             <div style={{ paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 4 }}>🌸 Heat cycle reminder lead time</div>
               <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>
