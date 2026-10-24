@@ -17,6 +17,7 @@ export default function VerifyEmailPage({ toast }: Props) {
   const [checking, setChecking] = useState(false)
   const [resending, setResending] = useState(false)
   const [cooldown, setCooldown] = useState(0)
+  const [sendStatus, setSendStatus] = useState('')
 
   // If not logged in at all, send to login
   useEffect(() => {
@@ -53,13 +54,26 @@ export default function VerifyEmailPage({ toast }: Props) {
   }
 
   async function handleResend() {
+    if (resending || cooldown > 0 || !user) return
     setResending(true)
+    setSendStatus('')
     try {
       await resendVerificationEmail()
-      toast('Verification email sent!')
+      setSendStatus('Verification email requested. Delivery can take a few minutes. Check your inbox and Spam or Junk folder.')
+      toast('Verification email requested. Please check your inbox.')
       setCooldown(60)
-    } catch {
-      toast('Failed to resend. Please try again shortly.', 'error')
+    } catch (err: unknown) {
+      const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : err instanceof Error ? err.message : ''
+      const message = code.includes('too-many-requests')
+        ? 'Too many requests. Wait a few minutes before requesting another email.'
+        : code.includes('network-request-failed')
+          ? 'Could not reach the email service. Check your internet connection and try again.'
+          : code.includes('requires-recent-login') || code.includes('user-token-expired') || code.includes('invalid-user-token')
+            ? 'Your session has expired. Sign out and sign in again before requesting another email.'
+            : 'Could not request a verification email. Please try again shortly.'
+      setSendStatus(message)
+      toast(message, 'error')
+      if (code.includes('too-many-requests')) setCooldown(60)
     } finally {
       setResending(false)
     }
@@ -97,7 +111,7 @@ export default function VerifyEmailPage({ toast }: Props) {
             Verify your email
           </h1>
           <p style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.6, marginBottom: 4 }}>
-            We sent a verification link to
+            A verification link is needed for
           </p>
           <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 20 }}>
             {user?.email}
@@ -117,10 +131,15 @@ export default function VerifyEmailPage({ toast }: Props) {
             onClick={handleResend}
             className="btn btn-secondary"
             style={{ width: '100%', height: 44, marginTop: 10 }}
-            disabled={resending || cooldown > 0}
+            disabled={!user || resending || cooldown > 0}
           >
             {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend verification email'}
           </button>
+          {sendStatus && <p role="status" style={{ fontSize: 13, lineHeight: 1.6, marginTop: 12 }}>{sendStatus}</p>}
+          <p style={{ fontSize: 12, color: 'var(--mid)', lineHeight: 1.6, marginTop: 16 }}>
+            Still no email after a few minutes? Request another link above. If it still does not arrive, contact{' '}
+            <a href="mailto:info@idogs.com.au">info@idogs.com.au</a> using the account email shown here.
+          </p>
 
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
             <button onClick={handleLogout} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--light)', cursor: 'pointer', textDecoration: 'underline' }}>
