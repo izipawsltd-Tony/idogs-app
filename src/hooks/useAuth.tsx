@@ -108,7 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function resendVerificationEmail() {
-    if (!auth.currentUser) return
+    if (!auth.currentUser) throw new Error('auth/requires-recent-login')
     await sendEmailVerification(auth.currentUser)
   }
 
