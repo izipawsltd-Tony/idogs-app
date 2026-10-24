@@ -1,8 +1,8 @@
 import {describe,it,expect,vi} from 'vitest'
 import React from 'react'
 import {renderToStaticMarkup} from 'react-dom/server'
-const state=vi.hoisted(()=>({profile:{role:'breeder',emailReminders:false,reminderDays:7,reminderFrequency:'once'}}))
-vi.mock('../src/hooks/useAuth',()=>({useAuth:()=>({user:{uid:'synthetic',email:'qa@example.invalid'},profile:state.profile,refreshProfile:vi.fn()})}))
+const state=vi.hoisted(()=>({email:'qa@example.invalid',profile:{role:'breeder',emailReminders:false,reminderDays:7,reminderFrequency:'once'}}))
+vi.mock('../src/hooks/useAuth',()=>({useAuth:()=>({user:{uid:'synthetic',email:state.email},profile:state.profile,refreshProfile:vi.fn()})}))
 vi.mock('../src/lib/db',()=>({updateUserProfile:vi.fn()}))
 vi.mock('../src/lib/firebase',()=>({db:{app:{options:{projectId:'idogs-app-staging'}}}}))
 import SettingsPage from '../src/pages/SettingsPage'
@@ -22,5 +22,14 @@ describe('SMS settings remain usable without email',()=>{
   const html=renderToStaticMarkup(React.createElement(SettingsPage,{toast:vi.fn()}))
   expect(html).toContain('Reminder lead time')
   expect(html).not.toContain('Heat cycle reminder lead time')
+ })
+ it('exposes read-only historical QA without a live-send control even for the QA account',()=>{
+  state.email='idogsbreeder+qaa@gmail.com'
+  state.profile={role:'breeder',emailReminders:false}
+  const html=renderToStaticMarkup(React.createElement(SettingsPage,{toast:vi.fn()}))
+  expect(html).toContain('Historical ClickSend QA — read-only')
+  expect(html).toContain('Check LIVE delivery (no resend)')
+  expect(html).not.toContain('Send ONE live QA SMS')
+  expect(html).not.toContain('Owner-approved: one fixed message')
  })
 })
