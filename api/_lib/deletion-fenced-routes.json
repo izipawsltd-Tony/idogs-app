@@ -83,6 +83,7 @@
   ],
   "exemptions": [
     "api/account-deletion.js",
-    "api/super-admin/account-deletions.js"
+    "api/super-admin/account-deletions.js",
+    "api/qa/deletion-webhook.js"
   ]
 }

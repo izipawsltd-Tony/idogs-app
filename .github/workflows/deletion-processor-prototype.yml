@@ -26,6 +26,7 @@ jobs:
       - run: node --test scripts/test-account-deletion.mjs
       - run: node --test scripts/test-deletion-billing.mjs
       - run: node --test scripts/test-deletion-stripe-contract.mjs
+      - run: node --test scripts/test-deletion-qa-webhook.mjs
       - name: Synthetic Auth, Firestore and Storage only
         env:
           GCLOUD_PROJECT: demo-idogs-deletion
