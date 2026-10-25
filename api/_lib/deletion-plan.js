@@ -23,7 +23,8 @@ function strings(value, out = []) {
 // Inspect nested free text without persisting the departing email in a job.
 // This is a conservative hold check, not a claim to find every personal datum.
 export function containsDeletionIdentity(data,uid,emailHash){
-  return strings(data).some(s=>s.includes(uid)||[...(s.match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)||[])].some(email=>digest(email.toLowerCase())===emailHash))
+  const hashes=new Set(Array.isArray(emailHash)?emailHash:[emailHash])
+  return strings(data).some(s=>s.includes(uid)||[...(s.match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)||[])].some(email=>hashes.has(digest(email.toLowerCase()))))
 }
 function related(data, needles) { return strings(data).some(s => needles.has(s) || [...needles].some(n => n.length > 4 && (n.includes('@') ? s.toLowerCase().includes(n.toLowerCase()) : s.includes(n)))) }
 
@@ -185,5 +186,5 @@ export async function buildEmulatorDeletionPlan({ db, bucket, uid, now = Date.no
   // Profile is removed after all dependent data. Auth is always last.
   operations.sort((a,b) => (a.path === `users/${uid}`?1:0)-(b.path === `users/${uid}`?1:0) || a.path.localeCompare(b.path))
   const plan = {operations:[...media,...operations],retained,holds:[...holds].sort()}
-  return {...plan,fingerprint:digest(plan),counts:{records:scan.records.length,operations:plan.operations.length,retained:retained.length}}
+  return {...plan,profileEmailHash:digest((profile.email||'').toLowerCase()),fingerprint:digest(plan),counts:{records:scan.records.length,operations:plan.operations.length,retained:retained.length}}
 }

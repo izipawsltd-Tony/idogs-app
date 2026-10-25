@@ -218,6 +218,60 @@ test('Auth deletion failure is restartable after data cleanup and does not repor
   assert.equal((await requestRef().get()).data().status,'processing')
   assert.equal((await p.process({uid:owner.uid,revision:1})).status,'completed')
 })
+test('Auth is disabled and existing sessions are rejected before data removal completes',async()=>{
+  await seed();let checked=false
+  await processor.process({uid:owner.uid,revision:1,afterOperation:async()=>{
+    if(checked)return;checked=true
+    assert.equal((await auth.getUser(owner.uid)).disabled,true)
+    assert.equal((await call(owner,'/request')).status,401)
+    const response=await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=synthetic`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:owner.email,password:'Emulator-fixture-only-42!',returnSecureToken:true})})
+    assert.equal(response.status,400)
+  }})
+  assert.equal(checked,true)
+})
+test('Auth freeze failure precedes every destructive operation and is restartable',async()=>{
+  await seed();let fail=true
+  const faulty=new Proxy(auth,{get(target,key){if(key==='updateUser')return async(...args)=>{if(fail){fail=false;throw Error('freeze outage')}return target.updateUser(...args)};const v=target[key];return typeof v==='function'?v.bind(target):v}})
+  const p=createEmulatorDeletionProcessor({projectId:PROJECT,db,auth:faulty,bucket,provider})
+  await assert.rejects(p.process({uid:owner.uid,revision:1}),/freeze outage/)
+  assert.equal((await db.doc('dogs/synthetic-dog').get()).exists,true)
+  assert.equal((await bucket.getFiles())[0].length,1)
+  assert.equal((await p.process({uid:owner.uid,revision:1})).status,'completed')
+})
+test('identity change after planning aborts before deleting data',async()=>{
+  await seed();let first=true
+  const changing=new Proxy(auth,{get(target,key){if(key==='getUser')return async uid=>{const original=await target.getUser(uid);if(first){first=false;await target.updateUser(uid,{email:'changed-identity@example.invalid'})}return original};const v=target[key];return typeof v==='function'?v.bind(target):v}})
+  const p=createEmulatorDeletionProcessor({projectId:PROJECT,db,auth:changing,bucket,provider})
+  await assert.rejects(p.process({uid:owner.uid,revision:1}),/AUTH_IDENTITY_CHANGED/)
+  assert.equal((await db.doc('dogs/synthetic-dog').get()).exists,true)
+  assert.equal((await db.doc(`users/${owner.uid}`).get()).exists,true)
+})
+test('final scan checks both profile and Auth email identities',async()=>{
+  await seed({media:false});const profileEmail='older-profile@example.invalid'
+  await db.doc(`users/${owner.uid}`).update({email:profileEmail})
+  let injected=false
+  await assert.rejects(processor.process({uid:owner.uid,revision:1,afterOperation:async()=>{if(!injected){injected=true;await db.doc('newData/email-only').set({note:profileEmail})}}}),/RESIDUAL_ACCOUNT_RECORD/)
+  assert.ok(await auth.getUser(owner.uid))
+})
+test('an Auth identity recreated during cleanup is preserved and completion is refused',async()=>{
+  await seed({media:false});let replaced=false
+  await assert.rejects(processor.process({uid:owner.uid,revision:1,afterOperation:async()=>{
+    if(replaced)return;replaced=true
+    await auth.deleteUser(owner.uid)
+    await auth.createUser({uid:owner.uid,email:'replacement-identity@example.invalid',password:'Synthetic-replacement-only-42!'})
+  }}),/AUTH_IDENTITY_CHANGED/)
+  assert.equal((await auth.getUser(owner.uid)).email,'replacement-identity@example.invalid')
+  assert.notEqual((await requestRef().get()).data().status,'completed')
+})
+test('an already executed operation changed before final verification cannot forge completion',async()=>{
+  await seed({media:false});let changed=false
+  await assert.rejects(processor.process({uid:owner.uid,revision:1,afterOperation:async({index})=>{
+    if(changed)return;changed=true
+    await db.doc(`accountDeletionJobs/${owner.uid}/operations/${String(index).padStart(6,'0')}`).update({path:`users/${other.uid}`})
+  }}),/DELETION_PLAN_CHANGED/)
+  assert.equal((await db.doc(`users/${other.uid}`).get()).exists,true)
+  assert.ok(await auth.getUser(owner.uid))
+})
 test('still-valid signed upload authority holds deletion even when the grant status is failed',async()=>{
   await seed();const grant=db.collection('mediaUploadGrants').doc('synthetic-grant')
   await grant.set({uid:owner.uid,dogId:'synthetic-dog',status:'failed',path:`dogs/${owner.uid}/synthetic-dog/upload.jpg`,expiresAt:new Date(Date.now()+600000).toISOString()})
@@ -238,7 +292,7 @@ test('synthetic renewal stops once with stable keys; cancelling cannot restart i
   await ref.update({subscriptions:[{id:'sub-synthetic',ownerUid:owner.uid,renewalStopped:false}]})
   await assert.rejects(processor.process({uid:owner.uid,revision:1,afterOperation:async()=>{throw Error('lost-response')}}))
   assert.equal((await ref.get()).data().keys.length,1)
-  assert.equal((await call(owner,'/request','POST',{action:'cancel'})).status,409)
+  assert.equal((await call(owner,'/request','POST',{action:'cancel'})).status,401)
   await processor.process({uid:owner.uid,revision:1});assert.equal((await ref.get()).data().keys.length,1)
   assert.equal((await ref.get()).data().subscriptions[0].renewalStopped,true)
 })

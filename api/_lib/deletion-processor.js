@@ -6,6 +6,7 @@ import { buildEmulatorDeletionPlan, scanDeletionDocuments, versionOf, digest, co
 const day = 86400000
 const fail = code => Object.assign(new Error(code),{code,status:409})
 const publicStages = new Set(['checking','waiting_for_writes','review_required','removing_data','verifying','completed'])
+const identityHash = user => digest({uid:user.uid,createdAt:user.metadata.creationTime,email:user.email||null,phone:user.phoneNumber||null,providers:(user.providerData||[]).map(p=>({id:p.providerId,uid:p.uid,email:p.email||null})).sort((a,b)=>a.id.localeCompare(b.id)||a.uid.localeCompare(b.uid))})
 
 // Only an injected SYNTHETIC provider adapter is accepted, and only after the
 // real emulator service identities/hosts have been checked. There is no live
@@ -100,17 +101,34 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
         }
         await db.runTransaction(async tx=>{
           await owned(tx,uid,revision,lease)
-          tx.update(jobRef(uid),{planReady:true,fingerprint:plan.fingerprint,operationCount:plan.operations.length,operationHashes:plan.operations.map(digest),retained:plan.retained,authCreatedAt:identity.metadata.creationTime,profileEmailHash:digest((identity.email||'').toLowerCase()),stage:'removing_data'})
+          tx.update(jobRef(uid),{planReady:true,fingerprint:plan.fingerprint,operationCount:plan.operations.length,operationHashes:plan.operations.map(digest),retained:plan.retained,authCreatedAt:identity.metadata.creationTime,authIdentityHash:identityHash(identity),profileEmailHashes:[...new Set([plan.profileEmailHash,digest((identity.email||'').toLowerCase())])],stage:'removing_data'})
         })
         currentJob=(await jobRef(uid).get()).data()
       }
-      await stage(uid,revision,lease,'removing_data')
-      for(let index=0;index<currentJob.operationCount;index++){
-        const opRef=jobRef(uid).collection('operations').doc(String(index).padStart(6,'0'))
-        const op=(await opRef.get()).data()
+      // Firestore locks do not freeze Firebase Auth. Disable and revoke sessions
+      // before the first destructive operation; verify the same bound identity
+      // on every retry. A failed freeze leaves the data untouched.
+      await stage(uid,revision,lease,'checking')
+      let frozen
+      try{frozen=await auth.getUser(uid)}catch(e){if(e.code!=='auth/user-not-found'||!currentJob.authRemovalAttempted)throw fail('AUTH_IDENTITY_MISSING')}
+      if(frozen){
+        if(!currentJob.authIdentityHash||identityHash(frozen)!==currentJob.authIdentityHash)throw fail('AUTH_IDENTITY_CHANGED')
+        await auth.updateUser(uid,{disabled:true})
+        await auth.revokeRefreshTokens(uid)
+        const confirmed=await auth.getUser(uid)
+        if(confirmed.disabled!==true||identityHash(confirmed)!==currentJob.authIdentityHash)throw fail('AUTH_FREEZE_UNCONFIRMED')
+        await db.runTransaction(async tx=>{await owned(tx,uid,revision,lease);tx.update(jobRef(uid),{authFrozen:true})})
+      }
+      async function operation(index){
+        const op=(await jobRef(uid).collection('operations').doc(String(index).padStart(6,'0')).get()).data()
         if(!op||op.revision!==revision||op.index!==index)throw fail('DELETION_PLAN_INCOMPLETE')
         const {index:storedIndex,revision:storedRevision,...plannedOperation}=op
         if(digest(plannedOperation)!==currentJob.operationHashes?.[index])throw fail('DELETION_PLAN_CHANGED')
+        return op
+      }
+      await stage(uid,revision,lease,'removing_data')
+      for(let index=0;index<currentJob.operationCount;index++){
+        const op=await operation(index)
         const receipt=jobRef(uid).collection('receipts').doc(String(index).padStart(6,'0'))
         if(op.kind==='media'){
           await db.runTransaction(async tx=>{await owned(tx,uid,revision,lease)})
@@ -139,7 +157,7 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
       await stage(uid,revision,lease,'verifying')
       // Verify each operation, including completed receipts after a restart.
       for(let index=0;index<currentJob.operationCount;index++){
-        const id=String(index).padStart(6,'0'),op=(await jobRef(uid).collection('operations').doc(id).get()).data()
+        const id=String(index).padStart(6,'0'),op=await operation(index)
         if(!(await jobRef(uid).collection('receipts').doc(id).get()).exists)throw fail('DELETION_RECEIPT_MISSING')
         if(op.kind==='media'){if((await bucket.file(op.path).exists())[0])throw fail('MEDIA_REMOVAL_UNCONFIRMED')}
         else{
@@ -151,11 +169,12 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
       const scan=await scanDeletionDocuments(db)
       if(scan.holds.length)throw fail('FINAL_INVENTORY_INCOMPLETE')
       const approvedRetained=new Set(currentJob.retained.map(r=>r.path))
-      if(scan.records.some(r=>!approvedRetained.has(r.path)&&(r.path.startsWith(`users/${uid}/`)||r.path===`users/${uid}`||containsDeletionIdentity(r.data,uid,currentJob.profileEmailHash))))throw fail('RESIDUAL_ACCOUNT_RECORD')
+      if(scan.records.some(r=>!approvedRetained.has(r.path)&&(r.path.startsWith(`users/${uid}/`)||r.path===`users/${uid}`||containsDeletionIdentity(r.data,uid,currentJob.profileEmailHashes))))throw fail('RESIDUAL_ACCOUNT_RECORD')
       await db.runTransaction(async tx=>{await owned(tx,uid,revision,lease)})
       try{
         const identity=await auth.getUser(uid)
-        if(identity.metadata.creationTime!==currentJob.authCreatedAt)throw fail('AUTH_IDENTITY_CHANGED')
+        if(identity.disabled!==true||identityHash(identity)!==currentJob.authIdentityHash)throw fail('AUTH_IDENTITY_CHANGED')
+        await db.runTransaction(async tx=>{await owned(tx,uid,revision,lease);tx.update(jobRef(uid),{authRemovalAttempted:true})})
         await auth.deleteUser(uid)
       }catch(e){if(e.code!=='auth/user-not-found')throw e}
       try{await auth.getUser(uid);throw fail('AUTH_REMOVAL_UNCONFIRMED')}catch(e){if(e.code!=='auth/user-not-found')throw e}
