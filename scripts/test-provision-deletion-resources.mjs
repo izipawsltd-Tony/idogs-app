@@ -10,6 +10,7 @@ function fixture(){
  const storage={bucket:name=>({getMetadata:async()=>{if(name===oldBucket.name)return[oldBucket];if(state.bucket)return[state.bucket];throw Object.assign(new Error('missing'),{code:404})}}),createBucket:async(name,metadata)=>{state.writes.push({kind:'bucket',name,metadata});state.bucket={...metadata,name,projectNumber:q.projectNumber}}}
  const api=async(url,opts={})=>{
   if(opts.method){state.writes.push({kind:'api',url,...opts})
+   if(url.endsWith(':testIamPermissions'))return{permissions:opts.body.permissions}
    if(url.includes('/databases?')){state.db=database;return{name:`${database.name}/operations/synthetic`}}
    if(url.endsWith(':test'))return{testResults:opts.body.testSuite.testCases.map(()=>({state:'SUCCESS'}))}
    if(url.endsWith('/rulesets'))return{name:`projects/${q.projectId}/rulesets/synthetic`}
@@ -48,4 +49,14 @@ test('wrong database mode, edition, name or deletion protection is rejected',()=
 test('API permission failure stops provisioning without trying another project',async()=>{
  const f=fixture();f.loadClients=async()=>({storage:{bucket:()=>({getMetadata:async()=>{throw Object.assign(new Error('denied'),{code:403})}})}})
  await assert.rejects(provisionQaResources({env:env(),loadClients:f.loadClients}));assert.equal(f.state.writes.length,0)
+})
+test('all missing provisioning permissions are reported before resource creation',async()=>{
+ const f=fixture(),load=f.loadClients;const report={}
+ await assert.rejects(provisionQaResources({env:env(),report,loadClients:async c=>{
+  const clients=await load(c),api=clients.api
+  clients.api=(url,opts)=>url.endsWith(':testIamPermissions')?Promise.resolve({permissions:['datastore.databases.get']}):api(url,opts)
+  return clients
+ }}),/QA_PROVISIONING_PERMISSIONS_MISSING/)
+ assert.ok(report.missingPermissions.includes('datastore.databases.create'));assert.ok(report.missingPermissions.includes('storage.buckets.create'))
+ assert.equal(f.state.db,null);assert.equal(f.state.bucket,null)
 })

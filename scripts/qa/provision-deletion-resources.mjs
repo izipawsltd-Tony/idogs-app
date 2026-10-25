@@ -28,6 +28,12 @@ export async function provisionQaResources({env=process.env,loadClients,report={
  const originalDefaultRules=await api(`${rules}projects/${p}/releases/cloud.firestore`,{allow404:true})
  const originalDefaultDb=await api(`${firestore}projects/${p}/databases/(default)`)
  report.defaultEdition=originalDefaultDb.databaseEdition
+ report.phase='verify_provisioning_permissions'
+ const required=['datastore.databases.create','datastore.databases.get','firebaserules.rulesets.create','firebaserules.rulesets.get','firebaserules.rulesets.test','firebaserules.releases.create','firebaserules.releases.get','firebaserules.releases.update','storage.buckets.create','storage.buckets.get']
+ const iam=await api(`https://cloudresourcemanager.googleapis.com/v1/projects/${p}:testIamPermissions`,{method:'POST',body:{permissions:required}})
+ report.principal=credential.client_email
+ report.missingPermissions=required.filter(permission=>!iam.permissions?.includes(permission))
+ if(report.missingPermissions.length)throw fail('QA_PROVISIONING_PERMISSIONS_MISSING')
  report.phase='create_qa_database'
  let database=await api(firestore+db,{allow404:true})
  if(!database){
@@ -89,10 +95,15 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
     const token=await auth.getAccessToken()
     const response=await fetch(url,{method,headers:{Authorization:`Bearer ${token.access_token}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)})
     if(allow404&&response.status===404)return null
-    if(!response.ok)throw Object.assign(new Error('QA_RESOURCE_API_FAILED'),{code:'QA_RESOURCE_API_FAILED',httpStatus:response.status})
+    if(!response.ok){
+     const error=await response.json().catch(()=>({}))
+     const permission=String(error.error?.message||'').match(/Permission ['"]([A-Za-z0-9_.]+)['"]/)?.[1]
+     const detail=error.error?.details?.find(d=>d['@type']==='type.googleapis.com/google.rpc.ErrorInfo')
+     throw Object.assign(new Error('QA_RESOURCE_API_FAILED'),{code:'QA_RESOURCE_API_FAILED',httpStatus:response.status,permission,reason:/^[A-Z_]{1,80}$/.test(detail?.reason||'')?detail.reason:undefined})
+    }
     return response.json()
    }}
   }})
   console.log(JSON.stringify(result,null,2))
- }catch(e){console.error(JSON.stringify({...report,status:'blocked',code:/^[A-Z_]{3,80}$/.test(String(e.code))?e.code:'QA_RESOURCE_PROVISIONING_FAILED',httpStatus:e.httpStatus,partialResourcesMayExist:report.databaseCreated===true||report.bucketCreated===true}));process.exitCode=2}
+ }catch(e){console.error(JSON.stringify({...report,status:'blocked',code:/^[A-Z_]{3,80}$/.test(String(e.code))?e.code:'QA_RESOURCE_PROVISIONING_FAILED',httpStatus:e.httpStatus,permission:e.permission,reason:e.reason,partialResourcesMayExist:report.databaseCreated===true||report.bucketCreated===true}));process.exitCode=2}
 }
