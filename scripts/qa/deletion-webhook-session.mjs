@@ -15,7 +15,7 @@ export function sessionConfiguration(env){
 }
 export async function webhookSession({env=process.env,loadClients,runFixture,wait=ms=>new Promise(r=>setTimeout(r,ms)),report={}}){
  const config=sessionConfiguration(env),{stripe,api}=await loadClients(config)
- let endpoint,bypass,deployment,originalProject,mutated=false
+ let endpoint,bypass,deployment,originalProject,mutated=false,endpointIntent=false
  const createdEnvs=[],cleanup=[]
  const note=`idogs-deletion-qa-${randomBytes(12).toString('hex')}`
  report.source=env.GITHUB_SHA;report.project=P;report.branch=B
@@ -27,15 +27,18 @@ export async function webhookSession({env=process.env,loadClients,runFixture,wai
   const initial=(await api(`/v10/projects/${P}/env`)).envs||[]
   ensure(!initial.some(e=>e.gitBranch===B&&e.target?.includes('preview')&&keys.includes(e.key)),'QA_BRANCH_ENV_ALREADY_EXISTS')
   report.phase='create_then_disable_test_endpoint'
-  endpoint=await stripe.webhookEndpoints.create({url:'https://idogs-app-staging-yeh5jvxgo-izipawsltd-tonys-projects.vercel.app/api/qa/deletion-webhook',enabled_events:['customer.subscription.updated'],description:note,metadata:{deletionQaSession:note}})
+  endpointIntent=true
+  endpoint=await stripe.webhookEndpoints.create({url:'https://idogs-app-staging-yeh5jvxgo-izipawsltd-tonys-projects.vercel.app/api/qa/deletion-webhook',enabled_events:['customer.subscription.updated'],description:note,metadata:{deletionQaSession:note}},{idempotencyKey:`${note}/endpoint`})
   ensure(endpoint.livemode===false&&/^we_[A-Za-z0-9]+$/.test(endpoint.id)&&/^whsec_[A-Za-z0-9]+$/.test(endpoint.secret||''),'QA_ENDPOINT_CONFIGURATION_MISMATCH')
   await stripe.webhookEndpoints.update(endpoint.id,{disabled:true})
   ensure((await stripe.webhookEndpoints.retrieve(endpoint.id)).status==='disabled','QA_ENDPOINT_DISABLE_FAILED')
   report.endpointCreated=true
   report.phase='create_temporary_bypass'
-  bypass=randomBytes(32).toString('hex');mutated=true
-  await api(`/v1/projects/${P}/protection-bypass`,{method:'PATCH',body:{generate:{secret:bypass,note}}})
-  ensure((await api(`/v9/projects/${P}`)).protectionBypass?.[bypass],'QA_BYPASS_READBACK_FAILED')
+  mutated=true
+  // Let Vercel generate the token; OAuth connections reject custom values.
+  await api(`/v1/projects/${P}/protection-bypass`,{method:'PATCH',body:{generate:{note}}})
+  const generated=Object.entries((await api(`/v9/projects/${P}`)).protectionBypass||{}).filter(([,v])=>v.note===note)
+  ensure(generated.length===1,'QA_BYPASS_READBACK_FAILED');bypass=generated[0][0]
   report.bypassCreated=true
   report.phase='create_branch_only_variables'
   const values=[config.stripeKey,endpoint.secret,new Date(Date.now()+23*3600000).toISOString()]
@@ -45,7 +48,7 @@ export async function webhookSession({env=process.env,loadClients,runFixture,wai
    ensure(match.length===1,'QA_ENV_READBACK_FAILED');createdEnvs.push(match[0].id)
   }
   report.phase='deploy_exact_preview_source'
-  deployment=await api('/v13/deployments',{method:'POST',body:{name:'idogs-app-staging',project:P,gitSource:{type:'github',repoId:originalProject.link.repoId,ref:B,sha:env.GITHUB_SHA},meta:{deletionQaSession:note}}})
+  deployment=await api('/v13/deployments?forceNew=1',{method:'POST',body:{name:'idogs-app-staging',project:P,gitSource:{type:'github',repoId:originalProject.link.repoId,ref:B,sha:env.GITHUB_SHA},meta:{deletionQaSession:note}}})
   ensure(/^dpl_[A-Za-z0-9]+$/.test(deployment.id||''),'QA_DEPLOYMENT_ID_REQUIRED')
   for(let attempt=0;attempt<90;attempt++){
    deployment=await api(`/v13/deployments/${deployment.id}`)
@@ -67,7 +70,9 @@ export async function webhookSession({env=process.env,loadClients,runFixture,wai
   report.status='signed_webhook_qa_pass'
  }finally{
   const clean=async(step,fn)=>{try{await fn();cleanup.push({step,status:'success'})}catch(e){cleanup.push({step,status:'failed',code:/^[A-Za-z0-9_/-]{1,80}$/.test(String(e.code||''))?String(e.code):'CLEANUP_FAILED'})}}
+  if(endpointIntent&&!endpoint)await clean('reconcile_endpoint_response',async()=>{const list=await stripe.webhookEndpoints.list({limit:100});ensure(!list.has_more,'QA_ENDPOINT_RECONCILIATION_INCOMPLETE');const own=list.data.filter(e=>e.livemode===false&&e.metadata?.deletionQaSession===note);ensure(own.length<=1,'QA_ENDPOINT_RECONCILIATION_AMBIGUOUS');endpoint=own[0]})
   if(endpoint)await clean('test_endpoint',async()=>{const current=await stripe.webhookEndpoints.retrieve(endpoint.id);ensure(current.livemode===false&&current.metadata?.deletionQaSession===note,'QA_ENDPOINT_CLEANUP_BINDING');await stripe.webhookEndpoints.del(endpoint.id)})
+  if(mutated&&!bypass)await clean('reconcile_bypass_response',async()=>{const entries=Object.entries((await api(`/v9/projects/${P}`)).protectionBypass||{}).filter(([,v])=>v.note===note);ensure(entries.length<=1,'QA_BYPASS_RECONCILIATION_AMBIGUOUS');bypass=entries[0]?.[0]})
   if(bypass&&mutated)await clean('temporary_bypass',async()=>{const p=await api(`/v9/projects/${P}`);if(p.protectionBypass?.[bypass])await api(`/v1/projects/${P}/protection-bypass`,{method:'PATCH',body:{revoke:{secret:bypass,regenerate:false}}});ensure(!(await api(`/v9/projects/${P}`)).protectionBypass?.[bypass],'QA_BYPASS_REVOCATION_UNCONFIRMED')})
   // Reconcile writes whose API response may have been lost before an ID was saved.
   if(mutated)await clean('reconcile_branch_variable_ids',async()=>{for(const e of (await api(`/v10/projects/${P}/env`)).envs||[])if(e.comment===note&&e.gitBranch===B&&e.target?.length===1&&e.target[0]==='preview'&&keys.includes(e.key)&&!createdEnvs.includes(e.id))createdEnvs.push(e.id)})
@@ -87,7 +92,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
    const {default:Stripe}=await import('stripe'),stripe=new Stripe(config.stripeKey,{timeout:20000,maxNetworkRetries:0})
    return {stripe,api:async(path,{method='GET',body}={})=>{
     const r=await fetch(`https://api.vercel.com${path}${path.includes('?')?'&':'?'}teamId=${T}`,{method,headers:{Authorization:`Bearer ${process.env.VERCEL_TOKEN}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)})
-    if(!r.ok)throw Object.assign(new Error('QA_VERCEL_API_FAILED'),{code:`QA_VERCEL_HTTP_${r.status}`})
+    if(!r.ok){const err=await r.json().catch(()=>({}));throw Object.assign(new Error('QA_VERCEL_API_FAILED'),{code:`QA_VERCEL_HTTP_${r.status}`,providerCode:/^[A-Za-z0-9_.-]{1,100}$/.test(err.error?.code||'')?err.error.code:undefined})}
     return r.status===204?{}:r.json()
    }}
   },runFixture:async env=>{
@@ -96,6 +101,6 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
    if(result.code!==0)report.fixture=parsed
    return parsed
   }})
- }catch(e){report.status='blocked';report.code=/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'QA_WEBHOOK_SESSION_FAILED'}
+ }catch(e){report.status='blocked';report.code=/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'QA_WEBHOOK_SESSION_FAILED';report.providerCode=e.providerCode}
  console.log(JSON.stringify(report,null,2));if(report.status!=='signed_webhook_qa_pass')process.exitCode=2
 }

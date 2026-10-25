@@ -11,10 +11,10 @@ function clients(){
  const api=async(path,{method='GET',body}={})=>{
   if(method!=='GET')writes.push({path,method})
   if(path===`/v9/projects/${P}`)return project
-  if(path.endsWith('/protection-bypass')){if(body.generate)project.protectionBypass[body.generate.secret]={note:body.generate.note};else delete project.protectionBypass[body.revoke.secret];return {}}
+  if(path.endsWith('/protection-bypass')){if(body.generate){assert.equal(body.generate.secret,undefined);project.protectionBypass['fixture-server-generated-token']={note:body.generate.note}}else delete project.protectionBypass[body.revoke.secret];return {}}
   if(path===`/v10/projects/${P}/env`){if(method==='POST')envs.push({...body,id:`env_${envs.length}`});return {envs}}
   if(path.startsWith(`/v9/projects/${P}/env/`)){const id=path.split('/').at(-1),index=envs.findIndex(e=>e.id===id);envs.splice(index,1);return {}}
-  if(path==='/v13/deployments'){assert.equal(body.project,P);assert.equal(body.target,undefined);assert.equal(body.gitSource.sha,env.GITHUB_SHA);return deployment}
+  if(path==='/v13/deployments?forceNew=1'){assert.equal(body.project,P);assert.equal(body.target,undefined);assert.equal(body.gitSource.sha,env.GITHUB_SHA);return deployment}
   if(path==='/v13/deployments/dpl_fixture'){if(method==='DELETE')deletedDeployment=true;return deployment}
   throw Error('Unexpected fixture path')
  }
