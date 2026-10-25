@@ -62,7 +62,11 @@ try{
   for(const item of s.items.data){
    const price=await stripe.prices.retrieve(item.price.id)
    ensure(price.livemode===false&&price.product===product.id,'CLEANUP_PRICE_MISMATCH')
-   await stripe.prices.update(price.id,{active:false})
+   // Inline price_data prices can already be inactive and are not editable.
+   // Do not issue an unsupported update for a price already unavailable for sale.
+   if(price.active!==false)await stripe.prices.update(price.id,{active:false})
+   const archived=await stripe.prices.retrieve(price.id)
+   ensure(archived.livemode===false&&archived.product===product.id&&archived.active===false,'CLEANUP_PRICE_ARCHIVE_UNCONFIRMED')
   }
   cleanupSteps.push({step:'stripe_prices',status:'success'})
  }catch(e){cleanupFailure('stripe_subscription_or_prices',e)}}
