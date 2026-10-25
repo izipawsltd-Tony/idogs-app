@@ -20,7 +20,9 @@ export async function signInCloudFixture({auth,uid,credential,fetchImpl=fetch}){
  const custom=await auth.createCustomToken(uid)
  const r=await fetchImpl(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(config.apiKey)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:custom,returnSecureToken:true}),signal:AbortSignal.timeout(30000)})
  ensure(r.ok,`QA_SIGN_IN_HTTP_${r.status}`)
- const result=await r.json();ensure(result.localId===uid&&typeof result.idToken==='string','QA_SIGN_IN_UID_MISMATCH')
+ // This endpoint returns an ID token, not a localId field. Bind UID to the
+ // cryptographically verified Firebase token below, never an unverified body.
+ const result=await r.json();ensure(typeof result.idToken==='string'&&result.idToken.length>0,'QA_SIGN_IN_TOKEN_MISSING')
  const verified=await auth.verifyIdToken(result.idToken,true)
  ensure(verified.uid===uid&&verified.aud===project&&verified.iss===`https://securetoken.google.com/${project}`,'QA_SIGN_IN_TOKEN_IDENTITY_MISMATCH')
  return result.idToken

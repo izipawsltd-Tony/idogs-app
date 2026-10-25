@@ -24,3 +24,15 @@ test('HTTP adapter denies anonymous, invalid and foreign tokens without database
   assert.equal((await api.call({token:'fixture-only',method:'DELETE'})).status,405)
  }finally{await api.close()}
 })
+test('custom-token REST response needs no localId; verified token must bind UID, audience and issuer',async()=>{
+ const appId='1:530003937245:web:qa'
+ let decoded={uid,aud:project,iss:`https://securetoken.google.com/${project}`}
+ const auth={app:{options:{projectId:project}},createCustomToken:async()=> 'fixture-custom',verifyIdToken:async()=>decoded}
+ const credential={getAccessToken:async()=>({access_token:'fixture-only'})}
+ const fetchImpl=async url=>({ok:true,json:async()=>url.includes('signInWithCustomToken')?{idToken:'fixture-id',refreshToken:'not-used',expiresIn:'3600',isNewUser:false}:url.includes('/config')?{projectId:project,appId,apiKey:'AIza-qa',messagingSenderId:'530003937245'}:{apps:[{appId}]}})
+ assert.equal(await signInCloudFixture({auth,uid,credential,fetchImpl}),'fixture-id')
+ for(const change of [{uid:'foreign'},{aud:'idogs-app'},{iss:'https://securetoken.google.com/idogs-app'}]){
+  decoded={uid,aud:project,iss:`https://securetoken.google.com/${project}`,...change}
+  await assert.rejects(signInCloudFixture({auth,uid,credential,fetchImpl}),/TOKEN_IDENTITY_MISMATCH/)
+ }
+})
