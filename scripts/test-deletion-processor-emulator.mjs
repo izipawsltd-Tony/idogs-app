@@ -14,6 +14,7 @@ import {createEmulatorDeletionProcessor} from '../api/_lib/deletion-processor.js
 import {syntheticDeletionProvider} from '../api/_lib/deletion-synthetic-provider.js'
 import {buildEmulatorDeletionPlan,scanDeletionDocuments,versionOf,mediaPaths} from '../api/_lib/deletion-plan.js'
 import {requireDeletionEmulators,beginAccountMutation,withAccountMutationFence} from '../api/_lib/deletion-fence.js'
+import {recordDeletionBillingAcceptance} from '../api/_lib/deletion-billing.js'
 
 const PROJECT='demo-idogs-deletion'
 for(const key of ['FIRESTORE_EMULATOR_HOST','FIREBASE_AUTH_EMULATOR_HOST','FIREBASE_STORAGE_EMULATOR_HOST'])if(!/^(localhost|127\.0\.0\.1):\d{4,5}$/.test(process.env[key]||''))throw Error('Expected local emulators')
@@ -49,7 +50,7 @@ before(async()=>{
   rules=await initializeTestEnvironment({projectId:PROJECT,firestore:{host:'127.0.0.1',port:8080,rules:readFileSync(new URL('../firestore.rules',import.meta.url),'utf8')}})
   provider=syntheticDeletionProvider(db)
   processor=createEmulatorDeletionProcessor({projectId:PROJECT,db,auth,bucket,provider})
-  const requestHandler=makeDeletionHandler({db,authenticate:t=>auth.verifyIdToken(t,true)})
+  const requestHandler=makeDeletionHandler({db,authenticate:t=>auth.verifyIdToken(t,true),onRequestAccepted:job=>recordDeletionBillingAcceptance({...job,db,provider,assertRuntime:()=>requireDeletionEmulators({projectId:PROJECT,db,auth,bucket})})})
   const workHandler=makeDeletionProcessingHandler({authorize:async(req,res)=>{try{return await auth.verifyIdToken((req.headers.authorization||'').slice(7),true)}catch{res.status(401).json({error:'Unauthorized'});return null}},processor})
   server=createServer(async(req,res)=>{res.status=code=>{res.statusCode=code;return res};res.json=data=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));return res};try{let body='';for await(const c of req)body+=c;req.body=body?JSON.parse(body):undefined;req.query={};await (req.url==='/request'?requestHandler:workHandler)(req,res)}catch{if(!res.headersSent)res.status(500).json({error:'Fixture server failure'})}})
   await new Promise(r=>server.listen(0,'127.0.0.1',r));origin=`http://127.0.0.1:${server.address().port}`
@@ -67,6 +68,70 @@ test('strict environment/service guard rejects cloud, remote hosts, credentials 
   for(const change of [{GCLOUD_PROJECT:'idogs-app'},{FIRESTORE_EMULATOR_HOST:'remote.example:8080'},{FIREBASE_AUTH_EMULATOR_HOST:''},{FIREBASE_STORAGE_EMULATOR_HOST:''},{FIREBASE_PRIVATE_KEY:'not-a-real-key'},{ACCOUNT_DELETION_MODE:'live'}])assert.throws(()=>requireDeletionEmulators({projectId:PROJECT,db,auth,bucket,env:{...env,...change}}))
   assert.throws(()=>requireDeletionEmulators({projectId:PROJECT,db,auth,bucket:{name:'idogs-app.firebasestorage.app'},env}))
   assert.throws(()=>createEmulatorDeletionProcessor({projectId:PROJECT,db,auth,bucket,provider:{mode:'live'}}))
+})
+test('acceptance stops synthetic renewal before destructive processing; cancellation never restarts it',async()=>{
+  await seed();const fixture=db.collection('deletionSyntheticProviders').doc(owner.uid)
+  await fixture.update({subscriptions:[{id:'sub-synthetic',ownerUid:owner.uid,renewalStopped:false}]})
+  const accepted=await request()
+  assert.equal(accepted.body.renewalStatus,'verified_stopped');assert.equal(accepted.body.status,'requested')
+  assert.equal((await db.collection('users').doc(owner.uid).get()).exists,true);assert.ok(await auth.getUser(owner.uid))
+  assert.equal((await call(owner,'/request','POST',{action:'cancel'})).body.renewalStatus,'verified_stopped')
+  assert.equal((await fixture.get()).data().subscriptions[0].renewalStopped,true)
+  assert.equal((await fixture.get()).data().keys.length,1)
+  const task=(await db.doc(`accountDeletionRenewalTasks/${owner.uid}_1`).get()).data()
+  assert.equal(task.status,'verified_stopped');assert.equal(task.executionEnabled,false);assert.equal(task.verificationMode,'synthetic-emulator')
+})
+test('acceptance provider failure keeps an honest receipt; later failed recheck never claims verified renewal',async()=>{
+  await seed();const fixture=db.collection('deletionSyntheticProviders').doc(owner.uid)
+  // A prior check is not proof of the current provider state.
+  await requestRef().update({renewalStatus:'pending_verification'})
+  await fixture.update({discoveryComplete:false})
+  const held=await request();assert.equal(held.body.renewalStatus,'review_required');assert.equal(held.body.canCancel,true)
+  await fixture.update({discoveryComplete:true,subscriptions:[{id:'sub-synthetic',ownerUid:owner.uid,renewalStopped:false}]})
+  assert.equal((await request()).body.renewalStatus,'verified_stopped')
+  await fixture.update({failCancellation:true})
+  assert.equal((await request()).body.renewalStatus,'review_required')
+})
+test('late billing evidence cannot overwrite a replacement request revision',async()=>{
+  await seed();const late={...provider,discover:async uid=>{await requestRef().update({revision:2,renewalStatus:'pending_verification'});return {uid,complete:true,subscriptions:[]}}}
+  await recordDeletionBillingAcceptance({db,uid:owner.uid,revision:1,provider:late,assertRuntime:()=>requireDeletionEmulators({projectId:PROJECT,db,auth,bucket})})
+  assert.equal((await requestRef().get()).data().renewalStatus,'pending_verification')
+})
+test('an older failed billing attempt cannot overwrite a newer verified result',async()=>{
+  await seed();let entered,release
+  const started=new Promise(r=>{entered=r}),waiting=new Promise(r=>{release=r})
+  const late={...provider,discover:async()=>{entered();await waiting;throw Error('old timeout')}}
+  const assertRuntime=()=>requireDeletionEmulators({projectId:PROJECT,db,auth,bucket})
+  const first=recordDeletionBillingAcceptance({db,uid:owner.uid,revision:1,provider:late,assertRuntime})
+  await started
+  await recordDeletionBillingAcceptance({db,uid:owner.uid,revision:1,provider,assertRuntime})
+  release();await first
+  assert.equal((await requestRef().get()).data().renewalStatus,'verified_no_subscription')
+})
+test('UID-keyed promotion Checkout ledger is inventoried and held for reviewed billing retention',async()=>{
+  await seed();await db.doc(`plusPromotionCheckouts/${owner.uid}`).set({sessionId:'cs_synthetic',status:'complete'})
+  assert.equal((await processor.process({uid:owner.uid,revision:1})).code,'retention_review')
+  assert.ok(await auth.getUser(owner.uid));assert.equal((await db.doc(`users/${owner.uid}`).get()).exists,true)
+})
+test('Rules preserve marketing preferences for an active account and deny changes by a frozen account',async()=>{
+  await seed()
+  const preferences={marketingConsent:{channel:'email_marketing',choice:'opt_in',email:other.email,source:'account_settings'}}
+  const client=rules.authenticatedContext(other.uid).firestore()
+  await assertSucceeds(updateDoc(doc(client,'users',other.uid),preferences))
+  await db.doc(`accountDeletionLocks/${other.uid}`).set({state:'processing',revision:1})
+  await assertFails(updateDoc(doc(client,'users',other.uid),{marketingConsent:{...preferences.marketingConsent,choice:'opt_out'}}))
+})
+test('email-only data introduced after planning blocks completion and preserves Auth',async()=>{
+  await seed({media:false});let injected=false
+  await assert.rejects(processor.process({uid:owner.uid,revision:1,afterOperation:async()=>{if(!injected){injected=true;await db.doc('unknownRecords/email-only').set({note:`Contact ${owner.email.toUpperCase()} before closure`})}}}),/RESIDUAL_ACCOUNT_RECORD/)
+  assert.ok(await auth.getUser(owner.uid));assert.notEqual((await requestRef().get()).data().status,'completed')
+})
+test('tampered staged operation is refused on retry before a different path can be deleted',async()=>{
+  await seed({media:false});await assert.rejects(processor.process({uid:owner.uid,revision:1,afterOperation:async()=>{throw Error('staged crash')}}),/staged crash/)
+  const op=db.doc(`accountDeletionJobs/${owner.uid}/operations/000001`)
+  await op.update({path:`users/${other.uid}`})
+  await assert.rejects(processor.process({uid:owner.uid,revision:1}),/DELETION_PLAN_CHANGED/)
+  assert.equal((await db.doc(`users/${other.uid}`).get()).exists,true)
 })
 test('HTTP request -> operator processor -> real emulator records/media/Auth removal with completion receipt',async()=>{
   await seed();const path=`dogs/${owner.uid}/orphan.jpg`;await bucket.file(path).save(Buffer.from('orphan'))

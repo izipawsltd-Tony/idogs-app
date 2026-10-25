@@ -11,8 +11,9 @@ export const ACCOUNT_QUERIES = {
   dogPrivateAccess: ['ownerId', 'ownerUid'], passportReservations: ['tenantId', 'uid'],
   litterPuppyOperations: ['tenantId', 'uid'], litterQuotaCredits: ['tenantId', 'userId'],
   litterQuotaLedger: ['tenantId', 'userId'], mediaUploadGrants: ['uid', 'userId', 'tenantId'],
-  mediaUploadQuotas: ['uid', 'userId'], smsDeliveries: ['tenantId'], auditLogs: ['tenantId', 'userId'],
+  mediaUploadQuotas: ['uid', 'userId'], smsDeliveries: ['tenantId'], reminderEmailDeliveries: ['tenantId'], auditLogs: ['tenantId', 'userId'],
   supportConversations: ['ownerUid'], supportMessages: ['senderUid'], supportFaqFeedback: ['ownerUid'],
+  accountDeletionRenewalTasks: ['uid'],
 }
 const DOG_COLLECTIONS = ['vaccineRecords', 'wormingRecords', 'healthTests', 'reminders', 'activityNotes',
   'documents', 'heatCycles', 'dogPrivateAccess', 'scanLogs', 'mediaUploadGrants', 'passportReservations']
@@ -20,7 +21,7 @@ const LITTER_COLLECTIONS = ['litterShowcases', 'showcaseEnquiries', 'litterPuppy
 const PATH_KEYS = new Set(['path', 'filePath', 'documentPath', 'storagePath', 'microchipCertPath'])
 const URL_KEYS = new Set(['url', 'fileUrl', 'documentUrl', 'photoUrl', 'profilePhoto', 'microchipCertUrl'])
 const EXPECTED_GLOBAL_COLLECTIONS = new Set(['supportFaqs', 'supportRateLimits', 'processedStripeEvents',
-  'accountDeletionRequests', 'surveyResponses', 'scanLogs', 'landingMediaDrafts', 'landingMediaPublished',
+  'accountDeletionRequests', 'plusPromotionCheckouts', 'surveyResponses', 'scanLogs', 'landingMediaDrafts', 'landingMediaPublished',
   'mediaUploadGrants', 'mediaUploadQuotas', ...Object.keys(ACCOUNT_QUERIES)])
 
 function mediaReferences(data) {
@@ -62,6 +63,11 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     else errors.add('users:missing_profile')
     rootCollections = (await db.listCollections()).map(c => c.id)
   } catch { errors.add('collection_discovery') }
+  // Checkout ledgers are keyed by UID; their payload has no ownership field to query.
+  try {
+    const doc = await db.collection('plusPromotionCheckouts').doc(uid).get()
+    if (doc.exists) remember(doc)
+  } catch { errors.add('plusPromotionCheckouts:document') }
   // Bounded sequential batches limit load without claiming a global snapshot.
   for (const [collection, fields] of Object.entries(ACCOUNT_QUERIES)) {
     await Promise.all(fields.map(field => discover(collection, field, uid)))
@@ -95,6 +101,8 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     const dogId = collection === 'dogs' ? document.id : data.dogId
     const dogState = dogId ? dogStates.get(dogId) : null
     let disposition = 'review_account_record'
+    if (collection === 'accountDeletionRenewalTasks') disposition = 'review_workflow_retention'
+    if (collection === 'plusPromotionCheckouts') disposition = 'review_billing_retention'
     if (dogState === 'preserve_other_owner') disposition = 'preserve_other_owner'
     else if (dogState === 'review_pending_transfer') disposition = 'review_pending_transfer'
     else if (dogState === 'review_legacy_ownership') disposition = 'review_legacy_ownership'
@@ -104,7 +112,7 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     try { for (const c of await document.ref.listCollections()) subcollections.add(c.path) }
     catch { errors.add(`${collection}:subcollections`) }
     records.push({ path: document.ref.path, version: document.updateTime?.toDate?.().toISOString() || null,
-      disposition, media: mediaReferences(data) })
+      disposition, media: collection === 'plusPromotionCheckouts' ? { paths: [], legacyUrlCount: 0 } : mediaReferences(data) })
   }
   records.sort((a, b) => a.path.localeCompare(b.path))
   const unknownCollections = rootCollections.filter(c => !EXPECTED_GLOBAL_COLLECTIONS.has(c) && c !== 'users').sort()
@@ -124,7 +132,7 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     counts: { records: records.length, dogs: dogs.length, litters: litters.length, conversations: conversations.length },
     holds, errors: [...errors].sort(), truncated: [...truncated].sort(),
     unscannedSubcollections: [...subcollections].sort(), unknownCollections,
-    billingReviewRequired: !!(profile?.stripeCustomerId || profile?.stripeSubscriptionId || profile?.smsStripeSubscriptionId || profile?.subscriptionStatus === 'active'),
+    billingReviewRequired: !!(found.has(`plusPromotionCheckouts/${uid}`) || profile?.stripeCustomerId || profile?.stripeSubscriptionId || profile?.smsStripeSubscriptionId || profile?.subscriptionStatus === 'active'),
     // Even false here is not provider confirmation of no subscription.
   }
 }

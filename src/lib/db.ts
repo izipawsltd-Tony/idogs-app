@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDoc, getDocsFromServer as getDocs, addDoc, updateDoc, deleteDoc,
+  collection, doc, getDoc, getDocFromServer, getDocsFromServer as getDocs, addDoc, updateDoc, deleteDoc,
   query, where, serverTimestamp, setDoc, Timestamp, deleteField, runTransaction
 } from 'firebase/firestore'
 import { db, auth } from './firebase'
@@ -124,6 +124,14 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
   if (!snap.exists()) return null
   const d = snap.data()
   return normalizeUserProfile({ ...d, uid: snap.id, createdAt: toDate(d.createdAt) })
+}
+
+// Privacy/consent refresh must bypass local Firestore cache.
+export async function getUserProfileFromServer(userId: string): Promise<UserProfile | null> {
+  const snap = await getDocFromServer(doc(db, 'users', userId))
+  if (!snap.exists()) return null
+  const data = snap.data()
+  return normalizeUserProfile({ ...data, uid: snap.id, createdAt: toDate(data.createdAt) })
 }
 
 export async function createUserProfile(userId: string, data: Partial<UserProfile>): Promise<void> {

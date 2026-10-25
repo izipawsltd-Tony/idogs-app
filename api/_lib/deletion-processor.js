@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireDeletionEmulators, DELETION_LOCKS, MUTATION_LEASES, DELETION_JOBS, DELETION_RECEIPTS, validAccountId } from './deletion-fence.js'
-import { buildEmulatorDeletionPlan, scanDeletionDocuments, versionOf, digest } from './deletion-plan.js'
+import { buildEmulatorDeletionPlan, scanDeletionDocuments, versionOf, digest, containsDeletionIdentity } from './deletion-plan.js'
 
 const day = 86400000
 const fail = code => Object.assign(new Error(code),{code,status:409})
@@ -151,7 +151,7 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
       const scan=await scanDeletionDocuments(db)
       if(scan.holds.length)throw fail('FINAL_INVENTORY_INCOMPLETE')
       const approvedRetained=new Set(currentJob.retained.map(r=>r.path))
-      if(scan.records.some(r=>!approvedRetained.has(r.path)&&(r.path.startsWith(`users/${uid}/`)||r.path===`users/${uid}`||JSON.stringify(r.data).includes(uid))))throw fail('RESIDUAL_ACCOUNT_RECORD')
+      if(scan.records.some(r=>!approvedRetained.has(r.path)&&(r.path.startsWith(`users/${uid}/`)||r.path===`users/${uid}`||containsDeletionIdentity(r.data,uid,currentJob.profileEmailHash))))throw fail('RESIDUAL_ACCOUNT_RECORD')
       await db.runTransaction(async tx=>{await owned(tx,uid,revision,lease)})
       try{
         const identity=await auth.getUser(uid)

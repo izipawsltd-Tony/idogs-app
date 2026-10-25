@@ -61,7 +61,7 @@ export default function PrivacyPage() {
             <p>We share your information only in these limited circumstances:</p>
             <ul>
               <li><strong>Ownership transfer:</strong> A transfer can share the dog records needed by its new owner. Former-owner access is limited to the available historical record; later current-owner updates are private</li>
-              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure); Vercel (hosting), Amazon Web Services/SNS (SMS where enabled) and Anthropic (optional AI scanning). Provider arrangements require verification before this draft becomes effective</li>
+              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure); Vercel (hosting), ClickSend (SMS where enabled) and Anthropic (optional AI scanning). Provider arrangements and any legacy SMS provider records require verification before this draft becomes effective</li>
               <li><strong>Legal requirements:</strong> If required by Australian law, court order, or government authority</li>
               <li><strong>Public passport:</strong> Information displayed on a dog's public QR passport page is visible to anyone with the link</li>
             </ul>

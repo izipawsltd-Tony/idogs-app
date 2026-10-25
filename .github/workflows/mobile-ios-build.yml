@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/android-v20-qa-blockers
+      - release/ios-app-store-20261025
     paths:
       - 'mobile/**'
       - 'src/**'

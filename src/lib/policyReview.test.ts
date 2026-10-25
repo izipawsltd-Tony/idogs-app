@@ -18,7 +18,8 @@ describe('unpublished legal policy review', () => {
   it.each([['Privacy', PrivacyPage], ['Terms', TermsPage]] as const)('%s clearly distinguishes proposed commitments from current capability', (_name, Page) => {
     const html = pageText(Page)
     expect(html).toContain('Draft for review — not effective')
-    expect(html).toContain('not yet enabled')
+    expect(html).toContain('Permanent deletion and automatic cancellation of subscription renewal remain unavailable in the live service.')
+    expect(html).toContain('a target is not confirmation of completion')
     expect(html).toContain('not a statutory deadline or a mandatory waiting period')
     expect(html).toContain('requested, not deleted')
     expect(html).toContain('Australian Consumer Law')

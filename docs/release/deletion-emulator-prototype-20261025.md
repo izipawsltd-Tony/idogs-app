@@ -22,7 +22,7 @@ Run `npm test`, `npm run build`, `node --test scripts/test-account-deletion.mjs`
 - Direct Storage ingestion is not fenced by Firestore Rules. The worker holds unexpired signed grants and requires synthetic ingress-drained evidence; real upload draining and Storage rules remain production prerequisites.
 - Inventory limits hold rather than truncate silently. Root collection listing and missing-parent discovery are emulator prototypes, not a demonstrated production-scale inventory strategy.
 - Financial/history retention decisions need exact versions, reasons and future review dates. Real legal retention periods, access restrictions, policy text and deletion of expired retained records remain unresolved.
-- The final residual scan checks UID references. Full free-text/email detection, external copies, logs, backups and restored-data suppression require additional engineering and real provider evidence.
+- The final residual scan checks UID references and case-insensitive email tokens against a stored hash. This is not comprehensive detection of personal information in free text. External copies, logs, backups and restored-data suppression require additional engineering and real provider evidence.
 - A crashed writer lease stays active and requires operator investigation; elapsed time never proves that an external write stopped.
 - Source review and automated tests are not an independent security review. Rules and production architecture require review before broad sharing or any deployment. No production readiness or App Store readiness is asserted.
 

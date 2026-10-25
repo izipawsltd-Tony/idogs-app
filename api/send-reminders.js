@@ -4,10 +4,11 @@ import { withAccountMutationFence } from './_lib/deletion-fence.js'
 
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
-import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
+import { sendClickSendSms } from './_lib/clicksend-sms.js'
 import { requireAppUrl, logConfigError } from './_lib/require-config.js'
 import { checkCronAuth } from './_lib/cron-auth.js'
 import { sendSmsWithQuota } from './_lib/sms-addon.js'
+import { smsSendGate } from './_lib/sms-sender-readiness.js'
 import { deliverManualReminder } from './_lib/manual-reminder-delivery.js'
 
 if (!getApps().length) {
@@ -21,13 +22,6 @@ if (!getApps().length) {
 }
 
 const db = getFirestore()
-const sns = new SNSClient({
-  region: process.env.AWS_SNS_REGION || 'ap-southeast-2',
-  credentials: {
-    accessKeyId: process.env.AWS_SNS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SNS_SECRET_ACCESS_KEY,
-  },
-})
 
 // Dogs eligible for reminder processing under `tenantId` — mirrors the
 // ownership rule getDogs() uses client-side. tenantId permanently stays
@@ -66,15 +60,7 @@ async function getReminderEligibleDogs(tenantId) {
 }
 
 async function sendSmsProvider(phone, message) {
-  const command = new PublishCommand({
-    Message: message,
-    PhoneNumber: phone,
-    MessageAttributes: {
-      'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: 'iDogs' },
-      'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },
-    },
-  })
-  return sns.send(command)
+  return sendClickSendSms(phone, message)
 }
 
 async function sendReminderSms({
@@ -90,6 +76,8 @@ async function sendReminderSms({
   now,
 }) {
   if (!phone) return { sent: false, reason: 'NO_PHONE' }
+  const gate = smsSendGate()
+  if (!gate.ready) return { sent: false, reason: gate.reason }
   return sendSmsWithQuota({
     db,
     tenantId,
@@ -194,7 +182,8 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
     for (const userDoc of usersSnap.docs) {
       const user = userDoc.data()
       // Skip users who have explicitly disabled email reminders
-      if (user.emailReminders === false) continue
+      // Keep SMS/in-app processing independent of the email preference.
+      const emailEnabled = user.emailReminders !== false
       const tenantId = userDoc.id
       const reminderDays = user.reminderDays || 7
       const reminderFrequency = user.reminderFrequency || 'once' // 'once' | 'daily'
@@ -204,7 +193,7 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
       // Manual care emails are explicitly opt-in. Query by tenant only and
       // re-check reminder, profile and current dog owner inside each claim.
       // No SMS and no native push are added by this path.
-      if (user.manualReminderEmails === true && process.env.RESEND_API_KEY) {
+      if (emailEnabled && user.manualReminderEmails === true && process.env.RESEND_API_KEY) {
         const manual = await db.collection('reminders').where('tenantId', '==', tenantId).get()
         for (const item of manual.docs.filter(d => d.data().source === 'manual')) {
           try {
@@ -233,7 +222,7 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
         // Birthday / join-anniversary check — separate from the vaccine
         // due-date logic below, this fires at most once per dog per day
         // regardless of how many vaccine records exist.
-        if (user.email) {
+        if (emailEnabled && user.email) {
           const dogCreatedAt = dog.createdAt?.toDate ? dog.createdAt.toDate() : new Date(dog.createdAt)
           const milestone = getTodaysDogMilestone(dog.dateOfBirth, dogCreatedAt)
           if (milestone) {
@@ -377,7 +366,7 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
               const msg = `🐾 iDogs Reminder: ${dog.name}'s ${vaccine.name} is ${dueLabelShort} (${formatDate(vaccine.nextDue)}). Book your vet now.`
 
               // Send email reminder
-              if (user.email) {
+              if (emailEnabled && user.email) {
                 try {
                   await fetch(`${appUrl}/api/send-email`, {
                     method: 'POST',
@@ -399,24 +388,7 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
 
               // SMS is independently gated by server-owned entitlement/quota.
               // A blocked/failed SMS never blocks the email/in-app reminder path.
-              if (phone) {
-                try {
-                  const smsResult = await sendReminderSms({
-                    tenantId,
-                    phone,
-                    message: `iDogs: ${dog.name} ${vaccine.name} is ${dueLabelShort} (${formatDate(vaccine.nextDue)}). Please arrange with your vet if needed.`,
-                    dogId: dog.id,
-                    eventType: 'vaccination',
-                    sourceRecordId: vDoc.id,
-                    milestoneKey: vaccine.nextDue,
-                    idempotencyKey: `vaccination:${tenantId}:${dog.id}:${vDoc.id}:${vaccine.nextDue}`,
-                    now: today,
-                  })
-                  if (smsResult.sent) smsSent++
-                } catch {
-                  console.error('SMS reminder error')
-                }
-              }
+              // SMS handled separately from email frequency below.
 
               // Record when this reminder fired
               try {
@@ -425,6 +397,25 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
                 })
               } catch (e) {
                 console.error('Failed to record lastReminderSentAt:', e)
+              }
+            }
+            // Each vaccine SMS is protected by an immutable Firestore delivery key.
+            if (phone) {
+              try {
+                const smsResult = await sendReminderSms({
+                  tenantId,
+                  phone,
+                  message: `iDogs: ${dog.name} ${vaccine.name} is ${dueLabelShort} (${formatDate(vaccine.nextDue)}). Please arrange with your vet if needed.`,
+                  dogId: dog.id,
+                  eventType: 'vaccination',
+                  sourceRecordId: vDoc.id,
+                  milestoneKey: vaccine.nextDue,
+                  idempotencyKey: `vaccination:${tenantId}:${dog.id}:${vDoc.id}:${vaccine.nextDue}`,
+                  now: today,
+                })
+                if (smsResult.sent) smsSent++
+              } catch {
+                console.error('SMS reminder error')
               }
             }
           } else if (daysUntilDue > reminderDays) {
@@ -514,7 +505,7 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
             const blockedByFrequencyPref = reminderFrequency === 'once' ? hasSentBefore : sentWithinLast20h
 
             if (!blockedByFrequencyPref) {
-              if (user.email) {
+              if (emailEnabled && user.email) {
                 try {
                   await fetch(`${appUrl}/api/send-email`, {
                     method: 'POST',
@@ -532,24 +523,7 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
                 }
               }
 
-              if (phone) {
-                try {
-                  const smsResult = await sendReminderSms({
-                    tenantId,
-                    phone,
-                    message: `iDogs: ${dog.name} worming is due ${formatDate(activeWorming.nextDue)}. Check the recorded treatment schedule in iDogs.`,
-                    dogId: dog.id,
-                    eventType: 'worming',
-                    sourceRecordId: activeWorming.id,
-                    milestoneKey: activeWorming.nextDue,
-                    idempotencyKey: `worming:${tenantId}:${dog.id}:${activeWorming.id}:${activeWorming.nextDue}`,
-                    now: today,
-                  })
-                  if (smsResult.sent) smsSent++
-                } catch {
-                  console.error('Worming SMS error')
-                }
-              }
+              // SMS handled separately from email frequency below.
 
               try {
                 await db.collection('wormingRecords').doc(activeWorming.id).update({
@@ -557,6 +531,25 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
                 })
               } catch {
                 console.error('Failed to record worming reminder sent')
+              }
+            }
+            // Each worming SMS is protected by an immutable Firestore delivery key.
+            if (phone) {
+              try {
+                const smsResult = await sendReminderSms({
+                  tenantId,
+                  phone,
+                  message: `iDogs: ${dog.name} worming is due ${formatDate(activeWorming.nextDue)}. Check the recorded treatment schedule in iDogs.`,
+                  dogId: dog.id,
+                  eventType: 'worming',
+                  sourceRecordId: activeWorming.id,
+                  milestoneKey: activeWorming.nextDue,
+                  idempotencyKey: `worming:${tenantId}:${dog.id}:${activeWorming.id}:${activeWorming.nextDue}`,
+                  now: today,
+                })
+                if (smsResult.sent) smsSent++
+              } catch {
+                console.error('Worming SMS error')
               }
             }
           }
@@ -824,7 +817,7 @@ function getTodaysDogMilestone(dateOfBirth, createdAt) {
                   ? `⚠️ She will be ${ageAtHeatMonths} months old — Dogs SA requires at least ${minBreedingMonths} months for ${breedSize} breeds.`
                   : `✓ She will be ${ageAtHeatMonths} months old — eligible to breed under Dogs SA rules.`
 
-                if (user.email) {
+                if (emailEnabled && user.email) {
                   try {
                     await fetch(`${appUrl}/api/send-email`, {
                       method: 'POST',

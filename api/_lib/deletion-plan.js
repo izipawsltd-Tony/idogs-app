@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto'
 import { FieldPath } from 'firebase-admin/firestore'
 import { DELETION_LOCKS, MUTATION_LEASES, DELETION_JOBS, DELETION_RECEIPTS, validAccountId } from './deletion-fence.js'
 
-const CONTROL = new Set([DELETION_LOCKS, MUTATION_LEASES, DELETION_JOBS, DELETION_RECEIPTS, 'accountDeletionRequests', 'deletionSyntheticProviders'])
+const CONTROL = new Set([DELETION_LOCKS, MUTATION_LEASES, DELETION_JOBS, DELETION_RECEIPTS, 'accountDeletionRequests', 'accountDeletionRenewalTasks', 'deletionSyntheticProviders'])
 const KNOWN = new Set(['users','dogs','vaccineRecords','wormingRecords','healthTests','activityNotes','documents','reminders','heatCycles','scanLogs','litters','litterShowcases','showcaseEnquiries','ownershipHistorySnapshots','dogPrivateAccess','passportReservations','litterPuppyOperations','litterQuotaLedger','litterQuotaCredits','mediaUploadGrants','mediaUploadQuotas','landingMediaUploadGrants','financeDocuments','financeCounters','smsDeliveries','reminderEmailDeliveries','auditLogs','supportConversations','supportMessages','supportFaqFeedback','supportRateLimits','surveyResponses','rateLimitCounters','superAdminVerificationEmailRateLimits','superAdminPasswordResetRateLimits'])
-const FINANCIAL = new Set(['financeDocuments','financeCounters','litterQuotaLedger','litterQuotaCredits','smsDeliveries'])
+KNOWN.add('plusPromotionCheckouts')
+const FINANCIAL = new Set(['financeDocuments','financeCounters','litterQuotaLedger','litterQuotaCredits','smsDeliveries','plusPromotionCheckouts'])
 const ID_KEYS = new Set(['uid','userId','tenantId','ownerUid','ownerId','currentOwnerId','createdBy','createdByUserId','originBreederId','previousOwnerId','fromOwnerId','originalBreederId','performedBy','senderUid','claimedBy','reservedForUid','toOwnerId','assignedBy'])
 const CONTACT_KEYS = new Set(['email','ownerEmail','buyerEmail','toOwnerEmail','performedByEmail','phone','buyerPhone','ownerPhone','address','firstName','lastName','ownerName','buyerName','toOwnerName','contactName','displayName'])
 const MEDIA_KEYS = new Set(['path','filePath','storagePath','documentPath','microchipCertPath','url','fileUrl','documentUrl','photoUrl','profilePhoto','microchipCertUrl'])
@@ -18,6 +19,11 @@ function strings(value, out = []) {
   else if (Array.isArray(value)) value.forEach(v => strings(v,out))
   else if (value && typeof value === 'object' && !value.toDate) Object.values(value).forEach(v => strings(v,out))
   return out
+}
+// Inspect nested free text without persisting the departing email in a job.
+// This is a conservative hold check, not a claim to find every personal datum.
+export function containsDeletionIdentity(data,uid,emailHash){
+  return strings(data).some(s=>s.includes(uid)||[...(s.match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)||[])].some(email=>digest(email.toLowerCase())===emailHash))
 }
 function related(data, needles) { return strings(data).some(s => needles.has(s) || [...needles].some(n => n.length > 4 && (n.includes('@') ? s.toLowerCase().includes(n.toLowerCase()) : s.includes(n)))) }
 
@@ -109,7 +115,7 @@ export async function buildEmulatorDeletionPlan({ db, bucket, uid, now = Date.no
       if (r.data.transferStatus === 'pendingClaim' || r.data.status === 'transferred' || r.data.historySnapshotId || r.data.previousOwnerId) holds.add('ownership_history_review')
     } else shared.add(id)
   }
-  const relatedPaths = new Set([`users/${uid}`])
+  const relatedPaths = new Set([`users/${uid}`,`plusPromotionCheckouts/${uid}`])
   const relatedIds = new Set([...needles,...owned,...shared])
   // Fixed point discovers conversations, litter children, snapshots and nested
   // document references without relying on a single tenantId equality query.

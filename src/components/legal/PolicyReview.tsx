@@ -6,7 +6,7 @@ export const CONSUMER_RIGHTS = 'Nothing in these Terms or our refund policy excl
 export function PolicyReviewNotice() {
   return <aside role="note" aria-label="Draft policy status" style={{ margin: '16px 0', padding: 16, border: '2px solid #9a6700', borderRadius: 10, background: '#fff8df', color: '#493600', overflowWrap: 'anywhere' }}>
     <strong>Draft for review — not effective</strong>
-    <p>The owner has approved the seven-day service target and stopping future renewal on acceptance for implementation. These changes are not yet enabled. Deletion requests can currently be submitted and cancelled before processing. Permanent deletion and automatic cancellation of subscription renewal remain unavailable. This preview does not change your subscription.</p>
+    <p>The owner has approved the seven-day service target and stopping future renewal on acceptance for implementation. Request status may show a processing target; a target is not confirmation of completion. Deletion requests can currently be submitted and cancelled before processing. Permanent deletion and automatic cancellation of subscription renewal remain unavailable in the live service. This preview does not change your subscription.</p>
   </aside>
 }
 
@@ -36,7 +36,7 @@ export function RetentionPolicyDraft() {
 
 export function InternationalProcessingDraft() {
   return <div data-policy-section="international">
-    <p>iDogs uses Firebase/Google for authentication, database and file storage, Vercel for hosting, Stripe for web payments, Resend for email, Amazon Web Services/SNS for SMS where enabled, and Anthropic for optional AI document scanning. Providers may process information outside Australia. This draft does not promise that all data stays in Australia or Asia-Pacific.</p>
+    <p>iDogs uses Firebase/Google for authentication, database and file storage, Vercel for hosting, Stripe for web payments, Resend for email, ClickSend for SMS where enabled, and Anthropic for optional AI document scanning. Providers may process information outside Australia. This draft does not promise that all data stays in Australia or Asia-Pacific. Any legacy SMS provider records also require retention review.</p>
     <p>Before this policy becomes effective, we must verify provider processing locations, relevant overseas disclosures, contractual safeguards and retention arrangements, and complete the applicable privacy disclosures. No provider training, residency or deletion guarantee is made without that verification.</p>
   </div>
 }

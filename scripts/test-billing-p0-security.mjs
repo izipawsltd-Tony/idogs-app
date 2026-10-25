@@ -100,8 +100,8 @@ for (const legacyPlan of ['basic', 'pro', 'kennel', 'sms_addon', 'starter']) {
 check(
   'exactly the two Plus price ids are allowlisted — no $40 launch-offer price, no legacy tiers',
   Object.keys(CHECKOUT_PRICE_IDS).length === 2 &&
-    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1TxaNJGHgBd6ZgJEpAhrWark' &&
-    CHECKOUT_PRICE_IDS.plus_annual === 'price_1TxMJ8GHgBd6ZgJEt56IzJJd'
+    CHECKOUT_PRICE_IDS.plus_monthly === 'price_1UAInbGHgBd6ZgJE0NAikQgm' &&
+    CHECKOUT_PRICE_IDS.plus_annual === 'price_1UAIngGHgBd6ZgJEh3njs6hZ'
 )
 
 await checkAsync('authenticated Checkout (monthly) uses only server-derived customer and metadata identity, and grants no trial', async () => {

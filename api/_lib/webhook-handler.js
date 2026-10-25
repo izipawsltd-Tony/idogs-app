@@ -64,12 +64,13 @@
 //      association and always adopts whatever customer id it carries.
 
 import { randomBytes } from 'node:crypto'
-import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS } from './checkout-handler.js'
+import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS, LEGACY_PLUS_PRICE_INTERVALS } from './checkout-handler.js'
 import { reconcileDogCapTx, reactivateUpToCapTx } from './dog-cap.js'
 import { anchorDayFromDate } from './entitlements.js'
 import { SMS_MONTHLY_CREDITS } from './sms-addon.js'
 
 const PRICE_INTERVAL = Object.freeze({
+  ...LEGACY_PLUS_PRICE_INTERVALS,
   [CHECKOUT_PRICE_IDS.plus_monthly]: 'monthly',
   [CHECKOUT_PRICE_IDS.plus_annual]: 'annual',
   [LEGACY_PAID_PRICE_IDS.basic]: 'monthly',
