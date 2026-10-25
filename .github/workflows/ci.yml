@@ -42,6 +42,9 @@ jobs:
       - name: Account deletion safety regression
         run: node --test scripts/test-account-deletion.mjs
 
+      - name: Read-only Storage metadata regression (mock only)
+        run: node --test scripts/test-storage-metadata.mjs
+
       - name: Native production environment guard regression
         run: npm run test:native-release-env
 
