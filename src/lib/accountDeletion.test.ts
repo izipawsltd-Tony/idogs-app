@@ -145,6 +145,18 @@ describe('Account deletion confirmation UI', () => {
     act(() => renderer.unmount())
   })
 
+  it('shows storage recovery as incomplete and does not allow cancellation after processing starts', async () => {
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({status:'processing',canCancel:false,processingStage:'waiting_for_storage',storageReviewAfter:'2026-11-01T00:00:00.000Z'}))))
+    const renderer=create(createElement(AccountDeletion))
+    await act(async()=>renderer.root.findByType('button').props.onClick())
+    const text=JSON.stringify(renderer.toJSON())
+    expect(text).toContain('Deleted files are still within the storage recovery period')
+    expect(text).toContain('not confirmation that every copy has been erased')
+    expect(renderer.root.findAllByType('form')).toHaveLength(0)
+    expect(text).not.toContain('Account deletion has completed.')
+    act(()=>renderer.unmount())
+  })
+
   it.each(['request', 'cancel'])('requires status reconciliation after a lost %s response', async action => {
     const fetchMock = vi.fn().mockResolvedValueOnce(reply(action === 'cancel' ? 'requested' : 'none', action === 'cancel'))
       .mockRejectedValueOnce(new TypeError('Lost response'))

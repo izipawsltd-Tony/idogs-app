@@ -5,7 +5,7 @@ import { buildEmulatorDeletionPlan, scanDeletionDocuments, versionOf, digest, co
 
 const day = 86400000
 const fail = code => Object.assign(new Error(code),{code,status:409})
-const publicStages = new Set(['checking','waiting_for_writes','review_required','removing_data','verifying','completed'])
+const publicStages = new Set(['checking','waiting_for_writes','waiting_for_storage','review_required','removing_data','verifying','completed'])
 const identityHash = user => digest({uid:user.uid,createdAt:user.metadata.creationTime,email:user.email||null,phone:user.phoneNumber||null,providers:(user.providerData||[]).map(p=>({id:p.providerId,uid:p.uid,email:p.email||null})).sort((a,b)=>a.id.localeCompare(b.id)||a.uid.localeCompare(b.uid))})
 
 // Only an injected SYNTHETIC provider adapter is accepted, and only after the
@@ -85,6 +85,8 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
       }
       const providerEvidence=await provider.retention(uid)
       if(providerEvidence?.verified!==true||providerEvidence.uid!==uid||providerEvidence.restoreReplayVerified!==true||providerEvidence.mediaIngressDrained!==true)return await hold(uid,revision,lease,'provider_retention_review')
+      const storageRetentionSeconds=providerEvidence.storageRetentionSeconds
+      if(!Number.isSafeInteger(storageRetentionSeconds)||storageRetentionSeconds<0||storageRetentionSeconds>90*86400)return await hold(uid,revision,lease,'storage_retention_unverified')
       await stage(uid,revision,lease,'checking',{renewalStatus:subscriptionIds.length?'verified_stopped':'verified_no_subscription'})
       let currentJob=(await jobRef(uid).get()).data()
       if(!currentJob.planReady){
@@ -101,10 +103,11 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
         }
         await db.runTransaction(async tx=>{
           await owned(tx,uid,revision,lease)
-          tx.update(jobRef(uid),{planReady:true,fingerprint:plan.fingerprint,operationCount:plan.operations.length,operationHashes:plan.operations.map(digest),retained:plan.retained,authCreatedAt:identity.metadata.creationTime,authIdentityHash:identityHash(identity),profileEmailHashes:[...new Set([plan.profileEmailHash,digest((identity.email||'').toLowerCase())])],stage:'removing_data'})
+          tx.update(jobRef(uid),{planReady:true,storageRetentionSeconds,fingerprint:plan.fingerprint,operationCount:plan.operations.length,operationHashes:plan.operations.map(digest),retained:plan.retained,authCreatedAt:identity.metadata.creationTime,authIdentityHash:identityHash(identity),profileEmailHashes:[...new Set([plan.profileEmailHash,digest((identity.email||'').toLowerCase())])],stage:'removing_data'})
         })
         currentJob=(await jobRef(uid).get()).data()
       }
+      if(currentJob.storageRetentionSeconds!==storageRetentionSeconds)return await hold(uid,revision,lease,'storage_policy_changed')
       // Firestore locks do not freeze Firebase Auth. Disable and revoke sessions
       // before the first destructive operation; verify the same bound identity
       // on every retry. A failed freeze leaves the data untouched.
@@ -155,11 +158,19 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
         await stage(uid,revision,lease,'removing_data')
       }
       await stage(uid,revision,lease,'verifying')
+      let storageReviewAt=0,hasMedia=false
       // Verify each operation, including completed receipts after a restart.
       for(let index=0;index<currentJob.operationCount;index++){
         const id=String(index).padStart(6,'0'),op=await operation(index)
-        if(!(await jobRef(uid).collection('receipts').doc(id).get()).exists)throw fail('DELETION_RECEIPT_MISSING')
-        if(op.kind==='media'){if((await bucket.file(op.path).exists())[0])throw fail('MEDIA_REMOVAL_UNCONFIRMED')}
+        const receipt=await jobRef(uid).collection('receipts').doc(id).get()
+        if(!receipt.exists)throw fail('DELETION_RECEIPT_MISSING')
+        if(op.kind==='media'){
+          hasMedia=true
+          if((await bucket.file(op.path).exists())[0])throw fail('MEDIA_REMOVAL_UNCONFIRMED')
+          const removedAt=Date.parse(receipt.data().at)
+          if(!Number.isFinite(removedAt))throw fail('MEDIA_RECEIPT_TIME_MISSING')
+          storageReviewAt=Math.max(storageReviewAt,removedAt+storageRetentionSeconds*1000)
+        }
         else{
           const snap=await db.doc(op.path).get()
           if(op.kind==='delete'&&snap.exists)throw fail('RECORD_REMOVAL_UNCONFIRMED')
@@ -170,6 +181,14 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
       if(scan.holds.length)throw fail('FINAL_INVENTORY_INCOMPLETE')
       const approvedRetained=new Set(currentJob.retained.map(r=>r.path))
       if(scan.records.some(r=>!approvedRetained.has(r.path)&&(r.path.startsWith(`users/${uid}/`)||r.path===`users/${uid}`||containsDeletionIdentity(r.data,uid,currentJob.profileEmailHashes))))throw fail('RESIDUAL_ACCOUNT_RECORD')
+      if(hasMedia&&storageRetentionSeconds>0){
+        if(clock()<storageReviewAt){
+          await stage(uid,revision,lease,'waiting_for_storage',{storageReviewAfter:new Date(storageReviewAt).toISOString()})
+          return {status:'held',code:'storage_retention_pending'}
+        }
+        // Elapsed time alone does not prove that recoverable copies disappeared.
+        if(providerEvidence.storageRecoveryVerified!==true)return await hold(uid,revision,lease,'storage_recovery_verification')
+      }
       await db.runTransaction(async tx=>{await owned(tx,uid,revision,lease)})
       try{
         const identity=await auth.getUser(uid)

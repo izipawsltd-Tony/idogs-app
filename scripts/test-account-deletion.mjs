@@ -106,6 +106,13 @@ test('legacy receipts gain no invented dates or billing success; public data sta
   assert.doesNotMatch(JSON.stringify(status), /secret-/)
   for (const invalid of [NaN, Infinity, -1, 8640000000000000]) assert.throws(() => deletionCommitment(invalid), /invalid_deletion_clock/)
 })
+test('storage waiting receipt exposes only a valid review time during processing',()=>{
+  const data={status:'processing',processingStage:'waiting_for_storage',storageReviewAfter:'2026-11-01T00:00:00.000Z',internalStoragePaths:['private']}
+  const result=deletionStatus(data)
+  assert.equal(result.storageReviewAfter,data.storageReviewAfter);assert.equal(result.canCancel,false)
+  assert.doesNotMatch(JSON.stringify(result),/private/)
+  for(const patch of [{status:'cancelled'},{status:'completed'},{storageReviewAfter:'invalid'}])assert.equal(deletionStatus({...data,...patch}).storageReviewAfter,undefined)
+})
 test('current owner and pending transfer always override original tenant', () => {
   assert.equal(classifyDeletionDog({ tenantId: token.uid, currentOwnerId: 'new-owner' }, token.uid), 'preserve_other_owner')
   assert.equal(classifyDeletionDog({ tenantId: token.uid, currentOwnerId: token.uid, transferStatus: 'pendingClaim' }, token.uid), 'review_pending_transfer')

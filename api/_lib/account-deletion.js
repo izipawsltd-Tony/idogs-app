@@ -13,7 +13,7 @@ export function requireRecentAuthentication(token, now = Date.now()) {
 
 export function deletionStatus(data) {
   if (!data) return { status: 'none', canCancel: false }
-  const stages = ['checking', 'waiting_for_writes', 'review_required', 'removing_data', 'verifying', 'completed']
+  const stages = ['checking', 'waiting_for_writes', 'waiting_for_storage', 'review_required', 'removing_data', 'verifying', 'completed']
   const dates = Object.fromEntries(['targetAt', 'nextUpdateDueAt', 'completedAt'].filter(key => typeof data[key] === 'string' && Number.isFinite(Date.parse(data[key]))).map(key => [key,data[key]]))
   return {
     status: data.status,
@@ -23,6 +23,7 @@ export function deletionStatus(data) {
     ...publicDeletionCommitment(data),
     ...dates,
     ...(stages.includes(data.processingStage) ? { processingStage: data.processingStage } : {}),
+    ...(data.status==='processing'&&data.processingStage==='waiting_for_storage'&&typeof data.storageReviewAfter==='string'&&Number.isFinite(Date.parse(data.storageReviewAfter))?{storageReviewAfter:data.storageReviewAfter}:{}),
     ...(['pending_verification','review_required','verified_stopped','verified_no_subscription'].includes(data.renewalStatus) ? {renewalStatus:data.renewalStatus} : {}),
     ...(data.status === 'completed' && Array.isArray(data.retainedCategories) ? {retainedCategories:data.retainedCategories.filter(v => ['current_owner_history','reviewed_financial_record','reviewed_history'].includes(v))} : {}),
     // No internal notes, identity, billing identifiers or inventory leaks.

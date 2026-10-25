@@ -42,6 +42,16 @@ describe('unpublished legal policy review', () => {
     expect(html).toContain('manual entry instead')
     expect(html).toContain('Providers may process information outside Australia')
   })
+  it('distinguishes request target, recovery copies and resource-specific Singapore location', () => {
+    const html=pageText(PrivacyPage)
+    expect(html).toContain('seven-day processing target and file recovery period are separate')
+    expect(html).toContain('from the time that file is deleted')
+    expect(html).toContain('reaching a date alone is not proof of deletion')
+    expect(html).toContain('asia-southeast1 (Singapore)')
+    expect(html).toContain('object versioning off')
+    expect(html).toContain('where you have opted in')
+    expect(html).toContain('reapply deletion records')
+  })
   it('uses the same proposed deletion, billing and retention sections in the app without sending a deletion request', async () => {
     const original = globalThis.fetch
     const http = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ status: 'none', canCancel: false })))

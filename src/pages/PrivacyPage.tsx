@@ -46,9 +46,10 @@ export default function PrivacyPage() {
               <li>Process subscription payments via Stripe</li>
               <li>Generate compliance export reports</li>
               <li>Respond to support requests</li>
+              <li>Send optional iDogs offers and product marketing where you have opted in; you can change your marketing preference in Settings</li>
               <li>Comply with legal obligations</li>
             </ul>
-            <p>This draft does not authorise sale of personal information or advertising use. Actual business practices and any third-party tracking must be verified before the policy becomes effective.</p>
+            <p>Optional marketing consent is separate from essential account, security and service messages. Withdrawing that consent does not itself delete your account or cancel your subscription. Actual campaign practices and any third-party tracking must be verified before the policy becomes effective.</p>
           </LegalSection>
 
           <LegalSection title="4. Data Storage and Security">

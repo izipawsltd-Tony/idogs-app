@@ -41,7 +41,7 @@ async function seed({shared=false,media=true}={}){
   await db.collection('vaccineRecords').doc('synthetic-vaccine').set({dogId:'synthetic-dog',createdBy:recordOwner,name:'Synthetic vaccine',dateGiven:'2026-01-01'})
   await db.collection('wormingRecords').doc('synthetic-worm').set({dogId:'synthetic-dog',createdBy:recordOwner,product:'Synthetic worming'})
   if(media){const path=`documents/${recordOwner}/synthetic-dog/proof.pdf`;await bucket.file(path).save(Buffer.from('Synthetic fixture only'));await db.collection('documents').doc('synthetic-document').set({dogId:'synthetic-dog',tenantId:recordOwner,filePath:path})}
-  await db.collection('deletionSyntheticProviders').doc(owner.uid).set({discoveryComplete:true,subscriptions:[],retention:{verified:true,restoreReplayVerified:true,mediaIngressDrained:true}})
+  await db.collection('deletionSyntheticProviders').doc(owner.uid).set({discoveryComplete:true,subscriptions:[],retention:{verified:true,restoreReplayVerified:true,mediaIngressDrained:true,storageRetentionSeconds:0}})
   await request()
 }
 before(async()=>{
@@ -348,4 +348,37 @@ test('all current API entrypoints declare a prototype fence or an explicit delet
   const registry=JSON.parse(readFileSync(new URL('../api/_lib/deletion-fenced-routes.json',import.meta.url),'utf8'))
   function walk(dir){for(const e of readdirSync(new URL('../'+dir+'/',import.meta.url),{withFileTypes:true})){const p=`${dir}/${e.name}`;if(e.isDirectory()){if(e.name!=='_lib')walk(p)}else if(p.endsWith('.js')){const s=readFileSync(new URL('../'+p,import.meta.url),'utf8');if(/export default/.test(s)&&!registry.exemptions.includes(p)){assert.ok(registry.routes.includes(p),p);assert.match(s,/export default withAccountMutationFence\(/,p)}}}}
   walk('api')
+})
+
+test('seven-day storage recovery holds Auth and completion; elapsed time alone is insufficient',async()=>{
+  await seed()
+  let now=Date.now()
+  const fixture=db.collection('deletionSyntheticProviders').doc(owner.uid)
+  await fixture.update({'retention.storageRetentionSeconds':604800,'retention.storageRecoveryVerified':false})
+  const worker=createEmulatorDeletionProcessor({projectId:PROJECT,db,auth,bucket,provider,clock:()=>now})
+  assert.deepEqual(await worker.process({uid:owner.uid,revision:1}),{status:'held',code:'storage_retention_pending'})
+  const waiting=(await requestRef().get()).data()
+  assert.equal(waiting.status,'processing');assert.equal(waiting.processingStage,'waiting_for_storage')
+  assert.equal(Date.parse(waiting.storageReviewAfter),now+604800000)
+  assert.equal((await auth.getUser(owner.uid)).disabled,true)
+  assert.equal((await fixture.get()).data().confirmationAccepted,undefined)
+  assert.equal((await bucket.getFiles())[0].length,0)
+  const retryTime=waiting.storageReviewAfter
+  now+=86400000
+  await worker.process({uid:owner.uid,revision:1})
+  assert.equal((await requestRef().get()).data().storageReviewAfter,retryTime)
+  now=Date.parse(retryTime)
+  assert.deepEqual(await worker.process({uid:owner.uid,revision:1}),{status:'held',code:'storage_recovery_verification'})
+  assert.ok(await auth.getUser(owner.uid))
+  await fixture.update({'retention.storageRecoveryVerified':true})
+  assert.equal((await worker.process({uid:owner.uid,revision:1})).status,'completed')
+  await assert.rejects(auth.getUser(owner.uid),{code:'auth/user-not-found'})
+})
+
+test('missing storage retention evidence holds before destructive processing',async()=>{
+  await seed()
+  await db.collection('deletionSyntheticProviders').doc(owner.uid).update({'retention.storageRetentionSeconds':FieldValue.delete()})
+  assert.deepEqual(await processor.process({uid:owner.uid,revision:1}),{status:'held',code:'storage_retention_unverified'})
+  assert.equal((await db.doc(`users/${owner.uid}`).get()).exists,true)
+  assert.equal((await auth.getUser(owner.uid)).disabled,false)
 })
