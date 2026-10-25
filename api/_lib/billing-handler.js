@@ -126,6 +126,12 @@ export function createBillingSummaryHandler({
           cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end === true,
           currentPeriodEnd: isoFromSeconds(subscriptionPeriodEnd(stripeSubscription)),
         }
+        // A canceled Stripe subscription cannot be shown as active from a stale
+        // Firestore profile. This response does not rewrite customer records.
+        if (['canceled', 'incomplete_expired', 'unpaid'].includes(stripeSubscription.status)) {
+          entitlement = { plan: 'free', billingInterval: null, subscriptionStatus: stripeSubscription.status }
+          sms.status = 'cancelled'
+        }
       }
 
       const result = await listInvoices({ customer: customerId, limit: 12 })

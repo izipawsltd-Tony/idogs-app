@@ -136,7 +136,7 @@ describe('Plus campaign boundaries and Checkout intent (mocked Stripe and Firest
     const f = fixture({ time: PLUS_PROMOTION_END - 48 * 60 * 60_000 }); await f.call()
     expect(f.createSession.mock.calls[0][0].subscription_data.trial_end).toBe(PLUS_PROMOTION_END / 1000)
   })
-  it.each([{ stripeSubscriptionId: 'sub_synthetic' }, { stripeCustomerId: 'cus_synthetic' }, { subscriptionStatus: 'past_due' }])('blocks known existing billing accounts', async profile => {
+  it.each([{ stripeSubscriptionId: 'sub_synthetic' }, { stripeCustomerId: 'cus_synthetic' }, { subscriptionStatus: 'past_due' }])('blocks unverified existing billing accounts', async profile => {
     const f = fixture({ profile }); expect((await f.call()).status).toBe(409)
     expect(f.createSession).not.toHaveBeenCalled()
   })
@@ -159,6 +159,18 @@ describe('Plus campaign boundaries and Checkout intent (mocked Stripe and Firest
   it('does not bypass failed provider verification for a former customer', async () => {
     const f = fixture({ profile: { stripeCustomerId: 'cus_synthetic' }, reuseCustomer: vi.fn().mockRejectedValue(new Error('synthetic outage')) })
     expect((await f.call()).status).toBe(500); expect(f.createSession).not.toHaveBeenCalled()
+  })
+  it('allows stale local active fields only after Stripe verifies all customer subscriptions ended', async () => {
+    const verify = vi.fn().mockResolvedValue(true)
+    const f = fixture({ profile: { stripeCustomerId: 'cus_former', stripeSubscriptionId: 'sub_ended', subscriptionStatus: 'active' }, reuseCustomer: verify })
+    expect((await f.call()).status).toBe(200)
+    expect(verify).toHaveBeenCalledTimes(1)
+    expect(f.createSession.mock.calls[0][0].customer).toBe('cus_former')
+  })
+  it('blocks stale active fields when Stripe reports an ongoing subscription', async () => {
+    const f = fixture({ profile: { stripeCustomerId: 'cus_active', stripeSubscriptionId: 'sub_active', subscriptionStatus: 'active' }, reuseCustomer: vi.fn().mockResolvedValue(false) })
+    expect((await f.call()).status).toBe(409)
+    expect(f.createSession).not.toHaveBeenCalled()
   })
   it('fails closed on profile read failure', async () => {
     const f = fixture({ broken: true }); expect((await f.call()).status).toBe(500)
