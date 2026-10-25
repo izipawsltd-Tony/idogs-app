@@ -2,7 +2,7 @@ name: iDogs App Store Readiness (read-only)
 
 on:
   push:
-    branches: [fix/android-v20-qa-blockers]
+    branches: [fix/android-v20-qa-blockers, release/ios-app-store-20261025]
     paths:
       # Refresh the GET-only inventory when a new internal candidate is recorded.
       - docs/release/ios-candidate-*.md

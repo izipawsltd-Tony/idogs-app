@@ -5,6 +5,7 @@ on:
     branches:
       - fix/android-v20-qa-blockers
       - fix/ios-resume-20261024
+      - release/ios-app-store-20261025
   workflow_dispatch:
 
 permissions:
