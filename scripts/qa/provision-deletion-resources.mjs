@@ -30,8 +30,11 @@ export async function provisionQaResources({env=process.env,loadClients,report={
  report.defaultEdition=originalDefaultDb.databaseEdition
  report.phase='verify_provisioning_permissions'
  const required=['datastore.databases.create','datastore.databases.get','firebaserules.rulesets.create','firebaserules.rulesets.get','firebaserules.rulesets.test','firebaserules.releases.create','firebaserules.releases.get','firebaserules.releases.update','storage.buckets.create','storage.buckets.get']
- const iam=await api(`https://cloudresourcemanager.googleapis.com/v1/projects/${p}:testIamPermissions`,{method:'POST',body:{permissions:required}})
+ const grantPermissions=['iam.roles.create','iam.roles.get','iam.roles.update','resourcemanager.projects.getIamPolicy','resourcemanager.projects.setIamPolicy']
+ const iam=await api(`https://cloudresourcemanager.googleapis.com/v1/projects/${p}:testIamPermissions`,{method:'POST',body:{permissions:[...required,...grantPermissions]}})
  report.principal=credential.client_email
+ report.iamAdministrationGranted=grantPermissions.filter(permission=>iam.permissions?.includes(permission))
+ report.canApplyTemporaryCustomRole=grantPermissions.every(permission=>iam.permissions?.includes(permission))
  report.missingPermissions=required.filter(permission=>!iam.permissions?.includes(permission))
  if(report.missingPermissions.length)throw fail('QA_PROVISIONING_PERMISSIONS_MISSING')
  report.phase='create_qa_database'
