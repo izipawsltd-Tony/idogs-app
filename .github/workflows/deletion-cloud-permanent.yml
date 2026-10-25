@@ -1,0 +1,39 @@
+name: Isolated cloud permanent deletion QA
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['scripts/qa/deletion-cloud-*.mjs', 'scripts/test-deletion-cloud-runtime.mjs', 'api/_lib/deletion-processor.js', '.github/workflows/deletion-cloud-permanent.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: isolated-cloud-deletion-qa
+  cancel-in-progress: false
+jobs:
+  cloud-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Cloud fixture scope and provider regression checks
+        run: node --test scripts/test-deletion-cloud-runtime.mjs scripts/test-deletion-stripe-contract.mjs scripts/test-provision-deletion-resources.mjs
+      - name: Shared worker Auth Firestore Storage emulator regressions
+        env:
+          GCLOUD_PROJECT: demo-idogs-deletion
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-deletion --only auth,firestore,storage
+          'ACCOUNT_DELETION_MODE=prototype-emulator node --test scripts/test-deletion-processor-emulator.mjs'
+      - name: Real isolated Firebase deletion and Stripe Test readback
+        env:
+          IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
+          IDOGS_DELETION_STRIPE_TEST_KEY: ${{ secrets.IDOGS_DELETION_STRIPE_TEST_KEY }}
+        run: node scripts/qa/deletion-cloud-permanent.mjs

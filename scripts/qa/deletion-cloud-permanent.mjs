@@ -1,0 +1,140 @@
+import {randomUUID} from 'node:crypto'
+import {stagingDeletionConfiguration} from './deletion-staging-readiness.mjs'
+import {QA_RESOURCES as target,verifyQaDatabase,verifyQaBucket} from './provision-deletion-resources.mjs'
+import {cloudFixtureScope,createCloudFixtureProcessor} from './deletion-cloud-runtime.mjs'
+import {changeDeletionRequest} from '../../api/_lib/account-deletion.js'
+import {createStripeDeletionRenewalContract} from '../../api/_lib/deletion-stripe-contract.js'
+import {digest,scanDeletionDocuments} from '../../api/_lib/deletion-plan.js'
+
+const ensure=(v,code)=>{if(!v)throw Object.assign(new Error(code),{code})}
+const runId=`deletion-qa-${randomUUID().replaceAll('-','')}`,uid=`qa-${runId}`,email=`qa-${runId}@example.invalid`
+let app,db,auth,bucket,stripe,customer,product,subscription,manifest,authCreated=false,fixtureCreated=false,passed=false,phase='configuration',error,cleanupVerified=true
+const evidence={},cleanup=[]
+try{
+ const config=stagingDeletionConfiguration(process.env);ensure(config.status==='configured','CLOUD_QA_CREDENTIALS_REQUIRED')
+ const [{initializeApp,cert},{getFirestore},{getAuth},{Storage},{default:Stripe}]=await Promise.all([import('firebase-admin/app'),import('firebase-admin/firestore'),import('firebase-admin/auth'),import('@google-cloud/storage'),import('stripe')])
+ const credential=cert(config.credential)
+ app=initializeApp({credential,projectId:target.projectId},runId);db=getFirestore(app,target.databaseId);auth=getAuth(app)
+ bucket=new Storage({projectId:target.projectId,credentials:config.credential}).bucket(target.bucket)
+ stripe=new Stripe(config.stripeKey,{timeout:15000,maxNetworkRetries:0})
+ const cloudRead=async url=>{
+  ensure(new URL(url).origin==='https://firestore.googleapis.com','QA_API_ORIGIN_REJECTED')
+  const token=await credential.getAccessToken(),r=await fetch(url,{headers:{Authorization:`Bearer ${token.access_token}`},signal:AbortSignal.timeout(30000)})
+  ensure(r.ok,`QA_METADATA_HTTP_${r.status}`);return r.json()
+ }
+ phase='verify_isolation'
+ verifyQaBucket((await bucket.getMetadata())[0])
+ const databaseUrl=`https://firestore.googleapis.com/v1/projects/${target.projectId}/databases/${target.databaseId}`
+ const metadata=await cloudRead(databaseUrl);verifyQaDatabase(metadata)
+ ensure(metadata.pointInTimeRecoveryEnablement==='POINT_IN_TIME_RECOVERY_DISABLED','QA_PITR_REVIEW_REQUIRED')
+ const schedules=await cloudRead(`${databaseUrl}/backupSchedules`)
+ ensure(!(schedules.backupSchedules?.length)&&!schedules.nextPageToken,'QA_BACKUP_SCHEDULE_REVIEW_REQUIRED')
+ ensure((await stripe.accounts.retrieve()).id==='acct_1TiU0IGHgBd6ZgJE','STRIPE_ACCOUNT_MISMATCH')
+ phase='create_nonce_fixtures'
+ const providerMetadata={deletionQaRunId:runId,firebaseUid:uid}
+ customer=await stripe.customers.create({name:'Disposable permanent-deletion QA',metadata:providerMetadata},{idempotencyKey:`${runId}/customer`})
+ ensure(customer.livemode===false,'STRIPE_TEST_REQUIRED')
+ product=await stripe.products.create({name:'Disposable deletion QA',metadata:providerMetadata},{idempotencyKey:`${runId}/product`})
+ subscription=await stripe.subscriptions.create({customer:customer.id,items:[{price_data:{currency:'aud',unit_amount:100,recurring:{interval:'month'},product:product.id}}],trial_period_days:2,trial_settings:{end_behavior:{missing_payment_method:'cancel'}},metadata:providerMetadata},{idempotencyKey:`${runId}/subscription`})
+ ensure(subscription.livemode===false&&subscription.customer===customer.id&&!subscription.cancel_at_period_end,'STRIPE_TEST_FIXTURE_MISMATCH')
+ const user=await auth.createUser({uid,email,emailVerified:true,displayName:runId});authCreated=true
+ const mediaPaths=[`documents/${uid}/proof.txt`,`documents/${uid}/orphan.txt`]
+ const recordPaths=[`users/${uid}`,`dogs/${runId}-dog`,`vaccineRecords/${runId}-vaccine`,`wormingRecords/${runId}-worm`,`documents/${runId}-document`]
+ manifest={uid,email,runId,disposable:true,authCreatedAt:user.metadata.creationTime,recordPaths,mediaPaths,stripeCustomerId:customer.id,stripeSubscriptionId:subscription.id}
+ const batch=db.batch()
+ batch.create(db.doc(`accountDeletionJobs/${uid}`),{revision:1,leaseUntil:0,qaManifest:manifest})
+ batch.create(db.doc(recordPaths[0]),{email,role:'owner',plan:'free',stripeCustomerId:customer.id,deletionQaRunId:runId})
+ batch.create(db.doc(recordPaths[1]),{tenantId:uid,currentOwnerId:uid,name:'Disposable dog',deletionQaRunId:runId})
+ for(const path of recordPaths.slice(2))batch.create(db.doc(path),{tenantId:uid,dogId:`${runId}-dog`,deletionQaRunId:runId,...(path.startsWith('documents/')?{filePath:mediaPaths[0]}:{})})
+ batch.create(db.doc(`dogs/${runId}-sentinel`),{currentOwnerId:`qa-other-${runId}`,tenantId:`qa-other-${runId}`,name:'Unrelated QA sentinel',deletionQaRunId:runId})
+ await batch.commit();fixtureCreated=true
+ const generations={}
+ for(const path of mediaPaths){await bucket.file(path).save(Buffer.from('Disposable fixture, no personal data'),{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{metadata:{deletionQaRunId:runId}}});generations[path]=String((await bucket.file(path).getMetadata())[0].generation)}
+ const sentinelBefore=digest((await db.doc(`dogs/${runId}-sentinel`).get()).data())
+ const scope=cloudFixtureScope({db,auth,bucket,runId,manifest})
+ const provider=()=>{
+  const contract=createStripeDeletionRenewalContract({stripe,assertRuntime:scope.assertTarget,expectedAccountId:'acct_1TiU0IGHgBd6ZgJE',expectedLivemode:false,loadOwnership:async id=>{
+   ensure(id===uid,'QA_PROVIDER_UID_MISMATCH')
+   const job=(await db.doc(`accountDeletionJobs/${uid}`).get()).data()
+   ensure(digest(job?.qaManifest)===digest(manifest),'QA_PROVIDER_MANIFEST_CHANGED')
+   const c=await stripe.customers.retrieve(customer.id)
+   ensure(!c.deleted&&c.livemode===false&&c.metadata?.deletionQaRunId===runId&&c.metadata?.firebaseUid===uid,'QA_PROVIDER_CUSTOMER_CHANGED')
+   const owners=await db.collection('users').where('stripeCustomerId','==',customer.id).limit(2).get()
+   const profile=await db.doc(`users/${uid}`).get()
+   ensure(owners.size===1&&owners.docs[0].id===uid&&profile.data()?.deletionQaRunId===runId||owners.empty&&!profile.exists&&job.authFrozen===true&&job.planReady===true,'QA_PROVIDER_REVERSE_BINDING_CHANGED')
+   return {customerId:customer.id,ownerUids:[uid],knownSubscriptionIds:[subscription.id]}
+  }})
+  return {...contract,mode:'isolated-cloud-qa',retention:async id=>{
+   ensure(id===uid,'QA_PROVIDER_UID_MISMATCH');await scope.assertRuntime(uid)
+   // This controlled fixture run issues no signed upload URLs, exports,
+   // backups or restore operations. These attestations are QA scope only.
+   return {uid,verified:true,restoreReplayVerified:true,mediaIngressDrained:true,storageRetentionSeconds:0}
+  },confirm:async id=>{
+   ensure(id===uid,'QA_CONFIRMATION_UID_MISMATCH')
+   try{await auth.getUser(uid);throw Error('QA_AUTH_STILL_PRESENT')}catch(e){ensure(e.code==='auth/user-not-found','QA_AUTH_REMOVAL_NOT_VERIFIED')}
+   for(const path of recordPaths)ensure(!(await db.doc(path).get()).exists,'QA_DATA_STILL_PRESENT')
+   for(const path of mediaPaths)ensure(!(await bucket.file(path).exists())[0],'QA_MEDIA_STILL_PRESENT')
+   // Operational QA ledger only. No email delivery is asserted.
+   return {uid,accepted:true,mode:'qa-ledger'}
+  }}
+ }
+ phase='request_business_logic'
+ const receipt=await changeDeletionRequest({db:scope.db,token:{uid,email,auth_time:Math.floor(Date.now()/1000)},body:{action:'request',confirmation:'DELETE MY ACCOUNT'}})
+ ensure(receipt.status==='requested','QA_REQUEST_NOT_SAVED')
+ phase='interrupt_after_real_media_removal'
+ let interrupted=false
+ try{await createCloudFixtureProcessor({scope,provider:provider()}).process({uid,revision:1,afterOperation:async({kind})=>{if(kind==='media'){interrupted=true;throw Object.assign(new Error('QA_INJECTED_INTERRUPTION'),{code:'QA_INJECTED_INTERRUPTION'})}}});throw Error('QA_INTERRUPTION_NOT_REACHED')}
+ catch(e){ensure(e.code==='QA_INJECTED_INTERRUPTION'&&interrupted,'QA_UNEXPECTED_PROCESSOR_FAILURE')}
+ ensure((await auth.getUser(uid)).disabled===true,'QA_AUTH_NOT_FROZEN')
+ ensure((await db.doc(`users/${uid}`).get()).exists,'QA_PROFILE_REMOVED_BEFORE_INTERRUPTION')
+ ensure((await db.doc(`accountDeletionRequests/${uid}`).get()).data()?.status!=='completed','QA_PREMATURE_COMPLETION')
+ ensure((await stripe.subscriptions.retrieve(subscription.id)).cancel_at_period_end===true,'QA_RENEWAL_NOT_STOPPED')
+ evidence.interruptionAndFreezeVerified=true
+ phase='retry_new_worker'
+ const result=await createCloudFixtureProcessor({scope,provider:provider()}).process({uid,revision:1})
+ ensure(result.status==='completed','QA_PROCESSOR_NOT_COMPLETED')
+ phase='independent_cloud_readback'
+ for(const path of recordPaths)ensure(!(await db.doc(path).get()).exists,'QA_RECORD_REMAINS')
+ const scan=await scanDeletionDocuments(db)
+ ensure(!scan.holds.length&&!scan.records.some(r=>r.path.includes(uid)||JSON.stringify(r.data).includes(uid)||JSON.stringify(r.data).includes(email)),'QA_RESIDUAL_IDENTITY')
+ for(const path of mediaPaths){
+  ensure(!(await bucket.file(path).exists())[0],'QA_LIVE_MEDIA_REMAINS')
+  try{await bucket.file(path,{generation:generations[path]}).getMetadata();throw Error('QA_GENERATION_REMAINS')}catch(e){ensure(Number(e.code)===404,'QA_GENERATION_NOT_REMOVED')}
+  const [versions,next]=await bucket.getFiles({prefix:path,versions:true,autoPaginate:false,maxResults:100})
+  ensure(!versions.some(f=>f.name===path)&&!next,'QA_VERSION_REMAINS')
+ }
+ // A zero-retention bucket can reject softDeleted listing with 400 because
+ // soft delete is disabled. Only that documented precondition is accepted;
+ // unknown errors/403 fail. Metadata and exact generation 404 remain required.
+ try{const [soft,next]=await bucket.getFiles({prefix:`documents/${uid}/`,softDeleted:true,autoPaginate:false,maxResults:100});ensure(soft.length===0&&!next,'QA_SOFT_DELETED_COPY_REMAINS');evidence.softDeletedListing='empty'}
+ catch(e){ensure(Number(e.code)===400&&/soft.?delete/i.test(e.message||''),'QA_SOFT_DELETED_INVENTORY_FAILED');verifyQaBucket((await bucket.getMetadata())[0]);evidence.softDeletedListing='disabled_bucket_400'}
+ try{await auth.getUser(uid);throw Error('QA_AUTH_REMAINS')}catch(e){ensure(e.code==='auth/user-not-found','QA_AUTH_REMAINS')}
+ ensure(digest((await db.doc(`dogs/${runId}-sentinel`).get()).data())===sentinelBefore,'QA_SENTINEL_CHANGED')
+ ensure((await stripe.subscriptions.retrieve(subscription.id)).cancel_at_period_end===true,'QA_RENEWAL_RESTARTED')
+ const final=(await db.doc(`accountDeletionRequests/${uid}`).get()).data(),audit=(await db.doc(`accountDeletionReceipts/${digest([uid,1])}`).get()).data()
+ ensure(final.status==='completed'&&final.renewalStatus==='verified_stopped'&&audit.confirmation==='qa-ledger-no-email','QA_COMPLETION_RECEIPT_INVALID')
+ const duplicate=await createCloudFixtureProcessor({scope,provider:provider()}).process({uid,revision:1})
+ ensure(duplicate.status==='completed'&&duplicate.duplicate===true,'QA_DUPLICATE_NOT_IDEMPOTENT')
+ Object.assign(evidence,{firestoreRemoval:true,exactStorageGenerationsRemoved:true,authRemoval:true,stripeTestRenewalStopped:true,otherOwnerSentinelUnchanged:true,newWorkerRetry:true,duplicateIdempotent:true})
+ passed=true
+}catch(e){error={code:/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'CLOUD_PERMANENT_QA_FAILED',httpStatus:Number.isInteger(e.statusCode)?e.statusCode:undefined};}
+finally{
+ const clean=async(name,fn)=>{try{await fn();cleanup.push({step:name,status:'success'})}catch(e){cleanupVerified=false;cleanup.push({step:name,status:'failed',code:/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'CLEANUP_FAILED'})}}
+ if(manifest&&db)await clean('firebase_fixture',async()=>{
+  const job=db.doc(`accountDeletionJobs/${uid}`),j=(await job.get()).data();ensure(digest(j?.qaManifest)===digest(manifest),'QA_CLEANUP_BINDING_CHANGED')
+  for(const path of manifest.mediaPaths){const file=bucket.file(path);if((await file.exists())[0]){const [m]=await file.getMetadata();ensure(m.metadata?.deletionQaRunId===runId,'QA_CLEANUP_MEDIA_CHANGED');await file.delete({ifGenerationMatch:m.generation})}}
+  const paths=[...manifest.recordPaths,`dogs/${runId}-sentinel`,`accountDeletionRequests/${uid}`,`accountDeletionLocks/${uid}`,`accountDeletionReceipts/${digest([uid,1])}`,`accountDeletionRenewalTasks/${uid}_1`,`supportConversations/account_deletion_${uid}`,`supportMessages/account_deletion_${uid}_1_request`]
+  if(fixtureCreated){const batch=db.batch();for(const path of paths)batch.delete(db.doc(path));await batch.commit();await db.recursiveDelete(job)}
+ })
+ if(authCreated)await clean('auth_fixture',async()=>{try{const u=await auth.getUser(uid);ensure(u.email===email&&u.displayName===runId,'QA_CLEANUP_AUTH_CHANGED');await auth.deleteUser(uid)}catch(e){if(e.code!=='auth/user-not-found')throw e}})
+ if(subscription)await clean('stripe_subscription_prices',async()=>{
+  const s=await stripe.subscriptions.retrieve(subscription.id);ensure(s.livemode===false&&s.customer===customer.id&&s.metadata?.deletionQaRunId===runId,'QA_CLEANUP_SUB_CHANGED')
+  if(s.status!=='canceled')await stripe.subscriptions.cancel(s.id,{}, {idempotencyKey:`${runId}/cleanup-sub`})
+  for(const item of s.items.data){const p=await stripe.prices.retrieve(item.price.id);ensure(p.livemode===false&&p.product===product.id,'QA_CLEANUP_PRICE_CHANGED');if(p.active)await stripe.prices.update(p.id,{active:false});ensure((await stripe.prices.retrieve(p.id)).active===false,'QA_CLEANUP_PRICE_ACTIVE')}
+ })
+ if(product)await clean('stripe_product',async()=>{const p=await stripe.products.retrieve(product.id);ensure(p.livemode===false&&p.metadata?.deletionQaRunId===runId,'QA_CLEANUP_PRODUCT_CHANGED');await stripe.products.update(p.id,{active:false})})
+ if(customer)await clean('stripe_customer',async()=>{const c=await stripe.customers.retrieve(customer.id);ensure(!c.deleted&&c.livemode===false&&c.metadata?.deletionQaRunId===runId,'QA_CLEANUP_CUSTOMER_CHANGED');await stripe.customers.del(c.id)})
+ if(app)await clean('sdk_shutdown',async()=>{const {deleteApp}=await import('firebase-admin/app');await deleteApp(app)})
+}
+console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:false,signedWebhookVerified:false,emailDeliveryVerified:false,productionReady:false},null,2))
+if(!passed||!cleanupVerified)process.exitCode=2

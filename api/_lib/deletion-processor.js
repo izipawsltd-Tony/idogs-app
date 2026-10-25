@@ -11,9 +11,19 @@ const identityHash = user => digest({uid:user.uid,createdAt:user.metadata.creati
 // Only an injected SYNTHETIC provider adapter is accepted, and only after the
 // real emulator service identities/hosts have been checked. There is no live
 // Stripe/Resend/SMS adapter, scheduled dispatcher or production enable switch.
-export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, provider, clock = Date.now }) {
+export function createEmulatorDeletionProcessor(options) {
+  const {db,auth,bucket,projectId,provider}=options
   requireDeletionEmulators({db,auth,bucket,projectId})
-  if (provider?.mode !== 'synthetic') throw fail('SYNTHETIC_PROVIDER_REQUIRED')
+  if(provider?.mode!=='synthetic')throw fail('SYNTHETIC_PROVIDER_REQUIRED')
+  return createGuardedDeletionProcessor({...options,assertRuntime:()=>requireDeletionEmulators({db,auth,bucket,projectId}),mode:'prototype-emulator',confirmationMode:'synthetic'})
+}
+
+// Internal execution engine. Callers must supply a guard; deployed routes still
+// construct only the emulator wrapper. The cloud fixture wrapper is operator-only.
+export function createGuardedDeletionProcessor({db,auth,bucket,provider,clock=Date.now,assertRuntime,mode,confirmationMode}) {
+  if(typeof assertRuntime!=='function'||!['prototype-emulator','isolated-cloud-qa'].includes(mode)
+    ||(mode==='prototype-emulator'&&(provider?.mode!=='synthetic'||confirmationMode!=='synthetic'))
+    ||(mode==='isolated-cloud-qa'&&(provider?.mode!=='isolated-cloud-qa'||confirmationMode!=='qa-ledger')))throw fail('GUARDED_RUNTIME_REQUIRED')
   const requestRef = uid => db.collection('accountDeletionRequests').doc(uid)
   const jobRef = uid => db.collection(DELETION_JOBS).doc(uid)
   const lockRef = uid => db.collection(DELETION_LOCKS).doc(uid)
@@ -46,7 +56,7 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
   }
 
   async function process({uid,revision,decisions={},limits,afterOperation}) {
-    requireDeletionEmulators({db,auth,bucket,projectId})
+    await assertRuntime(uid)
     if(!validAccountId(uid)||!Number.isInteger(revision)||revision<1)throw fail('INVALID_DELETION_JOB')
     const lease=randomUUID(),now=clock()
     const claimed=await db.runTransaction(async tx=>{
@@ -58,7 +68,7 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
       if(job.exists && job.data().leaseUntil>now)throw fail('DELETION_WORKER_BUSY')
       if(lock.exists && lock.data().revision!==revision)throw fail('DELETION_LOCK_REVISION_MISMATCH')
       tx.set(lockRef(uid),{revision,state:'processing',lockedAt:lock.data()?.lockedAt||new Date(now).toISOString()})
-      tx.set(jobRef(uid),{...(job.exists?job.data():{}),revision,lease,leaseUntil:now+60000,stage:'checking',mode:'prototype-emulator'})
+      tx.set(jobRef(uid),{...(job.exists?job.data():{}),revision,lease,leaseUntil:now+60000,stage:'checking',mode})
       tx.update(requestRef(uid),{status:'processing',processingStage:'checking',targetAt:request.data().targetAt||new Date(Date.parse(request.data().requestedAt)+7*day).toISOString(),nextUpdateDueAt:new Date(now+day).toISOString(),updatedAt:new Date(now).toISOString()})
       return true
     })
@@ -70,12 +80,17 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
       // Provider request keys are stable across lost responses and retries.
       // A snapshot taken before the first cancellation is durably preserved.
       let subscriptionIds=job.subscriptionIds
-      if(!subscriptionIds){
+      {
+        // Rehydrate provider ownership on a new worker after interruption.
         const discovery=await provider.discover(uid)
         if(discovery?.complete!==true || discovery.uid!==uid || !Array.isArray(discovery.subscriptions)
           || discovery.subscriptions.some(s=>s.ownerUid!==uid||typeof s.id!=='string'))return await hold(uid,revision,lease,'billing_provider_verification')
-        subscriptionIds=[...new Set(discovery.subscriptions.map(s=>s.id))].sort()
-        await db.runTransaction(async tx=>{await owned(tx,uid,revision,lease);tx.update(jobRef(uid),{subscriptionIds})})
+        const found=[...new Set(discovery.subscriptions.map(s=>s.id))].sort()
+        if(subscriptionIds&&digest(subscriptionIds)!==digest(found))return await hold(uid,revision,lease,'billing_inventory_changed')
+        if(!subscriptionIds){
+          subscriptionIds=found
+          await db.runTransaction(async tx=>{await owned(tx,uid,revision,lease);tx.update(jobRef(uid),{subscriptionIds})})
+        }
       }
       for(const id of subscriptionIds){
         await stage(uid,revision,lease,'checking')
@@ -198,14 +213,14 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
       }catch(e){if(e.code!=='auth/user-not-found')throw e}
       try{await auth.getUser(uid);throw fail('AUTH_REMOVAL_UNCONFIRMED')}catch(e){if(e.code!=='auth/user-not-found')throw e}
       const confirmation=await provider.confirm(uid,{idempotencyKey:`deletion-confirmation/${uid}/${revision}`})
-      if(confirmation?.uid!==uid||confirmation.accepted!==true||confirmation.mode!=='synthetic')throw fail('CONFIRMATION_UNCONFIRMED')
+      if(confirmation?.uid!==uid||confirmation.accepted!==true||confirmation.mode!==confirmationMode)throw fail('CONFIRMATION_UNCONFIRMED')
       await db.runTransaction(async tx=>{
         await owned(tx,uid,revision,lease)
         const completedAt=new Date(clock()).toISOString()
         tx.update(requestRef(uid),{status:'completed',processingStage:'completed',completedAt,updatedAt:completedAt,issueCode:FieldValue.delete(),retainedCategories:[...new Set(currentJob.retained.map(r=>r.category))]})
         tx.update(lockRef(uid),{state:'completed',completedAt})
         tx.update(jobRef(uid),{stage:'completed',leaseUntil:0})
-        tx.set(db.collection(DELETION_RECEIPTS).doc(digest([uid,revision])),{revision,completedAt,fingerprint:currentJob.fingerprint,confirmation:'synthetic-emulator-only',retainedCategories:[...new Set(currentJob.retained.map(r=>r.category))]})
+        tx.set(db.collection(DELETION_RECEIPTS).doc(digest([uid,revision])),{revision,completedAt,fingerprint:currentJob.fingerprint,confirmation:mode==='prototype-emulator'?'synthetic-emulator-only':'qa-ledger-no-email',retainedCategories:[...new Set(currentJob.retained.map(r=>r.category))]})
       })
       return {status:'completed',revision}
     }catch(e){
@@ -214,5 +229,5 @@ export function createEmulatorDeletionProcessor({ db, auth, bucket, projectId, p
       throw e
     }finally{await release(uid,revision,lease)}
   }
-  return {process,mode:'prototype-emulator'}
+  return {process,mode}
 }
