@@ -1,0 +1,29 @@
+name: Provision approved isolated deletion QA resources
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['scripts/qa/provision-deletion-resources.mjs', 'scripts/test-provision-deletion-resources.mjs', '.github/workflows/deletion-qa-resources.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: idogs-approved-deletion-qa-provisioning
+  cancel-in-progress: false
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Exact-resource guards (mock only)
+        run: node --test scripts/test-provision-deletion-resources.mjs
+      - name: Provision only the two owner-approved staging QA resources
+        env:
+          IDOGS_QA_RESOURCE_APPROVAL: 2026-10-25-isolated-deletion-qa
+          IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/qa/provision-deletion-resources.mjs
