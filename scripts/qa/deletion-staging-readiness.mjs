@@ -30,6 +30,8 @@ export async function checkStagingDeletionReadiness({env=process.env,loadClients
   const list=await clients.stripe.subscriptions.list({limit:1,status:'all'})
   if(!Array.isArray(list.data)||list.data.some(item=>item.livemode!==false))throw fail('STRIPE_TEST_MODE_UNCONFIRMED')
   return {status:'read_access_verified',...STAGING_DELETION_TARGET,storageLocation:metadata.location,
+    storageProjectNumber:metadata.projectNumber?String(metadata.projectNumber):null,
+    storageSoftDeleteSeconds:metadata.softDeletePolicy?.retentionDurationSeconds===undefined?null:String(metadata.softDeletePolicy.retentionDurationSeconds),
     permanentDeletionReady:false,renewalWriteVerified:false,
     remaining:['disposable_fixture_binding','staging_worker_and_ingress_controls','stripe_test_renewal_write_and_webhook_readback','provider_recovery_inventory','post_auth_confirmation_delivery']}
 }
