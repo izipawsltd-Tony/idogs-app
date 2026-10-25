@@ -103,6 +103,18 @@ try{
  ensure((await db.doc(`accountDeletionRequests/${uid}`).get()).data()?.status!=='completed','QA_PREMATURE_COMPLETION')
  ensure((await stripe.subscriptions.retrieve(subscription.id)).cancel_at_period_end===true,'QA_RENEWAL_NOT_STOPPED')
  evidence.interruptionAndFreezeVerified=true
+ if(process.env.IDOGS_DELETION_SIGNED_WEBHOOK_QA_REQUIRED==='true'){
+  phase='actual_signed_stripe_event_receipt'
+  let found=false
+  for(let attempt=0;attempt<24;attempt++){
+   const receipts=await db.doc(`accountDeletionJobs/${uid}`).collection('providerEvents').get()
+   found=receipts.docs.some(d=>{const r=d.data();return /^evt_[A-Za-z0-9]+$/.test(r.eventId||'')&&r.subscriptionId===subscription.id&&r.type==='customer.subscription.updated'&&r.livemode===false&&r.renewalStopped===true})
+   if(found)break
+   await new Promise(resolve=>setTimeout(resolve,5000))
+  }
+  ensure(found,'QA_SIGNED_WEBHOOK_RECEIPT_MISSING')
+  evidence.actualSignedStripeWebhookVerified=true
+ }
  phase='retry_new_worker'
  const result=await createCloudFixtureProcessor({scope,provider:provider()}).process({uid,revision:1})
  ensure(result.status==='completed','QA_PROCESSOR_NOT_COMPLETED')
@@ -158,5 +170,5 @@ finally{
  if(customer)await clean('stripe_customer',async()=>{const c=await stripe.customers.retrieve(customer.id);ensure(!c.deleted&&c.livemode===false&&c.metadata?.deletionQaRunId===runId,'QA_CLEANUP_CUSTOMER_CHANGED');await stripe.customers.del(c.id)})
  if(app)await clean('sdk_shutdown',async()=>{const {deleteApp}=await import('firebase-admin/app');await deleteApp(app)})
 }
-console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:'runner-loopback-actual-handler',publicDeploymentVerified:false,signedWebhookVerified:false,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:false,productionReady:false},null,2))
+console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:'runner-loopback-actual-handler',publicDeploymentVerified:false,signedWebhookVerified:evidence.actualSignedStripeWebhookVerified===true,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:false,productionReady:false},null,2))
 if(!passed||!cleanupVerified)process.exitCode=2
