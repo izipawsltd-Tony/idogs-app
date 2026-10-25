@@ -38,6 +38,8 @@ jobs:
         run: |
           npm test
           node --test scripts/test-legacy-history-recovery.mjs
+          node scripts/test-webhook-handler.mjs
+          node scripts/test-sms-addon-v1.mjs
 
       - name: Production build
         run: npm run build

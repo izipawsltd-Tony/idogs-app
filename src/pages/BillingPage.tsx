@@ -242,6 +242,11 @@ export default function BillingPage({ toast }: Props) {
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || 'SMS add-on unavailable')
 
+      if (body.url) {
+        window.location.href = body.url
+        return
+      }
+
       if (body.hostedInvoiceUrl) {
         window.location.href = body.hostedInvoiceUrl
         return
