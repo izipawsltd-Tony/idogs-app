@@ -6,6 +6,8 @@ import { changeDeletionRequest } from '../../api/_lib/account-deletion.js'
 // Disposable Stripe TEST + Firestore staging fixture only. This does not test
 // cloud permanent deletion, public HTTP authentication or signed webhooks.
 let phase='configuration',stripe,db,app,runId,uid,customer,product,subscription,fixtureCreated=false,passed=false,cleanupOk=true,errorCode
+const cleanupSteps=[]
+const cleanupFailure=(step,e)=>{cleanupOk=false;cleanupSteps.push({step,status:'failed',code:/^[a-zA-Z0-9_/-]{1,80}$/.test(String(e?.code||''))?e.code:'CLEANUP_FAILED',httpStatus:Number.isInteger(e?.statusCode)?e.statusCode:undefined})}
 const ensure=(value,code)=>{if(!value)throw Object.assign(new Error(code),{code})}
 try{
  const config=stagingDeletionConfiguration(process.env)
@@ -50,30 +52,35 @@ try{
    ensure(f.data()?.runId===runId&&f.data()?.uid===uid&&f.data()?.disposable===true&&p.data()?.deletionQaRunId===runId,'CLEANUP_BINDING_CHANGED')
    for(const path of [`users/${uid}`,`deletionQaFixtures/${runId}`,`accountDeletionRequests/${uid}`,`accountDeletionRenewalTasks/${uid}_1`,`supportConversations/account_deletion_${uid}`,`supportMessages/account_deletion_${uid}_1_request`,`supportMessages/account_deletion_${uid}_1_cancel`])tx.delete(db.doc(path))
   })
- }catch{cleanupOk=false}}
+  cleanupSteps.push({step:'firestore_fixture',status:'success'})
+ }catch(e){cleanupFailure('firestore_fixture',e)}}
  if(subscription){try{
   const s=await stripe.subscriptions.retrieve(subscription.id)
   ensure(s.livemode===false&&s.customer===customer.id&&s.metadata?.deletionQaRunId===runId,'CLEANUP_SUBSCRIPTION_MISMATCH')
   await stripe.subscriptions.cancel(s.id,{}, {idempotencyKey:`${runId}/cleanup-subscription`})
+  cleanupSteps.push({step:'stripe_subscription',status:'success'})
   for(const item of s.items.data){
    const price=await stripe.prices.retrieve(item.price.id)
    ensure(price.livemode===false&&price.product===product.id,'CLEANUP_PRICE_MISMATCH')
    await stripe.prices.update(price.id,{active:false})
   }
- }catch{cleanupOk=false}}
+  cleanupSteps.push({step:'stripe_prices',status:'success'})
+ }catch(e){cleanupFailure('stripe_subscription_or_prices',e)}}
  if(product){try{
   const p=await stripe.products.retrieve(product.id)
   ensure(p.livemode===false&&p.metadata?.deletionQaRunId===runId,'CLEANUP_PRODUCT_MISMATCH')
   await stripe.products.update(p.id,{active:false})
- }catch{cleanupOk=false}}
+  cleanupSteps.push({step:'stripe_product',status:'success'})
+ }catch(e){cleanupFailure('stripe_product',e)}}
  if(customer){try{
   const c=await stripe.customers.retrieve(customer.id)
   ensure(c.livemode===false&&c.metadata?.deletionQaRunId===runId,'CLEANUP_CUSTOMER_MISMATCH')
   await stripe.customers.del(c.id)
- }catch{cleanupOk=false}}
- if(app){try{const {deleteApp}=await import('firebase-admin/app');await deleteApp(app)}catch{cleanupOk=false}}
+  cleanupSteps.push({step:'stripe_customer',status:'success'})
+ }catch(e){cleanupFailure('stripe_customer',e)}}
+ if(app){try{const {deleteApp}=await import('firebase-admin/app');await deleteApp(app)}catch(e){cleanupFailure('sdk_shutdown',e)}}
 }
-console.log(JSON.stringify({status:passed&&cleanupOk?'staging_renewal_contract_pass':'blocked',phase,code:errorCode,cleanupVerified:cleanupOk,fixtureCreated,
+console.log(JSON.stringify({status:passed&&cleanupOk?'staging_renewal_contract_pass':'blocked',phase,code:errorCode,cleanupVerified:cleanupOk,cleanupSteps,fixtureRunId:runId,fixtureCreated,
  permanentDeletionVerified:false,signedWebhookVerified:false,httpAuthenticationVerified:false,
  requiredTestPermissions:['Accounts: Read','Customers: Write','Products: Write','Prices: Write','Subscriptions: Write','Subscription schedules: Read','Checkout Sessions: Read']},null,2))
 if(!passed||!cleanupOk)process.exitCode=2
