@@ -3,6 +3,31 @@
    runtime markers installed before React renders. */
 
 @media (max-width: 768px) {
+  /* overflow-x:hidden implicitly makes overflow-y:auto, trapping sticky inside
+     a non-scrolling ancestor. Clip horizontal overflow without creating that
+     scroll container so the iPhone top bar remains pinned during page scroll. */
+  html[data-idogs-native-platform='ios'] .main-area {
+    overflow-x: clip;
+  }
+
+  /* Keep scrolling content out of the transparent iOS status-bar region,
+     including on screens whose header has scrolled away or is not present. */
+  html[data-idogs-native-platform='ios'] body::before {
+    content: '';
+    position: fixed;
+    inset: 0 0 auto;
+    height: var(--safe-area-top);
+    background: #fff;
+    z-index: 9998;
+    pointer-events: none;
+  }
+
+  html[data-idogs-native-platform='ios'][data-idogs-route='dog-detail'] .dog-profile-name {
+    font-size: 22px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
   /* The painted status band does not reserve layout space. Keep one inset
      before the in-flow header so its sticky offset cannot cover page content.
      clip also avoids overflow-x:hidden creating a non-scrolling ancestor for
