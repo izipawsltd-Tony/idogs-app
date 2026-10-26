@@ -1,3 +1,9 @@
+# Human inbox QA gate resolved — 26 October 2026
+
+The owner saved the recipient secret and explicitly approved one QA message. Workflow 40300913582, job 121498285273, source 13ab8fe5d4bc3552be79a84f8fa301d53b1d3b1e passed. The provider reported delivery; the connected recipient Gmail independently contained exactly one matching message in INBOX at 2026-10-26T09:45:15Z. Sender, recipient, subject and fixed QA body were verified without publishing the address or provider credentials. Temporary configuration and fixtures were cleaned. No further recipient secret or send authorization is needed for this completed one-message test. Human opening is not asserted. See deletion-human-inbox-pass-20261026.md.
+
+## Historical preparation
+
 # Owner-selected inbox QA gate
 
 The real cloud deletion flow has verified Resend's simulation sink. That does not establish delivery to, or opening in, a human inbox. A guarded human confirmation adapter and tests are prepared, with an optional hook after completed Auth/data deletion in the controlled fixture runner. No human email has been sent.
