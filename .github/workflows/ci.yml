@@ -37,7 +37,7 @@ jobs:
       - name: Unit tests
         run: |
           npm test
-          node --test scripts/test-deletion-qa-http.mjs
+          node --test scripts/test-deletion-qa-http.mjs scripts/test-deletion-human-confirmation.mjs
           node --experimental-test-module-mocks --test scripts/test-legacy-history-recovery.mjs scripts/test-history-api.mjs scripts/test-history-document-access.mjs scripts/test-ownership-history.mjs
 
       - name: Account deletion safety regression

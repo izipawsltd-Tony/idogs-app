@@ -1,0 +1,11 @@
+# Protected HTTPS account deletion QA — PASS
+
+Verified 26 October 2026, Australia/Adelaide. Source dcaa1ce8488d2766033460f68a9c1e1aa07707e9, release/ios-app-store-20261025, PR #62. Workflow 40271849490, job 121406166493 succeeded, reporting signed_webhook_qa_pass, protected-preview-https, publicDeploymentVerified true, signedWebhookVerified true, emailSimulationVerified true, fixture cleanupVerified true and sessionCleanupVerified true.
+
+The actual Google-issued Firebase token was sent over HTTPS to the fixed protected staging Preview route /api/qa/deletion-account. The route verified revocation and the disposable manifest/Auth binding in the named QA database. The fixture verified anonymous/invalid-token rejection, initial status, request receipt, duplicate request idempotency, frozen-token rejection and deleted-token rejection over deployed HTTPS. Request/cancel logic and second-revision refusal are unit-tested; this run did not exercise a full request/cancel/re-request over HTTPS.
+
+The same fixture verified real zero-retention Storage/Firestore/Auth removal, interrupted worker/new-worker resumption, an unchanged other-owner sentinel, actual Stripe Test renewal stopped and an actual signed Test webhook receipt over protected HTTPS, then Resend simulation delivery after removal. Human inbox receipt, native/browser CORS/device authentication and Production activation are not asserted. Plus entitlement webhook integration is not established by the deletion webhook receipt.
+
+Before external configuration, 29 scope/provider/HTTP/session tests and 38 actual emulator integration tests passed. Temporary session cleanup removed the dedicated Test endpoint, temporary bypass, all four branch-only Preview variables and the exact temporary deployment. SSO/password protections were checked unchanged. The initial staging Preview route remains disabled outside a controlled temporary session.
+
+Seven-day cloud expiry is a different ongoing fixture: workflow 40271208201, provider deadline 2 November 2026 at 15:26 Adelaide, automated follow-up from 16:00. That lifecycle is not yet PASS. The next human-inbox QA needs the owner-selected recipient secret and explicit authorization; adapter, one-off workflow and tests are prepared. App publish-ready remains false.

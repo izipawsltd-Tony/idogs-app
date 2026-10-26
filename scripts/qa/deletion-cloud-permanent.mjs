@@ -4,6 +4,7 @@ import {QA_RESOURCES as target,verifyQaDatabase,verifyQaBucket} from './provisio
 import {cloudFixtureScope,createCloudFixtureProcessor} from './deletion-cloud-runtime.mjs'
 import {signInCloudFixture,loopbackDeletionApi,protectedPreviewDeletionApi} from './deletion-cloud-http.mjs'
 import {createDeletionEmailSink} from './deletion-email-sink.mjs'
+import {createHumanQaConfirmation} from './deletion-human-confirmation.mjs'
 import {createStripeDeletionRenewalContract} from '../../api/_lib/deletion-stripe-contract.js'
 import {digest,scanDeletionDocuments} from '../../api/_lib/deletion-plan.js'
 
@@ -148,6 +149,11 @@ try{
    try{Object.assign(evidence,await emailSink.verify());break}catch(e){if(e.code!=='QA_RESEND_DELIVERY_PENDING'||attempt===7)throw e;await new Promise(resolve=>setTimeout(resolve,5000))}
   }
  }
+ if(process.env.IDOGS_HUMAN_EMAIL_QA_APPROVAL){
+  phase='owner_selected_human_email_qa'
+  const human=createHumanQaConfirmation({env:process.env,scope,db:scope.db,auth,manifest});await human.send()
+  for(let attempt=0;attempt<8;attempt++){try{Object.assign(evidence,await human.verify());break}catch(e){if(e.code!=='HUMAN_QA_DELIVERY_PENDING'||attempt===7)throw e;await new Promise(resolve=>setTimeout(resolve,5000))}}
+ }
  Object.assign(evidence,{firestoreRemoval:true,exactStorageGenerationsRemoved:true,authRemoval:true,stripeTestRenewalStopped:true,otherOwnerSentinelUnchanged:true,newWorkerRetry:true,duplicateIdempotent:true})
  passed=true
 }catch(e){error={code:/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'CLOUD_PERMANENT_QA_FAILED',httpStatus:Number.isInteger(e.statusCode)?e.statusCode:undefined};}
@@ -170,5 +176,5 @@ finally{
  if(customer)await clean('stripe_customer',async()=>{const c=await stripe.customers.retrieve(customer.id);ensure(!c.deleted&&c.livemode===false&&c.metadata?.deletionQaRunId===runId,'QA_CLEANUP_CUSTOMER_CHANGED');await stripe.customers.del(c.id)})
  if(app)await clean('sdk_shutdown',async()=>{const {deleteApp}=await import('firebase-admin/app');await deleteApp(app)})
 }
-console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:process.env.IDOGS_DELETION_HTTP_QA_ORIGIN?'protected-preview-https':'runner-loopback-actual-handler',publicDeploymentVerified:passed&&!!process.env.IDOGS_DELETION_HTTP_QA_ORIGIN,signedWebhookVerified:evidence.actualSignedStripeWebhookVerified===true,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:false,productionReady:false},null,2))
+console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:process.env.IDOGS_DELETION_HTTP_QA_ORIGIN?'protected-preview-https':'runner-loopback-actual-handler',publicDeploymentVerified:passed&&!!process.env.IDOGS_DELETION_HTTP_QA_ORIGIN,signedWebhookVerified:evidence.actualSignedStripeWebhookVerified===true,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:evidence.humanRecipientProviderDelivered===true,humanInboxOpened:false,productionReady:false},null,2))
 if(!passed||!cleanupVerified)process.exitCode=2
