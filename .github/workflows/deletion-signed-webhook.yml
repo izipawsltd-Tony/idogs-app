@@ -24,7 +24,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - run: npm ci
-      - run: node --test scripts/test-deletion-webhook-session.mjs scripts/test-deletion-qa-webhook.mjs scripts/test-deletion-cloud-runtime.mjs scripts/test-deletion-cloud-http.mjs scripts/test-deletion-email-sink.mjs
+      - run: node --test scripts/test-deletion-webhook-session.mjs scripts/test-deletion-qa-webhook.mjs scripts/test-deletion-cloud-runtime.mjs scripts/test-deletion-cloud-http.mjs scripts/test-deletion-email-sink.mjs scripts/test-deletion-qa-http.mjs
       - name: Shared processor regression gate before cloud configuration
         env:
           GCLOUD_PROJECT: demo-idogs-deletion
@@ -33,6 +33,7 @@ jobs:
           'ACCOUNT_DELETION_MODE=prototype-emulator node --test scripts/test-deletion-processor-emulator.mjs'
       - name: Configure approved Preview only, QA real signed event, always clean session
         env:
+          IDOGS_DELETION_HTTP_QA_APPROVAL: 2026-10-26-isolated-https-fixture
           IDOGS_WEBHOOK_QA_APPROVAL: 2026-10-26-staging-preview-webhook
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}

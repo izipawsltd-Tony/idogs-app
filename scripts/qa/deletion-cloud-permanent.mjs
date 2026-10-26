@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto'
 import {stagingDeletionConfiguration} from './deletion-staging-readiness.mjs'
 import {QA_RESOURCES as target,verifyQaDatabase,verifyQaBucket} from './provision-deletion-resources.mjs'
 import {cloudFixtureScope,createCloudFixtureProcessor} from './deletion-cloud-runtime.mjs'
-import {signInCloudFixture,loopbackDeletionApi} from './deletion-cloud-http.mjs'
+import {signInCloudFixture,loopbackDeletionApi,protectedPreviewDeletionApi} from './deletion-cloud-http.mjs'
 import {createDeletionEmailSink} from './deletion-email-sink.mjs'
 import {createStripeDeletionRenewalContract} from '../../api/_lib/deletion-stripe-contract.js'
 import {digest,scanDeletionDocuments} from '../../api/_lib/deletion-plan.js'
@@ -83,7 +83,7 @@ try{
  }
  phase='real_firebase_auth_http_request'
  idToken=await signInCloudFixture({auth,uid,credential})
- httpApi=await loopbackDeletionApi({db:scope.db,auth,uid})
+ httpApi=process.env.IDOGS_DELETION_HTTP_QA_ORIGIN?protectedPreviewDeletionApi({origin:process.env.IDOGS_DELETION_HTTP_QA_ORIGIN,bypass:process.env.IDOGS_DELETION_HTTP_QA_BYPASS}):await loopbackDeletionApi({db:scope.db,auth,uid})
  ensure((await httpApi.call()).status===401,'QA_HTTP_ANONYMOUS_ACCEPTED')
  ensure((await httpApi.call({token:'invalid-qa-token'})).status===401,'QA_HTTP_INVALID_TOKEN_ACCEPTED')
  const initial=await httpApi.call({token:idToken})
@@ -170,5 +170,5 @@ finally{
  if(customer)await clean('stripe_customer',async()=>{const c=await stripe.customers.retrieve(customer.id);ensure(!c.deleted&&c.livemode===false&&c.metadata?.deletionQaRunId===runId,'QA_CLEANUP_CUSTOMER_CHANGED');await stripe.customers.del(c.id)})
  if(app)await clean('sdk_shutdown',async()=>{const {deleteApp}=await import('firebase-admin/app');await deleteApp(app)})
 }
-console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:'runner-loopback-actual-handler',publicDeploymentVerified:false,signedWebhookVerified:evidence.actualSignedStripeWebhookVerified===true,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:false,productionReady:false},null,2))
+console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:process.env.IDOGS_DELETION_HTTP_QA_ORIGIN?'protected-preview-https':'runner-loopback-actual-handler',publicDeploymentVerified:passed&&!!process.env.IDOGS_DELETION_HTTP_QA_ORIGIN,signedWebhookVerified:evidence.actualSignedStripeWebhookVerified===true,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:false,productionReady:false},null,2))
 if(!passed||!cleanupVerified)process.exitCode=2

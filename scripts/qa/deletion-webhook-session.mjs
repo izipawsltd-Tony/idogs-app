@@ -15,6 +15,8 @@ export function sessionConfiguration(env){
 }
 export async function webhookSession({env=process.env,loadClients,runFixture,wait=ms=>new Promise(r=>setTimeout(r,ms)),report={}}){
  const config=sessionConfiguration(env),{stripe,api}=await loadClients(config)
+ const httpQa=env.IDOGS_DELETION_HTTP_QA_APPROVAL==='2026-10-26-isolated-https-fixture'
+ const sessionKeys=httpQa?[...keys,'IDOGS_DELETION_HTTP_QA_ENABLED']:keys
  let endpoint,bypass,deployment,originalProject,mutated=false,endpointIntent=false
  const createdEnvs=[],cleanup=[]
  const note=`idogs-deletion-qa-${randomBytes(12).toString('hex')}`
@@ -25,7 +27,7 @@ export async function webhookSession({env=process.env,loadClients,runFixture,wai
   ensure(originalProject.id===P&&originalProject.name==='idogs-app-staging'&&originalProject.accountId===T&&originalProject.link?.org==='izipawsltd-Tony'&&originalProject.link?.repo==='idogs-app','VERCEL_PROJECT_IDENTITY_MISMATCH')
   ensure((await stripe.accounts.retrieve()).id==='acct_1TiU0IGHgBd6ZgJE','STRIPE_ACCOUNT_MISMATCH')
   const initial=(await api(`/v10/projects/${P}/env`)).envs||[]
-  ensure(!initial.some(e=>e.gitBranch===B&&e.target?.includes('preview')&&keys.includes(e.key)),'QA_BRANCH_ENV_ALREADY_EXISTS')
+  ensure(!initial.some(e=>e.gitBranch===B&&e.target?.includes('preview')&&sessionKeys.includes(e.key)),'QA_BRANCH_ENV_ALREADY_EXISTS')
   report.phase='create_then_disable_test_endpoint'
   endpointIntent=true
   endpoint=await stripe.webhookEndpoints.create({url:'https://idogs-app-staging-yeh5jvxgo-izipawsltd-tonys-projects.vercel.app/api/qa/deletion-webhook',enabled_events:['customer.subscription.updated'],description:note,metadata:{deletionQaSession:note}},{idempotencyKey:`${note}/endpoint`})
@@ -41,10 +43,10 @@ export async function webhookSession({env=process.env,loadClients,runFixture,wai
   ensure(generated.length===1,'QA_BYPASS_READBACK_FAILED');bypass=generated[0][0]
   report.bypassCreated=true
   report.phase='create_branch_only_variables'
-  const values=[config.stripeKey,endpoint.secret,new Date(Date.now()+23*3600000).toISOString()]
-  for(let i=0;i<keys.length;i++){
-   await api(`/v10/projects/${P}/env`,{method:'POST',body:{key:keys[i],value:values[i],type:i===2?'plain':'sensitive',target:['preview'],gitBranch:B,comment:note}})
-   const match=((await api(`/v10/projects/${P}/env`)).envs||[]).filter(e=>e.key===keys[i]&&e.gitBranch===B&&e.target?.length===1&&e.target[0]==='preview'&&e.comment===note)
+  const values=[config.stripeKey,endpoint.secret,new Date(Date.now()+23*3600000).toISOString(),...(httpQa?['2026-10-26-isolated-https-fixture']:[])]
+  for(let i=0;i<sessionKeys.length;i++){
+   await api(`/v10/projects/${P}/env`,{method:'POST',body:{key:sessionKeys[i],value:values[i],type:i===2?'plain':'sensitive',target:['preview'],gitBranch:B,comment:note}})
+   const match=((await api(`/v10/projects/${P}/env`)).envs||[]).filter(e=>e.key===sessionKeys[i]&&e.gitBranch===B&&e.target?.length===1&&e.target[0]==='preview'&&e.comment===note)
    ensure(match.length===1,'QA_ENV_READBACK_FAILED');createdEnvs.push(match[0].id)
   }
   report.phase='deploy_exact_preview_source'
@@ -65,7 +67,8 @@ export async function webhookSession({env=process.env,loadClients,runFixture,wai
   const active=await stripe.webhookEndpoints.retrieve(endpoint.id)
   ensure(active.url===url&&active.status==='enabled'&&active.livemode===false&&active.metadata?.deletionQaSession===note,'QA_ENDPOINT_READBACK_FAILED')
   report.phase='run_signed_provider_fixture'
-  report.fixture=await runFixture({...env,IDOGS_DELETION_SIGNED_WEBHOOK_QA_REQUIRED:'true'})
+  report.fixture=await runFixture({...env,IDOGS_DELETION_SIGNED_WEBHOOK_QA_REQUIRED:'true',...(httpQa?{IDOGS_DELETION_HTTP_QA_ORIGIN:`https://${deployment.url}`,IDOGS_DELETION_HTTP_QA_BYPASS:bypass}:{})})
+  if(httpQa)ensure(report.fixture?.publicDeploymentVerified===true,'QA_PUBLIC_HTTPS_NOT_VERIFIED')
   ensure(report.fixture?.status==='isolated_cloud_permanent_deletion_pass'&&report.fixture?.signedWebhookVerified===true&&report.fixture?.cleanupVerified===true,'QA_SIGNED_FIXTURE_FAILED')
   report.status='signed_webhook_qa_pass'
  }finally{
@@ -75,8 +78,8 @@ export async function webhookSession({env=process.env,loadClients,runFixture,wai
   if(mutated&&!bypass)await clean('reconcile_bypass_response',async()=>{const entries=Object.entries((await api(`/v9/projects/${P}`)).protectionBypass||{}).filter(([,v])=>v.note===note);ensure(entries.length<=1,'QA_BYPASS_RECONCILIATION_AMBIGUOUS');bypass=entries[0]?.[0]})
   if(bypass&&mutated)await clean('temporary_bypass',async()=>{const p=await api(`/v9/projects/${P}`);if(p.protectionBypass?.[bypass])await api(`/v1/projects/${P}/protection-bypass`,{method:'PATCH',body:{revoke:{secret:bypass,regenerate:false}}});ensure(!(await api(`/v9/projects/${P}`)).protectionBypass?.[bypass],'QA_BYPASS_REVOCATION_UNCONFIRMED')})
   // Reconcile writes whose API response may have been lost before an ID was saved.
-  if(mutated)await clean('reconcile_branch_variable_ids',async()=>{for(const e of (await api(`/v10/projects/${P}/env`)).envs||[])if(e.comment===note&&e.gitBranch===B&&e.target?.length===1&&e.target[0]==='preview'&&keys.includes(e.key)&&!createdEnvs.includes(e.id))createdEnvs.push(e.id)})
-  for(const id of createdEnvs)await clean('branch_variable',async()=>{const all=(await api(`/v10/projects/${P}/env`)).envs||[],e=all.find(x=>x.id===id);ensure(e?.comment===note&&e.gitBranch===B&&e.target?.length===1&&e.target[0]==='preview'&&keys.includes(e.key),'QA_ENV_CLEANUP_BINDING');await api(`/v9/projects/${P}/env/${id}`,{method:'DELETE'})})
+  if(mutated)await clean('reconcile_branch_variable_ids',async()=>{for(const e of (await api(`/v10/projects/${P}/env`)).envs||[])if(e.comment===note&&e.gitBranch===B&&e.target?.length===1&&e.target[0]==='preview'&&sessionKeys.includes(e.key)&&!createdEnvs.includes(e.id))createdEnvs.push(e.id)})
+  for(const id of createdEnvs)await clean('branch_variable',async()=>{const all=(await api(`/v10/projects/${P}/env`)).envs||[],e=all.find(x=>x.id===id);ensure(e?.comment===note&&e.gitBranch===B&&e.target?.length===1&&e.target[0]==='preview'&&sessionKeys.includes(e.key),'QA_ENV_CLEANUP_BINDING');await api(`/v9/projects/${P}/env/${id}`,{method:'DELETE'})})
   if(deployment?.id)await clean('temporary_deployment',async()=>{const d=await api(`/v13/deployments/${deployment.id}`);ensure(d.projectId===P&&d.meta?.githubCommitSha===env.GITHUB_SHA&&d.target!=='production','QA_DEPLOYMENT_CLEANUP_BINDING');await api(`/v13/deployments/${deployment.id}`,{method:'DELETE'})})
   if(originalProject)await clean('protection_settings_unchanged',async()=>{const p=await api(`/v9/projects/${P}`);for(const key of ['ssoProtection','passwordProtection'])ensure(JSON.stringify(p[key])===JSON.stringify(originalProject[key]),'QA_PROTECTION_SETTINGS_CHANGED')})
   report.sessionCleanup=cleanup;report.sessionCleanupVerified=cleanup.every(c=>c.status==='success')

@@ -43,3 +43,16 @@ test('existing branch credential is never overwritten and no new resource is cre
  await assert.rejects(webhookSession({env,...f,runFixture:async()=>{throw Error('must not run')}}),/ALREADY_EXISTS/)
  assert.equal(f.writes.length,0);assert.equal(f.envs[0].id,'foreign')
 })
+test('HTTPS fixture opt-in creates a fourth scoped variable and requires deployed proof, then cleans it',async()=>{
+ for(const verified of [true,false]){
+  const f=clients(),report={}
+  const run=webhookSession({env:{...env,IDOGS_DELETION_HTTP_QA_APPROVAL:'2026-10-26-isolated-https-fixture'},...f,report,runFixture:async child=>{
+   assert.equal(child.IDOGS_DELETION_HTTP_QA_ORIGIN,'https://qa-fixture.vercel.app')
+   assert.equal(child.IDOGS_DELETION_HTTP_QA_BYPASS,'fixture-server-generated-token')
+   assert.equal(f.envs.length,4);assert.equal(f.envs.find(e=>e.key==='IDOGS_DELETION_HTTP_QA_ENABLED').gitBranch,B)
+   return {status:'isolated_cloud_permanent_deletion_pass',signedWebhookVerified:true,cleanupVerified:true,publicDeploymentVerified:verified}
+  }})
+  if(verified)await run;else await assert.rejects(run,/PUBLIC_HTTPS_NOT_VERIFIED/)
+  assert.equal(report.sessionCleanupVerified,true);assert.deepEqual(f.counts(),{deletedEndpoint:true,deletedDeployment:true,bypasses:0,envs:0})
+ }
+})

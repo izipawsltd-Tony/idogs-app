@@ -36,3 +36,11 @@ test('custom-token REST response needs no localId; verified token must bind UID,
   await assert.rejects(signInCloudFixture({auth,uid,credential,fetchImpl}),/TOKEN_IDENTITY_MISMATCH/)
  }
 })
+test('protected HTTPS adapter pins origin and carries bypass only in headers with redirects disabled',async()=>{
+ const {protectedPreviewDeletionApi}=await import('./qa/deletion-cloud-http.mjs')
+ for(const origin of ['https://idogs.com.au','http://idogs-app-staging-fixture.vercel.app','https://idogs-app-staging-fixture.vercel.app.evil.example'])assert.throws(()=>protectedPreviewDeletionApi({origin,bypass:'fixture-private-bypass'}))
+ const api=protectedPreviewDeletionApi({origin:'https://idogs-app-staging-fixture.vercel.app',bypass:'fixture-private-bypass',fetchImpl:async(url,options)=>{
+  assert.equal(url,'https://idogs-app-staging-fixture.vercel.app/api/qa/deletion-account');assert.equal(options.redirect,'error');assert.equal(options.headers['x-vercel-protection-bypass'],'fixture-private-bypass');return {status:401,headers:new Headers({'cache-control':'private, no-store'}),json:async()=>({error:'Please sign in again.'})}
+ }})
+ assert.equal((await api.call()).status,401)
+})

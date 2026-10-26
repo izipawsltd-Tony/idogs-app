@@ -47,3 +47,11 @@ export async function loopbackDeletionApi({db,auth,uid}){
   return {status:r.status,cacheControl:r.headers.get('cache-control'),body:await r.json()}
  },close:async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}}
 }
+
+export function protectedPreviewDeletionApi({origin,bypass,fetchImpl=fetch}){
+ ensure(/^https:\/\/idogs-app-staging-[a-z0-9-]+\.vercel\.app$/.test(origin||'')&&typeof bypass==='string'&&bypass.length>=16,'QA_PUBLIC_HTTP_TARGET_REQUIRED')
+ return {call:async({token,method='GET',body}={})=>{
+  const r=await fetchImpl(`${origin}/api/qa/deletion-account`,{method,redirect:'error',headers:{'Content-Type':'application/json','x-vercel-protection-bypass':bypass,...(token?{Authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)})
+  return {status:r.status,cacheControl:r.headers.get('cache-control'),body:await r.json()}
+ },close:async()=>{}}
+}
