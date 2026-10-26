@@ -1,12 +1,16 @@
 import {createGuardedDeletionProcessor} from '../../api/_lib/deletion-processor.js'
 import {digest} from '../../api/_lib/deletion-plan.js'
 import {QA_RESOURCES,verifyQaBucket} from './provision-deletion-resources.mjs'
+import {RETENTION_QA,verifyRetentionBucket} from './provision-retention-bucket.mjs'
 
 const fail=code=>Object.assign(new Error(code),{code})
-export function cloudFixtureScope({db,auth,bucket,runId,manifest,env=process.env}){
+export function cloudFixtureScope({db,auth,bucket,runId,manifest,env=process.env,retentionMode='zero'}){
  const uid=`qa-${runId}`
+ const recovery=retentionMode==='seven-day'
+ const verifyBucket=recovery?verifyRetentionBucket:verifyQaBucket
  function target(){
-  if(!/^deletion-qa-[a-f0-9]{32}$/.test(runId||'')||db.projectId!==QA_RESOURCES.projectId||db.databaseId!==QA_RESOURCES.databaseId||auth.app.options.projectId!==QA_RESOURCES.projectId||bucket.name!==QA_RESOURCES.bucket)throw fail('CLOUD_QA_TARGET_REQUIRED')
+  if(!['zero','seven-day'].includes(retentionMode)||!/^deletion-qa-[a-f0-9]{32}$/.test(runId||'')||db.projectId!==QA_RESOURCES.projectId||db.databaseId!==QA_RESOURCES.databaseId||auth.app.options.projectId!==QA_RESOURCES.projectId||bucket.name!==(recovery?RETENTION_QA.bucket:QA_RESOURCES.bucket))throw fail('CLOUD_QA_TARGET_REQUIRED')
+  if(recovery&&(manifest.storageMode!=='seven-day'||manifest.bucket!==RETENTION_QA.bucket))throw fail('CLOUD_QA_RETENTION_MANIFEST_REQUIRED')
   for(const k of ['FIRESTORE_EMULATOR_HOST','FIREBASE_AUTH_EMULATOR_HOST','FIREBASE_STORAGE_EMULATOR_HOST','STORAGE_EMULATOR_HOST','GOOGLE_CLOUD_UNIVERSE_DOMAIN'])if(env[k])throw fail('CLOUD_QA_ENDPOINT_OVERRIDE')
   if(manifest.uid!==uid||manifest.runId!==runId||manifest.disposable!==true||manifest.email!==`${uid}@example.invalid`||!manifest.authCreatedAt||!Array.isArray(manifest.recordPaths)||!Array.isArray(manifest.mediaPaths))throw fail('CLOUD_QA_MANIFEST_REQUIRED')
   if(manifest.recordPaths.some(p=>!new RegExp(`^(users/${uid}|(dogs|vaccineRecords|wormingRecords|documents|activityNotes)/${runId}-[a-z]+)$`).test(p))||manifest.mediaPaths.some(p=>!p.startsWith(`documents/${uid}/`)||p.includes('..')))throw fail('CLOUD_QA_MANIFEST_SCOPE')
@@ -32,7 +36,7 @@ export function cloudFixtureScope({db,auth,bucket,runId,manifest,env=process.env
   target();if(id!==uid)throw fail('CLOUD_QA_FOREIGN_UID_REJECTED')
   const job=(await db.doc(`accountDeletionJobs/${uid}`).get()).data()
   if(!job||digest(job.qaManifest)!==digest(manifest))throw fail('CLOUD_QA_DURABLE_BINDING_CHANGED')
-  verifyQaBucket((await bucket.getMetadata())[0])
+  verifyBucket((await bucket.getMetadata())[0])
   await boundAuth(uid,{allowMissing:job.authRemovalAttempted===true||job.stage==='completed'})
  }
  return {uid,db:scopedDb,auth:scopedAuth,bucket:scopedBucket,assertRuntime,assertTarget:target,boundAuth,allowed}

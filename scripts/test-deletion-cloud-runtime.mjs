@@ -42,3 +42,14 @@ test('isolated cloud wrapper rejects synthetic/live provider and explicit mismat
  await assert.rejects(scope.assertRuntime('real-user'),/FOREIGN_UID/)
  assert.equal(digest(f.manifest),digest({...f.manifest}))
 })
+test('seven-day runtime permits only its fixed private bucket and an explicit durable retention manifest',async()=>{
+ const f=fixture();f.args.retentionMode='seven-day';f.bucket.name='idogs-app-staging-retention-qa'
+ assert.throws(()=>cloudFixtureScope(f.args),/RETENTION_MANIFEST/)
+ f.manifest.storageMode='seven-day';f.manifest.bucket=f.bucket.name
+ f.bucket.getMetadata=async()=>[{name:f.bucket.name,projectNumber:'530003937245',location:'ASIA-SOUTHEAST1',softDeletePolicy:{retentionDurationSeconds:'604800'},versioning:{enabled:false},iamConfiguration:{uniformBucketLevelAccess:{enabled:true},publicAccessPrevention:'enforced'}}]
+ await cloudFixtureScope(f.args).assertRuntime(uid)
+ assert.throws(()=>cloudFixtureScope({...f.args,retentionMode:'zero'}),/TARGET/)
+ assert.throws(()=>cloudFixtureScope({...f.args,retentionMode:'production'}),/TARGET/)
+ f.bucket.getMetadata=async()=>[{name:f.bucket.name}]
+ await assert.rejects(cloudFixtureScope(f.args).assertRuntime(uid),/BUCKET_MISMATCH/)
+})
