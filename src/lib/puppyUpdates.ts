@@ -19,6 +19,6 @@ export const puppyAppPath = (passportId: string) => `/app/puppy-updates/${encode
 
 export function puppyShareUrl(passportId: string): string {
   const native = document.documentElement.dataset.idogsNativePlatform
-  const base = native ? (import.meta.env.VITE_FIREBASE_PROJECT_ID === 'idogs-app-staging' ? 'https://idogs-puppy-journey-qa.vercel.app' : 'https://idogs.com.au') : window.location.origin
+  const base = native ? (import.meta.env.VITE_FIREBASE_PROJECT_ID === 'idogs-app-staging' ? 'https://idogs-puppy-journey-qa-izipawsltd-tonys-projects.vercel.app' : 'https://idogs.com.au') : window.location.origin
   return `${base}${puppyPath(passportId)}`
 }

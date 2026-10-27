@@ -25,7 +25,7 @@ jobs:
       CLIENT_SOURCE_PROJECT_ID: prj_UsnGhC1BWtYnmF5rKMYBR9KWkbIo
       ADMIN_SOURCE_PROJECT_ID: prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o
       QA_PROJECT_NAME: idogs-puppy-journey-qa
-      QA_PUBLIC_BASE: https://idogs-puppy-journey-qa.vercel.app
+      QA_PUBLIC_BASE: https://idogs-puppy-journey-qa-izipawsltd-tonys-projects.vercel.app
 
     steps:
       - name: Checkout exact commit
