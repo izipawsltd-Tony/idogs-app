@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter, useLocation } from 'react-router-dom'
 import { AuthProvider } from './hooks/useAuth'
 import App from './components/App'
+import MarketingMeasurement from './components/MarketingMeasurement'
 import { installNativeProductionApiRouting, installNativeQaApiRouting } from './lib/nativeApiRouting'
 import './index.css'
 import './mobile.css'
@@ -58,6 +59,7 @@ function renderApp() {
     <React.StrictMode>
       <BrowserRouter>
         <RouteMarker />
+        <MarketingMeasurement />
         <AuthProvider>
           <App />
         </AuthProvider>

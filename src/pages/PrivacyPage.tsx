@@ -45,7 +45,8 @@ export default function PrivacyPage() {
               <li>Respond to support requests</li>
               <li>Comply with legal obligations</li>
             </ul>
-            <p>We do <strong>not</strong> sell your personal information to third parties. We do not use your data for advertising purposes.</p>
+            <p>We do <strong>not</strong> sell your personal information to third parties.</p>
+            <p><strong>Optional advertising measurement:</strong> If you choose “Allow ad measurement”, Meta Pixel shares visits to our home and signup pages and successful registrations with Meta (Facebook) to measure and improve our advertising. Meta may receive page URLs, IP address, browser information and advertising cookies. We do not send form entries, account contact details, dog records or documents through this integration. It does not run in the native app or on private account pages. You can decline or withdraw permission using “Ad privacy choices” on our home or signup page. Declining does not affect your ability to use iDogs. See <a href="https://www.facebook.com/privacy/policy/" target="_blank" rel="noopener noreferrer">Meta’s privacy policy</a> for how Meta handles this information.</p>
           </LegalSection>
 
           <LegalSection title="4. Data Storage and Security">

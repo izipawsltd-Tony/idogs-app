@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import { AU_STATES } from '../lib/utils'
 import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
+import { trackCompletedRegistration } from '../lib/metaPixel'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -57,6 +58,7 @@ export default function SignupPage({ toast }: Props) {
         breederNumber: form.breederNumber || undefined,
         marketingOptIn,
       })
+      trackCompletedRegistration()
       toast('Account created! Please check your email to verify your address.')
       navigate(`/verify-email?next=${encodeURIComponent(returnTo)}`)
     } catch (err: unknown) {
