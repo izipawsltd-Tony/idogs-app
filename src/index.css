@@ -918,3 +918,18 @@ h1, h2, h3, h4, h5, h6 {
     text-align: left;
   }
 }
+
+/* The add-dog form must accommodate iOS date controls and long registry labels. */
+.dog-new-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.dog-new-fields > .form-group { min-width: 0; }
+.dog-new-page .form-input, .dog-new-page .form-select, .dog-new-page .form-textarea { min-width: 0; max-width: 100%; }
+.dog-new-actions { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 4px; }
+.dog-new-actions .btn { min-width: 0; min-height: 46px; height: auto; white-space: normal; }
+.dog-new-actions .btn-primary { flex: 1 1 240px; }
+@media (max-width: 600px) {
+  .dog-new-page { padding: 20px 16px !important; }
+  .dog-new-page > .card { padding: 20px 16px; }
+  .dog-new-fields { grid-template-columns: minmax(0, 1fr); }
+  .dog-new-actions { flex-direction: column; }
+  .dog-new-actions .btn { flex: none; width: 100%; }
+}

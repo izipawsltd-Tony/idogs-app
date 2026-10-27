@@ -220,7 +220,7 @@ export default function SettingsPage({ toast }: Props) {
               {includedAccess ? 'Unlimited dogs' : effectivePlan === 'plus' ? 'Up to 5 dogs' : 'Up to 2 dogs'} · Health records, reminders, documents and QR Passport
             </p>
             <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 12px' }}>
-              {effectivePlan === 'plus' ? '10 AI document scans per month' : '2 AI document scans for the life of your account'}. Dogs over your plan limit stay saved and become read-only.
+              {effectivePlan === 'plus' ? '10 iDogs Document Scans per month' : '2 iDogs Document Scans for the life of your account'}. Dogs over your plan limit stay saved and become read-only.
             </p>
           </>
         ) : (

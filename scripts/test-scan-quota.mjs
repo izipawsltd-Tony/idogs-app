@@ -10,9 +10,12 @@ import { makeChecker } from './_lib/test-check.mjs'
 import { createFakeFirestore } from './test-helpers/fake-firestore.mjs'
 import { reserveScanQuota, rollbackScanReservation } from '../api/_lib/scan-quota.js'
 import { createScanHandler } from '../api/_lib/scan-handler.js'
-import { SCAN_QUOTA } from '../api/_lib/entitlements.js'
+import { rollScanPeriod, SCAN_QUOTA } from '../api/_lib/entitlements.js'
 
 const { check, checkAsync, summary } = makeChecker()
+// Reservation fixtures must use the current billing period; a fixed July
+// boundary correctly rolls over when this suite runs in a later month.
+const currentPeriodStart = rollScanPeriod({ scanPeriodAnchorDay: 1 }).plusScansPeriodStart
 
 // ── reserveScanQuota — Free lifetime ──────────────────────────────────
 
@@ -36,7 +39,7 @@ await checkAsync(`Free account with ${SCAN_QUOTA.freeLifetime} used (exhausted):
 
 await checkAsync('Plus account with 9/10 used this period: reservation succeeds, becomes 10', async () => {
   const db = createFakeFirestore({
-    users: { u1: { plan: 'plus', plusScansUsed: 9, plusScansPeriodStart: '2026-07-01T00:00:00.000Z', scanPeriodAnchorDay: 1 } },
+    users: { u1: { plan: 'plus', plusScansUsed: 9, plusScansPeriodStart: currentPeriodStart, scanPeriodAnchorDay: 1 } },
   })
   const userRef = db.collection('users').doc('u1')
   const result = await reserveScanQuota(db, userRef)
@@ -46,7 +49,7 @@ await checkAsync('Plus account with 9/10 used this period: reservation succeeds,
 
 await checkAsync(`Plus account with ${SCAN_QUOTA.plusMonthly}/${SCAN_QUOTA.plusMonthly} used this period: reservation fails`, async () => {
   const db = createFakeFirestore({
-    users: { u1: { plan: 'plus', plusScansUsed: SCAN_QUOTA.plusMonthly, plusScansPeriodStart: '2026-07-01T00:00:00.000Z', scanPeriodAnchorDay: 1 } },
+    users: { u1: { plan: 'plus', plusScansUsed: SCAN_QUOTA.plusMonthly, plusScansPeriodStart: currentPeriodStart, scanPeriodAnchorDay: 1 } },
   })
   const userRef = db.collection('users').doc('u1')
   const result = await reserveScanQuota(db, userRef)
@@ -84,7 +87,7 @@ await checkAsync('CONCURRENCY: with 2 scans remaining, three simultaneous reserv
 
 await checkAsync('CONCURRENCY: Plus account, 2 remaining, 5 simultaneous requests — exactly 2 succeed, never over-granting', async () => {
   const db = createFakeFirestore({
-    users: { u1: { plan: 'plus', plusScansUsed: SCAN_QUOTA.plusMonthly - 2, plusScansPeriodStart: '2026-07-01T00:00:00.000Z', scanPeriodAnchorDay: 1 } },
+    users: { u1: { plan: 'plus', plusScansUsed: SCAN_QUOTA.plusMonthly - 2, plusScansPeriodStart: currentPeriodStart, scanPeriodAnchorDay: 1 } },
   })
   const userRef = db.collection('users').doc('u1')
   const results = await Promise.all(Array.from({ length: 5 }, () => reserveScanQuota(db, userRef)))
