@@ -9,12 +9,13 @@ import { requireStorageBucket } from './_lib/require-config.js'
 import { signMediaItems } from './_lib/showcase-media-access.js'
 
 import { createPuppyUpdatesHandler } from './_lib/puppy-updates-handler.js'
+import { publicMediaBase } from './_lib/puppy-updates-policy.js'
 
 if (!getApps().length) initializeApp({ credential: cert({ projectId: process.env.FIREBASE_PROJECT_ID, clientEmail: process.env.FIREBASE_CLIENT_EMAIL, privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n') }) })
 
 
 export default withApiErrorHandling('puppy-updates', createPuppyUpdatesHandler({
   db: getFirestore(), timestamp: () => FieldValue.serverTimestamp(), verifyToken: token => getAuth().verifyIdToken(token),
-  publicBase: /^[a-z0-9.-]+\.vercel\.app$/.test(process.env.VERCEL_URL || '') ? `https://${process.env.VERCEL_URL}` : '',
+  publicBase: publicMediaBase(process.env),
   sign: (items, ttl) => signMediaItems(getStorage().bucket(requireStorageBucket()), items, ttl),
 }))

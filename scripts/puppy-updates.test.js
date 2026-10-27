@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createPuppyUpdatesHandler } from '../api/_lib/puppy-updates-handler.js'
-import { canPublish, publicSharingLive, viewerRole, mayReadUpdate, safeUpdateMedia, validateUpdate } from '../api/_lib/puppy-updates-policy.js'
+import { canPublish, publicSharingLive, publicMediaBase, viewerRole, mayReadUpdate, safeUpdateMedia, validateUpdate } from '../api/_lib/puppy-updates-policy.js'
 
 const breeder = { uid: 'breeder', email: 'breeder@example.test', email_verified: true }
 const buyer = { uid: 'buyer', email: 'buyer@example.test', email_verified: true }
@@ -33,6 +33,12 @@ function setup(extra = {}, onSign = () => {}) {
 const create = (overrides = {}) => ({ action: 'create', dogIds: ['puppy1'], requestId: 'request-1', text: 'Week five in the garden', date: '2026-10-28', audience: 'buyer', mediaIds: ['photo1', 'video1'], ...overrides })
 
 describe('Puppy update privacy through the ownership lifecycle', () => {
+  it('uses the public customer domain instead of SSO-protected immutable Production URLs', () => {
+    expect(publicMediaBase({ FIREBASE_PROJECT_ID: 'idogs-app', VERCEL_URL: 'protected.vercel.app' })).toBe('https://idogs.com.au')
+    expect(publicMediaBase({ FIREBASE_PROJECT_ID: 'idogs-app-staging', VERCEL_URL: 'qa.vercel.app' })).toBe('https://qa.vercel.app')
+    expect(publicMediaBase({ VERCEL_URL: 'evil.example/path' })).toBe('')
+    expect(publicMediaBase({})).toBe('')
+  })
   it('distinguishes public, verified deposited buyer and owner', () => {
     const dog = { ...puppy, id: 'puppy1' }
     expect(viewerRole(dog, grant, breeder)).toBe('owner')

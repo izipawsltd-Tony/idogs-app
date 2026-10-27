@@ -6,6 +6,13 @@ export const ownerId = dog => Object.hasOwn(dog || {}, 'currentOwnerId') ? dog.c
 export const canPublish = (dog, uid) => canAddDogRecord(dog, uid) && dog.status !== 'transferred' && dog.transferStatus !== 'pendingClaim'
 export const publicSharingLive = (dog, profile) => !!ownerId(dog) && profile?.ownerId === ownerId(dog) && profile.publicEnabled === true && dog.status !== 'transferred' && dog.transferStatus !== 'pendingClaim'
 
+export function publicMediaBase(env) {
+  // Production's immutable Vercel URL is SSO-protected even though the
+  // customer-facing domain is public. Never send public media there.
+  if (env.FIREBASE_PROJECT_ID === 'idogs-app') return 'https://idogs.com.au'
+  return /^[a-z0-9.-]+\.vercel\.app$/.test(env.VERCEL_URL || '') ? `https://${env.VERCEL_URL}` : ''
+}
+
 export function viewerRole(dog, grant, identity) {
   if (hasDogWriteAccess(dog, identity?.uid) && dog.transferStatus !== 'pendingClaim' && dog.status !== 'transferred') return 'owner'
   if (dog.depositStatus === 'received' && identity?.email_verified === true && grantAllowsBuyerRead(grant, dog, identity.email)) return 'buyer'
