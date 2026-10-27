@@ -31,7 +31,7 @@ function related(data, needles) { return strings(data).some(s => needles.has(s) 
 // Includes missing parent document references, so orphaned subcollections are
 // discovered too. Pagination/limits fail closed, never silently truncate.
 export async function scanDeletionDocuments(db, { pageSize = 100, maxDocuments = 5000, maxCollections = 200 } = {}) {
-  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100 || !Number.isInteger(maxDocuments) || maxDocuments < 1 || maxDocuments > 5000) throw new Error('INVALID_INVENTORY_LIMIT')
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100 || !Number.isInteger(maxDocuments) || maxDocuments < 1 || maxDocuments > 5000 || !Number.isInteger(maxCollections) || maxCollections < 1 || maxCollections > 200) throw new Error('INVALID_INVENTORY_LIMIT')
   const queue = (await db.listCollections()).filter(c => !CONTROL.has(c.id))
   const seen = new Set(), records = [], holds = new Set()
   while (queue.length) {
@@ -142,7 +142,16 @@ export async function buildEmulatorDeletionPlan({ db, bucket, uid, now = Date.no
       const redaction = redactShared(r.data,uid,profile,pseudonym)
       redaction.holds.forEach(h => holds.add(h))
       if (Object.keys(redaction.changes).length) operations.push({kind:'redact',path:r.path,expectedVersion:r.version,changes:redaction.changes})
-      retained.push({path:r.path,category:'current_owner_history',reason:'Preserve the other current owner; redact only proven departing identity fields.'})
+      // Bind the exemption to the reviewed content after the planned redaction,
+      // so a later write cannot smuggle departing identity into a retained path.
+      const expected=canonical(r.data)
+      for(const [field,value] of Object.entries(redaction.changes)){
+        const keys=field.split('.'),last=keys.pop()
+        let target=expected
+        for(const key of keys)target=target[key]
+        target[last]=value
+      }
+      retained.push({path:r.path,category:'current_owner_history',expectedDataHash:digest(expected),reason:'Preserve the other current owner; redact only proven departing identity fields.'})
       continue
     }
     // A related record owned by somebody else is never silently deleted.
@@ -156,7 +165,7 @@ export async function buildEmulatorDeletionPlan({ db, bucket, uid, now = Date.no
     if (FINANCIAL.has(r.collection) || r.collection === 'ownershipHistorySnapshots' || r.collection === 'passportReservations') {
       const d = decisions[r.path]
       if (!d || d.expectedVersion !== r.version || d.action !== 'retain' || typeof d.reason !== 'string' || !d.reason.trim() || d.reason.length > 200 || !Number.isFinite(Date.parse(d.reviewAfter)) || Date.parse(d.reviewAfter) <= now) { holds.add('retention_review'); continue }
-      retained.push({path:r.path,category:FINANCIAL.has(r.collection)?'reviewed_financial_record':'reviewed_history',reason:d.reason,reviewAfter:d.reviewAfter})
+      retained.push({path:r.path,category:FINANCIAL.has(r.collection)?'reviewed_financial_record':'reviewed_history',expectedDataHash:digest(r.data),reason:d.reason,reviewAfter:d.reviewAfter})
       continue
     }
     mediaPaths(r.data,bucket.name).holds.forEach(h => holds.add(h))

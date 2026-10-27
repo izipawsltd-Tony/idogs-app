@@ -303,6 +303,42 @@ test('reviewed financial retention requires exact version, reason and future rev
   assert.equal((await processor.process({uid:owner.uid,revision:1,decisions})).status,'completed')
   assert.equal((await ref.get()).exists,true);assert.deepEqual((await requestRef().get()).data().retainedCategories,['reviewed_financial_record'])
 })
+for(const shared of [false,true])test(`changed retained ${shared?'shared history':'financial record'} blocks completion and confirmation`,async()=>{
+  await seed({shared,media:false})
+  const ref=db.doc(shared?'dogs/synthetic-dog':'financeDocuments/synthetic-invoice')
+  if(!shared)await ref.set({tenantId:owner.uid,amount:100,documentType:'invoice'})
+  const decisions=shared?{}:{[ref.path]:{expectedVersion:versionOf(await ref.get()),action:'retain',reason:'Synthetic reviewed financial fixture',reviewAfter:new Date(Date.now()+86400000).toISOString()}}
+  let changed=false
+  await assert.rejects(processor.process({uid:owner.uid,revision:1,decisions,afterOperation:async()=>{
+    if(changed)return
+    changed=true
+    await ref.update({unexpectedContact:owner.email})
+  }}),/RETAINED_RECORD_CHANGED/)
+  assert.equal((await auth.getUser(owner.uid)).disabled,true)
+  assert.notEqual((await requestRef().get()).data().status,'completed')
+  assert.equal((await db.doc(`deletionSyntheticProviders/${owner.uid}`).get()).data().confirmationAccepted,undefined)
+})
+
+test('a retained financial review that expires during storage recovery must be renewed before completion',async()=>{
+  await seed()
+  let now=Date.now()
+  const ref=db.doc('financeDocuments/synthetic-invoice')
+  await ref.set({tenantId:owner.uid,amount:100,documentType:'invoice'})
+  const decisions={[ref.path]:{expectedVersion:versionOf(await ref.get()),action:'retain',reason:'Synthetic reviewed financial fixture',reviewAfter:new Date(now+86400000).toISOString()}}
+  await db.doc(`deletionSyntheticProviders/${owner.uid}`).update({'retention.storageRetentionSeconds':604800,'retention.storageRecoveryVerified':true})
+  const worker=createEmulatorDeletionProcessor({projectId:PROJECT,db,auth,bucket,provider,clock:()=>now})
+  assert.equal((await worker.process({uid:owner.uid,revision:1,decisions})).code,'storage_retention_pending')
+  now+=604800000
+  await assert.rejects(worker.process({uid:owner.uid,revision:1}),/RETENTION_REVIEW_EXPIRED/)
+  assert.ok(await auth.getUser(owner.uid))
+  assert.notEqual((await requestRef().get()).data().status,'completed')
+})
+
+test('invalid collection budgets are rejected before inventory access',async()=>{
+  const noReads={listCollections(){throw Error('UNEXPECTED_DATABASE_READ')}}
+  for(const maxCollections of [0,-1,201,1.5,NaN,Infinity,'200',null])await assert.rejects(scanDeletionDocuments(noReads,{maxCollections}),/INVALID_INVENTORY_LIMIT/)
+})
+
 test('unknown collection and orphaned subcollection are discovered and held rather than silently skipped',async()=>{
   await seed();await db.collection('newUnclassifiedCollection').doc('one').set({uid:owner.uid})
   assert.equal((await processor.process({uid:owner.uid,revision:1})).code,'unclassified_record_review')

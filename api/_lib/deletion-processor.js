@@ -194,6 +194,12 @@ export function createGuardedDeletionProcessor({db,auth,bucket,provider,clock=Da
       }
       const scan=await scanDeletionDocuments(db)
       if(scan.holds.length)throw fail('FINAL_INVENTORY_INCOMPLETE')
+      const finalRecords=new Map(scan.records.map(r=>[r.path,r]))
+      for(const retained of currentJob.retained){
+        const record=finalRecords.get(retained.path)
+        if(!record||!retained.expectedDataHash||digest(record.data)!==retained.expectedDataHash)throw fail('RETAINED_RECORD_CHANGED')
+        if(retained.category!=='current_owner_history'&&(!Number.isFinite(Date.parse(retained.reviewAfter))||Date.parse(retained.reviewAfter)<=clock()))throw fail('RETENTION_REVIEW_EXPIRED')
+      }
       const approvedRetained=new Set(currentJob.retained.map(r=>r.path))
       if(scan.records.some(r=>!approvedRetained.has(r.path)&&(r.path.startsWith(`users/${uid}/`)||r.path===`users/${uid}`||containsDeletionIdentity(r.data,uid,currentJob.profileEmailHashes))))throw fail('RESIDUAL_ACCOUNT_RECORD')
       if(hasMedia&&storageRetentionSeconds>0){
