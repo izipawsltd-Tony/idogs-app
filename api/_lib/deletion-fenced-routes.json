@@ -82,6 +82,7 @@
     "api/upload.js"
   ],
   "exemptions": [
+    "api/sms-readiness.js",
     "api/account-deletion.js",
     "api/super-admin/account-deletions.js",
     "api/qa/deletion-webhook.js",

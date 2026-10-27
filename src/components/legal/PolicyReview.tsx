@@ -36,6 +36,7 @@ export function RetentionPolicyDraft() {
     <p>The deletion inventory must also cover public passport data, uploaded media, provider-held copies and backups. Provider and backup deletion schedules must be verified before publication; this draft does not promise immediate removal from every backup or third-party system.</p>
     <p><strong>File recovery copies:</strong> The Storage configuration supplied for review on 25 October 2026 shows a seven-day soft-delete period, object versioning off and no bucket retention policy. Soft-deleted files are recoverable during that period and are not immediately permanently erased. These settings do not establish that there are no older versions, object-level holds, exports or other provider copies. No Storage protection is disabled by this policy.</p>
     <p>Proposed recovery safeguard: deleted account data must not be returned to normal service during recovery. Any authorised disaster recovery must reapply deletion records before restored data becomes available. This safeguard requires operational testing before the policy becomes effective.</p>
+    <p><strong>Database backups:</strong> Daily database backups can retain removed account data for seven days after each snapshot. We must account for those copies and prevent deleted information from returning to normal service during a restore. A file recovery check alone does not verify database backup removal.</p>
   </div>
 }
 

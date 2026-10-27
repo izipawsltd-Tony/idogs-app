@@ -140,15 +140,22 @@ export function createCheckoutHandler({
         if (!getProfile) throw new Error('Promotion profile verification unavailable')
         profile = await getProfile(uid)
         if (!profile) return res.status(409).json({ error: 'Account details are not ready. Please refresh Billing.' })
-        if (profile.stripeSubscriptionId || ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(profile.subscriptionStatus)) {
+        const knownBilling = profile.stripeSubscriptionId || ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(profile.subscriptionStatus)
+        // Historical profile fields can outlive a canceled Stripe subscription.
+        // Only the existing server-side, exhaustive Stripe customer check can
+        // permit a new checkout; a stale profile must never grant that permission.
+        const reusableCustomer = profile.stripeCustomerId && canReusePromotionCustomer
+          ? await canReusePromotionCustomer(profile.stripeCustomerId) : false
+        if (knownBilling && !reusableCustomer) {
           return res.status(409).json({ error: 'Your existing billing account must be reviewed for this offer. Please use Manage subscription; do not create another subscription.' })
         }
-        if (profile.stripeCustomerId && (!canReusePromotionCustomer || !await canReusePromotionCustomer(profile.stripeCustomerId))) {
+        if (profile.stripeCustomerId && !reusableCustomer) {
           return res.status(409).json({ error: 'Your existing billing account must be reviewed before starting another subscription.' })
         }
         if (!getPromotionAttempt || !savePromotionSession) throw new Error('Promotion session verification unavailable')
         if (!getPromotionTaxStatus || await getPromotionTaxStatus(priceId, profile.stripeCustomerId || null) !== true) return res.status(503).json({ error: 'Tax configuration or billing address requires review. No payment has been taken.' })
-        attempt = await getPromotionAttempt(uid, timestamp, profile.stripeCustomerId || null, appUrl, PROMOTION_TAX_POLICY)
+        attempt = await getPromotionAttempt(uid, timestamp, profile.stripeCustomerId || null, appUrl, PROMOTION_TAX_POLICY,
+          reusableCustomer ? { subscriptionId: profile.stripeSubscriptionId || null, status: profile.subscriptionStatus || null } : null)
         if (attempt.checkoutPolicy !== PROMOTION_TAX_POLICY) return res.status(409).json({ error: 'An earlier checkout uses older tax terms. Wait until it expires or contact support; do not start another subscription.' })
         if (attempt.returnOrigin !== appUrl) return res.status(409).json({ error: 'An earlier checkout uses a different page. Do not start another checkout. Reopen Billing where that checkout started or contact support.' })
         if (attempt.url) return res.status(200).json({ url: attempt.url })

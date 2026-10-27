@@ -32,11 +32,12 @@ async function getRawBody(req) {
 }
 
 const db = getFirestore()
-const getSubscription = subscriptionId => stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] })
+const getSubscription = subscriptionId => stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price', 'latest_invoice'] })
 
 const processWebhook = createWebhookHandler({
   constructEvent: (rawBody, sig) => stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET),
   getSubscription,
+  cancelSubscription: (id, params) => stripe.subscriptions.cancel(id, params),
   db,
 })
 

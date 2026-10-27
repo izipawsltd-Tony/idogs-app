@@ -4,12 +4,18 @@ import { PLUS_PROMOTION_END } from '../../shared/plus-promotion.js'
 // same timestamp and Stripe idempotency key, including after an ambiguous I/O.
 export function promotionSessionStore(db) {
   return {
-    getPromotionAttempt: (uid, now, verifiedCustomer = null, returnOrigin, checkoutPolicy) => db.runTransaction(async tx => {
+    getPromotionAttempt: (uid, now, verifiedCustomer = null, returnOrigin, checkoutPolicy, verifiedEndedBilling = null) => db.runTransaction(async tx => {
       const ref = db.collection('plusPromotionCheckouts').doc(uid)
       const snapshot = await tx.get(db.collection('users').doc(uid))
       const ledger = await tx.get(ref)
       const profile = snapshot.data()
-      if (!snapshot.exists || profile.stripeSubscriptionId || (profile.stripeCustomerId || null) !== verifiedCustomer || ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(profile.subscriptionStatus)) throw new Error('Billing account requires review')
+      // This proof comes only from the server's exhaustive Stripe customer
+      // check. If billing fields change before this transaction, reject it.
+      const endedVerified = verifiedCustomer && verifiedEndedBilling &&
+        (profile?.stripeSubscriptionId || null) === verifiedEndedBilling.subscriptionId &&
+        (profile?.subscriptionStatus || null) === verifiedEndedBilling.status
+      if (!snapshot.exists || (profile.stripeCustomerId || null) !== verifiedCustomer ||
+          (!endedVerified && (profile.stripeSubscriptionId || ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(profile.subscriptionStatus)))) throw new Error('Billing account requires review')
       const previous = ledger.data()
       if (previous && Number.isFinite(previous.createdAt) && previous.expiresAt > now + 31 * 60_000) return previous
       // Do not replace a still-open checkout just because it is close to
