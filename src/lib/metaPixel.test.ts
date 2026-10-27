@@ -43,6 +43,8 @@ describe('Meta acquisition measurement', () => {
     expect(canMeasureMarketingPage()).toBe(false)
     delete (window as any).Capacitor
     location.search = '?email=private@example.invalid'; expect(canMeasureMarketingPage()).toBe(false)
+    location.search = '?next=%2Fapp%2Fdogs%2Fprivate-id'; expect(canMeasureMarketingPage()).toBe(false)
+    location.search = '?next=%2Fapp%2Fbilling'; expect(canMeasureMarketingPage()).toBe(true)
   })
   it('revokes on private routes and discards unsent events when consent is withdrawn', () => {
     setMetaConsent('granted'); trackMarketingPage()

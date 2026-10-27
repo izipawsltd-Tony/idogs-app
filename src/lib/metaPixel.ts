@@ -12,9 +12,11 @@ export function isMarketingWebsitePage() {
 }
 
 export function canMeasureMarketingPage() {
+  const query = new URLSearchParams(location.search)
   return isMarketingWebsitePage()
     && ['idogs.com.au', 'www.idogs.com.au'].includes(location.hostname)
-    && Array.from(new URLSearchParams(location.search).keys()).every(key => ['fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'next'].includes(key))
+    && Array.from(query.keys()).every(key => ['fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'next'].includes(key))
+    && (!query.has('next') || ['/app/dashboard', '/app/billing'].includes(query.get('next')!))
 }
 
 export function readMetaConsent(): 'granted' | 'denied' | null {

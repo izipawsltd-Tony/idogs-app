@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 
 export default function PrivacyPage() {
-  const lastUpdated = '15 June 2026'
+  const lastUpdated = '27 October 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
       {/* Nav */}
