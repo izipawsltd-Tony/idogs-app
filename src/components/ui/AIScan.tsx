@@ -3,6 +3,7 @@ import { useAuth } from '../../hooks/useAuth'
 import type { ToastMessage } from '../../types'
 import { isNativeApp } from '../../lib/nativePlatform'
 import { aiScanQuotaExhaustedMessage } from '../../lib/nativeUpgradeCopy'
+import AIProviderRetention from '../legal/AIProviderRetention'
 
 interface ScanResult {
   documentType: string
@@ -282,6 +283,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
           <h3 id="ai-consent-heading">Allow AI processing of this document?</h3>
           <p>{pendingFile.name}</p>
           <p>iDogs will send the selected photo or PDF to Anthropic, a third-party AI provider, to extract dog and health record details. The full document may include personal information, such as names, addresses or vet details.</p>
+          <AIProviderRetention />
           <p>If this dog is selected, iDogs will also save the document to its profile. AI results can be incorrect; check all extracted details before saving records.</p>
           <p>You can cancel and enter records manually without sending this document for AI processing.</p>
           <a href="/privacy" target="_blank" rel="noopener noreferrer">iDogs privacy policy</a>
