@@ -227,7 +227,7 @@ export default function SettingsPage({ toast }: Props) {
           <p role="status" style={{ fontSize: 13, color: 'var(--mid)' }}>Your plan is temporarily unavailable. Please try again after reconnecting.</p>
         )}
         {nativeApp && <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 12px' }}>Purchases are unavailable in this app. Your existing plan access remains available.</p>}
-        <Link to="/app/billing" className="btn btn-secondary" style={{ display: 'inline-flex', minHeight: 44, alignItems: 'center', textDecoration: 'none' }}>View plan details</Link>
+        <Link to="/app/billing" className="btn btn-secondary" style={{ display: 'inline-flex', minHeight: 44, alignItems: 'center', textDecoration: 'none' }}>Billing &amp; plan details</Link>
       </section>
 
       {/* ── PROFILE ── */}
