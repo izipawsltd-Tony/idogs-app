@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isPlusPromotionActive, PLUS_PROMOTION_TERMS } from '../../../shared/plus-promotion.js'
+import { isPlusPromotionActive } from '../../../shared/plus-promotion.js'
 
 export function usePlusPromotion() {
   const [now, setNow] = useState(Date.now)
@@ -11,14 +11,13 @@ export function usePlusPromotion() {
 }
 
 export default function PlusPromotion() {
-  return <div style={{ padding: '20px 0', color: 'var(--forest, var(--green))' }}>
-    <p style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', margin: '0 0 12px' }}>Limited-time Plus offer</p>
-    <div aria-label="Normally A$7, now A$0 per month" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'baseline' }}>
-      <del style={{ fontSize: 30, color: '#747b76' }}>A$7</del>
-      <strong style={{ fontSize: 54, lineHeight: 1.1 }}>A$0</strong>
-      <span style={{ fontSize: 15 }}>/month</span>
+  return <section className="plus-promotion" aria-label="Plus A$0 offer">
+    <p className="plus-promotion-badge">Plus promotion</p>
+    <div className="plus-promotion-price" aria-label="A$0 per month during the promotion">
+      <strong>A$0</strong><span>/month</span>
     </div>
-    <p style={{ margin: '12px 0 6px', fontWeight: 700 }}>Enjoy iDogs Plus free through 31 January 2027</p>
-    <p style={{ fontSize: 13, lineHeight: 1.65, margin: 0 }}>{PLUS_PROMOTION_TERMS}</p>
-  </div>
+    <p className="plus-promotion-dates">Through <strong>31 January 2027</strong> (Adelaide time)</p>
+    <p className="plus-promotion-renewal">Then <strong>A$7/month</strong> from 1 February 2027, including GST.</p>
+    <p className="plus-promotion-terms">Payment details required. Renews automatically unless cancelled before renewal. SMS and extra litters are not included.</p>
+  </section>
 }

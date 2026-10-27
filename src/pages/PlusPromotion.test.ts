@@ -27,9 +27,17 @@ async function render() {
 }
 const offerButton = () => page.root.findAllByType('button').find(node => node.children.includes('Get Plus for A$0'))!
 
-it('shows original/offer price, requires consent, then submits the exact monthly offer and redirects to mocked Checkout', async () => {
+it('shows offer price and renewal terms, requires consent, then submits the exact monthly offer and redirects to mocked Checkout', async () => {
   await render()
-  expect(page.root.findByType('del').children).toEqual(['A$7'])
+  const promotion = page.root.findByProps({ 'aria-label': 'Plus A$0 offer' })
+  const displayedOffer = promotion.findAll(() => true).flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ')
+  expect(displayedOffer).toContain('A$0')
+  expect(displayedOffer).toContain('31 January 2027')
+  expect(displayedOffer).toContain('A$7/month')
+  expect(displayedOffer).toContain('1 February 2027')
+  expect(displayedOffer).toContain('Payment details required')
+  expect(displayedOffer).toContain('Renews automatically unless cancelled')
+  expect(displayedOffer).toContain('SMS and extra litters are not included')
   expect(offerButton().props.disabled).toBe(true)
   expect(requests.mock.calls.filter(([url]) => url === '/api/create-checkout')).toHaveLength(0)
   await act(async () => page.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }))
@@ -52,3 +60,4 @@ it('refreshes an open page after campaign expiry and removes the A$0 CTA', async
   expect(offerButton()).toBeUndefined()
   expect(page.root.findAllByType('del')).toHaveLength(0)
 })
+
