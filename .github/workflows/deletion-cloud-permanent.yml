@@ -4,6 +4,11 @@ on:
     branches: [release/ios-app-store-20261025]
     paths: ['scripts/qa/deletion-cloud-*.mjs', 'scripts/qa/deletion-email-sink.mjs', 'scripts/qa/deletion-restore-replay.mjs', 'scripts/deletion-restore-gate.test.js', 'api/_lib/deletion-restore-gate.js', 'scripts/test-deletion-cloud-*.mjs', 'scripts/test-deletion-email-sink.mjs', 'api/_lib/deletion-processor.js', '.github/workflows/deletion-cloud-permanent.yml']
   workflow_dispatch:
+    inputs:
+      qa_email_simulation:
+        description: 'Explicit operator request for the Resend simulation (not needed for restore QA)'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -38,10 +43,11 @@ jobs:
         env:
           IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
           IDOGS_DELETION_STRIPE_TEST_KEY: ${{ secrets.IDOGS_DELETION_STRIPE_TEST_KEY }}
-          IDOGS_DELETION_RESEND_QA_KEY: ${{ secrets.IDOGS_DELETION_RESEND_QA_KEY }}
+          IDOGS_DELETION_RESEND_QA_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.qa_email_simulation && secrets.IDOGS_DELETION_RESEND_QA_KEY || '' }}
         run: node scripts/qa/deletion-cloud-permanent.mjs
-      - name: Owner gate - dedicated Resend QA credential
+      - name: Verify optional email simulation scope
         env:
-          IDOGS_DELETION_RESEND_QA_KEY: ${{ secrets.IDOGS_DELETION_RESEND_QA_KEY }}
+          QA_EMAIL_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.qa_email_simulation }}
+          IDOGS_DELETION_RESEND_QA_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.qa_email_simulation && secrets.IDOGS_DELETION_RESEND_QA_KEY || '' }}
         run: >-
-          node -e 'if(!process.env.IDOGS_DELETION_RESEND_QA_KEY){console.log(JSON.stringify({status:"owner_gate",code:"IDOGS_DELETION_RESEND_QA_KEY_MISSING",humanEmailSent:false}));process.exitCode=2}else{console.log("Dedicated QA email credential is configured; delivery result is in the preceding fixture report.")}'
+          node -e 'if(process.env.QA_EMAIL_REQUESTED!=="true"){console.log(JSON.stringify({emailSimulationRequested:false,emailSimulationSent:false,humanEmailSent:false}))}else if(!process.env.IDOGS_DELETION_RESEND_QA_KEY){console.log(JSON.stringify({status:"owner_gate",code:"IDOGS_DELETION_RESEND_QA_KEY_MISSING",humanEmailSent:false}));process.exitCode=2}else{console.log("Explicitly requested simulation used the dedicated QA credential; see the preceding fixture report. No human recipient is configured here.")}'

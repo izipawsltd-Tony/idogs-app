@@ -3,12 +3,12 @@ import { assessIsolatedDeletionRestore } from '../api/_lib/deletion-restore-gate
 
 function fixture() {
   const ledger = { independentOfRestore: true, complete: true, revision: 'live-ledger-1', accounts: [
-    { uid: 'qa-deleted', revision: 2, state: 'completed', retained: [{ path: 'invoices/lawfully-retained', expectedDataHash: 'a'.repeat(64) }] },
+    { uid: 'qa-deleted', revision: 2, state: 'completed', retained: [{ path: 'invoices/lawfully-retained', expectedDataHash: 'a'.repeat(64), category: 'reviewed_financial_record', reason: 'Synthetic lawful retention review', reviewAfter: '2026-10-29T00:00:00Z' }] },
   ] }
   const view = { complete: true, auth: { state: 'absent' }, lock: { revision: 2, state: 'completed' },
     records: [{ path: 'invoices/lawfully-retained', dataHash: 'a'.repeat(64) }] }
   const options = { target: { projectId: 'idogs-app-staging', databaseId: 'idogs-deletion-qa', publicAccess: false, isolated: true },
-    readLedger: vi.fn(async () => structuredClone(ledger)), inspectRestoredAccount: vi.fn(async () => structuredClone(view)) }
+    clock: () => Date.parse('2026-10-28T00:00:00Z'), readLedger: vi.fn(async () => structuredClone(ledger)), inspectRestoredAccount: vi.fn(async () => structuredClone(view)) }
   return { ledger, view, options }
 }
 
@@ -64,5 +64,36 @@ describe('isolated deletion restore gate', () => {
   ])('rejects incomplete restored inventories', async mutate => {
     const f = fixture(); mutate(f.view)
     await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('RESTORE_INVENTORY_INCOMPLETE')
+  })
+  it.each(['reviewed_financial_record', 'reviewed_history'])('holds expired %s despite unchanged retained content', async category => {
+    const f = fixture(); Object.assign(f.ledger.accounts[0].retained[0], { category, reviewAfter: '2026-10-27T00:00:00Z' })
+    const result = await assessIsolatedDeletionRestore(f.options)
+    expect(result.replayVerified).toBe(false)
+    expect(result.issues).toContainEqual({ uid: 'qa-deleted', code: 'retention_review_expired', path: 'invoices/lawfully-retained' })
+  })
+  it('rechecks retention expiry after asynchronous inventory and ledger reads', async () => {
+    const f = fixture(); let now = Date.parse('2026-10-28T00:00:00Z'); f.options.clock = () => now
+    f.options.inspectRestoredAccount.mockImplementation(async () => { now = Date.parse('2026-10-29T00:00:00Z'); return f.view })
+    expect((await assessIsolatedDeletionRestore(f.options)).issues.map(i => i.code)).toContain('retention_review_expired')
+  })
+  it.each([undefined, '', 'not-a-date', 0])('rejects missing or malformed retention review dates: %s', async reviewAfter => {
+    const f = fixture(); f.ledger.accounts[0].retained[0].reviewAfter = reviewAfter
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('RESTORE_RETENTION_REVIEW_REQUIRED')
+    expect(f.options.inspectRestoredAccount).not.toHaveBeenCalled()
+  })
+  it('preserves current-owner history without inventing a financial retention deadline', async () => {
+    const f = fixture(); Object.assign(f.ledger.accounts[0].retained[0], { category: 'current_owner_history', reviewAfter: undefined, reason: undefined })
+    expect((await assessIsolatedDeletionRestore(f.options)).replayVerified).toBe(true)
+  })
+  it.each([undefined, 'unknown'])('rejects unclassified retained records: %s', async category => {
+    const f = fixture(); f.ledger.accounts[0].retained[0].category = category
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('RESTORE_RETAINED_BINDING_REQUIRED')
+  })
+  it('rejects invalid or backwards clocks instead of treating an expired approval as current', async () => {
+    const f = fixture(); f.options.clock = () => NaN
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('RESTORE_CLOCK_INVALID')
+    expect(f.options.readLedger).not.toHaveBeenCalled()
+    f.options.clock = vi.fn().mockReturnValueOnce(100).mockReturnValueOnce(99)
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('RESTORE_CLOCK_INVALID')
   })
 })
