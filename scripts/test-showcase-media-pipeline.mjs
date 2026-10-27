@@ -196,10 +196,10 @@ const { check, checkAsync, skip, summary } = makeChecker()
   const photoUploadSrc = readFileSync(new URL('../src/components/ui/PhotoUpload.tsx', import.meta.url), 'utf8')
   const dogDetailSrc = readFileSync(new URL('../src/pages/DogDetailPage.tsx', import.meta.url), 'utf8')
   check('src/lib/heic.ts exports the shared isHeicFile()', /export function isHeicFile\(file: File\): boolean/.test(heicLibSrc))
-  check('PhotoUpload.tsx imports isHeicFile from the shared module (no duplicated inline copy)',
-    /import \{ isHeicFile \} from '\.\.\/\.\.\/lib\/heic'/.test(photoUploadSrc) && !/function isHeic\(file: File\)/.test(photoUploadSrc))
-  check('DogDetailPage.tsx imports isHeicFile from the shared module (no duplicated inline copy)',
-    /import \{ isHeicFile \} from '\.\.\/lib\/heic'/.test(dogDetailSrc) && !/function isHeic\(file: File\)/.test(dogDetailSrc))
+  check('PhotoUpload.tsx uses the shared image preparation pipeline',
+    photoUploadSrc.includes("from '../../lib/imageCompression'") && photoUploadSrc.includes('prepareImageForUpload(file)') && !/function isHeic\(file: File\)/.test(photoUploadSrc))
+  check('DogDetailPage.tsx uses the shared image preparation pipeline',
+    dogDetailSrc.includes("from '../lib/imageCompression'") && dogDetailSrc.includes('prepareImageForUpload(file)') && !/function isHeic\(file: File\)/.test(dogDetailSrc))
 
   // ── Dog type additions ──
   const typesSrc = readFileSync(new URL('../src/types/index.ts', import.meta.url), 'utf8')
@@ -253,9 +253,10 @@ const { check, checkAsync, skip, summary } = makeChecker()
   // ── api/get-showcase-media-urls.js — breeder's own authenticated view ──
   const getUrlsSrc = readFileSync(new URL('../api/get-showcase-media-urls.js', import.meta.url), 'utf8')
   check('get-showcase-media-urls.js requires a valid Firebase ID token', /verifyIdToken/.test(getUrlsSrc))
-  check('get-showcase-media-urls.js authorizes via tenantId OR currentOwnerId (viewing, not writing — a restricted dog\'s existing photos must still be viewable)',
-    /dog\.tenantId === uid \|\| dog\.currentOwnerId === uid/.test(getUrlsSrc))
-  check('get-showcase-media-urls.js returns signed URLs for both photos and videos', /signMediaItems\(bucket, dog\.photos/.test(getUrlsSrc) && /signMediaItems\(bucket, dog\.videos/.test(getUrlsSrc))
+  check('media viewing uses current ownership or an immutable former-owner snapshot',
+    getUrlsSrc.includes('if (!isCurrentOwner)') && getUrlsSrc.includes("collection('ownershipHistorySnapshots')") && getUrlsSrc.includes('mediaDog = latest.data().dog'))
+  check('media viewing signs the selected live or historical photo/video arrays',
+    getUrlsSrc.includes('signMediaItems(bucket, mediaDog.photos') && getUrlsSrc.includes('signMediaItems(bucket, mediaDog.videos'))
 }
 
 // =========================================================================

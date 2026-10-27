@@ -7,6 +7,13 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
   const profileRef = id => db.collection('puppyProfiles').doc(id)
   const entriesRef = id => profileRef(id).collection('updates')
   const followRef = (uid, id) => db.collection('puppyFollowers').doc(uid).collection('dogs').doc(id)
+  async function assertSameAccess(dog, role, profile, identity) {
+    const [freshDog, freshProfile, freshGrant] = await Promise.all([db.collection('dogs').doc(dog.id).get(), profileRef(dog.id).get(), db.collection('dogPrivateAccess').doc(dog.id).get()])
+    const current = { ...freshDog.data(), id: dog.id }
+    if (!freshDog.exists || ownerId(current) !== ownerId(dog) || viewerRole(current, freshGrant.data(), identity) !== role || (role === 'public' && publicSharingLive(current, freshProfile.data()) !== publicSharingLive(dog, profile))) {
+      throw new ApiError(409, 'Access changed while loading. Refresh updates.')
+    }
+  }
   async function loadDog(body) {
     if (body.passportId) {
       if (!validId(body.passportId)) throw new ApiError(400, 'Invalid puppy link')
@@ -63,7 +70,8 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
         if (existing.some(s => s.exists)) throw new ApiError(409, 'Update request already used; refresh and retry')
         const source = dogs[0].data()
         const candidates = [...(source.photos || []).map(m => ({ ...m, kind: 'photo' })), ...(source.videos || []).map(m => ({ ...m, kind: 'video' }))]
-        const media = input.mediaIds.map(id => candidates.find(m => m.id === id))
+        const uploaded = await Promise.all(input.mediaIds.map(id => tx.get(profileRef(input.dogIds[0]).collection('media').doc(id))))
+        const media = input.mediaIds.map((id, index) => candidates.find(m => m.id === id) || (uploaded[index].exists && uploaded[index].data().authorUid === identity.uid ? { ...uploaded[index].data(), id } : null))
         const entry = { authorUid: identity.uid, sourceDogId: input.dogIds[0] }
         if (media.some(m => !safeUpdateMedia(m, entry))) throw new ApiError(400, 'Some media is unavailable; select media uploaded by your account')
         const data = { ...entry, text: input.text, date: input.date, audience: input.audience, media: media.map(({ id, path, kind }) => ({ id, path, kind })), createdAt: timestamp(), deleted: false }
@@ -76,6 +84,15 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
     const [profileSnap, grantSnap] = await Promise.all([profileRef(dog.id).get(), db.collection('dogPrivateAccess').doc(dog.id).get()])
     const profile = profileSnap.data() || {}
     const role = viewerRole(dog, grantSnap.data(), identity)
+    if (action === 'gallery') {
+      if (role !== 'owner') throw new ApiError(403, 'Only the current owner can select story media')
+      const uploaded = await profileRef(dog.id).collection('media').orderBy('createdAt', 'desc').limit(100).get()
+      const entry = { authorUid: identity.uid, sourceDogId: dog.id }
+      const media = [...uploaded.docs.map(snap => ({ ...snap.data(), id: snap.id })), ...(dog.photos || []).map(m => ({ ...m, kind: 'photo' })), ...(dog.videos || []).map(m => ({ ...m, kind: 'video' }))].filter(m => safeUpdateMedia(m, entry))
+      const signed = await sign(media, 15 * 60 * 1000)
+      await assertSameAccess(dog, role, profile, identity)
+      return res.status(200).json({ media: signed.map(m => ({ ...m, kind: media.find(item => item.id === m.id).kind })) })
+    }
     if (action === 'follow' || action === 'unfollow') {
       if (identity.email_verified !== true) throw new ApiError(403, 'Verify your email before following a puppy')
       if (action === 'follow') {
@@ -110,6 +127,7 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
         // New owners may remove inherited shared entries, but never reveal
         // a former owner's internal notes or republish under their identity.
         if (action === 'visibility' && entry.data().authorUid !== identity.uid) throw new ApiError(403, 'Inherited updates can be removed, not republished')
+        if (entry.data().authorUid !== identity.uid && !['public', 'buyer'].includes(entry.data().audience)) throw new ApiError(403, 'Former owner private notes cannot be changed')
         tx.update(ref, action === 'delete' ? { deleted: true, updatedAt: timestamp() } : { audience: body.audience, updatedAt: timestamp() })
       })
       return res.status(200).json({ success: true })
@@ -124,6 +142,7 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
       if (!safeUpdateMedia(item, entry)) throw new ApiError(404, 'Media not found')
       const signed = await sign([item], 60 * 1000)
       if (!signed.length) throw new ApiError(404, 'Media not found')
+      await assertSameAccess(dog, role, profile, identity)
       return res.redirect(302, signed[0].url)
     }
     if (action !== 'view') throw new ApiError(400, 'Unknown action')
@@ -145,6 +164,7 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
       updates.push({ id: snap.id, text: entry.text, date: entry.date, audience: entry.audience, inherited: entry.authorUid !== ownerId(dog), media: items })
     }
     const saved = identity ? await followRef(identity.uid, dog.id).get() : null
+    await assertSameAccess(dog, role, profile, identity)
     return res.status(200).json({ dog: { name: dog.name || 'Puppy', breed: dog.breed || '', passportId: dog.passportId }, role, following: saved?.exists || false, publicEnabled: publicSharingLive(dog, profile), updates, nextCursor: snapshot.docs.length === 25 ? snapshot.docs.at(-1).id : null, ...(role === 'owner' ? { dogId: dog.id } : {}) })
   }
 }

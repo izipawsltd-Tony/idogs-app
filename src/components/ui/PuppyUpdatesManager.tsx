@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import { getDogs, getShowcaseMediaUrls, uploadShowcaseMediaDirect, isCurrentOwner, managePrivateDogAccess, type SignedMediaItem } from '../../lib/db'
+import { getDogs, uploadShowcaseMediaDirect, isCurrentOwner, managePrivateDogAccess, type SignedMediaItem } from '../../lib/db'
 import { prepareImageForUpload } from '../../lib/imageCompression'
 import { puppyUpdates, puppyPath, puppyShareUrl, type PuppyStory, type UpdateAudience } from '../../lib/puppyUpdates'
 import type { Dog } from '../../types'
@@ -36,9 +36,9 @@ export default function PuppyUpdatesManager({ dog }: { dog: Dog }) {
         if (!active) return
         setStory(data)
         if (editable) {
-          const [media, dogs] = await Promise.all([getShowcaseMediaUrls(dog.id), getDogs()])
+          const [media, dogs] = await Promise.all([puppyUpdates<{ media: SelectableMedia[] }>({ action: 'gallery', dogId: dog.id }), getDogs()])
           if (!active) return
-          setGallery([...media.photos.map(m => ({ ...m, kind: 'photo' as const })), ...media.videos.map(m => ({ ...m, kind: 'video' as const }))])
+          setGallery(media.media)
           setSiblings(dogs.filter(d => d.id !== dog.id && !!dog.litterId && d.litterId === dog.litterId && isCurrentOwner(d, user!.uid) && d.status !== 'transferred' && d.status !== 'restricted'))
           if (dog.tenantId === user?.uid && dog.depositStatus === 'received') {
             const grant = await managePrivateDogAccess(dog.id, 'get')
@@ -65,8 +65,8 @@ export default function PuppyUpdatesManager({ dog }: { dog: Dog }) {
       if (files.length + selectedMedia.length > 12) throw new Error('Select up to 12 files per update')
       for (const file of Array.from(files)) {
         let result
-        if (file.type.startsWith('video/')) result = await uploadShowcaseMediaDirect(dog.id, 'video', file, file.type)
-        else { const prepared = await prepareImageForUpload(file); result = await uploadShowcaseMediaDirect(dog.id, 'photo', prepared.base64, prepared.mediaType) }
+        if (file.type.startsWith('video/')) result = await uploadShowcaseMediaDirect(dog.id, 'video', file, file.type, 'puppy-update')
+        else { const prepared = await prepareImageForUpload(file); result = await uploadShowcaseMediaDirect(dog.id, 'photo', prepared.base64, prepared.mediaType, 'puppy-update') }
         uploaded.push(result.mediaId)
       }
       setMessage('Media uploaded privately. Publish the update when you are ready.')
@@ -97,7 +97,7 @@ export default function PuppyUpdatesManager({ dog }: { dog: Dog }) {
         {audience === 'buyer' && <p style={{ fontSize: 12, color: 'var(--mid)' }}>Private updates require buyer access after the deposit is marked Received. Following alone does not unlock them.</p>}
         {siblings.length > 0 && <fieldset style={{ border: '1px solid var(--border)', borderRadius: 8, margin: '12px 0', padding: 12 }}><legend>Also add to littermates</legend><p style={{ fontSize: 12 }}>Use group media only when every selected puppy’s viewer may see it. Public sharing is controlled separately for each puppy.</p>{siblings.map(sibling => <label key={sibling.id} style={{ display: 'block', margin: '6px 0' }}><input type="checkbox" checked={selectedDogs.includes(sibling.id)} onChange={e => { setSelectedDogs(ids => e.target.checked ? [...ids, sibling.id] : ids.filter(id => id !== sibling.id)); changed() }} /> {sibling.name}</label>)}</fieldset>}
         <label style={{ display: 'block', margin: '14px 0' }}>Upload photos / videos <input type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm" onChange={e => { void upload(e.target.files); e.target.value = ''; changed() }} /></label>
-        <p style={{ fontSize: 12, color: 'var(--mid)' }}>Videos up to 20 MB. Select up to 12 items; existing gallery limits apply. Uploaded files stay private until included in a shared update.</p>
+        <p style={{ fontSize: 12, color: 'var(--mid)' }}>Videos up to 20 MB. Select up to 12 items per update. Recent uploads are shown below; older published media stays in the story. Files stay private until shared.</p>
         {!!gallery.length && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 8, marginBottom: 14 }}>{gallery.map(media => <label key={media.id} style={{ padding: 5, border: selectedMedia.includes(media.id) ? '2px solid var(--brand-600)' : '1px solid var(--border)', borderRadius: 8 }}>
           {media.kind === 'photo' ? <img src={media.url} alt="Gallery selection" style={{ width: '100%', height: 80, objectFit: 'cover' }} /> : <video src={media.url} preload="metadata" muted style={{ width: '100%', height: 80 }} />}
           <span style={{ fontSize: 12 }}><input type="checkbox" checked={selectedMedia.includes(media.id)} onChange={e => { setSelectedMedia(ids => e.target.checked ? [...ids, media.id] : ids.filter(id => id !== media.id)); changed() }} /> {media.kind === 'photo' ? 'Photo' : 'Video'}</span>

@@ -40,6 +40,7 @@ function PuppyStoryContent({ passportId }: { passportId: string }) {
     {error && <p role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
     {!visibleStory && !error && <div className="spinner" />}
     {visibleStory && story && <>
+      <h3 style={{ margin: '0 0 12px', fontSize: 18 }}>{story.dog.name} <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--mid)' }}>{story.dog.breed}</span></h3>
       {story.role === 'owner' ? <Link className="btn btn-primary" to={`/app/dogs/${story.dogId}`} style={{ marginBottom: 16 }}>Manage {story.dog.name}</Link>
         : user ? <button className="btn btn-primary" disabled={busy} onClick={() => void follow()} style={{ marginBottom: 16 }}>{story.following ? '✓ Following · Unfollow' : 'Follow this puppy'}</button>
           : <div style={{ background: 'var(--brand-50)', padding: 14, borderRadius: 12, marginBottom: 16 }}><strong>Save this puppy’s story</strong><p style={{ fontSize: 13, margin: '6px 0 12px' }}>Create a free account to find this puppy again in Following puppies. No app download needed.</p><Link className="btn btn-primary" to={`/signup?next=${next}`}>Follow with a free account</Link> <Link to={`/login?next=${next}`} style={{ fontSize: 13 }}>Sign in</Link></div>}

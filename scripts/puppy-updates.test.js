@@ -19,10 +19,10 @@ function store(seed) {
   function col(path, filters = [], max = Infinity, after = null) { return { path, doc: id => doc(`${path}/${id}`), where: (field, op, value) => col(path, [...filters, [field, value]], max), orderBy: () => col(path, filters, max, after), startAfter: snap => col(path, filters, max, snap.id), limit: n => col(path, filters, n, after), get: async () => { let keys = [...data.keys()].filter(key => key.startsWith(`${path}/`) && key.slice(path.length + 1).split('/').length === 1 && filters.every(([field, value]) => data.get(key)[field] === value)); if (after) keys = keys.slice(keys.findIndex(k => k.split('/').at(-1) === after) + 1); const docs = keys.slice(0, max).map(snapshot); return { docs, empty: !docs.length, size: docs.length } } } }
   return { data, collection: col, runTransaction: async fn => { const pending = []; const result = await fn({ get: ref => ref.get(), create: (ref, value) => { if (data.has(ref.path)) throw Error('already exists'); pending.push([ref.path, value]) }, set: (ref, value, options) => pending.push([ref.path, options?.merge ? { ...data.get(ref.path), ...value } : value]), update: (ref, value) => pending.push([ref.path, { ...data.get(ref.path), ...value }]) }); pending.forEach(([k, v]) => data.set(k, v)); return result } }
 }
-function setup(extra = {}) {
+function setup(extra = {}, onSign = () => {}) {
   const db = store({ 'dogs/puppy1': puppy, 'dogs/puppy2': { ...puppy, name: 'Blue', passportId: 'DOG-BLUE' }, 'puppyProfiles/puppy1': profile, 'dogPrivateAccess/puppy1': grant, ...extra })
   const signed = []
-  const handler = createPuppyUpdatesHandler({ db, timestamp: () => '2026-10-28T10:00:00Z', verifyToken: async token => { const identity = { breeder, buyer, stranger, unverified: { ...buyer, email_verified: false } }[token]; if (!identity) throw Error('invalid'); return identity }, sign: async (items, ttl) => { signed.push(...items); return items.map(item => ({ id: item.id, url: `https://media.example.test/${item.id}?ttl=${ttl}` })) } })
+  const handler = createPuppyUpdatesHandler({ db, timestamp: () => '2026-10-28T10:00:00Z', verifyToken: async token => { const identity = { breeder, buyer, stranger, unverified: { ...buyer, email_verified: false } }[token]; if (!identity) throw Error('invalid'); return identity }, sign: async (items, ttl) => { signed.push(...items); onSign(db); return items.map(item => ({ id: item.id, url: `https://media.example.test/${item.id}?ttl=${ttl}` })) } })
   async function call(body, who, method = 'POST') {
     const response = { code: 200, headers: {}, status(code) { this.code = code; return this }, setHeader(k, v) { this.headers[k] = v }, json(value) { this.body = value; return this }, redirect(code, url) { this.code = code; this.url = url; return this } }
     try { await handler({ method, body, query: body, headers: { ...(who ? { authorization: `Bearer ${who}` } : {}), 'x-forwarded-for': '203.0.113.20' } }, response) } catch (e) { response.code = e.status || 500; response.body = { error: e.message } }
@@ -73,6 +73,23 @@ describe('Puppy update privacy through the ownership lifecycle', () => {
 })
 
 describe('Actual puppy updates handler', () => {
+  it('uses separate story media without growing the limited dog gallery', async () => {
+    const saved = { ...puppy.photos[0], id: 'story-photo', authorUid: 'breeder', sourceDogId: 'puppy1', kind: 'photo', createdAt: '2026-10-28' }
+    const { call, db } = setup({ 'puppyProfiles/puppy1/media/story-photo': saved })
+    const result = await call(create({ mediaIds: ['story-photo'] }), 'breeder')
+    expect(result.code).toBe(200)
+    expect(db.data.get('dogs/puppy1').photos).toHaveLength(1)
+    const gallery = await call({ action: 'gallery', dogId: 'puppy1' }, 'breeder')
+    expect(gallery.code).toBe(200)
+    expect(gallery.body.media.some(m => m.id === 'story-photo')).toBe(true)
+    expect((await call({ action: 'gallery', dogId: 'puppy1' }, 'buyer')).code).toBe(403)
+  })
+  it('rejects a stale private response if ownership changes while media is being signed', async () => {
+    const { call } = setup({ 'puppyProfiles/puppy1/updates/shared': entry('buyer', { media: [{ ...puppy.photos[0], kind: 'photo' }] }) }, db => db.data.set('dogs/puppy1', { ...puppy, currentOwnerId: 'buyer' }))
+    const r = await call({ dogId: 'puppy1' }, 'breeder')
+    expect(r.code).toBe(409)
+    expect(r.body.updates).toBeUndefined()
+  })
   it('pages lifetime history without silently losing older updates', async () => {
     const seed = Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`puppyProfiles/puppy1/updates/page${String(i).padStart(2, '0')}`, entry('public')]))
     const { call } = setup(seed)
@@ -153,6 +170,7 @@ describe('Actual puppy updates handler', () => {
   it('new owner can remove inherited history but cannot expose former private notes', async () => {
     const { call } = setup({ 'dogs/puppy1': { ...puppy, currentOwnerId: 'buyer' }, 'puppyProfiles/puppy1/updates/internal': entry('internal'), 'puppyProfiles/puppy1/updates/shared': entry('buyer') })
     expect((await call({ action: 'visibility', dogId: 'puppy1', updateId: 'internal', audience: 'public' }, 'buyer')).code).toBe(403)
+    expect((await call({ action: 'delete', dogId: 'puppy1', updateId: 'internal' }, 'buyer')).code).toBe(403)
     expect((await call({ action: 'delete', dogId: 'puppy1', updateId: 'shared' }, 'buyer')).code).toBe(200)
   })
   it('follows are scoped to account and grant no private access', async () => {
