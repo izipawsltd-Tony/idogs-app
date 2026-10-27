@@ -5,7 +5,7 @@ import type { ToastMessage } from '../types'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
 import { isAndroidNativeApp } from '../lib/nativePlatform'
 import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
-import { PLUS_PROMOTION_ID, PLUS_PROMOTION_TERMS } from '../../shared/plus-promotion.js'
+import { PLUS_PROMOTION_ID } from '../../shared/plus-promotion.js'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -412,9 +412,9 @@ export default function BillingPage({ toast }: Props) {
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               {PLUS_FEATURES.map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
             </ul>
-            {promotionActive && interval === 'plus_monthly' && !isPlus && !androidPurchasesUnavailable && <label style={{ display: 'flex', gap: 10, fontSize: 12, lineHeight: 1.6, marginBottom: 16 }}>
+            {promotionActive && interval === 'plus_monthly' && !isPlus && !androidPurchasesUnavailable && <label className="plus-promotion-consent">
               <input type="checkbox" checked={promotionConsent} onChange={event => setPromotionConsent(event.target.checked)} />
-              <span>I agree: {PLUS_PROMOTION_TERMS}</span>
+              <span>I agree to the Plus offer terms above, including automatic renewal at A$7/month after the promotion.</span>
             </label>}
             {promotionActive && isPlus && <p style={{ fontSize: 12, lineHeight: 1.6 }}>Already subscribed? The offer also includes existing customers. Your current billing continues until your account’s promotion adjustment is confirmed. Do not start another subscription.</p>}
             {isPlus ? (

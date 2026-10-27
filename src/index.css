@@ -910,3 +910,15 @@ h1, h2, h3, h4, h5, h6 {
     text-align: left;
   }
 }
+
+/* Keep the current Plus offer primary and its renewal terms readable together. */
+.plus-promotion { margin: 16px 0; padding: 16px; border-radius: 12px; background: var(--green-light); color: var(--green); }
+.plus-promotion-badge { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+.plus-promotion-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.plus-promotion-price strong { font-size: clamp(36px, 9vw, 46px); line-height: 1.1; }
+.plus-promotion-price span { font-size: 14px; }
+.plus-promotion-dates { font-size: 14px; line-height: 1.5; margin-top: 8px; }
+.plus-promotion-renewal { font-size: 13px; line-height: 1.5; margin-top: 6px; }
+.plus-promotion-terms { font-size: 12px; line-height: 1.6; margin-top: 10px; }
+.plus-promotion-consent { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; line-height: 1.6; margin-bottom: 16px; }
+.plus-promotion-consent input { flex: 0 0 auto; width: 20px; height: 20px; margin-top: 2px; }
