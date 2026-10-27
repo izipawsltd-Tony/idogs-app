@@ -7,6 +7,7 @@ import {createDeletionEmailSink} from './deletion-email-sink.mjs'
 import {createHumanQaConfirmation} from './deletion-human-confirmation.mjs'
 import {createStripeDeletionRenewalContract} from '../../api/_lib/deletion-stripe-contract.js'
 import {digest,scanDeletionDocuments} from '../../api/_lib/deletion-plan.js'
+import {rehearseDeletedRecordRestore} from './deletion-restore-replay.mjs'
 
 const ensure=(v,code)=>{if(!v)throw Object.assign(new Error(code),{code})}
 const runId=`deletion-qa-${randomUUID().replaceAll('-','')}`,uid=`qa-${runId}`,email=`qa-${runId}@example.invalid`
@@ -50,6 +51,7 @@ try{
  for(const path of recordPaths.slice(2))batch.create(db.doc(path),{tenantId:uid,dogId:`${runId}-dog`,deletionQaRunId:runId,...(path.startsWith('documents/')?{filePath:mediaPaths[0]}:{})})
  batch.create(db.doc(`dogs/${runId}-sentinel`),{currentOwnerId:`qa-other-${runId}`,tenantId:`qa-other-${runId}`,name:'Unrelated QA sentinel',deletionQaRunId:runId})
  await batch.commit();fixtureCreated=true
+ const restoreRecords=await Promise.all(recordPaths.slice(0,2).map(async path=>({path,data:(await db.doc(path).get()).data()})))
  const generations={}
  for(const path of mediaPaths){await bucket.file(path).save(Buffer.from('Disposable fixture, no personal data'),{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{metadata:{deletionQaRunId:runId}}});generations[path]=String((await bucket.file(path).getMetadata())[0].generation)}
  const sentinelBefore=digest((await db.doc(`dogs/${runId}-sentinel`).get()).data())
@@ -143,6 +145,9 @@ try{
  ensure(final.status==='completed'&&final.renewalStatus==='verified_stopped'&&audit.confirmation==='qa-ledger-no-email','QA_COMPLETION_RECEIPT_INVALID')
  const duplicate=await createCloudFixtureProcessor({scope,provider:provider()}).process({uid,revision:1})
  ensure(duplicate.status==='completed'&&duplicate.duplicate===true,'QA_DUPLICATE_NOT_IDEMPOTENT')
+ phase='controlled_restored_record_replay'
+ evidence.restoreReplay=await rehearseDeletedRecordRestore({scope,manifest,records:restoreRecords})
+ ensure(digest((await db.doc(`dogs/${runId}-sentinel`).get()).data())===sentinelBefore,'QA_RESTORE_SENTINEL_CHANGED')
  if(emailSink){
   phase='resend_simulation_delivery_readback'
   for(let attempt=0;attempt<8;attempt++){

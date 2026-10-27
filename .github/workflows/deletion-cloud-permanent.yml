@@ -2,7 +2,7 @@ name: Isolated cloud permanent deletion QA
 on:
   push:
     branches: [release/ios-app-store-20261025]
-    paths: ['scripts/qa/deletion-cloud-*.mjs', 'scripts/qa/deletion-email-sink.mjs', 'scripts/test-deletion-cloud-*.mjs', 'scripts/test-deletion-email-sink.mjs', 'api/_lib/deletion-processor.js', '.github/workflows/deletion-cloud-permanent.yml']
+    paths: ['scripts/qa/deletion-cloud-*.mjs', 'scripts/qa/deletion-email-sink.mjs', 'scripts/qa/deletion-restore-replay.mjs', 'scripts/deletion-restore-gate.test.js', 'api/_lib/deletion-restore-gate.js', 'scripts/test-deletion-cloud-*.mjs', 'scripts/test-deletion-email-sink.mjs', 'api/_lib/deletion-processor.js', '.github/workflows/deletion-cloud-permanent.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,6 +26,8 @@ jobs:
           java-version: '21'
       - name: Cloud fixture scope and provider regression checks
         run: node --test scripts/test-deletion-cloud-runtime.mjs scripts/test-deletion-cloud-http.mjs scripts/test-deletion-email-sink.mjs scripts/test-deletion-stripe-contract.mjs scripts/test-provision-deletion-resources.mjs
+      - name: Restore quarantine regressions
+        run: npx vitest run scripts/deletion-restore-gate.test.js
       - name: Shared worker Auth Firestore Storage emulator regressions
         env:
           GCLOUD_PROJECT: demo-idogs-deletion
