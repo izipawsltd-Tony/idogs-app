@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { getDogs, getShowcaseMediaUrls, uploadShowcaseMediaDirect, isCurrentOwner, managePrivateDogAccess, type SignedMediaItem } from '../../lib/db'
 import { prepareImageForUpload } from '../../lib/imageCompression'
-import { puppyUpdates, puppyPath, type PuppyStory, type UpdateAudience } from '../../lib/puppyUpdates'
+import { puppyUpdates, puppyPath, puppyShareUrl, type PuppyStory, type UpdateAudience } from '../../lib/puppyUpdates'
 import type { Dog } from '../../types'
 import PuppyUpdateFeed, { AUDIENCE_LABELS } from './PuppyUpdateFeed'
 
@@ -79,7 +79,7 @@ export default function PuppyUpdatesManager({ dog }: { dog: Dog }) {
     <p style={{ fontSize: 13, color: 'var(--mid)' }}>Post here to update this puppy’s permanent QR profile. Your existing story notes below stay private.</p>
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '12px 0' }}>
       <Link className="btn btn-secondary btn-sm" to={puppyPath(dog.passportId)} target="_blank" rel="noreferrer">Preview QR profile</Link>
-      <button className="btn btn-secondary btn-sm" onClick={() => { void navigator.clipboard.writeText(`${window.location.origin}${puppyPath(dog.passportId)}`).then(() => setMessage('Permanent puppy link copied')).catch(() => setError('Could not copy. Open the QR profile and copy its address.')) }}>Copy permanent link</button>
+      <button className="btn btn-secondary btn-sm" onClick={() => { void navigator.clipboard.writeText(puppyShareUrl(dog.passportId)).then(() => setMessage('Permanent puppy link copied')).catch(() => setError('Could not copy. Open the QR profile and copy its address.')) }}>Copy permanent link</button>
       <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setRefresh(v => v + 1)}>Refresh</button>
     </div>
     {error && <p role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}{message && <p role="status" style={{ color: 'var(--brand-600)' }}>{message}</p>}

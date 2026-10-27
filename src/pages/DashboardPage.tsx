@@ -170,6 +170,7 @@ export default function DashboardPage({ toast }: Props) {
 
   return (
     <div style={{ padding: '28px 32px' }}>
+      <Link className="btn btn-secondary" to="/app/following-puppies" style={{ marginBottom: 16 }}>🐾 Following puppies · View saved stories</Link>
 
       {anySectionErrored && (
         <div style={{

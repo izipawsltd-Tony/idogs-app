@@ -3,7 +3,7 @@ import { ApiError, parseJsonBody } from './http-helpers.js'
 import { checkRateLimit, getClientIp, hashClientKey } from './rate-limit.js'
 import { validId, ownerId, canPublish, publicSharingLive, viewerRole, mayReadUpdate, safeUpdateMedia, validateUpdate } from './puppy-updates-policy.js'
 
-export function createPuppyUpdatesHandler({ db, verifyToken, sign, timestamp = () => new Date().toISOString() }) {
+export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = '', timestamp = () => new Date().toISOString() }) {
   const profileRef = id => db.collection('puppyProfiles').doc(id)
   const entriesRef = id => profileRef(id).collection('updates')
   const followRef = (uid, id) => db.collection('puppyFollowers').doc(uid).collection('dogs').doc(id)
@@ -140,7 +140,7 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, timestamp = (
       const entry = snap.data()
       if (!mayReadUpdate(entry, dog, profile, role)) continue
       const media = (entry.media || []).filter(m => safeUpdateMedia(m, entry))
-      const items = role === 'public' ? media.map(m => ({ id: m.id, kind: m.kind, url: `/api/puppy-updates?action=media&passportId=${encodeURIComponent(dog.passportId)}&updateId=${snap.id}&mediaId=${m.id}` }))
+      const items = role === 'public' ? media.map(m => ({ id: m.id, kind: m.kind, url: `${publicBase}/api/puppy-updates?action=media&passportId=${encodeURIComponent(dog.passportId)}&updateId=${snap.id}&mediaId=${m.id}` }))
         : (await sign(media, 5 * 60 * 1000)).map(m => ({ ...m, kind: media.find(item => item.id === m.id).kind }))
       updates.push({ id: snap.id, text: entry.text, date: entry.date, audience: entry.audience, inherited: entry.authorUid !== ownerId(dog), media: items })
     }

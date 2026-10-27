@@ -15,5 +15,6 @@ if (!getApps().length) initializeApp({ credential: cert({ projectId: process.env
 
 export default withApiErrorHandling('puppy-updates', createPuppyUpdatesHandler({
   db: getFirestore(), timestamp: () => FieldValue.serverTimestamp(), verifyToken: token => getAuth().verifyIdToken(token),
+  publicBase: /^[a-z0-9.-]+\.vercel\.app$/.test(process.env.VERCEL_URL || '') ? `https://${process.env.VERCEL_URL}` : '',
   sign: (items, ttl) => signMediaItems(getStorage().bucket(requireStorageBucket()), items, ttl),
 }))

@@ -16,7 +16,7 @@ function store(seed) {
   const data = new Map(Object.entries(seed).map(([k, v]) => [k, structuredClone(v)]))
   const snapshot = path => ({ id: path.split('/').at(-1), exists: data.has(path), data: () => data.get(path), ref: doc(path) })
   function doc(path) { return { path, id: path.split('/').at(-1), parent: col(path.split('/').slice(0, -1).join('/')), collection: name => col(`${path}/${name}`), get: async () => snapshot(path), delete: async () => data.delete(path) } }
-  function col(path, filters = [], max = Infinity) { return { path, doc: id => doc(`${path}/${id}`), where: (field, op, value) => col(path, [...filters, [field, value]], max), orderBy: () => col(path, filters, max), limit: n => col(path, filters, n), get: async () => { const docs = [...data.keys()].filter(key => key.startsWith(`${path}/`) && key.slice(path.length + 1).split('/').length === 1 && filters.every(([field, value]) => data.get(key)[field] === value)).slice(0, max).map(snapshot); return { docs, empty: !docs.length, size: docs.length } } } }
+  function col(path, filters = [], max = Infinity, after = null) { return { path, doc: id => doc(`${path}/${id}`), where: (field, op, value) => col(path, [...filters, [field, value]], max), orderBy: () => col(path, filters, max, after), startAfter: snap => col(path, filters, max, snap.id), limit: n => col(path, filters, n, after), get: async () => { let keys = [...data.keys()].filter(key => key.startsWith(`${path}/`) && key.slice(path.length + 1).split('/').length === 1 && filters.every(([field, value]) => data.get(key)[field] === value)); if (after) keys = keys.slice(keys.findIndex(k => k.split('/').at(-1) === after) + 1); const docs = keys.slice(0, max).map(snapshot); return { docs, empty: !docs.length, size: docs.length } } } }
   return { data, collection: col, runTransaction: async fn => { const pending = []; const result = await fn({ get: ref => ref.get(), create: (ref, value) => { if (data.has(ref.path)) throw Error('already exists'); pending.push([ref.path, value]) }, set: (ref, value, options) => pending.push([ref.path, options?.merge ? { ...data.get(ref.path), ...value } : value]), update: (ref, value) => pending.push([ref.path, { ...data.get(ref.path), ...value }]) }); pending.forEach(([k, v]) => data.set(k, v)); return result } }
 }
 function setup(extra = {}) {
@@ -73,6 +73,18 @@ describe('Puppy update privacy through the ownership lifecycle', () => {
 })
 
 describe('Actual puppy updates handler', () => {
+  it('pages lifetime history without silently losing older updates', async () => {
+    const seed = Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`puppyProfiles/puppy1/updates/page${String(i).padStart(2, '0')}`, entry('public')]))
+    const { call } = setup(seed)
+    const first = await call({ passportId: 'DOG-RUBY' })
+    expect(first.body.updates).toHaveLength(25)
+    expect(first.body.nextCursor).toBe('page24')
+    const next = await call({ passportId: 'DOG-RUBY', cursor: first.body.nextCursor })
+    expect(next.body.updates).toHaveLength(6)
+    expect(next.body.nextCursor).toBe(null)
+    expect(new Set([...first.body.updates, ...next.body.updates].map(u => u.id)).size).toBe(31)
+    expect((await call({ passportId: 'DOG-RUBY', cursor: 'missing' })).code).toBe(400)
+  })
   it('uploads no bytes and publishes one shared media reference for multiple owned puppies', async () => {
     const { call, db } = setup()
     const r = await call(create({ dogIds: ['puppy1', 'puppy2'] }), 'breeder')

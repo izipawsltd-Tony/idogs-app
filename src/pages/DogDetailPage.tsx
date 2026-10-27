@@ -1,5 +1,6 @@
 import ReminderForm from '../components/ui/ReminderForm'
 import PuppyUpdatesManager from '../components/ui/PuppyUpdatesManager'
+import { puppyShareUrl } from '../lib/puppyUpdates'
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import QRCode from 'qrcode'
@@ -399,7 +400,7 @@ export default function DogDetailPage({ toast }: Props) {
           setReminders(history.reminders || []); setRemindersError(false)
           setLifeStageEvents([]); setAuditError(false)
           setScanCount(typeof history.scanCount === 'number' ? history.scanCount : 0); setScanCountError(false)
-          const publicUrl = `${window.location.origin}/p/${d.passportId}`
+          const publicUrl = puppyShareUrl(d.passportId)
           const url = await QRCode.toDataURL(publicUrl, {
             width: 200, margin: 2, errorCorrectionLevel: 'H',
             color: { dark: '#1A3A2A', light: '#FFFFFF' }
@@ -468,7 +469,7 @@ export default function DogDetailPage({ toast }: Props) {
         setDocuments(docsRes.data); setDocumentsError(!docsRes.ok)
         setLifeStageEvents(auditRes.data.filter(e => e.action === 'life_stage_changed'))
         setAuditError(!auditRes.ok)
-        const publicUrl = `${window.location.origin}/p/${d.passportId}`
+        const publicUrl = puppyShareUrl(d.passportId)
         const url = await QRCode.toDataURL(publicUrl, {
           width: 200, margin: 2, errorCorrectionLevel: 'H',
           color: { dark: '#1A3A2A', light: '#FFFFFF' }
@@ -986,7 +987,7 @@ export default function DogDetailPage({ toast }: Props) {
     </div>
   }
 
-  const publicUrl = `${window.location.origin}/p/${dog.passportId}`
+  const publicUrl = puppyShareUrl(dog.passportId)
 
   // Only consider the latest record per vaccine group for the header status.
   // A record is "superseded" if a newer dose of the same type was given —

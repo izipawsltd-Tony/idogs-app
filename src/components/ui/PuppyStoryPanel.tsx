@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { puppyUpdates, puppyPath, puppyAppPath, type PuppyStory } from '../../lib/puppyUpdates'
 import PuppyUpdateFeed from './PuppyUpdateFeed'
 
-export default function PuppyStoryPanel({ passportId }: { passportId: string }) {
+function PuppyStoryContent({ passportId }: { passportId: string }) {
   const { user, loading: authLoading } = useAuth()
   const [story, setStory] = useState<PuppyStory | null>(null)
   const [error, setError] = useState('')
@@ -50,4 +50,10 @@ export default function PuppyStoryPanel({ passportId }: { passportId: string }) 
       <p style={{ fontSize: 12, color: 'var(--mid)', marginTop: 16 }}>Looking for recent photos? Refresh to load new updates and renew media access. <Link to={puppyPath(passportId)}>Keep this profile link</Link>.</p>
     </>}
   </section>
+}
+
+export default function PuppyStoryPanel({ passportId }: { passportId: string }) {
+  const { user, loading } = useAuth()
+  if (loading) return <div className="spinner" />
+  return <PuppyStoryContent key={`${passportId}:${user?.uid || 'public'}`} passportId={passportId} />
 }

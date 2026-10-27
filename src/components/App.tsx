@@ -92,6 +92,10 @@ function DogDetailRoute({ toast }: { toast: (msg: string, type?: ToastMessage['t
   const { dogId } = useParams<{ dogId: string }>()
   return <DogDetailPage key={dogId} toast={toast} />
 }
+function PassportRoute() {
+  const { passportId } = useParams<{ passportId: string }>()
+  return <PassportPublicPage key={passportId} />
+}
 export default function App() {
   const { toasts, toast, dismiss, dismissAll } = useToast()
 
@@ -102,7 +106,7 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage toast={toast} />} />
         <Route path="/signup" element={<SignupPage toast={toast} />} />
-        <Route path="/p/:passportId" element={<PassportPublicPage />} />
+        <Route path="/p/:passportId" element={<PassportRoute />} />
         <Route path="/s/:token" element={<ShowcasePublicPage />} />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/survey" element={<SurveyPage />} />

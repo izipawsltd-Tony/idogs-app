@@ -12,6 +12,7 @@ import { db } from '../lib/firebase'
 import { formatDate, formatDateTime, isEligibleSireDog, isEligibleDamDog, isDogTransferred, parseDobStrict, getEffectivePlanClient } from '../lib/utils'
 import type { Litter, Dog, ToastMessage, LitterShowcase, ShowcaseAvailability, ShowcaseEnquiry, MediaItem } from '../types'
 import { useAuth } from '../hooks/useAuth'
+import { puppyShareUrl } from '../lib/puppyUpdates'
 import ExtraLitterButton from '../components/ExtraLitterButton'
 import { useShowcaseRequestGuard } from '../hooks/useShowcaseRequestGuard'
 import { sendTransferEmail } from '../lib/email'
@@ -2248,7 +2249,7 @@ function ShowcaseManager({
   }
 
   async function copyPrivateAccessLink(puppy: Dog) {
-    const url = `${window.location.origin}/p/${encodeURIComponent(puppy.passportId)}`
+    const url = puppyShareUrl(puppy.passportId)
     try {
       await navigator.clipboard.writeText(url)
       toast(`Private link copied for ${puppy.name}`)

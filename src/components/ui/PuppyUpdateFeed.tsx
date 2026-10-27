@@ -1,10 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PuppyUpdate, UpdateAudience } from '../../lib/puppyUpdates'
 
 export const AUDIENCE_LABELS: Record<UpdateAudience, string> = { internal: 'Only me', public: 'Public on QR profile', buyer: 'Deposited buyer only' }
 
 export default function PuppyUpdateFeed({ updates, manage, busy }: { updates: PuppyUpdate[]; busy?: boolean; manage?: (id: string, action: 'delete' | 'visibility', audience?: UpdateAudience) => void }) {
   const [expanded, setExpanded] = useState<string | null>(null)
+  const closeButton = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!expanded) return
+    const previous = document.activeElement as HTMLElement | null
+    closeButton.current?.focus()
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(null)
+      if (event.key === 'Tab') { event.preventDefault(); closeButton.current?.focus() }
+    }
+    document.addEventListener('keydown', key)
+    return () => { document.removeEventListener('keydown', key); previous?.focus() }
+  }, [expanded])
   if (!updates.length) return <p style={{ color: 'var(--mid)', padding: '18px 0' }}>No updates shared here yet. Check back to follow their story.</p>
   return <div style={{ display: 'grid', gap: 16 }}>{updates.map(update => <article key={update.id} className="card" style={{ padding: 16, minWidth: 0 }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -21,5 +33,5 @@ export default function PuppyUpdateFeed({ updates, manage, busy }: { updates: Pu
       {!update.inherited && <label style={{ fontSize: 12 }}>Who can see this? <select aria-label="Update visibility" disabled={busy} value={update.audience} onChange={e => manage(update.id, 'visibility', e.target.value as UpdateAudience)}>{Object.entries(AUDIENCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
       <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => { if (window.confirm('Remove this update from this puppy’s story?')) manage(update.id, 'delete') }}>Remove update</button>
     </div>}
-  </article>)}{expanded && <div role="dialog" aria-modal="true" aria-label="Update photo" onClick={() => setExpanded(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.9)', zIndex: 1000, display: 'grid', placeItems: 'center', padding: 20 }}><button autoFocus className="btn btn-secondary" onKeyDown={e => { if (e.key === 'Escape') setExpanded(null) }} onClick={() => setExpanded(null)} style={{ position: 'absolute', right: 16, top: 16 }}>Close photo</button><img src={expanded} alt="Puppy update enlarged" style={{ maxWidth: '100%', maxHeight: '85vh', objectFit: 'contain' }} /></div>}</div>
+  </article>)}{expanded && <div role="dialog" aria-modal="true" aria-label="Update photo" onClick={() => setExpanded(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.9)', zIndex: 1000, display: 'grid', placeItems: 'center', padding: 20 }}><button ref={closeButton} className="btn btn-secondary" onClick={() => setExpanded(null)} style={{ position: 'absolute', right: 16, top: 16 }}>Close photo</button><img src={expanded} alt="Puppy update enlarged" style={{ maxWidth: '100%', maxHeight: '85vh', objectFit: 'contain' }} /></div>}</div>
 }
