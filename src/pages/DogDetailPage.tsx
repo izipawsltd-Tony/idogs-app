@@ -1,4 +1,5 @@
 import ReminderForm from '../components/ui/ReminderForm'
+import PuppyUpdatesManager from '../components/ui/PuppyUpdatesManager'
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import QRCode from 'qrcode'
@@ -2896,8 +2897,8 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetry
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button className="btn btn-primary btn-sm" onClick={downloadQR} style={{ width: '100%' }}>⬇ Download QR PNG</button>
-          <button className="btn btn-secondary btn-sm" onClick={copyUrl} style={{ width: '100%' }}>Copy passport link</button>
-          <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ textAlign: 'center', width: '100%' }}>Preview passport ↗</a>
+          <button className="btn btn-secondary btn-sm" onClick={copyUrl} style={{ width: '100%' }}>Copy puppy / passport link</button>
+          <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ textAlign: 'center', width: '100%' }}>Preview profile &amp; updates ↗</a>
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -3216,6 +3217,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
     <div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>{dog.name}'s story</h2>
       <p style={{ fontSize: 13, color: 'var(--light)', marginBottom: 16 }}>Every milestone, automatically gathered in one place.</p>
+      {canEdit && <PuppyUpdatesManager key={dog.id} dog={dog} />}
 
       {canEdit ? (
       <div className="card" style={{ marginBottom: 20 }}>

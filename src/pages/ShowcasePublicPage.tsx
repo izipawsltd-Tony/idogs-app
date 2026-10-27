@@ -4,6 +4,7 @@ import { formatDate, getDogAge } from '../lib/utils'
 
 interface PublicMediaItem { id: string; url: string }
 interface PublicPuppy {
+  passportId?: string | null
   id: string; name: string; sex: 'male' | 'female'; breed: string; colour: string | null; dateOfBirth: string
   availability: 'available' | 'reserved' | 'sold'; personality: string | null; readyToGoHomeDate: string | null
   priceCents?: number; depositCents?: number; photos: PublicMediaItem[]; videos: PublicMediaItem[]
@@ -101,7 +102,7 @@ function PuppyCard({ puppy, onOpen, onEnquire }: { puppy: PublicPuppy; onOpen: (
         regardless of name length; aria-label keeps the full descriptive
         name for assistive tech. minHeight: 44 meets the mobile touch
         target guideline. */}
-    <div style={{ padding: '8px 14px 14px' }}><button className="btn btn-primary" onClick={onEnquire} aria-label={`Enquire about ${puppy.name}`} style={{ width: '100%', minHeight: 44, padding: '10px 20px', boxSizing: 'border-box' }}>Enquire</button></div>
+    <div style={{ padding: '8px 14px 14px', display: 'grid', gap: 8 }}><button className="btn btn-primary" onClick={onEnquire} aria-label={`Enquire about ${puppy.name}`} style={{ width: '100%', minHeight: 44, padding: '10px 20px', boxSizing: 'border-box' }}>Enquire</button>{puppy.passportId && <Link className="btn btn-secondary" to={`/p/${encodeURIComponent(puppy.passportId)}`} style={{ textAlign: 'center', whiteSpace: 'normal' }}>Follow {puppy.name}’s story →</Link>}</div>
   </article>
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { formatDate, getDogAge, getVaccineStatus, LIFE_STAGE_EMOJI } from '../lib/utils'
 import type { Dog, VaccineRecord, HealthTest } from '../types'
+import PuppyStoryPanel from '../components/ui/PuppyStoryPanel'
 
 // ADR-002 §9 Decision 4 — exact public provenance values. Never a real
 // person/organisation name; label stays "Source" (ADR-001 §Decision 6's
@@ -21,7 +22,7 @@ export default function PassportPublicPage() {
   const [healthTests, setHealthTests] = useState<HealthTest[]>([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
-  const [activeTab, setActiveTab] = useState<'vaccines' | 'health' | 'info'>('vaccines')
+  const [activeTab, setActiveTab] = useState<'updates' | 'vaccines' | 'health' | 'info'>('updates')
 
   useEffect(() => {
     if (!passportId) return
@@ -140,6 +141,7 @@ export default function PassportPublicPage() {
           {/* Tabs */}
           <div style={{ display: 'flex', borderBottom: '1px solid #E2DFD8' }}>
             {([
+              { id: 'updates', label: '📷 Updates' },
               { id: 'vaccines', label: `💉 Vaccines (${vaccines.length})` },
               { id: 'health', label: `🔬 Health (${healthTests.length})` },
               { id: 'info', label: '📋 Info' },
@@ -161,6 +163,7 @@ export default function PassportPublicPage() {
           </div>
 
           {/* Vaccines tab */}
+          {activeTab === 'updates' && passportId && <PuppyStoryPanel key={passportId} passportId={passportId} />}
           {activeTab === 'vaccines' && (
             <div>
               {vaccines.length === 0 ? (

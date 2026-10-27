@@ -17,7 +17,7 @@ export default function SignupPage({ toast }: Props) {
   const returnTo = safeAppReturnTo(searchParams.get('next'))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [accountType, setAccountType] = useState<'breeder' | 'owner'>('breeder')
+  const [accountType, setAccountType] = useState<'breeder' | 'owner'>(() => returnTo.startsWith('/app/puppy-updates/') ? 'owner' : 'breeder')
   const [agreedToTerms, setAgreedToTerms] = useState(false)
   const [marketingOptIn, setMarketingOptIn] = useState(false)
   const [form, setForm] = useState({

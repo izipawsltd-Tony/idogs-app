@@ -72,6 +72,7 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
     items: [
       { path: '/app/dashboard', label: 'Dashboard', icon: '⊞' },
       { path: '/app/dogs',      label: 'My Dogs',   icon: '🐕' },
+      { path: '/app/following-puppies', label: 'Following puppies', icon: '🐾' },
       { path: '/app/litters',   label: 'Litters',   icon: '🐣', littersItem: true },
     ],
   },

@@ -2248,7 +2248,7 @@ function ShowcaseManager({
   }
 
   async function copyPrivateAccessLink(puppy: Dog) {
-    const url = `${window.location.origin}/app/shared-dogs/${puppy.id}`
+    const url = `${window.location.origin}/p/${encodeURIComponent(puppy.passportId)}`
     try {
       await navigator.clipboard.writeText(url)
       toast(`Private link copied for ${puppy.name}`)
@@ -2650,7 +2650,7 @@ function ShowcaseManager({
                                 {privateAccessGrants[puppy.id] ? (
                                   <div style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                                     <span style={{ fontSize: 11, color: 'var(--brand-700)', fontWeight: 600 }}>✓ Access active for {privateAccessGrants[puppy.id]?.buyerEmail}</span>
-                                    <button type="button" className="btn btn-primary btn-sm" disabled={privateAccessBusy[puppy.id]} onClick={() => void copyPrivateAccessLink(puppy)}>Copy private link</button>
+                                    <button type="button" className="btn btn-primary btn-sm" disabled={privateAccessBusy[puppy.id]} onClick={() => void copyPrivateAccessLink(puppy)}>Copy puppy QR link</button>
                                     <button type="button" className="btn btn-ghost btn-sm" disabled={privateAccessBusy[puppy.id]} onClick={() => void revokePrivateAccess(puppy)} style={{ color: 'var(--danger)' }}>Revoke</button>
                                   </div>
                                 ) : (
