@@ -9,8 +9,12 @@ try {
   validateManifest(m)
   const { api } = await clients()
   const result = { mode: 'read-only-cleanup-diagnosis', manifestNonce: m.nonce, sourceUid: m.sourceUid, destinationUid: m.destinationUid, productionReady: false, databases: {} }
-  result.restoreOperation = await api(fsUrl(m.restoreOperation.name))
-  verifyRestoreOperation(result.restoreOperation, m)
+  result.restoreOperation = await api(fsUrl(m.restoreOperation.name), { allow404: true })
+  // Deleting a database can change availability of its old operations. Record
+  // the actual metadata for diagnosis; this does not authorize any mutation or
+  // relax the restore/replay gate used by the continuation workflow.
+  try { verifyRestoreOperation(result.restoreOperation, m); result.restoreBindingVerified = true }
+  catch (error) { result.restoreBindingVerified = false; result.restoreBindingError = error.code }
   for (const id of [TARGET.destination, TARGET.source]) {
     const metadata = await api(fsUrl(dbName(id)), { allow404: true })
     const operations = await api(fsUrl(`${dbName(id)}/operations?pageSize=100`), { allow404: true })
