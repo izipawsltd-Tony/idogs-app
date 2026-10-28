@@ -23,6 +23,15 @@ export function verifyBackup(b, m) {
     && b.state === 'READY' && Number.isFinite(Date.parse(b.snapshotTime))
     && Date.parse(b.snapshotTime) >= Date.parse(m.createdAt), 'MANAGED_BACKUP_IDENTITY_MISMATCH')
 }
+export function verifyRestoreOperation(op, m) {
+  ensure(op?.name === m.restoreOperation?.name
+    && op.name.startsWith(`${dbName(TARGET.destination)}/operations/`)
+    && op.metadata?.['@type'] === 'type.googleapis.com/google.firestore.admin.v1.RestoreDatabaseMetadata'
+    && op.metadata.database === dbName(TARGET.destination) && op.metadata.backup === m.backupName,
+  'MANAGED_BACKUP_RESTORE_OPERATION_CHANGED')
+  ensure(!op.error, 'MANAGED_BACKUP_OPERATION_FAILED')
+  if (m.destinationUid && op.response?.uid) ensure(op.response.uid === m.destinationUid, 'MANAGED_BACKUP_DESTINATION_REPLACED')
+}
 async function inventory(db, m, { deleted = false, tombstone = false } = {}) {
   const collections = await db.listCollections()
   ensure(collections.length === 1 && collections[0].id === 'managedBackupQa', 'MANAGED_BACKUP_FOREIGN_COLLECTION')
@@ -95,7 +104,16 @@ export async function continueBackup({ api, db, manifest: m, save, report = {}, 
     const op = await api(fsUrl(`projects/${TARGET.projectId}/databases:restore`), { method: 'POST', body: { databaseId: TARGET.destination, backup: backup.name } })
     m.restoreOperation = op; await save(m)
   }
-  await operation(api, m.restoreOperation)
+  // Google restore is asynchronous. Re-read the exact saved operation and its
+  // database/backup binding; a provider wait is not a failed rehearsal and must
+  // never cause a second restore request or a replacement fixture.
+  const restoreStatus = await api(fsUrl(m.restoreOperation.name))
+  verifyRestoreOperation(restoreStatus, m)
+  m.restoreOperation = restoreStatus
+  if (restoreStatus.response?.uid) m.destinationUid = restoreStatus.response.uid
+  await save(m)
+  if (!restoreStatus.done) return { ...report, status: 'waiting_for_managed_restore',
+    restoreOperation: restoreStatus.name, managedBackupRestoreVerified: false, productionReady: false }
   const targetMetadata = await api(fsUrl(dbName(TARGET.destination)))
   verifyDatabase(targetMetadata, TARGET.destination)
   if (m.destinationUid) ensure(m.destinationUid === targetMetadata.uid, 'MANAGED_BACKUP_DESTINATION_REPLACED')

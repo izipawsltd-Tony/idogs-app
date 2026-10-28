@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { validateManifest, verifyBackup, continueBackup } from './qa/managed-backup-continue.mjs'
+import { validateManifest, verifyBackup, verifyRestoreOperation, continueBackup } from './qa/managed-backup-continue.mjs'
 import { TARGET } from './qa/managed-backup-preflight.mjs'
 const fixture = () => {
   const m = { schema: 1, ...TARGET, ownerApproval: '2026-10-28-two-databases-one-backup', nonce: '12345678-1234-1234-1234-123456789abc', sourceUid: 'immutable-source', createdAt: '2026-10-28T06:30:00Z', scheduleName: `projects/${TARGET.projectId}/databases/${TARGET.source}/backupSchedules/one` }
@@ -35,7 +35,7 @@ test('replaced source database stops before data access or destructive operation
   assert.equal(dataRead, false)
 })
 
-function cloudFixture({ ready = true, corruptRestore = false } = {}) {
+function cloudFixture({ ready = true, corruptRestore = false, restorePending = false } = {}) {
   const { m, b } = fixture(), calls = [], saved = []
   const initial = new Map(m.records.map(r => [r.id, structuredClone(r.data)]))
   initial.set('manifest', { synthetic: true, nonce: m.nonce, approval: m.ownerApproval, sourceUid: m.sourceUid })
@@ -79,6 +79,8 @@ function cloudFixture({ ready = true, corruptRestore = false } = {}) {
       if (corruptRestore) stores.get(TARGET.destination).get('foreign-sentinel').content = 'Changed by another actor'
       return { name: `projects/${TARGET.projectId}/databases/${TARGET.destination}/operations/restore` }
     }
+    if (url.endsWith('/operations/restore')) return { name: `projects/${TARGET.projectId}/databases/${TARGET.destination}/operations/restore`, done: !restorePending,
+      metadata: { '@type': 'type.googleapis.com/google.firestore.admin.v1.RestoreDatabaseMetadata', database: `projects/${TARGET.projectId}/databases/${TARGET.destination}`, backup: b.name }, response: metadata(TARGET.destination) }
     if (url.includes('/operations/')) return { done: true }
     for (const id of [TARGET.source, TARGET.destination]) if (url.includes(`/databases/${id}`)) {
       if (options.method === 'DELETE') { assert.match(url, /etag=etag-1/); stores.delete(id); return { name: `projects/${TARGET.projectId}/databases/${id}/operations/delete` } }
@@ -121,4 +123,22 @@ test('changed restored sentinel blocks replay and all database/backup deletion',
   await assert.rejects(continueBackup(f), /CONTENT_PRECONDITION_FAILED/)
   assert.equal(f.stores.size, 2)
   assert.ok(!f.calls.some(c => c.options.method === 'DELETE' && !c.url.includes('/backupSchedules/')))
+})
+test('pending managed restore persists the exact operation and resumes it without starting a second restore', async () => {
+  const f = cloudFixture({ restorePending: true }), first = await continueBackup(f)
+  assert.equal(first.status, 'waiting_for_managed_restore')
+  assert.equal(first.managedBackupRestoreVerified, false)
+  assert.equal(f.manifest.destinationUid, 'restored-uid')
+  const second = await continueBackup(f)
+  assert.equal(second.status, 'waiting_for_managed_restore')
+  assert.equal(f.calls.filter(c => c.url.endsWith('/databases:restore')).length, 1)
+  assert.ok(!f.calls.some(c => c.options.method === 'DELETE' && !c.url.includes('/backupSchedules/')))
+})
+test('rejects a saved restore operation whose real database, backup or immutable UID binding differs', () => {
+  const { m, b } = fixture()
+  m.backupName = b.name; m.destinationUid = 'target-uid'; m.restoreOperation = { name: `projects/${TARGET.projectId}/databases/${TARGET.destination}/operations/one` }
+  const op = { name: m.restoreOperation.name, metadata: { '@type': 'type.googleapis.com/google.firestore.admin.v1.RestoreDatabaseMetadata', database: `projects/${TARGET.projectId}/databases/${TARGET.destination}`, backup: b.name }, response: { uid: 'target-uid' } }
+  verifyRestoreOperation(op, m)
+  for (const metadata of [{ ...op.metadata, backup: 'other' }, { ...op.metadata, database: 'other' }, {}]) assert.throws(() => verifyRestoreOperation({ ...op, metadata }, m), /RESTORE_OPERATION_CHANGED/)
+  assert.throws(() => verifyRestoreOperation({ ...op, response: { uid: 'replacement' } }, m), /DESTINATION_REPLACED/)
 })
