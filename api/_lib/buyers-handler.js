@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { ApiError, parseJsonBody } from './http-helpers.js'
 import { canManagePrivateDogAccess } from './private-dog-access.js'
+import { joinFinanceBuyers } from './finance-buyers.js'
 
 const statuses = ['enquiry', 'waiting', 'reserved', 'deposit', 'transferred', 'closed']
 const text = (v, max) => typeof v === 'string' ? v.trim().slice(0, max + 1) : ''
@@ -25,9 +26,9 @@ export function createBuyersHandler({ db, verifyToken, timestamp = () => new Dat
     if (!identity?.uid) throw new ApiError(401, 'Please sign in again.')
     const uid = identity.uid, body = parseJsonBody(req), collection = db.collection('buyerContacts')
     if (body.action === 'list') {
-      const snap = await collection.where('ownerUid', '==', uid).limit(501).get()
+      const [snap, finance] = await Promise.all([collection.where('ownerUid', '==', uid).limit(501).get(), db.collection('financeDocuments').where('tenantId', '==', uid).get()])
       if (snap.docs.length > 500) throw new ApiError(409, 'Buyer list limit reached. Please contact support.')
-      return res.status(200).json({ buyers: snap.docs.map(doc => ({ ...doc.data(), id: doc.id })) })
+      return res.status(200).json({ buyers: joinFinanceBuyers(snap.docs.map(doc => ({ ...doc.data(), id: doc.id })), finance.docs.map(doc => ({ ...doc.data(), id: doc.id })), uid) })
     }
     if (body.action !== 'save') throw new ApiError(400, 'Invalid action')
     const buyer = validateBuyer(body)
@@ -57,7 +58,7 @@ export function createBuyersHandler({ db, verifyToken, timestamp = () => new Dat
         }
         if (buyer.status === 'transferred') throw new ApiError(400, 'Use Transfer on the puppy profile to transfer ownership, or leave Puppy blank to record a past buyer.')
       }
-      tx.set(ref, { ...buyer, ownerUid: uid, createdAt: old?.createdAt || timestamp(), updatedAt: timestamp() })
+      tx.set(ref, { ...buyer, ...(old?.address ? { address: old.address } : {}), ownerUid: uid, createdAt: old?.createdAt || timestamp(), updatedAt: timestamp() })
     })
     return res.status(200).json({ buyer: { ...(await ref.get()).data(), id } })
   }

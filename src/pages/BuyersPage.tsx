@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { Dog } from '../types';
 import { getDogs } from '../lib/db';
 import BuyerForm from '../components/ui/BuyerForm';
@@ -138,10 +138,11 @@ export function buildBuyers(dogs: Dog[], contacts: BuyerContact[] = []): Buyer[]
   }
 
   for (const contact of contacts) {
-    let buyer = map.get(contact.email);
+    const contactKey = contact.email || `finance-${contact.documents?.[0]?.id || contact.id}`;
+    let buyer = map.get(contactKey);
     if (!buyer) {
-      buyer = { key: contact.email, name: contact.name, email: contact.email, phone: contact.phone, dogs: [], reservedCount: 0, transferredCount: 0, lastActivity: 0 };
-      map.set(contact.email, buyer);
+      buyer = { key: contactKey, name: contact.name, email: contact.email, phone: contact.phone, dogs: [], reservedCount: 0, transferredCount: 0, lastActivity: 0 };
+      map.set(contactKey, buyer);
     }
     buyer.contact = contact;
     buyer.name = contact.name; buyer.phone = contact.phone;
@@ -163,7 +164,8 @@ export function buyerStages(buyer: Buyer): BuyerStage[] {
   const stages = new Set<BuyerStage>();
   for (const { dog, relationship } of buyer.dogs) stages.add(relationship === 'transferred' ? 'transferred' : dog.depositStatus === 'received' ? 'deposit' : 'reserved');
   // Canonical puppy state wins over a previously recorded CRM stage.
-  if (buyer.contact && (!['reserved', 'deposit'].includes(buyer.contact.status) || !buyer.dogs.some(d => d.dog.id === buyer.contact?.dogId))) stages.add(buyer.contact.status);
+  if (buyer.contact && !(buyer.contact.status === 'enquiry' && buyer.dogs.length > 0) && (!['reserved', 'deposit'].includes(buyer.contact.status) || !buyer.dogs.some(d => d.dog.id === buyer.contact?.dogId))) stages.add(buyer.contact.status);
+  if (buyer.contact?.documents?.some(doc => doc.depositPaidCents > 0)) stages.add('deposit');
   return [...stages];
 }
 
@@ -171,6 +173,7 @@ export function buyerStages(buyer: Buyer): BuyerStage[] {
 
 export default function BuyersPage() {
   const { user } = useAuth();
+  const [params] = useSearchParams();
   const [dogs, setDogs] = useState<Dog[]>([]);
   const [contacts, setContacts] = useState<BuyerContact[]>([]);
   const [editing, setEditing] = useState<BuyerContact | null | undefined>(undefined);
@@ -178,7 +181,7 @@ export default function BuyersPage() {
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(params.get('buyerEmail') || '');
 
   const [reloadToken, setReloadToken] = useState(0);
   // Codex round 15: this page previously had NO useAuth/user dependency
@@ -217,7 +220,7 @@ export default function BuyersPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const staged = buyers.filter(b => stage === 'all' || buyerStages(b).includes(stage as BuyerStage));
+    const staged = buyers.filter(b => (stage === 'all' || buyerStages(b).includes(stage as BuyerStage)) && (!params.get('documentId') || b.contact?.documents?.some(d => d.id === params.get('documentId'))));
     if (!q) return staged;
     const qDigits = q.replace(/\D/g, '');
     return staged.filter((b) => {
@@ -226,7 +229,7 @@ export default function BuyersPage() {
       if (qDigits && b.phone.replace(/\D/g, '').includes(qDigits)) return true;
       return b.dogs.some((d) => (d.dog.name || '').toLowerCase().includes(q));
     });
-  }, [buyers, search, stage]);
+  }, [buyers, search, stage, params]);
 
   return (
     <div style={{ padding: 'clamp(16px, 4vw, 32px)' }}>
@@ -319,6 +322,11 @@ export default function BuyersPage() {
                 </div>
               </div>
 
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                {(['invoice', 'receipt'] as const).map(type => <Link key={type} className="btn btn-secondary btn-sm" to={`/app/finance?${new URLSearchParams({ buyerEmail: b.email, create: type, dogId: b.dogs.find(d => d.relationship === 'reserved')?.dog.id || b.contact?.dogId || '' })}`}>Create {type}</Link>)}
+                <Link className="btn btn-secondary btn-sm" to={`/app/finance?${new URLSearchParams(b.email ? { buyerEmail: b.email } : { documentId: b.contact?.documents?.[0]?.id || '' })}`}>View invoices / receipts</Link>
+              </div>
+              {!!b.contact?.documents?.length && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 12 }}>{b.contact.documents.map(doc => <Link key={doc.id} to={`/app/finance?documentId=${encodeURIComponent(doc.id)}`}>{doc.documentNumber} · {doc.dogName}</Link>)}</div>}
               {b.contact?.notes && <p style={{ whiteSpace: 'pre-wrap', color: 'var(--mid)' }}><strong>Private notes: </strong>{b.contact.notes}</p>}
               {b.contact?.dogId && !b.dogs.some(d => d.dog.id === b.contact?.dogId) && <p><Link to={`/app/dogs/${b.contact.dogId}`}>View linked puppy</Link></p>}
               <div

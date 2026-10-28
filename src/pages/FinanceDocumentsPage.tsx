@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { buyerRequest, type BuyerContact } from '../lib/buyers'
+import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getDogs } from '../lib/db'
 import type { Dog, ToastMessage } from '../types'
 
@@ -31,6 +33,7 @@ interface FinanceDocument {
   refundReason?: string
   notes?: string
   status: string
+  paymentPurpose?: string
   emailedAt?: string | null
   emailedTo?: string
   createdAt?: string | null
@@ -129,6 +132,8 @@ function PrintableDocument({ doc }: { doc: FinanceDocument }) {
             <tr><td style={{ ...rowLabel, fontWeight: 700, color: '#1a1917' }}>Balance due</td><td style={{ ...rowValue, fontSize: 18, color: '#085041' }}>{money(doc.balanceDueCents)}</td></tr>
           </>}
           {doc.type === 'receipt' && <>
+            {doc.originalDocumentNumber && <tr><td style={rowLabel}>Related invoice</td><td style={rowValue}>{doc.originalDocumentNumber}</td></tr>}
+            {doc.paymentPurpose && <tr><td style={rowLabel}>Payment for</td><td style={rowValue}>{doc.paymentPurpose === 'deposit' ? 'Deposit' : doc.paymentPurpose === 'balance' ? 'Balance payment' : 'Other payment'}</td></tr>}
             <tr><td style={rowLabel}>Amount paid</td><td style={{ ...rowValue, fontSize: 18, color: '#085041' }}>{money(doc.amountPaidCents)}</td></tr>
             <tr><td style={rowLabel}>Payment method</td><td style={rowValue}>{doc.paymentMethod || 'Not specified'}</td></tr>
             <tr><td style={rowLabel}>Transaction reference</td><td style={rowValue}>{doc.paymentReference || '—'}</td></tr>
@@ -167,6 +172,14 @@ const rowValue: React.CSSProperties = { padding: '10px 0', borderBottom: '1px so
 export default function FinanceDocumentsPage({ toast }: Props) {
   const { user, profile } = useAuth()
   const [searchParams] = useSearchParams()
+  const { beginRequest } = useRequestGuard(user?.uid)
+  const prefilled = useRef(false)
+  const [contacts, setContacts] = useState<BuyerContact[]>([])
+  const [selectedBuyer, setSelectedBuyer] = useState('')
+  const [paymentPurpose, setPaymentPurpose] = useState('other')
+  const [depositTotal, setDepositTotal] = useState('')
+  const [requestId, setRequestId] = useState('')
+  const [loadError, setLoadError] = useState('')
   const [dogs, setDogs] = useState<Dog[]>([])
   const [documents, setDocuments] = useState<FinanceDocument[]>([])
   const [loading, setLoading] = useState(true)
@@ -185,6 +198,7 @@ export default function FinanceDocumentsPage({ toast }: Props) {
   const [refundAmount, setRefundAmount] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('Bank transfer')
   const [paymentReference, setPaymentReference] = useState('')
+  const [originalDocumentId, setOriginalDocumentId] = useState('')
   const [originalDocumentNumber, setOriginalDocumentNumber] = useState('')
   const [refundReason, setRefundReason] = useState('')
   const [notes, setNotes] = useState('')
@@ -206,22 +220,25 @@ export default function FinanceDocumentsPage({ toast }: Props) {
 
   async function load() {
     if (!user) return
-    setLoading(true)
+    const req = beginRequest()
+    setLoading(true); setLoadError('')
     try {
-      const [dogRows, idToken] = await Promise.all([getDogs(), token()])
-      setDogs(dogRows)
-      const res = await fetch('/api/breeder-finance-documents', { headers: { Authorization: `Bearer ${idToken}` } })
+      const [dogRows, directory, res] = await Promise.all([getDogs(), buyerRequest({ action: 'list' }), token().then(idToken => fetch('/api/breeder-finance-documents', { headers: { Authorization: `Bearer ${idToken}` } }))])
+      if (!req.isCurrent()) return
+      setDogs(dogRows); setContacts(directory.buyers)
       if (!res.ok) throw new Error('Failed')
       const json = await res.json()
+      if (!req.isCurrent()) return
       setDocuments(Array.isArray(json.documents) ? json.documents : [])
     } catch {
-      toast('Could not load invoices and payments.', 'error')
+      if (!req.isCurrent()) return
+      setLoadError('Could not load invoices and buyers. Please retry.'); toast('Could not load invoices and payments.', 'error')
     } finally {
-      setLoading(false)
+      if (req.isCurrent()) setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [user?.uid])
+  useEffect(() => { setDogs([]); setDocuments([]); setContacts([]); setShowCreate(false); setViewing(null); setBuyerName(''); setBuyerEmail(''); setBuyerPhone(''); setBuyerAddress(''); setSelectedBuyer(''); prefilled.current = false; load() }, [user?.uid])
 
   useEffect(() => {
     if (!profile) return
@@ -233,26 +250,57 @@ export default function FinanceDocumentsPage({ toast }: Props) {
     setBankAccountNumber((profile as any).bankAccountNumber || '')
   }, [profile?.uid])
 
-  const selectedDog = useMemo(() => dogs.find(d => d.id === dogId), [dogs, dogId])
-
+  const buyerOptions = useMemo(() => {
+    const map = new Map(contacts.map(c => [c.email || c.id, c]))
+    for (const dog of dogs) {
+      const transferred = !!dog.transferredAt
+      const email = (transferred ? dog.buyerEmail : dog.reservedForEmail)?.trim().toLowerCase()
+      if (email && !map.has(email)) map.set(email, { id: '', name: (transferred ? dog.buyerName : dog.reservedForName) || email, email, phone: (transferred ? dog.buyerPhone : dog.reservedForPhone) || '', notes: '', status: transferred ? 'transferred' : dog.depositStatus === 'received' ? 'deposit' : 'reserved', dogId: dog.id, amount: dog.depositAmount || null })
+    }
+    return [...map.values()].filter(c => c.email).sort((a,b) => a.name.localeCompare(b.name))
+  }, [contacts, dogs])
+  function pickDog(id: string) {
+    setDogId(id); setOriginalDocumentNumber(''); setOriginalDocumentId('')
+    const dog = dogs.find(d => d.id === id), transferred = !!dog?.transferredAt
+    const email = (transferred ? dog?.buyerEmail : dog?.reservedForEmail) || ''
+    setBuyerName((transferred ? dog?.buyerName : dog?.reservedForName) || ''); setBuyerEmail(email); setBuyerPhone((transferred ? dog?.buyerPhone : dog?.reservedForPhone) || ''); setBuyerAddress(''); setSelectedBuyer(email.toLowerCase())
+    setDepositPaid(dog?.depositStatus === 'received' ? String(dog.depositAmount || 0) : ''); setAmountPaid(''); setDepositTotal('')
+  }
+  function pickBuyer(email: string) {
+    const contact = buyerOptions.find(c => c.email === email)
+    setOriginalDocumentNumber(''); setOriginalDocumentId('')
+    setSelectedBuyer(email); setBuyerName(contact?.name || ''); setBuyerEmail(contact?.email || ''); setBuyerPhone(contact?.phone || ''); setBuyerAddress(contact?.address || '')
+    const matches = (d: Dog) => (d.transferredAt ? d.buyerEmail : d.reservedForEmail)?.toLowerCase() === email
+    const linked = dogs.find(d => d.id === dogId && matches(d)) || dogs.find(d => d.id === contact?.dogId && matches(d)) || dogs.find(d => !d.transferredAt && matches(d)) || dogs.find(matches)
+    if (linked) setDogId(linked.id)
+    setDepositPaid(linked?.depositStatus === 'received' && linked.reservedForEmail?.toLowerCase() === email ? String(linked.depositAmount || 0) : ''); setAmountPaid(''); setDepositTotal('')
+  }
   useEffect(() => {
-    if (!selectedDog) return
-    const transferred = !!selectedDog.transferredAt
-    setBuyerName(transferred ? selectedDog.buyerName || '' : selectedDog.reservedForName || '')
-    setBuyerEmail(transferred ? selectedDog.buyerEmail || '' : selectedDog.reservedForEmail || '')
-    setBuyerPhone(transferred ? selectedDog.buyerPhone || '' : selectedDog.reservedForPhone || '')
-    if (!depositPaid && selectedDog.depositAmount) setDepositPaid(String(selectedDog.depositAmount))
-  }, [dogId])
+    if (loading || loadError || prefilled.current) return
+    prefilled.current = true
+    const doc = documents.find(d => d.id === searchParams.get('documentId'))
+    if (doc) setViewing(doc)
+    if (dogId) pickDog(dogId)
+    if (searchParams.get('buyerEmail')) pickBuyer(searchParams.get('buyerEmail')!.toLowerCase())
+    const create = searchParams.get('create')
+    if (create === 'invoice' || create === 'receipt') startCreate(create)
+  }, [loading, loadError, documents, buyerOptions])
+  const visibleDocuments = documents.filter(doc => searchParams.get('documentId') ? doc.id === searchParams.get('documentId') : searchParams.get('buyerEmail') ? doc.buyer?.email?.toLowerCase() === searchParams.get('buyerEmail')?.toLowerCase() : searchParams.get('dogId') ? doc.dog?.id === searchParams.get('dogId') : true)
 
   function startCreate(nextType: FinanceType) {
+    setRequestId(crypto.randomUUID()); setPaymentPurpose('other'); setAmountPaid(''); setDepositTotal(''); setRefundAmount(''); setSalePrice('')
     setType(nextType)
     setIssueDate(today())
     setDueDate(plusDays(today(), 7))
     setPaymentReference('')
-    setOriginalDocumentNumber('')
+    setOriginalDocumentNumber(''); setOriginalDocumentId('')
     setRefundReason('')
     setNotes('')
     setShowCreate(true)
+  }
+
+  function receiptFromInvoice(doc: FinanceDocument) {
+    startCreate('receipt'); setDogId(doc.dog.id); setBuyerName(doc.buyer.name || ''); setBuyerEmail(doc.buyer.email || ''); setBuyerPhone(doc.buyer.phone || ''); setBuyerAddress(doc.buyer.address || ''); setSelectedBuyer(doc.buyer.email || ''); setDepositPaid(String(doc.depositPaidCents / 100)); setOriginalDocumentId(doc.id); setOriginalDocumentNumber(doc.documentNumber)
   }
 
   async function createDocument() {
@@ -267,12 +315,12 @@ export default function FinanceDocumentsPage({ toast }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
         body: JSON.stringify({
-          type, dogId, issueDate, dueDate,
+          type, dogId, issueDate, dueDate, requestId, paymentPurpose, depositTotalCents: centsFromInput(depositTotal),
           salePriceCents: centsFromInput(salePrice),
           depositPaidCents: centsFromInput(depositPaid),
           amountPaidCents: centsFromInput(amountPaid),
           refundAmountCents: centsFromInput(refundAmount),
-          paymentMethod, paymentReference, originalDocumentNumber, refundReason, notes,
+          paymentMethod, paymentReference, originalDocumentNumber, originalDocumentId, refundReason, notes,
           buyer: { name: buyerName, email: buyerEmail, phone: buyerPhone, address: buyerAddress },
           seller: {
             businessName,
@@ -296,6 +344,7 @@ export default function FinanceDocumentsPage({ toast }: Props) {
       setDocuments(prev => [json.document, ...prev])
       setViewing(json.document)
       setShowCreate(false)
+      await load()
       toast(`${typeLabel(type)} ${json.document.documentNumber} created.`, 'success')
     } catch (err: any) {
       toast(err.message || 'Could not create document.', 'error')
@@ -396,7 +445,7 @@ export default function FinanceDocumentsPage({ toast }: Props) {
   }, [])
 
   return (
-    <div style={{ padding: 32 }}>
+    <div style={{ padding: 'clamp(16px, 4vw, 32px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, margin: 0, color: 'var(--dark)' }}>Invoices & Payments</h1>
@@ -405,9 +454,9 @@ export default function FinanceDocumentsPage({ toast }: Props) {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" onClick={() => startCreate('invoice')}>＋ Invoice</button>
-          <button className="btn btn-secondary" onClick={() => startCreate('receipt')}>＋ Receipt</button>
-          <button className="btn btn-secondary" onClick={() => startCreate('refund')}>＋ Refund</button>
+          <button className="btn btn-primary" disabled={loading || !!loadError} onClick={() => startCreate('invoice')}>＋ Invoice</button>
+          <button className="btn btn-secondary" disabled={loading || !!loadError} onClick={() => startCreate('receipt')}>＋ Receipt</button>
+          <button className="btn btn-secondary" disabled={loading || !!loadError} onClick={() => startCreate('refund')}>＋ Refund</button>
         </div>
       </div>
 
@@ -418,9 +467,12 @@ export default function FinanceDocumentsPage({ toast }: Props) {
         </div>
       </div>
 
+      {loadError && <p role="alert">{loadError} <button className="btn btn-secondary" onClick={load}>Retry</button></p>}
+      {(searchParams.get('buyerEmail') || searchParams.get('dogId') || searchParams.get('documentId')) && <p>Showing linked documents. <Link to="/app/finance">View all documents</Link></p>}
+      <p><Link to="/app/buyers">Manage buyers →</Link></p>
       {loading ? (
         <div className="card"><p style={{ margin: 0, color: 'var(--mid)' }}>Loading finance documents…</p></div>
-      ) : documents.length === 0 ? (
+      ) : visibleDocuments.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 40 }}>
           <div style={{ fontSize: 38 }}>🧾</div>
           <h3 style={{ margin: '10px 0 6px' }}>No finance documents yet</h3>
@@ -435,10 +487,10 @@ export default function FinanceDocumentsPage({ toast }: Props) {
               </tr>
             </thead>
             <tbody>
-              {documents.map(doc => (
+              {visibleDocuments.map(doc => (
                 <tr key={doc.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: 14 }}><strong>{doc.documentNumber}</strong><div style={{ color: 'var(--mid)', fontSize: 11 }}>{typeLabel(doc.type)}</div></td>
-                  <td>{doc.buyer?.name || '—'}<div style={{ color: 'var(--mid)', fontSize: 11 }}>{doc.buyer?.email || ''}</div></td>
+                  <td><Link to={`/app/buyers?${new URLSearchParams(doc.buyer?.email ? { buyerEmail: doc.buyer.email } : { documentId: doc.id })}`}>{doc.buyer?.name || '—'}</Link><div style={{ color: 'var(--mid)', fontSize: 11 }}>{doc.buyer?.email || ''}</div></td>
                   <td>{doc.dog?.name || '—'}</td>
                   <td style={{ fontWeight: 600 }}>{doc.type === 'invoice' ? money(doc.balanceDueCents) : doc.type === 'receipt' ? money(doc.amountPaidCents) : money(doc.refundAmountCents)}</td>
                   <td>{doc.issueDate}</td>
@@ -446,6 +498,7 @@ export default function FinanceDocumentsPage({ toast }: Props) {
                   <td style={{ paddingRight: 14 }}>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       <button className="btn btn-sm btn-secondary" onClick={() => setViewing(doc)}>View</button>
+                      {doc.type === 'invoice' && <button className="btn btn-sm btn-secondary" onClick={() => receiptFromInvoice(doc)}>Create receipt</button>}
                       <button className="btn btn-sm btn-secondary" onClick={() => printDocument(doc)}>Print/PDF</button>
                       <button className="btn btn-sm btn-primary" disabled={sendingId === doc.id || !doc.buyer?.email} onClick={() => sendEmail(doc)}>
                         {sendingId === doc.id ? 'Sending…' : 'Email'}
@@ -474,11 +527,13 @@ export default function FinanceDocumentsPage({ toast }: Props) {
               <section className="finance-form-section">
                 <div className="finance-form-section-title">① Dog & buyer</div>
                 <div className="finance-form-grid">
-                  <div className="form-group finance-span-2"><label className="form-label">Dog / Puppy *</label><select className="form-select" value={dogId} onChange={e => setDogId(e.target.value)}><option value="">Select dog</option>{dogs.filter(d => d.tenantId === user?.uid).map(d => <option key={d.id} value={d.id}>{d.name || 'Unnamed'} — {d.breed}</option>)}</select></div>
-                  <div className="form-group"><label className="form-label">Buyer name *</label><input className="form-input" value={buyerName} onChange={e => setBuyerName(e.target.value)} /></div>
-                  <div className="form-group"><label className="form-label">Buyer email</label><input className="form-input" type="email" value={buyerEmail} onChange={e => setBuyerEmail(e.target.value)} /></div>
-                  <div className="form-group"><label className="form-label">Buyer phone</label><input className="form-input" value={buyerPhone} onChange={e => setBuyerPhone(e.target.value)} /></div>
-                  <div className="form-group"><label className="form-label">Buyer address</label><input className="form-input" value={buyerAddress} onChange={e => setBuyerAddress(e.target.value)} /></div>
+                  <label className="form-group finance-span-2">Choose existing buyer<select className="form-select" value={selectedBuyer} onChange={e => pickBuyer(e.target.value)}><option value="">New buyer — enter details below</option>{buyerOptions.map(c => <option key={c.email} value={c.email}>{c.name} · {c.email}</option>)}</select></label>
+                  <p className="finance-span-2" style={{ fontSize: 13, color: 'var(--mid)' }}>New buyers appear in Buyers after creating a document. Issued documents keep their original details.</p>
+                  <div className="form-group finance-span-2"><label className="form-label">Dog / Puppy *</label><select aria-label="Dog / Puppy" className="form-select" value={dogId} onChange={e => pickDog(e.target.value)}><option value="">Select dog</option>{dogs.filter(d => d.tenantId === user?.uid).map(d => <option key={d.id} value={d.id}>{d.name || 'Unnamed'} — {d.breed}</option>)}</select></div>
+                  <div className="form-group"><label className="form-label">Buyer name *</label><input aria-label="Buyer name" className="form-input" value={buyerName} onChange={e => setBuyerName(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">Buyer email</label><input aria-label="Buyer email" className="form-input" type="email" value={buyerEmail} onChange={e => setBuyerEmail(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">Buyer phone</label><input aria-label="Buyer phone" className="form-input" value={buyerPhone} onChange={e => setBuyerPhone(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">Buyer address</label><input aria-label="Buyer address" className="form-input" value={buyerAddress} onChange={e => setBuyerAddress(e.target.value)} /></div>
                 </div>
               </section>
 
@@ -496,8 +551,10 @@ export default function FinanceDocumentsPage({ toast }: Props) {
                 <div className="finance-form-grid">
                   <div className="form-group"><label className="form-label">Date</label><input className="form-input" type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} /></div>
                   {type === 'invoice' && <div className="form-group"><label className="form-label">Due date</label><input className="form-input" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>}
-                  {type === 'invoice' && <><div className="form-group"><label className="form-label">Puppy sale price (AUD) *</label><input className="form-input" inputMode="decimal" value={salePrice} onChange={e => setSalePrice(e.target.value)} placeholder="2500.00" /></div><div className="form-group"><label className="form-label">Deposit already paid</label><input className="form-input" inputMode="decimal" value={depositPaid} onChange={e => setDepositPaid(e.target.value)} placeholder="500.00" /></div></>}
-                  {type === 'receipt' && <div className="form-group"><label className="form-label">Amount paid (AUD) *</label><input className="form-input" inputMode="decimal" value={amountPaid} onChange={e => setAmountPaid(e.target.value)} placeholder="500.00" /></div>}
+                  {type === 'invoice' && <><div className="form-group"><label className="form-label">Puppy sale price (AUD) *</label><input aria-label="Puppy sale price" className="form-input" inputMode="decimal" value={salePrice} onChange={e => setSalePrice(e.target.value)} placeholder="2500.00" /></div><div className="form-group"><label className="form-label">Deposit already paid</label><input aria-label="Deposit already paid" className="form-input" inputMode="decimal" value={depositPaid} onChange={e => setDepositPaid(e.target.value)} placeholder="500.00" /></div></>}
+                  {type === 'receipt' && originalDocumentNumber && <p className="finance-span-2">Related invoice: <strong>{originalDocumentNumber}</strong></p>}
+                  {type === 'receipt' && <><label className="form-group">Payment for<select className="form-select" value={paymentPurpose} onChange={e => { setPaymentPurpose(e.target.value); setDepositTotal(String(Math.max(Number(depositPaid) || 0, Number(amountPaid) || 0))) }}><option value="other">Other payment</option><option value="deposit">Deposit</option><option value="balance">Balance payment</option></select></label>{paymentPurpose === 'deposit' && <label className="form-group">Total deposit received to date (AUD)<input className="form-input" inputMode="decimal" value={depositTotal} onChange={e => setDepositTotal(e.target.value)} /><span style={{ fontSize: 12 }}>Includes this receipt. Updates the puppy’s deposit total without adding it twice.</span></label>}</>}
+                  {type === 'receipt' && <div className="form-group"><label className="form-label">Amount paid (AUD) *</label><input aria-label="Amount paid" className="form-input" inputMode="decimal" value={amountPaid} onChange={e => setAmountPaid(e.target.value)} placeholder="500.00" /></div>}
                   {type === 'refund' && <div className="form-group"><label className="form-label">Amount refunded (AUD) *</label><input className="form-input" inputMode="decimal" value={refundAmount} onChange={e => setRefundAmount(e.target.value)} placeholder="500.00" /></div>}
                   {type !== 'invoice' && <div className="form-group"><label className="form-label">{type === 'refund' ? 'Refund method' : 'Payment method'}</label><select className="form-select" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}><option>Bank transfer</option><option>Cash</option><option>Card</option><option>PayID</option><option>Other</option></select></div>}
                   {type === 'receipt' && <div className="form-group"><label className="form-label">Transaction reference</label><input className="form-input" value={paymentReference} onChange={e => setPaymentReference(e.target.value)} /></div>}
