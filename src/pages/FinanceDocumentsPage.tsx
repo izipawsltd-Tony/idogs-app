@@ -263,8 +263,9 @@ export default function FinanceDocumentsPage({ toast }: Props) {
     setDogId(id); setOriginalDocumentNumber(''); setOriginalDocumentId('')
     const dog = dogs.find(d => d.id === id), transferred = !!dog?.transferredAt
     const email = (transferred ? dog?.buyerEmail : dog?.reservedForEmail) || ''
-    setBuyerName((transferred ? dog?.buyerName : dog?.reservedForName) || ''); setBuyerEmail(email); setBuyerPhone((transferred ? dog?.buyerPhone : dog?.reservedForPhone) || ''); setBuyerAddress(''); setSelectedBuyer(email.toLowerCase())
-    setDepositPaid(dog?.depositStatus === 'received' ? String(dog.depositAmount || 0) : ''); setAmountPaid(''); setDepositTotal('')
+    const keepBuyer = !!selectedBuyer && buyerOptions.some(c => c.email === selectedBuyer)
+    if (!keepBuyer) { setBuyerName((transferred ? dog?.buyerName : dog?.reservedForName) || ''); setBuyerEmail(email); setBuyerPhone((transferred ? dog?.buyerPhone : dog?.reservedForPhone) || ''); setBuyerAddress(''); setSelectedBuyer(email.toLowerCase()) }
+    setDepositPaid(dog?.depositStatus === 'received' && (!keepBuyer || email.toLowerCase() === selectedBuyer) ? String(dog.depositAmount || 0) : ''); setAmountPaid(''); setDepositTotal('')
   }
   function pickBuyer(email: string) {
     const contact = buyerOptions.find(c => c.email === email)
