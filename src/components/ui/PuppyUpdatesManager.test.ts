@@ -30,6 +30,19 @@ it('makes the composer usable without loading the optional media library or litt
   await act(async () => { screen.root.findAllByType('input').find(input => input.props.type === 'checkbox')!.props.onChange({ target: { checked: true } }) })
   expect(state.dogs).toHaveBeenCalledTimes(1)
 })
+it('accepts typing while history loads and keeps sharing locked until its setting is known', async () => {
+  let resolve!: (value: unknown) => void
+  state.request.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+  await render()
+  const textarea = screen.root.findByProps({ id: 'puppy-update-text' })
+  expect(textarea.parent?.props.disabled).toBe(false)
+  expect(screen.root.findByProps({ role: 'switch' }).props.disabled).toBe(true)
+  await act(async () => { textarea.props.onChange({ target: { value: 'A draft written immediately' } }); screen.root.findByProps({ id: 'puppy-update-audience' }).props.onChange({ target: { value: 'public' } }) })
+  expect(button('Publish update').props.disabled).toBe(true)
+  await act(async () => { resolve(story) })
+  expect(screen.root.findByProps({ id: 'puppy-update-text' }).props.value).toBe('A draft written immediately')
+  expect(screen.root.findByProps({ role: 'switch' }).props.disabled).toBe(false)
+})
 it('updates the sharing switch immediately, locks rapid clicks, and rolls back on failure', async () => {
   await render()
   let reject!: (error: Error) => void
