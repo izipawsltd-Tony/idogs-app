@@ -23,6 +23,14 @@ try {
   }
   result.backup = await api(fsUrl(m.backupName), { allow404: true })
   result.schedule = await api(fsUrl(m.scheduleName), { allow404: true })
+  result.cleanupOperations = {}
+  for (const id of [TARGET.destination, TARGET.source]) {
+    const saved = m.cleanupOperations?.[id]
+    if (!saved?.operation?.name) continue
+    const uid = id === TARGET.source ? m.sourceUid : m.destinationUid
+    ensure([dbName(id), `projects/${TARGET.projectId}/databases/${uid}`].some(base => saved.operation.name.startsWith(`${base}/operations/`)), 'MANAGED_BACKUP_DIAGNOSIS_OPERATION_SCOPE')
+    result.cleanupOperations[id] = await api(fsUrl(saved.operation.name), { allow404: true })
+  }
   await writeFile('managed-backup-diagnosis.json', JSON.stringify(result, null, 2))
   console.log(JSON.stringify(result, null, 2))
 } catch (error) {
