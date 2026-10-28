@@ -4,9 +4,9 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, expect, it, vi } from 'vitest'
 import type { Dog } from '../../types'
 
-const state = vi.hoisted(() => ({ request: vi.fn() }))
+const state = vi.hoisted(() => ({ request: vi.fn(), dogs: vi.fn() }))
 vi.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'breeder' } }) }))
-vi.mock('../../lib/db', () => ({ isCurrentOwner: () => true, getDogs: async () => [{ id: 'blue', name: 'Blue', litterId: 'litter' }], uploadShowcaseMediaDirect: vi.fn(), managePrivateDogAccess: vi.fn() }))
+vi.mock('../../lib/db', () => ({ isCurrentOwner: () => true, getDogs: state.dogs, uploadShowcaseMediaDirect: vi.fn(), managePrivateDogAccess: vi.fn() }))
 vi.mock('../../lib/puppyUpdates', () => ({ puppyUpdates: state.request, puppyPath: () => '/p/QR', puppyShareUrl: () => 'https://example.test/p/QR' }))
 import PuppyUpdatesManager from './PuppyUpdatesManager'
 const update = { id: 'one', text: 'Garden', date: '2026-10-28', audience: 'internal', inherited: false, media: [{ id: 'photo', kind: 'photo', url: 'https://example.test/photo' }] }
@@ -16,9 +16,20 @@ let screen: ReactTestRenderer
 const button = (text: string) => screen.root.findAllByType('button').find(b => b.children.join('') === text)!
 beforeEach(() => {
   state.request.mockReset().mockImplementation(async body => body.action === 'gallery' ? { media: update.media } : story)
+  state.dogs.mockReset().mockResolvedValue([{ id: 'blue', name: 'Blue', litterId: 'litter' }])
   vi.stubGlobal('document', { getElementById: () => null })
 })
 async function render() { await act(async () => { screen = create(createElement(MemoryRouter, {}, createElement(PuppyUpdatesManager, { dog }))) }) }
+it('makes the composer usable without loading the optional media library or littermates', async () => {
+  await render()
+  expect(state.request.mock.calls.map(([body]) => body.action)).toEqual(['view'])
+  expect(state.dogs).not.toHaveBeenCalled()
+  expect(screen.root.findByProps({ id: 'puppy-update-text' }).parent?.props.disabled).not.toBe(true)
+  await act(async () => { button('Choose from uploaded media').props.onClick() })
+  expect(state.request).toHaveBeenCalledWith({ action: 'gallery', dogId: 'ruby' })
+  await act(async () => { screen.root.findAllByType('input').find(input => input.props.type === 'checkbox')!.props.onChange({ target: { checked: true } }) })
+  expect(state.dogs).toHaveBeenCalledTimes(1)
+})
 it('updates the sharing switch immediately, locks rapid clicks, and rolls back on failure', async () => {
   await render()
   let reject!: (error: Error) => void

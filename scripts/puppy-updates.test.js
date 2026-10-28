@@ -79,6 +79,19 @@ describe('Puppy update privacy through the ownership lifecycle', () => {
 })
 
 describe('Actual puppy updates handler', () => {
+  it('signs repeated visible files once for the whole page and excludes private hidden files', async () => {
+    let signingCalls = 0
+    const shared = { ...puppy.photos[0], kind: 'photo' }
+    const { call, signed } = setup({
+      'puppyProfiles/puppy1/updates/first': entry('buyer', { media: [shared] }),
+      'puppyProfiles/puppy1/updates/second': entry('buyer', { media: [{ ...shared, id: 'alias-photo' }] }),
+      'puppyProfiles/puppy1/updates/hidden': entry('internal', { media: [{ ...shared, id: 'hidden', path: 'dogs/breeder/puppy1/photos/secret.jpg' }] }),
+    }, () => { signingCalls++ })
+    const result = await call({ dogId: 'puppy1' }, 'buyer')
+    expect(result.code).toBe(200); expect(signingCalls).toBe(1); expect(signed).toHaveLength(1)
+    expect(result.body.updates.map(u => u.media[0].id)).toEqual(['photo1', 'alias-photo'])
+    expect(result.body.updates[0].media[0].url).toBe(result.body.updates[1].media[0].url)
+  })
   it('edits text/date/audience, replaces media and leaves other puppy copies unchanged', async () => {
     const { call, db } = setup()
     const created = await call(create({ dogIds: ['puppy1', 'puppy2'] }), 'breeder')

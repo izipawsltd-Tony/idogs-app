@@ -178,17 +178,21 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
       if (!cursor.exists) throw new ApiError(400, 'This page is unavailable; refresh updates')
       page = page.startAfter(cursor)
     }
-    const snapshot = await page.limit(25).get()
-    const updates = []
-    for (const snap of snapshot.docs) {
-      const entry = snap.data()
-      if (!mayReadUpdate(entry, dog, profile, role)) continue
-      const media = (entry.media || []).filter(m => safeUpdateMedia(m, entry))
-      const items = role === 'public' ? media.map(m => ({ id: m.id, kind: m.kind, url: `${publicBase}/api/puppy-updates?action=media&passportId=${encodeURIComponent(dog.passportId)}&updateId=${snap.id}&mediaId=${m.id}` }))
-        : (await sign(media, 5 * 60 * 1000)).map(m => ({ ...m, kind: media.find(item => item.id === m.id).kind }))
-      updates.push({ id: snap.id, text: entry.text, date: entry.date, audience: entry.audience, inherited: entry.authorUid !== ownerId(dog), media: items })
+    const [snapshot, saved] = await Promise.all([page.limit(25).get(), identity ? followRef(identity.uid, dog.id).get() : null])
+    const visible = snapshot.docs.filter(snap => mayReadUpdate(snap.data(), dog, profile, role)).map(snap => ({ id: snap.id, entry: snap.data(), media: (snap.data().media || []).filter(m => safeUpdateMedia(m, snap.data())) }))
+    // Sign each visible file once per response, rather than waiting for each
+    // update in sequence. Keep authorization request-local and concurrency bounded.
+    const mediaByPath = new Map()
+    if (role !== 'public') for (const { media } of visible) for (const item of media) if (!mediaByPath.has(item.path)) mediaByPath.set(item.path, { ...item, id: `media-${mediaByPath.size}` })
+    const unique = [...mediaByPath.values()]
+    const urls = new Map()
+    for (let offset = 0; offset < unique.length; offset += 24) {
+      const signed = await sign(unique.slice(offset, offset + 24), 5 * 60 * 1000)
+      for (const item of signed) urls.set(item.id, item.url)
     }
-    const saved = identity ? await followRef(identity.uid, dog.id).get() : null
+    const updates = visible.map(({ id, entry, media }) => ({ id, text: entry.text, date: entry.date, audience: entry.audience, inherited: entry.authorUid !== ownerId(dog), media: role === 'public'
+      ? media.map(m => ({ id: m.id, kind: m.kind, url: `${publicBase}/api/puppy-updates?action=media&passportId=${encodeURIComponent(dog.passportId)}&updateId=${id}&mediaId=${m.id}` }))
+      : media.flatMap(m => { const url = urls.get(mediaByPath.get(m.path).id); return url ? [{ id: m.id, kind: m.kind, url }] : [] }) }))
     await assertSameAccess(dog, role, profile, identity)
     return res.status(200).json({ dog: { name: dog.name || 'Puppy', breed: dog.breed || '', passportId: dog.passportId }, role, following: saved?.exists || false, publicEnabled: publicSharingLive(dog, profile), updates, nextCursor: snapshot.docs.length === 25 ? snapshot.docs.at(-1).id : null, ...(role === 'owner' ? { dogId: dog.id } : {}) })
   }
