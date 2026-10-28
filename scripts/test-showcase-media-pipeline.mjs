@@ -198,8 +198,9 @@ const { check, checkAsync, skip, summary } = makeChecker()
   check('src/lib/heic.ts exports the shared isHeicFile()', /export function isHeicFile\(file: File\): boolean/.test(heicLibSrc))
   check('PhotoUpload.tsx uses the shared image preparation pipeline',
     photoUploadSrc.includes("from '../../lib/imageCompression'") && photoUploadSrc.includes('prepareImageForUpload(file)') && !/function isHeic\(file: File\)/.test(photoUploadSrc))
-  check('DogDetailPage.tsx uses the shared image preparation pipeline',
-    dogDetailSrc.includes("from '../lib/imageCompression'") && dogDetailSrc.includes('prepareImageForUpload(file)') && !/function isHeic\(file: File\)/.test(dogDetailSrc))
+  const updateComposerSrc = readFileSync(new URL('../src/components/ui/PuppyUpdatesManager.tsx', import.meta.url), 'utf8')
+  check('Dog Timeline delegates uploads to its shared image preparation composer',
+    dogDetailSrc.includes('<PuppyUpdatesManager') && updateComposerSrc.includes("from '../../lib/imageCompression'") && updateComposerSrc.includes('prepareImageForUpload(file)') && !/function isHeic\(file: File\)/.test(updateComposerSrc))
 
   // ── Dog type additions ──
   const typesSrc = readFileSync(new URL('../src/types/index.ts', import.meta.url), 'utf8')
