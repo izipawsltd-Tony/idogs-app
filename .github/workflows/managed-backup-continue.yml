@@ -1,0 +1,54 @@
+name: Continue approved managed backup restore QA
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['scripts/qa/managed-backup-continue.mjs', 'scripts/test-managed-backup-continue.mjs', '.github/workflows/managed-backup-continue.yml']
+  workflow_dispatch:
+    inputs:
+      manifest_run:
+        description: 'Exact prior approved QA run containing the durable managed-backup-manifest artifact'
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: idogs-managed-backup-qa
+  cancel-in-progress: false
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/test-managed-backup-preflight.mjs scripts/test-managed-backup-prepare.mjs scripts/test-managed-backup-continue.mjs
+      - run: npx vitest run scripts/deletion-restore-gate.test.js
+      - name: Validate exact source run ID
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          MANIFEST_RUN: ${{ inputs.manifest_run }}
+        run: node -e 'if(!/^[0-9]{8,20}$/.test(process.env.MANIFEST_RUN||""))process.exit(2)'
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: managed-backup-manifest
+          run-id: ${{ inputs.manifest_run }}
+          github-token: ${{ github.token }}
+      - name: Continue only approved managed backup and exact synthetic replay
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IDOGS_MANAGED_BACKUP_APPROVAL: 2026-10-28-two-databases-one-backup
+          IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/qa/managed-backup-continue.mjs
+      - uses: actions/upload-artifact@v4
+        if: always() && github.event_name == 'workflow_dispatch'
+        with:
+          name: managed-backup-manifest
+          path: managed-backup-manifest.json
+          if-no-files-found: ignore
+          retention-days: 14

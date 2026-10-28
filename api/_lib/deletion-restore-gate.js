@@ -7,7 +7,9 @@ const validUid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.
 // outside the restored snapshot. This does not erase records or authorise a
 // Production restore; callers must keep restored data inaccessible.
 export async function assessIsolatedDeletionRestore({ target, readLedger, inspectRestoredAccount, clock = Date.now }) {
-  if (target?.projectId !== 'idogs-app-staging' || target?.databaseId !== 'idogs-deletion-qa'
+  const approvedDatabase = target?.databaseId === 'idogs-deletion-qa'
+    || (target?.databaseId === 'idogs-deletion-restore-qa' && target?.rehearsal === 'managed-backup')
+  if (target?.projectId !== 'idogs-app-staging' || !approvedDatabase
     || target?.publicAccess !== false || target?.isolated !== true) throw new Error('ISOLATED_RESTORE_REQUIRED')
   if (typeof readLedger !== 'function' || typeof inspectRestoredAccount !== 'function') throw new Error('RESTORE_READERS_REQUIRED')
   if (typeof clock !== 'function') throw new Error('RESTORE_CLOCK_INVALID')

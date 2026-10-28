@@ -13,6 +13,14 @@ function fixture() {
 }
 
 describe('isolated deletion restore gate', () => {
+  it('allows the separately approved managed restore target only with explicit rehearsal type', async () => {
+    const f = fixture(); f.options.target.databaseId = 'idogs-deletion-restore-qa'
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('ISOLATED_RESTORE_REQUIRED')
+    f.options.target.rehearsal = 'managed-backup'
+    expect((await assessIsolatedDeletionRestore(f.options)).productionReady).toBe(false)
+    f.options.target.databaseId = 'idogs-deletion-backup-qa'
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('ISOLATED_RESTORE_REQUIRED')
+  })
   it('verifies replay without granting Production readiness or exposure', async () => {
     const f = fixture(), result = await assessIsolatedDeletionRestore(f.options)
     expect(result).toMatchObject({ replayVerified: true, keepIsolated: true, productionReady: false, checkedAccounts: 1 })
