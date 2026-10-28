@@ -134,8 +134,25 @@ export default function PuppyUpdatesManager({ dog, onUpdates, onEditReady }: { d
       <fieldset ref={composer} disabled={busy || sharingBusy} style={{ border: 0, padding: 0, margin: '16px 0' }}>
         <legend style={{ fontWeight: 600, marginBottom: 10 }}>{editing ? 'Edit update' : 'Add an update'}</legend>
         <button type="button" className="btn btn-secondary" style={{ display: 'block', marginBottom: 16 }} onClick={() => fileInput.current?.click()}>＋ Add photos / videos</button>
+        <input ref={fileInput} aria-label="Upload update photos and videos" type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm" style={{ display: 'none' }} onChange={e => { void upload(e.target.files); e.target.value = ''; changed() }} />
+        <div aria-label="Selected photos and videos" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10, marginBottom: 14 }}>{selectedMedia.map(id => {
+          const media = availableMedia.find(m => m.id === id)
+          return <div key={id} style={{ padding: 6, border: '1px solid var(--border)', borderRadius: 10 }}>
+            {media ? (media.kind === 'photo' ? <img src={media.url} alt="Selected update photo" style={{ width: '100%', height: 100, objectFit: 'cover', borderRadius: 6 }} /> : <video src={media.url} controls preload="metadata" style={{ width: '100%', height: 100 }} />) : <span>Loading media…</span>}
+            <button type="button" className="btn btn-ghost btn-sm" aria-label={'Remove selected ' + (media?.kind || 'media') + ' ' + (selectedMedia.indexOf(id) + 1)} onClick={() => { setSelectedMedia(ids => ids.filter(item => item !== id)); changed() }}>× Remove</button>
+          </div>
+        })}</div>
+        <p style={{ fontSize: 12, color: 'var(--mid)' }}>Up to 12 photos/videos. Videos up to 20 MB. Removing an item here does not delete it from other updates.</p>
+        {<><button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowLibrary(value => !value)}>{showLibrary ? 'Hide uploaded media' : 'Choose from uploaded media'}</button>
+          {showLibrary && galleryLoading && <p role="status">Loading uploaded media…</p>}
+          {showLibrary && !galleryLoading && !gallery.length && <p>No uploaded media yet. Use Add photos / videos above.</p>}
+          {showLibrary && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10, margin: '12px 0' }}>{gallery.map(media => <button type="button" key={media.id} aria-label={'Select ' + media.kind + ' ' + media.id} aria-pressed={selectedMedia.includes(media.id)} disabled={!selectedMedia.includes(media.id) && selectedMedia.length >= 12} style={{ padding: 6, border: selectedMedia.includes(media.id) ? '2px solid var(--brand-600)' : '1px solid var(--border)', borderRadius: 10, background: 'transparent' }} onClick={() => { setSelectedMedia(ids => ids.includes(media.id) ? ids.filter(id => id !== media.id) : [...ids, media.id]); changed() }}>
+            {media.kind === 'photo' ? <img src={media.url} alt="Uploaded puppy photo" style={{ width: '100%', height: 90, objectFit: 'cover' }} /> : <video src={media.url} preload="metadata" muted style={{ width: '100%', height: 90 }} />}
+            <span>{selectedMedia.includes(media.id) ? '✓ Selected' : '＋ Select'}</span>
+          </button>)}</div>}
+        </>}
+        <label className="form-label" htmlFor="puppy-update-text" style={{ display: 'block', marginTop: 18 }}>Tell their story</label><textarea id="puppy-update-text" className="form-textarea" maxLength={3000} value={text} placeholder="A first adventure, a new milestone or a little moment to remember…" onChange={e => { setText(e.target.value); changed() }} style={{ minHeight: 80, width: '100%', marginBottom: 16 }} />
         <label className="form-label" htmlFor="puppy-update-date" style={{ display: 'block' }}>Update date</label><input id="puppy-update-date" className="form-input" type="date" value={date} onChange={e => { setDate(e.target.value); changed() }} style={{ display: 'block', maxWidth: 200, marginBottom: 14 }} />
-        <label className="form-label" htmlFor="puppy-update-text">What’s new?</label><textarea id="puppy-update-text" className="form-textarea" maxLength={3000} value={text} placeholder="Week 5 — exploring the garden together…" onChange={e => { setText(e.target.value); changed() }} style={{ minHeight: 80, width: '100%' }} />
         <label className="form-label" htmlFor="puppy-update-audience" style={{ marginTop: 12 }}>Who can see this update?</label><select id="puppy-update-audience" className="form-select" value={audience} onChange={e => { setAudience(e.target.value as UpdateAudience); changed() }}>{Object.entries(AUDIENCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
         {audience === 'public' && !ready && <p style={{ fontSize: 12 }}>Checking QR sharing before publishing…</p>}
         {audience === 'public' && ready && !story?.publicEnabled && <p style={{ fontSize: 12, color: 'var(--warning)' }}>Public sharing is off. Enable it above before visitors can see public updates.</p>}
@@ -151,23 +168,6 @@ export default function PuppyUpdatesManager({ dog, onUpdates, onEditReady }: { d
           </div>}
         </div>}
         {editing && <p style={{ fontSize: 12 }}>Changes apply to this puppy’s update only. Other puppies’ copies stay unchanged.</p>}
-        <input ref={fileInput} aria-label="Upload update photos and videos" type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm" style={{ display: 'none' }} onChange={e => { void upload(e.target.files); e.target.value = ''; changed() }} />
-        <p style={{ fontSize: 12, color: 'var(--mid)' }}>Up to 12 photos/videos. Videos up to 20 MB. Removing an item here does not delete it from other updates.</p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10, marginBottom: 14 }}>{selectedMedia.map(id => {
-          const media = availableMedia.find(m => m.id === id)
-          return <div key={id} style={{ padding: 6, border: '1px solid var(--border)', borderRadius: 10 }}>
-            {media ? (media.kind === 'photo' ? <img src={media.url} alt="Selected update photo" style={{ width: '100%', height: 100, objectFit: 'cover', borderRadius: 6 }} /> : <video src={media.url} controls preload="metadata" style={{ width: '100%', height: 100 }} />) : <span>Loading media…</span>}
-            <button type="button" className="btn btn-ghost btn-sm" aria-label={'Remove selected ' + (media?.kind || 'media') + ' ' + (selectedMedia.indexOf(id) + 1)} onClick={() => { setSelectedMedia(ids => ids.filter(item => item !== id)); changed() }}>× Remove</button>
-          </div>
-        })}</div>
-        {<><button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowLibrary(value => !value)}>{showLibrary ? 'Hide uploaded media' : 'Choose from uploaded media'}</button>
-          {showLibrary && galleryLoading && <p role="status">Loading uploaded media…</p>}
-          {showLibrary && !galleryLoading && !gallery.length && <p>No uploaded media yet. Use Add photos / videos above.</p>}
-          {showLibrary && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10, margin: '12px 0' }}>{gallery.map(media => <button type="button" key={media.id} aria-label={'Select ' + media.kind + ' ' + media.id} aria-pressed={selectedMedia.includes(media.id)} disabled={!selectedMedia.includes(media.id) && selectedMedia.length >= 12} style={{ padding: 6, border: selectedMedia.includes(media.id) ? '2px solid var(--brand-600)' : '1px solid var(--border)', borderRadius: 10, background: 'transparent' }} onClick={() => { setSelectedMedia(ids => ids.includes(media.id) ? ids.filter(id => id !== media.id) : [...ids, media.id]); changed() }}>
-            {media.kind === 'photo' ? <img src={media.url} alt="Uploaded puppy photo" style={{ width: '100%', height: 90, objectFit: 'cover' }} /> : <video src={media.url} preload="metadata" muted style={{ width: '100%', height: 90 }} />}
-            <span>{selectedMedia.includes(media.id) ? '✓ Selected' : '＋ Select'}</span>
-          </button>)}</div>}
-        </>}
         <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
           <button className="btn btn-primary" disabled={!text.trim() || selectedMedia.length > 12 || selectedDogs.length > 12 || (audience !== 'internal' && !ready)} onClick={() => void run(async () => { await puppyUpdates(editing ? { action: 'edit', dogId: dog.id, updateId: editing.id, text, date, audience, mediaIds: selectedMedia } : { action: 'create', dogIds: [dog.id, ...selectedDogs.filter(id => id !== dog.id)], requestId, text, date, audience, mediaIds: selectedMedia }); resetComposer() }, editing ? 'Changes saved' : 'Update saved')}>{busy ? 'Saving…' : editing ? 'Save changes' : audience === 'internal' ? 'Save private update' : 'Publish update'}</button>
           {(editing || text || selectedMedia.length > 0) && <button type="button" className="btn btn-secondary" onClick={resetComposer}>Cancel</button>}
