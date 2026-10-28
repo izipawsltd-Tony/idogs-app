@@ -18,7 +18,7 @@ export function validateManifest(m) {
   ensure(digest(m.records) === digest(expected), 'MANAGED_BACKUP_FIXTURE_CHANGED')
 }
 export function verifyBackup(b, m) {
-  ensure(b?.database === dbName(TARGET.source) && b.databaseUid === m.sourceUid
+  ensure([dbName(TARGET.source), `projects/${TARGET.projectId}/databases/${m.sourceUid}`].includes(b?.database) && b.databaseUid === m.sourceUid
     && b.name?.startsWith(`projects/${TARGET.projectId}/locations/${TARGET.location}/backups/`)
     && b.state === 'READY' && Number.isFinite(Date.parse(b.snapshotTime))
     && Date.parse(b.snapshotTime) >= Date.parse(m.createdAt), 'MANAGED_BACKUP_IDENTITY_MISMATCH')
@@ -85,6 +85,17 @@ export async function recoverVerifiedLegacyCleanup({ api, manifest: m, save, loa
     historicalDeletionProof: { runId: run.id, jobId: job.id, deleteTime: deleted.response.deleteTime } } }
   await save(m)
 }
+export function verifyDeletedCleanup(metadata, saved, id, uid) {
+  const canonical = `projects/${TARGET.projectId}/databases/${uid}`
+  const initial = saved.operation?.response
+  ensure(saved.uid === uid && saved.etag && initial?.uid === uid && initial.name === canonical
+    && initial.previousId === id && Number.isFinite(Date.parse(initial.deleteTime))
+    && metadata?.name === canonical && metadata.uid === uid && metadata.previousId === id
+    && metadata.deleteTime === initial.deleteTime && metadata.createTime === initial.createTime
+    && Number.isFinite(Date.parse(metadata.createTime)) && Date.parse(metadata.deleteTime) >= Date.parse(metadata.createTime)
+    && metadata.databaseEdition === 'STANDARD' && metadata.locationId === TARGET.location
+    && metadata.type === 'FIRESTORE_NATIVE', 'MANAGED_BACKUP_DELETED_CLEANUP_UNVERIFIED')
+}
 export async function cleanupBackup({ api, db, manifest: m, save, report = {} }) {
   validateManifest(m)
   ensure(m.destinationUid && m.backupName && m.restoreOperation?.done === true
@@ -119,9 +130,27 @@ export async function cleanupBackup({ api, db, manifest: m, save, report = {} })
     const suffix = saved.operation?.name?.split('/operations/')[1]
     ensure(saved.uid === uid && /^[A-Za-z0-9_-]+$/.test(suffix || '')
       && [dbName(id), canonicalBase].some(base => saved.operation.name === `${base}/operations/${suffix}`), 'MANAGED_BACKUP_CLEANUP_OPERATION_CHANGED')
-    const actual = await api(fsUrl(saved.operation.name))
+    // The public database ID stops resolving after deletion. Query the same
+    // operation suffix through the already-verified immutable database UID.
+    const actual = await api(fsUrl(`${canonicalBase}/operations/${suffix}`))
+    if (![dbName(id), canonicalBase].some(base => actual.name === `${base}/operations/${suffix}`)) {
+      // A changed operation identifier is not operation-completion evidence.
+      // Independently prove deletion against the original DELETE response;
+      // retain that response instead of overwriting its immutable identity.
+      ensure(actual.done === true && !actual.error
+        && actual.metadata?.['@type'] === 'type.googleapis.com/google.firestore.admin.v1.DeleteDatabaseMetadata', 'MANAGED_BACKUP_CLEANUP_OPERATION_CHANGED')
+      const deleted = await api(fsUrl(canonicalBase))
+      verifyDeletedCleanup(deleted, saved, id, uid)
+      ensure(await api(fsUrl(dbName(id)), { allow404: true }) === null, 'MANAGED_BACKUP_DELETED_DATABASE_REAPPEARED')
+      saved.deletedMetadataProof = { uid, previousId: id, deleteTime: deleted.deleteTime,
+        createTime: deleted.createTime, operationIdentityVerified: false }
+      saved.absenceVerified = true; await save(m)
+      continue
+    }
     ensure([dbName(id), canonicalBase].some(base => actual.name === `${base}/operations/${suffix}`) && !actual.error
       && (!actual.metadata?.['@type'] || actual.metadata['@type'] === 'type.googleapis.com/google.firestore.admin.v1.DeleteDatabaseMetadata'), 'MANAGED_BACKUP_CLEANUP_OPERATION_CHANGED')
+    if (actual.response?.uid) ensure(actual.response.uid === uid
+      && (!actual.response.previousId || actual.response.previousId === id), 'MANAGED_BACKUP_CLEANUP_IDENTITY_CHANGED')
     saved.operation = actual; await save(m)
     if (!actual.done) return pending()
     const remaining = await api(fsUrl(dbName(id)), { allow404: true })

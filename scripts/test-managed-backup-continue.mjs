@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { validateManifest, verifyBackup, verifyRestoreOperation, continueBackup, recoverVerifiedLegacyCleanup, verifyDeletedRestore } from './qa/managed-backup-continue.mjs'
+import { validateManifest, verifyBackup, verifyRestoreOperation, continueBackup, recoverVerifiedLegacyCleanup, verifyDeletedRestore, verifyDeletedCleanup } from './qa/managed-backup-continue.mjs'
 import { TARGET } from './qa/managed-backup-preflight.mjs'
 const fixture = () => {
   const m = { schema: 1, ...TARGET, ownerApproval: '2026-10-28-two-databases-one-backup', nonce: '12345678-1234-1234-1234-123456789abc', sourceUid: 'immutable-source', createdAt: '2026-10-28T06:30:00Z', scheduleName: `projects/${TARGET.projectId}/databases/${TARGET.source}/backupSchedules/one` }
@@ -20,6 +20,7 @@ test('accepts only exact approved manifest and synthetic contents', () => {
 })
 test('rejects backup from wrong database generation, region, time or readiness', () => {
   const { m, b } = fixture(); verifyBackup(b, m)
+  verifyBackup({ ...b, database: `projects/${TARGET.projectId}/databases/${m.sourceUid}` }, m)
   for (const change of [{ databaseUid: 'replaced' }, { database: 'projects/idogs-app/databases/(default)' }, { name: 'projects/idogs-app-staging/locations/us-central1/backups/one' }, { state: 'CREATING' }, { snapshotTime: '2026-10-27T00:00:00Z' }]) assert.throws(() => verifyBackup({ ...b, ...change }, m), /IDENTITY_MISMATCH/)
 })
 test('invalid manifest fails before any cloud access', async () => {
@@ -62,7 +63,7 @@ function cloudFixture({ ready = true, corruptRestore = false, restorePending = f
   const api = async (url, options = {}) => {
     calls.push({ url, options })
     if (url.endsWith('/backups')) return { backups: backup ? [{ ...b, state: ready ? 'READY' : 'CREATING' }] : [] }
-    if (url.endsWith('/backups/one')) { if (options.method === 'DELETE') { backup = false; return {} } return backup ? b : null }
+    if (url.endsWith('/backups/one')) { if (options.method === 'DELETE') { backup = false; return {} } return backup ? { ...b, database: stores.has(TARGET.source) ? b.database : `projects/${TARGET.projectId}/databases/${m.sourceUid}` } : null }
     if (url.endsWith('/backupSchedules/one')) { if (options.method === 'DELETE') { schedule = false; return {} } return schedule ? { name: m.scheduleName, retention: '604800s', dailyRecurrence: {} } : null }
     if (url.endsWith('/releases/cloud.firestore/idogs-deletion-qa')) return { rulesetName: rs }
     if (url.endsWith('/rulesets/existing')) {
@@ -184,6 +185,21 @@ test('cleanup follows canonical immutable-UID operation names after deletion wit
   assert.equal((await continueBackup(f)).cleanupVerified, true)
   assert.equal(f.calls.filter(c => c.options.method === 'DELETE' && c.url.includes(`/databases/${TARGET.destination}?`)).length, 1)
 })
+test('cleanup queries immutable UID instead of a deleted public alias and rejects foreign response UID', async () => {
+  const f = cloudFixture(), originalApi = f.api
+  f.api = async (url, options = {}) => {
+    if (url.includes('/operations/delete') && [TARGET.source, TARGET.destination].some(id => url.includes(`/databases/${id}/`))) throw new Error('Deleted public alias must not be queried')
+    return originalApi(url, options)
+  }
+  assert.equal((await continueBackup(f)).cleanupVerified, true)
+  const wrong = cloudFixture(), wrongApi = wrong.api
+  wrong.api = async (url, options = {}) => {
+    const value = await wrongApi(url, options)
+    return url.includes('/operations/delete') ? { ...value, response: { uid: 'different-database' } } : value
+  }
+  await assert.rejects(continueBackup(wrong), /CLEANUP_IDENTITY_CHANGED/)
+  assert.ok(!wrong.calls.some(c => c.options.method === 'DELETE' && c.url.endsWith('/backups/one')))
+})
 
 function legacyFixture() {
   const { m, b } = fixture()
@@ -209,4 +225,48 @@ test('legacy receipt recovery requires exact historical job evidence plus provid
 test('deleted restore identity cannot be replaced by another generation or missing previousId', () => {
   const f = legacyFixture(); verifyDeletedRestore(f.deleted, f.manifest)
   for (const change of [{ uid: 'other' }, { previousId: 'other' }, { deleteTime: '2026-10-27T00:00:00Z' }]) assert.throws(() => verifyDeletedRestore({ ...f.deleted, response: { ...f.deleted.response, ...change } }, f.manifest), /DELETED_IDENTITY_UNVERIFIED/)
+})
+
+test('deleted database metadata must match the durable original DELETE identity and exact deletion time', () => {
+  const id = TARGET.source, uid = 'immutable-source'
+  const metadata = { name: `projects/${TARGET.projectId}/databases/${uid}`, uid, previousId: id,
+    createTime: '2026-10-28T06:28:49Z', deleteTime: '2026-10-28T09:22:24Z',
+    databaseEdition: 'STANDARD', locationId: TARGET.location, type: 'FIRESTORE_NATIVE' }
+  const saved = { uid, etag: 'verified-predelete-etag', operation: { response: structuredClone(metadata) } }
+  verifyDeletedCleanup(metadata, saved, id, uid)
+  for (const change of [{ uid: 'other' }, { previousId: TARGET.destination }, { deleteTime: '2026-10-28T09:22:25Z' },
+    { createTime: '2026-10-28T06:28:50Z' }, { locationId: 'other' }, { databaseEdition: 'ENTERPRISE' }]) {
+    assert.throws(() => verifyDeletedCleanup({ ...metadata, ...change }, saved, id, uid), /DELETED_CLEANUP_UNVERIFIED/)
+  }
+  assert.throws(() => verifyDeletedCleanup(metadata, { ...saved, operation: { response: {} } }, id, uid), /DELETED_CLEANUP_UNVERIFIED/)
+})
+
+test('changed delete operation ID requires independent matching deleted metadata before backup cleanup', async () => {
+  for (const corrupt of [false, true]) {
+    const f = cloudFixture(), original = f.api, deleted = new Map()
+    f.api = async (url, options = {}) => {
+      if (deleted.has(url)) return { ...deleted.get(url), ...(corrupt ? { previousId: 'replacement' } : {}) }
+      const value = await original(url, options)
+      if (options.method === 'DELETE' && url.includes('?etag=')) {
+        const id = url.includes(TARGET.destination) ? TARGET.destination : TARGET.source
+        const uid = id === TARGET.source ? f.manifest.sourceUid : 'restored-uid'
+        const name = `projects/${TARGET.projectId}/databases/${uid}`
+        const response = { name, uid, previousId: id, createTime: '2026-10-28T06:28:49Z', deleteTime: '2026-10-28T09:22:24Z',
+          databaseEdition: 'STANDARD', locationId: TARGET.location, type: 'FIRESTORE_NATIVE' }
+        deleted.set(`https://firestore.googleapis.com/v1/${name}`, response)
+        return { ...value, response }
+      }
+      if (url.includes('/operations/delete')) return { name: value.name.replace('/operations/delete', '/operations/changed'), done: true,
+        metadata: { '@type': 'type.googleapis.com/google.firestore.admin.v1.DeleteDatabaseMetadata' }, response: {} }
+      return value
+    }
+    if (corrupt) {
+      await assert.rejects(continueBackup(f), /DELETED_CLEANUP_UNVERIFIED/)
+      assert.ok(!f.calls.some(c => c.options.method === 'DELETE' && c.url.endsWith('/backups/one')))
+    } else {
+      assert.equal((await continueBackup(f)).cleanupVerified, true)
+      assert.equal(f.manifest.cleanupOperations[TARGET.source].deletedMetadataProof.operationIdentityVerified, false)
+      assert.equal(f.calls.filter(c => c.options.method === 'DELETE' && c.url.includes('?etag=')).length, 2)
+    }
+  }
 })
