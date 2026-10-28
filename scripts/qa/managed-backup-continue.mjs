@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
-import { clients, ensure, fsUrl, dbName, verifyDatabase, denyClients, operation } from './managed-backup-prepare.mjs'
+import { clients, ensure, fsUrl, dbName, verifyDatabase, denyClients } from './managed-backup-prepare.mjs'
 import { TARGET } from './managed-backup-preflight.mjs'
 import { digest } from '../../api/_lib/deletion-plan.js'
 import { assessIsolatedDeletionRestore } from '../../api/_lib/deletion-restore-gate.js'
@@ -44,8 +44,109 @@ async function inventory(db, m, { deleted = false, tombstone = false } = {}) {
   for (const doc of snapshot.docs) ensure((await doc.ref.listCollections()).length === 0, 'MANAGED_BACKUP_NESTED_CONTENT')
   return snapshot
 }
+export function cleanupReceipt(m) {
+  return { nonce: m.nonce, sourceUid: m.sourceUid, destinationUid: m.destinationUid,
+    backupName: m.backupName, restoreOperation: m.restoreOperation.name,
+    managedBackupResurrectionBlocked: true, managedBackupRestoreVerified: true }
+}
+export function verifyDeletedRestore(actual, m) {
+  const canonical = `projects/${TARGET.projectId}/databases/${m.destinationUid}`
+  const suffix = m.restoreOperation.name.split('/operations/')[1]
+  ensure(m.destinationUid && actual?.name === `${canonical}/operations/${suffix}` && actual.done === true && !actual.error
+    && actual.metadata?.['@type'] === 'type.googleapis.com/google.firestore.admin.v1.RestoreDatabaseMetadata'
+    && actual.metadata.database === canonical && actual.metadata.backup === m.backupName
+    && actual.response?.uid === m.destinationUid && actual.response.previousId === TARGET.destination
+    && actual.response.name === canonical && Number.isFinite(Date.parse(actual.response.deleteTime))
+    && Date.parse(actual.response.deleteTime) >= Date.parse(actual.metadata.endTime)
+    && actual.response.sourceInfo?.backup?.backup === m.backupName, 'MANAGED_BACKUP_DELETED_IDENTITY_UNVERIFIED')
+}
+export async function recoverVerifiedLegacyCleanup({ api, manifest: m, save, loadEvidence }) {
+  validateManifest(m)
+  // One diagnosed pre-receipt run only. Never infer replay success from missing
+  // data or an operator-provided boolean; authenticate the exact historical job.
+  ensure(m.nonce === '28944b70-51c1-401e-94f6-3a1e7692a60f'
+    && m.sourceUid === 'e9cbde7b-2372-47eb-9000-1ccb7baf6ecf'
+    && m.destinationUid === '7bfd4493-b0ae-4429-8861-3779aec1a253', 'MANAGED_BACKUP_LEGACY_SCOPE_MISMATCH')
+  verifyRestoreOperation(m.restoreOperation, m)
+  const { run, job, logs } = await loadEvidence()
+  ensure(run.id === 40655659645 && run.head_sha === '942b2b17d03a55668fb97e978be06c58136e26e7'
+    && run.head_branch === 'release/ios-app-store-20261025' && run.event === 'workflow_dispatch'
+    && run.path === '.github/workflows/managed-backup-continue.yml' && run.status === 'completed'
+    && job.id === 122705971553 && job.run_id === run.id && job.conclusion === 'failure'
+    && typeof logs === 'string' && logs.split('\n').some(line => line.includes('"phase":"cleanup"')
+      && line.includes('"managedBackupResurrectionBlocked":true') && line.includes('"managedBackupRestoreVerified":true')
+      && line.includes('"code":"MANAGED_BACKUP_OPERATION_PENDING"') && line.includes('"productionReady":false')),
+  'MANAGED_BACKUP_LEGACY_REPLAY_EVIDENCE_REQUIRED')
+  const deleted = await api(fsUrl(m.restoreOperation.name))
+  verifyDeletedRestore(deleted, m)
+  ensure(await api(fsUrl(dbName(TARGET.destination)), { allow404: true }) === null, 'MANAGED_BACKUP_DELETED_DATABASE_REAPPEARED')
+  m.replayReceipt = cleanupReceipt(m)
+  m.cleanupOperations = { [TARGET.destination]: { uid: m.destinationUid, absenceVerified: true,
+    historicalDeletionProof: { runId: run.id, jobId: job.id, deleteTime: deleted.response.deleteTime } } }
+  await save(m)
+}
+export async function cleanupBackup({ api, db, manifest: m, save, report = {} }) {
+  validateManifest(m)
+  ensure(m.destinationUid && m.backupName && m.restoreOperation?.done === true
+    && digest(m.replayReceipt) === digest(cleanupReceipt(m)), 'MANAGED_BACKUP_REPLAY_RECEIPT_REQUIRED')
+  verifyRestoreOperation(m.restoreOperation, m)
+  ensure(await api(fsUrl(m.scheduleName), { allow404: true }) === null, 'MANAGED_BACKUP_SCHEDULE_REMAINS')
+  m.cleanupOperations ||= {}
+  const pending = () => ({ ...report, phase: 'cleanup', status: 'waiting_for_managed_cleanup',
+    managedBackupResurrectionBlocked: true, managedBackupRestoreVerified: true, cleanupVerified: false, productionReady: false })
+  for (const id of [TARGET.destination, TARGET.source]) {
+    const uid = id === TARGET.source ? m.sourceUid : m.destinationUid
+    let saved = m.cleanupOperations[id]
+    if (saved?.historicalDeletionProof) {
+      ensure(id === TARGET.destination && saved.uid === m.destinationUid && saved.historicalDeletionProof.runId === 40655659645
+        && saved.historicalDeletionProof.jobId === 122705971553, 'MANAGED_BACKUP_LEGACY_SCOPE_MISMATCH')
+      const deleted = await api(fsUrl(m.restoreOperation.name)); verifyDeletedRestore(deleted, m)
+      ensure(deleted.response.deleteTime === saved.historicalDeletionProof.deleteTime
+        && await api(fsUrl(dbName(id)), { allow404: true }) === null, 'MANAGED_BACKUP_DELETED_DATABASE_REAPPEARED')
+      continue
+    }
+    if (!saved) {
+      const metadata = await api(fsUrl(dbName(id)))
+      verifyDatabase(metadata, id)
+      ensure(metadata.uid === uid && metadata.etag && metadata.deleteProtectionState === 'DELETE_PROTECTION_DISABLED', 'MANAGED_BACKUP_CLEANUP_IDENTITY_CHANGED')
+      await inventory(db(id), m, { deleted: true, tombstone: id === TARGET.destination })
+      const operation = await api(fsUrl(`${dbName(id)}?etag=${encodeURIComponent(metadata.etag)}`), { method: 'DELETE' })
+      ensure([dbName(id), `projects/${TARGET.projectId}/databases/${uid}`].some(base => operation.name?.startsWith(`${base}/operations/`)), 'MANAGED_BACKUP_CLEANUP_OPERATION_CHANGED')
+      saved = { uid, etag: metadata.etag, operation }; m.cleanupOperations[id] = saved
+      await save(m)
+    }
+    const canonicalBase = `projects/${TARGET.projectId}/databases/${uid}`
+    const suffix = saved.operation?.name?.split('/operations/')[1]
+    ensure(saved.uid === uid && /^[A-Za-z0-9_-]+$/.test(suffix || '')
+      && [dbName(id), canonicalBase].some(base => saved.operation.name === `${base}/operations/${suffix}`), 'MANAGED_BACKUP_CLEANUP_OPERATION_CHANGED')
+    const actual = await api(fsUrl(saved.operation.name))
+    ensure([dbName(id), canonicalBase].some(base => actual.name === `${base}/operations/${suffix}`) && !actual.error
+      && (!actual.metadata?.['@type'] || actual.metadata['@type'] === 'type.googleapis.com/google.firestore.admin.v1.DeleteDatabaseMetadata'), 'MANAGED_BACKUP_CLEANUP_OPERATION_CHANGED')
+    saved.operation = actual; await save(m)
+    if (!actual.done) return pending()
+    const remaining = await api(fsUrl(dbName(id)), { allow404: true })
+    if (remaining) {
+      ensure(remaining.uid === uid, 'MANAGED_BACKUP_CLEANUP_IDENTITY_CHANGED')
+      return pending()
+    }
+    saved.absenceVerified = true; await save(m)
+  }
+  const backup = await api(fsUrl(m.backupName), { allow404: true })
+  if (backup) {
+    verifyBackup(backup, m)
+    if (!m.backupDeleteRequested) {
+      m.backupDeleteRequested = true; await save(m)
+      await api(fsUrl(m.backupName), { method: 'DELETE' })
+    }
+    if (await api(fsUrl(m.backupName), { allow404: true })) return pending()
+  } else ensure(m.backupDeleteRequested === true, 'MANAGED_BACKUP_UNEXPLAINED_BACKUP_ABSENCE')
+  m.cleanupVerified = true; await save(m)
+  return { ...report, status: 'managed_backup_rehearsal_pass', managedBackupResurrectionBlocked: true,
+    managedBackupRestoreVerified: true, cleanupVerified: true, productionReady: false }
+}
 export async function continueBackup({ api, db, manifest: m, save, report = {}, clock = Date.now }) {
   validateManifest(m)
+  if (m.replayReceipt) return cleanupBackup({ api, db, manifest: m, save, report })
   const sourceMetadata = await api(fsUrl(dbName(TARGET.source)))
   verifyDatabase(sourceMetadata, TARGET.source)
   ensure(sourceMetadata.uid === m.sourceUid, 'MANAGED_BACKUP_SOURCE_REPLACED')
@@ -141,28 +242,29 @@ export async function continueBackup({ api, db, manifest: m, save, report = {}, 
   await inventory(destination, m, { deleted: true, tombstone: true })
   ensure((await check()).replayVerified, 'MANAGED_BACKUP_REPLAY_UNVERIFIED')
   report.managedBackupRestoreVerified = true
-  // Cleanup exact immutable database identities only, with content and etag guards.
+  // Persist actual verified replay before destructive cleanup starts. Every
+  // asynchronous delete operation is saved and resumed, never recreated.
+  m.replayReceipt = cleanupReceipt(m); await save(m)
   report.phase = 'cleanup'
-  for (const id of [TARGET.destination, TARGET.source]) {
-    const metadata = await api(fsUrl(dbName(id)))
-    verifyDatabase(metadata, id)
-    ensure(metadata.uid === (id === TARGET.source ? m.sourceUid : m.destinationUid) && metadata.etag
-      && metadata.deleteProtectionState === 'DELETE_PROTECTION_DISABLED', 'MANAGED_BACKUP_CLEANUP_IDENTITY_CHANGED')
-    await inventory(db(id), m, { deleted: true, tombstone: id === TARGET.destination })
-    await operation(api, await api(fsUrl(`${dbName(id)}?etag=${encodeURIComponent(metadata.etag)}`), { method: 'DELETE' }))
-    ensure(await api(fsUrl(dbName(id)), { allow404: true }) === null, 'MANAGED_BACKUP_DATABASE_REMAINS')
-  }
-  verifyBackup(await api(fsUrl(backup.name)), m)
-  await api(fsUrl(backup.name), { method: 'DELETE' })
-  ensure(await api(fsUrl(backup.name), { allow404: true }) === null, 'MANAGED_BACKUP_COPY_REMAINS')
-  m.cleanupVerified = true; await save(m)
-  return { ...report, status: 'managed_backup_rehearsal_pass', cleanupVerified: true, productionReady: false }
+  return cleanupBackup({ api, db, manifest: m, save, report })
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const report = { productionReady: false }
   try {
     const manifest = JSON.parse(await readFile('managed-backup-manifest.json', 'utf8'))
     const runtime = await clients()
+    if (!manifest.replayReceipt && manifest.restoreOperation?.done === true && manifest.destinationUid === '7bfd4493-b0ae-4429-8861-3779aec1a253') {
+      await recoverVerifiedLegacyCleanup({ ...runtime, manifest, save: m => writeFile('managed-backup-manifest.json', JSON.stringify(m, null, 2)), loadEvidence: async () => {
+        ensure(process.env.GH_TOKEN, 'MANAGED_BACKUP_LEGACY_EVIDENCE_AUTH_REQUIRED')
+        const get = async (path, raw = false) => {
+          const response = await fetch(`https://api.github.com/repos/izipawsltd-Tony/idogs-app/${path}`, { headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30000) })
+          ensure(response.ok, 'MANAGED_BACKUP_LEGACY_EVIDENCE_UNAVAILABLE')
+          return raw ? response.text() : response.json()
+        }
+        const [run, job, logs] = await Promise.all([get('actions/runs/40655659645'), get('actions/jobs/122705971553'), get('actions/jobs/122705971553/logs', true)])
+        return { run, job, logs }
+      } })
+    }
     const result = await continueBackup({ ...runtime, manifest, report, save: m => writeFile('managed-backup-manifest.json', JSON.stringify(m, null, 2)) })
     console.log(JSON.stringify(result, null, 2))
     if (result.status === 'owner_gate') process.exitCode = 2
