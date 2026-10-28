@@ -19,10 +19,10 @@ function store(seed) {
   function col(path, filters = [], max = Infinity, after = null) { return { path, doc: id => doc(`${path}/${id}`), where: (field, op, value) => col(path, [...filters, [field, value]], max), orderBy: () => col(path, filters, max, after), startAfter: snap => col(path, filters, max, snap.id), limit: n => col(path, filters, n, after), get: async () => { let keys = [...data.keys()].filter(key => key.startsWith(`${path}/`) && key.slice(path.length + 1).split('/').length === 1 && filters.every(([field, value]) => data.get(key)[field] === value)); if (after) keys = keys.slice(keys.findIndex(k => k.split('/').at(-1) === after) + 1); const docs = keys.slice(0, max).map(snapshot); return { docs, empty: !docs.length, size: docs.length } } } }
   return { data, collection: col, runTransaction: async fn => { const pending = []; const result = await fn({ get: ref => ref.get(), create: (ref, value) => { if (data.has(ref.path)) throw Error('already exists'); pending.push([ref.path, value]) }, set: (ref, value, options) => pending.push([ref.path, options?.merge ? { ...data.get(ref.path), ...value } : value]), update: (ref, value) => pending.push([ref.path, { ...data.get(ref.path), ...value }]) }); pending.forEach(([k, v]) => data.set(k, v)); return result } }
 }
-function setup(extra = {}, onSign = () => {}) {
+function setup(extra = {}, onSign = () => {}, serveVideo) {
   const db = store({ 'dogs/puppy1': puppy, 'dogs/puppy2': { ...puppy, name: 'Blue', passportId: 'DOG-BLUE' }, 'puppyProfiles/puppy1': profile, 'dogPrivateAccess/puppy1': grant, ...extra })
   const signed = []
-  const handler = createPuppyUpdatesHandler({ db, timestamp: () => '2026-10-28T10:00:00Z', verifyToken: async token => { const identity = { breeder, buyer, stranger, unverified: { ...buyer, email_verified: false } }[token]; if (!identity) throw Error('invalid'); return identity }, sign: async (items, ttl) => { signed.push(...items); onSign(db); return items.map(item => ({ id: item.id, url: `https://media.example.test/${item.id}?ttl=${ttl}` })) } })
+  const handler = createPuppyUpdatesHandler({ db, serveVideo, timestamp: () => '2026-10-28T10:00:00Z', verifyToken: async token => { const identity = { breeder, buyer, stranger, unverified: { ...buyer, email_verified: false } }[token]; if (!identity) throw Error('invalid'); return identity }, sign: async (items, ttl) => { signed.push(...items); onSign(db); return items.map(item => ({ id: item.id, url: `https://media.example.test/${item.id}?ttl=${ttl}` })) } })
   async function call(body, who, method = 'POST') {
     const response = { code: 200, headers: {}, status(code) { this.code = code; return this }, setHeader(k, v) { this.headers[k] = v }, json(value) { this.body = value; return this }, redirect(code, url) { this.code = code; this.url = url; return this } }
     try { await handler({ method, body, query: body, headers: { ...(who ? { authorization: `Bearer ${who}` } : {}), 'x-forwarded-for': '203.0.113.20' } }, response) } catch (e) { response.code = e.status || 500; response.body = { error: e.message } }
@@ -36,6 +36,7 @@ describe('Puppy update privacy through the ownership lifecycle', () => {
   it('uses the public customer domain instead of SSO-protected immutable Production URLs', () => {
     expect(publicMediaBase({ FIREBASE_PROJECT_ID: 'idogs-app', VERCEL_URL: 'protected.vercel.app' })).toBe('https://idogs.com.au')
     expect(publicMediaBase({ FIREBASE_PROJECT_ID: 'idogs-app-staging', VERCEL_URL: 'qa.vercel.app' })).toBe('https://qa.vercel.app')
+    expect(publicMediaBase({ FIREBASE_PROJECT_ID: 'idogs-app-staging', IDOGS_NATIVE_QA_BACKEND: '1', VERCEL_URL: 'temporary.vercel.app' })).toBe('https://idogs-puppy-journey-qa-izipawsltd-tonys-projects.vercel.app')
     expect(publicMediaBase({ VERCEL_URL: 'evil.example/path' })).toBe('')
     expect(publicMediaBase({})).toBe('')
   })
@@ -74,11 +75,34 @@ describe('Puppy update privacy through the ownership lifecycle', () => {
   })
   it('bounds batch, content, media and dates', () => {
     expect(validateUpdate(create()).dogIds).toEqual(['puppy1'])
-    for (const changes of [{ dogIds: [] }, { dogIds: ['../x'] }, { dogIds: Array(13).fill('puppy1') }, { audience: 'all' }, { text: ' ' }, { text: 'x'.repeat(3001) }, { date: '2026-02-30' }, { mediaIds: ['x/y'] }, { requestId: '' }]) expect(() => validateUpdate(create(changes))).toThrow()
+    for (const changes of [{ dogIds: [] }, { dogIds: ['../x'] }, { dogIds: Array(13).fill('puppy1') }, { audience: 'all' }, { text: ' ', mediaIds: [] }, { text: 'x'.repeat(3001) }, { date: '2026-02-30' }, { mediaIds: ['x/y'] }, { requestId: '' }]) expect(() => validateUpdate(create(changes))).toThrow()
   })
 })
 
 describe('Actual puppy updates handler', () => {
+  it('publishes media without a caption but rejects a completely empty update', async () => {
+    const { call } = setup()
+    expect((await call(create({ text: '', audience: 'public', mediaIds: ['photo1'] }), 'breeder')).code).toBe(200)
+    expect((await call({ passportId: 'DOG-RUBY' })).body.updates[0].text).toBe('')
+    expect((await call(create({ requestId: 'empty', text: ' ', mediaIds: [] }), 'breeder')).code).toBe(400)
+  })
+  it('authorizes HEAD and range video delivery and rejects a changed update before bytes leave', async () => {
+    const media = [{ ...puppy.videos[0], kind: 'video' }]
+    let deliveries = 0, removeBeforeRead = false
+    const { call, db, signed } = setup({ 'puppyProfiles/puppy1/updates/movie': entry('public', { media }) }, () => {}, async (req, res, item, assertAccess) => {
+      if (removeBeforeRead) db.data.set('puppyProfiles/puppy1/updates/movie', entry('public', { media, deleted: true }))
+      await assertAccess(); deliveries++
+      return res.status(200).json({ delivered: item.id, method: req.method })
+    })
+    const request = { action: 'media', passportId: 'DOG-RUBY', updateId: 'movie', mediaId: 'video1' }
+    expect((await call(request, null, 'HEAD')).code).toBe(200)
+    expect((await call(request, null, 'GET')).code).toBe(200)
+    expect(signed).toHaveLength(0)
+    removeBeforeRead = true
+    expect((await call(request, null, 'GET')).code).toBe(404)
+    expect(deliveries).toBe(2)
+    expect((await call({ passportId: 'DOG-RUBY' }, null, 'HEAD')).code).toBe(405)
+  })
   it('signs repeated visible files once for the whole page and excludes private hidden files', async () => {
     let signingCalls = 0
     const shared = { ...puppy.photos[0], kind: 'photo' }

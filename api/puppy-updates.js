@@ -10,6 +10,7 @@ import { signMediaItems } from './_lib/showcase-media-access.js'
 
 import { createPuppyUpdatesHandler } from './_lib/puppy-updates-handler.js'
 import { publicMediaBase } from './_lib/puppy-updates-policy.js'
+import { createVideoDelivery } from './_lib/video-delivery.js'
 
 if (!getApps().length) initializeApp({ credential: cert({ projectId: process.env.FIREBASE_PROJECT_ID, clientEmail: process.env.FIREBASE_CLIENT_EMAIL, privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n') }) })
 
@@ -17,5 +18,6 @@ if (!getApps().length) initializeApp({ credential: cert({ projectId: process.env
 export default withApiErrorHandling('puppy-updates', createPuppyUpdatesHandler({
   db: getFirestore(), timestamp: () => FieldValue.serverTimestamp(), verifyToken: token => getAuth().verifyIdToken(token),
   publicBase: publicMediaBase(process.env),
+  serveVideo: (req, res, item, assertAccess) => createVideoDelivery(getStorage().bucket(requireStorageBucket()))(req, res, item, assertAccess),
   sign: (items, ttl) => signMediaItems(getStorage().bucket(requireStorageBucket()), items, ttl),
 }))

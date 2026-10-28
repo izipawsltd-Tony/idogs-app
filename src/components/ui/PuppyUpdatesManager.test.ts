@@ -20,6 +20,15 @@ beforeEach(() => {
   vi.stubGlobal('document', { getElementById: () => null })
 })
 async function render() { await act(async () => { screen = create(createElement(MemoryRouter, {}, createElement(PuppyUpdatesManager, { dog }))) }) }
+it('enables publishing selected media without forcing a caption', async () => {
+  await render()
+  await act(async () => { button('Choose from uploaded media').props.onClick() })
+  await act(async () => { screen.root.findByProps({ 'aria-label': 'Select photo photo' }).props.onClick(); screen.root.findByProps({ id: 'puppy-update-audience' }).props.onChange({ target: { value: 'public' } }) })
+  expect(screen.root.findByProps({ id: 'puppy-update-text' }).props.value).toBe('')
+  expect(button('Publish update').props.disabled).toBe(false)
+  await act(async () => { button('Publish update').props.onClick() })
+  expect(state.request).toHaveBeenCalledWith(expect.objectContaining({ action: 'create', text: '', audience: 'public', mediaIds: ['photo'] }))
+})
 it('makes the composer usable without loading the optional media library or littermates', async () => {
   await render()
   expect(state.request.mock.calls.map(([body]) => body.action)).toEqual(['view'])

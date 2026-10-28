@@ -151,7 +151,7 @@ export default function PuppyUpdatesManager({ dog, onUpdates, onEditReady }: { d
             <span>{selectedMedia.includes(media.id) ? '✓ Selected' : '＋ Select'}</span>
           </button>)}</div>}
         </>}
-        <label className="form-label" htmlFor="puppy-update-text" style={{ display: 'block', marginTop: 18 }}>Tell their story</label><textarea id="puppy-update-text" className="form-textarea" maxLength={3000} value={text} placeholder="A first adventure, a new milestone or a little moment to remember…" onChange={e => { setText(e.target.value); changed() }} style={{ minHeight: 80, width: '100%', marginBottom: 16 }} />
+        <label className="form-label" htmlFor="puppy-update-text" style={{ display: 'block', marginTop: 18 }}>Tell their story (optional)</label><textarea id="puppy-update-text" className="form-textarea" maxLength={3000} value={text} placeholder="A first adventure, a new milestone or a little moment to remember…" onChange={e => { setText(e.target.value); changed() }} style={{ minHeight: 80, width: '100%', marginBottom: 16 }} />
         <label className="form-label" htmlFor="puppy-update-date" style={{ display: 'block' }}>Update date</label><input id="puppy-update-date" className="form-input" type="date" value={date} onChange={e => { setDate(e.target.value); changed() }} style={{ display: 'block', maxWidth: 200, marginBottom: 14 }} />
         <label className="form-label" htmlFor="puppy-update-audience" style={{ marginTop: 12 }}>Who can see this update?</label><select id="puppy-update-audience" className="form-select" value={audience} onChange={e => { setAudience(e.target.value as UpdateAudience); changed() }}>{Object.entries(AUDIENCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
         {audience === 'public' && !ready && <p style={{ fontSize: 12 }}>Checking QR sharing before publishing…</p>}
@@ -168,8 +168,8 @@ export default function PuppyUpdatesManager({ dog, onUpdates, onEditReady }: { d
           </div>}
         </div>}
         {editing && <p style={{ fontSize: 12 }}>Changes apply to this puppy’s update only. Other puppies’ copies stay unchanged.</p>}
-        <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" disabled={!text.trim() || selectedMedia.length > 12 || selectedDogs.length > 12 || (audience !== 'internal' && !ready)} onClick={() => void run(async () => { await puppyUpdates(editing ? { action: 'edit', dogId: dog.id, updateId: editing.id, text, date, audience, mediaIds: selectedMedia } : { action: 'create', dogIds: [dog.id, ...selectedDogs.filter(id => id !== dog.id)], requestId, text, date, audience, mediaIds: selectedMedia }); resetComposer() }, editing ? 'Changes saved' : 'Update saved')}>{busy ? 'Saving…' : editing ? 'Save changes' : audience === 'internal' ? 'Save private update' : 'Publish update'}</button>
+        <div className="puppy-update-actions" style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" disabled={(!text.trim() && selectedMedia.length === 0) || selectedMedia.length > 12 || selectedDogs.length > 12 || (audience !== 'internal' && !ready)} onClick={() => void run(async () => { await puppyUpdates(editing ? { action: 'edit', dogId: dog.id, updateId: editing.id, text, date, audience, mediaIds: selectedMedia } : { action: 'create', dogIds: [dog.id, ...selectedDogs.filter(id => id !== dog.id)], requestId, text, date, audience, mediaIds: selectedMedia }); resetComposer() }, editing ? 'Changes saved' : 'Update saved')}>{busy ? 'Saving…' : editing ? 'Save changes' : audience === 'internal' ? 'Save private update' : 'Publish update'}</button>
           {(editing || text || selectedMedia.length > 0) && <button type="button" className="btn btn-secondary" onClick={resetComposer}>Cancel</button>}
         </div>
       </fieldset>

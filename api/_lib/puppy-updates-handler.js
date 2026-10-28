@@ -3,7 +3,7 @@ import { ApiError, parseJsonBody } from './http-helpers.js'
 import { checkRateLimit, getClientIp, hashClientKey } from './rate-limit.js'
 import { validId, ownerId, canPublish, publicSharingLive, viewerRole, mayReadUpdate, safeUpdateMedia, validateUpdate } from './puppy-updates-policy.js'
 
-export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = '', timestamp = () => new Date().toISOString() }) {
+export function createPuppyUpdatesHandler({ db, verifyToken, sign, serveVideo, publicBase = '', timestamp = () => new Date().toISOString() }) {
   const profileRef = id => db.collection('puppyProfiles').doc(id)
   const entriesRef = id => profileRef(id).collection('updates')
   const followRef = (uid, id) => db.collection('puppyFollowers').doc(uid).collection('dogs').doc(id)
@@ -29,9 +29,10 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'private, no-store')
     res.setHeader('Referrer-Policy', 'no-referrer')
-    if (!['POST', 'GET'].includes(req.method)) throw new ApiError(405, 'Method not allowed')
-    const body = req.method === 'GET' ? req.query : parseJsonBody(req)
+    if (!['POST', 'GET', 'HEAD'].includes(req.method)) throw new ApiError(405, 'Method not allowed')
+    const body = req.method === 'GET' || req.method === 'HEAD' ? req.query : parseJsonBody(req)
     const action = body.action || 'view'
+    if (req.method === 'HEAD' && action !== 'media') throw new ApiError(405, 'Use GET')
     if (req.method === 'GET' && !['view', 'media'].includes(action)) throw new ApiError(405, 'Use POST')
     const raw = (req.headers.authorization || '').replace(/^Bearer /, '')
     let identity = null
@@ -165,6 +166,13 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
       if (!mayReadUpdate(entry, dog, profile, role)) throw new ApiError(404, 'Media not found')
       const item = entry.media?.find(m => m.id === body.mediaId)
       if (!safeUpdateMedia(item, entry)) throw new ApiError(404, 'Media not found')
+      if (item.kind === 'video' && serveVideo) return serveVideo(req, res, item, async () => {
+        await assertSameAccess(dog, role, profile, identity)
+        const current = (await entriesRef(dog.id).doc(body.updateId).get()).data()
+        const currentMedia = current?.media?.find(m => m.id === body.mediaId)
+        if (!mayReadUpdate(current, dog, profile, role) || !safeUpdateMedia(currentMedia, current) || currentMedia.path !== item.path) throw new ApiError(404, 'Media not found')
+      })
+      if (req.method === 'HEAD') throw new ApiError(405, 'Use GET')
       const signed = await sign([item], 60 * 1000)
       if (!signed.length) throw new ApiError(404, 'Media not found')
       await assertSameAccess(dog, role, profile, identity)

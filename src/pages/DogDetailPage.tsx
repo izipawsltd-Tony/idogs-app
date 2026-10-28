@@ -3233,7 +3233,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
           <div style={{ position: 'absolute', left: 15, top: 6, bottom: 6, width: 2, background: 'var(--border)' }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {events.map((e, i) => e.update ? (
-              <div key={e.id} style={{ position: 'relative' }}><div style={{ position: 'absolute', left: -36, top: 0, width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-600)', display: 'grid', placeItems: 'center' }}>📷</div><PuppyUpdateFeed updates={[e.update]} busy={updateBusy} edit={canEdit ? update => editUpdate.current(update) : undefined} manage={canEdit ? manageUpdate : undefined} /></div>
+              <div key={e.id} style={{ position: 'relative' }}><div style={{ position: 'absolute', left: -36, top: 0, width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-600)', display: 'grid', placeItems: 'center' }}>📷</div><PuppyUpdateFeed updates={[e.update]} galleryUpdates={updates} busy={updateBusy} edit={canEdit ? update => editUpdate.current(update) : undefined} manage={canEdit ? manageUpdate : undefined} /></div>
             ) : (
               <div key={e.id ?? i} style={{ position: 'relative' }}>
                 {/* Dot on the timeline */}

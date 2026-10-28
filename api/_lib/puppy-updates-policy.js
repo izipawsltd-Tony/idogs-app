@@ -10,6 +10,7 @@ export function publicMediaBase(env) {
   // Production's immutable Vercel URL is SSO-protected even though the
   // customer-facing domain is public. Never send public media there.
   if (env.FIREBASE_PROJECT_ID === 'idogs-app') return 'https://idogs.com.au'
+  if (env.FIREBASE_PROJECT_ID === 'idogs-app-staging' && env.IDOGS_NATIVE_QA_BACKEND === '1') return 'https://idogs-puppy-journey-qa-izipawsltd-tonys-projects.vercel.app'
   return /^[a-z0-9.-]+\.vercel\.app$/.test(env.VERCEL_URL || '') ? `https://${env.VERCEL_URL}` : ''
 }
 
@@ -39,8 +40,9 @@ export function validateUpdate(body) {
   if (!Array.isArray(body.dogIds) || !body.dogIds.length || body.dogIds.length > 12 || body.dogIds.some(id => !validId(id))) throw new Error('Select between 1 and 12 puppies')
   if (!validId(body.requestId)) throw new Error('A valid update request ID is required')
   if (!['internal', 'public', 'buyer'].includes(body.audience)) throw new Error('Choose who can see this update')
-  if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 3000) throw new Error('Write an update of up to 3000 characters')
+  if (typeof body.text !== 'string' || body.text.length > 3000) throw new Error('Write an update of up to 3000 characters')
   if (typeof body.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(body.date) || Number.isNaN(Date.parse(body.date)) || new Date(body.date).toISOString().slice(0, 10) !== body.date) throw new Error('Choose a valid update date')
   if (!Array.isArray(body.mediaIds) || body.mediaIds.length > 12 || body.mediaIds.some(id => !validId(id))) throw new Error('Select up to 12 photos or videos')
+  if (!body.text.trim() && body.mediaIds.length === 0) throw new Error('Add a photo/video or write a memory')
   return { dogIds: [...new Set(body.dogIds)], text: body.text.trim(), audience: body.audience, date: body.date, mediaIds: [...new Set(body.mediaIds)] }
 }
