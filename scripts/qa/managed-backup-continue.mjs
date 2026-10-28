@@ -34,7 +34,7 @@ async function inventory(db, m, { deleted = false, tombstone = false } = {}) {
   for (const doc of snapshot.docs) ensure((await doc.ref.listCollections()).length === 0, 'MANAGED_BACKUP_NESTED_CONTENT')
   return snapshot
 }
-export async function continueBackup({ api, db, manifest: m, save, report = {} }) {
+export async function continueBackup({ api, db, manifest: m, save, report = {}, clock = Date.now }) {
   validateManifest(m)
   const sourceMetadata = await api(fsUrl(dbName(TARGET.source)))
   verifyDatabase(sourceMetadata, TARGET.source)
@@ -45,7 +45,23 @@ export async function continueBackup({ api, db, manifest: m, save, report = {} }
   ensure(!listed.nextPageToken, 'MANAGED_BACKUP_LIST_INCOMPLETE')
   const backups = (listed.backups || []).filter(b => b.database === dbName(TARGET.source))
   ensure(backups.length <= 1, 'MANAGED_BACKUP_MULTIPLE_COPIES')
-  if (!backups.length || backups[0].state !== 'READY') return { status: 'waiting_for_managed_backup', managedBackupRestoreVerified: false, productionReady: false }
+  if (!backups.length || backups[0].state !== 'READY') {
+    // The owner approved one 24-hour grant, not automatic renewal. Stop the
+    // schedule one hour before expiry if Google has not produced a usable copy.
+    const now = clock()
+    ensure(Number.isFinite(now), 'MANAGED_BACKUP_CLOCK_INVALID')
+    if (now >= Date.parse('2026-10-29T06:24:03Z') - 3600000) {
+      const schedule = await api(fsUrl(m.scheduleName), { allow404: true })
+      if (schedule) {
+        ensure(schedule.name === m.scheduleName && schedule.retention === '604800s' && schedule.dailyRecurrence, 'MANAGED_BACKUP_SCHEDULE_CHANGED')
+        await api(fsUrl(m.scheduleName), { method: 'DELETE' })
+        ensure(await api(fsUrl(m.scheduleName), { allow404: true }) === null, 'MANAGED_BACKUP_SCHEDULE_REMAINS')
+      }
+      m.scheduleStoppedBeforeGrantExpiry = true; await save(m)
+      return { status: 'owner_gate', code: 'MANAGED_BACKUP_GRANT_EXPIRY_APPROACHING', scheduleRemoved: true, resourcesRemain: true, managedBackupRestoreVerified: false, productionReady: false }
+    }
+    return { status: 'waiting_for_managed_backup', managedBackupRestoreVerified: false, productionReady: false }
+  }
   const backup = backups[0]; verifyBackup(backup, m)
   if (m.backupName) ensure(m.backupName === backup.name, 'MANAGED_BACKUP_SELECTION_CHANGED')
   m.backupName = backup.name; await save(m)
@@ -127,6 +143,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const manifest = JSON.parse(await readFile('managed-backup-manifest.json', 'utf8'))
     const runtime = await clients()
-    console.log(JSON.stringify(await continueBackup({ ...runtime, manifest, report, save: m => writeFile('managed-backup-manifest.json', JSON.stringify(m, null, 2)) }), null, 2))
+    const result = await continueBackup({ ...runtime, manifest, report, save: m => writeFile('managed-backup-manifest.json', JSON.stringify(m, null, 2)) })
+    console.log(JSON.stringify(result, null, 2))
+    if (result.status === 'owner_gate') process.exitCode = 2
   } catch (error) { console.log(JSON.stringify({ ...report, status: 'blocked', code: /^[A-Z_0-9]{3,80}$/.test(error.code || '') ? error.code : 'MANAGED_BACKUP_CONTINUE_FAILED' })); process.exitCode = 2 }
 }
