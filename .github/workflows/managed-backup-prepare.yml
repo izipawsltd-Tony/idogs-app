@@ -1,0 +1,35 @@
+name: Prepare owner-approved synthetic managed backup QA
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['scripts/qa/managed-backup-prepare.mjs', '.github/workflows/managed-backup-prepare.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: idogs-managed-backup-qa
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/test-managed-backup-preflight.mjs scripts/test-managed-backup-prepare.mjs
+      - name: Prepare only approved isolated synthetic source and one schedule
+        env:
+          IDOGS_MANAGED_BACKUP_APPROVAL: 2026-10-28-two-databases-one-backup
+          IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/qa/managed-backup-prepare.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-backup-manifest
+          path: managed-backup-manifest.json
+          if-no-files-found: ignore
+          retention-days: 14
