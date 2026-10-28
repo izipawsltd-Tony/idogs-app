@@ -141,4 +141,6 @@ test('rejects a saved restore operation whose real database, backup or immutable
   verifyRestoreOperation(op, m)
   for (const metadata of [{ ...op.metadata, backup: 'other' }, { ...op.metadata, database: 'other' }, {}]) assert.throws(() => verifyRestoreOperation({ ...op, metadata }, m), /RESTORE_OPERATION_CHANGED/)
   assert.throws(() => verifyRestoreOperation({ ...op, response: { uid: 'replacement' } }, m), /DESTINATION_REPLACED/)
+  delete m.destinationUid; m.restoreOperation.response = { uid: 'target-uid' }
+  assert.throws(() => verifyRestoreOperation({ ...op, response: { uid: 'replacement' } }, m), /DESTINATION_REPLACED/)
 })

@@ -30,7 +30,8 @@ export function verifyRestoreOperation(op, m) {
     && op.metadata.database === dbName(TARGET.destination) && op.metadata.backup === m.backupName,
   'MANAGED_BACKUP_RESTORE_OPERATION_CHANGED')
   ensure(!op.error, 'MANAGED_BACKUP_OPERATION_FAILED')
-  if (m.destinationUid && op.response?.uid) ensure(op.response.uid === m.destinationUid, 'MANAGED_BACKUP_DESTINATION_REPLACED')
+  const boundUid = m.destinationUid || m.restoreOperation?.response?.uid
+  if (boundUid && op.response?.uid) ensure(op.response.uid === boundUid, 'MANAGED_BACKUP_DESTINATION_REPLACED')
 }
 async function inventory(db, m, { deleted = false, tombstone = false } = {}) {
   const collections = await db.listCollections()
@@ -109,6 +110,7 @@ export async function continueBackup({ api, db, manifest: m, save, report = {}, 
   // never cause a second restore request or a replacement fixture.
   const restoreStatus = await api(fsUrl(m.restoreOperation.name))
   verifyRestoreOperation(restoreStatus, m)
+  if (!m.destinationUid && m.restoreOperation.response?.uid) m.destinationUid = m.restoreOperation.response.uid
   m.restoreOperation = restoreStatus
   if (restoreStatus.response?.uid) m.destinationUid = restoreStatus.response.uid
   await save(m)
