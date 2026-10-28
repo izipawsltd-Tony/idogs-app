@@ -42,6 +42,15 @@ describe('unpublished legal policy review', () => {
     expect(html).toContain('manual entry instead')
     expect(html).toContain('Providers may process information outside Australia')
   })
+  it('preserves current consent-based Meta disclosure without denying advertising cookies', () => {
+    const html = pageText(PrivacyPage)
+    expect(html).toContain('Meta Pixel')
+    expect(html).toContain('Ad privacy choices')
+    expect(html).toContain('advertising cookies only when you allow it')
+    expect(html).toContain('does not run in the native app or on private account pages')
+    expect(html).not.toContain('We do not use advertising or tracking cookies')
+    expect(html).toContain('Draft for review — not effective')
+  })
   it('distinguishes request target, recovery copies and resource-specific Singapore location', () => {
     const html=pageText(PrivacyPage)
     expect(html).toContain('seven-day processing target and file recovery period are separate')

@@ -50,6 +50,7 @@ export default function PrivacyPage() {
               <li>Comply with legal obligations</li>
             </ul>
             <p>Optional marketing consent is separate from essential account, security and service messages. Withdrawing that consent does not itself delete your account or cancel your subscription. Actual campaign practices and any third-party tracking must be verified before the policy becomes effective.</p>
+            <p><strong>Optional advertising measurement:</strong> If you choose “Allow ad measurement”, Meta Pixel shares visits to our home and signup pages and successful registrations with Meta (Facebook) to measure and improve our advertising. Meta may receive page URLs, IP address, browser information and advertising cookies. We do not send form entries, account contact details, dog records or documents through this integration. It does not run in the native app or on private account pages. You can decline or withdraw permission using “Ad privacy choices” on our home or signup page. Declining does not affect your ability to use iDogs. See <a href="https://www.facebook.com/privacy/policy/" target="_blank" rel="noopener noreferrer">Meta’s privacy policy</a> for how Meta handles this information.</p>
           </LegalSection>
 
           <LegalSection title="4. Data Storage and Security">
@@ -93,6 +94,7 @@ export default function PrivacyPage() {
 
           <LegalSection title="8. Cookies">
             <p>Firebase Authentication uses browser or device storage to maintain your sign-in session. The full cookie, analytics and SDK inventory must be verified before this draft becomes effective.</p>
+            <p>Optional Meta advertising measurement on our home and signup pages uses advertising cookies only when you allow it. You can decline or withdraw that permission through “Ad privacy choices”; authentication and account use do not depend on that choice.</p>
             <p>Restricting storage required for authentication may prevent sign-in or session persistence.</p>
           </LegalSection>
 
