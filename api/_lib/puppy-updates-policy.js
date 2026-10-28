@@ -29,9 +29,10 @@ export function mayReadUpdate(entry, dog, profile, role) {
 
 export function safeUpdateMedia(item, entry) {
   if (!item || !validId(item.id) || !['photo', 'video'].includes(item.kind)) return false
-  if (!validId(entry.authorUid) || !validId(entry.sourceDogId) || typeof item.path !== 'string') return false
+  const sourceDogId = item.sourceDogId || entry.sourceDogId
+  if (!validId(entry.authorUid) || !validId(sourceDogId) || typeof item.path !== 'string') return false
   const parts = item.path.split('/')
-  return parts.length === 5 && parts[0] === 'dogs' && parts[1] === entry.authorUid && parts[2] === entry.sourceDogId && parts[3] === `${item.kind}s` && !!parts[4] && !parts.some(p => p === '.' || p === '..')
+  return parts.length === 5 && parts[0] === 'dogs' && parts[1] === entry.authorUid && parts[2] === sourceDogId && parts[3] === `${item.kind}s` && !!parts[4] && !parts.some(p => p === '.' || p === '..')
 }
 
 export function validateUpdate(body) {

@@ -3,7 +3,7 @@ import type { PuppyUpdate, UpdateAudience } from '../../lib/puppyUpdates'
 
 export const AUDIENCE_LABELS: Record<UpdateAudience, string> = { internal: 'Only me', public: 'Public on QR profile', buyer: 'Deposited buyer only' }
 
-export default function PuppyUpdateFeed({ updates, manage, busy }: { updates: PuppyUpdate[]; busy?: boolean; manage?: (id: string, action: 'delete' | 'visibility', audience?: UpdateAudience) => void }) {
+export default function PuppyUpdateFeed({ updates, manage, busy, edit }: { updates: PuppyUpdate[]; busy?: boolean; edit?: (update: PuppyUpdate) => void; manage?: (id: string, action: 'delete' | 'visibility', audience?: UpdateAudience) => void }) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
   useEffect(() => {
@@ -30,6 +30,7 @@ export default function PuppyUpdateFeed({ updates, manage, busy }: { updates: Pu
         : <video key={media.id} src={media.url} controls playsInline preload="metadata" style={{ width: '100%', height: 180, borderRadius: 8, background: '#111' }} />)}
     </div>
     {manage && <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+      {!update.inherited && edit && <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => edit(update)}>Edit</button>}
       {!update.inherited && <label style={{ fontSize: 12 }}>Who can see this? <select aria-label="Update visibility" disabled={busy} value={update.audience} onChange={e => manage(update.id, 'visibility', e.target.value as UpdateAudience)}>{Object.entries(AUDIENCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
       <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => { if (window.confirm('Remove this update from this puppy’s story?')) manage(update.id, 'delete') }}>Remove update</button>
     </div>}

@@ -79,6 +79,44 @@ describe('Puppy update privacy through the ownership lifecycle', () => {
 })
 
 describe('Actual puppy updates handler', () => {
+  it('edits text/date/audience, replaces media and leaves other puppy copies unchanged', async () => {
+    const { call, db } = setup()
+    const created = await call(create({ dogIds: ['puppy1', 'puppy2'] }), 'breeder')
+    const id = created.body.updateId
+    const other = structuredClone(db.data.get(`puppyProfiles/puppy2/updates/${id}`))
+    const edited = await call({ action: 'edit', dogId: 'puppy1', updateId: id, text: 'A new adventure', date: '2026-10-27', audience: 'internal', mediaIds: ['photo1'] }, 'breeder')
+    expect(edited.code).toBe(200)
+    const update = db.data.get(`puppyProfiles/puppy1/updates/${id}`)
+    expect(update.text).toBe('A new adventure'); expect(update.date).toBe('2026-10-27'); expect(update.audience).toBe('internal')
+    expect(update.media.map(m => m.id)).toEqual(['photo1'])
+    expect(db.data.get(`puppyProfiles/puppy2/updates/${id}`)).toEqual(other)
+    expect((await call({ passportId: 'DOG-RUBY' })).body.updates).toHaveLength(0)
+    expect(db.data.get('dogs/puppy1').photos).toHaveLength(1)
+  })
+  it('allows replacing group-copy media with current puppy media and still serves retained group media', async () => {
+    const { call, db } = setup({ 'puppyProfiles/puppy2': profile, 'dogs/puppy2': { ...puppy, passportId: 'DOG-BLUE', photos: [{ id: 'blue-photo', path: 'dogs/breeder/puppy2/photos/blue.jpg' }] } })
+    const created = await call(create({ dogIds: ['puppy1', 'puppy2'] }), 'breeder')
+    const id = created.body.updateId
+    expect((await call({ action: 'edit', dogId: 'puppy2', updateId: id, text: 'Blue with Ruby', date: '2026-10-28', audience: 'public', mediaIds: ['photo1', 'blue-photo'] }, 'breeder')).code).toBe(200)
+    const edited = db.data.get(`puppyProfiles/puppy2/updates/${id}`)
+    expect(edited.media.every(m => safeUpdateMedia(m, edited))).toBe(true)
+    expect((await call({ action: 'media', passportId: 'DOG-BLUE', updateId: id, mediaId: 'blue-photo' }, null, 'GET')).code).toBe(302)
+  })
+  it('rejects edit by buyer, stranger, former owner or new owner of inherited entries', async () => {
+    const { call, db } = setup({ 'puppyProfiles/puppy1/updates/editable': entry('buyer') })
+    const request = { action: 'edit', dogId: 'puppy1', updateId: 'editable', text: 'Changed', date: '2026-10-28', audience: 'public', mediaIds: [] }
+    for (const who of ['buyer', 'stranger']) expect((await call(request, who)).code).toBe(403)
+    db.data.set('dogs/puppy1', { ...puppy, currentOwnerId: 'buyer' })
+    for (const who of ['breeder', 'buyer']) expect((await call(request, who)).code).toBe(403)
+  })
+  it('rejects unavailable media and deleted edits without changing the saved update', async () => {
+    const { call, db } = setup({ 'puppyProfiles/puppy1/updates/editable': entry('buyer') })
+    const request = { action: 'edit', dogId: 'puppy1', updateId: 'editable', text: 'Changed', date: '2026-10-28', audience: 'public', mediaIds: ['foreign'] }
+    expect((await call(request, 'breeder')).code).toBe(400)
+    expect(db.data.get('puppyProfiles/puppy1/updates/editable').text).toBe('buyer update')
+    db.data.set('puppyProfiles/puppy1/updates/editable', entry('buyer', { deleted: true }))
+    expect((await call({ ...request, mediaIds: [] }, 'breeder')).code).toBe(403)
+  })
   it('uses separate story media without growing the limited dog gallery', async () => {
     const saved = { ...puppy.photos[0], id: 'story-photo', authorUid: 'breeder', sourceDogId: 'puppy1', kind: 'photo', createdAt: '2026-10-28' }
     const { call, db } = setup({ 'puppyProfiles/puppy1/media/story-photo': saved })

@@ -117,6 +117,31 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, publicBase = 
       })
       return res.status(200).json({ publicEnabled: body.publicEnabled })
     }
+    if (action === 'edit') {
+      if (!validId(body.updateId)) throw new ApiError(400, 'Invalid update')
+      let input
+      try { input = validateUpdate({ ...body, dogIds: [dog.id], requestId: 'edit' }) } catch (e) { throw new ApiError(400, e.message) }
+      await db.runTransaction(async tx => {
+        const fresh = await tx.get(db.collection('dogs').doc(dog.id))
+        const ref = entriesRef(dog.id).doc(body.updateId)
+        const saved = await tx.get(ref)
+        const entry = saved.data()
+        if (!fresh.exists || !canPublish(fresh.data(), identity.uid) || !saved.exists || entry.deleted || entry.authorUid !== identity.uid) throw new ApiError(403, 'Only the author who currently manages this puppy can edit this update')
+        const uploaded = await Promise.all(input.mediaIds.map(id => tx.get(profileRef(dog.id).collection('media').doc(id))))
+        const candidates = [...(fresh.data().photos || []).map(m => ({ ...m, kind: 'photo' })), ...(fresh.data().videos || []).map(m => ({ ...m, kind: 'video' }))]
+        // Keep existing group media from its original source; replacement media
+        // must belong to the current puppy and author. Never trust client paths.
+        const media = input.mediaIds.map((id, index) => {
+          const old = entry.media?.find(m => m.id === id)
+          if (old && safeUpdateMedia(old, entry)) return old
+          const candidate = candidates.find(m => m.id === id) || (uploaded[index].exists && uploaded[index].data().authorUid === identity.uid ? { ...uploaded[index].data(), id } : null)
+          return safeUpdateMedia(candidate, { authorUid: identity.uid, sourceDogId: dog.id }) ? { ...candidate, sourceDogId: dog.id } : null
+        })
+        if (media.some(m => !m)) throw new ApiError(400, 'Some media is unavailable; choose your own uploaded media')
+        tx.update(ref, { text: input.text, date: input.date, audience: input.audience, media: media.map(({ id, path, kind, sourceDogId }) => ({ id, path, kind, ...(sourceDogId ? { sourceDogId } : {}) })), updatedAt: timestamp() })
+      })
+      return res.status(200).json({ success: true })
+    }
     if (action === 'visibility' || action === 'delete') {
       if (!validId(body.updateId) || (action === 'visibility' && !['internal', 'public', 'buyer'].includes(body.audience))) throw new ApiError(400, 'Invalid update')
       await db.runTransaction(async tx => {
