@@ -5,6 +5,7 @@ import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
 import { verifyBeforeUpdateEmail } from 'firebase/auth'
+import { verificationDelivery } from '../lib/signupVerification'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -19,6 +20,7 @@ export default function VerifyEmailPage({ toast }: Props) {
   const [resending, setResending] = useState(false)
   const [cooldown, setCooldown] = useState(0)
   const [contactEmail, setContactEmail] = useState('')
+  const initialDelivery = verificationDelivery(user?.uid)
 
   // If not logged in at all, send to login
   useEffect(() => {
@@ -109,7 +111,7 @@ export default function VerifyEmailPage({ toast }: Props) {
             {user?.email}
           </p>
           <p style={{ fontSize: 13, color: 'var(--light)', lineHeight: 1.6, marginBottom: 8 }}>
-            Choose Send verification email, open the link in your inbox, then return here to continue.
+            {initialDelivery?.status === 'sent' ? 'A verification email has already been sent. Open the link in your inbox, then return here to continue. You can request another email below.' : initialDelivery?.status === 'failed' ? 'Your account is ready, but the first verification email could not be sent. Choose Send verification email to try again.' : 'Choose Send verification email, open the link in your inbox, then return here to continue.'}
           </p>
           <p style={{ fontSize: 12, color: 'var(--gold)', lineHeight: 1.6, marginBottom: 24, background: 'var(--gold-light)', padding: '8px 12px', borderRadius: 8 }}>
             💡 Can't find it? Check your <strong>Spam</strong> or <strong>Junk</strong> folder — verification emails sometimes end up there.
@@ -126,7 +128,7 @@ export default function VerifyEmailPage({ toast }: Props) {
             style={{ width: '100%', height: 44, marginTop: 10 }}
             disabled={resending || cooldown > 0}
           >
-            {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : 'Send verification email'}
+            {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : initialDelivery?.status === 'sent' ? 'Resend verification email' : 'Send verification email'}
           </button>
 
           <p><Link to="/app/start">Keep exploring for now</Link></p>

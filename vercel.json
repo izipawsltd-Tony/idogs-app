@@ -1,4 +1,10 @@
 {
+  "headers": [
+    { "source": "/p/:path*", "headers": [
+      { "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" },
+      { "key": "Referrer-Policy", "value": "no-referrer" }
+    ] }
+  ],
   "crons": [
     { "path": "/api/cleanup-showcase-media-uploads", "schedule": "17 3 * * *" }
   ],

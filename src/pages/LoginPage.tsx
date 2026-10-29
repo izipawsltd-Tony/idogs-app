@@ -16,7 +16,7 @@ export default function LoginPage({ toast }: Props) {
   const [email, setEmail] = useState(''), [password, setPassword] = useState(''), [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   const [socialChoice, setSocialChoice] = useState<'google.com' | 'facebook.com' | null>(null)
-  const [agreed, setAgreed] = useState(false), [promotions, setPromotions] = useState(false)
+  const [agreed, setAgreed] = useState(false), [promotions, setPromotions] = useState(true), [promotionsConfirmed, setPromotionsConfirmed] = useState(false)
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('')
     try { await login(email.trim(), password); navigate(returnTo, { replace: true }) }
@@ -25,7 +25,7 @@ export default function LoginPage({ toast }: Props) {
   async function social() {
     if (!socialChoice || !agreed) return
     setBusy(true); setError('')
-    try { const created = await socialLogin(socialChoice, promotions, true); if (created) toast('Welcome to iDogs!'); navigate(returnTo, { replace: true }) }
+    try { const created = await socialLogin(socialChoice, promotions && promotionsConfirmed, true); if (created) toast('Welcome to iDogs!'); navigate(returnTo, { replace: true }) }
     catch { setError('Could not sign in with this provider. Try email or mobile number.'); setBusy(false) }
   }
   const puppy = returnTo.startsWith('/p/')
@@ -39,7 +39,7 @@ export default function LoginPage({ toast }: Props) {
       <button className="btn btn-primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
     </form> : <PasswordlessSignIn next={returnTo} phoneOnly onBusyChange={setBusy} />}
     <div className="idogs-auth-divider">or</div><SocialSignIn busy={busy} onContinue={setSocialChoice} />
-    {socialChoice && <div className="idogs-auth-form"><p className="idogs-auth-small">For your first visit, please confirm your account preferences. Existing preferences will stay as they are.</p><SignupConsent agreed={agreed} onAgree={setAgreed} promotions={promotions} onPromotions={setPromotions} busy={busy} /><button type="button" className="btn btn-primary" disabled={busy || !agreed} onClick={() => void social()}>Continue with {socialChoice === 'google.com' ? 'Google' : 'Facebook'}</button></div>}
+    {socialChoice && <div className="idogs-auth-form"><p className="idogs-auth-small">For your first visit, please confirm your account preferences. Existing preferences will stay as they are.</p><SignupConsent agreed={agreed} onAgree={setAgreed} promotions={promotions} onPromotions={value => { setPromotions(value); setPromotionsConfirmed(true) }} promotionsConfirmed={promotionsConfirmed} busy={busy} /><button type="button" className="btn btn-primary" disabled={busy || !agreed} onClick={() => void social()}>Continue with {socialChoice === 'google.com' ? 'Google' : 'Facebook'}</button></div>}
     <p className="idogs-auth-switch">New to iDogs? <Link to={`/signup?next=${encodeURIComponent(returnTo)}`}>Create free account</Link></p>
   </AuthLayout>
 }

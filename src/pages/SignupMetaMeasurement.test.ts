@@ -31,13 +31,21 @@ describe('simple email signup and QR return', () => {
     expect(state.signup).not.toHaveBeenCalled(); expect(state.social).not.toHaveBeenCalled(); expect(state.track).not.toHaveBeenCalled()
     view.unmount()
   })
-  it('allows declining promotions, creates a minimal account and returns to the same public dog', async () => {
+  it('shows Yes by default without treating an untouched default as marketing consent', async () => {
     const view = await render(); await fill(view)
+    expect(view.root.findAllByProps({ type: 'radio' })[0].props.checked).toBe(true)
     await act(async () => { view.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }) })
     await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
     expect(state.signup).toHaveBeenCalledWith({ firstName: 'Ruby', lastName: '', kennelName: '', email: 'qa@example.invalid', password: 'synthetic-only', marketingOptIn: false, termsAccepted: true })
     expect(state.track).toHaveBeenCalledTimes(1)
     expect(view.root.findByType('output').children.join('')).toBe('/p/QR-RUBY?follow=1')
+    view.unmount()
+  })
+  it.each([true, false])('records an actively confirmed promotion choice while allowing signup either way: %s', async choice => {
+    const view = await render(); await fill(view)
+    await act(async () => { view.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }); const radios = view.root.findAllByProps({ type: 'radio' }); if (choice) radios[0].props.onClick(); else radios[1].props.onChange() })
+    await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(state.signup).toHaveBeenCalledWith(expect.objectContaining({ marketingOptIn: choice, termsAccepted: true }))
     view.unmount()
   })
   it('keeps the form and does not record conversion when creation fails', async () => {

@@ -40,6 +40,8 @@ if (!getApps().length) {
 const db = getFirestore()
 
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'private, no-store')
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive')
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }

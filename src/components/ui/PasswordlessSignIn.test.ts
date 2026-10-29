@@ -10,7 +10,7 @@ vi.mock('firebase/auth', () => ({ getAdditionalUserInfo: () => ({ isNewUser: tru
 import PasswordlessSignIn from './PasswordlessSignIn'
 beforeEach(() => {
   s.send.mockReset().mockResolvedValue({ confirm: s.confirm }); s.confirm.mockReset().mockResolvedValue({ user: { uid: 'qa-phone', phoneNumber: '+16505553434' } }); s.finish.mockReset().mockResolvedValue(undefined); s.track.mockReset()
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ json: async () => ({ emailLink: true, phone: true, phoneTestOnly: true }) }))
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ emailLink: true, phone: true, phoneTestOnly: true }) }))
 })
 afterEach(() => vi.unstubAllGlobals())
 async function phoneForm() {

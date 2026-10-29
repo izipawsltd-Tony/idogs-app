@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth'
 import { splitDisplayName } from '../lib/quickSignup'
 import { welcomeUser } from '../lib/welcomeUser'
+import { sendInitialVerification, rememberVerificationDelivery } from '../lib/signupVerification'
 import { auth } from '../lib/firebase'
 import { createUserProfile, getUserProfile, getUserProfileFromServer, updateUserProfile, deleteUserData } from '../lib/db'
 import type { UserProfile, SignupFormData } from '../types'
@@ -92,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ...(breederNumber?.trim() && { breederIdValue: breederNumber.trim() }),
       })
       const p = await getUserProfile(newUser.uid)
+      await sendInitialVerification(newUser)
       ++authGeneration.current
       setProfile(p); setLoading(false)
       void welcomeUser(newUser)
@@ -114,6 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await createUserProfile(result.user.uid, { email: result.user.email || '', ...splitDisplayName(name), kennelName: '', role: 'owner', marketingConsent: { channel: 'email_marketing', choice: marketingOptIn ? 'opt_in' : 'opt_out', source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox', checkboxDefault: false, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn ? new Date().toISOString() : null, revokedAt: null, email: result.user.email || '', evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1' } })
     }
     if (!existing && termsAccepted) await updateUserProfile(result.user.uid, { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' } })
+    if (!existing) await sendInitialVerification(result.user)
     const loadedProfile = await getUserProfile(result.user.uid)
     ++authGeneration.current
     setProfile(loadedProfile); setLoading(false)
@@ -168,6 +171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function resendVerificationEmail() {
     if (!auth.currentUser) return
     await sendEmailVerification(auth.currentUser)
+    rememberVerificationDelivery(auth.currentUser.uid, 'sent')
   }
 
   async function deleteAccount() {
