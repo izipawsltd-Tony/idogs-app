@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto'
 import {stagingDeletionConfiguration} from './deletion-staging-readiness.mjs'
 import {QA_RESOURCES as target,verifyQaDatabase,verifyQaBucket} from './provision-deletion-resources.mjs'
-import {cloudFixtureScope,createCloudFixtureProcessor} from './deletion-cloud-runtime.mjs'
+import {cloudFixtureScope,createCloudFixtureProcessor,createCloudFixtureRenewalDispatcher} from './deletion-cloud-runtime.mjs'
 import {signInCloudFixture,loopbackDeletionApi,protectedPreviewDeletionApi} from './deletion-cloud-http.mjs'
 import {createDeletionEmailSink} from './deletion-email-sink.mjs'
 import {createHumanQaConfirmation} from './deletion-human-confirmation.mjs'
@@ -96,6 +96,25 @@ try{
  const duplicateRequest=await httpApi.call({token:idToken,method:'POST',body:{action:'request',confirmation:'DELETE MY ACCOUNT'}})
  ensure(duplicateRequest.status===200&&duplicateRequest.body.requestedAt===receipt.body.requestedAt,'QA_HTTP_DUPLICATE_REQUEST_CHANGED')
  evidence.realFirebaseTokenHttpVerified=true
+ phase='durable_renewal_dispatch'
+ // Trusted QA activation of this one disposable task only. Public requests and
+ // Production tasks still default to executionEnabled:false; no live switch.
+ const renewalRef=db.doc(`accountDeletionRenewalTasks/${uid}_1`)
+ await scope.assertRuntime(uid)
+ await scope.db.runTransaction(async tx=>{
+  const task=await tx.get(renewalRef),t=task.data()
+  ensure(t?.uid===uid&&t.revision===1&&t.executionEnabled===false&&t.status==='pending_verification','QA_RENEWAL_TASK_CHANGED')
+  tx.update(renewalRef,{executionEnabled:true})
+ })
+ const dispatched=await createCloudFixtureRenewalDispatcher({scope,provider:provider()}).execute({uid,revision:1})
+ ensure(dispatched.status==='completed'&&dispatched.renewalStatus==='verified_stopped','QA_RENEWAL_DISPATCH_NOT_VERIFIED')
+ const durable=(await renewalRef.get()).data()
+ ensure(durable.executionEnabled===false&&durable.dispatchState==='completed'&&durable.verificationReceipt?.mode==='isolated-cloud-qa','QA_RENEWAL_RECEIPT_MISSING')
+ ensure((await auth.getUser(uid)).disabled===false&&(await db.doc(`users/${uid}`).get()).exists,'QA_RENEWAL_REMOVED_ACCOUNT')
+ const replay=await createCloudFixtureRenewalDispatcher({scope,provider:provider()}).execute({uid,revision:1})
+ ensure(replay.status==='completed'&&replay.duplicate===true,'QA_RENEWAL_DUPLICATE_NOT_IDEMPOTENT')
+ evidence.durableRenewalDispatchVerified=true
+ evidence.renewalBeforeAuthRemovalVerified=true
  phase='interrupt_after_real_media_removal'
  let interrupted=false
  try{await createCloudFixtureProcessor({scope,provider:provider()}).process({uid,revision:1,afterOperation:async({kind})=>{if(kind==='media'){interrupted=true;throw Object.assign(new Error('QA_INJECTED_INTERRUPTION'),{code:'QA_INJECTED_INTERRUPTION'})}}});throw Error('QA_INTERRUPTION_NOT_REACHED')}
@@ -167,6 +186,17 @@ finally{
  if(httpApi)await clean('http_shutdown',()=>httpApi.close())
  if(manifest&&db)await clean('firebase_fixture',async()=>{
   const job=db.doc(`accountDeletionJobs/${uid}`),j=(await job.get()).data();ensure(digest(j?.qaManifest)===digest(manifest),'QA_CLEANUP_BINDING_CHANGED')
+  const renewal=db.doc(`accountDeletionRenewalTasks/${uid}_1`)
+  const renewalCollections=await renewal.listCollections()
+  ensure(renewalCollections.every(c=>c.id==='receipts'),'QA_CLEANUP_RENEWAL_COLLECTION_CHANGED')
+  const renewalReceipts=await renewal.collection('receipts').limit(2).get()
+  ensure(renewalReceipts.size<=1,'QA_CLEANUP_RENEWAL_RECEIPTS_CHANGED')
+  for(const snap of renewalReceipts.docs){
+   const r=snap.data()
+   ensure(snap.id===digest(manifest.stripeSubscriptionId)&&r.uid===uid&&r.revision===1&&r.subscriptionId===manifest.stripeSubscriptionId&&r.mode==='isolated-cloud-qa','QA_CLEANUP_RENEWAL_RECEIPT_CHANGED')
+   await scope.db.runTransaction(async tx=>{const current=await tx.get(snap.ref);ensure(current.exists&&digest(current.data())===digest(r),'QA_CLEANUP_RENEWAL_RECEIPT_CHANGED');tx.delete(snap.ref)})
+  }
+  ensure((await renewal.collection('receipts').limit(1).get()).empty,'QA_CLEANUP_RENEWAL_RECEIPTS_REMAIN')
   for(const path of manifest.mediaPaths){const file=bucket.file(path);if((await file.exists())[0]){const [m]=await file.getMetadata();ensure(m.metadata?.deletionQaRunId===runId,'QA_CLEANUP_MEDIA_CHANGED');await file.delete({ifGenerationMatch:m.generation})}}
   const paths=[...manifest.recordPaths,`dogs/${runId}-sentinel`,`accountDeletionRequests/${uid}`,`accountDeletionLocks/${uid}`,`accountDeletionReceipts/${digest([uid,1])}`,`accountDeletionRenewalTasks/${uid}_1`,`supportConversations/account_deletion_${uid}`,`supportMessages/account_deletion_${uid}_1_request`]
   if(fixtureCreated){const batch=db.batch();for(const path of paths)batch.delete(db.doc(path));await batch.commit();await db.recursiveDelete(job)}

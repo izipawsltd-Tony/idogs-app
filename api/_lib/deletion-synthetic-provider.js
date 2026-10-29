@@ -1,12 +1,14 @@
 // Persisted emulator fixture, not a live provider implementation. The processor
 // independently requires all three local emulators before using this adapter.
+import { deletionBillingIdentityHash } from './account-deletion-policy.js'
 export function syntheticDeletionProvider(db) {
   const ref = uid => db.collection('deletionSyntheticProviders').doc(uid)
   return {
     mode:'synthetic',
     async discover(uid) {
       const s=await ref(uid).get(),d=s.data()
-      return {uid,complete:d?.discoveryComplete===true,subscriptions:d?.subscriptions||[]}
+      const profile=(await db.collection('users').doc(uid).get()).data()
+      return {uid,complete:d?.discoveryComplete===true,subscriptions:d?.subscriptions||[],billingIdentityHash:deletionBillingIdentityHash(profile?.stripeCustomerId)}
     },
     async stopRenewal(id,{uid,idempotencyKey}) {
       await db.runTransaction(async tx=>{

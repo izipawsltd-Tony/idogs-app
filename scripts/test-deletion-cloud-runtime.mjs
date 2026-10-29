@@ -1,6 +1,6 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
-import {cloudFixtureScope,createCloudFixtureProcessor} from './qa/deletion-cloud-runtime.mjs'
+import {cloudFixtureScope,createCloudFixtureProcessor,createCloudFixtureRenewalDispatcher} from './qa/deletion-cloud-runtime.mjs'
 import {digest} from '../api/_lib/deletion-plan.js'
 
 const runId=`deletion-qa-${'a'.repeat(32)}`,uid=`qa-${runId}`
@@ -39,8 +39,17 @@ test('Auth replacement and manifest changes block destructive calls',async()=>{
 test('isolated cloud wrapper rejects synthetic/live provider and explicit mismatch UID',async()=>{
  const f=fixture(),scope=cloudFixtureScope(f.args)
  for(const mode of ['synthetic','live','stripe-contract-unwired'])assert.throws(()=>createCloudFixtureProcessor({scope,provider:{mode}}),/PROVIDER_REQUIRED/)
+ for(const mode of ['synthetic','live','stripe-contract-unwired'])assert.throws(()=>createCloudFixtureRenewalDispatcher({scope,provider:{mode}}),/PROVIDER_REQUIRED/)
  await assert.rejects(scope.assertRuntime('real-user'),/FOREIGN_UID/)
  assert.equal(digest(f.manifest),digest({...f.manifest}))
+})
+
+test('renewal receipt writes are restricted to this manifest account and bounded receipt IDs',async()=>{
+ const f=fixture(),scope=cloudFixtureScope(f.args),receipt='a'.repeat(64)
+ await scope.db.runTransaction(tx=>tx.set(f.db.doc(`accountDeletionRenewalTasks/${uid}_1/receipts/${receipt}`),{}))
+ assert.equal(f.counts().writes,1)
+ for(const path of [`accountDeletionRenewalTasks/real-user_1/receipts/${receipt}`,`accountDeletionRenewalTasks/${uid}_2/receipts/${receipt}`,`accountDeletionRenewalTasks/${uid}_1/receipts/not-a-hash`,`accountDeletionRenewalTasks/${uid}_1/other/${receipt}`])await assert.rejects(scope.db.runTransaction(tx=>tx.set(f.db.doc(path),{})),/FOREIGN_WRITE/)
+ assert.equal(f.counts().writes,1)
 })
 test('seven-day runtime permits only its fixed private bucket and an explicit durable retention manifest',async()=>{
  const f=fixture();f.args.retentionMode='seven-day';f.bucket.name='idogs-app-staging-retention-qa'

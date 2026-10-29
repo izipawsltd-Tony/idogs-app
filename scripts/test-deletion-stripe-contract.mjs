@@ -103,3 +103,20 @@ test('verification cannot report a stopped renewal after customer binding change
   f.stripe.subscriptions.retrieve=async()=>{f.state.ownership={...f.state.ownership,customerId:'cus_replacement'};return {...f.state.subs[0],cancel_at_period_end:true}}
   await assert.rejects(f.adapter.verify('sub_one'),/OWNERSHIP_CHANGED/)
 })
+
+test('Stripe discovery preserves provider creation evidence for acceptance-scoped renewal dispatch',async()=>{
+  const f=fixture();f.state.subs[0].created=1700000000
+  const discovery=await f.adapter.discover(uid)
+  assert.equal(discovery.subscriptions[0].createdAt,'2023-11-14T22:13:20.000Z')
+  delete f.state.subs[0].created
+  assert.equal((await f.adapter.discover(uid)).subscriptions[0].createdAt,undefined)
+})
+
+test('dispatcher lease revoked during Stripe lookup blocks the final cancellation mutation',async()=>{
+  const f=fixture();await f.adapter.discover(uid)
+  let lease=true
+  const original=f.stripe.subscriptions.retrieve
+  f.stripe.subscriptions.retrieve=async id=>{const value=await original(id);lease=false;return value}
+  await assert.rejects(f.adapter.stopRenewal('sub_one',{uid,idempotencyKey:`deletion/${uid}/1/sub_one`,assertExecution:async()=>{if(!lease)throw Object.assign(Error('stale attempt'),{code:'RENEWAL_STALE_ATTEMPT'})}}),/stale attempt/)
+  assert.equal(f.state.updates.length,0)
+})

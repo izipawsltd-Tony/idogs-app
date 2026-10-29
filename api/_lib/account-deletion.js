@@ -1,5 +1,5 @@
 // Request lifecycle only. Never deletes data or mutates subscriptions.
-import { deletionCommitment, newRenewalTask, publicDeletionCommitment, RENEWAL_TASK_COLLECTION } from './account-deletion-policy.js'
+import { deletionCommitment, newRenewalTask, publicDeletionCommitment, RENEWAL_TASK_COLLECTION, deletionBillingIdentityHash } from './account-deletion-policy.js'
 export const DELETION_COLLECTION = 'accountDeletionRequests'
 export const CANCELLABLE = ['requested', 'review_required']
 const fail = (message, status) => Object.assign(new Error(message), { status })
@@ -71,6 +71,7 @@ export async function changeDeletionRequest({ db, token, body, now = Date.now(),
     if (previous && now - Date.parse(previous.updatedAt) < 60000) throw fail('Please wait a minute before requesting again.', 429)
     const conversation = await tx.get(conversationRef)
     const commitment = deletionCommitment(now)
+    const profile = await tx.get(db.collection('users').doc(token.uid))
     const next = {
       uid: token.uid, status: 'requested', revision: Number(previous?.revision || 0) + 1,
       requestedAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
@@ -85,7 +86,8 @@ export async function changeDeletionRequest({ db, token, body, now = Date.now(),
     // dates or enqueue another task. Cancellation preserves this task and never
     // requests a subscription restart. Provider execution remains disabled.
     tx.set(db.collection(RENEWAL_TASK_COLLECTION).doc(`${token.uid}_${next.revision}`),
-      newRenewalTask({ uid: token.uid, revision: next.revision, commitment }))
+      newRenewalTask({ uid: token.uid, revision: next.revision, commitment,
+        billingIdentityHash:deletionBillingIdentityHash(profile.data()?.stripeCustomerId) }))
     const message = 'Account deletion requested. Review ownership, pending transfers, billing and record retention before processing. No permanent deletion is confirmed.'
     tx.set(conversationRef, {
       ...(conversation.exists ? conversation.data() : {}),

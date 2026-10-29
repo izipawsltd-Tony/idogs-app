@@ -2,7 +2,7 @@ name: Deletion processor prototype (emulators only)
 on:
   push:
     branches: [release/ios-app-store-20261025]
-    paths: ['api/**', 'scripts/test-deletion-processor-emulator.mjs', 'scripts/test-deletion-billing.mjs', 'scripts/test-deletion-stripe-contract.mjs', 'firestore.rules', '.github/workflows/deletion-processor-prototype.yml']
+    paths: ['api/**', 'scripts/test-deletion-processor-emulator.mjs', 'scripts/test-deletion-billing.mjs', 'scripts/test-deletion-renewal-dispatcher.mjs', 'scripts/test-deletion-stripe-contract.mjs', 'firestore.rules', '.github/workflows/deletion-processor-prototype.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -24,7 +24,7 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: node --test scripts/test-account-deletion.mjs
-      - run: node --test scripts/test-deletion-billing.mjs
+      - run: node --test scripts/test-deletion-billing.mjs scripts/test-deletion-renewal-dispatcher.mjs
       - run: node --test scripts/test-deletion-stripe-contract.mjs
       - run: node --test scripts/test-deletion-qa-webhook.mjs
       - name: Synthetic Auth, Firestore and Storage only

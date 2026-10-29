@@ -15,6 +15,7 @@ import {syntheticDeletionProvider} from '../api/_lib/deletion-synthetic-provider
 import {buildEmulatorDeletionPlan,scanDeletionDocuments,versionOf,mediaPaths} from '../api/_lib/deletion-plan.js'
 import {requireDeletionEmulators,beginAccountMutation,withAccountMutationFence} from '../api/_lib/deletion-fence.js'
 import {recordDeletionBillingAcceptance} from '../api/_lib/deletion-billing.js'
+import {changeDeletionRequest} from '../api/_lib/account-deletion.js'
 
 const PROJECT='demo-idogs-deletion'
 for(const key of ['FIRESTORE_EMULATOR_HOST','FIREBASE_AUTH_EMULATOR_HOST','FIREBASE_STORAGE_EMULATOR_HOST'])if(!/^(localhost|127\.0\.0\.1):\d{4,5}$/.test(process.env[key]||''))throw Error('Expected local emulators')
@@ -32,8 +33,8 @@ async function signup(label,claims){
 }
 async function call(identity,path,method='GET',body){const r=await fetch(origin+path,{method,headers:{...(identity?{Authorization:`Bearer ${identity.token}`}:{ }),'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()}}
 async function request(){const r=await call(owner,'/request','POST',reqBody);assert.equal(r.status,200);return r}
-async function seed({shared=false,media=true}={}){
-  await db.collection('users').doc(owner.uid).set({email:owner.email,firstName:'Synthetic',lastName:'Departing',phone:'0400000000',address:'Synthetic only',role:'owner',plan:'free'})
+async function seed({shared=false,media=true,billingAcceptance=true,subscriptions=[],stripeCustomerId}={}){
+  await db.collection('users').doc(owner.uid).set({email:owner.email,firstName:'Synthetic',lastName:'Departing',phone:'0400000000',address:'Synthetic only',role:'owner',plan:'free',...(stripeCustomerId?{stripeCustomerId}:{})})
   await db.collection('users').doc(other.uid).set({email:other.email,role:'owner',plan:'free'})
   const dog={tenantId:owner.uid,currentOwnerId:shared?other.uid:owner.uid,name:'Synthetic dog',passportId:'NNG-SYNTHETIC',status:'active'}
   await db.collection('dogs').doc('synthetic-dog').set(dog)
@@ -41,8 +42,9 @@ async function seed({shared=false,media=true}={}){
   await db.collection('vaccineRecords').doc('synthetic-vaccine').set({dogId:'synthetic-dog',createdBy:recordOwner,name:'Synthetic vaccine',dateGiven:'2026-01-01'})
   await db.collection('wormingRecords').doc('synthetic-worm').set({dogId:'synthetic-dog',createdBy:recordOwner,product:'Synthetic worming'})
   if(media){const path=`documents/${recordOwner}/synthetic-dog/proof.pdf`;await bucket.file(path).save(Buffer.from('Synthetic fixture only'));await db.collection('documents').doc('synthetic-document').set({dogId:'synthetic-dog',tenantId:recordOwner,filePath:path})}
-  await db.collection('deletionSyntheticProviders').doc(owner.uid).set({discoveryComplete:true,subscriptions:[],retention:{verified:true,restoreReplayVerified:true,mediaIngressDrained:true,storageRetentionSeconds:0}})
-  await request()
+  await db.collection('deletionSyntheticProviders').doc(owner.uid).set({discoveryComplete:true,subscriptions,retention:{verified:true,restoreReplayVerified:true,mediaIngressDrained:true,storageRetentionSeconds:0}})
+  if(billingAcceptance)await request()
+  else await changeDeletionRequest({db,token:await auth.verifyIdToken(owner.token,true),body:reqBody})
 }
 before(async()=>{
   app=initializeApp({projectId:PROJECT,storageBucket:`${PROJECT}.firebasestorage.app`});db=getFirestore(app);auth=getAuth(app);bucket=getStorage(app).bucket()
@@ -450,4 +452,151 @@ for(const invalid of ['foreign-readback','invalid-subscription-id','oversized-in
   assert.equal((await db.doc(`users/${owner.uid}`).get()).exists,true)
   assert.equal((await db.doc('documents/synthetic-document').get()).exists,true)
   assert.equal((await requestRef().get()).data().status,'processing')
+})
+
+// These trusted Admin writes activate only disposable emulator tasks. The
+// request API still creates executionEnabled:false; no route enables live work.
+import {createEmulatorRenewalDispatcher} from '../api/_lib/deletion-renewal-dispatcher.js'
+const renewalTask=()=>db.doc(`accountDeletionRenewalTasks/${owner.uid}_1`)
+const seedRenewal=options=>seed({stripeCustomerId:'cus_synthetic',billingAcceptance:false,...options})
+const dispatchWith=(p=provider,clock)=>createEmulatorRenewalDispatcher({db,auth,bucket,projectId:PROJECT,provider:p,clock})
+async function enableEmulatorRenewal(){
+  const task=await renewalTask().get()
+  assert.equal(task.data().executionEnabled,false)
+  await renewalTask().update({executionEnabled:true})
+}
+
+test('renewal dispatcher holds default-disabled tasks without provider calls or account deletion',async()=>{
+  await seedRenewal();let calls=0
+  const p={...provider,discover:async()=>{calls++;throw Error('must not call provider')}}
+  assert.deepEqual(await dispatchWith(p).execute({uid:owner.uid,revision:1}),{status:'held',code:'execution_disabled'})
+  assert.equal(calls,0);assert.equal((await auth.getUser(owner.uid)).disabled,false)
+  assert.equal((await renewalTask().get()).data().attempts,undefined)
+})
+
+test('renewal dispatcher persists exact provider receipts and duplicate completion without deleting Auth',async()=>{
+  await seedRenewal({billingAcceptance:false,subscriptions:[{id:'sub-durable',ownerUid:owner.uid,renewalStopped:false,createdAt:new Date(Date.now()-1000).toISOString()}]})
+  await enableEmulatorRenewal()
+  const dispatcher=dispatchWith()
+  assert.deepEqual(await dispatcher.execute({uid:owner.uid,revision:1}),{status:'completed',renewalStatus:'verified_stopped'})
+  const task=(await renewalTask().get()).data(),receipts=await renewalTask().collection('receipts').get()
+  assert.equal(task.executionEnabled,false);assert.equal(task.attempts,1);assert.equal(receipts.size,1)
+  assert.equal(receipts.docs[0].data().subscriptionId,'sub-durable')
+  assert.equal((await requestRef().get()).data().status,'requested')
+  assert.equal((await auth.getUser(owner.uid)).disabled,false)
+  assert.equal((await dispatcher.execute({uid:owner.uid,revision:1})).duplicate,true)
+  assert.equal((await db.doc(`deletionSyntheticProviders/${owner.uid}`).get()).data().keys.length,1)
+})
+
+test('renewal dispatcher lost response schedules bounded retry with the same provider key',async()=>{
+  await seedRenewal({billingAcceptance:false,subscriptions:[{id:'sub-durable',ownerUid:owner.uid,renewalStopped:false,createdAt:new Date(Date.now()-1000).toISOString()}]})
+  await enableEmulatorRenewal();let time=Date.now(),drop=true,calls=0
+  const p={...provider,stopRenewal:async(...args)=>{calls++;await provider.stopRenewal(...args);if(drop){drop=false;throw Object.assign(Error('lost reply'),{code:'ETIMEDOUT'})}}}
+  const dispatcher=dispatchWith(p,()=>time)
+  assert.deepEqual(await dispatcher.execute({uid:owner.uid,revision:1}),{status:'retry_wait'})
+  const first=(await renewalTask().get()).data()
+  assert.equal(first.status,'review_required');assert.equal(first.verificationReceipt,undefined)
+  assert.deepEqual(await dispatcher.execute({uid:owner.uid,revision:1}),{status:'held',code:'retry_not_due'})
+  assert.equal(calls,1)
+  // Synthetic scheduler unit time only; this is not real Storage-expiry evidence.
+  time=Date.parse(first.nextAttemptAt)
+  assert.equal((await dispatcher.execute({uid:owner.uid,revision:1})).renewalStatus,'verified_stopped')
+  assert.equal((await renewalTask().get()).data().attempts,2)
+  assert.equal((await db.doc(`deletionSyntheticProviders/${owner.uid}`).get()).data().keys.length,1)
+})
+
+test('renewal dispatcher refuses a second worker while a claimed provider request is in flight',async()=>{
+  await seedRenewal();await enableEmulatorRenewal();let enter,release
+  const entered=new Promise(r=>{enter=r}),gate=new Promise(r=>{release=r})
+  const slow={...provider,discover:async uid=>{enter();await gate;return provider.discover(uid)}}
+  const first=dispatchWith(slow).execute({uid:owner.uid,revision:1})
+  try{await entered;assert.deepEqual(await dispatchWith().execute({uid:owner.uid,revision:1}),{status:'busy'})}finally{release()}
+  assert.equal((await first).renewalStatus,'verified_no_subscription')
+  assert.equal((await renewalTask().get()).data().attempts,1)
+})
+
+test('renewal dispatcher cannot overwrite a replacement request after provider work',async()=>{
+  await seedRenewal();await enableEmulatorRenewal()
+  const changed={...provider,discover:async uid=>{await requestRef().update({revision:2,renewalStatus:'pending_verification'});return provider.discover(uid)}}
+  assert.deepEqual(await dispatchWith(changed).execute({uid:owner.uid,revision:1}),{status:'superseded'})
+  assert.equal((await requestRef().get()).data().renewalStatus,'pending_verification')
+  assert.equal((await renewalTask().get()).data().verificationReceipt,undefined)
+})
+
+test('renewal dispatcher honors accepted cancellation without restarting subscription or account deletion',async()=>{
+  await seedRenewal();await enableEmulatorRenewal()
+  assert.equal((await call(owner,'/request','POST',{action:'cancel'})).status,200)
+  assert.equal((await dispatchWith().execute({uid:owner.uid,revision:1})).renewalStatus,'verified_no_subscription')
+  assert.equal((await requestRef().get()).data().status,'cancelled')
+  assert.equal((await auth.getUser(owner.uid)).disabled,false)
+})
+
+test('renewal dispatcher holds wrong provider evidence for review and enforces attempt limit',async()=>{
+  await seedRenewal();await enableEmulatorRenewal()
+  const bad={...provider,discover:async()=>({uid:owner.uid,complete:false,subscriptions:[]})}
+  assert.deepEqual(await dispatchWith(bad).execute({uid:owner.uid,revision:1}),{status:'review_required'})
+  assert.equal((await renewalTask().get()).data().verificationReceipt,undefined)
+  assert.equal((await renewalTask().get()).data().nextAttemptAt,null)
+  await renewalTask().update({dispatchState:'retry_wait',attempts:5})
+  assert.deepEqual(await dispatchWith().execute({uid:owner.uid,revision:1}),{status:'held',code:'attempt_limit'})
+  assert.equal((await requestRef().get()).data().renewalStatus,'review_required')
+})
+
+test('renewal dispatcher detects a modified receipt instead of accepting forged duplicate success',async()=>{
+  await seedRenewal();await enableEmulatorRenewal();const dispatcher=dispatchWith()
+  await dispatcher.execute({uid:owner.uid,revision:1})
+  await renewalTask().update({'verificationReceipt.bindingHash':'changed'})
+  await assert.rejects(dispatcher.execute({uid:owner.uid,revision:1}),/RENEWAL_RECEIPT_CHANGED/)
+})
+
+for(const createdAt of [undefined,'not-a-date',new Date(Date.now()+86400000).toISOString()])test(`renewal dispatcher refuses missing or post-acceptance subscription evidence ${String(createdAt)}`,async()=>{
+  await seedRenewal({billingAcceptance:false});await enableEmulatorRenewal();let calls=0
+  const p={...provider,discover:async()=>({uid:owner.uid,complete:true,billingIdentityHash:(await provider.discover(owner.uid)).billingIdentityHash,subscriptions:[{id:'sub-new',ownerUid:owner.uid,createdAt}]}),stopRenewal:async()=>{calls++}}
+  assert.equal((await dispatchWith(p).execute({uid:owner.uid,revision:1})).status,'review_required')
+  assert.equal(calls,0);assert.equal((await renewalTask().get()).data().verificationReceipt,undefined)
+  assert.equal((await auth.getUser(owner.uid)).disabled,false)
+})
+
+test('renewal dispatcher expired attempt cannot overwrite the replacement receipt',async()=>{
+  await seedRenewal({billingAcceptance:false});await enableEmulatorRenewal();let time=Date.now(),enter,release
+  const entered=new Promise(r=>{enter=r}),gate=new Promise(r=>{release=r})
+  const slow={...provider,discover:async uid=>{enter();await gate;return provider.discover(uid)}}
+  const first=dispatchWith(slow,()=>time).execute({uid:owner.uid,revision:1})
+  try{
+    await entered;time+=60001
+    assert.equal((await dispatchWith(provider,()=>time).execute({uid:owner.uid,revision:1})).status,'completed')
+  }finally{release()}
+  assert.deepEqual(await first,{status:'superseded'})
+  const task=(await renewalTask().get()).data()
+  assert.equal(task.attempts,2);assert.equal(task.dispatchEpoch,task.verificationReceipt.epoch)
+})
+
+test('renewal dispatcher resumes verified per-subscription receipts after a later provider timeout',async()=>{
+  const createdAt=new Date(Date.now()-1000).toISOString()
+  await seedRenewal({billingAcceptance:false,subscriptions:['sub-a','sub-b'].map(id=>({id,ownerUid:owner.uid,createdAt,renewalStopped:false}))})
+  await enableEmulatorRenewal();let time=Date.now(),drop=true;const calls=[]
+  const p={...provider,stopRenewal:async(id,args)=>{calls.push(id);await provider.stopRenewal(id,args);if(id==='sub-b'&&drop){drop=false;throw Object.assign(Error('lost reply'),{code:'ETIMEDOUT'})}}}
+  assert.equal((await dispatchWith(p,()=>time).execute({uid:owner.uid,revision:1})).status,'retry_wait')
+  assert.equal((await renewalTask().collection('receipts').get()).size,1)
+  time=Date.parse((await renewalTask().get()).data().nextAttemptAt)
+  assert.equal((await dispatchWith(p,()=>time).execute({uid:owner.uid,revision:1})).status,'completed')
+  assert.deepEqual(calls,['sub-a','sub-b','sub-b'])
+  assert.equal((await renewalTask().collection('receipts').get()).size,2)
+  assert.equal((await db.doc(`deletionSyntheticProviders/${owner.uid}`).get()).data().keys.length,2)
+})
+
+test('renewal dispatcher refuses a different customer binding recorded after acceptance',async()=>{
+  await seedRenewal();await enableEmulatorRenewal()
+  await db.doc(`users/${owner.uid}`).update({stripeCustomerId:'cus_replacement'})
+  let calls=0
+  const p={...provider,stopRenewal:async()=>{calls++}}
+  assert.equal((await dispatchWith(p).execute({uid:owner.uid,revision:1})).status,'review_required')
+  assert.equal(calls,0);assert.equal((await renewalTask().get()).data().verificationReceipt,undefined)
+})
+
+test('renewal dispatcher does not invent an acceptance binding for legacy tasks',async()=>{
+  await seedRenewal();await enableEmulatorRenewal()
+  await renewalTask().update({billingIdentityHash:FieldValue.delete()})
+  assert.deepEqual(await dispatchWith().execute({uid:owner.uid,revision:1}),{status:'held',code:'acceptance_billing_binding_missing'})
+  assert.equal((await renewalTask().get()).data().attempts,undefined)
 })

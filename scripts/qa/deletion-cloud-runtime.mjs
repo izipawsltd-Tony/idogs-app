@@ -1,4 +1,5 @@
 import {createGuardedDeletionProcessor} from '../../api/_lib/deletion-processor.js'
+import {createGuardedRenewalDispatcher} from '../../api/_lib/deletion-renewal-dispatcher.js'
 import {digest} from '../../api/_lib/deletion-plan.js'
 import {QA_RESOURCES,verifyQaBucket} from './provision-deletion-resources.mjs'
 import {RETENTION_QA,verifyRetentionBucket} from './provision-retention-bucket.mjs'
@@ -18,6 +19,7 @@ export function cloudFixtureScope({db,auth,bucket,runId,manifest,env=process.env
  target()
  const exact=new Set([...manifest.recordPaths,`accountDeletionRequests/${uid}`,`accountDeletionLocks/${uid}`,`accountDeletionJobs/${uid}`,`accountDeletionReceipts/${digest([uid,1])}`,`accountDeletionRenewalTasks/${uid}_1`,`supportConversations/account_deletion_${uid}`,`supportMessages/account_deletion_${uid}_1_request`,`supportMessages/account_deletion_${uid}_1_cancel`])
  const allowed=path=>exact.has(path)||new RegExp(`^accountDeletionJobs/${uid}/(operations|receipts)/[0-9]{6}$`).test(path)
+  ||new RegExp(`^accountDeletionRenewalTasks/${uid}_1/receipts/[a-f0-9]{64}$`).test(path)
  function write(ref){target();if(ref.firestore!==db||!allowed(ref.path))throw fail('CLOUD_QA_FOREIGN_WRITE_REJECTED')}
  // All worker writes go through a checked transaction. Query/inventory reads
  // stay inside the fixed isolated database. No generic batch/delete API exposed.
@@ -45,4 +47,9 @@ export function cloudFixtureScope({db,auth,bucket,runId,manifest,env=process.env
 export function createCloudFixtureProcessor({scope,provider,...options}){
  if(provider?.mode!=='isolated-cloud-qa')throw fail('CLOUD_QA_PROVIDER_REQUIRED')
  return createGuardedDeletionProcessor({...options,db:scope.db,auth:scope.auth,bucket:scope.bucket,provider,assertRuntime:scope.assertRuntime,mode:'isolated-cloud-qa',confirmationMode:'qa-ledger'})
+}
+
+export function createCloudFixtureRenewalDispatcher({scope,provider}){
+ if(provider?.mode!=='isolated-cloud-qa')throw fail('CLOUD_QA_PROVIDER_REQUIRED')
+ return createGuardedRenewalDispatcher({db:scope.db,provider,assertRuntime:scope.assertRuntime,mode:'isolated-cloud-qa'})
 }

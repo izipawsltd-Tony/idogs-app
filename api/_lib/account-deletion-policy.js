@@ -1,5 +1,6 @@
 // Owner-approved business rules; deployment/fulfilment are separate gates.
 // This module never contacts a billing provider or deletes account data.
+import { createHash } from 'node:crypto'
 export const DELETION_POLICY_VERSION = '2026-10-21-v1'
 export const DELETION_TARGET_MS = 7 * 24 * 60 * 60 * 1000
 export const RENEWAL_TASK_COLLECTION = 'accountDeletionRenewalTasks'
@@ -11,13 +12,19 @@ export function deletionCommitment(now) {
   return { policyVersion: DELETION_POLICY_VERSION, acceptedAt, targetAt, nextUpdateDueAt: targetAt }
 }
 
-export function newRenewalTask({ uid, revision, commitment }) {
+export function deletionBillingIdentityHash(customerId) {
+  return typeof customerId==='string'&&/^cus_[A-Za-z0-9]+$/.test(customerId)
+    ? createHash('sha256').update(customerId).digest('hex') : null
+}
+
+export function newRenewalTask({ uid, revision, commitment, billingIdentityHash=null }) {
   return {
     uid, revision, policyVersion: commitment.policyVersion,
     acceptedAt: commitment.acceptedAt, updatedAt: commitment.acceptedAt,
     status: 'pending_verification', cancellationMode: 'period_end',
     scope: 'verified_subscriptions_existing_at_acceptance',
     restartOnDeletionCancellation: false,
+    billingIdentityHash,
     // No provider dispatcher is enabled by a request, owner policy approval or UI.
     executionEnabled: false,
   }

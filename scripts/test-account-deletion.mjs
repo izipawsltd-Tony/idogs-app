@@ -239,3 +239,16 @@ test('promotion Checkout document lookup failure remains an explicit redacted ho
   assert.equal(report.readyForDeletion, false)
   assert.doesNotMatch(JSON.stringify(report), /private provider detail/)
 })
+
+test('accepted renewal task captures only a private hash of the customer binding',async()=>{
+  const db=fakeDb()
+  db.records.set('users/synthetic-owner',{stripeCustomerId:'cus_privateAccepted'})
+  const receipt=await request(db)
+  const task=db.records.get('accountDeletionRenewalTasks/synthetic-owner_1')
+  assert.match(task.billingIdentityHash,/^[a-f0-9]{64}$/)
+  assert.ok(!JSON.stringify(receipt).includes(task.billingIdentityHash))
+  assert.ok(!JSON.stringify(task).includes('cus_privateAccepted'))
+  db.records.set('users/synthetic-owner',{stripeCustomerId:'cus_replacement'})
+  await request(db)
+  assert.equal(db.records.get('accountDeletionRenewalTasks/synthetic-owner_1').billingIdentityHash,task.billingIdentityHash)
+})

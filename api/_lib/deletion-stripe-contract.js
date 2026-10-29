@@ -1,6 +1,7 @@
 // Unwired SDK contract for review and mock-only tests. No credentials, SDK
 // construction, HTTP route, scheduler or production enable switch exists here.
 // The emulator deletion worker rejects this adapter's non-synthetic mode.
+import { deletionBillingIdentityHash } from './account-deletion-policy.js'
 const fail=code=>Object.assign(new Error(code),{code})
 const customerId=s=>typeof s.customer==='string'?s.customer:s.customer?.id
 const terminal=new Set(['canceled','incomplete_expired'])
@@ -55,9 +56,12 @@ export function createStripeDeletionRenewalContract({stripe,loadOwnership,assert
       if(current.customerId!==b.customerId)throw fail('STRIPE_DELETION_OWNERSHIP_CHANGED')
       if(current.knownSubscriptionIds.some(id=>!subs.some(s=>s.id===id)))throw fail('STRIPE_DELETION_LINKED_SUBSCRIPTION_MISSING')
       for(const s of subs)discovered.set(s.id,{uid,customerId:b.customerId})
-      return {uid,complete:true,subscriptions:subs.map(s=>({id:s.id,ownerUid:uid}))}
+      return {uid,complete:true,billingIdentityHash:deletionBillingIdentityHash(b.customerId),subscriptions:subs.map(s=>({id:s.id,ownerUid:uid,
+        ...(Number.isSafeInteger(s.created)&&s.created>=0&&s.created<=8640000000000?{createdAt:new Date(s.created*1000).toISOString()}:{})}))}
     },
-    async stopRenewal(id,{uid,idempotencyKey}){
+    async stopRenewal(id,{uid,idempotencyKey,assertExecution}){
+      if(assertExecution!==undefined&&typeof assertExecution!=='function')throw fail('STRIPE_DELETION_EXECUTION_GUARD_INVALID')
+      if(assertExecution)await assertExecution()
       await target();const cached=discovered.get(id),b=await binding(uid)
       if(!cached||cached.uid!==uid||cached.customerId!==b.customerId||typeof idempotencyKey!=='string'||!idempotencyKey.startsWith(`deletion/${uid}/`)||!idempotencyKey.endsWith(`/${id}`))throw fail('STRIPE_DELETION_UNDISCOVERED_SUBSCRIPTION')
       const s=await stripe.subscriptions.retrieve(id);checkSubscription(s,b,id)
@@ -67,6 +71,7 @@ export function createStripeDeletionRenewalContract({stripe,loadOwnership,assert
         const current=await binding(uid)
         if(current.customerId!==b.customerId)throw fail('STRIPE_DELETION_OWNERSHIP_CHANGED')
         await assertRuntime()
+        if(assertExecution)await assertExecution()
         await stripe.subscriptions.update(id,{cancel_at_period_end:true},{idempotencyKey})
       }
     },
