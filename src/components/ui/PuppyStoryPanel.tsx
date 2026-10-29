@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { puppyUpdates, puppyPath, puppyAppPath, type PuppyStory } from '../../lib/puppyUpdates'
 import PuppyUpdateFeed from './PuppyUpdateFeed'
 
 function PuppyStoryContent({ passportId }: { passportId: string }) {
   const { user, loading: authLoading } = useAuth()
+  const [params, setParams] = useSearchParams()
   const [story, setStory] = useState<PuppyStory | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -20,11 +21,19 @@ function PuppyStoryContent({ passportId }: { passportId: string }) {
     puppyUpdates({ passportId, action: 'view' }).then(data => { if (active) { setStory(data); setLoadedFor(identityKey) } }).catch(e => { if (active) setError(e.message) })
     return () => { active = false }
   }, [passportId, user?.uid, authLoading, refresh, identityKey])
-  const next = encodeURIComponent(puppyAppPath(passportId))
+  const next = encodeURIComponent(puppyAppPath(passportId) + '?follow=1')
   async function follow() {
     setBusy(true); setError('')
     try { await puppyUpdates({ passportId, action: story?.following ? 'unfollow' : 'follow' }); load() } catch (e) { setError(e instanceof Error ? e.message : 'Please retry') } finally { setBusy(false) }
   }
+  useEffect(() => {
+    if (!user || !story || loadedFor !== identityKey || params.get('follow') !== '1') return
+    let live = true
+    if (story.following) { const next = new URLSearchParams(params); next.delete('follow'); setParams(next, { replace: true }); return }
+    setBusy(true)
+    puppyUpdates({ passportId, action: 'follow' }).then(() => { if (live) { setBusy(false); const next = new URLSearchParams(params); next.delete('follow'); setParams(next, { replace: true }); load() } }).catch(e => { if (live) setError(e.message) }).finally(() => { if (live) setBusy(false) })
+    return () => { live = false }
+  }, [user?.uid, loadedFor, identityKey, params.get('follow'), passportId])
   async function older() {
     if (!story?.nextCursor) return
     setBusy(true); setError('')

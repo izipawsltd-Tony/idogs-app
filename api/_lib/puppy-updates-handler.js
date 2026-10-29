@@ -45,6 +45,7 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, serveVideo, p
       const rate = checkRateLimit(hashClientKey(getClientIp(req)))
       if (!rate.allowed) { res.setHeader('Retry-After', String(rate.retryAfterSeconds)); throw new ApiError(429, 'Please try again shortly') }
     }
+    if (identity && identity.email_verified !== true && !['view', 'media', 'list', 'follow', 'unfollow'].includes(action)) throw new ApiError(403, 'Verify your email before managing puppy updates')
     if (action === 'list') {
       const follows = await followRef(identity.uid, '_').parent.limit(100).get()
       const puppies = []
@@ -95,7 +96,6 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, serveVideo, p
       return res.status(200).json({ media: signed.map(m => ({ ...m, kind: media.find(item => item.id === m.id).kind })) })
     }
     if (action === 'follow' || action === 'unfollow') {
-      if (identity.email_verified !== true) throw new ApiError(403, 'Verify your email before following a puppy')
       if (action === 'follow') {
         await db.runTransaction(async tx => {
           const ref = followRef(identity.uid, dog.id)

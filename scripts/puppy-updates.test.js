@@ -263,10 +263,14 @@ describe('Actual puppy updates handler', () => {
     expect((await call({ action: 'unfollow', passportId: 'DOG-RUBY' }, 'stranger')).code).toBe(200)
     expect((await call({ action: 'list' }, 'stranger')).body.puppies).toHaveLength(0)
   })
-  it('requires authentication and verified email for following', async () => {
+  it('allows authenticated unverified users to follow without unlocking private data', async () => {
     const { call } = setup()
     expect((await call({ action: 'follow', dogId: 'puppy1' })).code).toBe(401)
-    expect((await call({ action: 'follow', dogId: 'puppy1' }, 'unverified')).code).toBe(403)
+    expect((await call({ action: 'follow', dogId: 'puppy1' }, 'unverified')).code).toBe(200)
+    const story = await call({ passportId: 'DOG-RUBY' }, 'unverified')
+    expect(story.body.role).toBe('public')
+    expect(story.body.updates.some(u => u.audience !== 'public')).toBe(false)
+    expect((await call({ action: 'create', dogId: 'puppy1' }, 'unverified')).code).toBe(403)
     expect((await call({ action: 'create' }, 'broken')).code).toBe(401)
     expect((await call({ action: 'settings', dogId: 'puppy1', publicEnabled: true }, 'stranger')).code).toBe(403)
   })

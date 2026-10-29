@@ -97,13 +97,13 @@ export default function VerifyEmailPage({ toast }: Props) {
             Verify your email
           </h1>
           <p style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.6, marginBottom: 4 }}>
-            We sent a verification link to
+            Verify this email to continue securely:
           </p>
           <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 20 }}>
             {user?.email}
           </p>
           <p style={{ fontSize: 13, color: 'var(--light)', lineHeight: 1.6, marginBottom: 8 }}>
-            Click the link in that email, then come back here and press the button below.
+            Choose Send verification email, open the link in your inbox, then return here to continue.
           </p>
           <p style={{ fontSize: 12, color: 'var(--gold)', lineHeight: 1.6, marginBottom: 24, background: 'var(--gold-light)', padding: '8px 12px', borderRadius: 8 }}>
             💡 Can't find it? Check your <strong>Spam</strong> or <strong>Junk</strong> folder — verification emails sometimes end up there.
@@ -119,9 +119,10 @@ export default function VerifyEmailPage({ toast }: Props) {
             style={{ width: '100%', height: 44, marginTop: 10 }}
             disabled={resending || cooldown > 0}
           >
-            {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend verification email'}
+            {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : 'Send verification email'}
           </button>
 
+          <p><Link to="/app/start">Keep exploring for now</Link></p>
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
             <button onClick={handleLogout} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--light)', cursor: 'pointer', textDecoration: 'underline' }}>
               Sign out and use a different account

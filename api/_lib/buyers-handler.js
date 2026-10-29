@@ -24,6 +24,7 @@ export function createBuyersHandler({ db, verifyToken, timestamp = () => new Dat
     let identity
     try { identity = await verifyToken((req.headers.authorization || '').replace(/^Bearer /, '')) } catch { throw new ApiError(401, 'Please sign in again.') }
     if (!identity?.uid) throw new ApiError(401, 'Please sign in again.')
+    if (identity.email_verified !== true) throw new ApiError(403, 'Verify your email before managing buyers')
     const uid = identity.uid, body = parseJsonBody(req), collection = db.collection('buyerContacts')
     if (body.action === 'list') {
       const [snap, finance] = await Promise.all([collection.where('ownerUid', '==', uid).limit(501).get(), db.collection('financeDocuments').where('tenantId', '==', uid).get()])

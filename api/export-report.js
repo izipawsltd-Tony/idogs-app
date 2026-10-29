@@ -601,6 +601,7 @@ export default async function handler(req, res) {
   let uid
   try {
     const decoded = await getAuth().verifyIdToken(idToken)
+    if (decoded.email_verified !== true) return res.status(403).json({ error: 'Verify your email to continue securely' })
     uid = decoded.uid
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' })

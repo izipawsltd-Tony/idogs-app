@@ -14,6 +14,7 @@ describe('signup conversion outcome', () => {
     const view = create(createElement(MemoryRouter, null, createElement(SignupPage, { toast: vi.fn() })))
     await act(async () => {
       for (const input of view.root.findAllByType('input').filter(input => input.props.type === 'password')) input.props.onChange({ target: { value: 'synthetic-only-password' } })
+      for (const input of view.root.findAllByType('input').filter(input => input.props.autoComplete === 'name' || input.props.type === 'email')) input.props.onChange({ target: { value: input.props.type === 'email' ? 'qa@example.invalid' : 'QA Customer' } })
       const checkboxes = view.root.findAllByType('input').filter(input => input.props.type === 'checkbox')
       checkboxes[checkboxes.length - 1].props.onChange({ target: { checked: true } })
     })

@@ -7,7 +7,7 @@ function setup() {
  const doc = path => ({ path, get: async () => snapshot(path) })
  const col = (path, filters = [], max = Infinity) => ({ doc: id => doc(`${path}/${id}`), where: (key, op, value) => col(path, [...filters, [key,value]], max), limit: n => col(path,filters,n), get: async () => ({ docs: [...data.keys()].filter(k => k.startsWith(path+'/') && filters.every(([f,v])=>data.get(k)[f]===v)).slice(0,max).map(snapshot) }) })
  const db = { collection: col, runTransaction: async fn => { const writes=[]; let written=false; const result=await fn({ get: ref => { if(written) throw Error('read after write'); return ref.get() }, set: (r,v)=>{written=true;writes.push([r.path,v])}, update:(r,v)=>{written=true;writes.push([r.path,{...data.get(r.path),...v}])} }); writes.forEach(([k,v])=>data.set(k,v)); return result } }
- const handler=createBuyersHandler({db,verifyToken:async token=>{if(!token)throw Error('auth');return {uid:token}},timestamp:()=> '2026-10-29T00:00:00Z'})
+ const handler=createBuyersHandler({db,verifyToken:async token=>{if(!token)throw Error('auth');return {uid:token,email_verified:true}},timestamp:()=> '2026-10-29T00:00:00Z'})
  async function call(body,who='breeder') { const res={code:200,setHeader(){},status(code){this.code=code;return this},json(body){this.body=body;return this}};try{await handler({method:'POST',body,headers:{authorization:who?`Bearer ${who}`:''}},res)}catch(e){res.code=e.status||500;res.body={error:e.message}};return res }
  return {data,call}
 }

@@ -1,3 +1,4 @@
+import SocialSignIn from '../components/ui/SocialSignIn'
 import { useState, useEffect, FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -10,7 +11,7 @@ interface Props {
 }
 
 export default function LoginPage({ toast }: Props) {
-  const { user, login } = useAuth()
+  const { user, login, socialLogin } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const returnTo = safeAppReturnTo(searchParams.get('next'))
@@ -21,7 +22,7 @@ export default function LoginPage({ toast }: Props) {
 
   useEffect(() => {
     if (user) {
-      navigate(returnTo, { replace: true })
+      navigate(!user.emailVerified && returnTo === '/app/dashboard' ? '/app/start' : returnTo, { replace: true })
     }
   }, [user, navigate, returnTo])
 
@@ -42,6 +43,11 @@ export default function LoginPage({ toast }: Props) {
       }
       setIsSubmitting(false)
     }
+  }
+
+  async function social(provider: 'google.com' | 'facebook.com') {
+    setIsSubmitting(true); setError('')
+    try { await socialLogin(provider) } catch { setError('Could not sign in with this provider. Try your existing sign-in method or use email.'); setIsSubmitting(false) }
   }
 
   if (isSubmitting) return <LoadingScreen />
@@ -70,8 +76,10 @@ export default function LoginPage({ toast }: Props) {
 
         <div className="card" style={{ padding: '32px 28px' }}>
           <h1 style={{ fontSize: 22, fontFamily: 'var(--font-display)', marginBottom: 6, color: 'var(--dark)' }}>Welcome back</h1>
-          <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 28 }}>Sign in to your kennel account</p>
+          <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 28 }}>Continue your dog’s story</p>
 
+          <SocialSignIn busy={isSubmitting} onContinue={social} />
+          <p style={{ fontSize: 12, color: 'var(--mid)' }}>New to iDogs? Continuing with a provider creates an account under our <Link to="/terms">Terms</Link> and <Link to="/privacy">Privacy Policy</Link>.</p>
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div className="form-group">
               <label className="form-label">Email address</label>

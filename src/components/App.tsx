@@ -1,3 +1,5 @@
+import QuickStartPage from '../pages/QuickStartPage'
+import { discoveryRoute } from '../lib/quickSignup'
 import React from 'react'
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -64,7 +66,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const returnTo = `${location.pathname}${location.search}`
   if (loading) return <LoadingScreen />
   if (!user) return <Navigate to={`/login?next=${encodeURIComponent(returnTo)}`} replace />
-  if (!user.emailVerified) return <Navigate to={`/verify-email?next=${encodeURIComponent(returnTo)}`} replace />
+  if (!user.emailVerified && !discoveryRoute(location.pathname)) return <Navigate to={`/verify-email?next=${encodeURIComponent(returnTo)}`} replace />
   return <>{children}</>
 }
 
@@ -123,6 +125,7 @@ export default function App() {
           </ProtectedRoute>
         }>
           <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
+          <Route path="start" element={<QuickStartPage />} />
           <Route path="dashboard" element={<SuperAdminOverviewPage />} />
           <Route path="ai-ceo" element={<SuperAdminAiCeoPage />} />
           <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
