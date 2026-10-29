@@ -58,7 +58,7 @@ check('Showcase UI supports revoke and copy-link actions', /revokePrivateAccess\
 check('public Showcase still selects only entry.visible === true puppies', /filter\(\(\[, entry\]\) => entry\?\.visible === true\)/.test(publicSrc))
 check('public Showcase litter projection does not return total puppyIds', !/const litter = \{[\s\S]*?puppyIds[\s\S]*?\n\s*\}/.test(publicSrc))
 check('ProtectedRoute preserves the requested private dog path through sign-in', /next=\$\{encodeURIComponent\(returnTo\)\}/.test(protectedSrc))
-check('login preserves a validated requested path; only the unverified default dashboard goes to discovery', /safeAppReturnTo/.test(loginSrc) && loginSrc.includes("!user.emailVerified && returnTo === '/app/dashboard' ? '/app/start' : returnTo"))
+check('login preserves a validated destination and lets protected routes enforce deeper verification', /signupDestination\(params.get\('next'\)\)/.test(loginSrc) && /navigate\(returnTo, \{ replace: true \}\)/.test(loginSrc) && /!discoveryRoute\(location.pathname\)/.test(appSrc))
 check('signup preserves the requested path and delegates deeper verification to the guarded route', /signupDestination/.test(signupSrc) && /navigate\(returnTo/.test(signupSrc) && /!discoveryRoute\(location.pathname\)/.test(appSrc))
 check('email verification returns the buyer to the requested private dog path', /safeAppReturnTo/.test(verifySrc) && /navigate\(returnTo/.test(verifySrc))
 check('post-auth redirect is constrained to internal /app routes', /startsWith\('\/app\/'\)/.test(returnToSrc) && /includes\('\:\/\/'\)/.test(returnToSrc))

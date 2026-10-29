@@ -1,4 +1,5 @@
 import ReminderForm from '../components/ui/ReminderForm'
+import { QrDocumentManager } from '../components/ui/QrDocuments'
 import PuppyUpdatesManager from '../components/ui/PuppyUpdatesManager'
 import PuppyUpdateFeed from '../components/ui/PuppyUpdateFeed'
 import { puppyUpdates, type PuppyUpdate, puppyShareUrl } from '../lib/puppyUpdates'
@@ -1325,7 +1326,7 @@ export default function DogDetailPage({ toast }: Props) {
       {tab === 'passport' && (historicalSnapshot
         ? <div className="card" style={{ padding: 20 }}><h2>Passport at transfer</h2><p>{dog.passportId || 'Not recorded'}</p><p>This history does not open the current owner's live passport.</p></div>
         : <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />)}
-      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} onRetry={retryDocuments} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} dogId={dog.id} toast={toast} error={documentsError} onRetry={retryDocuments} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
       {tab === 'timeline' && <TimelineTab key={dog.id + (user?.uid || "")} dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
 
       {tab === 'breeding' && !isOwner && historicalSnapshot && <HistoricalBreedingTab heatCycles={historicalSnapshot.heatCycles || []} />}
@@ -2928,7 +2929,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetry
 
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
-function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry, canEdit }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void; canEdit: boolean }) {
+function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, onRetry, canEdit }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; dogId: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void; canEdit: boolean }) {
   const [editingDocId, setEditingDocId] = useState<string | null>(null)
   const [editDocName, setEditDocName] = useState('')
   const { user } = useAuth()
@@ -2953,6 +2954,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry,
   return (
     <div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Documents</h2>
+      {canEdit && !error && <QrDocumentManager key={dogId} dogId={dogId} documents={documents} />}
       {error ? (
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>

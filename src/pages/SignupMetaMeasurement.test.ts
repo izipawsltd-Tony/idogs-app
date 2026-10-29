@@ -1,36 +1,51 @@
 import { createElement } from 'react'
-import { act, create } from 'react-test-renderer'
-import { MemoryRouter } from 'react-router-dom'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-const state = vi.hoisted(() => ({ send: vi.fn(), track: vi.fn() }))
-vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ finishQuickSignIn: vi.fn(), socialLogin: vi.fn() }) }))
+const state = vi.hoisted(() => ({ signup: vi.fn(), social: vi.fn(), track: vi.fn() }))
+vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ signup: state.signup, socialLogin: state.social, finishQuickSignIn: vi.fn() }) }))
 vi.mock('../lib/firebase', () => ({ auth: {} }))
-vi.mock('firebase/auth', () => ({ sendSignInLinkToEmail: state.send, getAdditionalUserInfo: vi.fn(), RecaptchaVerifier: vi.fn(), signInWithPhoneNumber: vi.fn() }))
 vi.mock('../lib/metaPixel', () => ({ trackCompletedRegistration: state.track }))
 import SignupPage from './SignupPage'
+function Destination() { return createElement('output', {}, useLocation().pathname + useLocation().search) }
 beforeEach(() => {
-  state.send.mockReset().mockResolvedValue(undefined); state.track.mockReset()
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ json: async () => ({ providers: [], emailLink: true }) }))
-  vi.stubGlobal('location', { origin: 'https://qa.example.invalid' })
-  vi.stubGlobal('localStorage', { setItem: vi.fn() })
+  state.signup.mockReset().mockResolvedValue(undefined); state.social.mockReset().mockResolvedValue(true); state.track.mockReset()
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ json: async () => ({ providers: ['google.com'], phone: true, phoneTestOnly: true }) }))
 })
 afterEach(() => vi.unstubAllGlobals())
-describe('passwordless signup conversion outcome', () => {
-  async function submit(succeed: boolean) {
-    if (!succeed) state.send.mockRejectedValue(new Error('synthetic outage'))
-    let view: ReturnType<typeof create>
-    await act(async () => { view = create(createElement(MemoryRouter, null, createElement(SignupPage, { toast: vi.fn() }))) })
-    expect(view!.root.findAllByType('input').filter(i => i.props.type === 'password')).toHaveLength(0)
-    await act(async () => { view!.root.findAllByType('input').find(i => i.props.type === 'email')!.props.onChange({ target: { value: 'qa@example.invalid' } }) })
-    await act(async () => { await view!.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
-    await act(async () => { view!.unmount() })
+async function render() {
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(createElement(MemoryRouter, { initialEntries: ['/signup?next=%2Fp%2FQR-RUBY%3Ffollow%3D1'] }, createElement(Routes, {}, createElement(Route, { path: '/signup', element: createElement(SignupPage, { toast: vi.fn() }) }), createElement(Route, { path: '*', element: createElement(Destination) })))) })
+  return view
+}
+async function fill(view: ReactTestRenderer) {
+  for (const [key, value] of [['nickname', 'Ruby'], ['email', 'qa@example.invalid'], ['new-password', 'synthetic-only']]) {
+    await act(async () => { view.root.findAllByType('input').find(i => i.props.autoComplete === key)!.props.onChange({ target: { value } }) })
   }
-  it('does not count sending a sign-in link as a completed registration', async () => {
-    await submit(true); expect(state.send).toHaveBeenCalledTimes(1); expect(state.track).not.toHaveBeenCalled()
-    const settings = state.send.mock.calls[0][2]
-    expect(settings.handleCodeInApp).toBe(true); expect(settings.url).not.toContain('qa@example.invalid')
+}
+describe('simple email signup and QR return', () => {
+  it('requires Terms agreement before account creation or a social popup', async () => {
+    const view = await render(); await fill(view)
+    await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    await act(async () => { await view.root.findAllByType('button').find(b => b.children.join('').includes('Continue with'))!.props.onClick() })
+    expect(state.signup).not.toHaveBeenCalled(); expect(state.social).not.toHaveBeenCalled(); expect(state.track).not.toHaveBeenCalled()
+    view.unmount()
   })
-  it('does not record conversion if the sign-in email cannot be sent', async () => {
-    await submit(false); expect(state.send).toHaveBeenCalledTimes(1); expect(state.track).not.toHaveBeenCalled()
+  it('allows declining promotions, creates a minimal account and returns to the same public dog', async () => {
+    const view = await render(); await fill(view)
+    await act(async () => { view.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }) })
+    await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(state.signup).toHaveBeenCalledWith({ firstName: 'Ruby', lastName: '', kennelName: '', email: 'qa@example.invalid', password: 'synthetic-only', marketingOptIn: false, termsAccepted: true })
+    expect(state.track).toHaveBeenCalledTimes(1)
+    expect(view.root.findByType('output').children.join('')).toBe('/p/QR-RUBY?follow=1')
+    view.unmount()
+  })
+  it('keeps the form and does not record conversion when creation fails', async () => {
+    state.signup.mockRejectedValue(new Error('auth/email-already-in-use'))
+    const view = await render(); await fill(view)
+    await act(async () => { view.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }) })
+    await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(view.root.findByProps({ role: 'alert' }).children.join('')).toContain('already has an account')
+    expect(state.track).not.toHaveBeenCalled(); view.unmount()
   })
 })

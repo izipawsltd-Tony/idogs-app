@@ -1,4 +1,3 @@
-import QuickStartPage from '../pages/QuickStartPage'
 import EmailSigninFinishPage from '../pages/EmailSigninFinishPage'
 import { discoveryRoute } from '../lib/quickSignup'
 import React from 'react'
@@ -127,7 +126,7 @@ export default function App() {
           </ProtectedRoute>
         }>
           <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
-          <Route path="start" element={<QuickStartPage />} />
+          <Route path="start" element={<Navigate to="/app/dashboard" replace />} />
           <Route path="dashboard" element={<SuperAdminOverviewPage />} />
           <Route path="ai-ceo" element={<SuperAdminAiCeoPage />} />
           <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
@@ -150,7 +149,7 @@ export default function App() {
           </ProtectedRoute>
         }>
           <Route index element={<Navigate to="/app/dashboard" replace />} />
-          <Route path="start" element={<QuickStartPage />} />
+          <Route path="start" element={<Navigate to="/app/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage toast={toast} />} />
           <Route path="dogs" element={<DogListPage toast={toast} />} />
           <Route path="dogs/new" element={<DogNewPage toast={toast} />} />

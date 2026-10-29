@@ -31,6 +31,7 @@ export default function SettingsPage({ toast }: Props) {
   const [changingRole, setChangingRole] = useState(false)
 
   const marketingEnabled = Boolean(user?.email && profile?.marketingConsent?.channel === 'email_marketing' && profile.marketingConsent.choice === 'opt_in' && !profile.marketingConsent.revokedAt && profile.marketingConsent.email?.toLowerCase() === user.email.toLowerCase())
+  const smsMarketingEnabled = Boolean(user?.phoneNumber && profile?.smsMarketingConsent?.choice === 'opt_in' && !profile.smsMarketingConsent.revokedAt && profile.smsMarketingConsent.phone === user.phoneNumber)
   const isOwner = profile?.role === 'owner'
   const hideLitters = (profile as any)?.hideLitters === true
   const hideDocuments = (profile as any)?.hideDocuments === true
@@ -99,6 +100,21 @@ export default function SettingsPage({ toast }: Props) {
       await refreshProfile()
       toast(enabled ? 'Email reminders enabled' : 'Email reminders disabled')
     } catch { toast('Failed to save setting', 'error') }
+    finally { setSaving(null) }
+  }
+
+  async function setSmsMarketingConsent(enabled: boolean) {
+    if (!user?.phoneNumber || saving) return
+    setSaving('smsMarketingConsent')
+    try {
+      const now = new Date().toISOString()
+      await updateUserProfile(user.uid, { smsMarketingConsent: { channel: 'sms_marketing', choice: enabled ? 'opt_in' : 'opt_out', source: 'account_settings', policyVersion: 'marketing-v1-2026-10', optedInAt: enabled ? now : profile?.smsMarketingConsent?.optedInAt || null, revokedAt: enabled ? null : now, phone: user.phoneNumber, evidenceRef: enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1' } })
+      const stored = await getDocFromServer(doc(db, 'users', user.uid))
+      const actual = stored.data()?.smsMarketingConsent
+      if (actual?.choice !== (enabled ? 'opt_in' : 'opt_out') || actual?.phone !== user.phoneNumber || actual?.channel !== 'sms_marketing' || actual?.source !== 'account_settings' || (enabled ? actual?.revokedAt != null : !actual?.revokedAt)) throw new Error('SMS_MARKETING_CONSENT_NOT_PERSISTED')
+      await refreshProfile(true)
+      toast(enabled ? 'Promotional SMS preference saved' : 'Promotional SMS disabled')
+    } catch { toast('Could not save SMS preference. Please try again.', 'error') }
     finally { setSaving(null) }
   }
 
@@ -527,7 +543,8 @@ export default function SettingsPage({ toast }: Props) {
 
       {/* Marketing emails are separate from transactional and care reminders. */}
       <div className="card" style={{ marginBottom: 16, padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', marginBottom: 14 }}>Marketing emails</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', marginBottom: 14 }}>News &amp; promotions</div>
+        {user?.email && <>
         <ToggleRow
           icon="✉️"
           label="iDogs news and promotional offers"
@@ -536,6 +553,8 @@ export default function SettingsPage({ toast }: Props) {
           saving={saving === 'marketingConsent'}
           onToggle={() => setMarketingConsent(!marketingEnabled)}
         />
+        </>}
+        {user?.phoneNumber && <ToggleRow icon="💬" label="iDogs promotional SMS" description="Optional news and offers sent to your sign-in mobile number. Sign-in codes and dog-care reminders are separate." enabled={smsMarketingEnabled} saving={saving === 'smsMarketingConsent'} onToggle={() => setSmsMarketingConsent(!smsMarketingEnabled)} />}
         <p style={{ fontSize: 12, color: 'var(--light)', marginTop: 10 }}>Existing accounts are off unless they explicitly opt in.</p>
        </div>
 

@@ -18,7 +18,8 @@ it('shows public updates without forcing login and preserves the puppy through s
   const serialized = JSON.stringify(screen.toJSON())
   expect(serialized).toContain('First garden adventure')
   const signup = screen.root.findAllByType('a').find(link => link.props.href.startsWith('/signup'))!
-  expect(decodeURIComponent(signup.props.href)).toContain('next=/app/puppy-updates/QR-RUBY')
+  expect(decodeURIComponent(signup.props.href)).toContain('next=/p/QR-RUBY')
+  expect(serialized.indexOf('First garden adventure')).toBeLessThan(serialized.indexOf('Want to keep this story close?'))
   expect(serialized).not.toContain('Ownership remains')
 })
 it('saves a signed-in customer’s puppy and refreshes the view', async () => {

@@ -20,8 +20,8 @@ interface AuthContextType {
   profile: UserProfile | null
   loading: boolean
   signup: (data: SignupFormData) => Promise<void>
-  finishQuickSignIn: (signedInUser: User, isNew: boolean, name?: string, marketingOptIn?: boolean) => Promise<void>
-  socialLogin: (provider: 'google.com' | 'facebook.com', marketingOptIn?: boolean) => Promise<boolean>
+  finishQuickSignIn: (signedInUser: User, isNew: boolean, name?: string, marketingOptIn?: boolean, termsAccepted?: boolean) => Promise<void>
+  socialLogin: (provider: 'google.com' | 'facebook.com', marketingOptIn?: boolean, termsAccepted?: boolean) => Promise<boolean>
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   resetPassword: (email: string) => Promise<void>
@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsub
   }, [])
 
-  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber, marketingOptIn = false }: SignupFormData) {
+  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber, marketingOptIn = false, termsAccepted = false }: SignupFormData) {
     const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password)
     try {
       await updateProfile(newUser, { displayName: `${firstName} ${lastName}`.trim() })
@@ -75,17 +75,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         lastName,
         kennelName,
         role: role || 'owner',
+        ...(termsAccepted && { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' as const } }),
         plan: 'trial',
         marketingConsent: {
           channel: 'email_marketing',
           choice: marketingOptIn ? 'opt_in' : 'opt_out',
-          source: 'explicit_checkbox',
+          source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox',
           checkboxDefault: false,
           policyVersion: 'marketing-v1-2026-10',
           optedInAt: marketingOptIn ? new Date().toISOString() : null,
           revokedAt: null,
           email: newUser.email || email,
-          evidenceRef: 'signup-checkbox-v1',
+          evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1',
         },
         ...(state && { state: state as UserProfile['state'] }),
         ...(breederNumber?.trim() && { breederIdValue: breederNumber.trim() }),
@@ -102,7 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  async function socialLogin(provider: 'google.com' | 'facebook.com', marketingOptIn = false): Promise<boolean> {
+  async function socialLogin(provider: 'google.com' | 'facebook.com', marketingOptIn = false, termsAccepted = false): Promise<boolean> {
     const selected = provider === 'google.com' ? new GoogleAuthProvider() : new FacebookAuthProvider()
     if (provider === 'facebook.com') selected.addScope('email')
     const result = await signInWithPopup(auth, selected)
@@ -110,8 +111,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const existing = await getUserProfile(result.user.uid)
     if (!existing) {
       const name = result.user.displayName || result.user.email?.split('@')[0] || 'Dog lover'
-      await createUserProfile(result.user.uid, { email: result.user.email || '', ...splitDisplayName(name), kennelName: '', role: 'owner', marketingConsent: { channel: 'email_marketing', choice: marketingOptIn ? 'opt_in' : 'opt_out', source: 'explicit_checkbox', checkboxDefault: false, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn ? new Date().toISOString() : null, revokedAt: null, email: result.user.email || '', evidenceRef: 'signup-checkbox-v1' } })
+      await createUserProfile(result.user.uid, { email: result.user.email || '', ...splitDisplayName(name), kennelName: '', role: 'owner', marketingConsent: { channel: 'email_marketing', choice: marketingOptIn ? 'opt_in' : 'opt_out', source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox', checkboxDefault: false, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn ? new Date().toISOString() : null, revokedAt: null, email: result.user.email || '', evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1' } })
     }
+    if (!existing && termsAccepted) await updateUserProfile(result.user.uid, { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' } })
     const loadedProfile = await getUserProfile(result.user.uid)
     ++authGeneration.current
     setProfile(loadedProfile); setLoading(false)
@@ -123,14 +125,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await signInWithEmailAndPassword(auth, email, password)
   }
 
-  async function finishQuickSignIn(signedInUser: User, isNew: boolean, name = '', marketingOptIn = false) {
+  async function finishQuickSignIn(signedInUser: User, isNew: boolean, name = '', marketingOptIn = false, termsAccepted = false) {
     const existing = await getUserProfile(signedInUser.uid)
     if (!existing) {
       const displayName = name.trim() || signedInUser.displayName || 'Dog lover'
       if (!signedInUser.displayName) await updateProfile(signedInUser, { displayName })
       await createUserProfile(signedInUser.uid, {
         ...splitDisplayName(displayName), email: signedInUser.email || '', phone: signedInUser.phoneNumber || '', kennelName: '', role: 'owner',
-        marketingConsent: { channel: 'email_marketing', choice: marketingOptIn && !!signedInUser.email ? 'opt_in' : 'opt_out', source: 'explicit_checkbox', checkboxDefault: false, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn && signedInUser.email ? new Date().toISOString() : null, revokedAt: null, email: signedInUser.email || '', evidenceRef: 'signup-checkbox-v1' },
+        ...(termsAccepted && { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' as const } }),
+        ...(termsAccepted && signedInUser.phoneNumber && { smsMarketingConsent: { channel: 'sms_marketing' as const, choice: marketingOptIn ? 'opt_in' as const : 'opt_out' as const, source: 'signup' as const, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn ? new Date().toISOString() : null, revokedAt: null, phone: signedInUser.phoneNumber, evidenceRef: 'signup-choice-v2' } }),
+        marketingConsent: { channel: 'email_marketing', choice: marketingOptIn && !!signedInUser.email ? 'opt_in' : 'opt_out', source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox', checkboxDefault: false, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn && signedInUser.email ? new Date().toISOString() : null, revokedAt: null, email: signedInUser.email || '', evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1' },
       })
     }
     const nextProfile = await getUserProfile(signedInUser.uid)

@@ -470,10 +470,21 @@ export interface ActivityNote {
 }
 
 export interface UserProfile {
+  termsAcceptance?: { version: string; acceptedAt: string; source: 'signup' }
+  smsMarketingConsent?: {
+    channel: 'sms_marketing'
+    choice: 'opt_in' | 'opt_out'
+    source: 'signup' | 'account_settings'
+    policyVersion: string
+    optedInAt: string | null
+    revokedAt: string | null
+    phone: string
+    evidenceRef: string
+  }
   marketingConsent?: {
     channel: 'email_marketing'
     choice: 'opt_in' | 'opt_out'
-    source: 'explicit_checkbox' | 'account_settings'
+    source: 'explicit_checkbox' | 'explicit_choice' | 'account_settings'
     checkboxDefault: false
     policyVersion: string
     optedInAt: string | null
@@ -599,6 +610,7 @@ export interface AuthFormData {
 }
 
 export interface SignupFormData extends AuthFormData {
+  termsAccepted?: boolean
   marketingOptIn?: boolean
   firstName: string
   lastName: string

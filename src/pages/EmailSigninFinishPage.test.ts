@@ -27,7 +27,7 @@ describe('email link completion', () => {
     expect(s.signin).toHaveBeenCalledTimes(1); expect(s.signin.mock.calls[0][1]).toBe('qa@example.invalid')
     expect(s.finish).toHaveBeenCalledWith(expect.objectContaining({ uid: 'synthetic' }), true, 'Ruby Friend', true)
     expect(view.root.findAllByType('input')).toHaveLength(0); expect(view.root.findAllByType('form')).toHaveLength(0)
-    expect(s.path).toBe('/app/puppy-updates/QA-RUBY?follow=1'); expect(s.track).toHaveBeenCalledTimes(1)
+    expect(s.path).toBe('/p/QA-RUBY?follow=1'); expect(s.track).toHaveBeenCalledTimes(1)
     expect(localStorage.removeItem).toHaveBeenCalledWith('idogs.signin.1234567890123456'); view.unmount()
   })
   it('does not submit a single-use link again while an automatic request is pending', async () => {

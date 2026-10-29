@@ -22,6 +22,20 @@ async function phoneForm() {
   return view!
 }
 describe('phone sign-in completion', () => {
+  it('requires explicit Terms and a name for new phone signup, and refuses live QA numbers before SMS', async () => {
+    let view!: ReturnType<typeof create>
+    await act(async () => { view = create(createElement(MemoryRouter, null, createElement(PasswordlessSignIn, { next: '/p/QR-RUBY', signup: true, phoneOnly: true })), { createNodeMock: () => ({}) }) })
+    await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(s.send).not.toHaveBeenCalled()
+    await act(async () => { view.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }); view.root.findByProps({ autoComplete: 'nickname' }).props.onChange({ target: { value: 'Ruby Friend' } }); view.root.findByProps({ type: 'tel' }).props.onChange({ target: { value: '0412345678' } }) })
+    await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(s.send).not.toHaveBeenCalled(); expect(view.root.findByProps({ role: 'alert' }).children.join('')).toContain('limited to the supplied test number')
+    await act(async () => { view.root.findByProps({ type: 'tel' }).props.onChange({ target: { value: '+16505553434' } }) })
+    await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(s.finish).toHaveBeenCalledWith(expect.objectContaining({ uid: 'qa-phone' }), true, 'Ruby Friend', false, true)
+    view.unmount()
+  })
   it('creates no profile or conversion until Firebase accepts the code', async () => {
     const view = await phoneForm(); expect(s.finish).not.toHaveBeenCalled(); expect(s.track).not.toHaveBeenCalled()
     expect(s.send.mock.calls[0][1]).toBe('+16505553434')

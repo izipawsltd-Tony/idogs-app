@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { formatDate, getDogAge, getVaccineStatus, LIFE_STAGE_EMOJI } from '../lib/utils'
 import type { Dog, VaccineRecord, HealthTest } from '../types'
 import PuppyStoryPanel from '../components/ui/PuppyStoryPanel'
+import QrDocuments from '../components/ui/QrDocuments'
 
 // ADR-002 §9 Decision 4 — exact public provenance values. Never a real
 // person/organisation name; label stays "Source" (ADR-001 §Decision 6's
@@ -22,7 +23,7 @@ export default function PassportPublicPage() {
   const [healthTests, setHealthTests] = useState<HealthTest[]>([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
-  const [activeTab, setActiveTab] = useState<'updates' | 'vaccines' | 'health' | 'info'>('updates')
+  const [activeTab, setActiveTab] = useState<'updates' | 'documents' | 'vaccines' | 'health' | 'info'>('updates')
 
   useEffect(() => {
     if (!passportId) return
@@ -141,10 +142,11 @@ export default function PassportPublicPage() {
           {/* Tabs */}
           <div style={{ display: 'flex', borderBottom: '1px solid #E2DFD8' }}>
             {([
-              { id: 'updates', label: '📷 Updates' },
-              { id: 'vaccines', label: `💉 Vaccines (${vaccines.length})` },
-              { id: 'health', label: `🔬 Health (${healthTests.length})` },
-              { id: 'info', label: '📋 Info' },
+              { id: 'updates', label: 'Updates' },
+              { id: 'documents', label: 'Files' },
+              { id: 'vaccines', label: 'Vaccines' },
+              { id: 'health', label: 'Health' },
+              { id: 'info', label: 'Info' },
             ] as const).map(tab => (
               <button
                 key={tab.id}
@@ -164,6 +166,7 @@ export default function PassportPublicPage() {
 
           {/* Vaccines tab */}
           {activeTab === 'updates' && passportId && <PuppyStoryPanel key={passportId} passportId={passportId} />}
+          {activeTab === 'documents' && passportId && <QrDocuments key={passportId} passportId={passportId} />}
           {activeTab === 'vaccines' && (
             <div>
               {vaccines.length === 0 ? (

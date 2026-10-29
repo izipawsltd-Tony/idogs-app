@@ -9,7 +9,7 @@ import {
 } from '../lib/pricingCopy'
 
 export default function TermsPage() {
-  const lastUpdated = '1 September 2026'
+  const lastUpdated = '29 October 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
       {/* Nav */}
@@ -30,6 +30,7 @@ export default function TermsPage() {
           <LegalSection title="1. Acceptance of Terms">
             <p>By accessing or using iDogs ("the Service"), operated by iziPaws Pty Ltd ABN 42 693 563 745 ("we", "us", "our"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Service.</p>
             <p>These Terms apply to all users including breeders, pet owners, and visitors.</p>
+            <p>Accepting these Terms does not require you to receive promotions. You can choose “No, thanks” during registration and still create and use your account.</p>
           </LegalSection>
 
           <LegalSection title="2. Description of Service">
@@ -76,6 +77,7 @@ export default function TermsPage() {
           </LegalSection>
 
           <LegalSection title="6. Data and Privacy">
+            <p>If you choose to receive iDogs news and promotions, we may send promotional messages to the email address or mobile number you provided, using only the channels you have agreed to. This choice is optional. You can decline during registration, change your choice in Settings, or use the unsubscribe instructions in a promotional message. Account, security and dog-care service messages are separate from promotions.</p>
             <p>Your use of the Service is also governed by our <Link to="/privacy" style={{ color: 'var(--green)' }}>Privacy Policy</Link>, which is incorporated into these Terms by reference.</p>
             <p>All data is stored securely in Asia-Pacific in compliance with the Australian Privacy Act 1988 (Cth).</p>
             <p>You retain ownership of all data you upload to the Service. By uploading data, you grant us a limited licence to store, process, and display it solely for the purpose of providing the Service to you.</p>
