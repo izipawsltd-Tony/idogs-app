@@ -8,7 +8,7 @@ import {createEmulatorDocumentStorage,documentBytesHash,documentStorageIntentHas
 const fail=code=>Object.assign(new Error(code),{code})
 // Guarded emulator-only session, deliberately unwired from live routes. This
 // grants no signed upload authority and makes no global ingress-drain claim.
-export function createEmulatorDocumentIngress({db,auth,bucket,projectId}){
+export function createEmulatorDocumentIngress({db,auth,bucket,projectId,independentLedger}){
   const runtime=()=>requireDeletionEmulators({db,auth,bucket,projectId})
   runtime()
   const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value)
@@ -20,6 +20,10 @@ export function createEmulatorDocumentIngress({db,auth,bucket,projectId}){
       runtime()
       const token=await auth.verifyIdToken(idToken,true)
       if(!validAccountId(token.uid))throw fail('DOCUMENT_INGRESS_IDENTITY_INVALID')
+      if(independentLedger!==undefined){
+        if(typeof independentLedger?.assertWritable!=='function')throw fail('DOCUMENT_INGRESS_LEDGER_INVALID')
+        await independentLedger.assertWritable(token.uid)
+      }
       const user=await auth.getUser(token.uid),createdAt=Date.parse(user.metadata?.creationTime)
       if(user.uid!==token.uid||user.disabled||!Number.isSafeInteger(createdAt)||createdAt<0)throw fail('DOCUMENT_INGRESS_IDENTITY_INVALID')
       // UserMetadata.creationTime loses milliseconds in the Admin SDK. Use

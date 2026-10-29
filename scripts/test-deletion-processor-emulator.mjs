@@ -17,11 +17,13 @@ import {requireDeletionEmulators,beginAccountMutation,withAccountMutationFence} 
 import {recordDeletionBillingAcceptance} from '../api/_lib/deletion-billing.js'
 import {changeDeletionRequest} from '../api/_lib/account-deletion.js'
 import {createEmulatorDocumentIngress} from '../api/_lib/deletion-document-ingress.js'
+import {createEmulatorIndependentLedger} from '../api/_lib/deletion-independent-ledger.js'
+import {randomUUID} from 'node:crypto'
 
 const PROJECT='demo-idogs-deletion'
 for(const key of ['FIRESTORE_EMULATOR_HOST','FIREBASE_AUTH_EMULATOR_HOST','FIREBASE_STORAGE_EMULATOR_HOST'])if(!/^(localhost|127\.0\.0\.1):\d{4,5}$/.test(process.env[key]||''))throw Error('Expected local emulators')
 if(process.env.GCLOUD_PROJECT!==PROJECT||process.env.ACCOUNT_DELETION_MODE!=='prototype-emulator')throw Error('Expected synthetic project opt-in')
-let app,db,auth,bucket,rules,server,origin,owner,other,operator,processor,provider,counter=0
+let app,db,ledgerDb,auth,bucket,rules,server,origin,owner,other,operator,processor,provider,counter=0
 const reqBody={action:'request',confirmation:'DELETE MY ACCOUNT'}
 const documentIngress=()=>createEmulatorDocumentIngress({db,auth,bucket,projectId:PROJECT})
 const beginDocument=()=>documentIngress().begin({idToken:owner.token,dogId:'synthetic-dog',executionEnabled:true})
@@ -52,6 +54,7 @@ async function seed({shared=false,media=true,billingAcceptance=true,subscription
 }
 before(async()=>{
   app=initializeApp({projectId:PROJECT,storageBucket:`${PROJECT}.firebasestorage.app`});db=getFirestore(app);auth=getAuth(app);bucket=getStorage(app).bucket()
+  ledgerDb=getFirestore(app,'idogs-deletion-ledger-qa')
   requireDeletionEmulators({projectId:PROJECT,db,auth,bucket})
   rules=await initializeTestEnvironment({projectId:PROJECT,firestore:{host:'127.0.0.1',port:8080,rules:readFileSync(new URL('../firestore.rules',import.meta.url),'utf8')}})
   provider=syntheticDeletionProvider(db)
@@ -790,6 +793,123 @@ test('document ingress constructor cannot target cloud services',()=>{
 })
 
 const resumeDocument=(leaseId,idToken=owner.token,dogId='synthetic-dog')=>documentIngress().resume({leaseId,idToken,dogId,executionEnabled:true})
+function independentLedger(nonce=randomUUID(),overrides={}){
+  return createEmulatorIndependentLedger({db,ledgerDb,auth,bucket,projectId:PROJECT,uid:owner.uid,nonce,executionEnabled:true,...overrides})
+}
+test('independent ledger defaults disabled and rejects the restored/default or cloud database',async()=>{
+  assert.throws(()=>independentLedger(randomUUID(),{executionEnabled:false}),/INDEPENDENT_LEDGER_DISABLED/)
+  assert.throws(()=>independentLedger(randomUUID(),{ledgerDb:db}),/INDEPENDENT_LEDGER_TARGET_INVALID/)
+  assert.throws(()=>independentLedger(randomUUID(),{ledgerDb:{projectId:PROJECT,databaseId:'idogs-deletion-ledger-qa',_settings:{servicePath:'remote.example',port:443,ssl:true}}}),/INDEPENDENT_LEDGER_ENDPOINT_CHANGED/)
+  assert.throws(()=>independentLedger(randomUUID(),{projectId:'idogs-app-staging'}),/DELETION_EMULATOR_ONLY/)
+})
+test('independent ledger publishes durable acceptance and completion with restart duplicate receipts',async()=>{
+  await seed();const nonce=randomUUID(),ledger=independentLedger(nonce)
+  assert.equal((await ledger.quarantine()).code,'independent_ledger_missing')
+  await assert.rejects(ledger.assertWritable(owner.uid),/INDEPENDENT_LEDGER_HISTORY_REQUIRED/)
+  const first=await ledger.publishAccepted();assert.equal(first.sequence,1);assert.equal(first.duplicate,false)
+  assert.equal((await independentLedger(nonce).publishAccepted()).duplicate,true)
+  await assert.rejects(ledger.publishCompleted(),/INDEPENDENT_LEDGER_COMPLETION_REQUIRED/)
+  assert.equal((await processor.process({uid:owner.uid,revision:1})).status,'completed')
+  const completed=await ledger.publishCompleted();assert.equal(completed.sequence,2)
+  assert.equal((await independentLedger(nonce).publishCompleted()).duplicate,true)
+  const state=await independentLedger(nonce).read()
+  assert.equal(state.events.length,2);assert.equal(state.events[1].previous,state.events[0].hash)
+  assert.equal(state.head.hash,completed.hash)
+  assert.equal(JSON.stringify(state).includes(owner.email),false)
+  assert.equal((await ledger.quarantine()).code,'independent_deletion_receipt')
+})
+test('independent receipt survives restored source tombstone loss and historical Auth import',async()=>{
+  const signInLocal=async()=>{
+    const response=await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=synthetic`,{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:await auth.createCustomToken(owner.uid),returnSecureToken:true}),redirect:'error',signal:AbortSignal.timeout(5000)})
+    assert.equal(response.status,200);return (await response.json()).idToken
+  }
+  // Use an actual provider-less custom-auth account. Reconstructing password
+  // credentials is unnecessary and no password/hash export is permitted.
+  await auth.deleteUser(owner.uid);await auth.createUser({uid:owner.uid,email:owner.email,emailVerified:true})
+  owner.token=await signInLocal()
+  await seed();const nonce=randomUUID(),ledger=independentLedger(nonce),original=await auth.getUser(owner.uid)
+  const lookup=async idToken=>{
+    const response=await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:lookup?key=synthetic&fields=users(localId,createdAt,email,phoneNumber,tenantId)`,{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken}),redirect:'error',signal:AbortSignal.timeout(5000)})
+    assert.equal(response.status,200);const raw=(await response.json()).users[0]
+    return {uid:raw.localId,createdAt:raw.createdAt,email:raw.email||null,phone:raw.phoneNumber||null,tenant:raw.tenantId||null}
+  }
+  const precise=await lookup(owner.token)
+  const saved=(await requestRef().get()).data(),savedDog=(await db.doc('dogs/synthetic-dog').get()).data()
+  await ledger.publishAccepted();await processor.process({uid:owner.uid,revision:1});await ledger.publishCompleted()
+  const external=await ledger.read()
+  // Restore only this exact synthetic account's source records, not the
+  // separate receipt database. Import preserves the historical SDK metadata.
+  await db.doc(`accountDeletionLocks/${owner.uid}`).delete()
+  await requestRef().set(saved)
+  await db.doc(`users/${owner.uid}`).set({email:owner.email,firstName:'Restored synthetic'})
+  await db.doc('dogs/synthetic-dog').set(savedDog)
+  const imported=await auth.importUsers([{uid:owner.uid,email:owner.email,emailVerified:true,
+    providerData:original.providerData.map(p=>({providerId:p.providerId,uid:p.uid,email:p.email})),
+    metadata:{creationTime:new Date(Number(precise.createdAt)).toISOString()}}])
+  assert.equal(imported.failureCount,0)
+  const restored=await auth.getUser(owner.uid)
+  assert.equal(restored.metadata.creationTime,original.metadata.creationTime)
+  assert.deepEqual(restored.providerData,original.providerData)
+  owner.token=await signInLocal()
+  const restoredEvidence=await lookup(owner.token)
+  assert.deepEqual(restoredEvidence,precise)
+  assert.equal((await db.doc(`accountDeletionLocks/${owner.uid}`).get()).exists,false)
+  const gate=await independentLedger(nonce).quarantine()
+  assert.equal(gate.code,'restored_auth_quarantine');assert.equal(gate.authState,'enabled')
+  assert.equal(gate.watermark,external.head.hash);assert.equal(gate.productionReady,false)
+  assert.equal(gate.globalCompletenessVerified,false)
+  assert.deepEqual(await ledger.read(),external)
+  const baseline=await beginDocument();assert.equal(baseline.status,'claimed')
+  const leases=(await db.collection('accountMutationLeases').get()).size
+  const guarded=createEmulatorDocumentIngress({db,auth,bucket,projectId:PROJECT,independentLedger:independentLedger(nonce)})
+  await assert.rejects(async()=>{
+    const session=await guarded.begin({idToken:owner.token,dogId:'synthetic-dog',executionEnabled:true})
+    return session.createDocument({recordId:'restored-write',metadata:ingressMetadata()})
+  },/INDEPENDENT_LEDGER_QUARANTINED/)
+  assert.equal((await db.collection('accountMutationLeases').get()).size,leases)
+  assert.equal((await db.doc('documents/restored-write').get()).exists,false)
+  await assert.rejects(ledger.assertWritable(other.uid),/INDEPENDENT_LEDGER_ACCOUNT_MISMATCH/)
+})
+test('independent ledger refuses replaced scope, altered chain and erased heads without granting access',async()=>{
+  await seed();const nonce=randomUUID(),ledger=independentLedger(nonce)
+  await ledger.publishAccepted()
+  await assert.rejects(independentLedger().read(),/INDEPENDENT_LEDGER_HEAD_CHANGED/)
+  const ref=ledgerDb.doc(`scopedDeletionLedger/${owner.uid}`),event=ref.collection('events').doc('000001'),saved=(await event.get()).data()
+  await event.update({requestHash:'0'.repeat(64)})
+  await assert.rejects(ledger.quarantine(),/INDEPENDENT_LEDGER_CHAIN_CHANGED/)
+  await event.set(saved);await ref.delete()
+  await assert.rejects(ledger.quarantine(),/INDEPENDENT_LEDGER_ORPHANED/)
+})
+test('independent ledger concurrent publishers produce one accepted event and reject a changed source revision',async()=>{
+  await seed();const nonce=randomUUID(),ledger=independentLedger(nonce)
+  const result=await Promise.all([ledger.publishAccepted(),independentLedger(nonce).publishAccepted()])
+  assert.equal(result.filter(r=>!r.duplicate).length,1)
+  assert.equal((await ledger.read()).events.length,1)
+  await requestRef().update({revision:2})
+  await assert.rejects(ledger.publishAccepted(),/INDEPENDENT_LEDGER_REQUEST_INVALID/)
+  assert.equal((await ledger.read()).events.length,1)
+})
+test('independent ledger recovers an actual committed receipt after its caller loses the response',async()=>{
+  await seed();const nonce=randomUUID();let lost=true
+  const fault={projectId:ledgerDb.projectId,databaseId:ledgerDb.databaseId,_settings:ledgerDb._settings,collection:ledgerDb.collection.bind(ledgerDb),
+    runTransaction:async fn=>{const result=await ledgerDb.runTransaction(fn);if(lost){lost=false;throw Error('synthetic lost commit reply')}return result}}
+  await assert.rejects(independentLedger(nonce,{ledgerDb:fault}).publishAccepted(),/synthetic lost commit reply/)
+  const restarted=independentLedger(nonce)
+  assert.equal((await restarted.read()).events.length,1)
+  assert.equal((await restarted.publishAccepted()).duplicate,true)
+  assert.equal((await restarted.quarantine()).code,'restored_auth_quarantine')
+})
+test('independent ledger refuses a watermark that changes while Auth is inspected',async()=>{
+  await seed();const nonce=randomUUID(),ledger=independentLedger(nonce)
+  await ledger.publishAccepted();await processor.process({uid:owner.uid,revision:1})
+  let changed=false
+  const changing=new Proxy(auth,{get(target,key){if(key==='getUser')return async uid=>{if(!changed){changed=true;await ledger.publishCompleted()}return target.getUser(uid)};const value=target[key];return typeof value==='function'?value.bind(target):value}})
+  await assert.rejects(independentLedger(nonce,{auth:changing}).quarantine(),/INDEPENDENT_LEDGER_WATERMARK_CHANGED/)
+  assert.equal((await ledger.read()).head.sequence,2)
+  assert.equal((await ledger.quarantine()).code,'independent_deletion_receipt')
+})
 async function signInFixture(email){
   const response=await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=synthetic`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:'Emulator-fixture-only-42!',returnSecureToken:true})})
   assert.equal(response.status,200);return (await response.json()).idToken
