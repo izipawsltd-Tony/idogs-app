@@ -26,6 +26,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { checkRateLimit, getClientIp, hashClientKey } from './_lib/rate-limit.js'
+import { logSanitizedError } from './_lib/http-helpers.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -56,7 +57,7 @@ export default async function handler(req, res) {
   }
 
   const { passportId } = req.query
-  if (!passportId) {
+  if (typeof passportId !== 'string' || !passportId || passportId.length > 128) {
     return res.status(400).json({ error: 'passportId required' })
   }
 
@@ -135,13 +136,13 @@ export default async function handler(req, res) {
         scannedAt: new Date().toISOString(),
         result: 'public_view',
       })
-    } catch (e) {
-      console.error('scanLog write failed:', e)
+    } catch {
+      logSanitizedError('passport-scan', 'SCAN_LOG_FAILED')
     }
 
     return res.status(200).json({ dog, vaccines, healthTests })
-  } catch (err) {
-    console.error('Passport lookup error:', err)
-    return res.status(500).json({ error: 'Internal error', message: String(err) })
+  } catch {
+    logSanitizedError('passport', 'LOOKUP_FAILED')
+    return res.status(500).json({ error: 'Could not load this profile. Please try again.' })
   }
 }

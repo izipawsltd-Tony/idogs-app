@@ -23,28 +23,33 @@ export default function PassportPublicPage() {
   const [healthTests, setHealthTests] = useState<HealthTest[]>([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [loadError, setLoadError] = useState(false), [retry, setRetry] = useState(0)
   const [activeTab, setActiveTab] = useState<'updates' | 'documents' | 'vaccines' | 'health' | 'info'>('updates')
 
   useEffect(() => {
     if (!passportId) return
+    let active = true
+    setLoading(true); setNotFound(false); setLoadError(false); setDog(null); setVaccines([]); setHealthTests([])
     async function load() {
       try {
         const response = await fetch(`/api/passport?passportId=${encodeURIComponent(passportId!)}`)
-        if (response.status === 404) { setNotFound(true); return }
-        if (!response.ok) { setNotFound(true); return }
+        if (response.status === 404) { if (active) setNotFound(true); return }
+        if (!response.ok) throw new Error('Profile unavailable')
 
         const data = await response.json()
+        if (!active) return
         setDog(data.dog as Dog)
         setVaccines(data.vaccines as VaccineRecord[])
         setHealthTests(data.healthTests as HealthTest[])
       } catch {
-        setNotFound(true)
+        if (active) setLoadError(true)
       } finally {
-        setLoading(false)
+        if (active) setLoading(false)
       }
     }
     load()
-  }, [passportId])
+    return () => { active = false }
+  }, [passportId, retry])
 
   if (loading) return (
     <div style={{ minHeight: '100vh', background: '#F5F0E8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -54,6 +59,8 @@ export default function PassportPublicPage() {
       </div>
     </div>
   )
+
+  if (loadError) return <main style={{ minHeight: '100dvh', background: '#f4f7f0', padding: 24, display: 'grid', placeItems: 'center' }}><section role="alert" style={{ maxWidth: 420, background: '#fff', border: '1px solid #dfe7dc', borderRadius: 20, padding: 32, textAlign: 'center' }}><Link to="/"><img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ width: 150, marginBottom: 20 }} /></Link><h1 style={{ fontSize: 22 }}>We couldn’t load this profile</h1><p style={{ color: 'var(--mid)', fontSize: 14, lineHeight: 1.7 }}>This may be a temporary connection issue. Please try again.</p><button className="btn btn-primary" onClick={() => setRetry(value => value + 1)}>Try again</button></section></main>
 
   if (notFound || !dog) return (
     <div style={{ minHeight: '100vh', background: '#F5F0E8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
