@@ -845,6 +845,7 @@ test('intake uncertain source dispatch with absent receipt cannot be blindly sen
   await assert.rejects(intake.accept({idToken:owner.token}),/source transport unavailable/)
   assert.equal(sends,1);assert.equal((await requestRef().get()).exists,false)
   const restarted=deletionIntake(nonce)
+  await assert.rejects(restarted.withdrawPrepared({idToken:owner.token,confirmation:'CANCEL DELETION PREPARATION'}),/DELETION_INTAKE_ALREADY_DISPATCHED/)
   await assert.rejects(restarted.accept({idToken:owner.token}),/DELETION_INTAKE_SOURCE_RECEIPT_REQUIRED/)
   assert.equal((await requestRef().get()).exists,false)
   assert.equal((await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).data().state,'dispatching')
@@ -875,10 +876,102 @@ test('intake cancellation during an unacknowledged request remains an explicit h
   await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
   await assert.rejects(intake.accept({idToken:owner.token}),/source commit reply lost/)
   assert.equal((await call(owner,'/request','POST',{action:'cancel'})).status,200)
+  await assert.rejects(deletionIntake(nonce).withdrawPrepared({idToken:owner.token,confirmation:'CANCEL DELETION PREPARATION'}),/DELETION_INTAKE_ALREADY_DISPATCHED/)
   await assert.rejects(deletionIntake(nonce).reconcile({idToken:owner.token}),/INDEPENDENT_LEDGER_REQUEST_INVALID/)
   assert.equal((await requestRef().get()).data().status,'cancelled')
   assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).data().state,'active')
   assert.equal((await intake.ledger.read()).head,null)
+})
+
+test('intake prepared withdrawal is durable terminal evidence without source release or account admission',async()=>{
+  const nonce=randomUUID(),intake=deletionIntake(nonce)
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  const ref=ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`),original=(await ref.get()).data()
+  await assert.rejects(intake.withdrawPrepared({idToken:owner.token}),/DELETION_INTAKE_WITHDRAWAL_CONFIRMATION_REQUIRED/)
+  await assert.rejects(intake.withdrawPrepared({idToken:other.token,confirmation:'CANCEL DELETION PREPARATION'}),/DELETION_INTAKE_ACCOUNT_MISMATCH/)
+  assert.deepEqual((await ref.get()).data(),original)
+  const result=await intake.withdrawPrepared({idToken:owner.token,confirmation:'CANCEL DELETION PREPARATION'})
+  assert.equal(result.status,'prepared_withdrawn');assert.equal(result.duplicate,false)
+  assert.equal(result.sourceMutationReleased,false);assert.equal(result.accountAdmissionGranted,false)
+  assert.equal((await requestRef().get()).exists,false)
+  assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).exists,false)
+  assert.equal((await intake.ledger.read()).head,null)
+  const terminal=(await ref.get()).data()
+  assert.equal(terminal.hash,original.hash);assert.equal(terminal.now,original.now)
+  assert.equal((await deletionIntake(nonce).withdrawPrepared({idToken:owner.token,confirmation:'CANCEL DELETION PREPARATION'})).duplicate,true)
+  assert.deepEqual((await ref.get()).data(),terminal)
+  await assert.rejects(deletionIntake(nonce).accept({idToken:owner.token}),/DELETION_INTAKE_WITHDRAWN/)
+  await assert.rejects(deletionIntake(nonce).prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'}),/DELETION_INTAKE_ALREADY_DISPATCHED/)
+  await assert.rejects(deletionIntake(nonce).reconcile({idToken:owner.token}),/DELETION_INTAKE_NOT_DISPATCHED/)
+  await assert.rejects(intake.ledger.assertWritable(owner.uid),/INDEPENDENT_LEDGER_HISTORY_REQUIRED/)
+  await ref.update({'withdrawal.intentHash':'0'.repeat(64)})
+  await assert.rejects(deletionIntake(nonce).withdrawPrepared({idToken:owner.token,confirmation:'CANCEL DELETION PREPARATION'}),/DELETION_INTAKE_WITHDRAWAL_CHANGED/)
+  assert.equal((await requestRef().get()).exists,false)
+})
+
+test('intake prepared withdrawal recovers a lost actual terminal commit reply without rewriting history',async()=>{
+  const nonce=randomUUID(),intake=deletionIntake(nonce)
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  let lost=true
+  const fault={projectId:ledgerDb.projectId,databaseId:ledgerDb.databaseId,_settings:ledgerDb._settings,doc:ledgerDb.doc.bind(ledgerDb),collection:ledgerDb.collection.bind(ledgerDb),
+    runTransaction:async fn=>{const result=await ledgerDb.runTransaction(fn)
+      if(lost&&(await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).data()?.state==='withdrawn'){
+        lost=false;throw Error('synthetic withdrawal commit reply lost')
+      }return result}}
+  await assert.rejects(deletionIntake(nonce,{ledgerDb:fault}).withdrawPrepared({idToken:owner.token,confirmation:'CANCEL DELETION PREPARATION'}),/withdrawal commit reply lost/)
+  const before=(await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).data()
+  assert.equal(before.state,'withdrawn')
+  const result=await deletionIntake(nonce).withdrawPrepared({idToken:owner.token,confirmation:'CANCEL DELETION PREPARATION'})
+  assert.equal(result.duplicate,true);assert.equal(result.receiptHash,before.withdrawal.hash)
+  assert.deepEqual((await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).data(),before)
+  await assert.rejects(intake.accept({idToken:owner.token}),/DELETION_INTAKE_WITHDRAWN/)
+  assert.equal((await requestRef().get()).exists,false)
+})
+
+test('intake prepared withdrawal and acceptance serialize to one irreversible winner',async()=>{
+  const nonce=randomUUID(),intake=deletionIntake(nonce)
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  const results=await Promise.allSettled([
+    intake.accept({idToken:owner.token}),
+    deletionIntake(nonce).withdrawPrepared({idToken:owner.token,confirmation:'CANCEL DELETION PREPARATION'}),
+  ])
+  const stored=(await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).data()
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1)
+  if(stored.state==='withdrawn'){
+    assert.match(results[0].reason.message,/DELETION_INTAKE_WITHDRAWN/)
+    assert.equal((await requestRef().get()).exists,false)
+    assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).exists,false)
+    assert.equal((await intake.ledger.read()).head,null)
+  }else{
+    assert.equal(stored.state,'acknowledged')
+    assert.match(results[1].reason.message,/DELETION_INTAKE_ALREADY_DISPATCHED/)
+    assert.equal((await requestRef().get()).data().independentIntake.intentHash,stored.hash)
+    assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).data().receiptHash,stored.ackHash)
+  }
+})
+
+test('intake prepared withdrawal refuses changed identity and preserves unrelated source evidence',async()=>{
+  const nonce=randomUUID(),intake=deletionIntake(nonce)
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  const ref=ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`),before=(await ref.get()).data()
+  const changedEmail=`changed-${owner.email}`
+  await auth.updateUser(owner.uid,{email:changedEmail})
+  const fresh=await signInFixture(changedEmail)
+  await assert.rejects(intake.withdrawPrepared({idToken:fresh,confirmation:'CANCEL DELETION PREPARATION'}),/DELETION_INTAKE_IDENTITY_CHANGED/)
+  assert.deepEqual((await ref.get()).data(),before)
+  await auth.updateUser(owner.uid,{email:owner.email})
+  owner.token=await signInFixture(owner.email)
+  await request()
+  const source=(await requestRef().get()).data()
+  const foreignLease=db.doc('accountMutationLeases/unrelated-intake-hold')
+  const unrelated={uids:[owner.uid],operation:'synthetic-unrelated-writer',state:'active'}
+  await foreignLease.set(unrelated)
+  const withdrawn=await intake.withdrawPrepared({idToken:owner.token,confirmation:'CANCEL DELETION PREPARATION'})
+  assert.equal(withdrawn.sourceMutationReleased,false)
+  assert.deepEqual((await requestRef().get()).data(),source)
+  assert.deepEqual((await foreignLease.get()).data(),unrelated)
+  assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).exists,false)
+  await assert.rejects(intake.accept({idToken:owner.token}),/DELETION_INTAKE_WITHDRAWN/)
 })
 test('intake refuses source history retrofit, another actor and serialized fake permits',async()=>{
   await seed();const intake=deletionIntake()

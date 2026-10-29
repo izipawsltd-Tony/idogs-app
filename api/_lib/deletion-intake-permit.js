@@ -7,7 +7,7 @@ const ensure=(ok)=>{if(!ok)throw Object.assign(Error('DELETION_INTAKE_PERMIT_INV
 // request cannot mint this permit. The factory remains emulator guarded.
 export function makeEmulatorIntakePermit({db,ledger,intent}){
   ledger.assertRuntime()
-  ensure(ledger.scope.uid===intent.uid&&ledger.scope.nonce===intent.nonce&&/^[a-f0-9]{64}$/.test(intent.hash)
+  ensure(intent.state==='dispatching'&&ledger.scope.uid===intent.uid&&ledger.scope.nonce===intent.nonce&&/^[a-f0-9]{64}$/.test(intent.hash)
     &&/^[a-f0-9]{64}$/.test(intent.requestHash)&&db.projectId==='demo-idogs-deletion'&&db.databaseId==='(default)')
   const permit=Object.freeze({})
   permits.set(permit,{db,ledger,intent:structuredClone(intent)})

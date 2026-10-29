@@ -2,7 +2,7 @@ name: Deletion processor prototype (emulators only)
 on:
   push:
     branches: [release/ios-app-store-20261025]
-    paths: ['api/**', 'scripts/test-deletion-processor-emulator.mjs', 'scripts/test-deletion-billing.mjs', 'scripts/test-deletion-renewal-dispatcher.mjs', 'scripts/test-deletion-stripe-contract.mjs', 'firestore.rules', '.github/workflows/deletion-processor-prototype.yml']
+    paths: ['api/**', 'scripts/test-deletion-processor-emulator.mjs', 'scripts/test-deletion-production-schema-emulator.mjs', 'scripts/test-deletion-billing.mjs', 'scripts/test-deletion-renewal-dispatcher.mjs', 'scripts/test-deletion-stripe-contract.mjs', 'firestore.rules', '.github/workflows/deletion-processor-prototype.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,4 +32,4 @@ jobs:
           GCLOUD_PROJECT: demo-idogs-deletion
         run: >-
           npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-deletion --only auth,firestore,storage
-          'ACCOUNT_DELETION_MODE=prototype-emulator node --test scripts/test-deletion-processor-emulator.mjs'
+          'ACCOUNT_DELETION_MODE=prototype-emulator node --test --test-concurrency=1 scripts/test-deletion-processor-emulator.mjs scripts/test-deletion-production-schema-emulator.mjs'

@@ -117,6 +117,14 @@ export async function buildEmulatorDeletionPlan({ db, bucket, uid, now = Date.no
     } else shared.add(id)
   }
   const relatedPaths = new Set([`users/${uid}`,`plusPromotionCheckouts/${uid}`])
+  // Some account-rooted trees carry identity only in the ancestor document ID
+  // (for example puppyFollowers/{uid}/dogs/{dogId}). Unknown descendants must
+  // hold even when their payload contains no UID. This exact ancestor match is
+  // conservative quarantine, never an ownership classification or delete grant.
+  for(const r of scan.records){
+    const segments=r.path.split('/')
+    if(segments.length>2&&segments[1]===uid)relatedPaths.add(r.path)
+  }
   const relatedIds = new Set([...needles,...owned,...shared])
   // Fixed point discovers conversations, litter children, snapshots and nested
   // document references without relying on a single tenantId equality query.

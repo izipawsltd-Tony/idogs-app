@@ -10,14 +10,21 @@ export function createEmulatorDeletionIntake(options){
   const runtime=()=>ledger.assertRuntime(),intentRef=ledgerDb.doc(`scopedDeletionIntakes/${uid}`)
   const requestRef=db.doc(`accountDeletionRequests/${uid}`),leaseRef=db.doc(`accountMutationLeases/intake_${nonce}`)
   function verify(i){
-    const {hash,state,ackHash,...core}=i||{}
+    const {hash,state,ackHash,withdrawal,...core}=i||{}
     ensure(core.schema===1&&core.uid===uid&&core.nonce===nonce&&Number.isSafeInteger(core.now)&&core.now>=0
       &&/^[a-f0-9]{64}$/.test(core.authHash||'')&&hash===digest(core)
-      &&['prepared','dispatching','acknowledged'].includes(state),'DELETION_INTAKE_INTENT_CHANGED')
+      &&['prepared','dispatching','acknowledged','withdrawn'].includes(state),'DELETION_INTAKE_INTENT_CHANGED')
     const commitment=deletionCommitment(core.now)
     ensure(digest(core.binding)===digest(scopedDeletionRequestBinding({uid,revision:1,status:'requested',requestedAt:commitment.acceptedAt,...commitment},uid))
       &&core.requestHash===digest(core.binding)&&core.consentHash===digest({action:'request',confirmation:'DELETE MY ACCOUNT',uid,nonce,policyVersion:commitment.policyVersion}),'DELETION_INTAKE_INTENT_CHANGED')
     ensure(state==='acknowledged'?/^[a-f0-9]{64}$/.test(ackHash||''):ackHash===undefined,'DELETION_INTAKE_INTENT_CHANGED')
+    if(state==='withdrawn'){
+      const {hash:receiptHash,...receipt}=withdrawal||{}
+      ensure(receipt.schema===1&&receipt.kind==='prepared_withdrawal'&&receipt.intentHash===hash&&receipt.authHash===core.authHash
+        &&receipt.confirmationHash===digest({uid,nonce,intentHash:hash,confirmation:'CANCEL DELETION PREPARATION'})
+        &&typeof receipt.at==='string'&&Number.isFinite(Date.parse(receipt.at))&&Date.parse(receipt.at)>=core.now
+        &&receiptHash===digest(receipt),'DELETION_INTAKE_WITHDRAWAL_CHANGED')
+    }else ensure(withdrawal===undefined,'DELETION_INTAKE_WITHDRAWAL_CHANGED')
     return i
   }
   async function identity(idToken){
@@ -70,7 +77,7 @@ export function createEmulatorDeletionIntake(options){
   async function reconcile({idToken}={}){
     const actor=await identity(idToken),i=await load()
     ensure(i.authHash===actor.hash,'DELETION_INTAKE_IDENTITY_CHANGED')
-    ensure(i.state!=='prepared','DELETION_INTAKE_NOT_DISPATCHED')
+    ensure(['dispatching','acknowledged'].includes(i.state),'DELETION_INTAKE_NOT_DISPATCHED')
     // Missing source data after an unknown write is NOT permission to resend.
     await db.runTransaction(tx=>sourceProof(i,tx))
     await ledger.publishAccepted()
@@ -100,6 +107,7 @@ export function createEmulatorDeletionIntake(options){
     runtime()
     const dispatch=await ledgerDb.runTransaction(async tx=>{
       runtime();const i=verify((await tx.get(intentRef)).data());ensure(i.authHash===actor.hash,'DELETION_INTAKE_IDENTITY_CHANGED')
+      ensure(i.state!=='withdrawn','DELETION_INTAKE_WITHDRAWN')
       if(i.state!=='prepared')return {send:false,intent:i}
       ensure(Date.now()>=i.now&&Date.now()-i.now<=30000,'DELETION_INTAKE_PREPARATION_EXPIRED')
       tx.update(intentRef,{state:'dispatching'});return {send:true,intent:{...i,state:'dispatching'}}
@@ -112,5 +120,29 @@ export function createEmulatorDeletionIntake(options){
     }
     return reconcile({idToken})
   }
-  return {prepare,accept,reconcile,ledger}
+  async function withdrawPrepared({idToken,confirmation}={}){
+    ensure(confirmation==='CANCEL DELETION PREPARATION','DELETION_INTAKE_WITHDRAWAL_CONFIRMATION_REQUIRED')
+    const actor=await identity(idToken)
+    runtime()
+    const duplicate=await ledgerDb.runTransaction(async tx=>{
+      runtime();const i=verify((await tx.get(intentRef)).data())
+      ensure(i.authHash===actor.hash,'DELETION_INTAKE_IDENTITY_CHANGED')
+      if(i.state==='withdrawn')return true
+      // Only the original never-dispatched state can become terminal. The
+      // same transaction serializes against accept's dispatching transition.
+      // Source absence, cancellation or elapsed time cannot satisfy this proof.
+      ensure(i.state==='prepared','DELETION_INTAKE_ALREADY_DISPATCHED')
+      const receipt={schema:1,kind:'prepared_withdrawal',intentHash:i.hash,authHash:i.authHash,
+        confirmationHash:digest({uid,nonce,intentHash:i.hash,confirmation}),at:new Date().toISOString()}
+      ensure(Date.parse(receipt.at)>=i.now,'DELETION_INTAKE_CLOCK_CHANGED')
+      tx.update(intentRef,{state:'withdrawn',withdrawal:{...receipt,hash:digest(receipt)}})
+      return false
+    })
+    const terminal=await load()
+    ensure(terminal.state==='withdrawn'&&terminal.authHash===actor.hash,'DELETION_INTAKE_WITHDRAWAL_REQUIRED')
+    ensure((await identity(idToken)).hash===actor.hash,'DELETION_INTAKE_IDENTITY_CHANGED')
+    return {status:'prepared_withdrawn',duplicate,intentHash:terminal.hash,receiptHash:terminal.withdrawal.hash,
+      sourceMutationReleased:false,accountAdmissionGranted:false,productionReady:false}
+  }
+  return {prepare,accept,reconcile,withdrawPrepared,ledger}
 }

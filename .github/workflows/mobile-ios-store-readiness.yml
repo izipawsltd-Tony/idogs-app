@@ -7,6 +7,7 @@ on:
       # Refresh the GET-only inventory when a new internal candidate is recorded.
       - docs/release/ios-candidate-*.md
       - scripts/qa/app-store-readiness.mjs
+      - scripts/test-app-store-readiness-contract.mjs
       - .github/workflows/mobile-ios-store-readiness.yml
   workflow_dispatch:
 
@@ -22,6 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Verify read-only transport and summary contracts without network or Apple credentials
+        run: node --test scripts/test-app-store-readiness-contract.mjs
       - name: Read metadata without changing App Store Connect
         env:
           APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}

@@ -20,9 +20,17 @@ The preceding full local108-case suite PASS covers the broader worker/ledger/Sto
 
 This is a one-way intent/barrier/ACK protocol across two emulator databases, not a cross-database atomic transaction or global completeness proof. All live/legacy intake routes, multi-revision requests, cloud durability/IAM, independent restore-generation admission and global high-watermark reconciliation still require engineering and exact-source activation review. The existing missing-history/deletion-receipt quarantine remains in force; an ACK does not authorize ordinary account writes.
 
-Cancellation during an unacknowledged request and an expired prepared intent are explicit holds pending a separately verified withdrawal/terminal protocol. A source absence after uncertain dispatch must be investigated using the original intent/nonce and receipts, not a replacement fixture or reset state. Full-project rollback of the independent store is outside this scoped source-database restore proof. No readiness boolean resolves these gaps.
+Cancellation during a dispatched unacknowledged request remains an explicit hold pending a separately verified terminal protocol. An expired never-dispatched prepared intent may now be explicitly withdrawn through the scoped terminal protocol below; expiry alone never changes its state. A source absence after uncertain dispatch must be investigated using the original intent/nonce and receipts, not a replacement fixture or reset state. Full-project rollback of the independent store is outside this scoped source-database restore proof. No readiness boolean resolves these gaps.
 
 No Production, IAM/provider, Privacy/App Review, mobile build or communication changed. No managed backup/restore/replay dispatch or original seven-day fixture access. Keep its source/run/job/manifest and2026-11-02T04:56:11.242Z deadline unchanged. Preserve newer Production puppy/media/Meta behavior and unknown-collection quarantine.
+
+## Prepared-intent withdrawal, parallel follow-up increment
+
+The scoped emulator controller now requires explicit CANCEL DELETION PREPARATION and recent precise identity evidence to atomically transition only the original prepared intent to withdrawn. It serializes against the same dispatching transition used by accept. The hashed terminal receipt binds the exact intent, actor evidence, nonce and confirmation; restart and lost actual commit-reply recovery preserve the same receipt. A withdrawn intent cannot dispatch, reconcile acceptance or prepare again. The opaque source permit also refuses every state except dispatching.
+
+This is terminal closure of an original never-dispatched intent, not source IO drain. It releases no source mutation, changes no existing source request and grants no ordinary-account admission. Dispatched, uncertain or cancelled-unACKed requests cannot withdraw through this method. Neither source absence, elapsed time nor cancellation status is terminal evidence.
+
+Four additional real emulator cases cover explicit confirmation, durable duplicate/lost-reply recovery, accept/withdraw contention and changed identity/unrelated-source preservation. Full local112/112 PASS against the prior planner baseline, lifecycle20/20 and TypeScript PASS. The first local attempt failed before test bodies because the Firestore JVM exhausted native memory; unchanged assertions passed with bounded local heap/CPU. Diagnostic originals were preserved and hash-checked under the root release-audit-20261030/intake-withdrawal-local directory. Combined-source CI must additionally verify the parallel planner correction and Production-schema cases; no earlier-source PASS substitutes for that result.
 
 ## Exact-source verification completed
 
