@@ -1,10 +1,10 @@
 import { signupDestination } from './quickSignup'
 export const PENDING_SIGNIN_PREFIX = 'idogs.signin.'
 export interface PendingSignin { email: string; name: string; marketingOptIn: boolean; createdAt: number }
-export function readPendingSignin(flow: string | null, storage: Pick<Storage, 'getItem'> = localStorage): PendingSignin | null {
+export function readPendingSignin(flow: string | null, storage?: Pick<Storage, 'getItem'>): PendingSignin | null {
   if (!flow || !/^[a-zA-Z0-9-]{16,80}$/.test(flow)) return null
   try {
-    const value = JSON.parse(storage.getItem(PENDING_SIGNIN_PREFIX + flow) || 'null')
+    const value = JSON.parse((storage ?? localStorage).getItem(PENDING_SIGNIN_PREFIX + flow) || 'null')
     return value && typeof value.email === 'string' && typeof value.name === 'string' && Date.now() - value.createdAt < 3600000 && value.createdAt <= Date.now() ? value : null
   } catch { return null }
 }

@@ -81,7 +81,7 @@ export default function LoginPage({ toast }: Props) {
           <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 28 }}>Continue your dog’s story</p>
 
           <SocialSignIn busy={isSubmitting} onContinue={social} />
-          <p style={{ fontSize: 12, color: 'var(--mid)' }}>New to iDogs? Continuing with a provider creates an account under our <Link to="/terms">Terms</Link> and <Link to="/privacy">Privacy Policy</Link>.</p>
+          <p style={{ fontSize: 12, color: 'var(--mid)' }}>By requesting a sign-in link or code, or continuing with a provider, you agree to our <Link to="/terms">Terms</Link> and <Link to="/privacy">Privacy Policy</Link>. If you’re new, we’ll create your free account.</p>
           {!usePassword && <PasswordlessSignIn next={returnTo === '/app/dashboard' ? '/app/start' : returnTo} />}
           <button type="button" className="btn btn-secondary" style={{ marginTop: 16 }} onClick={() => setUsePassword(v => !v)}>{usePassword ? 'Use email link or mobile number' : 'Use my existing password'}</button>
           {usePassword && <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

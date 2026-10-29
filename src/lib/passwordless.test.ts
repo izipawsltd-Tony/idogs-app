@@ -19,4 +19,7 @@ describe('passwordless contact and return state', () => {
     expect(normalizeSigninPhone('+1 (650) 555-3434')).toBe('+16505553434')
     expect(() => normalizeSigninPhone('123')).toThrow()
   })
+  it('falls back safely if browser storage is blocked', () => {
+    expect(readPendingSignin('1234567890123456', { getItem() { throw new Error('storage blocked') } })).toBeNull()
+  })
 })
