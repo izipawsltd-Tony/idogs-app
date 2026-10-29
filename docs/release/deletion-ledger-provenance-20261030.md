@@ -23,3 +23,9 @@ Local480/480 Vitest tests PASS, including42 restore-gate cases.24 historical pro
 Exact-source CI and real isolated controlled-record replay regression are pending after push. The actual historical artifact read is separate evidence from the mocked rejection tests. A temporary approval usage-limit error initially prevented the GitHub read; after its reset, normal approval permitted the same read-only action. No approval bypass was used.
 
 Next work remains a provenance-backed current ledger/high-watermark and restore-generation quarantine, including Auth imports preserving historical identity facts; guarded signed-authority lifecycle/drain; per-route account resolvers preserving newer puppy/media/Meta behavior; and a post-Auth confirmation outbox without sending messages. No Production, IAM/provider, Privacy/App Review or mobile build change. Original seven-day source/run/job/manifest and deadline remain unchanged.
+
+## Exact-source verification
+
+Runtime8a30fd2a1368ec0c4dfa20f3fddb215ae14d2d46 pushCI40933548762,PRCI40933556197,pinned emulator40933548776 SUCCESS. Pinned/shared93/93 emulator cases,42 restore-gate cases and42 Node historical/managed compatibility cases PASS. Managed compatibility40933548668 was event:push; workflow_dispatch-only continuation SKIPPED. No completed managed cloud operation was rerun.
+
+Actual isolated cloud40933548632/job123658008423 SUCCESS2026-10-29T18:49:10Z: controlledRecordRestoreBlocked:true,exactRecordReplayVerified:true,boundedRenewalQueueVerified:true,durableRenewalDispatchVerified:true,storageCreateOnlyCasVerified:true,storageCasProbePending:false,cleanupVerified:true,productionReady:false. This covers the changed controlled-record QA caller on its exact disposable UID/revision1. No pending fixture remains. Historical provenance is separately recorded at release-audit-20261030/historical-ledger-verification.json; current/live completeness remains unproven. Do not repeat unchanged runtime/cloud QA.
