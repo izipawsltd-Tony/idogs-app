@@ -10,6 +10,7 @@ import {
   User, GoogleAuthProvider, FacebookAuthProvider, signInWithPopup, updateProfile, getAdditionalUserInfo
 } from 'firebase/auth'
 import { splitDisplayName } from '../lib/quickSignup'
+import { welcomeUser } from '../lib/welcomeUser'
 import { auth } from '../lib/firebase'
 import { createUserProfile, getUserProfile, getUserProfileFromServer, updateUserProfile, deleteUserData } from '../lib/db'
 import type { UserProfile, SignupFormData } from '../types'
@@ -91,6 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const p = await getUserProfile(newUser.uid)
       ++authGeneration.current
       setProfile(p); setLoading(false)
+      void welcomeUser(newUser)
     } catch (err) {
       // Rollback: remove the Auth user so the email isn't permanently locked
       // behind a half-created account the user can never log into.
@@ -112,6 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const loadedProfile = await getUserProfile(result.user.uid)
     ++authGeneration.current
     setProfile(loadedProfile); setLoading(false)
+    if (getAdditionalUserInfo(result)?.isNewUser === true) void welcomeUser(result.user)
     return getAdditionalUserInfo(result)?.isNewUser === true
   }
 
