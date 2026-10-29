@@ -27,3 +27,9 @@ No completed managed workflow was dispatched, no original seven-day fixture was 
 ## Validation
 
 Seven focused real emulator cases PASS after serialized header/query initialization and opt-in ingress integration. Final full100/100 real emulator cases,480 local unit tests, TypeScript and whitespace checks PASS. Pinned CI and existing isolated-cloud regression remain pending until the source is pushed and checked. Do not treat earlier 93-case cloud results as proof for this new component. It has no cloud/live adapter.
+
+## Exact-source evidence
+
+Runtime4c96108ea0d452c6ea75a1e0eef54730d6bd5e44: pushCI40943784342,PRCI40943792490,pinned emulator40943784339 SUCCESS. Pinned/shared100/100 PASS, including precise-identity Auth import and actual guarded-write rejection, one acceptance event under contention, lost actual commit reply recovery and changed-watermark rejection. No assertion was relaxed.
+
+Existing isolated cloud40943784336/job123693679628 SUCCESS2026-10-29T19:56:59Z: controlledRecordRestoreBlocked:true,exactRecordReplayVerified:true,boundedRenewalQueueVerified:true,durableRenewalDispatchVerified:true,storageCreateOnlyCasVerified:true,storageCasProbePending:false,cleanupVerified:true,productionReady:false. Email simulation/human email unrequested/not sent; human-inbox40943784392 and unchanged TestFlight40943784364 SKIPPED. No unresolved cloud fixture remains. The new ledger was exercised inside runner emulators; the real cloud worker did not create or use a named cloud ledger. This is independent-receipt prototype evidence plus existing cloud regression safety, not global/current/live completeness or operational activation. No rerun for unchanged code is needed.
