@@ -829,3 +829,124 @@ test('document ingress refuses missing or mismatched precise Auth evidence befor
   }finally{globalThis.fetch=originalFetch}
   assert.equal((await db.collection('accountMutationLeases').get()).size,0)
 })
+
+const storageMetadata=()=>({...ingressMetadata(),fileName:'guarded.pdf',filePath:`documents/${owner.uid}/synthetic-dog/guarded.pdf`})
+test('document storage persists intent then verifies a single create and exact-generation readback',async()=>{
+  await seed();const session=await beginDocument(),metadata=storageMetadata(),bytes=Buffer.from('Guarded synthetic document')
+  const retries={...bucket.storage.retryOptions}
+  assert.deepEqual(await session.writeStorage({filePath:metadata.filePath,content:bytes,mediaType:metadata.mediaType}),{status:'storage_verified'})
+  const lease=(await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data()
+  assert.equal(lease.storageWrite.state,'verified');assert.equal(lease.state,'active')
+  assert.equal(lease.storageWrite.receipt.terminal,'single_nonretrying_save_resolved')
+  assert.match(lease.storageWrite.receipt.generation,/^\d+$/)
+  assert.equal((await db.doc(`accountMutationLeases/${session.leaseId}/storageIntents/${lease.documentIngress.storageIntentHash}`).get()).exists,true)
+  assert.deepEqual(bucket.storage.retryOptions,retries)
+  const resumed=await resumeDocument(session.leaseId)
+  assert.equal((await resumed.writeStorage({filePath:metadata.filePath,content:bytes,mediaType:metadata.mediaType})).duplicate,true)
+  assert.equal((await resumed.createDocument({recordId:'storage-proof',metadata})).status,'record_created')
+  assert.equal((await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data().state,'closed')
+})
+
+test('document storage refuses generation changes and cannot erase intent to bypass the write hold',async()=>{
+  await seed();const session=await beginDocument(),metadata=storageMetadata()
+  await session.writeStorage({filePath:metadata.filePath,content:Buffer.from('Original synthetic content'),mediaType:metadata.mediaType})
+  await bucket.file(metadata.filePath).save(Buffer.from('Replacement synthetic content'))
+  await assert.rejects(session.createDocument({recordId:'storage-proof',metadata}),/DOCUMENT_STORAGE_READBACK_CHANGED/)
+  const ref=db.doc(`accountMutationLeases/${session.leaseId}`)
+  await ref.update({storageWrite:FieldValue.delete(),'documentIngress.storageIntentHash':FieldValue.delete()})
+  const restarted=await resumeDocument(session.leaseId)
+  await assert.rejects(restarted.createDocument({recordId:'storage-proof',metadata}),/DOCUMENT_STORAGE_INTENT_CHANGED/)
+  assert.equal((await db.doc('documents/storage-proof').get()).exists,false)
+  assert.equal((await ref.get()).data().state,'active')
+})
+
+async function storageResponseBarrier(mode){
+  const actual=process.env.FIREBASE_STORAGE_EMULATOR_HOST,oldGcs=process.env.STORAGE_EMULATOR_HOST
+  let sends=0,entered,release
+  const enteredPromise=new Promise(r=>{entered=r}),gate=new Promise(r=>{release=r})
+  const proxy=createServer(async(req,res)=>{
+    try{
+      const chunks=[];for await(const chunk of req)chunks.push(chunk)
+      const headers={...req.headers};for(const key of ['host','connection','transfer-encoding','content-length'])delete headers[key]
+      const response=await fetch(`http://${actual}${req.url}`,{method:req.method,headers,redirect:'error',...(['GET','HEAD'].includes(req.method)?{}:{body:Buffer.concat(chunks)})})
+      const bytes=Buffer.from(await response.arrayBuffer())
+      if(mode==='freeze'&&req.method==='GET'&&response.status===404)await db.doc(`accountDeletionLocks/${owner.uid}`).set({state:'processing'})
+      if(req.method==='POST'){
+        sends++;entered()
+        if(mode==='drop'){res.destroy();return}
+        if(mode==='hold')await gate
+      }
+      const output=Object.fromEntries(response.headers)
+      for(const key of ['content-encoding','content-length','connection','transfer-encoding'])delete output[key]
+      res.writeHead(response.status,output);res.end(bytes)
+    }catch{if(!res.headersSent){res.statusCode=502;res.end('synthetic proxy failure')}else res.destroy()}
+  })
+  await new Promise(r=>proxy.listen(0,'127.0.0.1',r))
+  const host=`127.0.0.1:${proxy.address().port}`
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST=host;process.env.STORAGE_EMULATOR_HOST=`http://${host}`
+  return {entered:enteredPromise,release,count:()=>sends,async close(){
+    release();process.env.FIREBASE_STORAGE_EMULATOR_HOST=actual;process.env.STORAGE_EMULATOR_HOST=oldGcs
+    proxy.closeAllConnections();await new Promise(r=>proxy.close(r))
+  }}
+}
+
+test('document storage matching object while the HTTP reply is pending cannot close the lease',async()=>{
+  await seed();const session=await beginDocument(),metadata=storageMetadata(),barrier=await storageResponseBarrier('hold')
+  const writing=session.writeStorage({filePath:metadata.filePath,content:Buffer.from('Pending response fixture'),mediaType:metadata.mediaType})
+  try{
+    await Promise.race([barrier.entered,writing.then(()=>{throw Error('write finished before response barrier')})])
+    assert.equal((await bucket.file(metadata.filePath).exists())[0],true)
+    await assert.rejects(session.createDocument({recordId:'storage-proof',metadata}),/DOCUMENT_STORAGE_OUTCOME_UNKNOWN/)
+    assert.equal((await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data().state,'active')
+    barrier.release();assert.equal((await writing).status,'storage_verified')
+    assert.equal(barrier.count(),1)
+    assert.equal((await session.createDocument({recordId:'storage-proof',metadata})).status,'record_created')
+  }finally{barrier.release();await writing.catch(()=>{});await barrier.close()}
+})
+
+test('document storage lost HTTP reply remains unknown after restart whether matching object exists or is absent',async()=>{
+  await seed();const session=await beginDocument(),metadata=storageMetadata(),bytes=Buffer.from('Lost response fixture')
+  const barrier=await storageResponseBarrier('drop')
+  try{
+    await assert.rejects(session.writeStorage({filePath:metadata.filePath,content:bytes,mediaType:metadata.mediaType}),/DOCUMENT_STORAGE_OUTCOME_UNKNOWN/)
+    assert.equal(barrier.count(),1)
+  }finally{await barrier.close()}
+  assert.equal((await bucket.file(metadata.filePath).exists())[0],true)
+  const leaseRef=db.doc(`accountMutationLeases/${session.leaseId}`)
+  assert.equal((await leaseRef.get()).data().storageWrite.state,'unknown')
+  const restarted=await resumeDocument(session.leaseId)
+  await assert.rejects(restarted.createDocument({recordId:'storage-proof',metadata}),/DOCUMENT_STORAGE_OUTCOME_UNKNOWN/)
+  await assert.rejects(restarted.writeStorage({filePath:metadata.filePath,content:bytes,mediaType:metadata.mediaType}),/DOCUMENT_STORAGE_OUTCOME_UNKNOWN/)
+  await bucket.file(metadata.filePath).delete() // Disposable LOCAL fixture only, not evidence that the original send drained.
+  await assert.rejects((await resumeDocument(session.leaseId)).createDocument({recordId:'storage-proof',metadata}),/DOCUMENT_STORAGE_OUTCOME_UNKNOWN/)
+  assert.equal((await leaseRef.get()).data().state,'active')
+  assert.equal((await db.doc('documents/storage-proof').get()).exists,false)
+})
+
+test('document storage occupied-path preflight preserves existing content and holds the write',async()=>{
+  await seed();const session=await beginDocument(),metadata=ingressMetadata()
+  const [before]=await bucket.file(metadata.filePath).download()
+  await assert.rejects(session.writeStorage({filePath:metadata.filePath,content:Buffer.from('Must not overwrite'),mediaType:metadata.mediaType}),/DOCUMENT_STORAGE_OUTCOME_UNKNOWN/)
+  assert.deepEqual((await bucket.file(metadata.filePath).download())[0],before)
+  assert.equal((await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data().state,'active')
+})
+
+test('document storage concurrent sessions reserve one path without a second send',async()=>{
+  await seed();const first=await beginDocument(),second=await beginDocument(),metadata=storageMetadata(),barrier=await storageResponseBarrier('hold')
+  const writing=first.writeStorage({filePath:metadata.filePath,content:Buffer.from('First reserved write'),mediaType:metadata.mediaType})
+  try{
+    await Promise.race([barrier.entered,writing.then(()=>{throw Error('write finished before response barrier')})])
+    await assert.rejects(second.writeStorage({filePath:metadata.filePath,content:Buffer.from('Competing write'),mediaType:metadata.mediaType}),/DOCUMENT_STORAGE_PATH_ALREADY_CLAIMED/)
+    barrier.release();await writing;assert.equal(barrier.count(),1)
+  }finally{barrier.release();await writing.catch(()=>{});await barrier.close()}
+})
+
+test('document storage rechecks the deletion lock after preflight and before the actual send',async()=>{
+  await seed();const session=await beginDocument(),metadata=storageMetadata(),barrier=await storageResponseBarrier('freeze')
+  try{
+    await assert.rejects(session.writeStorage({filePath:metadata.filePath,content:Buffer.from('Must not send'),mediaType:metadata.mediaType}),/DOCUMENT_STORAGE_OUTCOME_UNKNOWN/)
+    assert.equal(barrier.count(),0)
+    assert.equal((await bucket.file(metadata.filePath).exists())[0],false)
+    assert.equal((await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data().state,'active')
+  }finally{await barrier.close()}
+})

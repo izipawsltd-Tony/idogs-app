@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto'
+import {writeFileSync} from 'node:fs'
 import {stagingDeletionConfiguration} from './deletion-staging-readiness.mjs'
 import {QA_RESOURCES as target,verifyQaDatabase,verifyQaBucket} from './provision-deletion-resources.mjs'
 import {cloudFixtureScope,createCloudFixtureProcessor,createCloudFixtureRenewalDispatcher,createCloudFixtureRenewalQueue} from './deletion-cloud-runtime.mjs'
@@ -12,11 +13,11 @@ import {cleanupRenewalReceipts} from './deletion-renewal-cleanup.mjs'
 
 const ensure=(v,code)=>{if(!v)throw Object.assign(new Error(code),{code})}
 const runId=`deletion-qa-${randomUUID().replaceAll('-','')}`,uid=`qa-${runId}`,email=`qa-${runId}@example.invalid`
-let app,db,auth,bucket,stripe,customer,product,subscription,manifest,scope,httpApi,idToken,emailSink,authCreated=false,fixtureCreated=false,passed=false,phase='configuration',error,cleanupVerified=true
+let app,db,auth,bucket,stripe,customer,product,subscription,manifest,scope,httpApi,idToken,emailSink,authCreated=false,fixtureCreated=false,passed=false,phase='configuration',error,cleanupVerified=true,storageCasPending=false
 const evidence={},cleanup=[]
 try{
  const config=stagingDeletionConfiguration(process.env);ensure(config.status==='configured','CLOUD_QA_CREDENTIALS_REQUIRED')
- const [{initializeApp,cert},{getFirestore},{getAuth},{Storage},{default:Stripe}]=await Promise.all([import('firebase-admin/app'),import('firebase-admin/firestore'),import('firebase-admin/auth'),import('@google-cloud/storage'),import('stripe')])
+ const [{initializeApp,cert},{getFirestore},{getAuth},{Storage,IdempotencyStrategy},{default:Stripe}]=await Promise.all([import('firebase-admin/app'),import('firebase-admin/firestore'),import('firebase-admin/auth'),import('@google-cloud/storage'),import('stripe')])
  const credential=cert(config.credential)
  app=initializeApp({credential,projectId:target.projectId},runId);db=getFirestore(app,target.databaseId);auth=getAuth(app)
  bucket=new Storage({projectId:target.projectId,credentials:config.credential}).bucket(target.bucket)
@@ -58,6 +59,37 @@ try{
  for(const path of mediaPaths){await bucket.file(path).save(Buffer.from('Disposable fixture, no personal data'),{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{metadata:{deletionQaRunId:runId}}});generations[path]=String((await bucket.file(path).getMetadata())[0].generation)}
  const sentinelBefore=digest((await db.doc(`dogs/${runId}-sentinel`).get()).data())
  scope=cloudFixtureScope({db,auth,bucket,runId,manifest})
+ phase='storage_create_only_precondition'
+ await scope.assertRuntime(uid)
+ // One negative CAS probe on this exact disposable manifest object. Never
+ // use the original seven-day fixture or infer provider CAS from an emulator.
+ const casPath=manifest.mediaPaths[0],casOriginal=bucket.file(casPath)
+ const [casBefore]=await casOriginal.getMetadata(),[casBytes]=await casOriginal.download()
+ ensure(String(casBefore.generation)===generations[casPath]&&casBefore.metadata?.deletionQaRunId===runId,'QA_STORAGE_CAS_BINDING_CHANGED')
+ const casClient=new Storage({projectId:target.projectId,credentials:config.credential,
+  retryOptions:{autoRetry:false,maxRetries:0,idempotencyStrategy:IdempotencyStrategy.RetryNever}})
+ casClient.retryOptions.maxRetries=0
+ ensure(casClient.apiEndpoint==='https://storage.googleapis.com'&&casClient.retryOptions.autoRetry===false,'QA_STORAGE_CAS_TARGET_REQUIRED')
+ const casProof={schema:1,uid,runId,path:casPath,generation:String(casBefore.generation),metageneration:String(casBefore.metageneration),contentHash:digest(casBytes)}
+ const casJob=db.doc(`accountDeletionJobs/${uid}`)
+ await scope.db.runTransaction(async tx=>{const j=(await tx.get(casJob)).data();ensure(digest(j?.qaManifest)===digest(manifest)&&!j.storageCasProbe,'QA_STORAGE_CAS_MANIFEST_CHANGED');tx.update(casJob,{storageCasProbe:{...casProof,state:'dispatching'}})})
+ const casHandoff=state=>writeFileSync('storage-cas-handoff.json',JSON.stringify({schema:1,githubRunId:process.env.GITHUB_RUN_ID||null,
+  sourceSha:process.env.GITHUB_SHA||null,projectId:target.projectId,databaseId:target.databaseId,bucket:target.bucket,
+  manifest:{uid,email,runId,disposable:true,authCreatedAt:manifest.authCreatedAt,recordPaths:[...manifest.recordPaths],mediaPaths:[...manifest.mediaPaths],
+   stripeCustomerId:manifest.stripeCustomerId,stripeSubscriptionId:manifest.stripeSubscriptionId},probe:{...casProof,state}},null,2))
+ casHandoff('dispatching')
+ storageCasPending=true
+ let casRejected=false
+ try{await casClient.bucket(target.bucket).file(casPath).save(Buffer.from('Create-only CAS must reject this replacement'),{
+  resumable:false,timeout:15000,preconditionOpts:{ifGenerationMatch:0},metadata:{metadata:{deletionQaRunId:runId}}})}
+ catch(e){ensure(e.code===412,'QA_STORAGE_CAS_UNEXPECTED_FAILURE');casRejected=true}
+ await scope.db.runTransaction(async tx=>{const j=(await tx.get(casJob)).data();ensure(digest(j?.storageCasProbe)===digest({...casProof,state:'dispatching'}),'QA_STORAGE_CAS_RECEIPT_CHANGED');tx.update(casJob,{storageCasProbe:{...casProof,state:casRejected?'terminal_rejected_412':'terminal_unexpected_success'}})})
+ storageCasPending=false
+ casHandoff(casRejected?'terminal_rejected_412':'terminal_unexpected_success')
+ const [casAfter]=await casOriginal.getMetadata(),[casAfterBytes]=await casOriginal.download()
+ ensure(casRejected&&String(casAfter.generation)===String(casBefore.generation)
+  &&String(casAfter.metageneration)===String(casBefore.metageneration)&&Buffer.compare(casBytes,casAfterBytes)===0,'QA_STORAGE_CREATE_ONLY_CAS_NOT_VERIFIED')
+ evidence.storageCreateOnlyCasVerified=true
  if(process.env.IDOGS_DELETION_RESEND_QA_KEY)emailSink=createDeletionEmailSink({key:process.env.IDOGS_DELETION_RESEND_QA_KEY,scope,db:scope.db,auth,manifest})
  const provider=()=>{
   const contract=createStripeDeletionRenewalContract({stripe,assertRuntime:scope.assertTarget,expectedAccountId:'acct_1TiU0IGHgBd6ZgJE',expectedLivemode:false,loadOwnership:async id=>{
@@ -190,14 +222,15 @@ try{
 finally{
  const clean=async(name,fn)=>{try{await fn();cleanup.push({step:name,status:'success'})}catch(e){cleanupVerified=false;cleanup.push({step:name,status:'failed',code:/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'CLEANUP_FAILED'})}}
  if(httpApi)await clean('http_shutdown',()=>httpApi.close())
- if(manifest&&db)await clean('firebase_fixture',async()=>{
+ if(storageCasPending){cleanupVerified=false;cleanup.push({step:'firebase_fixture',status:'held',code:'QA_STORAGE_CAS_OUTCOME_UNKNOWN'})}
+ if(manifest&&db&&!storageCasPending)await clean('firebase_fixture',async()=>{
   const job=db.doc(`accountDeletionJobs/${uid}`),j=(await job.get()).data();ensure(digest(j?.qaManifest)===digest(manifest),'QA_CLEANUP_BINDING_CHANGED')
   await cleanupRenewalReceipts({scope:scope||cloudFixtureScope({db,auth,bucket,runId,manifest}),db,manifest})
   for(const path of manifest.mediaPaths){const file=bucket.file(path);if((await file.exists())[0]){const [m]=await file.getMetadata();ensure(m.metadata?.deletionQaRunId===runId,'QA_CLEANUP_MEDIA_CHANGED');await file.delete({ifGenerationMatch:m.generation})}}
   const paths=[...manifest.recordPaths,`dogs/${runId}-sentinel`,`accountDeletionRequests/${uid}`,`accountDeletionLocks/${uid}`,`accountDeletionReceipts/${digest([uid,1])}`,`accountDeletionRenewalTasks/${uid}_1`,`supportConversations/account_deletion_${uid}`,`supportMessages/account_deletion_${uid}_1_request`]
   if(fixtureCreated){const batch=db.batch();for(const path of paths)batch.delete(db.doc(path));await batch.commit();await db.recursiveDelete(job)}
  })
- if(authCreated)await clean('auth_fixture',async()=>{try{const u=await auth.getUser(uid);ensure(u.email===email&&u.displayName===runId,'QA_CLEANUP_AUTH_CHANGED');await auth.deleteUser(uid)}catch(e){if(e.code!=='auth/user-not-found')throw e}})
+ if(authCreated&&!storageCasPending)await clean('auth_fixture',async()=>{try{const u=await auth.getUser(uid);ensure(u.email===email&&u.displayName===runId,'QA_CLEANUP_AUTH_CHANGED');await auth.deleteUser(uid)}catch(e){if(e.code!=='auth/user-not-found')throw e}})
  if(subscription)await clean('stripe_subscription_prices',async()=>{
   const s=await stripe.subscriptions.retrieve(subscription.id);ensure(s.livemode===false&&s.customer===customer.id&&s.metadata?.deletionQaRunId===runId,'QA_CLEANUP_SUB_CHANGED')
   if(s.status!=='canceled')await stripe.subscriptions.cancel(s.id,{}, {idempotencyKey:`${runId}/cleanup-sub`})
@@ -207,5 +240,5 @@ finally{
  if(customer)await clean('stripe_customer',async()=>{const c=await stripe.customers.retrieve(customer.id);ensure(!c.deleted&&c.livemode===false&&c.metadata?.deletionQaRunId===runId,'QA_CLEANUP_CUSTOMER_CHANGED');await stripe.customers.del(c.id)})
  if(app)await clean('sdk_shutdown',async()=>{const {deleteApp}=await import('firebase-admin/app');await deleteApp(app)})
 }
-console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:process.env.IDOGS_DELETION_HTTP_QA_ORIGIN?'protected-preview-https':'runner-loopback-actual-handler',publicDeploymentVerified:passed&&!!process.env.IDOGS_DELETION_HTTP_QA_ORIGIN,signedWebhookVerified:evidence.actualSignedStripeWebhookVerified===true,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:evidence.humanRecipientProviderDelivered===true,humanInboxOpened:false,productionReady:false},null,2))
+console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,storageCasProbePending:storageCasPending,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:process.env.IDOGS_DELETION_HTTP_QA_ORIGIN?'protected-preview-https':'runner-loopback-actual-handler',publicDeploymentVerified:passed&&!!process.env.IDOGS_DELETION_HTTP_QA_ORIGIN,signedWebhookVerified:evidence.actualSignedStripeWebhookVerified===true,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:evidence.humanRecipientProviderDelivered===true,humanInboxOpened:false,productionReady:false},null,2))
 if(!passed||!cleanupVerified)process.exitCode=2

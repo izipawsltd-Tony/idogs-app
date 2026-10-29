@@ -9,3 +9,5 @@ WORKFLOW.md
 fix-script/
 node_modules/
 dist/
+
+storage-cas-handoff.json

@@ -2,7 +2,7 @@ name: Isolated cloud permanent deletion QA
 on:
   push:
     branches: [release/ios-app-store-20261025]
-    paths: ['scripts/qa/deletion-cloud-*.mjs', 'scripts/qa/deletion-email-sink.mjs', 'scripts/qa/deletion-restore-replay.mjs', 'scripts/deletion-restore-gate.test.js', 'api/_lib/deletion-restore-gate.js', 'scripts/test-deletion-cloud-*.mjs', 'scripts/test-deletion-email-sink.mjs', 'scripts/test-deletion-processor-emulator.mjs', 'api/_lib/deletion-processor.js', 'api/_lib/deletion-billing.js', 'api/_lib/deletion-renewal-dispatcher.js', 'api/_lib/deletion-renewal-queue.js', 'api/_lib/deletion-document-ingress.js', 'api/_lib/account-deletion.js', 'api/_lib/account-deletion-policy.js', 'api/_lib/deletion-synthetic-provider.js', 'scripts/test-deletion-renewal-dispatcher.mjs', 'api/_lib/deletion-stripe-contract.js', 'scripts/test-deletion-billing.mjs', 'scripts/test-deletion-stripe-contract.mjs', '.github/workflows/deletion-cloud-permanent.yml']
+    paths: ['scripts/qa/deletion-cloud-*.mjs', 'scripts/qa/deletion-email-sink.mjs', 'scripts/qa/deletion-restore-replay.mjs', 'scripts/deletion-restore-gate.test.js', 'api/_lib/deletion-restore-gate.js', 'scripts/test-deletion-cloud-*.mjs', 'scripts/test-deletion-email-sink.mjs', 'scripts/test-deletion-processor-emulator.mjs', 'api/_lib/deletion-processor.js', 'api/_lib/deletion-billing.js', 'api/_lib/deletion-renewal-dispatcher.js', 'api/_lib/deletion-renewal-queue.js', 'api/_lib/deletion-document-ingress.js', 'api/_lib/deletion-document-storage.js', 'api/_lib/account-deletion.js', 'api/_lib/account-deletion-policy.js', 'api/_lib/deletion-synthetic-provider.js', 'scripts/test-deletion-renewal-dispatcher.mjs', 'api/_lib/deletion-stripe-contract.js', 'scripts/test-deletion-billing.mjs', 'scripts/test-deletion-stripe-contract.mjs', '.github/workflows/deletion-cloud-permanent.yml']
   workflow_dispatch:
     inputs:
       qa_email_simulation:
@@ -51,3 +51,11 @@ jobs:
           IDOGS_DELETION_RESEND_QA_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.qa_email_simulation && secrets.IDOGS_DELETION_RESEND_QA_KEY || '' }}
         run: >-
           node -e 'if(process.env.QA_EMAIL_REQUESTED!=="true"){console.log(JSON.stringify({emailSimulationRequested:false,emailSimulationSent:false,humanEmailSent:false}))}else if(!process.env.IDOGS_DELETION_RESEND_QA_KEY){console.log(JSON.stringify({status:"owner_gate",code:"IDOGS_DELETION_RESEND_QA_KEY_MISSING",humanEmailSent:false}));process.exitCode=2}else{console.log("Explicitly requested simulation used the dedicated QA credential; see the preceding fixture report. No human recipient is configured here.")}'
+      - name: Preserve scoped Storage CAS handoff
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-cas-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: storage-cas-handoff.json
+          if-no-files-found: ignore
+          retention-days: 14
