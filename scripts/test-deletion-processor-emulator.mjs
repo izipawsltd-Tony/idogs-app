@@ -756,3 +756,76 @@ test('document ingress refuses same-owner version changes and altered lease proo
 test('document ingress constructor cannot target cloud services',()=>{
   assert.throws(()=>createEmulatorDocumentIngress({db,auth,bucket,projectId:'idogs-app-staging'}),/DELETION_EMULATOR_ONLY/)
 })
+
+const resumeDocument=(leaseId,idToken=owner.token,dogId='synthetic-dog')=>documentIngress().resume({leaseId,idToken,dogId,executionEnabled:true})
+async function signInFixture(email){
+  const response=await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=synthetic`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:'Emulator-fixture-only-42!',returnSecureToken:true})})
+  assert.equal(response.status,200);return (await response.json()).idToken
+}
+
+test('document ingress restart resumes the exact durable lease and verifies closed receipt recovery',async()=>{
+  await seed();const original=await beginDocument(),metadata=ingressMetadata()
+  const persisted=(await db.doc(`accountMutationLeases/${original.leaseId}`).get()).data()
+  assert.equal(persisted.documentIngress.schema,2)
+  assert.match(persisted.documentIngress.authHash,/^[a-f0-9]{64}$/)
+  assert.equal(JSON.stringify(persisted).includes(owner.email),false)
+  const restarted=await resumeDocument(original.leaseId,await signInFixture(owner.email))
+  await restarted.assertRecordWrite()
+  assert.equal((await restarted.createDocument({recordId:'ingress-resumed',metadata})).status,'record_created')
+  assert.equal((await db.collection('accountMutationLeases').get()).size,1)
+  assert.equal((await (await resumeDocument(original.leaseId)).createDocument({recordId:'ingress-resumed',metadata})).duplicate,true)
+  assert.equal((await db.collection('accountMutationLeases').get()).size,1)
+})
+
+test('document ingress restart refuses legacy Auth-unbound evidence without rewriting or replacing the hold',async()=>{
+  await seed();const original=await beginDocument(),ref=db.doc(`accountMutationLeases/${original.leaseId}`)
+  await ref.update({'documentIngress.schema':1,'documentIngress.authHash':FieldValue.delete()})
+  const before=(await ref.get()).data()
+  await assert.rejects(resumeDocument(original.leaseId),/DOCUMENT_INGRESS_AUTH_BINDING_MISSING/)
+  assert.deepEqual((await ref.get()).data(),before)
+  assert.equal((await db.collection('accountMutationLeases').get()).size,1)
+})
+
+test('document ingress restart refuses changed Auth identity even with a fresh valid token',async()=>{
+  await seed();const original=await beginDocument(),email=`changed-${owner.email}`
+  await auth.updateUser(owner.uid,{email})
+  const freshToken=await signInFixture(email)
+  assert.equal((await auth.verifyIdToken(freshToken,true)).uid,owner.uid)
+  await assert.rejects(resumeDocument(original.leaseId,freshToken),/DOCUMENT_INGRESS_IDENTITY_CHANGED/)
+  await assert.rejects(original.assertRecordWrite())
+  assert.equal((await db.doc(`accountMutationLeases/${original.leaseId}`).get()).data().state,'active')
+})
+
+test('document ingress restart refuses a recreated Auth user with the same UID and email',async()=>{
+  await seed();const original=await beginDocument()
+  await auth.deleteUser(owner.uid)
+  const replacement=await auth.createUser({uid:owner.uid,email:owner.email,password:'Emulator-fixture-only-42!',emailVerified:true})
+  assert.equal(replacement.uid,owner.uid);assert.equal(replacement.email,owner.email)
+  const freshToken=await signInFixture(owner.email)
+  assert.equal((await auth.verifyIdToken(freshToken,true)).uid,owner.uid)
+  await assert.rejects(resumeDocument(original.leaseId,freshToken),/DOCUMENT_INGRESS_IDENTITY_CHANGED/)
+  assert.equal((await db.doc(`accountMutationLeases/${original.leaseId}`).get()).data().state,'active')
+})
+
+test('document ingress restart rejects foreign identities, malformed lease IDs and changed lease scope',async()=>{
+  await seed();const original=await beginDocument()
+  await assert.rejects(resumeDocument(original.leaseId,other.token),/DOCUMENT_INGRESS_LEASE_CHANGED/)
+  await assert.rejects(resumeDocument('../foreign'),/DOCUMENT_INGRESS_INPUT_INVALID/)
+  await assert.rejects(resumeDocument(original.leaseId,owner.token,'foreign-dog'),/DOCUMENT_INGRESS_LEASE_CHANGED/)
+  await db.doc(`accountMutationLeases/${original.leaseId}`).update({'documentIngress.mode':'production'})
+  await assert.rejects(resumeDocument(original.leaseId),/DOCUMENT_INGRESS_LEASE_CHANGED/)
+  assert.equal((await db.collection('accountMutationLeases').get()).size,1)
+})
+
+test('document ingress refuses missing or mismatched precise Auth evidence before creating a lease',async()=>{
+  await seed();const originalFetch=globalThis.fetch
+  try{
+    for(const body of [{users:[]},{users:[{localId:other.uid,createdAt:'1'}]},{users:[{localId:owner.uid}]}]){
+      globalThis.fetch=async(url,options)=>String(url).includes('/accounts:lookup?')?new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}}):originalFetch(url,options)
+      await assert.rejects(beginDocument(),/DOCUMENT_INGRESS_AUTH_EVIDENCE_REQUIRED/)
+    }
+    globalThis.fetch=async(url,options)=>String(url).includes('/accounts:lookup?')?new Response(null,{status:503}):originalFetch(url,options)
+    await assert.rejects(beginDocument(),/DOCUMENT_INGRESS_AUTH_EVIDENCE_REQUIRED/)
+  }finally{globalThis.fetch=originalFetch}
+  assert.equal((await db.collection('accountMutationLeases').get()).size,0)
+})
