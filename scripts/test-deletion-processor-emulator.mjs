@@ -16,12 +16,16 @@ import {buildEmulatorDeletionPlan,scanDeletionDocuments,versionOf,mediaPaths} fr
 import {requireDeletionEmulators,beginAccountMutation,withAccountMutationFence} from '../api/_lib/deletion-fence.js'
 import {recordDeletionBillingAcceptance} from '../api/_lib/deletion-billing.js'
 import {changeDeletionRequest} from '../api/_lib/account-deletion.js'
+import {createEmulatorDocumentIngress} from '../api/_lib/deletion-document-ingress.js'
 
 const PROJECT='demo-idogs-deletion'
 for(const key of ['FIRESTORE_EMULATOR_HOST','FIREBASE_AUTH_EMULATOR_HOST','FIREBASE_STORAGE_EMULATOR_HOST'])if(!/^(localhost|127\.0\.0\.1):\d{4,5}$/.test(process.env[key]||''))throw Error('Expected local emulators')
 if(process.env.GCLOUD_PROJECT!==PROJECT||process.env.ACCOUNT_DELETION_MODE!=='prototype-emulator')throw Error('Expected synthetic project opt-in')
 let app,db,auth,bucket,rules,server,origin,owner,other,operator,processor,provider,counter=0
 const reqBody={action:'request',confirmation:'DELETE MY ACCOUNT'}
+const documentIngress=()=>createEmulatorDocumentIngress({db,auth,bucket,projectId:PROJECT})
+const beginDocument=()=>documentIngress().begin({idToken:owner.token,dogId:'synthetic-dog',executionEnabled:true})
+const ingressMetadata=()=>({source:'manual',fileName:'proof.pdf',filePath:`documents/${owner.uid}/synthetic-dog/proof.pdf`,mediaType:'application/pdf',title:'Synthetic proof'})
 const requestRef=()=>db.collection('accountDeletionRequests').doc(owner.uid)
 async function signup(label,claims){
   const uid=`synthetic-${label}-${++counter}`,email=`${uid}@example.invalid`,password='Emulator-fixture-only-42!'
@@ -670,4 +674,85 @@ test('renewal queue concurrent operators exclude live leases and expired workers
   assert.equal((await queueWith(manifest,{clock:()=>time}).run({executionEnabled:true})).status,'completed')
   release();await assert.rejects(first,/RENEWAL_QUEUE_STALE_ATTEMPT/)
   assert.equal((await requestRef().get()).data().renewalQueue.cursor,1)
+})
+
+test('document ingress is disabled by default and authenticates before resolving ownership',async()=>{
+  await seed()
+  assert.deepEqual(await documentIngress().begin(),{status:'held',code:'document_ingress_disabled'})
+  await assert.rejects(documentIngress().begin({idToken:'untrusted',dogId:'synthetic-dog',executionEnabled:true}))
+  assert.equal((await db.collection('accountMutationLeases').get()).size,0)
+})
+
+test('document ingress rejects former owners, restricted dogs and unresolved owner fields',async()=>{
+  await seed()
+  for(const patch of [{currentOwnerId:other.uid},{currentOwnerId:owner.uid,status:'restricted'},{currentOwnerId:null,status:'active'}]){
+    await db.doc('dogs/synthetic-dog').update(patch)
+    await assert.rejects(beginDocument(),/DOCUMENT_INGRESS_OWNERSHIP_REQUIRED/)
+  }
+  assert.equal((await db.collection('accountMutationLeases').get()).size,0)
+})
+
+test('document ingress commits metadata and lease receipt atomically and validates duplicates',async()=>{
+  await seed();const session=await beginDocument(),metadata=ingressMetadata()
+  await session.assertRecordWrite()
+  assert.deepEqual(await session.createDocument({recordId:'ingress-proof',metadata}),{status:'record_created',recordId:'ingress-proof'})
+  const lease=(await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data()
+  assert.equal(lease.state,'closed');assert.equal(lease.documentRecord.path,'documents/ingress-proof')
+  const stored=(await db.doc('documents/ingress-proof').get()).data()
+  assert.equal(stored.tenantId,owner.uid);assert.equal(stored.dogId,'synthetic-dog')
+  assert.equal((await session.createDocument({recordId:'ingress-proof',metadata})).duplicate,true)
+  await assert.rejects(session.createDocument({recordId:'ingress-proof',metadata:{...metadata,title:'changed'}}),/DOCUMENT_INGRESS_RECEIPT_CHANGED/)
+  await db.doc('documents/ingress-proof').update({title:'tampered'})
+  await assert.rejects(session.createDocument({recordId:'ingress-proof',metadata}),/DOCUMENT_INGRESS_RECEIPT_CHANGED/)
+})
+
+test('document ingress refuses a late deletion lock without closing the active hold',async()=>{
+  await seed();const session=await beginDocument()
+  await db.doc(`accountDeletionLocks/${owner.uid}`).set({state:'processing'})
+  await assert.rejects(session.assertRecordWrite(),/ACCOUNT_DELETION_LOCKED/)
+  await assert.rejects(session.createDocument({recordId:'ingress-proof',metadata:ingressMetadata()}),/ACCOUNT_DELETION_LOCKED/)
+  assert.equal((await db.doc('documents/ingress-proof').get()).exists,false)
+  assert.equal((await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data().state,'active')
+})
+
+test('document ingress pins ownership and the exact dog version before record writes',async()=>{
+  await seed();const session=await beginDocument()
+  await db.doc('dogs/synthetic-dog').update({currentOwnerId:other.uid})
+  await assert.rejects(session.createDocument({recordId:'ingress-proof',metadata:ingressMetadata()}),/DOCUMENT_INGRESS_OWNERSHIP_CHANGED/)
+  assert.equal((await db.doc('documents/ingress-proof').get()).exists,false)
+  assert.equal((await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data().state,'active')
+})
+
+test('document ingress rechecks revoked Auth and rejects caller ownership or foreign paths',async()=>{
+  await seed();const session=await beginDocument(),metadata=ingressMetadata()
+  for(const change of [{tenantId:other.uid},{dogId:'foreign-dog'},{createdBy:other.uid}])await assert.rejects(session.createDocument({recordId:'ingress-proof',metadata:{...metadata,...change}}),/CALLER_IDENTITY_FORBIDDEN/)
+  await assert.rejects(session.createDocument({recordId:'ingress-proof',metadata:{...metadata,filePath:`documents/${other.uid}/synthetic-dog/proof.pdf`}}),/RECORD_INVALID/)
+  await auth.updateUser(owner.uid,{disabled:true})
+  await assert.rejects(session.createDocument({recordId:'ingress-proof',metadata}))
+  assert.equal((await db.doc('documents/ingress-proof').get()).exists,false)
+})
+
+test('document ingress active session blocks the destructive worker until metadata commit',async()=>{
+  await seed();const session=await beginDocument()
+  const result=await processor.process({uid:owner.uid,revision:1})
+  assert.notEqual(result.status,'completed')
+  assert.equal((await db.doc('dogs/synthetic-dog').get()).exists,true)
+  assert.equal((await auth.getUser(owner.uid)).disabled,false)
+  assert.equal((await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data().state,'active')
+})
+
+test('document ingress refuses same-owner version changes and altered lease proof',async()=>{
+  await seed();const session=await beginDocument()
+  await db.doc('dogs/synthetic-dog').update({name:'Edited after claim'})
+  await assert.rejects(session.createDocument({recordId:'ingress-proof',metadata:ingressMetadata()}),/DOCUMENT_INGRESS_OWNERSHIP_CHANGED/)
+  const second=await beginDocument()
+  await db.doc(`accountMutationLeases/${second.leaseId}`).update({'documentIngress.epoch':'replaced'})
+  await assert.rejects(second.createDocument({recordId:'ingress-proof',metadata:ingressMetadata()}),/DOCUMENT_INGRESS_LEASE_CHANGED/)
+  await db.doc(`accountMutationLeases/${second.leaseId}`).update({documentIngress:FieldValue.delete()})
+  await assert.rejects(second.createDocument({recordId:'ingress-proof',metadata:ingressMetadata()}),/DOCUMENT_INGRESS_LEASE_CHANGED/)
+  assert.equal((await db.doc('documents/ingress-proof').get()).exists,false)
+})
+
+test('document ingress constructor cannot target cloud services',()=>{
+  assert.throws(()=>createEmulatorDocumentIngress({db,auth,bucket,projectId:'idogs-app-staging'}),/DELETION_EMULATOR_ONLY/)
 })
