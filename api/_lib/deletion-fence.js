@@ -7,6 +7,15 @@ export const DELETION_RECEIPTS = 'accountDeletionReceipts'
 export const validAccountId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value)
 const denied = code => Object.assign(new Error(code), { status: 423, code })
 
+// Returning from a signer is not evidence that the issued write authority has
+// drained. Until a separately verified grant protocol exists, these prototype
+// issuers retain their original durable lease even on errors or early returns.
+// Grant status, object absence and URL expiry alone cannot release this hold.
+const EXTERNAL_WRITE_AUTHORITY_ROUTES = new Set([
+  'api/request-showcase-media-upload.js',
+  'api/request-landing-media-upload.js',
+])
+
 // This increment is deliberately not a cloud activation mechanism. All three
 // emulators, a demo project, explicit opt-in and matching injected services are
 // required. A copied environment flag must never enable a real deletion.
@@ -104,7 +113,7 @@ export function withAccountMutationFence(handler, { route }) {
     } catch (error) {
       if (!res.headersSent) return res.status(error.status || 503).json({ error: 'Account changes are unavailable while deletion safety checks are active.', code: error.status === 423 ? error.code : 'MUTATION_FENCE_UNAVAILABLE' })
     } finally {
-      if (close) { try { await close() } catch { console.error('Account mutation lease could not be closed; deletion remains held') } }
+      if (close && !EXTERNAL_WRITE_AUTHORITY_ROUTES.has(route)) { try { await close() } catch { console.error('Account mutation lease could not be closed; deletion remains held') } }
     }
   }
 }

@@ -200,6 +200,38 @@ test('prototype route wrapper denies an actual authenticated mutation before han
   await db.collection('accountDeletionLocks').doc(other.uid).set({state:'processing'})
   const locked=response();await wrapped(req,locked);assert.equal(calls,1);assert.equal(locked.code,423)
 })
+for(const route of ['api/request-showcase-media-upload.js','api/request-landing-media-upload.js']){
+  for(const outcome of ['returned','threw'])test(`signed authority issuer retains its original hold after ${outcome}: ${route}`,async()=>{
+    await seed();let calls=0
+    const wrapped=withAccountMutationFence(async()=>{
+      calls++
+      // This is an actual grant-state write, not a fake successful signer or
+      // drain receipt. Even a locally expired/rejected grant proves no drain.
+      await db.doc('mediaUploadGrants/synthetic-authority').set({uid:owner.uid,dogId:'synthetic-dog',status:'expired',expiresAt:'2000-01-01T00:00:00Z'})
+      if(outcome==='threw')throw Error('synthetic signer outcome unknown')
+      return {status:'returned_without_drain_proof'}
+    },{route})
+    const res={headersSent:false,status(c){this.code=c;return this},json(b){this.body=b;return this}}
+    await wrapped({method:'POST',headers:{authorization:`Bearer ${owner.token}`},query:{},body:{dogId:'synthetic-dog'}},res)
+    assert.equal(calls,1)
+    if(outcome==='threw')assert.equal(res.code,503)
+    const leases=await db.collection('accountMutationLeases').where('state','==','active').get()
+    assert.equal(leases.size,1)
+    const lease=leases.docs[0],original=lease.data()
+    assert.equal(original.operation,route);assert.deepEqual(original.uids,[owner.uid])
+    const result=await processor.process({uid:owner.uid,revision:1})
+    assert.deepEqual(result,{status:'held',code:'active_mutations'})
+    assert.deepEqual((await lease.ref.get()).data(),original)
+    assert.equal((await db.doc('dogs/synthetic-dog').get()).exists,true)
+    assert.equal((await auth.getUser(owner.uid)).disabled,false)
+    assert.equal((await bucket.file(`documents/${owner.uid}/synthetic-dog/proof.pdf`).exists())[0],true)
+    assert.equal((await requestRef().get()).data().processingStage,'waiting_for_writes')
+    await wrapped({method:'POST',headers:{authorization:`Bearer ${owner.token}`},query:{},body:{dogId:'synthetic-dog'}},res)
+    assert.equal(res.code,423);assert.equal(calls,1)
+    assert.equal((await db.collection('accountMutationLeases').where('state','==','active').get()).size,1)
+  })
+}
+
 test('concurrent workers never execute two destructive plans',async()=>{
   await seed();const r=await Promise.allSettled([processor.process({uid:owner.uid,revision:1}),processor.process({uid:owner.uid,revision:1})])
   assert.equal(r.filter(x=>x.status==='fulfilled'&&x.value.status==='completed'&&!x.value.duplicate).length,1)
