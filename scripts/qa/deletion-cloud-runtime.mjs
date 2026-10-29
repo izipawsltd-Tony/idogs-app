@@ -1,5 +1,6 @@
 import {createGuardedDeletionProcessor} from '../../api/_lib/deletion-processor.js'
 import {createGuardedRenewalDispatcher} from '../../api/_lib/deletion-renewal-dispatcher.js'
+import {createGuardedRenewalQueue} from '../../api/_lib/deletion-renewal-queue.js'
 import {digest} from '../../api/_lib/deletion-plan.js'
 import {QA_RESOURCES,verifyQaBucket} from './provision-deletion-resources.mjs'
 import {RETENTION_QA,verifyRetentionBucket} from './provision-retention-bucket.mjs'
@@ -52,4 +53,11 @@ export function createCloudFixtureProcessor({scope,provider,...options}){
 export function createCloudFixtureRenewalDispatcher({scope,provider}){
  if(provider?.mode!=='isolated-cloud-qa')throw fail('CLOUD_QA_PROVIDER_REQUIRED')
  return createGuardedRenewalDispatcher({db:scope.db,provider,assertRuntime:scope.assertRuntime,mode:'isolated-cloud-qa'})
+}
+
+export function createCloudFixtureRenewalQueue({scope,provider,acceptedAt}){
+ if(provider?.mode!=='isolated-cloud-qa')throw fail('CLOUD_QA_PROVIDER_REQUIRED')
+ if(scope.bucket.name!==QA_RESOURCES.bucket)throw fail('CLOUD_QA_ZERO_RETENTION_REQUIRED')
+ return createGuardedRenewalQueue({db:scope.db,provider,assertRuntime:scope.assertRuntime,mode:'isolated-cloud-qa',
+  manifest:{id:scope.uid,targets:[{uid:scope.uid,revision:1,acceptedAt}]}})
 }

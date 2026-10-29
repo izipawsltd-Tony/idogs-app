@@ -457,6 +457,7 @@ for(const invalid of ['foreign-readback','invalid-subscription-id','oversized-in
 // These trusted Admin writes activate only disposable emulator tasks. The
 // request API still creates executionEnabled:false; no route enables live work.
 import {createEmulatorRenewalDispatcher} from '../api/_lib/deletion-renewal-dispatcher.js'
+import {createGuardedRenewalQueue} from '../api/_lib/deletion-renewal-queue.js'
 const renewalTask=()=>db.doc(`accountDeletionRenewalTasks/${owner.uid}_1`)
 const seedRenewal=options=>seed({stripeCustomerId:'cus_synthetic',billingAcceptance:false,...options})
 const dispatchWith=(p=provider,clock)=>createEmulatorRenewalDispatcher({db,auth,bucket,projectId:PROJECT,provider:p,clock})
@@ -599,4 +600,74 @@ test('renewal dispatcher does not invent an acceptance binding for legacy tasks'
   await renewalTask().update({billingIdentityHash:FieldValue.delete()})
   assert.deepEqual(await dispatchWith().execute({uid:owner.uid,revision:1}),{status:'held',code:'acceptance_billing_binding_missing'})
   assert.equal((await renewalTask().get()).data().attempts,undefined)
+})
+
+async function queueManifest(identities=[owner]){
+  return {id:'synthetic-operator-batch',targets:await Promise.all(identities.map(async identity=>{
+    const r=(await db.doc(`accountDeletionRequests/${identity.uid}`).get()).data()
+    return {uid:identity.uid,revision:r.revision,acceptedAt:r.acceptedAt}
+  }))}
+}
+const queueWith=(manifest,options={})=>createGuardedRenewalQueue({db,provider,manifest,mode:'prototype-emulator',
+  assertRuntime:uid=>{requireDeletionEmulators({db,auth,bucket,projectId:PROJECT});if(!manifest.targets.some(t=>t.uid===uid))throw Error('not allowlisted')},...options})
+
+test('renewal queue defaults disabled and does not activate disabled tasks',async()=>{
+  await seedRenewal();const q=queueWith(await queueManifest())
+  assert.equal((await q.run()).code,'queue_execution_disabled')
+  assert.equal((await requestRef().get()).data().renewalQueue,undefined)
+  assert.deepEqual(await q.run({executionEnabled:true}),{status:'blocked',cursor:0,total:1,taskStatus:'held'})
+  assert.equal((await renewalTask().get()).data().executionEnabled,false)
+})
+
+test('renewal queue pages explicit revisions and a new worker validates completion receipts',async()=>{
+  await seedRenewal();await enableEmulatorRenewal()
+  await db.doc(`users/${other.uid}`).update({stripeCustomerId:'cus_other'})
+  await db.doc(`deletionSyntheticProviders/${other.uid}`).set({discoveryComplete:true,subscriptions:[]})
+  await changeDeletionRequest({db,token:await auth.verifyIdToken(other.token,true),body:reqBody})
+  await db.doc(`accountDeletionRenewalTasks/${other.uid}_1`).update({executionEnabled:true})
+  const manifest=await queueManifest([owner,other])
+  assert.deepEqual(await queueWith(manifest).run({limit:1,executionEnabled:true}),{status:'page_completed',cursor:1,total:2})
+  assert.equal((await db.doc(`accountDeletionRenewalTasks/${other.uid}_1`).get()).data().attempts,undefined)
+  assert.deepEqual(await queueWith(manifest).run({limit:1,executionEnabled:true}),{status:'completed',cursor:2,total:2})
+  assert.equal((await queueWith(manifest).run({executionEnabled:true})).status,'completed')
+  assert.equal((await renewalTask().get()).data().attempts,1)
+  await renewalTask().update({'verificationReceipt.bindingHash':'tampered'})
+  await assert.rejects(queueWith(manifest).run({executionEnabled:true}),/RENEWAL_RECEIPT_CHANGED/)
+})
+
+test('renewal queue recovers a task completed before its queue acknowledgement',async()=>{
+  await seedRenewal();await enableEmulatorRenewal();await dispatchWith().execute({uid:owner.uid,revision:1})
+  const manifest=await queueManifest();let calls=0
+  const p={...provider,discover:async()=>{calls++;throw Error('receipt recovery must not rediscover')}}
+  assert.equal((await queueWith(manifest,{provider:p}).run({executionEnabled:true})).status,'completed')
+  assert.equal(calls,0);assert.equal((await renewalTask().get()).data().attempts,1)
+})
+
+test('renewal queue validates every allowlisted UID before touching any checkpoint',async()=>{
+  await seedRenewal();const manifest=await queueManifest();manifest.targets.push({uid:other.uid,revision:1,acceptedAt:manifest.targets[0].acceptedAt})
+  const q=queueWith(manifest,{assertRuntime:async uid=>{if(uid!==owner.uid)throw Error('scope denied')}})
+  await assert.rejects(q.run({executionEnabled:true}),/scope denied/)
+  assert.equal((await requestRef().get()).data().renewalQueue,undefined)
+})
+
+test('renewal queue refuses changed manifest, target revision and backwards clock',async()=>{
+  await seedRenewal();await enableEmulatorRenewal();const manifest=await queueManifest();let time=Date.now()
+  const q=queueWith(manifest,{clock:()=>time});await q.run({executionEnabled:true})
+  time--;await assert.rejects(q.run({executionEnabled:true}),/RENEWAL_QUEUE_CLOCK_INVALID/)
+  await assert.rejects(queueWith({...manifest,id:'different-batch'}).run({executionEnabled:true}),/RENEWAL_QUEUE_CHECKPOINT_CHANGED/)
+  await requestRef().update({revision:2})
+  await assert.rejects(queueWith(manifest).run({executionEnabled:true}),/RENEWAL_QUEUE_TARGET_CHANGED/)
+})
+
+test('renewal queue concurrent operators exclude live leases and expired workers cannot acknowledge',async()=>{
+  await seedRenewal();await enableEmulatorRenewal();const manifest=await queueManifest();let time=Date.now(),entered,release
+  const enteredPromise=new Promise(r=>{entered=r}),hold=new Promise(r=>{release=r})
+  const p={...provider,discover:async uid=>{entered();await hold;return provider.discover(uid)}}
+  const first=queueWith(manifest,{provider:p,clock:()=>time}).run({executionEnabled:true})
+  await enteredPromise
+  assert.equal((await queueWith(manifest,{clock:()=>time}).run({executionEnabled:true})).status,'busy')
+  time+=60001
+  assert.equal((await queueWith(manifest,{clock:()=>time}).run({executionEnabled:true})).status,'completed')
+  release();await assert.rejects(first,/RENEWAL_QUEUE_STALE_ATTEMPT/)
+  assert.equal((await requestRef().get()).data().renewalQueue.cursor,1)
 })

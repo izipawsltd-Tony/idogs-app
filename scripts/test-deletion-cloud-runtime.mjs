@@ -1,6 +1,6 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
-import {cloudFixtureScope,createCloudFixtureProcessor,createCloudFixtureRenewalDispatcher} from './qa/deletion-cloud-runtime.mjs'
+import {cloudFixtureScope,createCloudFixtureProcessor,createCloudFixtureRenewalDispatcher,createCloudFixtureRenewalQueue} from './qa/deletion-cloud-runtime.mjs'
 import {digest} from '../api/_lib/deletion-plan.js'
 
 const runId=`deletion-qa-${'a'.repeat(32)}`,uid=`qa-${runId}`
@@ -40,6 +40,7 @@ test('isolated cloud wrapper rejects synthetic/live provider and explicit mismat
  const f=fixture(),scope=cloudFixtureScope(f.args)
  for(const mode of ['synthetic','live','stripe-contract-unwired'])assert.throws(()=>createCloudFixtureProcessor({scope,provider:{mode}}),/PROVIDER_REQUIRED/)
  for(const mode of ['synthetic','live','stripe-contract-unwired'])assert.throws(()=>createCloudFixtureRenewalDispatcher({scope,provider:{mode}}),/PROVIDER_REQUIRED/)
+ for(const mode of ['synthetic','live','stripe-contract-unwired'])assert.throws(()=>createCloudFixtureRenewalQueue({scope,provider:{mode}}),/PROVIDER_REQUIRED/)
  await assert.rejects(scope.assertRuntime('real-user'),/FOREIGN_UID/)
  assert.equal(digest(f.manifest),digest({...f.manifest}))
 })
@@ -57,6 +58,7 @@ test('seven-day runtime permits only its fixed private bucket and an explicit du
  f.manifest.storageMode='seven-day';f.manifest.bucket=f.bucket.name
  f.bucket.getMetadata=async()=>[{name:f.bucket.name,projectNumber:'530003937245',location:'ASIA-SOUTHEAST1',softDeletePolicy:{retentionDurationSeconds:'604800'},versioning:{enabled:false},iamConfiguration:{uniformBucketLevelAccess:{enabled:true},publicAccessPrevention:'enforced'}}]
  await cloudFixtureScope(f.args).assertRuntime(uid)
+ assert.throws(()=>createCloudFixtureRenewalQueue({scope:cloudFixtureScope(f.args),provider:{mode:'isolated-cloud-qa'}}),/ZERO_RETENTION_REQUIRED/)
  assert.throws(()=>cloudFixtureScope({...f.args,retentionMode:'zero'}),/TARGET/)
  assert.throws(()=>cloudFixtureScope({...f.args,retentionMode:'production'}),/TARGET/)
  f.bucket.getMetadata=async()=>[{name:f.bucket.name}]

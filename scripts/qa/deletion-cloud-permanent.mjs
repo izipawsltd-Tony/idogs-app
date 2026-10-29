@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto'
 import {stagingDeletionConfiguration} from './deletion-staging-readiness.mjs'
 import {QA_RESOURCES as target,verifyQaDatabase,verifyQaBucket} from './provision-deletion-resources.mjs'
-import {cloudFixtureScope,createCloudFixtureProcessor,createCloudFixtureRenewalDispatcher} from './deletion-cloud-runtime.mjs'
+import {cloudFixtureScope,createCloudFixtureProcessor,createCloudFixtureRenewalDispatcher,createCloudFixtureRenewalQueue} from './deletion-cloud-runtime.mjs'
 import {signInCloudFixture,loopbackDeletionApi,protectedPreviewDeletionApi} from './deletion-cloud-http.mjs'
 import {createDeletionEmailSink} from './deletion-email-sink.mjs'
 import {createHumanQaConfirmation} from './deletion-human-confirmation.mjs'
@@ -108,13 +108,17 @@ try{
   ensure(t?.uid===uid&&t.revision===1&&t.executionEnabled===false&&t.status==='pending_verification','QA_RENEWAL_TASK_CHANGED')
   tx.update(renewalRef,{executionEnabled:true})
  })
- const dispatched=await createCloudFixtureRenewalDispatcher({scope,provider:provider()}).execute({uid,revision:1})
- ensure(dispatched.status==='completed'&&dispatched.renewalStatus==='verified_stopped','QA_RENEWAL_DISPATCH_NOT_VERIFIED')
+ const acceptedAt=(await db.doc(`accountDeletionRequests/${uid}`).get()).data().acceptedAt
+ const dispatched=await createCloudFixtureRenewalQueue({scope,provider:provider(),acceptedAt}).run({limit:1,executionEnabled:true})
+ ensure(dispatched.status==='completed'&&dispatched.cursor===1&&dispatched.total===1,'QA_RENEWAL_DISPATCH_NOT_VERIFIED')
  const durable=(await renewalRef.get()).data()
  ensure(durable.executionEnabled===false&&durable.dispatchState==='completed'&&durable.verificationReceipt?.mode==='isolated-cloud-qa','QA_RENEWAL_RECEIPT_MISSING')
  ensure((await auth.getUser(uid)).disabled===false&&(await db.doc(`users/${uid}`).get()).exists,'QA_RENEWAL_REMOVED_ACCOUNT')
  const replay=await createCloudFixtureRenewalDispatcher({scope,provider:provider()}).execute({uid,revision:1})
  ensure(replay.status==='completed'&&replay.duplicate===true,'QA_RENEWAL_DUPLICATE_NOT_IDEMPOTENT')
+ const queueReplay=await createCloudFixtureRenewalQueue({scope,provider:provider(),acceptedAt}).run({limit:1,executionEnabled:true})
+ ensure(queueReplay.status==='completed'&&queueReplay.cursor===1,'QA_RENEWAL_QUEUE_RECOVERY_FAILED')
+ evidence.boundedRenewalQueueVerified=true
  evidence.durableRenewalDispatchVerified=true
  evidence.renewalBeforeAuthRemovalVerified=true
  phase='interrupt_after_real_media_removal'
