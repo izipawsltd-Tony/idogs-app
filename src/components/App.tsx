@@ -150,6 +150,7 @@ export default function App() {
           </ProtectedRoute>
         }>
           <Route index element={<Navigate to="/app/dashboard" replace />} />
+          <Route path="start" element={<QuickStartPage />} />
           <Route path="dashboard" element={<DashboardPage toast={toast} />} />
           <Route path="dogs" element={<DogListPage toast={toast} />} />
           <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
