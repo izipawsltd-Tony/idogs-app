@@ -205,7 +205,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     if (verified && auth.currentUser.email) {
       const currentProfile = await getUserProfile(auth.currentUser.uid)
-      if (currentProfile && currentProfile.email !== auth.currentUser.email) await updateUserProfile(auth.currentUser.uid, { email: auth.currentUser.email })
+      if (currentProfile && currentProfile.email !== auth.currentUser.email) {
+        await updateUserProfile(auth.currentUser.uid, { email: auth.currentUser.email })
+        setProfile({ ...currentProfile, email: auth.currentUser.email })
+      }
     }
     setUser(auth.currentUser)
     return verified
