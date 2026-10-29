@@ -197,8 +197,25 @@ test('prototype route wrapper denies an actual authenticated mutation before han
 test('concurrent workers never execute two destructive plans',async()=>{
   await seed();const r=await Promise.allSettled([processor.process({uid:owner.uid,revision:1}),processor.process({uid:owner.uid,revision:1})])
   assert.equal(r.filter(x=>x.status==='fulfilled'&&x.value.status==='completed'&&!x.value.duplicate).length,1)
-  assert.ok(r.every(x=>x.status==='fulfilled'?x.value.status==='completed':x.reason.code==='DELETION_WORKER_BUSY'))
+  assert.ok(r.every(x=>x.status==='fulfilled'?x.value.status==='completed':x.reason.code==='DELETION_WORKER_BUSY'),JSON.stringify(r.map(x=>x.status==='fulfilled'?{status:x.value.status,code:x.value.code}:{code:x.reason.code,name:x.reason.name})))
   assert.equal((await requestRef().get()).data().status,'completed')
+})
+test('second worker is rejected while the first holds a live lease after a destructive receipt',async()=>{
+  await seed()
+  let entered,release,paused=false
+  const reached=new Promise(resolve=>{entered=resolve}),gate=new Promise(resolve=>{release=resolve})
+  const first=processor.process({uid:owner.uid,revision:1,afterOperation:async()=>{
+    if(!paused){paused=true;entered();await gate}
+  }})
+  try{
+    await Promise.race([reached,first.then(()=>{throw Error('first worker did not reach its receipt')})])
+    const job=(await db.doc(`accountDeletionJobs/${owner.uid}`).get()).data()
+    assert.ok(job.leaseUntil>Date.now())
+    await assert.rejects(processor.process({uid:owner.uid,revision:1}),{code:'DELETION_WORKER_BUSY'})
+  }finally{release()}
+  assert.equal((await first).status,'completed')
+  assert.equal((await requestRef().get()).data().status,'completed')
+  assert.equal((await processor.process({uid:owner.uid,revision:1})).duplicate,true)
 })
 test('lost response / crash after a destructive receipt resumes without recreating or double deleting data',async()=>{
   await seed();await assert.rejects(processor.process({uid:owner.uid,revision:1,afterOperation:async()=>{throw Error('synthetic worker crash')}}),/synthetic worker crash/)
