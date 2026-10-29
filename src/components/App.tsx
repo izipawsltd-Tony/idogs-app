@@ -1,4 +1,5 @@
 import QuickStartPage from '../pages/QuickStartPage'
+import EmailSigninFinishPage from '../pages/EmailSigninFinishPage'
 import { discoveryRoute } from '../lib/quickSignup'
 import React from 'react'
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
@@ -108,6 +109,7 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage toast={toast} />} />
         <Route path="/signup" element={<SignupPage toast={toast} />} />
+        <Route path="/auth/finish" element={<EmailSigninFinishPage />} />
         <Route path="/p/:passportId" element={<PassportRoute />} />
         <Route path="/s/:token" element={<ShowcasePublicPage />} />
         <Route path="/terms" element={<TermsPage />} />

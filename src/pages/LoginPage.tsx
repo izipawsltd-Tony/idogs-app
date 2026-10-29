@@ -1,4 +1,5 @@
 import SocialSignIn from '../components/ui/SocialSignIn'
+import PasswordlessSignIn from '../components/ui/PasswordlessSignIn'
 import { useState, useEffect, FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -19,6 +20,7 @@ export default function LoginPage({ toast }: Props) {
   const [password, setPassword] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [usePassword, setUsePassword] = useState(false)
 
   useEffect(() => {
     if (user) {
@@ -80,7 +82,9 @@ export default function LoginPage({ toast }: Props) {
 
           <SocialSignIn busy={isSubmitting} onContinue={social} />
           <p style={{ fontSize: 12, color: 'var(--mid)' }}>New to iDogs? Continuing with a provider creates an account under our <Link to="/terms">Terms</Link> and <Link to="/privacy">Privacy Policy</Link>.</p>
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {!usePassword && <PasswordlessSignIn next={returnTo === '/app/dashboard' ? '/app/start' : returnTo} />}
+          <button type="button" className="btn btn-secondary" style={{ marginTop: 16 }} onClick={() => setUsePassword(v => !v)}>{usePassword ? 'Use email link or mobile number' : 'Use my existing password'}</button>
+          {usePassword && <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div className="form-group">
               <label className="form-label">Email address</label>
               <input
@@ -123,7 +127,7 @@ export default function LoginPage({ toast }: Props) {
             >
               Sign in
             </button>
-          </form>
+          </form>}
         </div>
 
         <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--mid)' }}>

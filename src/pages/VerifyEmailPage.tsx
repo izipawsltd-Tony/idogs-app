@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
+import { verifyBeforeUpdateEmail } from 'firebase/auth'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -17,6 +18,7 @@ export default function VerifyEmailPage({ toast }: Props) {
   const [checking, setChecking] = useState(false)
   const [resending, setResending] = useState(false)
   const [cooldown, setCooldown] = useState(0)
+  const [contactEmail, setContactEmail] = useState('')
 
   // If not logged in at all, send to login
   useEffect(() => {
@@ -55,11 +57,15 @@ export default function VerifyEmailPage({ toast }: Props) {
   async function handleResend() {
     setResending(true)
     try {
-      await resendVerificationEmail()
+      if (user && !user.email) {
+        if (!contactEmail.trim()) { toast('Enter the email you use with your breeder.', 'error'); return }
+        await verifyBeforeUpdateEmail(user, contactEmail.trim(), { url: `${location.origin}/verify-email?next=${encodeURIComponent(returnTo)}` })
+      } else await resendVerificationEmail()
       toast('Verification email sent!')
       setCooldown(60)
-    } catch {
-      toast('Failed to resend. Please try again shortly.', 'error')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : ''
+      toast(message.includes('email-already-in-use') ? 'This email belongs to an existing account. Sign in to that account; your accounts have not been merged.' : message.includes('requires-recent-login') ? 'Please sign in again before adding your email.' : 'Could not send the verification email. Check the address and try again shortly.', 'error')
     } finally {
       setResending(false)
     }
@@ -94,10 +100,10 @@ export default function VerifyEmailPage({ toast }: Props) {
         <div className="card" style={{ padding: '36px 28px', textAlign: 'center' }}>
           <div style={{ fontSize: 44, marginBottom: 16 }}>📬</div>
           <h1 style={{ fontSize: 20, fontFamily: 'var(--font-display)', marginBottom: 8, color: 'var(--dark)' }}>
-            Verify your email
+            {user?.email ? 'Verify your email' : 'Add an email for private records'}
           </h1>
           <p style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.6, marginBottom: 4 }}>
-            Verify this email to continue securely:
+            {user?.email ? 'Verify this email to continue securely:' : 'Use the email you gave your breeder so we can match your private records securely.'}
           </p>
           <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 20 }}>
             {user?.email}
@@ -113,6 +119,7 @@ export default function VerifyEmailPage({ toast }: Props) {
             {checking ? <span className="spinner" /> : "I've verified — continue"}
           </button>
 
+          {!user?.email && <label>Email address for private records<input className="form-input" type="email" autoComplete="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="The email you use with your breeder" /></label>}
           <button
             onClick={handleResend}
             className="btn btn-secondary"
