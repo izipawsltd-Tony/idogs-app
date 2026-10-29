@@ -18,6 +18,7 @@ import {recordDeletionBillingAcceptance} from '../api/_lib/deletion-billing.js'
 import {changeDeletionRequest} from '../api/_lib/account-deletion.js'
 import {createEmulatorDocumentIngress} from '../api/_lib/deletion-document-ingress.js'
 import {createEmulatorIndependentLedger} from '../api/_lib/deletion-independent-ledger.js'
+import {createEmulatorDeletionIntake} from '../api/_lib/deletion-intake.js'
 import {randomUUID} from 'node:crypto'
 
 const PROJECT='demo-idogs-deletion'
@@ -796,6 +797,120 @@ const resumeDocument=(leaseId,idToken=owner.token,dogId='synthetic-dog')=>docume
 function independentLedger(nonce=randomUUID(),overrides={}){
   return createEmulatorIndependentLedger({db,ledgerDb,auth,bucket,projectId:PROJECT,uid:owner.uid,nonce,executionEnabled:true,...overrides})
 }
+function deletionIntake(nonce=randomUUID(),overrides={}){
+  return createEmulatorDeletionIntake({db,ledgerDb,auth,bucket,projectId:PROJECT,uid:owner.uid,nonce,executionEnabled:true,...overrides})
+}
+test('intake intent precedes actual acceptance and ACK closes only its exact source lease',async()=>{
+  const nonce=randomUUID(),intake=deletionIntake(nonce)
+  await db.doc(`users/${owner.uid}`).set({email:owner.email,role:'owner',plan:'free'})
+  await db.doc(`deletionSyntheticProviders/${owner.uid}`).set({discoveryComplete:true,subscriptions:[],retention:{verified:true,restoreReplayVerified:true,mediaIngressDrained:true,storageRetentionSeconds:0}})
+  await assert.rejects(intake.prepare({idToken:owner.token}),/DELETION_INTAKE_CONFIRMATION_REQUIRED/)
+  assert.equal((await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).exists,false)
+  const prepared=await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  assert.equal((await requestRef().get()).exists,false)
+  assert.equal((await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).data().state,'prepared')
+  assert.equal((await intake.ledger.read()).head,null)
+  const result=await intake.accept({idToken:owner.token});assert.equal(result.status,'acknowledged')
+  const request=(await requestRef().get()).data(),lease=(await db.doc(`accountMutationLeases/intake_${nonce}`).get()).data()
+  assert.equal(request.independentIntake.intentHash,prepared.intentHash)
+  assert.equal(lease.state,'closed');assert.equal(lease.receiptHash,result.receiptHash)
+  assert.equal((await intake.ledger.read()).events[0].hash,result.receiptHash)
+  assert.equal((await deletionIntake(nonce).reconcile({idToken:owner.token})).duplicate,true)
+  assert.equal((await requestRef().get()).data().requestedAt,request.requestedAt)
+  assert.equal((await processor.process({uid:owner.uid,revision:1})).status,'completed')
+  assert.equal((await intake.ledger.publishCompleted()).sequence,2)
+  await assert.rejects(auth.getUser(owner.uid),e=>e.code==='auth/user-not-found')
+})
+test('intake lost source commit reply retains processing hold until exact receipt reconciliation',async()=>{
+  const nonce=randomUUID();let lost=true
+  const fault={projectId:db.projectId,databaseId:db.databaseId,_settings:db._settings,doc:db.doc.bind(db),collection:db.collection.bind(db),
+    runTransaction:async fn=>{const result=await db.runTransaction(fn);if(lost&&result?.independentIntake){lost=false;throw Error('synthetic source commit reply lost')}return result}}
+  const intake=deletionIntake(nonce,{db:fault})
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  await assert.rejects(intake.accept({idToken:owner.token}),/source commit reply lost/)
+  assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).data().state,'active')
+  assert.equal((await intake.ledger.read()).head,null)
+  assert.deepEqual(await processor.process({uid:owner.uid,revision:1}),{status:'held',code:'active_mutations'})
+  const result=await deletionIntake(nonce).reconcile({idToken:owner.token})
+  assert.equal(result.status,'acknowledged')
+  assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).data().receiptHash,result.receiptHash)
+  assert.equal((await intake.ledger.read()).events.length,1)
+})
+test('intake uncertain source dispatch with absent receipt cannot be blindly sent again',async()=>{
+  const nonce=randomUUID();let sends=0
+  const fault={projectId:db.projectId,databaseId:db.databaseId,_settings:db._settings,doc:db.doc.bind(db),collection:db.collection.bind(db),
+    runTransaction:async()=>{sends++;throw Error('synthetic source transport unavailable')}}
+  const intake=deletionIntake(nonce,{db:fault})
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  await assert.rejects(intake.accept({idToken:owner.token}),/source transport unavailable/)
+  assert.equal(sends,1);assert.equal((await requestRef().get()).exists,false)
+  const restarted=deletionIntake(nonce)
+  await assert.rejects(restarted.accept({idToken:owner.token}),/DELETION_INTAKE_SOURCE_RECEIPT_REQUIRED/)
+  assert.equal((await requestRef().get()).exists,false)
+  assert.equal((await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).data().state,'dispatching')
+  assert.equal((await restarted.ledger.read()).head,null)
+})
+test('intake lost durable external ACK reply keeps the source lease until restart verifies the ACK',async()=>{
+  const nonce=randomUUID();let lost=true
+  const fault={projectId:ledgerDb.projectId,databaseId:ledgerDb.databaseId,_settings:ledgerDb._settings,doc:ledgerDb.doc.bind(ledgerDb),collection:ledgerDb.collection.bind(ledgerDb),
+    runTransaction:async fn=>{const result=await ledgerDb.runTransaction(fn)
+      if(lost&&result===undefined&&(await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).data()?.state==='acknowledged'){
+        lost=false;throw Error('synthetic external ACK reply lost')
+      }return result}}
+  const intake=deletionIntake(nonce,{ledgerDb:fault})
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  await assert.rejects(intake.accept({idToken:owner.token}),/external ACK reply lost/)
+  assert.equal((await ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`).get()).data().state,'acknowledged')
+  assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).data().state,'active')
+  assert.equal((await intake.ledger.read()).events.length,1)
+  assert.equal((await deletionIntake(nonce).reconcile({idToken:owner.token})).status,'acknowledged')
+  assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).data().state,'closed')
+  assert.equal((await intake.ledger.read()).events.length,1)
+})
+test('intake cancellation during an unacknowledged request remains an explicit hold',async()=>{
+  const nonce=randomUUID();let lost=true
+  const fault={projectId:db.projectId,databaseId:db.databaseId,_settings:db._settings,doc:db.doc.bind(db),collection:db.collection.bind(db),
+    runTransaction:async fn=>{const result=await db.runTransaction(fn);if(lost&&result?.independentIntake){lost=false;throw Error('synthetic source commit reply lost')}return result}}
+  const intake=deletionIntake(nonce,{db:fault})
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  await assert.rejects(intake.accept({idToken:owner.token}),/source commit reply lost/)
+  assert.equal((await call(owner,'/request','POST',{action:'cancel'})).status,200)
+  await assert.rejects(deletionIntake(nonce).reconcile({idToken:owner.token}),/INDEPENDENT_LEDGER_REQUEST_INVALID/)
+  assert.equal((await requestRef().get()).data().status,'cancelled')
+  assert.equal((await db.doc(`accountMutationLeases/intake_${nonce}`).get()).data().state,'active')
+  assert.equal((await intake.ledger.read()).head,null)
+})
+test('intake refuses source history retrofit, another actor and serialized fake permits',async()=>{
+  await seed();const intake=deletionIntake()
+  await assert.rejects(intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'}),/DELETION_INTAKE_SOURCE_ALREADY_EXISTS/)
+  await assert.rejects(intake.prepare({idToken:other.token,confirmation:'DELETE MY ACCOUNT'}),/DELETION_INTAKE_ACCOUNT_MISMATCH/)
+  await requestRef().delete()
+  await assert.rejects(changeDeletionRequest({db,token:await auth.verifyIdToken(owner.token,true),body:reqBody,intakePermit:{nonce:randomUUID()}}),/DELETION_INTAKE_PERMIT_INVALID/)
+  assert.equal((await requestRef().get()).exists,false)
+})
+test('intake restored source absence after ACK does not recreate acceptance or unlock admission',async()=>{
+  const nonce=randomUUID(),intake=deletionIntake(nonce)
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'});await intake.accept({idToken:owner.token})
+  const external=await intake.ledger.read()
+  await requestRef().delete();await db.doc(`accountMutationLeases/intake_${nonce}`).delete()
+  await assert.rejects(deletionIntake(nonce).accept({idToken:owner.token}),/DELETION_INTAKE_SOURCE_RECEIPT_REQUIRED/)
+  assert.equal((await requestRef().get()).exists,false)
+  assert.deepEqual(await intake.ledger.read(),external)
+  await assert.rejects(intake.ledger.assertWritable(owner.uid),/INDEPENDENT_LEDGER_QUARANTINED/)
+})
+test('intake changed intent and unrelated existing source cannot mint a matching ACK',async()=>{
+  const nonce=randomUUID(),intake=deletionIntake(nonce)
+  await intake.prepare({idToken:owner.token,confirmation:'DELETE MY ACCOUNT'})
+  const ref=ledgerDb.doc(`scopedDeletionIntakes/${owner.uid}`),saved=(await ref.get()).data()
+  await ref.update({authHash:'0'.repeat(64)})
+  await assert.rejects(intake.accept({idToken:owner.token}),/DELETION_INTAKE_INTENT_CHANGED/)
+  await ref.set(saved)
+  await request()
+  const source=(await requestRef().get()).data()
+  await assert.rejects(intake.accept({idToken:owner.token}),/DELETION_INTAKE_SOURCE_RECEIPT_REQUIRED/)
+  assert.deepEqual((await requestRef().get()).data(),source)
+  assert.equal((await intake.ledger.read()).head,null)
+})
 test('independent ledger defaults disabled and rejects the restored/default or cloud database',async()=>{
   assert.throws(()=>independentLedger(randomUUID(),{executionEnabled:false}),/INDEPENDENT_LEDGER_DISABLED/)
   assert.throws(()=>independentLedger(randomUUID(),{ledgerDb:db}),/INDEPENDENT_LEDGER_TARGET_INVALID/)

@@ -6,6 +6,14 @@ const fail=code=>Object.assign(new Error(code),{code})
 const ensure=(ok,code)=>{if(!ok)throw fail(code)}
 const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v)
 
+export function scopedDeletionRequestBinding(r,uid){
+  ensure(r?.uid===uid&&r.revision===1&&r.policyVersion===DELETION_POLICY_VERSION
+    &&['requested','review_required','processing','completed'].includes(r.status)
+    &&[r.requestedAt,r.acceptedAt,r.targetAt].every(v=>typeof v==='string'&&Number.isFinite(Date.parse(v)))
+    &&r.requestedAt===r.acceptedAt&&Date.parse(r.targetAt)-Date.parse(r.acceptedAt)===DELETION_TARGET_MS,'INDEPENDENT_LEDGER_REQUEST_INVALID')
+  return {uid,revision:1,policyVersion:r.policyVersion,requestedAt:r.requestedAt,acceptedAt:r.acceptedAt,targetAt:r.targetAt}
+}
+
 // Prototype only: an actual separate emulator database, outside the default
 // database's restore boundary. No cloud database, activation or global scan.
 export function createEmulatorIndependentLedger({db,ledgerDb,auth,bucket,projectId,uid,nonce,executionEnabled=false}){
@@ -41,11 +49,7 @@ export function createEmulatorIndependentLedger({db,ledgerDb,auth,bucket,project
     return {head:h,events:list}
   }
   function requestBinding(r){
-    ensure(r?.uid===uid&&r.revision===1&&r.policyVersion===DELETION_POLICY_VERSION
-      &&['requested','review_required','processing','completed'].includes(r.status)
-      &&[r.requestedAt,r.acceptedAt,r.targetAt].every(v=>typeof v==='string'&&Number.isFinite(Date.parse(v)))
-      &&r.requestedAt===r.acceptedAt&&Date.parse(r.targetAt)-Date.parse(r.acceptedAt)===DELETION_TARGET_MS, 'INDEPENDENT_LEDGER_REQUEST_INVALID')
-    return {uid,revision:1,policyVersion:r.policyVersion,requestedAt:r.requestedAt,acceptedAt:r.acceptedAt,targetAt:r.targetAt}
+    return scopedDeletionRequestBinding(r,uid)
   }
   async function publish(kind){
     runtime()
@@ -100,5 +104,5 @@ export function createEmulatorIndependentLedger({db,ledgerDb,auth,bucket,project
     const state=await quarantine()
     throw fail(state.code==='independent_ledger_missing'?'INDEPENDENT_LEDGER_HISTORY_REQUIRED':'INDEPENDENT_LEDGER_QUARANTINED')
   }
-  return {publishAccepted:()=>publish('accepted'),publishCompleted:()=>publish('completed'),read,quarantine,assertWritable}
+  return {scope:Object.freeze({uid,nonce}),assertRuntime:runtime,publishAccepted:()=>publish('accepted'),publishCompleted:()=>publish('completed'),read,quarantine,assertWritable}
 }

@@ -1,0 +1,25 @@
+# Guarded intake publication intent / ACK / reconciliation — 30 October 2026
+
+## Protocol and actual write barrier
+
+The new default-disabled emulator controller binds one approved synthetic UID/revision1/UUID nonce to recent verified Auth, precise end-user creation/identity evidence, explicit DELETE MY ACCOUNT confirmation and the server policy/commitment. Preparation requires no existing source request or published deletion history; it cannot retrofit restored or legacy requests. The independent intent records private hashes, scope and dates, never tokens, email or raw Auth responses. Duplicate preparation does not refresh the acceptance dates or reset a dispatched intent. A prepared intent may be dispatched only within30 seconds of its actual server preparation time; no injected clock is exposed.
+
+The separate local emulator database commits prepared -> dispatching before the source request is attempted. Only that transition permits one source send. A server-memory opaque permit then binds the existing request lifecycle helper to the exact commitment/nonce/intent. The helper commits the request, disabled renewal task and an active accountMutationLeases/intake_<nonce> barrier in the SAME source transaction. Serialized JSON cannot mint the permit, and the public request body schema is unchanged. Existing source calls without this server-only permit retain their previous behavior; no live route is switched to the controller.
+
+Reconciliation requires the exact source request marker, commitment and active/verified-closed lease. It publishes the existing independent acceptance receipt, saves the matching durable external ACK, reads that ACK back, rechecks Auth identity and closes ONLY its exact source lease transactionally. A worker that arrived earlier can install its processing lock but must hold on the active intake lease. A matching ACK can subsequently close that lease without deleting or bypassing the processing lock. A closed lease must retain the exact receipt hash for idempotent recovery.
+
+Unknown dispatch with an absent source receipt is a hold, not permission to retry the original source transaction. A restarted accept only reconciles; it never resends dispatching/acknowledged intents. Lost source/ACK replies, missing restored source data, changed scope/identity/intent, unmatched older source requests and serialized fake permits cannot produce an ACK or clear a lease. There is no finally cleanup, timeout reset or forced release.
+
+## Actual emulator tests
+
+Eight focused cases PASS on the final candidate: explicit confirmation is required before intent creation; intent exists before source request; positive request -> ACK -> actual worker deletion -> independent completion; actual committed source reply lost with worker held until reconciliation; uncertain source send with absence and no resend; durable external ACK reply lost with source lease still active until restart readback; cancellation remaining held; foreign actor/legacy source/fake permit rejection; restored source absence after ACK; and changed intent/unrelated-source rejection. Several assertions share one bounded test fixture. Fault cases throw only after real commits where claimed, without synthetic positive provider receipts.
+
+The preceding full local108-case suite PASS covers the broader worker/ledger/Storage behavior before final consent/positive-path refinements; final focused8 PASS covers those refinements.480 unit tests,20 account lifecycle Node tests, TypeScript and whitespace checks PASS. Pinned exact-source CI and existing isolated-cloud regression remain pending until push. Named receipt storage exists only in runner/local emulators; no named cloud database or resource is created.
+
+## Remaining limits / release gates
+
+This is a one-way intent/barrier/ACK protocol across two emulator databases, not a cross-database atomic transaction or global completeness proof. All live/legacy intake routes, multi-revision requests, cloud durability/IAM, independent restore-generation admission and global high-watermark reconciliation still require engineering and exact-source activation review. The existing missing-history/deletion-receipt quarantine remains in force; an ACK does not authorize ordinary account writes.
+
+Cancellation during an unacknowledged request and an expired prepared intent are explicit holds pending a separately verified withdrawal/terminal protocol. A source absence after uncertain dispatch must be investigated using the original intent/nonce and receipts, not a replacement fixture or reset state. Full-project rollback of the independent store is outside this scoped source-database restore proof. No readiness boolean resolves these gaps.
+
+No Production, IAM/provider, Privacy/App Review, mobile build or communication changed. No managed backup/restore/replay dispatch or original seven-day fixture access. Keep its source/run/job/manifest and2026-11-02T04:56:11.242Z deadline unchanged. Preserve newer Production puppy/media/Meta behavior and unknown-collection quarantine.

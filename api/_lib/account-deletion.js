@@ -1,5 +1,6 @@
 // Request lifecycle only. Never deletes data or mutates subscriptions.
 import { deletionCommitment, newRenewalTask, publicDeletionCommitment, RENEWAL_TASK_COLLECTION, deletionBillingIdentityHash } from './account-deletion-policy.js'
+import {applyEmulatorIntakePermit} from './deletion-intake-permit.js'
 export const DELETION_COLLECTION = 'accountDeletionRequests'
 export const CANCELLABLE = ['requested', 'review_required']
 const fail = (message, status) => Object.assign(new Error(message), { status })
@@ -34,7 +35,7 @@ export function deletionStatus(data) {
   }
 }
 
-export async function changeDeletionRequest({ db, token, body, now = Date.now(), onRequestAccepted }) {
+export async function changeDeletionRequest({ db, token, body, now = Date.now(), onRequestAccepted, intakePermit }) {
   if (!body || typeof body !== 'object' || Array.isArray(body)
     || Object.keys(body).some(k => !['action', 'confirmation'].includes(k))) {
     throw fail('Invalid request.', 400)
@@ -81,6 +82,7 @@ export async function changeDeletionRequest({ db, token, body, now = Date.now(),
       holds: ['ownership_inventory', 'billing_review', 'write_freeze_verification'],
       supportConversationId: conversationRef.id,
     }
+    if(intakePermit!==undefined)next.independentIntake=applyEmulatorIntakePermit({permit:intakePermit,db,tx,previous,next})
     tx.set(ref, next)
     // The task and receipt commit atomically. Duplicate requests do not reset
     // dates or enqueue another task. Cancellation preserves this task and never
