@@ -8,10 +8,11 @@ import {createHumanQaConfirmation} from './deletion-human-confirmation.mjs'
 import {createStripeDeletionRenewalContract} from '../../api/_lib/deletion-stripe-contract.js'
 import {digest,scanDeletionDocuments} from '../../api/_lib/deletion-plan.js'
 import {rehearseDeletedRecordRestore} from './deletion-restore-replay.mjs'
+import {cleanupRenewalReceipts} from './deletion-renewal-cleanup.mjs'
 
 const ensure=(v,code)=>{if(!v)throw Object.assign(new Error(code),{code})}
 const runId=`deletion-qa-${randomUUID().replaceAll('-','')}`,uid=`qa-${runId}`,email=`qa-${runId}@example.invalid`
-let app,db,auth,bucket,stripe,customer,product,subscription,manifest,httpApi,idToken,emailSink,authCreated=false,fixtureCreated=false,passed=false,phase='configuration',error,cleanupVerified=true
+let app,db,auth,bucket,stripe,customer,product,subscription,manifest,scope,httpApi,idToken,emailSink,authCreated=false,fixtureCreated=false,passed=false,phase='configuration',error,cleanupVerified=true
 const evidence={},cleanup=[]
 try{
  const config=stagingDeletionConfiguration(process.env);ensure(config.status==='configured','CLOUD_QA_CREDENTIALS_REQUIRED')
@@ -32,6 +33,7 @@ try{
  ensure(metadata.pointInTimeRecoveryEnablement==='POINT_IN_TIME_RECOVERY_DISABLED','QA_PITR_REVIEW_REQUIRED')
  const schedules=await cloudRead(`${databaseUrl}/backupSchedules`)
  ensure(!(schedules.backupSchedules?.length)&&!schedules.nextPageToken,'QA_BACKUP_SCHEDULE_REVIEW_REQUIRED')
+ ensure(!(await db.doc('accountDeletionJobs/qa-deletion-qa-afe48e556bfa43a595c6276939440179').get()).exists,'QA_PRIOR_FIXTURE_CLEANUP_REQUIRED')
  ensure((await stripe.accounts.retrieve()).id==='acct_1TiU0IGHgBd6ZgJE','STRIPE_ACCOUNT_MISMATCH')
  phase='create_nonce_fixtures'
  const providerMetadata={deletionQaRunId:runId,firebaseUid:uid}
@@ -55,7 +57,7 @@ try{
  const generations={}
  for(const path of mediaPaths){await bucket.file(path).save(Buffer.from('Disposable fixture, no personal data'),{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{metadata:{deletionQaRunId:runId}}});generations[path]=String((await bucket.file(path).getMetadata())[0].generation)}
  const sentinelBefore=digest((await db.doc(`dogs/${runId}-sentinel`).get()).data())
- const scope=cloudFixtureScope({db,auth,bucket,runId,manifest})
+ scope=cloudFixtureScope({db,auth,bucket,runId,manifest})
  if(process.env.IDOGS_DELETION_RESEND_QA_KEY)emailSink=createDeletionEmailSink({key:process.env.IDOGS_DELETION_RESEND_QA_KEY,scope,db:scope.db,auth,manifest})
  const provider=()=>{
   const contract=createStripeDeletionRenewalContract({stripe,assertRuntime:scope.assertTarget,expectedAccountId:'acct_1TiU0IGHgBd6ZgJE',expectedLivemode:false,loadOwnership:async id=>{
@@ -186,17 +188,7 @@ finally{
  if(httpApi)await clean('http_shutdown',()=>httpApi.close())
  if(manifest&&db)await clean('firebase_fixture',async()=>{
   const job=db.doc(`accountDeletionJobs/${uid}`),j=(await job.get()).data();ensure(digest(j?.qaManifest)===digest(manifest),'QA_CLEANUP_BINDING_CHANGED')
-  const renewal=db.doc(`accountDeletionRenewalTasks/${uid}_1`)
-  const renewalCollections=await renewal.listCollections()
-  ensure(renewalCollections.every(c=>c.id==='receipts'),'QA_CLEANUP_RENEWAL_COLLECTION_CHANGED')
-  const renewalReceipts=await renewal.collection('receipts').limit(2).get()
-  ensure(renewalReceipts.size<=1,'QA_CLEANUP_RENEWAL_RECEIPTS_CHANGED')
-  for(const snap of renewalReceipts.docs){
-   const r=snap.data()
-   ensure(snap.id===digest(manifest.stripeSubscriptionId)&&r.uid===uid&&r.revision===1&&r.subscriptionId===manifest.stripeSubscriptionId&&r.mode==='isolated-cloud-qa','QA_CLEANUP_RENEWAL_RECEIPT_CHANGED')
-   await scope.db.runTransaction(async tx=>{const current=await tx.get(snap.ref);ensure(current.exists&&digest(current.data())===digest(r),'QA_CLEANUP_RENEWAL_RECEIPT_CHANGED');tx.delete(snap.ref)})
-  }
-  ensure((await renewal.collection('receipts').limit(1).get()).empty,'QA_CLEANUP_RENEWAL_RECEIPTS_REMAIN')
+  await cleanupRenewalReceipts({scope:scope||cloudFixtureScope({db,auth,bucket,runId,manifest}),db,manifest})
   for(const path of manifest.mediaPaths){const file=bucket.file(path);if((await file.exists())[0]){const [m]=await file.getMetadata();ensure(m.metadata?.deletionQaRunId===runId,'QA_CLEANUP_MEDIA_CHANGED');await file.delete({ifGenerationMatch:m.generation})}}
   const paths=[...manifest.recordPaths,`dogs/${runId}-sentinel`,`accountDeletionRequests/${uid}`,`accountDeletionLocks/${uid}`,`accountDeletionReceipts/${digest([uid,1])}`,`accountDeletionRenewalTasks/${uid}_1`,`supportConversations/account_deletion_${uid}`,`supportMessages/account_deletion_${uid}_1_request`]
   if(fixtureCreated){const batch=db.batch();for(const path of paths)batch.delete(db.doc(path));await batch.commit();await db.recursiveDelete(job)}
