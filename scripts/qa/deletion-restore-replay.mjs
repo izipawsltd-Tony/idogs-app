@@ -27,12 +27,12 @@ export async function rehearseDeletedRecordRestore({ scope, manifest, records })
     try { const user = await auth.getUser(uid); authState = user.disabled ? 'disabled' : 'enabled' }
     catch (error) { if (error.code !== 'auth/user-not-found') throw error }
     const lock = (await db.doc(`accountDeletionLocks/${uid}`).get()).data()
-    return { complete: true, auth: { state: authState }, lock,
+    return { uid: id, complete: true, auth: { state: authState }, lock,
       records: inventory.records.filter(r => r.path === `users/${uid}` || r.path.startsWith(`users/${uid}/`)
         || containsDeletionIdentity(r.data, uid, [digest(manifest.email.toLowerCase())]))
         .map(r => ({ path: r.path, dataHash: digest(r.data) })) }
   }
-  const check = () => assessIsolatedDeletionRestore({ target: { projectId: db.projectId, databaseId: db.databaseId, isolated: true, publicAccess: false }, readLedger: loadLedger, inspectRestoredAccount: inspect })
+  const check = () => assessIsolatedDeletionRestore({ target: { projectId: db.projectId, databaseId: db.databaseId, isolated: true, publicAccess: false }, expectedAccounts: [{ uid, revision: 1 }], readLedger: loadLedger, inspectRestoredAccount: inspect })
   ensure((await check()).replayVerified, 'QA_RESTORE_BASELINE_UNVERIFIED')
   await db.runTransaction(async tx => {
     for (const record of records) ensure(!(await tx.get(db.doc(record.path))).exists, 'QA_RESTORE_RECORD_ALREADY_PRESENT')

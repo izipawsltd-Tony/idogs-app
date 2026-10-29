@@ -6,20 +6,30 @@ const validUid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.
 // Read-only, isolated restore rehearsal. The authoritative ledger must be read
 // outside the restored snapshot. This does not erase records or authorise a
 // Production restore; callers must keep restored data inaccessible.
-export async function assessIsolatedDeletionRestore({ target, readLedger, inspectRestoredAccount, clock = Date.now }) {
+export async function assessIsolatedDeletionRestore({ target, expectedAccounts, readLedger, inspectRestoredAccount, clock = Date.now }) {
   const approvedDatabase = target?.databaseId === 'idogs-deletion-qa'
     || (target?.databaseId === 'idogs-deletion-restore-qa' && target?.rehearsal === 'managed-backup')
   if (target?.projectId !== 'idogs-app-staging' || !approvedDatabase
     || target?.publicAccess !== false || target?.isolated !== true) throw new Error('ISOLATED_RESTORE_REQUIRED')
   if (typeof readLedger !== 'function' || typeof inspectRestoredAccount !== 'function') throw new Error('RESTORE_READERS_REQUIRED')
+  // Scope comes from the approved restore operation, never from the ledger
+  // being assessed. An empty or substituted ledger cannot define its own PASS.
+  if (!Array.isArray(expectedAccounts) || !expectedAccounts.length || expectedAccounts.length > 200) throw new Error('RESTORE_ACCOUNT_SCOPE_REQUIRED')
+  const expected = new Map()
+  for (const account of expectedAccounts) {
+    if (!validUid(account?.uid) || expected.has(account.uid) || !Number.isSafeInteger(account.revision) || account.revision < 1) throw new Error('RESTORE_ACCOUNT_SCOPE_INVALID')
+    expected.set(account.uid, account.revision)
+  }
   if (typeof clock !== 'function') throw new Error('RESTORE_CLOCK_INVALID')
   const startedAt = clock()
   if (!Number.isFinite(startedAt)) throw new Error('RESTORE_CLOCK_INVALID')
-  const before = await readLedger()
+  const before = structuredClone(await readLedger())
   if (!before || before.independentOfRestore !== true || before.complete !== true
     || before.nextPageToken || !Array.isArray(before.accounts) || before.accounts.length > 200
     || typeof before.revision !== 'string' || !before.revision) throw new Error('AUTHORITATIVE_RESTORE_LEDGER_REQUIRED')
   const fingerprint = hash(before)
+  if (before.accounts.length !== expected.size || before.accounts.some(a => !a || expected.get(a.uid) !== a.revision)
+    || new Set(before.accounts.map(a => a.uid)).size !== expected.size) throw new Error('RESTORE_LEDGER_SCOPE_MISMATCH')
   const seen = new Set(), issues = [], reviews = []
   for (const account of before.accounts) {
     if (!validUid(account.uid) || seen.has(account.uid) || !Number.isSafeInteger(account.revision)
@@ -41,6 +51,7 @@ export async function assessIsolatedDeletionRestore({ target, readLedger, inspec
     const view = await inspectRestoredAccount(account.uid)
     if (!view || view.complete !== true || view.nextPageToken || !Array.isArray(view.records)
       || !view.auth || !['absent', 'disabled', 'enabled'].includes(view.auth.state)) throw new Error('RESTORE_INVENTORY_INCOMPLETE')
+    if (view.uid !== account.uid) throw new Error('RESTORE_INVENTORY_ACCOUNT_MISMATCH')
     if (view.lock?.revision !== account.revision || view.lock?.state !== account.state) issues.push({ uid: account.uid, code: 'restore_tombstone_missing_or_changed' })
     if (account.state !== 'completed') issues.push({ uid: account.uid, code: 'deletion_still_processing' })
     if (view.auth.state !== 'absent') issues.push({ uid: account.uid, code: 'restored_auth_identity' })

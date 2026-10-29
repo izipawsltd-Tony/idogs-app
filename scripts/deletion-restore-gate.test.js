@@ -5,14 +5,51 @@ function fixture() {
   const ledger = { independentOfRestore: true, complete: true, revision: 'live-ledger-1', accounts: [
     { uid: 'qa-deleted', revision: 2, state: 'completed', retained: [{ path: 'invoices/lawfully-retained', expectedDataHash: 'a'.repeat(64), category: 'reviewed_financial_record', reason: 'Synthetic lawful retention review', reviewAfter: '2026-10-29T00:00:00Z' }] },
   ] }
-  const view = { complete: true, auth: { state: 'absent' }, lock: { revision: 2, state: 'completed' },
+  const view = { uid: 'qa-deleted', complete: true, auth: { state: 'absent' }, lock: { revision: 2, state: 'completed' },
     records: [{ path: 'invoices/lawfully-retained', dataHash: 'a'.repeat(64) }] }
   const options = { target: { projectId: 'idogs-app-staging', databaseId: 'idogs-deletion-qa', publicAccess: false, isolated: true },
-    clock: () => Date.parse('2026-10-28T00:00:00Z'), readLedger: vi.fn(async () => structuredClone(ledger)), inspectRestoredAccount: vi.fn(async () => structuredClone(view)) }
+    expectedAccounts: [{ uid: 'qa-deleted', revision: 2 }], clock: () => Date.parse('2026-10-28T00:00:00Z'), readLedger: vi.fn(async () => structuredClone(ledger)), inspectRestoredAccount: vi.fn(async () => structuredClone(view)) }
   return { ledger, view, options }
 }
 
 describe('isolated deletion restore gate', () => {
+  it.each([undefined, [], Array.from({ length: 201 }, (_, i) => ({ uid: `qa-${i}`, revision: 1 }))].map(value => [value]))('requires bounded nonempty approved account scope before reads: %s', async expectedAccounts => {
+    const f = fixture(); f.options.expectedAccounts = expectedAccounts
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('RESTORE_ACCOUNT_SCOPE_REQUIRED')
+    expect(f.options.readLedger).not.toHaveBeenCalled()
+  })
+  it.each([
+    [{ uid: 'qa-deleted', revision: 0 }],
+    [{ uid: '../foreign', revision: 2 }],
+    [{ uid: 'qa-deleted', revision: 2 }, { uid: 'qa-deleted', revision: 2 }],
+  ].map(value => [value]))('rejects invalid or duplicated approved scope: %s', async expectedAccounts => {
+    const f = fixture(); f.options.expectedAccounts = expectedAccounts
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('RESTORE_ACCOUNT_SCOPE_INVALID')
+    expect(f.options.readLedger).not.toHaveBeenCalled()
+  })
+  it.each(['empty', 'foreign', 'revision', 'duplicate', 'extra'])('cannot accept a self-declared complete ledger with %s scope', async kind => {
+    const f = fixture(), account = f.ledger.accounts[0]
+    if (kind === 'empty') f.ledger.accounts = []
+    if (kind === 'foreign') account.uid = 'qa-other'
+    if (kind === 'revision') account.revision++
+    if (kind === 'duplicate') f.ledger.accounts.push(structuredClone(account))
+    if (kind === 'extra') f.ledger.accounts.push({ ...account, uid: 'qa-other' })
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('RESTORE_LEDGER_SCOPE_MISMATCH')
+    expect(f.options.inspectRestoredAccount).not.toHaveBeenCalled()
+  })
+  it.each([undefined, 'qa-other'])('rejects inventory not bound to the requested account: %s', async uid => {
+    const f = fixture(); f.view.uid = uid
+    await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('RESTORE_INVENTORY_ACCOUNT_MISMATCH')
+  })
+  it('captures approved account scope before awaiting an external ledger read', async () => {
+    const f = fixture()
+    f.options.readLedger.mockImplementation(async () => {
+      f.options.expectedAccounts[0].uid = 'qa-other'
+      return structuredClone(f.ledger)
+    })
+    expect((await assessIsolatedDeletionRestore(f.options)).replayVerified).toBe(true)
+    expect(f.options.inspectRestoredAccount).toHaveBeenCalledWith('qa-deleted')
+  })
   it('allows the separately approved managed restore target only with explicit rehearsal type', async () => {
     const f = fixture(); f.options.target.databaseId = 'idogs-deletion-restore-qa'
     await expect(assessIsolatedDeletionRestore(f.options)).rejects.toThrow('ISOLATED_RESTORE_REQUIRED')

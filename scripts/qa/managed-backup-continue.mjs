@@ -253,12 +253,13 @@ export async function continueBackup({ api, db, manifest: m, save, report = {}, 
   await denyClients(api, TARGET.destination)
   const destination = db(TARGET.destination)
   await inventory(destination, m)
-  const inspect = async () => {
+  const inspect = async uid => {
+    ensure(uid === 'qa-deleted', 'MANAGED_BACKUP_RESTORE_ACCOUNT_MISMATCH')
     const snapshot = await destination.collection('managedBackupQa').limit(11).get()
-    return { complete: true, auth: { state: 'absent' }, lock: snapshot.docs.find(d => d.id === 'tombstone')?.data(),
+    return { uid, complete: true, auth: { state: 'absent' }, lock: snapshot.docs.find(d => d.id === 'tombstone')?.data(),
       records: snapshot.docs.filter(d => d.data().owner === 'qa-deleted').map(d => ({ path: d.ref.path, dataHash: digest(d.data()) })) }
   }
-  const check = () => assessIsolatedDeletionRestore({ target: { projectId: TARGET.projectId, databaseId: TARGET.destination, rehearsal: 'managed-backup', isolated: true, publicAccess: false }, readLedger: async () => structuredClone(m.ledger), inspectRestoredAccount: inspect })
+  const check = () => assessIsolatedDeletionRestore({ target: { projectId: TARGET.projectId, databaseId: TARGET.destination, rehearsal: 'managed-backup', isolated: true, publicAccess: false }, expectedAccounts: [{ uid: 'qa-deleted', revision: 1 }], readLedger: async () => structuredClone(m.ledger), inspectRestoredAccount: inspect })
   const blocked = await check()
   ensure(!blocked.replayVerified && blocked.issues.filter(i => i.code === 'restored_account_data').length === 2
     && blocked.issues.some(i => i.code === 'restore_tombstone_missing_or_changed'), 'MANAGED_BACKUP_QUARANTINE_NOT_BLOCKED')
