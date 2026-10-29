@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     ])
     if (!response.ok || !settingsResponse.ok) throw new Error('unavailable')
     const [data, settings] = await Promise.all([response.json(), settingsResponse.json()])
-    cached = { providers: (data.defaultSupportedIdpConfigs || []).filter(c => c.enabled && ['google.com', 'facebook.com'].includes(c.name?.split('/').at(-1))).map(c => c.name.split('/').at(-1)), emailLink: settings.signIn?.email?.enabled === true && settings.signIn?.email?.passwordRequired === false, phone: settings.signIn?.phoneNumber?.enabled === true, phoneTestOnly: process.env.IDOGS_NATIVE_QA_BACKEND === '1' }
+    cached = { providers: (data.defaultSupportedIdpConfigs || []).filter(c => c.enabled && ['google.com', 'facebook.com'].includes(c.name?.split('/').at(-1))).map(c => c.name.split('/').at(-1)), emailLink: settings.signIn?.email?.enabled === true && settings.signIn?.email?.passwordRequired !== true, phone: settings.signIn?.phoneNumber?.enabled === true, phoneTestOnly: process.env.IDOGS_NATIVE_QA_BACKEND === '1' }
     expires = Date.now() + 60000
     return res.status(200).json(cached)
   } catch { return res.status(200).json({ providers: [] }) }
