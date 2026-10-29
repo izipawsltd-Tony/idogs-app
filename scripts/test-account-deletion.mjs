@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { changeDeletionRequest, classifyDeletionDog, deletionStatus, requireRecentAuthentication } from '../api/_lib/account-deletion.js'
 import { makeDeletionHandler } from '../api/account-deletion.js'
 import { buildDeletionInventory } from '../api/_lib/account-deletion-inventory.js'
+import { DELETION_TARGET_MS, deletionCommitment } from '../api/_lib/account-deletion-policy.js'
 
 const now = Date.parse('2026-10-19T02:30:00Z')
 const token = { uid: 'synthetic-owner', auth_time: now / 1000 }
@@ -40,7 +41,7 @@ test('concurrent duplicate requests produce one durable job and stable receipt',
   const db = fakeDb()
   const [a, b] = await Promise.all([request(db), request(db)])
   assert.deepEqual(a, b)
-  assert.equal(db.writes, 3)
+  assert.equal(db.writes, 4)
   assert.equal(a.status, 'requested')
   assert.equal(a.canCancel, true)
   assert.equal(db.records.get('accountDeletionRequests/synthetic-owner').mode, 'as_soon_as_possible')
@@ -52,7 +53,7 @@ test('cancel is idempotent; resubmission is rate limited and versioned', async (
   await request(db)
   await request(db, { action: 'cancel' })
   await request(db, { action: 'cancel' })
-  assert.equal(db.writes, 6)
+  assert.equal(db.writes, 7)
   assert.equal(db.records.get('supportConversations/account_deletion_synthetic-owner').status, 'closed')
   await assert.rejects(request(db), { status: 429 })
   await request(db, undefined, { now: now + 60001 })
@@ -68,6 +69,42 @@ test('processing wins a cancellation race and cannot be reset by requesting agai
 test('status excludes identity, billing identifiers and private operator notes', () => {
   const result = JSON.stringify(deletionStatus({ status: 'review_required', uid: 'secret-uid', stripeCustomerId: 'secret-customer', notes: 'secret-note' }))
   assert.doesNotMatch(result, /secret-/)
+})
+test('acceptance stores an immutable seven-day target and one disabled renewal task atomically', async () => {
+  const db = fakeDb()
+  const first = await request(db)
+  const task = db.records.get('accountDeletionRenewalTasks/synthetic-owner_1')
+  assert.equal(Date.parse(first.targetAt) - now, DELETION_TARGET_MS)
+  assert.equal(first.nextUpdateDueAt, first.targetAt)
+  assert.equal(first.renewalStatus, 'pending_verification')
+  assert.equal(task.status, 'pending_verification')
+  assert.equal(task.executionEnabled, false)
+  assert.equal(task.restartOnDeletionCancellation, false)
+  assert.equal(task.acceptedAt, new Date(now).toISOString())
+  const later = now + 6 * 86400000
+  const duplicate = await request(db, undefined, { now: later, token: { ...token, auth_time: later / 1000 } })
+  assert.deepEqual(duplicate, first)
+  assert.equal(db.writes, 4)
+})
+test('cancellation preserves accepted renewal work and does not extend or restart anything', async () => {
+  const db = fakeDb()
+  const first = await request(db)
+  const task = structuredClone(db.records.get('accountDeletionRenewalTasks/synthetic-owner_1'))
+  const cancelled = await request(db, { action: 'cancel' })
+  assert.equal(cancelled.targetAt, first.targetAt)
+  assert.deepEqual(db.records.get('accountDeletionRenewalTasks/synthetic-owner_1'), task)
+  await request(db, undefined, { now: now + 60001 })
+  assert.equal(db.records.size, 7) // request, thread, two request receipts, cancellation receipt, two tasks
+  assert.equal(db.records.get('accountDeletionRenewalTasks/synthetic-owner_2').revision, 2)
+  assert.equal(db.records.get('accountDeletionRenewalTasks/synthetic-owner_1').revision, 1)
+})
+test('legacy receipts gain no invented dates or billing success; public data stays allowlisted', () => {
+  assert.equal(deletionStatus({ status: 'requested', policyVersion: '2026-10-19-v2' }).targetAt, undefined)
+  const status = deletionStatus({ status: 'requested', ...deletionCommitment(now), renewalStatus: 'provider-secret',
+    stripeCustomerId: 'secret-customer', subscriptions: ['secret-sub'], operatorError: 'secret-error' })
+  assert.equal(status.renewalStatus, 'pending_verification')
+  assert.doesNotMatch(JSON.stringify(status), /secret-/)
+  for (const invalid of [NaN, Infinity, -1, 8640000000000000]) assert.throws(() => deletionCommitment(invalid), /invalid_deletion_clock/)
 })
 test('current owner and pending transfer always override original tenant', () => {
   assert.equal(classifyDeletionDog({ tenantId: token.uid, currentOwnerId: 'new-owner' }, token.uid), 'preserve_other_owner')
@@ -149,4 +186,15 @@ test('inventory fingerprint is deterministic and changes when a discovered recor
   assert.equal(first.fingerprint, second.fingerprint)
   const third = await buildDeletionInventory({ db: inventoryDb({ ...seed, 'documents/new': { tenantId: 'qa' } }), uid: 'qa' })
   assert.notEqual(first.fingerprint, third.fingerprint)
+})
+test('reminder delivery inventory includes only requester metadata, never message payloads', async () => {
+  const report = await buildDeletionInventory({ uid: 'qa', db: inventoryDb({
+    'users/qa': {},
+    'reminderEmailDeliveries/own': {tenantId: 'qa', payload: {to: ['private@example.invalid'], html: 'secret-reminder-body'}},
+    'reminderEmailDeliveries/other': {tenantId: 'other', payload: {html: 'other-secret'}},
+  }) })
+  assert.ok(report.records.some(r => r.path === 'reminderEmailDeliveries/own'))
+  assert.ok(!report.records.some(r => r.path === 'reminderEmailDeliveries/other'))
+  assert.doesNotMatch(JSON.stringify(report), /private@example|secret-reminder|other-secret/)
+  assert.equal(report.complete, false); assert.equal(report.readyForDeletion, false)
 })

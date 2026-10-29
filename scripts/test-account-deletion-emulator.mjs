@@ -83,6 +83,12 @@ test('real Auth token and Firestore transactions persist exactly one request und
   assert.equal(stored.revision, 1)
   assert.equal(stored.uid, first.localId)
   assert.equal(stored.mode, 'as_soon_as_possible')
+  assert.equal(Date.parse(stored.targetAt) - Date.parse(stored.acceptedAt), 7 * 86400000)
+  assert.equal(stored.nextUpdateDueAt, stored.targetAt)
+  const renewalTask = (await db.collection('accountDeletionRenewalTasks').doc(`${first.localId}_1`).get()).data()
+  assert.equal(renewalTask.uid, first.localId)
+  assert.equal(renewalTask.status, 'pending_verification')
+  assert.equal(renewalTask.executionEnabled, false)
   assert.equal((await call(first)).body.requestedAt, stored.requestedAt)
   assert.equal((await db.collection('supportConversations').doc(stored.supportConversationId).get()).data().status, 'new')
   const messages = await db.collection('supportMessages').where('conversationId', '==', stored.supportConversationId).get()
@@ -99,6 +105,8 @@ test('actual Firestore Rules deny direct request reads and forged status writes'
     const client = rules.authenticatedContext(uid).firestore()
     await assertFails(getDoc(doc(client, 'accountDeletionRequests', first.localId)))
     await assertFails(setDoc(doc(client, 'accountDeletionRequests', uid), { status: 'completed' }))
+    await assertFails(getDoc(doc(client, 'accountDeletionRenewalTasks', `${first.localId}_1`)))
+    await assertFails(setDoc(doc(client, 'accountDeletionRenewalTasks', `${uid}_1`), { status: 'verified_stopped' }))
   }
 })
 test('receiving and cancelling a request never removes owned or transferred dog records', async () => {

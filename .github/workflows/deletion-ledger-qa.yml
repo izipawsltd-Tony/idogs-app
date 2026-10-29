@@ -1,0 +1,63 @@
+name: Deletion ledger and retention verification
+on:
+  push:
+    branches: [fix/ios-policy-review-20261019]
+    paths:
+      - api/_lib/account-deletion-policy.js
+      - api/_lib/account-deletion.js
+      - api/_lib/account-deletion-inventory.js
+      - scripts/test-account-deletion.mjs
+      - scripts/test-account-deletion-emulator.mjs
+      - scripts/test-deletion-processor.mjs
+      - scripts/test-deletion-renewal-emulator.mjs
+      - api/_lib/account-deletion-ledger.js
+      - scripts/test-deletion-ledger-emulator.mjs
+      - scripts/qa/deletion/**
+      - scripts/qa/audit-retention-backup.mjs
+      - .github/workflows/deletion-ledger-qa.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: node --test scripts/test-account-deletion.mjs scripts/test-deletion-processor.mjs
+      - name: Durable Firestore transactions, synthetic loopback project only
+        env:
+          GCLOUD_PROJECT: demo-idogs-account-deletion
+        run: npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-account-deletion --only auth,firestore 'node --test scripts/test-account-deletion-emulator.mjs scripts/test-deletion-ledger-emulator.mjs scripts/test-deletion-renewal-emulator.mjs'
+  metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Read existing production config; do not print or upload env
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node scripts/qa/audit-retention-backup.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: retention-backup-metadata-only
+          path: retention-backup-audit.json
+          retention-days: 7

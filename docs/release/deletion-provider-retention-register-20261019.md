@@ -1,0 +1,31 @@
+# Provider and retention register — activation blocked
+
+Review candidate, 19 October 2026. This register records source evidence and gaps; it does not certify actual provider configuration or legal compliance. No production setting is changed.
+
+| Store/provider | Data and source evidence | Location evidence | Retention/deletion evidence and next check |
+| --- | --- | --- | --- |
+| Firebase Auth | Identity, email, sign-in credentials/metadata. `src/lib/firebase.ts`, `api/account-deletion.js` | Project's actual Auth processing locations unverified | Current request API does not delete Auth. Candidate requires cleanup and renewal verification first. Verify provider logs/retention and supported account identifiers. |
+| Firestore | User profiles, dogs, current ownership, medical/history documents, support, delivery and audit records. Generated collection register accompanies this file. | Database location, exports, replicas and PITR unverified | No blanket delete by original tenant. Classify every collection/subcollection; preserve another owner's records and minimize departing person's private details. Retention basis/duration not yet approved. |
+| Firebase/Google Storage | Documents/photos and showcase/landing media. `api/upload-document.js`, `api/upload.js`, media confirmation handlers | Bucket location, versioning, soft-delete and backup policies unverified | Require exact bucket/path/generation; check shared references before deletion, including URLs embedded in records. No recursive bucket or prefix deletion. Live Storage Rules unverified; repository deny-all fixture must not be deployed. |
+| Vercel | API request handling, runtime/build logs, deployment metadata | Prior observed production deployment region `iad1`; not proof of complete residency | Verify request/log payloads, retention, drains, cache/CDN handling, support access and deletion controls. Do not promise log-free processing. |
+| Stripe (web only) | Customer/subscription identifiers and financial records. Billing API and webhook sources | Actual account processing/subprocessors unverified | Mock stops base and SMS renewals at acceptance and verifies readback. No live cancellation/refund/customer deletion enabled. Confirm customer mapping, full pagination, schedules/pending changes, invoice treatment and renewal race before a live adapter. Financial-record retention requires a record-specific approved schedule. |
+| Resend | Recipient email, reminder/support-related content and delivery IDs. `api/send-email.js`, `api/_lib/manual-reminder-delivery.js` | Account/provider locations unverified | `reminderEmailDeliveries` stores message payloads and has a 23h retry window; this is NOT a data-retention duration. This candidate adds an explicit tenant query to the read-only inventory; payload bodies are excluded from its report. This does not authorize deletion or establish complete coverage. Verify provider deletion/retention and all email channels without sending real mail. |
+| AWS SNS (where SMS enabled) | Phone number and SMS reminder content. `api/send-sms.js`, `api/send-reminders.js` | Code default `ap-southeast-2`; env can override; actual configuration unverified | Verify delivery logs, provider retention, consent/opt-outs and deletion controls. No real SMS or AWS config changes. |
+| Anthropic (optional scan) | User-selected document image/PDF and extracted fields. `api/scan.js` | Actual contract, processing countries, training and retention controls unverified | Per-document permission is implemented separately; it does not prove zero retention or legal waiver. Verify contractual/provider removal limits before policy effectiveness. Do not send real documents for QA. |
+| Device/browser | Firebase auth persistence through browser/IndexedDB preference. `src/lib/firebase.ts` | On device/browser; cloud sync/OS backup behavior unverified | Verify sign-out and account deletion clearing of SDK state/cache, offline documents and webview snapshots on physical devices; do not infer deletion from Auth removal alone. |
+| Backups/exports | Database, storage, device and operator-created backups may contain personal data | No full inventory verified | Document locations, expiry, access restriction and restore/reapply-deletion procedure. Restores must not silently resurrect a deleted account. No instantaneous all-copy deletion promise. |
+
+## Data dispositions requiring approval and evidence
+
+- Private exclusively owned records/media: remove or de-identify after request validation and safety checks; execution target remains a draft service commitment.
+- Other current owners' dogs/history: preserve their records; review whether departing person's contact fields can be removed safely. Original breeder/tenant match is not exclusive ownership.
+- Pending transfers and ambiguous legacy ownership: stop processing and resolve ownership without creating a real transfer during QA.
+- Invoices/company financial records: retain only required categories for an approved lawful period, segregated from ordinary product access. Do not apply a seven-year rule to all user data.
+- Deletion request/operation ledger: minimal identifiers, revision, operation receipt and outcome only; access controls and retention duration still need approval. No tokens/passwords/document bodies in logs.
+- Legal/security holds: document precise scope, basis, reviewer and next review date; never use an indefinite generic billing or shared-history hold.
+
+## Production activation prerequisites
+
+A real write freeze must cover client Firestore/Storage writes and Admin SDK APIs, uploads/grants, transfer/claim, reminders/provider dispatch and scheduled jobs. Revoking refresh tokens or disabling Auth is insufficient by itself. Verify existing tokens cannot race the processor. Any necessary Rules/Storage changes require separate scope approval.
+
+The existing read-only inventory always reports `complete: false`. The new processor is a synthetic rehearsal under `scripts/qa/deletion`, with no route, scheduler, Firebase adapter, Stripe SDK or live credentials. Successful rehearsal is not production deletion evidence. Finish live inventory, approved retention/billing rules, durable production adapter and emulator/physical-device checks before activation.

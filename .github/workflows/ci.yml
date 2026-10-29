@@ -40,7 +40,7 @@ jobs:
           node --experimental-test-module-mocks --test scripts/test-legacy-history-recovery.mjs scripts/test-history-api.mjs scripts/test-history-document-access.mjs scripts/test-ownership-history.mjs
 
       - name: Account deletion safety regression
-        run: node --test scripts/test-account-deletion.mjs
+        run: node --test scripts/test-account-deletion.mjs scripts/test-deletion-processor.mjs
 
       - name: Native production environment guard regression
         run: npm run test:native-release-env
