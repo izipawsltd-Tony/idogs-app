@@ -62,3 +62,9 @@ Build 92 and existing screenshots remain reusable. App Store reviewer metadata/P
 Original Storage run40271208201/job121405052447/sourcee8dc2b1471397885502c7c13389d73f038813a70 and original manifest remain untouched. Only the original job may read real retained data after 2026-11-02T04:56:11.242Z (2 November15:26:11 Adelaide). Passing that check does not supply missing route coverage, operational worker or live recovery evidence.
 
 Completed managed restore/replay/cleanup40671427781 must not be repeated or recreated. No runtime guard, IAM permission, provider setting, communication or Production change is authorized by this preparation document.
+
+## Combined-source preservation verification
+
+Exact runtime65f62f69e1966436ff844628fadeccb271dc4b99: push CI40975496400, PR CI40975501025 and pinned emulator40975496434 PASS. Pinned117/117 emulator cases include the112 withdrawal/worker cases and five Production-schema preservation cases, run sequentially to avoid cross-file inventory races. All480 unit tests and the TypeScript/Vite build PASS in this exact runner. App Store contract9/9 and GET-only40975496344 also PASS. Local standalone schema did not establish a result because of pre-test runner/native memory failures; exact-source CI now supplies the actual SDK preservation evidence without weakening assertions.
+
+The schema fixture verifies conservative execution holds for former/current-owner story descendants, cross-dog references, owner buyer contacts and UID-only follower ancestors. It verifies that a different ancestor UID sharing a prefix is not treated as the departing actor. It does not establish authoritative dispositions, complete Production inventory, descendant restore/replay or operational live route coverage. Do not remove unknown-collection quarantine or add collection names based on these hold-only proofs.
