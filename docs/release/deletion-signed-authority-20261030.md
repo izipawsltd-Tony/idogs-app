@@ -18,4 +18,8 @@ No Production route was replaced, no signing/provider settings changed, no cloud
 
 ## Remaining work
 
+Exact-source verification: runtime985ccfa2d50469e9589598eb62e32f3624d99b3d pushCI40912818450,PRCI40912830516 and pinned emulator40912818247 SUCCESS; pinned93/93 PASS. Actual isolated cloud40912818973/job123585047689 SUCCESS2026-10-29T16:39:05Z with shared93/93 PASS,storageCreateOnlyCasVerified:true,storageCasProbePending:false,boundedRenewalQueueVerified:true,durableRenewalDispatchVerified:true,cleanupVerified:true,productionReady:false. Email simulation unrequested/not sent; human email not sent; human-inbox40912818117 and unchanged TestFlight40912818125 SKIPPED. No unresolved fixture remains from this increment. Do not repeat unchanged runtime/cloud QA.
+
+This proves the original issuance hold is retained in the real emulator/worker and that existing isolated cloud behavior did not regress. It is not proof that a real signed URL was minted or drained by the controlled handler fixtures. The independent Storage provider CAS proof is a different capability.
+
 Continue guarded signed-authority issuance/confirmation with real drain evidence, per-route ownership resolvers and independent restore quarantine/ledger (including Auth imports preserving historical identity attributes), then a post-Auth confirmation outbox without sending messages. Preserve newer Production puppy-update/media/Meta semantics; unknown puppyProfiles descendants remain quarantined pending ownership/preservation/replay tests. Do not release these conservative holds merely to make deletion pass.
