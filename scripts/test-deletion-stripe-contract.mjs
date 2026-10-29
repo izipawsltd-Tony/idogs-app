@@ -62,3 +62,44 @@ test('mismatched retrieved resource and failed rediscovery cannot reuse stale sc
   await assert.rejects(adapter.discover(uid),/CHECKOUT_REVIEW/)
   await assert.rejects(adapter.verify('sub_one'),/UNDISCOVERED_SUBSCRIPTION/)
 })
+
+test('asynchronous runtime refusal prevents all Stripe reads and mutations',async()=>{
+  const f=fixture();let calls=0
+  const stripe=new Proxy({}, {get(){calls++;throw Error('unexpected Stripe access')}})
+  const adapter=createStripeDeletionRenewalContract({stripe,loadOwnership:async()=>f.state.ownership,
+    assertRuntime:async()=>{await Promise.resolve();throw Error('runtime revoked')},expectedAccountId:'acct_synthetic',expectedLivemode:false})
+  await assert.rejects(adapter.discover(uid),/runtime revoked/)
+  assert.equal(calls,0)
+})
+
+test('runtime revoked during subscription read holds before cancellation',async()=>{
+  const f=fixture();let allowed=true
+  const original=f.stripe.subscriptions.retrieve
+  f.stripe.subscriptions.retrieve=async id=>{const value=await original(id);allowed=false;return value}
+  const adapter=createStripeDeletionRenewalContract({stripe:f.stripe,loadOwnership:async()=>f.state.ownership,
+    assertRuntime:async()=>{await Promise.resolve();if(!allowed)throw Error('runtime revoked')},expectedAccountId:'acct_synthetic',expectedLivemode:false})
+  await adapter.discover(uid)
+  await assert.rejects(adapter.stopRenewal('sub_one',{uid,idempotencyKey:`deletion/${uid}/1/sub_one`}),/runtime revoked/)
+  assert.equal(f.state.updates.length,0)
+})
+
+test('ownership changed while subscription read was in flight blocks cancellation',async()=>{
+  const f=fixture(),original=f.stripe.subscriptions.retrieve
+  await f.adapter.discover(uid)
+  f.stripe.subscriptions.retrieve=async id=>{const value=await original(id);f.state.ownership={...f.state.ownership,customerId:'cus_replacement'};return value}
+  await assert.rejects(f.adapter.stopRenewal('sub_one',{uid,idempotencyKey:`deletion/${uid}/1/sub_one`}),/OWNERSHIP_CHANGED/)
+  assert.equal(f.state.updates.length,0)
+})
+
+test('an empty inventory cannot verify no subscription after ownership changes during discovery',async()=>{
+  const f=fixture();f.state.subs=[];f.state.ownership.knownSubscriptionIds=[]
+  f.stripe.checkout.sessions.list=async()=>{f.state.ownership={...f.state.ownership,customerId:'cus_replacement'};return page([])}
+  await assert.rejects(stopVerifiedDeletionRenewals({uid,revision:1,provider:f.adapter}),/OWNERSHIP_CHANGED/)
+  assert.equal(f.state.updates.length,0)
+})
+
+test('verification cannot report a stopped renewal after customer binding changes during readback',async()=>{
+  const f=fixture();await f.adapter.discover(uid)
+  f.stripe.subscriptions.retrieve=async()=>{f.state.ownership={...f.state.ownership,customerId:'cus_replacement'};return {...f.state.subs[0],cancel_at_period_end:true}}
+  await assert.rejects(f.adapter.verify('sub_one'),/OWNERSHIP_CHANGED/)
+})

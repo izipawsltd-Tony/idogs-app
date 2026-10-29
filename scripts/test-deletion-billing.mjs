@@ -31,3 +31,11 @@ test('billing acceptance requires the execution guard before accessing any servi
   await assert.rejects(recordDeletionBillingAcceptance({uid,revision}),/BILLING_RUNTIME_GUARD_REQUIRED/)
   await assert.rejects(recordDeletionBillingAcceptance({uid,revision,assertRuntime:()=>{throw Error('blocked cloud target')}}),/blocked cloud target/)
 })
+
+test('asynchronous acceptance guard is awaited before database access',async()=>{
+  let reads=0
+  const db=new Proxy({}, {get(){reads++;throw Error('unexpected DB access')}})
+  await assert.rejects(recordDeletionBillingAcceptance({db,uid,revision,provider:{mode:'synthetic'},
+    assertRuntime:async()=>{await Promise.resolve();throw Error('runtime revoked')}}),/runtime revoked/)
+  assert.equal(reads,0)
+})

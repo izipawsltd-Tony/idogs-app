@@ -25,7 +25,7 @@ export async function stopVerifiedDeletionRenewals({uid,revision,provider}) {
 // undoes an already stopped renewal. A stale attempt cannot update a new request.
 export async function recordDeletionBillingAcceptance({db,uid,revision,provider,assertRuntime}) {
   if(typeof assertRuntime!=='function')throw fail('BILLING_RUNTIME_GUARD_REQUIRED')
-  assertRuntime()
+  await assertRuntime()
   if(provider?.mode!=='synthetic')throw fail('SYNTHETIC_BILLING_ACCEPTANCE_REQUIRED')
   if(!validAccountId(uid)||!Number.isSafeInteger(revision)||revision<1)throw fail('INVALID_DELETION_BILLING_REQUEST')
   const ref=db.collection(DELETION_COLLECTION).doc(uid)
@@ -40,7 +40,7 @@ export async function recordDeletionBillingAcceptance({db,uid,revision,provider,
   let outcome
   try{outcome=await stopVerifiedDeletionRenewals({uid,revision,provider})}
   catch{outcome={renewalStatus:'review_required'}}
-  assertRuntime()
+  await assertRuntime()
   await db.runTransaction(async tx=>{
     const latest=await tx.get(ref)
     if(!latest.exists||latest.data().revision!==revision||latest.data().billingCheckEpoch!==epoch||!['requested','review_required','cancelled'].includes(latest.data().status))return
