@@ -84,7 +84,8 @@ export function createGuardedDeletionProcessor({db,auth,bucket,provider,clock=Da
         // Rehydrate provider ownership on a new worker after interruption.
         const discovery=await provider.discover(uid)
         if(discovery?.complete!==true || discovery.uid!==uid || !Array.isArray(discovery.subscriptions)
-          || discovery.subscriptions.some(s=>s.ownerUid!==uid||typeof s.id!=='string'))return await hold(uid,revision,lease,'billing_provider_verification')
+          || discovery.subscriptions.length>200
+          || discovery.subscriptions.some(s=>s?.ownerUid!==uid||!validAccountId(s.id)))return await hold(uid,revision,lease,'billing_provider_verification')
         const found=[...new Set(discovery.subscriptions.map(s=>s.id))].sort()
         if(subscriptionIds&&digest(subscriptionIds)!==digest(found))return await hold(uid,revision,lease,'billing_inventory_changed')
         if(!subscriptionIds){
@@ -96,7 +97,7 @@ export function createGuardedDeletionProcessor({db,auth,bucket,provider,clock=Da
         await stage(uid,revision,lease,'checking')
         await provider.stopRenewal(id,{uid,idempotencyKey:`deletion/${uid}/${revision}/${id}`})
         const result=await provider.verify(id)
-        if(result?.ownerUid!==uid||result.renewalStopped!==true)return await hold(uid,revision,lease,'billing_provider_verification')
+        if(result?.id!==id||result.ownerUid!==uid||result.renewalStopped!==true)return await hold(uid,revision,lease,'billing_provider_verification')
       }
       const providerEvidence=await provider.retention(uid)
       if(providerEvidence?.verified!==true||providerEvidence.uid!==uid||providerEvidence.restoreReplayVerified!==true||providerEvidence.mediaIngressDrained!==true)return await hold(uid,revision,lease,'provider_retention_review')

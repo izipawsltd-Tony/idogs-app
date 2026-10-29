@@ -418,3 +418,19 @@ test('missing storage retention evidence holds before destructive processing',as
   assert.equal((await db.doc(`users/${owner.uid}`).get()).exists,true)
   assert.equal((await auth.getUser(owner.uid)).disabled,false)
 })
+
+for(const invalid of ['foreign-readback','invalid-subscription-id','oversized-inventory'])test(`billing ${invalid} blocks worker before Auth freeze or data deletion`,async()=>{
+  await seed()
+  const subscription={id:'sub-synthetic',ownerUid:owner.uid,renewalStopped:true}
+  let mutations=0
+  const guarded={...provider,
+    discover:async()=>({uid:owner.uid,complete:true,subscriptions:invalid==='oversized-inventory'?Array.from({length:201},(_,i)=>({...subscription,id:`sub-${i}`})):[{...subscription,id:invalid==='invalid-subscription-id'?'sub/unsafe':subscription.id}]}),
+    stopRenewal:async()=>{mutations++},verify:async()=>({...subscription,id:'sub-foreign'})}
+  const worker=createEmulatorDeletionProcessor({db,auth,bucket,projectId:PROJECT,provider:guarded})
+  assert.equal((await worker.process({uid:owner.uid,revision:1})).code,'billing_provider_verification')
+  assert.equal(mutations,invalid==='foreign-readback'?1:0)
+  assert.equal((await auth.getUser(owner.uid)).disabled,false)
+  assert.equal((await db.doc(`users/${owner.uid}`).get()).exists,true)
+  assert.equal((await db.doc('documents/synthetic-document').get()).exists,true)
+  assert.equal((await requestRef().get()).data().status,'processing')
+})
