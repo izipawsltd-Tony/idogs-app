@@ -35,6 +35,7 @@ export default function LoginPage({ toast }: Props) {
       <label>Email address<input className="form-input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required disabled={busy} placeholder="you@example.com" /></label>
       <label>Password<span className="idogs-auth-password"><input className="form-input" type={show ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required disabled={busy} /><button type="button" className="btn btn-secondary" aria-label={show ? 'Hide password' : 'Show password'} onClick={() => setShow(v => !v)}>{show ? 'Hide' : 'Show'}</button></span></label>
       <Link to="/forgot-password" style={{ fontSize: 13 }}>Forgot password?</Link>
+      {import.meta.env.DEV && import.meta.env.VITE_ACCOUNT_RECOVERY_QA === '1' && <Link to="/forgot-login-email" style={{ fontSize: 13 }}>Forgot your login email?</Link>}
       {error && <p role="alert" className="idogs-auth-error">{error}</p>}
       <button className="btn btn-primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
     </form> : <PasswordlessSignIn next={returnTo} phoneOnly onBusyChange={setBusy} />}

@@ -1,6 +1,6 @@
 # iDogs account upgrade — server recovery decision
 
-Status: proposal for owner review, not implemented recovery and not production approval.
+Status: owner approved QA/emulator development with fake SMS in chat on 31 October 2026. Recovery prototype results are in `ACCOUNT-RECOVERY-QA-20261031.md`. This is not production/live-SMS approval. The inspection/proposal below records the original decision basis.
 Branch: `feature/account-onboarding-recovery-20261031`, based on `b43218e22a76d488a8ea2f47d4cd7b1d39f3e14e`.
 Scope: web account flows; native iPhone/Android verification remains separate.
 
@@ -66,7 +66,7 @@ Sources checked 31 October 2026:
 
 ## Remaining onboarding/enforcement work
 
-Not yet implemented or PASS in this branch:
+Original pending scopes at the decision point (recovery fake-SMS QA has since been implemented; see the linked checkpoint):
 - Resumable phone → email verification → password completion on the same UID, including refresh/new-device/expired-session/conflicting-email cases.
 - Trusted server readiness proof and API/Firestore/Storage management enforcement. A mutable client/profile flag or `providerId === 'password'` is insufficient (email-link also uses the password provider). Confirm actual email/password sign-in and verified Auth email, then store server-owned readiness tied to the current email/UID. Review how existing email users migrate without blanket lockout.
 - Compatibility route for existing OTP customers, email-password login/reset, account-deletion exceptions, and preserving original QR/follow destination.
@@ -77,4 +77,4 @@ Do not remove the existing OTP entry until the same-UID completion path and back
 
 ## Owner gate
 
-Approve the recommended server-owned recovery architecture for QA/emulator development with fake SMS only, keeping ordinary Firebase Auth. This approval does NOT authorize Identity Platform, production config changes, live SMS, purchases, or deployment. Live delivery requires a verified quote/sender and a separate spending decision.
+Approved in chat: recommended server-owned recovery architecture for QA/emulator development with fake SMS only, keeping ordinary Firebase Auth. This approval does NOT authorize Identity Platform, production config changes, live SMS, purchases, or deployment. Live delivery requires a verified quote/sender and a separate spending decision.

@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
-import { getFirestore } from 'firebase/firestore'
+import { connectAuthEmulator, getAuth } from 'firebase/auth'
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
 
 const firebaseConfig = {
@@ -16,4 +16,10 @@ const app = initializeApp(firebaseConfig)
 export const auth = getAuth(app)
 export const db = getFirestore(app)
 export const storage = getStorage(app)
+// A three-part local-only guard: never redirect a normal QA/production build
+// or project to emulators through a feature flag alone.
+if (import.meta.env.DEV && import.meta.env.VITE_ACCOUNT_RECOVERY_QA === '1' && firebaseConfig.projectId === 'demo-idogs-account-mobile') {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9299', { disableWarnings: true })
+  connectFirestoreEmulator(db, '127.0.0.1', 9280)
+}
 export default app

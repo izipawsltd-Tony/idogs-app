@@ -7,7 +7,12 @@ on:
     paths:
       - src/components/ui/PhoneSigninSettings*
       - scripts/test-account-mobile-emulator.mjs
-      - qa/account-auth-emulators.json
+      - scripts/test-account-recovery-emulator.mjs
+      - scripts/run-account-auth-emulator-tests.mjs
+      - api/_lib/account-recovery-qa.js
+      - api/account-recovery.js
+      - firestore.rules
+      - firebase.account-auth-qa.json
       - .github/workflows/account-mobile-emulator.yml
   workflow_dispatch:
 
@@ -32,4 +37,4 @@ jobs:
       - name: Synthetic same-UID number replacement (no cloud credentials, no real SMS)
         env:
           GCLOUD_PROJECT: demo-idogs-account-mobile
-        run: npx --yes firebase-tools@14.12.0 emulators:exec --config qa/account-auth-emulators.json --project demo-idogs-account-mobile --only auth,firestore 'node --test scripts/test-account-mobile-emulator.mjs'
+        run: npx --yes firebase-tools@14.12.0 emulators:exec --config firebase.account-auth-qa.json --project demo-idogs-account-mobile --only auth,firestore 'node scripts/run-account-auth-emulator-tests.mjs'

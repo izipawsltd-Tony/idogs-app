@@ -32,6 +32,7 @@ import PrivacyPage from '../pages/PrivacyPage'
 import PassportPublicPage from '../pages/PassportPublicPage'
 import ShowcasePublicPage from '../pages/ShowcasePublicPage'
 import ForgotPasswordPage from '../pages/ForgotPasswordPage'
+import ForgotLoginEmailPage from '../pages/ForgotLoginEmailPage'
 import NotFoundPage from '../pages/NotFoundPage'
 import ComingSoonPage from '../pages/ComingSoonPage'
 import ReportsPage from '../pages/ReportsPage'
@@ -116,6 +117,7 @@ export default function App() {
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/forgot-login-email" element={<ForgotLoginEmailPage />} />
 
         {/* Isolated Super SaaS Admin — intentionally outside AppLayout. */}
         <Route path="/app/super-admin" element={

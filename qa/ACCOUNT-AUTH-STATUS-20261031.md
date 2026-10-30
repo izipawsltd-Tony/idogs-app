@@ -1,5 +1,7 @@
 # Account-auth checkpoint — 31 October 2026
 
+Historical Settings-only checkpoint at `0441a063`. Owner has since approved fake-SMS recovery QA. For current recovery implementation/results/local QA instructions read `ACCOUNT-RECOVERY-QA-20261031.md`; do not treat the pending approval below as still pending.
+
 Branch: `feature/account-onboarding-recovery-20261031` (separate worktree).
 Base: `b43218e22a76d488a8ea2f47d4cd7b1d39f3e14e`.
 This checkpoint is NOT the whole new workflow and is NOT deployed.
@@ -33,7 +35,7 @@ Install dependencies into an isolated checkout with `npm ci`. Run normal typeche
 For the integration test (no cloud credentials needed): set `GCLOUD_PROJECT=demo-idogs-account-mobile`, then run:
 
 ```
-firebase emulators:exec --config qa/account-auth-emulators.json --project demo-idogs-account-mobile --only auth,firestore "node --test scripts/test-account-mobile-emulator.mjs"
+firebase emulators:exec --config firebase.account-auth-qa.json --project demo-idogs-account-mobile --only auth,firestore "node scripts/run-account-auth-emulator-tests.mjs"
 ```
 
 The script refuses cloud/non-loopback emulator configuration. The committed GitHub workflow runs the same synthetic integration on this feature branch and relevant PR changes. Do not use production configuration to run it.
