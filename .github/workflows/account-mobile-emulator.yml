@@ -1,0 +1,35 @@
+name: Account mobile replacement emulator
+
+on:
+  push:
+    branches: [feature/account-onboarding-recovery-20261031]
+  pull_request:
+    paths:
+      - src/components/ui/PhoneSigninSettings*
+      - scripts/test-account-mobile-emulator.mjs
+      - qa/account-auth-emulators.json
+      - .github/workflows/account-mobile-emulator.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - name: Synthetic same-UID number replacement (no cloud credentials, no real SMS)
+        env:
+          GCLOUD_PROJECT: demo-idogs-account-mobile
+        run: npx --yes firebase-tools@14.12.0 emulators:exec --config qa/account-auth-emulators.json --project demo-idogs-account-mobile --only auth,firestore 'node --test scripts/test-account-mobile-emulator.mjs'
