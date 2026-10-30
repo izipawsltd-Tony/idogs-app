@@ -205,7 +205,7 @@ Không coi tick lịch hoặc thời gian đã trôi là QA PASS; kiểm tra com
 
 ## 11. Việc tiếp theo, theo thứ tự có thể làm song song
 
-A. Read-only inventory: khôi phục buyerContacts ownerUid query đã có trên Production nhưng thiếu release. Update test từ “query omission” sang actual manifest inclusion; vẫn giữ unknown retention/disposition review hold, không thêm KNOWN để cho phép xóa.
+A. Read-only inventory: source c0bd0112496745435bccebf965308b53796c4dfa đã khôi phục buyerContacts ownerUid query có trên Production. REVIEW_ONLY_COLLECTIONS giữ unknown retention/disposition review kể cả contact liên kết owned dog; không thêm KNOWN hoặc quyền xóa. Test kiểm tra đúng owner, không xuất nội dung email, actual worker hold/preservation, bounded truncation và disposition precedence. Đọc deletion-buyer-contact-inventory-20261030.md để lấy kết quả exact-source mới nhất; không dùng proof131 cũ thay cho source này.
 
 B. Bounded puppyProfiles/puppyFollowers/finance inventory và preservation/restore proof: authorship, current/former owner, descendants dưới parent absent, shared/cross-dog media, follower relation và tài chính. Root collision fix đã xong, đừng lặp lại.
 
