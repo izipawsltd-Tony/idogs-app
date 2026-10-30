@@ -1,5 +1,6 @@
 import { assessIsolatedDeletionRestore } from '../../api/_lib/deletion-restore-gate.js'
-import { digest, scanDeletionDocuments, containsDeletionIdentity } from '../../api/_lib/deletion-plan.js'
+import { digest, scanDeletionDocuments } from '../../api/_lib/deletion-plan.js'
+import { scopedRestoredRecords } from '../../api/_lib/deletion-restore-inventory.js'
 
 const ensure = (ok, code) => { if (!ok) throw new Error(code) }
 
@@ -11,6 +12,7 @@ export async function rehearseDeletedRecordRestore({ scope, manifest, records })
   ensure(manifest.disposable === true && uid === manifest.uid && records.length === 2, 'QA_RESTORE_MANIFEST_REQUIRED')
   ensure(records.every(r => manifest.recordPaths.includes(r.path) && (r.path === `users/${uid}` || r.path.startsWith('dogs/'))), 'QA_RESTORE_SCOPE_REQUIRED')
   ensure(new Set(records.map(r => r.path)).size === records.length, 'QA_RESTORE_DUPLICATE_PATH')
+  const dogIds = manifest.recordPaths.filter(path => /^dogs\/[A-Za-z0-9_-]{1,128}$/.test(path)).map(path => path.split('/')[1])
   const loadLedger = async () => {
     await scope.assertRuntime(uid)
     const [request, job, lock] = await Promise.all(['accountDeletionRequests', 'accountDeletionJobs', 'accountDeletionLocks'].map(c => db.doc(`${c}/${uid}`).get()))
@@ -28,9 +30,7 @@ export async function rehearseDeletedRecordRestore({ scope, manifest, records })
     catch (error) { if (error.code !== 'auth/user-not-found') throw error }
     const lock = (await db.doc(`accountDeletionLocks/${uid}`).get()).data()
     return { uid: id, complete: true, auth: { state: authState }, lock,
-      records: inventory.records.filter(r => r.path === `users/${uid}` || r.path.startsWith(`users/${uid}/`)
-        || containsDeletionIdentity(r.data, uid, [digest(manifest.email.toLowerCase())]))
-        .map(r => ({ path: r.path, dataHash: digest(r.data) })) }
+      records: scopedRestoredRecords({ records: inventory.records, uid, dogIds, emailHashes: [digest(manifest.email.toLowerCase())] }) }
   }
   const check = () => assessIsolatedDeletionRestore({ target: { projectId: db.projectId, databaseId: db.databaseId, isolated: true, publicAccess: false }, expectedAccounts: [{ uid, revision: 1 }], readLedger: loadLedger, inspectRestoredAccount: inspect })
   ensure((await check()).replayVerified, 'QA_RESTORE_BASELINE_UNVERIFIED')

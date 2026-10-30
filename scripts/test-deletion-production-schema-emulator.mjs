@@ -10,6 +10,7 @@ import {buildDeletionInventory} from '../api/_lib/account-deletion-inventory.js'
 import {buildEmulatorDeletionPlan,scanDeletionDocuments,digest,versionOf} from '../api/_lib/deletion-plan.js'
 import {createEmulatorDeletionProcessor} from '../api/_lib/deletion-processor.js'
 import {syntheticDeletionProvider} from '../api/_lib/deletion-synthetic-provider.js'
+import {scopedRestoredRecords} from '../api/_lib/deletion-restore-inventory.js'
 
 // Existing demo project only. No Auth creation, cloud provider, destructive plan,
 // global cleanup, altered clock, external request, or resource provisioning.
@@ -206,4 +207,34 @@ test('dog ID prefix collision in another account descendants is not exact scoped
   assert.equal(plan.holds.includes('unclassified_record_review'),false,'Only exact dog path segments scope payload-free descendants')
   for(const path of paths)assert.equal(plan.operations.some(o=>o.path===path),false)
   assert.ok(plan.operations.some(o=>o.kind==='delete'&&o.path===root));await unchanged()
+})
+
+test('path-only restored descendants are discovered and exact replay preserves foreign records and shared media',async()=>{
+  const s=await seed(),root=`dogs/${s.dog}`
+  await put(root,{tenantId:s.uid,currentOwnerId:s.uid,name:'Synthetic original dog'})
+  const shared=await media(`documents/shared-${s.nonce}/preserved-shared.pdf`)
+  const select=async()=>{
+    const scan=await scanDeletionDocuments(db);assert.deepEqual(scan.holds,[])
+    return scopedRestoredRecords({records:scan.records,uid:s.uid,dogIds:[s.dog]})
+  }
+  const baseline=await select(),restored=[`puppyProfiles/${s.dog}/updates/restored-${s.nonce}`,`puppyProfiles/${s.dog}/media/restored-${s.nonce}`,`puppyFollowers/${s.uid}/dogs/${s.second}`,`${root}/details/restored-${s.nonce}`]
+  const foreign=`puppyProfiles/${s.dog}-collision/updates/foreign-${s.nonce}`
+  await put(foreign,{kind:'preserved foreign story',media:[{path:shared}]})
+  // Identity is carried only by paths; the shared object is outside replay scope.
+  for(const path of restored)await put(path,{kind:'path-only restored fixture',media:[{path:shared}]})
+  const candidates=await select(),extra=candidates.filter(r=>!baseline.some(b=>b.path===r.path))
+  assert.deepEqual(extra.map(r=>r.path).sort(),[...restored].sort())
+  assert.equal(candidates.some(r=>r.path===foreign),false)
+  assert.ok((await buildEmulatorDeletionPlan({db,bucket,uid:s.uid})).holds.includes('unclassified_record_review'))
+  await workerHeld();await unchanged()
+  // Test-only exact record replay, not worker permission for unknown collections.
+  for(const path of restored){
+    const original=documents.get(path),snap=await original.ref.get()
+    assert.equal(digest(snap.data()),original.hash);assert.equal(versionOf(snap),original.version)
+    await original.ref.delete({lastUpdateTime:snap.updateTime});documents.delete(path)
+  }
+  assert.deepEqual(await select(),baseline)
+  assert.equal((await db.doc(foreign).get()).exists,true)
+  assert.equal(String((await bucket.file(shared).getMetadata())[0].generation),objects.get(shared).generation)
+  await unchanged()
 })

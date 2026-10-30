@@ -1,5 +1,35 @@
 import { describe, expect, it, vi } from 'vitest'
 import { assessIsolatedDeletionRestore } from '../api/_lib/deletion-restore-gate.js'
+import { scopedRestoredRecords } from '../api/_lib/deletion-restore-inventory.js'
+
+describe('bounded restore discovery', () => {
+  const options = () => ({ uid: 'qa-deleted', dogIds: ['approved-dog'], records: [] })
+  it('includes path-only account and dog descendants without granting ownership', () => {
+    const paths = ['users/qa-deleted/private/note', 'puppyFollowers/qa-deleted/dogs/other-dog', 'puppyProfiles/approved-dog/media/item', 'dogs/approved-dog/details/item']
+    expect(scopedRestoredRecords({ ...options(), records: paths.map(path => ({ path, data: { public: false } })) }).map(r => r.path)).toEqual([...paths].sort())
+  })
+  it('excludes exact-segment collisions and never infers dog scope from restored ownership', () => {
+    const records = ['puppyProfiles/approved-dog-collision/media/item', 'puppyFollowers/qa-deleted-collision/dogs/other-dog', 'dogs/other-dog'].map(path => ({ path, data: { status: 'active' } }))
+    expect(scopedRestoredRecords({ ...options(), records })).toEqual([])
+  })
+  it('still includes payload identity and emits hashes without private contents', () => {
+    const record = { path: 'documents/restored', data: { ownerUid: 'qa-deleted', name: 'private synthetic name' } }
+    const selected = scopedRestoredRecords({ ...options(), records: [record] })
+    expect(selected).toEqual([{ path: record.path, dataHash: expect.stringMatching(/^[a-f0-9]{64}$/) }])
+    expect(JSON.stringify(selected)).not.toContain(record.data.name)
+  })
+  it.each([undefined, ['approved-dog', 'approved-dog'], ['../foreign'], Array(26).fill('dog')].map(value => [value]))('rejects invalid manifest dog scope %s', dogIds => {
+    expect(() => scopedRestoredRecords({ ...options(), dogIds })).toThrow('RESTORE_DISCOVERY_SCOPE_REQUIRED')
+  })
+  it.each(['dogs/../details/item', 'dogs//details/item', 'dogs/odd/collection', '/dogs/item'])('rejects malformed document path %s', path => {
+    expect(() => scopedRestoredRecords({ ...options(), records: [{ path, data: {} }] })).toThrow('RESTORE_DISCOVERY_RECORD_INVALID')
+  })
+  it('rejects duplicate paths and over-limit input instead of silently truncating', () => {
+    const record = { path: 'dogs/approved-dog', data: {} }
+    expect(() => scopedRestoredRecords({ ...options(), records: [record, record] })).toThrow('RESTORE_DISCOVERY_RECORD_INVALID')
+    expect(() => scopedRestoredRecords({ ...options(), records: Array(5001).fill(record) })).toThrow('RESTORE_DISCOVERY_INCOMPLETE')
+  })
+})
 
 function fixture() {
   const ledger = { independentOfRestore: true, complete: true, revision: 'live-ledger-1', accounts: [
