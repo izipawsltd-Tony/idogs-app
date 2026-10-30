@@ -8,11 +8,11 @@ Owner muốn đưa iDogs ra sử dụng công khai/gửi App Review sớm nhất
 
 App CHƯA public trên App Store, CHƯA gửi App Review. Version 1.0 đang PREPARE_FOR_SUBMISSION. Build 92 đã Owner PASS và đang được chọn. Backend release có nhiều thành phần deletion/renewal/recovery đã QA, nhưng vẫn có guard chỉ emulator/isolated QA; chưa có live fulfilment worker và toàn bộ route/authority/Privacy vận hành.
 
-Bản runtime mới nhất được kiểm chứng: e74bc49ab002309ad2dede6aa1e031e2207af42f.
+Bản source mới nhất được kiểm chứng: b9c517d4dc5783ef7df080f52b73b14e91ae3bd3. Xem deletion-descendant-restore-20261030.md; buyer inventory đã hoàn tất ở source33ce66c3 trước đó.
 HEAD local/remote tại lúc bắt đầu bàn giao: ee77e1ec9b04f098875087d5eb3e3d92ba77bddf (chỉ thêm evidence docs).
 Tài liệu bàn giao có thể nằm ở commit docs mới hơn; không coi đó là runtime mới.
 
-131/131 actual emulator tests, 480 unit tests, TypeScript/build và actual isolated-cloud QA PASS; cleanupVerified:true, productionReady:false. Không gửi email hoặc simulation. QA PASS không có nghĩa đã activate Production.
+134/134 actual emulator tests, 492 unit tests, TypeScript/build và actual isolated-cloud QA PASS (cloud41006720648, updated30/10 05:13:49UTC); cleanupVerified:true, productionReady:false. Không gửi email hoặc simulation. QA PASS không có nghĩa đã activate Production.
 
 ## 2. Repo, checkout và tránh mất công việc
 
@@ -207,7 +207,7 @@ Không coi tick lịch hoặc thời gian đã trôi là QA PASS; kiểm tra com
 
 A. Read-only inventory: source c0bd0112496745435bccebf965308b53796c4dfa đã khôi phục buyerContacts ownerUid query có trên Production. REVIEW_ONLY_COLLECTIONS giữ unknown retention/disposition review kể cả contact liên kết owned dog; không thêm KNOWN hoặc quyền xóa. Test kiểm tra đúng owner, không xuất nội dung email, actual worker hold/preservation, bounded truncation và disposition precedence. Đọc deletion-buyer-contact-inventory-20261030.md để lấy kết quả exact-source mới nhất; không dùng proof131 cũ thay cho source này.
 
-B. Bounded puppyProfiles/puppyFollowers/finance inventory và preservation/restore proof: authorship, current/former owner, descendants dưới parent absent, shared/cross-dog media, follower relation và tài chính. Root collision fix đã xong, đừng lặp lại.
+B. Path-only descendant discovery và bounded four-record replay đã PASS trên b9c517d4, giữ foreign story/shared object; không phải full coverage hoặc quyền xóa unknown collections. Tiếp tục bounded puppyProfiles/puppyFollowers/finance inventory và preservation/restore proof: authorship, current/former owner, descendants dưới parent absent, shared/cross-dog media, follower relation và tài chính. Root collision fix đã xong, đừng lặp lại.
 
 C. Per-route authority/write freeze: purpose-aware signed grant issuance/confirmation và actual authorization/in-flight drain; transfer source/destination locks + dog version trong transaction; verified Stripe webhook resolver đặt SAU signature/event binding; cron resolver có per-account proof. Không dùng prototype anonymous global users query làm live resolver.
 
