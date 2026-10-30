@@ -8,7 +8,7 @@ Link: http://127.0.0.1:5194/qa/onboarding
 
 1. Chọn **Open phone account demo**. Đây là tài khoản giả có sẵn ở giai đoạn sau OTP; không tạo một UID mới. Màn hình quản lý phải chuyển sang **Keep your account secure**.
 2. Nhập email giả, ví dụ `my-dog@example.invalid`, và mật khẩu thử nghiệm từ 8 ký tự. Không dùng email/mật khẩu thật. Chọn **Save email and send verification**.
-3. Mở **Open simulated email inbox (local QA)**. Trong tab inbox chọn **Open simulated email inbox**, mở **Verify test email** và xác minh trong trang emulator. Không có email thật được gửi.
+3. Ngay trang setup/verify, chọn **Open verification email (simulated)** → **Verify test email** và xác minh trong trang emulator. Inbox chỉ hiển thị thư verification mới nhất. Không có email thật được gửi tới Gmail; thông báo Spam/Junk chỉ áp dụng luồng gửi thật. Link inbox ở tab QA riêng vẫn có thể dùng như trước.
 4. Quay lại tab hoàn tất tài khoản, chọn **Check or resend verification email**, sau đó **I've verified — continue**. Nếu chưa xác minh, không được vào quản lý.
 5. Nhập lại mật khẩu thử nghiệm đã tạo và chọn **Save and continue**. Tới trang **Your account is ready**, chọn **Check saved dog and plan**: dog vẫn là **Ruby demo**, plan vẫn là **plus**.
 6. Dùng tab Sign in để đăng nhập lại bằng chính email/mật khẩu thử nghiệm. Tài khoản, dog và plan phải giữ nguyên.
@@ -39,7 +39,7 @@ Link chỉ hoạt động trên máy này khi emulator/server đang chạy. Reco
 
 ## Kết quả đã kiểm chứng
 
-- TypeScript/build local PASS; 68 files / **545 regression tests PASS**.
+- TypeScript/build local PASS; 69 files / **553 regression tests PASS** (gồm 8 kiểm thử inbox verification inline, fake-mode gating, link filtering và đổi tài khoản).
 - **8 Auth + Firestore emulator integration tests PASS**: phone signin đúng UID cũ; email conflict không merge; chưa verified không ready; email verified chưa đủ nếu chưa chứng minh mật khẩu; email-only sync không mở quyền quản lý; password confirmation/reset giữ UID/dog/subscription markers; signin lại bằng email giữ dữ liệu; OTP session sau migration vẫn phải xác nhận password; public GET/POST QR feed chỉ thấy public update; unlink phone không bypass; đổi email/disabled làm readiness mất hiệu lực.
 - Kiểm thử service và UI có session switch, conflict, delivery failure giữ account, unverified email, gate fail-closed, flag-off compatibility và original QR destination. Follow từ QR đi qua setup khi cần, rồi giữ ý định Follow đúng puppy; chọn Keep browsing bỏ auto-follow để không mắc vòng lặp setup.
 - Integration dùng subscription/Stripe customer **dữ liệu giả**, không phải kiểm tra hay thay đổi subscription Stripe thật.

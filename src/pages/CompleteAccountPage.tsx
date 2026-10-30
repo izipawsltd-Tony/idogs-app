@@ -5,6 +5,7 @@ import { accountSetupRequest, finishPrimaryPassword, linkPrimaryEmail, onboardin
 import { signupDestination } from '../lib/quickSignup'
 import AuthLayout from '../components/ui/AuthLayout'
 import LoadingScreen from '../components/ui/LoadingScreen'
+import QaVerificationInbox from '../components/ui/QaVerificationInbox'
 export default function CompleteAccountPage() {
   const { user, loading, checkEmailVerified } = useAuth(), [params] = useSearchParams(), navigate = useNavigate()
   const destination = signupDestination(params.get('next'))
@@ -50,6 +51,7 @@ export default function CompleteAccountPage() {
       <Link to={`/forgot-password?next=${encodeURIComponent(destination)}`}>Reset password</Link>
       <button type="button" className="btn btn-secondary" disabled={busy} onClick={async () => { if (!user) return; setBusy(true); try { const result = await accountSetupRequest(user); if (result.ready) navigate(destination, {replace:true}); else setError('Email verification and a working password still need to be confirmed.') } catch { setError('Could not check setup. Try again or sign in to this account again.') } finally { setBusy(false) } }}>Check completed setup</button>
     </form>}
+    <QaVerificationInbox user={user} />
     <p className="idogs-auth-small" style={{ marginTop: 20 }}><Link to={`/login?next=${encodeURIComponent(destination)}`}>Return to sign in</Link> · <Link to={destination.startsWith('/p/') ? destination.split('?')[0] : '/'}>Keep browsing public profiles</Link></p>
     {import.meta.env.DEV && import.meta.env.VITE_FIREBASE_PROJECT_ID === 'demo-idogs-account-onboarding' && <p className="idogs-auth-small" style={{marginTop:16}}><Link target="_blank" to="/qa/onboarding">Open simulated email inbox (local QA)</Link></p>}
   </AuthLayout>

@@ -8,6 +8,7 @@ import { verifyBeforeUpdateEmail } from 'firebase/auth'
 import { verificationDelivery } from '../lib/signupVerification'
 import { auth } from '../lib/firebase'
 import { onboardingQaEnabled } from '../lib/accountOnboarding'
+import QaVerificationInbox from '../components/ui/QaVerificationInbox'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -26,6 +27,7 @@ export default function VerifyEmailPage({ toast }: Props) {
   const [sentTo, setSentTo] = useState('')
   const [needsSignIn, setNeedsSignIn] = useState(false)
   const initialDelivery = verificationDelivery(user?.uid)
+  const localQa = import.meta.env.DEV && import.meta.env.VITE_ACCOUNT_ONBOARDING_QA === '1' && import.meta.env.VITE_FIREBASE_PROJECT_ID === 'demo-idogs-account-onboarding'
 
   // If not logged in at all, send to login
   useEffect(() => {
@@ -126,11 +128,11 @@ export default function VerifyEmailPage({ toast }: Props) {
             {user?.email}
           </p>
           <p style={{ fontSize: 13, color: 'var(--light)', lineHeight: 1.6, marginBottom: 8 }}>
-            {initialDelivery?.status === 'sent' ? 'A verification email has already been sent. Open the link in your inbox, then return here to continue. You can request another email below.' : initialDelivery?.status === 'failed' ? 'Your account is ready, but the first verification email could not be sent. Choose Send verification email to try again.' : 'Choose Send verification email, open the link in your inbox, then return here to continue.'}
+            {localQa ? 'This local QA does not send email to Gmail. Your test verification message is in the simulated inbox below.' : initialDelivery?.status === 'sent' ? 'A verification email has already been sent. Open the link in your inbox, then return here to continue. You can request another email below.' : initialDelivery?.status === 'failed' ? 'Your account is ready, but the first verification email could not be sent. Choose Send verification email to try again.' : 'Choose Send verification email, open the link in your inbox, then return here to continue.'}
           </p>
-          <p style={{ fontSize: 12, color: 'var(--gold)', lineHeight: 1.6, marginBottom: 24, background: 'var(--gold-light)', padding: '8px 12px', borderRadius: 8 }}>
+          {!localQa && <p style={{ fontSize: 12, color: 'var(--gold)', lineHeight: 1.6, marginBottom: 24, background: 'var(--gold-light)', padding: '8px 12px', borderRadius: 8 }}>
             💡 Can't find it? Check your <strong>Spam</strong> or <strong>Junk</strong> folder — verification emails sometimes end up there.
-          </p>
+          </p>}
 
           {!user?.email && <label style={{ display: 'block', textAlign: 'left', marginBottom: 14 }}>Your email address<input className="form-input" type="email" autoComplete="email" value={contactEmail} disabled={checking || resending} onChange={e => { setContactEmail(e.target.value); setError(''); setSentTo('') }} placeholder="The email you use for your dog’s profile" /><span style={{ display: 'block', fontSize: 12, color: 'var(--mid)', marginTop: 6 }}>Check the spelling. Adding an email does not sign you in to another account.</span></label>}
           {!user?.email && (returnTo.startsWith('/app/shared-dogs/') || returnTo.startsWith('/app/claim-dogs')) && <p style={{ fontSize: 12, color: 'var(--mid)' }}>For a breeder’s private records or ownership invitation, use the email the invitation was sent to.</p>}
@@ -150,6 +152,7 @@ export default function VerifyEmailPage({ toast }: Props) {
           </button>
           {needsSignIn && <button type="button" className="btn btn-secondary" style={{ width: '100%', marginTop: 10 }} onClick={() => void handleLogout(true)}>Sign in again</button>}
 
+          <QaVerificationInbox user={user} />
           <p><Link to="/app/start">Keep exploring for now</Link></p>
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
             <button onClick={() => void handleLogout()} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--light)', cursor: 'pointer', textDecoration: 'underline' }}>
