@@ -8,11 +8,11 @@ Owner muốn đưa iDogs ra sử dụng công khai/gửi App Review sớm nhất
 
 App CHƯA public trên App Store, CHƯA gửi App Review. Version 1.0 đang PREPARE_FOR_SUBMISSION. Build 92 đã Owner PASS và đang được chọn. Backend release có nhiều thành phần deletion/renewal/recovery đã QA, nhưng vẫn có guard chỉ emulator/isolated QA; chưa có live fulfilment worker và toàn bộ route/authority/Privacy vận hành.
 
-Bản source mới nhất được kiểm chứng: b9c517d4dc5783ef7df080f52b73b14e91ae3bd3. Xem deletion-descendant-restore-20261030.md; buyer inventory đã hoàn tất ở source33ce66c3 trước đó.
+Bản source mới nhất được kiểm chứng: 5adb8f7fc72d4a5f978cfbdb576d737ef33ab6bf. Xem deletion-transfer-transaction-20261031.md; descendant discovery/replay và buyer inventory đã có proof riêng trước đó.
 HEAD local/remote tại lúc bắt đầu bàn giao: ee77e1ec9b04f098875087d5eb3e3d92ba77bddf (chỉ thêm evidence docs).
 Tài liệu bàn giao có thể nằm ở commit docs mới hơn; không coi đó là runtime mới.
 
-134/134 actual emulator tests, 492 unit tests, TypeScript/build và actual isolated-cloud QA PASS (cloud41006720648, updated30/10 05:13:49UTC); cleanupVerified:true, productionReady:false. Không gửi email hoặc simulation. QA PASS không có nghĩa đã activate Production.
+138/138 actual emulator tests, 492 unit tests, TypeScript/build và actual isolated-cloud QA PASS (cloud41124582453, updated30/10 20:42:58UTC); cleanupVerified:true, productionReady:false. Không gửi email hoặc simulation. QA PASS không có nghĩa đã activate Production.
 
 ## 2. Repo, checkout và tránh mất công việc
 
@@ -209,7 +209,7 @@ A. Read-only inventory: source c0bd0112496745435bccebf965308b53796c4dfa đã kh�
 
 B. Path-only descendant discovery và bounded four-record replay đã PASS trên b9c517d4, giữ foreign story/shared object; không phải full coverage hoặc quyền xóa unknown collections. Tiếp tục bounded puppyProfiles/puppyFollowers/finance inventory và preservation/restore proof: authorship, current/former owner, descendants dưới parent absent, shared/cross-dog media, follower relation và tài chính. Root collision fix đã xong, đừng lặp lại.
 
-C. Per-route authority/write freeze: purpose-aware signed grant issuance/confirmation và actual authorization/in-flight drain; transfer source/destination locks + dog version trong transaction; verified Stripe webhook resolver đặt SAU signature/event binding; cron resolver có per-account proof. Không dùng prototype anonymous global users query làm live resolver.
+C. Transfer/claim transaction late-lock recheck đã PASS actual routes trên5adb8f7f; source/recipient locks ngăn writes sau outer lease, giữ Free2 restriction/original breeder. Chưa phải full commit-time/unknown-outcome/live authority proof. Tiếp tục per-route authority/write freeze: purpose-aware signed grant issuance/confirmation và actual authorization/in-flight drain; transfer source/destination locks + dog version trong transaction; verified Stripe webhook resolver đặt SAU signature/event binding; cron resolver có per-account proof. Không dùng prototype anonymous global users query làm live resolver.
 
 D. Terminal reconciliation cho dispatched cancellation/unknown source outcomes bằng original durable evidence. Không auto-unlock theo status/time/absence; không reconstruct independent authority từ restored source.
 
