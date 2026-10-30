@@ -20,6 +20,13 @@ import {createEmulatorDocumentIngress} from '../api/_lib/deletion-document-ingre
 import {createEmulatorIndependentLedger} from '../api/_lib/deletion-independent-ledger.js'
 import {createEmulatorDeletionIntake} from '../api/_lib/deletion-intake.js'
 import {randomUUID} from 'node:crypto'
+import Stripe from 'stripe'
+import {prepareEmulatorVerifiedStripeEvent} from '../api/_lib/deletion-stripe-ingress.js'
+import {createWebhookHandler} from '../api/_lib/webhook-handler.js'
+import {CHECKOUT_PRICE_IDS} from '../api/_lib/checkout-handler.js'
+import {grantExtraLitterCreditFromVerifiedEvent} from '../api/_lib/extra-litter-webhook.js'
+import {breederIdentity} from '../api/_lib/breeder-profile.js'
+import {EXTRA_LITTER_PRICE_CENTS} from '../api/_lib/litter-quota.js'
 
 const PROJECT='demo-idogs-deletion'
 for(const key of ['FIRESTORE_EMULATOR_HOST','FIREBASE_AUTH_EMULATOR_HOST','FIREBASE_STORAGE_EMULATOR_HOST'])if(!/^(localhost|127\.0\.0\.1):\d{4,5}$/.test(process.env[key]||''))throw Error('Expected local emulators')
@@ -1356,4 +1363,112 @@ test('actual transfer transaction rejects owner lock installed after ingress lea
   assert.equal(response.statusCode,423);assert.equal(response.body.error,'ACCOUNT_DELETION_LOCKED')
   const current=await ref.get();assert.equal(versionOf(current),versionOf(original));assert.deepEqual(current.data(),dog)
   assert.equal((await db.collection('ownershipHistorySnapshots').get()).empty,true)
+})
+function localSignedStripeEvent(object,type='customer.subscription.updated'){
+  // Ephemeral cryptographic fixture only: no API key, provider account or IO.
+  const secret=randomUUID()+randomUUID(),event={id:`evt_${randomUUID().replaceAll('-','')}`,type,livemode:false,created:Math.floor(Date.now()/1000),data:{object}}
+  const rawBody=Buffer.from(JSON.stringify(event)),signature=Stripe.webhooks.generateTestHeaderString({payload:rawBody.toString(),secret})
+  return {event,rawBody,signature,verifyEvent:(raw,sig)=>Stripe.webhooks.constructEvent(raw,sig,secret)}
+}
+async function webhookFixture(object,type){
+  const profile={email:owner.email,plan:'free',role:'owner',stripeCustomerId:'cus_synthetic_webhook'}
+  await db.doc(`users/${owner.uid}`).create(profile)
+  const subscription={id:'sub_synthetic_webhook',customer:profile.stripeCustomerId,metadata:{userId:owner.uid},status:'active',start_date:Math.floor(Date.now()/1000),items:{data:[{price:{id:CHECKOUT_PRICE_IDS.plus_monthly}}]}}
+  const signed=localSignedStripeEvent(object||subscription,type)
+  const options={db,auth,bucket,projectId:PROJECT,...signed,executionEnabled:true,getSubscription:async id=>{assert.equal(id,subscription.id);return subscription},cancelSubscription:async()=>{throw Error('No provider cancellation configured')}}
+  return {profile,subscription,signed,options,prepare:overrides=>prepareEmulatorVerifiedStripeEvent({...options,...overrides})}
+}
+function scopedWebhook(scope){return createWebhookHandler({db:scope.db,constructEvent:scope.constructEvent,getSubscription:scope.getSubscription,cancelSubscription:scope.cancelSubscription})}
+
+test('webhook signature rejects before all account reads and provider calls',async()=>{
+  const f=await webhookFixture();let reads=0,providerReads=0
+  const unreadDb={projectId:PROJECT,collection(){reads++;throw Error('Account IO before signature')},runTransaction(){reads++;throw Error('Transaction before signature')}}
+  await assert.rejects(f.prepare({db:unreadDb,signature:'invalid signature',getSubscription:async()=>{providerReads++}}))
+  assert.equal(reads,0);assert.equal(providerReads,0)
+  assert.equal((await db.collection('accountMutationLeases').get()).empty,true)
+})
+test('verified webhook with mismatched server customer never creates a lease or event claim',async()=>{
+  const f=await webhookFixture();await db.doc(`users/${owner.uid}`).update({stripeCustomerId:'cus_other_binding'})
+  await assert.rejects(f.prepare(),/WEBHOOK_CUSTOMER_BINDING_CHANGED/)
+  assert.equal((await db.collection('accountMutationLeases').get()).empty,true)
+  assert.equal((await db.collection('processedStripeEvents').get()).empty,true)
+})
+test('verified subscription uses targeted account scope and actual core writes while retaining one immutable hold',async()=>{
+  const f=await webhookFixture();await db.doc(`users/${other.uid}`).create({email:other.email,plan:'free'})
+  const scope=await f.prepare(),result=await scopedWebhook(scope)(f.signed.rawBody,f.signed.signature)
+  assert.equal(result.status,200);assert.equal((await db.doc(`users/${owner.uid}`).get()).data().plan,'plus')
+  assert.equal((await db.doc(`users/${other.uid}`).get()).data().plan,'free')
+  assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
+  assert.equal((await db.doc(`processedStripeEvents/${f.signed.event.id}`).get()).data().status,'completed')
+  const retry=await f.prepare();assert.equal(retry.leasePath,scope.leasePath)
+  assert.equal((await db.collection('accountMutationLeases').get()).size,1)
+  assert.throws(()=>scope.db.collection('users').where('plan','==','free'),/WEBHOOK_GLOBAL_ACCOUNT_QUERY_FORBIDDEN/)
+  assert.throws(()=>scope.db.collection('users').doc(other.uid),/WEBHOOK_FOREIGN_ACCOUNT/)
+  assert.throws(()=>scope.db.doc(`users/${other.uid}`),/WEBHOOK_FOREIGN_ACCOUNT/)
+  assert.throws(()=>scope.constructEvent(Buffer.from('{}'),f.signed.signature))
+})
+test('verified invoice resolves UID only from the exact customer-bound subscription without global account discovery',async()=>{
+  const object={id:'in_synthetic',customer:'cus_synthetic_webhook',subscription:'sub_synthetic_webhook'}
+  const f=await webhookFixture(object,'invoice.paid');let reads=0
+  const scope=await f.prepare({getSubscription:async id=>{reads++;assert.equal(id,f.subscription.id);return f.subscription}})
+  assert.equal(reads,1);assert.deepEqual((await db.doc(scope.leasePath).get()).data().uids,[owner.uid])
+  assert.equal((await db.collection('processedStripeEvents').get()).empty,true)
+})
+test('lock after verified webhook preparation blocks the actual event-claim transaction',async()=>{
+  const f=await webhookFixture(),scope=await f.prepare()
+  await db.doc(`accountDeletionLocks/${owner.uid}`).create({revision:1,state:'processing'})
+  await assert.rejects(scopedWebhook(scope)(f.signed.rawBody,f.signed.signature),/ACCOUNT_DELETION_LOCKED/)
+  assert.equal((await db.doc(`users/${owner.uid}`).get()).data().plan,'free')
+  assert.equal((await db.collection('processedStripeEvents').get()).empty,true)
+  assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
+})
+async function extraLitterWebhookFixture(){
+  const profile={email:owner.email,plan:'free',role:'owner',stripeCustomerId:'cus_synthetic_webhook'}
+  const breederProfileId=breederIdentity(profile,{uid:owner.uid,authEmail:owner.email}).breederProfileId
+  const object={id:'cs_synthetic_extra',customer:profile.stripeCustomerId,mode:'payment',payment_status:'paid',currency:'aud',amount_total:EXTRA_LITTER_PRICE_CENTS,
+    metadata:{userId:owner.uid,purchaseType:'extra_litter',breederProfileId}}
+  return webhookFixture(object,'checkout.session.completed')
+}
+test('late lock between webhook core and extra-litter post-processing blocks the real credit transaction',async()=>{
+  const f=await extraLitterWebhookFixture(),scope=await f.prepare()
+  assert.equal((await scopedWebhook(scope)(f.signed.rawBody,f.signed.signature)).status,200)
+  await db.doc(`accountDeletionLocks/${owner.uid}`).create({revision:1,state:'processing'})
+  await assert.rejects(grantExtraLitterCreditFromVerifiedEvent({db:scope.db,event:scope.event}),/ACCOUNT_DELETION_LOCKED/)
+  assert.equal((await db.collection('litterQuotaCredits').get()).empty,true)
+})
+test('unknown webhook cancellation outcome retains its original intent and blocks replay across restart',async()=>{
+  const f=await webhookFixture();let sends=0
+  const overrides={cancelSubscription:async()=>{sends++;throw Error('Unknown synthetic cancellation response')}}
+  const scope=await f.prepare(overrides)
+  await assert.rejects(scope.cancelSubscription(f.subscription.id,{prorate:false}),/Unknown synthetic cancellation/)
+  const intents=await db.doc(scope.leasePath).collection('externalIntents').get()
+  assert.equal(intents.size,1);assert.equal(intents.docs[0].data().state,'sending')
+  await assert.rejects(scope.cancelSubscription(f.subscription.id,{prorate:false}),/WEBHOOK_EXTERNAL_OUTCOME_HELD/)
+  const retry=await f.prepare(overrides)
+  await assert.rejects(retry.cancelSubscription(f.subscription.id,{prorate:false}),/WEBHOOK_EXTERNAL_OUTCOME_HELD/)
+  assert.equal(sends,1);assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
+})
+test('foreign subscription binding is rejected before any cancellation send',async()=>{
+  const f=await webhookFixture();let sends=0
+  const scope=await f.prepare({getSubscription:async()=>({...f.subscription,customer:'cus_foreign_binding'}),cancelSubscription:async()=>{sends++}})
+  await assert.rejects(scope.cancelSubscription(f.subscription.id,{}),/WEBHOOK_SUBSCRIPTION_BINDING_CHANGED/)
+  assert.equal(sends,0);assert.equal((await db.doc(scope.leasePath).collection('externalIntents').get()).empty,true)
+})
+test('verified extra-litter core and idempotent post-processing preserve paid credit semantics under the scoped fence',async()=>{
+  const f=await extraLitterWebhookFixture(),scope=await f.prepare()
+  assert.equal((await scopedWebhook(scope)(f.signed.rawBody,f.signed.signature)).status,200)
+  const first=await grantExtraLitterCreditFromVerifiedEvent({db:scope.db,event:scope.event})
+  assert.equal(first.created,true)
+  assert.equal((await grantExtraLitterCreditFromVerifiedEvent({db:scope.db,event:scope.event})).created,false)
+  const credits=await db.collection('litterQuotaCredits').get();assert.equal(credits.size,1)
+  assert.equal(credits.docs[0].data().purchasedByUid,owner.uid);assert.equal(credits.docs[0].data().amountAudCents,EXTRA_LITTER_PRICE_CENTS)
+  assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
+})
+test('changed customer binding after preparation blocks both core writes and later provider reads',async()=>{
+  const f=await webhookFixture();let reads=0
+  const scope=await f.prepare({getSubscription:async()=>{reads++;return f.subscription}})
+  await db.doc(`users/${owner.uid}`).update({stripeCustomerId:'cus_replaced_binding'})
+  await assert.rejects(scope.getSubscription(f.subscription.id),/WEBHOOK_CUSTOMER_BINDING_CHANGED/)
+  await assert.rejects(scopedWebhook(scope)(f.signed.rawBody,f.signed.signature),/WEBHOOK_CUSTOMER_BINDING_CHANGED/)
+  assert.equal(reads,0);assert.equal((await db.collection('processedStripeEvents').get()).empty,true)
 })

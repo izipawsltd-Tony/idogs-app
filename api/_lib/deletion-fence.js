@@ -78,6 +78,8 @@ export async function withAccountMutation(db, accounts, operation, fn) {
 export function withAccountMutationFence(handler, { route }) {
   return async (req, res) => {
     if (process.env.ACCOUNT_DELETION_MODE !== 'prototype-emulator') return handler(req, res)
+    // This route verifies its signature before resolving its exact account scope.
+    if (route === 'api/stripe-webhook.js') return handler(req, res)
     let close
     try {
       const [{ getAuth }, { getFirestore }, { getApp }, { getStorage }] = await Promise.all([
