@@ -125,7 +125,7 @@ check('post-auth redirect is constrained to internal /app routes', /startsWith\(
   check('[req 5 regression] VerifyEmailPage.tsx still redirects to the exact `returnTo` (the requested private Dog ID path) on success — untouched by this fix',
     /navigate\(returnTo, \{ replace: true \}\)/.test(verifySrc))
   check('[req 5 regression] VerifyEmailPage.tsx\'s handleCheck() still shows an error rather than redirecting when checkEmailVerified() resolves falsy',
-    /if \(verified\) \{[\s\S]{0,120}navigate\(returnTo/.test(verifySrc) && /\} else \{[\s\S]{0,80}Not verified yet/.test(verifySrc))
+    /if \(verified && currentEmail\) \{[\s\S]{0,140}navigate\(returnTo/.test(verifySrc) && /\} else \{\s*setError\(currentEmail \? 'This account’s email is not verified yet/.test(verifySrc))
   check('[req 6 regression] handleCheck()\'s try/catch still reports a genuine failure (now including a thrown forced-refresh error) via the existing, accurate "Could not check verification status" message — never silently treated as success',
     /catch \{[\s\S]{0,100}Could not check verification status/.test(verifySrc))
 }
