@@ -60,7 +60,7 @@ export default function VerifyEmailPage({ toast }: Props) {
     setResending(true)
     try {
       if (user && !user.email) {
-        if (!contactEmail.trim()) { toast('Enter the email you use with your breeder.', 'error'); return }
+        if (!contactEmail.trim()) { toast('Enter your email address.', 'error'); return }
         await verifyBeforeUpdateEmail(user, contactEmail.trim(), { url: `${location.origin}/verify-email?next=${encodeURIComponent(returnTo)}` })
       } else await resendVerificationEmail()
       toast('Verification email sent!')
@@ -102,10 +102,10 @@ export default function VerifyEmailPage({ toast }: Props) {
         <div className="card" style={{ padding: '36px 28px', textAlign: 'center' }}>
           <div style={{ fontSize: 44, marginBottom: 16 }}>📬</div>
           <h1 style={{ fontSize: 20, fontFamily: 'var(--font-display)', marginBottom: 8, color: 'var(--dark)' }}>
-            {user?.email ? 'Verify your email' : 'Add an email for private records'}
+            {user?.email ? 'Verify your email' : 'Add your email address'}
           </h1>
           <p style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.6, marginBottom: 4 }}>
-            {user?.email ? 'Verify this email to continue securely:' : 'Use the email you gave your breeder so we can match your private records securely.'}
+            {user?.email ? 'Verify this email to continue securely:' : 'Use an email you can access to help keep your dog’s profile and records secure.'}
           </p>
           <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 20 }}>
             {user?.email}
@@ -121,7 +121,8 @@ export default function VerifyEmailPage({ toast }: Props) {
             {checking ? <span className="spinner" /> : "I've verified — continue"}
           </button>
 
-          {!user?.email && <label>Email address for private records<input className="form-input" type="email" autoComplete="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="The email you use with your breeder" /></label>}
+          {!user?.email && <label>Your email address<input className="form-input" type="email" autoComplete="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="The email you use for your dog’s profile" /></label>}
+          {!user?.email && (returnTo.startsWith('/app/shared-dogs/') || returnTo.startsWith('/app/claim-dogs')) && <p style={{ fontSize: 12, color: 'var(--mid)' }}>For a breeder’s private records or ownership invitation, use the email the invitation was sent to.</p>}
           <button
             onClick={handleResend}
             className="btn btn-secondary"

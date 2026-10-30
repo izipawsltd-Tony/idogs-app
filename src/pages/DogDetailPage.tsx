@@ -1,5 +1,5 @@
 import ReminderForm from '../components/ui/ReminderForm'
-import { QrDocumentManager } from '../components/ui/QrDocuments'
+import { QrDocumentManager, QrDocumentSharingSummary, QrDocumentShareCheckbox, QrDocumentSharingFooter } from '../components/ui/QrDocuments'
 import PuppyUpdatesManager from '../components/ui/PuppyUpdatesManager'
 import PuppyUpdateFeed from '../components/ui/PuppyUpdateFeed'
 import { puppyUpdates, type PuppyUpdate, puppyShareUrl } from '../lib/puppyUpdates'
@@ -2952,9 +2952,9 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
   }
 
   return (
-    <div>
+    <QrDocumentManager key={dogId} dogId={dogId} documents={documents} enabled={canEdit && !error}><div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Documents</h2>
-      {canEdit && !error && <QrDocumentManager key={dogId} dogId={dogId} documents={documents} />}
+      {canEdit && !error && <QrDocumentSharingSummary />}
       {error ? (
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
@@ -2970,11 +2970,11 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {documents.map((doc, i) => (
-            <div key={i} style={{
+          {documents.map(doc => (
+            <div key={doc.id} style={{
               background: 'var(--white)', border: '1px solid var(--border)',
               borderRadius: 'var(--radius-md)', padding: '12px 16px',
-              display: 'flex', alignItems: 'center', gap: 14,
+              display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
             }}>
               <div style={{
                 width: 44, height: 44, borderRadius: 10,
@@ -2984,7 +2984,7 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
               }}>
                 {getDocIcon(doc.documentType)}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: '1 1 150px', minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 2 }}>
                   {editingDocId === doc.id ? (
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -3020,7 +3020,8 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap', marginLeft: 'auto' }}>
+                {canEdit && <QrDocumentShareCheckbox document={doc} />}
                 <button
                   onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
                   className="btn btn-secondary btn-sm"
@@ -3049,7 +3050,8 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
           ))}
         </div>
       )}
-    </div>
+      {canEdit && !error && <QrDocumentSharingFooter />}
+    </div></QrDocumentManager>
   )
 }
 
