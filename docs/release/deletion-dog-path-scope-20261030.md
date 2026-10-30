@@ -22,3 +22,9 @@ node --test --test-concurrency=1 scripts/test-deletion-processor-emulator.mjs sc
 ```
 
 The existing pinned workflow already includes this command and both files. Runtime remains default-disabled and QA-only. This correction does not establish complete inventory, safe descendant dispositions, restored-descendant replay or operational activation readiness.
+
+## Exact-source verification
+
+Runtimee74bc49ab002309ad2dede6aa1e031e2207af42f: push CI40983053423, PR CI40983058451, pinned emulator40983053426 SUCCESS. Pinned/shared131/131 actual emulator cases (112 core,9 schema,10 outbox) PASS;480 unit tests and TypeScript/Vite build PASS. SDK tests include actual root/follower collisions, source capture worker hold, committed-reply loss/restart, private-history loss, revised/completed locks, Auth restoration and exact fixture teardown. Local emulator execution was deferred after prior environment memory exhaustion; no local PASS is claimed.
+
+Isolated cloud40983053462/job123827494746 SUCCESS, updated2026-10-30T01:04:44Z (30October11:34:44Adelaide). Actual provider regression verifies controlled restore quarantine/exact replay, bounded renewal queue, durable dispatch and Storage create-only CAS; storageCasProbePending:false,cleanupVerified:true,productionReady:false. emailSimulationRequested:false,emailSimulationSent:false,humanEmailSent:false; human inbox40983053432 and unchanged TestFlight40983053459 SKIPPED. New outbox/ledger/schema proofs run only in local/runner emulators. The real cloud step remains the existing scoped worker/provider regression, not a cloud outbox, live confirmation or Production activation. No unchanged-source rerun required. Completed managed and original seven-day fixtures remain untouched.
