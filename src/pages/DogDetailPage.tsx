@@ -1,4 +1,5 @@
 import ReminderForm from '../components/ui/ReminderForm'
+import { UploadModal } from './DocumentsPage'
 import { QrDocumentManager, QrDocumentSharingSummary, QrDocumentShareCheckbox, QrDocumentSharingFooter } from '../components/ui/QrDocuments'
 import PuppyUpdatesManager from '../components/ui/PuppyUpdatesManager'
 import PuppyUpdateFeed from '../components/ui/PuppyUpdateFeed'
@@ -165,6 +166,7 @@ export default function DogDetailPage({ toast }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [statusActionLoading, setStatusActionLoading] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
+  const [showDocumentUpload, setShowDocumentUpload] = useState(false)
   const [showEditProfile, setShowEditProfile] = useState(false)
   const [savingProfile, setSavingProfile] = useState(false)
   const [profileDraft, setProfileDraft] = useState({
@@ -1220,6 +1222,7 @@ export default function DogDetailPage({ toast }: Props) {
           {canEditProfile && (
             <button onClick={openEditProfile} className="btn btn-secondary btn-sm">✎ Edit profile</button>
           )}
+          {canEditProfile && !historicalSnapshot && <button onClick={() => setShowDocumentUpload(true)} className="btn btn-primary btn-sm">+ Upload Documents</button>}
           {!isTransferred && (
             <button
               onClick={() => setShowTransfer(true)}
@@ -1371,6 +1374,7 @@ export default function DogDetailPage({ toast }: Props) {
         </div>
       )}
 
+      {showDocumentUpload && canEditProfile && !historicalSnapshot && user && <UploadModal key={dog.id} dogs={[dog]} fixedDogId={dog.id} user={user} toast={toast} onClose={() => setShowDocumentUpload(false)} onSuccess={document => { setDocuments(previous => [document, ...previous]); setShowDocumentUpload(false); setTab('documents'); retryDocuments(); toast('Document uploaded. Files stay private until you choose Share on QR.', 'success') }} />}
       {/* Transfer Ownership Modal */}
       {showTransfer && dog && (
         <TransferModal
