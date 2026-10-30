@@ -18,7 +18,7 @@ export function createEmulatorLoopbackStripeTransport({db,auth,bucket,projectId,
   const endpoint=new URL(origin)
   ensure(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&Number(endpoint.port)>=1024&&Number(endpoint.port)<=65535
     &&endpoint.origin===origin&&!endpoint.username&&!endpoint.password&&endpoint.pathname==='/'&&!endpoint.search&&!endpoint.hash,'WEBHOOK_LOOPBACK_ENDPOINT_REQUIRED')
-  const allowed=new Set(scope.subscriptionIds),credential=`synthetic-loopback-${scope.nonce}`
+  const attemptedDeletes=new Set(),allowed=new Set(scope.subscriptionIds),credential=`synthetic-loopback-${scope.nonce}`
   const nodeClient=Stripe.createNodeHttpClient()
   let client
   function pinned(){
@@ -40,8 +40,15 @@ export function createEmulatorLoopbackStripeTransport({db,auth,bucket,projectId,
       ensure(typeof assertBeforeMutation==='function','WEBHOOK_TRANSPORT_EXECUTION_GUARD_REQUIRED')
       await assertBeforeMutation(id)
       pinned()
+      ensure(!attemptedDeletes.has(id),'WEBHOOK_TRANSPORT_WRITE_ALREADY_ATTEMPTED');attemptedDeletes.add(id)
     }
-    return nodeClient.makeRequest(host,port,path,method,headers,body,protocol,timeout)
+    try{return await nodeClient.makeRequest(host,port,path,method,headers,body,protocol,timeout)}
+    catch(cause){
+      // The SDK special-cases ECONNRESET/EPIPE before checking max retries.
+      // Preserve the original cause, but classify the request as an unknown
+      // outcome that must not be automatically reissued by this private client.
+      const held=new Error('WEBHOOK_TRANSPORT_OUTCOME_UNKNOWN',{cause});held.code='WEBHOOK_TRANSPORT_OUTCOME_UNKNOWN';throw held
+    }
   }}
   client=new Stripe(credential,{host:'127.0.0.1',port:Number(endpoint.port),protocol:'http',timeout:5000,maxNetworkRetries:0,telemetry:false,httpClient})
   pinned()
@@ -56,6 +63,7 @@ export function createEmulatorLoopbackStripeTransport({db,auth,bucket,projectId,
   }
   return Object.freeze({mode:'emulator-loopback',bindingHash:digest({...scope,origin}),getSubscription:retrieve,cancelSubscription:async(id,params={})=>{
     pinned();ensure(allowed.has(id)&&params&&typeof params==='object'&&!Array.isArray(params),'WEBHOOK_TRANSPORT_CANCEL_SCOPE_REQUIRED')
+    ensure(!attemptedDeletes.has(id),'WEBHOOK_TRANSPORT_WRITE_ALREADY_ATTEMPTED')
     const body=structuredClone(params)
     ensure(Object.entries(body).every(([key,value])=>['prorate','invoice_now'].includes(key)&&value===false),'WEBHOOK_TRANSPORT_CANCEL_SCOPE_REQUIRED')
     ensure(typeof assertBeforeMutation==='function','WEBHOOK_TRANSPORT_EXECUTION_GUARD_REQUIRED')

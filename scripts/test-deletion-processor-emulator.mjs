@@ -1529,6 +1529,8 @@ test('private zero-retry Stripe SDK makes bound actual HTTP calls without changi
     const {scope,transport}=await f.prepare()
     assert.equal((await scope.cancelSubscription(f.subscription.id,{prorate:false,invoice_now:false})).status,'canceled')
     assert.deepEqual(f.counts,{get:2,delete:1});assert.equal(unrelated.getMaxNetworkRetries(),2)
+    await assert.rejects(transport.cancelSubscription(f.subscription.id,{prorate:false}),/WEBHOOK_TRANSPORT_WRITE_ALREADY_ATTEMPTED/)
+    assert.deepEqual(f.counts,{get:2,delete:1})
     assert.equal(transport.mode,'emulator-loopback');assert.equal(Object.hasOwn(transport,'client'),false)
     const intents=await db.doc(scope.leasePath).collection('externalIntents').get()
     assert.equal(intents.docs[0].data().state,'response_observed');assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
