@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/scan-count.js — Narrow, authenticated aggregate scan-count lookup.
 //
 // WHY THIS EXISTS: the old client-side getScanCount() queried `scanLogs`
@@ -53,7 +54,7 @@ export default async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token' })

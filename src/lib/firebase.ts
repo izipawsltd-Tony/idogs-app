@@ -22,4 +22,8 @@ if (import.meta.env.DEV && import.meta.env.VITE_ACCOUNT_RECOVERY_QA === '1' && f
   connectAuthEmulator(auth, 'http://127.0.0.1:9299', { disableWarnings: true })
   connectFirestoreEmulator(db, '127.0.0.1', 9280)
 }
+if (import.meta.env.DEV && import.meta.env.VITE_ACCOUNT_ONBOARDING_QA === '1' && firebaseConfig.projectId === 'demo-idogs-account-onboarding') {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9399', { disableWarnings: true })
+  connectFirestoreEmulator(db, '127.0.0.1', 9380)
+}
 export default app

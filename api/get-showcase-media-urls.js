@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/get-showcase-media-urls.js — issues fresh, short-lived signed
 // URLs for a puppy's OWN Showcase gallery, for the breeder's own
 // authenticated workspace view (PuppyMediaManager in LittersPage.tsx).
@@ -60,7 +61,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' })

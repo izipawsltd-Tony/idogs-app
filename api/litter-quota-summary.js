@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
@@ -34,7 +35,7 @@ async function handler(req, res) {
 
   let decoded
   try {
-    decoded = await getAuth().verifyIdToken(idToken)
+    decoded = await verifyAccountToken(idToken)
   } catch {
     throw new ApiError(401, 'Invalid or expired token')
   }

@@ -1,6 +1,7 @@
 // api/super-admin/_auth.js — Reusable authorization helper for Super Admin
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
+import { verifyAccountToken } from '../_lib/account-onboarding.js'
 
 function getAdminAuth() {
   if (getApps().length) return getAuth()
@@ -48,7 +49,7 @@ export async function verifySuperAdmin(req, res, authOverride = null) {
 
   try {
     const auth = authOverride || getAdminAuth()
-    const decodedToken = await auth.verifyIdToken(idToken)
+    const decodedToken = await verifyAccountToken(idToken, auth)
 
     // Enforce verified email
     if (!decodedToken.email_verified) {

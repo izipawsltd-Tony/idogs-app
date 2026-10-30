@@ -1,0 +1,38 @@
+name: Account onboarding emulator
+on:
+  push:
+    branches: [feature/account-onboarding-recovery-20261031]
+  pull_request:
+    paths:
+      - api/**
+      - src/lib/accountOnboarding*
+      - src/components/ui/AccountSetupGate*
+      - src/pages/CompleteAccountPage*
+      - scripts/test-account-onboarding-emulator.mjs
+      - scripts/prepare-onboarding-rules.mjs
+      - firebase.account-onboarding-qa.json
+      - firestore.rules
+      - .github/workflows/account-onboarding-emulator.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: node scripts/prepare-onboarding-rules.mjs
+      - name: Same UID, verified email/password, public QR and candidate rules
+        env:
+          GCLOUD_PROJECT: demo-idogs-account-onboarding
+        run: npx --yes firebase-tools@14.12.0 emulators:exec --config firebase.account-onboarding-qa.json --project demo-idogs-account-onboarding --only auth,firestore 'node --test scripts/test-account-onboarding-emulator.mjs'

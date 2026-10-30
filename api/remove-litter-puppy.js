@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/remove-litter-puppy.js — trusted server-side litter-puppy deletion
 // (Codex round 4, Blocker 3; hardened Codex round 5, Blocker 1; hardened
 // Codex round 6, Blocker 2).
@@ -108,7 +109,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     throw new ApiError(401, 'Invalid or expired token')

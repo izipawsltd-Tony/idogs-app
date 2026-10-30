@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -17,7 +18,7 @@ if (!getApps().length) {
 const db = getFirestore()
 
 export default createSmsAddonRemoveHandler({
-  verifyIdToken: token => getAuth().verifyIdToken(token),
+  verifyIdToken: token => verifyAccountToken(token),
   getProfile: async uid => {
     const snap = await db.collection('users').doc(uid).get()
     return snap.exists ? snap.data() : null

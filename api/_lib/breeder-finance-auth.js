@@ -1,6 +1,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
+import { verifyAccountToken } from './account-onboarding.js'
 
 function ensureAdmin() {
   if (!getApps().length) {
@@ -24,7 +25,7 @@ export async function verifyBreeder(req) {
 
   try {
     const { auth, db } = ensureAdmin()
-    const decoded = await auth.verifyIdToken(token)
+    const decoded = await verifyAccountToken(token, auth, db)
     if (!decoded.email_verified) return { ok: false, status: 403, error: 'Email not verified' }
 
     const snap = await db.collection('users').doc(decoded.uid).get()

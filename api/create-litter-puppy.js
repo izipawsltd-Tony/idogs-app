@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/create-litter-puppy.js — trusted server-side, safely-idempotent
 // puppy creation for a litter (Codex round 4, Blockers 3 + 4; hardened
 // Codex round 5, Blocker 4; hardened further Codex round 6, Blockers 4 + 5).
@@ -140,7 +141,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     throw new ApiError(401, 'Invalid or expired token')

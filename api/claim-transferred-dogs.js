@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/claim-transferred-dogs.js — Auto-claim dogs transferred to this
 // buyer's email, run once whenever a signed-in user loads the dashboard.
 //
@@ -59,7 +60,7 @@ export default async function handler(req, res) {
 
   let uid, email
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     if (decoded.email_verified !== true) return res.status(403).json({ error: 'Verify your email to continue securely' })
     uid = decoded.uid
     email = decoded.email

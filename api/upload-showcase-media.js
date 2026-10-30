@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/upload-showcase-media.js — trusted server-side photo/video upload
 // for a litter puppy's Showcase gallery (Slice 2). Appends the result to
 // the Dog document's `photos` or `videos` array — index 0 is the
@@ -70,7 +71,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' })

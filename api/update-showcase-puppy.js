@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/update-showcase-puppy.js — trusted server-side single-puppy
 // visibility/availability update for a Litter Showcase (iDogs Litter
 // Showcase MVP, Slice 1).
@@ -69,7 +70,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     throw new ApiError(401, 'Invalid or expired token')

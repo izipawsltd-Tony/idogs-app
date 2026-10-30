@@ -1,3 +1,4 @@
+import { onboardingQaEnabled } from '../lib/accountOnboarding'
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -30,7 +31,7 @@ export default function LoginPage({ toast }: Props) {
   }
   const puppy = returnTo.startsWith('/p/')
   return <AuthLayout title="Welcome back" description="Sign in to keep your dog’s story close." backTo={puppy ? returnTo.split('?')[0] : '/'} backLabel={puppy ? 'Back to dog profile' : 'Back to iDogs'}>
-    <div className="idogs-auth-tabs" aria-label="Choose how to sign in"><button type="button" aria-pressed={method === 'email'} disabled={busy} onClick={() => setMethod('email')}>Email</button><button type="button" aria-pressed={method === 'phone'} disabled={busy} onClick={() => setMethod('phone')}>Mobile number</button></div>
+    <div className="idogs-auth-tabs" aria-label="Choose how to sign in"><button type="button" aria-pressed={method === 'email'} disabled={busy} onClick={() => setMethod('email')}>Email</button><button type="button" aria-pressed={method === 'phone'} disabled={busy} onClick={() => setMethod('phone')}>{onboardingQaEnabled() ? 'Existing mobile account' : 'Mobile number'}</button></div>
     {method === 'email' ? <form className="idogs-auth-form" onSubmit={submit}>
       <label>Email address<input className="form-input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required disabled={busy} placeholder="you@example.com" /></label>
       <label>Password<span className="idogs-auth-password"><input className="form-input" type={show ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required disabled={busy} /><button type="button" className="btn btn-secondary" aria-label={show ? 'Hide password' : 'Show password'} onClick={() => setShow(v => !v)}>{show ? 'Hide' : 'Show'}</button></span></label>

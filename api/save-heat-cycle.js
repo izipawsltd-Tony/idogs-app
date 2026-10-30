@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/save-heat-cycle.js — trusted server-side heat cycle create/update
 // (Codex round 3, Blocker 1; hardened Codex round 4, Blocker 1; hardened
 // Codex round 5, Blocker 5).
@@ -68,7 +69,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     throw new ApiError(401, 'Invalid or expired token')

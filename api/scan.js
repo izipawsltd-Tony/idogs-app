@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
@@ -111,7 +112,7 @@ async function callAnthropic({ image, mediaType }) {
 const db = getFirestore()
 
 export default createScanHandler({
-  verifyIdToken: token => getAuth().verifyIdToken(token),
+  verifyIdToken: token => verifyAccountToken(token),
   getUserRef: uid => db.collection('users').doc(uid),
   reserveQuota: userRef => reserveScanQuota(db, userRef),
   rollbackQuota: (userRef, plan, periodStart) => rollbackScanReservation(db, userRef, plan, periodStart),

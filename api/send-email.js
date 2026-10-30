@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/send-email.js — Vercel serverless function
 // Sends email via Resend API
 
@@ -42,7 +43,7 @@ async function isAuthorized(req) {
   if (!idToken) return false
 
   try {
-    await getAuth().verifyIdToken(idToken)
+    await verifyAccountToken(idToken)
     return true
   } catch {
     return false

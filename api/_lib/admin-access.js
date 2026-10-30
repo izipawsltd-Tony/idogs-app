@@ -16,6 +16,7 @@
 // them is a visible, obvious diff in code review — the same convention
 // already established for MAX_DIRECT_VIDEO_UPLOAD_BYTES (see
 // api/_lib/direct-upload.js's own header comment).
+import { verifyAccountToken } from './account-onboarding.js'
 export const SUPER_ADMIN_EMAILS = [
   'trunghieungo@gmail.com',
   'theresanguyenngo@gmail.com',
@@ -39,7 +40,7 @@ export async function requireSuperAdmin(req, getAuthFn) {
 
   let decoded
   try {
-    decoded = await getAuthFn().verifyIdToken(idToken)
+    decoded = await verifyAccountToken(idToken, getAuthFn())
   } catch {
     return null
   }

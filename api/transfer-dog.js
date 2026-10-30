@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/transfer-dog.js — atomic ownership transfer + immutable privacy snapshot
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -29,7 +30,7 @@ export default async function handler(req, res) {
 
   let uid
   try {
-    const identity = await getAuth().verifyIdToken(idToken)
+    const identity = await verifyAccountToken(idToken)
     if (identity.email_verified !== true) return res.status(403).json({ error: 'Verify your email before transferring ownership' })
     uid = identity.uid
   } catch {

@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/create-dog.js — trusted server-side dog creation (Codex H2).
 //
 // WHY THIS EXISTS: dog creation used to be a pure CLIENT-side Firestore
@@ -77,7 +78,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     throw new ApiError(401, 'Invalid or expired token')

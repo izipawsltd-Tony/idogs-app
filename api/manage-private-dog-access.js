@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // Breeder-managed, pre-transfer private access for one deposited puppy.
 // The grant never changes Dog ownership and never grants client Firestore
 // access. A buyer's verified email is checked server-side by
@@ -36,7 +37,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const identity = await getAuth().verifyIdToken(token)
+    const identity = await verifyAccountToken(token)
     if (identity.email_verified !== true) throw new ApiError(403, 'Verify your email before sharing private updates')
     uid = identity.uid
   } catch (error) {

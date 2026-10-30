@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/request-showcase-media-upload.js — Implementation Phase 1: issues
 // a short-lived, single-object signed Storage PUT URL for a puppy's
 // Showcase gallery photo/video, so the browser can upload the file
@@ -76,7 +77,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' })

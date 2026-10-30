@@ -1,5 +1,6 @@
 import EmailSigninFinishPage from '../pages/EmailSigninFinishPage'
 import { discoveryRoute } from '../lib/quickSignup'
+import { onboardingQaEnabled } from '../lib/accountOnboarding'
 import React from 'react'
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -33,6 +34,9 @@ import PassportPublicPage from '../pages/PassportPublicPage'
 import ShowcasePublicPage from '../pages/ShowcasePublicPage'
 import ForgotPasswordPage from '../pages/ForgotPasswordPage'
 import ForgotLoginEmailPage from '../pages/ForgotLoginEmailPage'
+import CompleteAccountPage from '../pages/CompleteAccountPage'
+import OnboardingQaPage from '../pages/OnboardingQaPage'
+import AccountSetupGate from './ui/AccountSetupGate'
 import NotFoundPage from '../pages/NotFoundPage'
 import ComingSoonPage from '../pages/ComingSoonPage'
 import ReportsPage from '../pages/ReportsPage'
@@ -67,8 +71,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const returnTo = `${location.pathname}${location.search}`
   if (loading) return <LoadingScreen />
   if (!user) return <Navigate to={`/login?next=${encodeURIComponent(returnTo)}`} replace />
-  if (!user.emailVerified && !discoveryRoute(location.pathname)) return <Navigate to={`/verify-email?next=${encodeURIComponent(returnTo)}`} replace />
-  return <>{children}</>
+  if (!onboardingQaEnabled() && !user.emailVerified && !discoveryRoute(location.pathname)) return <Navigate to={`/verify-email?next=${encodeURIComponent(returnTo)}`} replace />
+  return <AccountSetupGate>{children}</AccountSetupGate>
 }
 
 function BreederOnlyRoute({ children }: { children: React.ReactNode }) {
@@ -118,6 +122,8 @@ export default function App() {
         <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/forgot-login-email" element={<ForgotLoginEmailPage />} />
+        <Route path="/complete-account" element={<CompleteAccountPage />} />
+        <Route path="/qa/onboarding" element={<OnboardingQaPage />} />
 
         {/* Isolated Super SaaS Admin — intentionally outside AppLayout. */}
         <Route path="/app/super-admin" element={
@@ -153,6 +159,7 @@ export default function App() {
           <Route index element={<Navigate to="/app/dashboard" replace />} />
           <Route path="start" element={<Navigate to="/app/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage toast={toast} />} />
+          <Route path="onboarding-check" element={<OnboardingQaPage management />} />
           <Route path="dogs" element={<DogListPage toast={toast} />} />
           <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
           <Route path="dogs/:dogId" element={<DogDetailRoute toast={toast} />} />

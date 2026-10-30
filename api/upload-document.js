@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/upload-document.js — Vercel serverless
 // Receives file as base64, uploads to Firebase Storage via Admin SDK
 
@@ -61,7 +62,7 @@ export default async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     if (decoded.email_verified !== true) return res.status(403).json({ error: 'Verify your email to continue securely' })
     uid = decoded.uid
   } catch (err) {

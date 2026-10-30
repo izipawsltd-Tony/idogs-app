@@ -37,7 +37,12 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, serveVideo, p
     const raw = (req.headers.authorization || '').replace(/^Bearer /, '')
     let identity = null
     if (raw) {
-      try { identity = await verifyToken(raw) } catch { throw new ApiError(401, 'Please sign in again') }
+      try { identity = await verifyToken(raw) } catch (error) {
+        // An incomplete signed-in account may still see exactly the anonymous
+        // QR view, never a private role or management action.
+        const publicRead = body.passportId && ((action === 'view' && ['GET', 'POST'].includes(req.method)) || (action === 'media' && ['GET', 'HEAD'].includes(req.method)))
+        if (!(error.code === 'account/setup-required' && publicRead)) throw new ApiError(401, 'Please sign in again')
+      }
     }
     if (!identity && !['view', 'media'].includes(action)) throw new ApiError(401, 'Please sign in')
     if (!identity && !body.passportId) throw new ApiError(400, 'A puppy QR link is required')

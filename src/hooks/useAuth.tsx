@@ -13,6 +13,7 @@ import { splitDisplayName } from '../lib/quickSignup'
 import { welcomeUser } from '../lib/welcomeUser'
 import { sendInitialVerification, rememberVerificationDelivery } from '../lib/signupVerification'
 import { auth } from '../lib/firebase'
+import { accountSetupRequest, onboardingQaEnabled } from '../lib/accountOnboarding'
 import { createUserProfile, getUserProfile, getUserProfileFromServer, updateUserProfile, deleteUserData } from '../lib/db'
 import type { UserProfile, SignupFormData } from '../types'
 
@@ -125,7 +126,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function login(email: string, password: string) {
-    await signInWithEmailAndPassword(auth, email, password)
+    const result = await signInWithEmailAndPassword(auth, email, password)
+    if (onboardingQaEnabled() && result.user.emailVerified) {
+      // Confirm the existing primary password without signing out if setup is
+      // temporarily unavailable. The protected gate will offer a safe retry.
+      try { if (!(await accountSetupRequest(result.user)).ready) await accountSetupRequest(result.user, password) } catch { /* Keep the same UID/session. */ }
+    }
   }
 
   async function finishQuickSignIn(signedInUser: User, isNew: boolean, name = '', marketingOptIn = false, termsAccepted = false, allowCreate = true) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { puppyUpdates, puppyPath, type PuppyStory } from '../../lib/puppyUpdates'
 import PuppyUpdateFeed from './PuppyUpdateFeed'
@@ -7,6 +7,7 @@ import PuppyUpdateFeed from './PuppyUpdateFeed'
 function PuppyStoryContent({ passportId }: { passportId: string }) {
   const { user, loading: authLoading } = useAuth()
   const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
   const [story, setStory] = useState<PuppyStory | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -22,16 +23,26 @@ function PuppyStoryContent({ passportId }: { passportId: string }) {
     return () => { active = false }
   }, [passportId, user?.uid, authLoading, refresh, identityKey])
   const next = encodeURIComponent(puppyPath(passportId) + '?follow=1')
+  async function allowFollowing() {
+    if (import.meta.env.VITE_ACCOUNT_ONBOARDING_QA === '1' && user) {
+      const { accountSetupRequest } = await import('../../lib/accountOnboarding')
+      if (!(await accountSetupRequest(user)).ready) {
+        navigate(`/complete-account?next=${next}`)
+        return false
+      }
+    }
+    return true
+  }
   async function follow() {
     setBusy(true); setError('')
-    try { await puppyUpdates({ passportId, action: story?.following ? 'unfollow' : 'follow' }); load() } catch (e) { setError(e instanceof Error ? e.message : 'Please retry') } finally { setBusy(false) }
+    try { if (!await allowFollowing()) return; await puppyUpdates({ passportId, action: story?.following ? 'unfollow' : 'follow' }); load() } catch (e) { setError(e instanceof Error ? e.message : 'Please retry') } finally { setBusy(false) }
   }
   useEffect(() => {
     if (!user || !story || loadedFor !== identityKey || params.get('follow') !== '1') return
     let live = true
     if (story.following) { const next = new URLSearchParams(params); next.delete('follow'); setParams(next, { replace: true }); return }
     setBusy(true)
-    puppyUpdates({ passportId, action: 'follow' }).then(() => { if (live) { setBusy(false); const next = new URLSearchParams(params); next.delete('follow'); setParams(next, { replace: true }); load() } }).catch(e => { if (live) setError(e.message) }).finally(() => { if (live) setBusy(false) })
+    ;(async () => { if (!await allowFollowing()) return false; await puppyUpdates({ passportId, action: 'follow' }); return true })().then(completed => { if (live && completed) { setBusy(false); const next = new URLSearchParams(params); next.delete('follow'); setParams(next, { replace: true }); load() } }).catch(e => { if (live) setError(e.message) }).finally(() => { if (live) setBusy(false) })
     return () => { live = false }
   }, [user?.uid, loadedFor, identityKey, params.get('follow'), passportId])
   async function older() {

@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/upload.js — unified photo upload endpoint.
 //
 // Merges the former api/upload-photo.js + api/upload-note-photo.js into
@@ -73,7 +74,7 @@ export default async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token' })

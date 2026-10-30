@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/reconcile-dog-cap.js — trusted server-side cap correction for iDogs
 // Pricing v1.1 (Pricing_Decision_Record_v1.1.md §3.2, LOCKED).
 //
@@ -53,7 +54,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     throw new ApiError(401, 'Invalid or expired token')

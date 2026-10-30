@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/reconcile-litter-puppy.js — Codex fix-round (Finding 3, HIGH):
 // explicit, scoped, authenticated reconciliation for a SINGLE legacy
 // litter puppy that may have been mis-restricted by the old (pre-Pricing
@@ -64,7 +65,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     throw new ApiError(401, 'Invalid or expired token')

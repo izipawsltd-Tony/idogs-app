@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/get-signed-url.js — Issues a short-lived signed URL for a private
 // Storage file, after verifying the requesting user actually owns/breeds
 // the dog the document belongs to.
@@ -64,7 +65,7 @@ export default async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     if (decoded.email_verified !== true) return res.status(403).json({ error: 'Verify your email to continue securely' })
     uid = decoded.uid
   } catch (err) {

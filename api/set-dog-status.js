@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/set-dog-status.js — trusted server-side dog status transitions for
 // iDogs Pricing v1.1/v1.2 (Pricing_Decision_Record_v1.1.md §3.2/§3.3,
 // LOCKED, plus the v1.2 litter-puppy cap-eligibility change — see
@@ -92,7 +93,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     throw new ApiError(401, 'Invalid or expired token')

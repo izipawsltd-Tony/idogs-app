@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/create-checkout.js — Authenticated Stripe Checkout session creation.
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
@@ -33,7 +34,7 @@ export default createCheckoutHandler({
   ...(promotionConfig.prices ? { checkoutPriceIds: promotionConfig.prices } : {}),
   promotionCheckoutEnabled: promotionConfig.enabled,
   getPromotionTaxStatus: (priceId, customerId) => promotionTaxReady(stripe, priceId, /^(?:sk|rk)_live_/.test(process.env.STRIPE_SECRET_KEY || ''), customerId),
-  verifyIdToken: token => getAuth().verifyIdToken(token),
+  verifyIdToken: token => verifyAccountToken(token),
   createSession: (params, options) => stripe.checkout.sessions.create(params, options),
   canReusePromotionCustomer: async customerId => {
     const subscriptions = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 })

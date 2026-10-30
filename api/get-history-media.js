@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
@@ -11,7 +12,7 @@ export default async function handler(req, res) {
   const token = (req.headers.authorization || '').match(/^Bearer (.+)$/)?.[1]
   if (!token) return res.status(401).json({ error: 'Sign in required' })
   let uid
-  try { uid = (await getAuth().verifyIdToken(token)).uid } catch { return res.status(401).json({ error: 'Sign in required' }) }
+  try { uid = (await verifyAccountToken(token)).uid } catch { return res.status(401).json({ error: 'Sign in required' }) }
   const { snapshotId, dogId } = req.body || {}
   if (typeof snapshotId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(snapshotId) || typeof dogId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(dogId)) return res.status(400).json({ error: 'Invalid history' })
   const bucketName = requireStorageBucket()

@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // Read-only buyer view for exactly one deposited Dog ID. Authorization is
 // server-mediated: a signed-in, verified Firebase email must match the
 // active dogPrivateAccess grant, and that grant must still have been issued
@@ -33,7 +34,7 @@ async function handler(req, res) {
 
   let decoded
   try {
-    decoded = await getAuth().verifyIdToken(token)
+    decoded = await verifyAccountToken(token)
   } catch {
     throw new ApiError(401, 'Invalid or expired token')
   }

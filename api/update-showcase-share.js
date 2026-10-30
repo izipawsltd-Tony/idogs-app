@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/update-showcase-share.js — trusted server-side toggle for an
 // EXISTING Litter Showcase share link (Slice 2): pause/resume public
 // access, or change its expiry, WITHOUT rotating the token itself — the
@@ -44,7 +45,7 @@ async function handler(req, res) {
 
   let uid
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
   } catch {
     throw new ApiError(401, 'Invalid or expired token')

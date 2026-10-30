@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
@@ -7,7 +8,7 @@ import { createDocumentDelivery } from './_lib/document-delivery.js'
 import { requireStorageBucket } from './_lib/require-config.js'
 import { ApiError, logSanitizedError } from './_lib/http-helpers.js'
 if (!getApps().length) initializeApp({ credential: cert({ projectId: process.env.FIREBASE_PROJECT_ID, clientEmail: process.env.FIREBASE_CLIENT_EMAIL, privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n') }) })
-const handle = createQrDocumentsHandler({ db: getFirestore(), verifyToken: token => getAuth().verifyIdToken(token), timestamp: () => FieldValue.serverTimestamp(), serve: (...args) => createDocumentDelivery(getStorage().bucket(requireStorageBucket()))(...args) })
+const handle = createQrDocumentsHandler({ db: getFirestore(), verifyToken: token => verifyAccountToken(token), timestamp: () => FieldValue.serverTimestamp(), serve: (...args) => createDocumentDelivery(getStorage().bucket(requireStorageBucket()))(...args) })
 export default async function handler(req, res) {
   try { return await handle(req, res) }
   catch (error) {

@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // All new collections are server-only (existing Rules default-deny).
 // QR is an identifier, never a credential. No email/SMS is sent here.
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
@@ -16,7 +17,7 @@ if (!getApps().length) initializeApp({ credential: cert({ projectId: process.env
 
 
 export default withApiErrorHandling('puppy-updates', createPuppyUpdatesHandler({
-  db: getFirestore(), timestamp: () => FieldValue.serverTimestamp(), verifyToken: token => getAuth().verifyIdToken(token),
+  db: getFirestore(), timestamp: () => FieldValue.serverTimestamp(), verifyToken: token => verifyAccountToken(token),
   publicBase: publicMediaBase(process.env),
   serveVideo: (req, res, item, assertAccess) => createVideoDelivery(getStorage().bucket(requireStorageBucket()))(req, res, item, assertAccess),
   sign: (items, ttl) => signMediaItems(getStorage().bucket(requireStorageBucket()), items, ttl),

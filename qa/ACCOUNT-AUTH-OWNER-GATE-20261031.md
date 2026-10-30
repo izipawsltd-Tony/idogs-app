@@ -1,6 +1,6 @@
 # iDogs account upgrade — server recovery decision
 
-Status: owner approved QA/emulator development with fake SMS in chat on 31 October 2026. Recovery prototype results are in `ACCOUNT-RECOVERY-QA-20261031.md`. This is not production/live-SMS approval. The inspection/proposal below records the original decision basis.
+Status: owner approved QA/emulator development with fake SMS in chat on 31 October 2026. Recovery prototype results are in `ACCOUNT-RECOVERY-QA-20261031.md`; subsequent same-UID onboarding results/instructions are in `ACCOUNT-ONBOARDING-QA-20261031.md`. This is not production/live-SMS approval. The inspection/proposal below records the original decision basis.
 Branch: `feature/account-onboarding-recovery-20261031`, based on `b43218e22a76d488a8ea2f47d4cd7b1d39f3e14e`.
 Scope: web account flows; native iPhone/Android verification remains separate.
 

@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/get-dog-history.js — immutable former-owner history snapshots
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -64,7 +65,7 @@ export default async function handler(req, res) {
 
   let uid
   try {
-    uid = (await getAuth().verifyIdToken(idToken)).uid
+    uid = (await verifyAccountToken(idToken)).uid
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
@@ -7,6 +7,7 @@ import { safeAppReturnTo } from '../lib/returnTo'
 import { verifyBeforeUpdateEmail } from 'firebase/auth'
 import { verificationDelivery } from '../lib/signupVerification'
 import { auth } from '../lib/firebase'
+import { onboardingQaEnabled } from '../lib/accountOnboarding'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -94,6 +95,7 @@ export default function VerifyEmailPage({ toast }: Props) {
   if (loading) {
     return <LoadingScreen />
   }
+  if (user && !user.email && onboardingQaEnabled()) return <Navigate replace to={`/complete-account?next=${encodeURIComponent(returnTo)}`} />
 
   return (
     <div style={{

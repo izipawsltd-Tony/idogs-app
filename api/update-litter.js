@@ -1,3 +1,4 @@
+import { verifyAccountToken } from './_lib/account-onboarding.js'
 // api/update-litter.js — trusted server-side litter field edits, with
 // DOB propagation to still-owned puppies and Breeder Profile quota enforcement.
 //
@@ -48,7 +49,7 @@ async function handler(req, res) {
   let uid
   let authEmail = ''
   try {
-    const decoded = await getAuth().verifyIdToken(idToken)
+    const decoded = await verifyAccountToken(idToken)
     uid = decoded.uid
     authEmail = typeof decoded.email === 'string' ? decoded.email : ''
   } catch {
