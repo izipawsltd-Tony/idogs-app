@@ -4,6 +4,7 @@ import {stagingDeletionConfiguration} from './deletion-staging-readiness.mjs'
 import {QA_RESOURCES as target,verifyQaDatabase,verifyQaBucket} from './provision-deletion-resources.mjs'
 import {cloudFixtureScope,createCloudFixtureProcessor,createCloudFixtureRenewalDispatcher,createCloudFixtureRenewalQueue} from './deletion-cloud-runtime.mjs'
 import {signInCloudFixture,loopbackDeletionApi,protectedPreviewDeletionApi} from './deletion-cloud-http.mjs'
+import {createCloudStripeReadback} from './deletion-cloud-stripe-readback.mjs'
 import {createDeletionEmailSink} from './deletion-email-sink.mjs'
 import {createHumanQaConfirmation} from './deletion-human-confirmation.mjs'
 import {createStripeDeletionRenewalContract} from '../../api/_lib/deletion-stripe-contract.js'
@@ -59,6 +60,9 @@ try{
  for(const path of mediaPaths){await bucket.file(path).save(Buffer.from('Disposable fixture, no personal data'),{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{metadata:{deletionQaRunId:runId}}});generations[path]=String((await bucket.file(path).getMetadata())[0].generation)}
  const sentinelBefore=digest((await db.doc(`dogs/${runId}-sentinel`).get()).data())
  scope=cloudFixtureScope({db,auth,bucket,runId,manifest})
+ phase='private_stripe_test_readback'
+ const stripeReadback=await createCloudStripeReadback({db,auth,bucket,runId,manifest,stripeKey:config.stripeKey,executionEnabled:true})
+ evidence.privateStripeTestReadback=await stripeReadback.read()
  phase='storage_create_only_precondition'
  await scope.assertRuntime(uid)
  // One negative CAS probe on this exact disposable manifest object. Never

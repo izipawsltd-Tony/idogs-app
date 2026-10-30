@@ -30,7 +30,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Cloud fixture scope and provider regression checks
-        run: node --test scripts/test-deletion-renewal-dispatcher.mjs scripts/test-deletion-cloud-runtime.mjs scripts/test-deletion-cloud-http.mjs scripts/test-deletion-email-sink.mjs scripts/test-deletion-billing.mjs scripts/test-deletion-stripe-contract.mjs scripts/test-deletion-staging-billing.mjs scripts/test-provision-deletion-resources.mjs
+        run: node --test scripts/test-deletion-cloud-stripe-readback.mjs scripts/test-deletion-renewal-dispatcher.mjs scripts/test-deletion-cloud-runtime.mjs scripts/test-deletion-cloud-http.mjs scripts/test-deletion-email-sink.mjs scripts/test-deletion-billing.mjs scripts/test-deletion-stripe-contract.mjs scripts/test-deletion-staging-billing.mjs scripts/test-provision-deletion-resources.mjs
       - name: Restore quarantine regressions
         run: npx vitest run scripts/deletion-restore-gate.test.js
       - name: Historical ledger provenance and managed continuation contracts (no cloud IO)
