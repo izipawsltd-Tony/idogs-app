@@ -11,3 +11,12 @@ beforeEach(async()=>{state.newUser=true;state.popup.mockReset().mockResolvedValu
 it('copies provider name/email into a minimal owner profile, marketing off by default',async()=>{await act(async()=>{expect(await state.api.socialLogin('google.com')).toBe(true)});expect(state.write).toHaveBeenCalledWith('qa',expect.objectContaining({firstName:'Ruby',lastName:'Friend',email:'qa@example.invalid',role:'owner',marketingConsent:expect.objectContaining({choice:'opt_out'})}))})
 it('does not overwrite existing breeder role or marketing consent on social sign-in',async()=>{state.newUser=false;state.read.mockResolvedValue({role:'breeder',firstName:'Existing'});await act(async()=>{expect(await state.api.socialLogin('google.com')).toBe(false)});expect(state.write).not.toHaveBeenCalled()})
 it('does not create an unusable email-less Facebook profile',async()=>{state.popup.mockResolvedValue({user:{uid:'qa',email:null,displayName:'Ruby Friend'}});await expect(state.api.socialLogin('facebook.com')).rejects.toThrow('email-required');expect(state.write).not.toHaveBeenCalled();expect(state.signout).toHaveBeenCalled()})
+it('does not invent a new iDogs profile when a phone identity has no linked profile during Sign in',async()=>{
+ await expect(state.api.finishQuickSignIn({uid:'unlinked-phone',phoneNumber:'+61412345678'},true,'',false,false,false)).rejects.toThrow('not linked')
+ expect(state.read).toHaveBeenCalledWith('unlinked-phone');expect(state.write).not.toHaveBeenCalled();expect(state.signout).toHaveBeenCalledOnce()
+})
+it('opens the existing profile by its authenticated UID and never replaces its records on phone login',async()=>{
+ state.read.mockResolvedValue({uid:'linked-account',role:'breeder',firstName:'Existing'})
+ await act(async()=>{await state.api.finishQuickSignIn({uid:'linked-account',phoneNumber:'+61412345678'},false,'',false,false,false)})
+ expect(state.read).toHaveBeenCalledWith('linked-account');expect(state.write).not.toHaveBeenCalled();expect(state.signout).not.toHaveBeenCalled()
+})

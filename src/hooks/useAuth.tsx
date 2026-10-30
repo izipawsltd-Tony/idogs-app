@@ -21,7 +21,7 @@ interface AuthContextType {
   profile: UserProfile | null
   loading: boolean
   signup: (data: SignupFormData) => Promise<void>
-  finishQuickSignIn: (signedInUser: User, isNew: boolean, name?: string, marketingOptIn?: boolean, termsAccepted?: boolean) => Promise<void>
+  finishQuickSignIn: (signedInUser: User, isNew: boolean, name?: string, marketingOptIn?: boolean, termsAccepted?: boolean, allowCreate?: boolean) => Promise<void>
   socialLogin: (provider: 'google.com' | 'facebook.com', marketingOptIn?: boolean, termsAccepted?: boolean) => Promise<boolean>
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
@@ -128,8 +128,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await signInWithEmailAndPassword(auth, email, password)
   }
 
-  async function finishQuickSignIn(signedInUser: User, isNew: boolean, name = '', marketingOptIn = false, termsAccepted = false) {
+  async function finishQuickSignIn(signedInUser: User, isNew: boolean, name = '', marketingOptIn = false, termsAccepted = false, allowCreate = true) {
     const existing = await getUserProfile(signedInUser.uid)
+    if (!existing && !allowCreate) {
+      await signOut(auth)
+      throw new Error('This mobile sign-in is not linked to an existing iDogs profile. Sign in using the email for your existing account. No new iDogs profile has been created.')
+    }
     if (!existing) {
       const displayName = name.trim() || signedInUser.displayName || 'Dog lover'
       if (!signedInUser.displayName) await updateProfile(signedInUser, { displayName })

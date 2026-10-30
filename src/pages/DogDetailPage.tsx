@@ -3005,8 +3005,7 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
                     </div>
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      {doc.name || getDocLabel(doc.documentType)}
-                      {canEdit && <button type="button" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || '') }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>}
+                      {doc.name || doc.title || getDocLabel(doc.documentType)}
                     </span>
                   )}
                 </div>
@@ -3032,6 +3031,7 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
                 >
                   View ↗
                 </button>
+                {canEdit && <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || doc.title || '') }}>Edit</button>}
                 {canEdit && <button
                   onClick={async () => {
                     if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
