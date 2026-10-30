@@ -107,7 +107,9 @@ export async function buildEmulatorDeletionPlan({ db, bucket, uid, now = Date.no
   const profile = scan.records.find(r => r.path === `users/${uid}`)?.data
   if (!profile) return { holds:[...new Set([...holds,'profile_missing'])], operations:[], retained:[], fingerprint:digest([]) }
   const needles = new Set([uid,profile.email].filter(Boolean))
-  const dogs = new Map(scan.records.filter(r => r.collection === 'dogs').map(r => [r.path.split('/').at(-1),r]))
+  // Recursive collection IDs are not ownership authority: a follower relation
+  // such as puppyFollowers/{uid}/dogs/{id} may share a root dog's ID.
+  const dogs = new Map(scan.records.filter(r => /^dogs\/[^/]+$/.test(r.path)).map(r => [r.path.split('/')[1],r]))
   const owned = new Set(), shared = new Set()
   for (const [id,r] of dogs) if (related(r.data,needles)) {
     if (!Object.hasOwn(r.data,'currentOwnerId') || !validAccountId(r.data.currentOwnerId)) holds.add('legacy_ownership_review')
@@ -121,9 +123,13 @@ export async function buildEmulatorDeletionPlan({ db, bucket, uid, now = Date.no
   // (for example puppyFollowers/{uid}/dogs/{dogId}). Unknown descendants must
   // hold even when their payload contains no UID. This exact ancestor match is
   // conservative quarantine, never an ownership classification or delete grant.
+  const scopedDogs = new Set([...owned,...shared])
   for(const r of scan.records){
     const segments=r.path.split('/')
-    if(segments.length>2&&segments[1]===uid)relatedPaths.add(r.path)
+    // Unknown dog-rooted descendants can carry identity only in the path too.
+    // Exact dog IDs quarantine them; no nested record supplies dog authority.
+    const scopedDogPath = scopedDogs.has(segments[1]) || segments.some((segment,index) => index%2===0 && segment==='dogs' && scopedDogs.has(segments[index+1]))
+    if(segments.length>2&&(segments[1]===uid||scopedDogPath))relatedPaths.add(r.path)
   }
   const relatedIds = new Set([...needles,...owned,...shared])
   // Fixed point discovers conversations, litter children, snapshots and nested

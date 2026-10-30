@@ -132,3 +132,53 @@ test('other account follower ancestor with UID prefix collision is not treated a
   assert.equal(plan.holds.includes('unclassified_record_review'),false,'Prefix similarity is not an exact ancestor actor match')
   await unchanged()
 })
+
+test('same-ID follower dog cannot replace an owned root dog authority',async()=>{
+  const s=await seed(),root=`dogs/${s.dog}`,follow=`puppyFollowers/${s.other}/dogs/${s.dog}`
+  await put(root,{tenantId:s.uid,currentOwnerId:s.uid,name:'Synthetic owned root'})
+  await put(follow,{tenantId:s.other,currentOwnerId:s.other,followedAt:new Date().toISOString()})
+  const scan=await scanDeletionDocuments(db),plan=await buildEmulatorDeletionPlan({db,bucket,uid:s.uid})
+  assert.ok(scan.records.findIndex(r=>r.path===follow)>scan.records.findIndex(r=>r.path===root),'Actual recursive scanner encounters the colliding nested dog after the root')
+  assert.ok(plan.operations.some(o=>o.kind==='delete'&&o.path===root),'Only exact root ownership determines the root dog disposition')
+  assert.equal(plan.retained.some(r=>r.path===root),false)
+  assert.ok(plan.holds.includes('unclassified_record_review'))
+  assert.equal(plan.operations.some(o=>o.path===follow),false)
+  await workerHeld();await unchanged()
+})
+
+test('same-ID follower dog cannot authorize deletion of another current owner root dog',async()=>{
+  const s=await seed(),root=`dogs/${s.dog}`,follow=`puppyFollowers/${s.other}/dogs/${s.dog}`,record=`documents/document-${s.nonce}`
+  await put(root,{tenantId:s.uid,currentOwnerId:s.other,name:'Synthetic inherited root'})
+  await put(follow,{tenantId:s.uid,currentOwnerId:s.uid,followedAt:new Date().toISOString()})
+  await put(record,{dogId:s.dog,tenantId:s.uid,name:'Synthetic inherited record'})
+  const scan=await scanDeletionDocuments(db),plan=await buildEmulatorDeletionPlan({db,bucket,uid:s.uid})
+  assert.ok(scan.records.findIndex(r=>r.path===follow)>scan.records.findIndex(r=>r.path===root))
+  for(const path of [root,record]){
+    assert.equal(plan.operations.some(o=>o.kind==='delete'&&o.path===path),false,'Nested ownership must not override the current owner of the root or its linked record')
+    assert.ok(plan.retained.some(r=>r.path===path&&r.category==='current_owner_history'))
+  }
+  assert.ok(plan.holds.includes('unclassified_record_review'));assert.equal(plan.operations.some(o=>o.path===follow),false)
+  await workerHeld();await unchanged()
+})
+
+test('payload-free exact dog descendants quarantine without granting deletion',async()=>{
+  const s=await seed(),root=`dogs/${s.dog}`
+  await put(root,{tenantId:s.uid,currentOwnerId:s.uid,name:'Synthetic scoped root'})
+  const paths=[`puppyProfiles/${s.dog}/updates/update-${s.nonce}`,`${root}/unknownDetails/detail-${s.nonce}`,`puppyFollowers/${s.other}/dogs/${s.dog}`]
+  for(const path of paths)await put(path,{createdAt:new Date().toISOString()})
+  const scan=await scanDeletionDocuments(db),plan=await buildEmulatorDeletionPlan({db,bucket,uid:s.uid})
+  for(const path of paths){assert.ok(scan.records.some(r=>r.path===path));assert.equal(plan.operations.some(o=>o.path===path),false)}
+  assert.ok(plan.operations.some(o=>o.kind==='delete'&&o.path===root))
+  assert.ok(plan.holds.includes('unclassified_record_review'),'Path-only dog identity must remain held even without payload references')
+  await workerHeld();await unchanged()
+})
+
+test('dog ID prefix collision in another account descendants is not exact scoped dog identity',async()=>{
+  const s=await seed(),root=`dogs/${s.dog}`,paths=[`puppyProfiles/${s.dog}-collision/updates/update-${s.nonce}`,`puppyFollowers/${s.other}/dogs/${s.dog}-collision`]
+  await put(root,{tenantId:s.uid,currentOwnerId:s.uid,name:'Synthetic scoped root'})
+  for(const path of paths)await put(path,{createdAt:new Date().toISOString()})
+  const plan=await buildEmulatorDeletionPlan({db,bucket,uid:s.uid})
+  assert.equal(plan.holds.includes('unclassified_record_review'),false,'Only exact dog path segments scope payload-free descendants')
+  for(const path of paths)assert.equal(plan.operations.some(o=>o.path===path),false)
+  assert.ok(plan.operations.some(o=>o.kind==='delete'&&o.path===root));await unchanged()
+})
