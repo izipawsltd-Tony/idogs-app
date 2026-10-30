@@ -85,6 +85,6 @@ export async function prepareEmulatorVerifiedStripeEvent({db,auth,bucket,project
     if(key==='doc')return path=>{const segments=String(path).split('/');ensure(segments[0]!=='users'||segments[1]===uid,'WEBHOOK_FOREIGN_ACCOUNT');return target.doc(path)}
     const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value
   }})
-  return {event,db:guardedDb,leasePath:leaseRef.path,getSubscription:guardedSubscription,cancelSubscription:guardedCancel,
+  return {event,db:guardedDb,leasePath:leaseRef.path,assertExecution:recheck,getSubscription:guardedSubscription,cancelSubscription:guardedCancel,
     constructEvent:(body,sig)=>{const checked=verifyEvent(body,sig);ensure(digest(checked)===eventHash,'WEBHOOK_EVENT_CHANGED');return freeze(structuredClone(checked))}}
 }

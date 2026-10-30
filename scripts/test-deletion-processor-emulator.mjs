@@ -22,6 +22,7 @@ import {createEmulatorDeletionIntake} from '../api/_lib/deletion-intake.js'
 import {randomUUID} from 'node:crypto'
 import Stripe from 'stripe'
 import {prepareEmulatorVerifiedStripeEvent} from '../api/_lib/deletion-stripe-ingress.js'
+import {createEmulatorLoopbackStripeTransport} from '../api/_lib/deletion-stripe-transport.js'
 import {createWebhookHandler} from '../api/_lib/webhook-handler.js'
 import {CHECKOUT_PRICE_IDS} from '../api/_lib/checkout-handler.js'
 import {grantExtraLitterCreditFromVerifiedEvent} from '../api/_lib/extra-litter-webhook.js'
@@ -1471,4 +1472,95 @@ test('changed customer binding after preparation blocks both core writes and lat
   await assert.rejects(scope.getSubscription(f.subscription.id),/WEBHOOK_CUSTOMER_BINDING_CHANGED/)
   await assert.rejects(scopedWebhook(scope)(f.signed.rawBody,f.signed.signature),/WEBHOOK_CUSTOMER_BINDING_CHANGED/)
   assert.equal(reads,0);assert.equal((await db.collection('processedStripeEvents').get()).empty,true)
+})
+async function stripeWireFixture({behavior='ok',badBinding=null,lockOnSecondGet=false}={}){
+  const f=await webhookFixture(),nonce=randomUUID(),counts={get:0,delete:0},failures=[]
+  const subscription={...f.subscription,livemode:false,metadata:{...f.subscription.metadata,deletionQaNonce:nonce}}
+  const fixture={uid:owner.uid,nonce,customerId:subscription.customer,subscriptionIds:[subscription.id]}
+  let scope
+  const wire=createServer(async(req,res)=>{
+    try{
+      assert.equal(req.headers.authorization,`Bearer synthetic-loopback-${nonce}`)
+      assert.equal(new URL(req.url,'http://127.0.0.1').pathname,`/v1/subscriptions/${subscription.id}`)
+      let body='';for await(const chunk of req){body+=chunk;assert.ok(body.length<=2048)}
+      if(req.method==='GET'){
+        counts.get++
+        if(lockOnSecondGet&&counts.get===2)await db.doc(`accountDeletionLocks/${owner.uid}`).create({revision:1,state:'processing'})
+      }else{
+        assert.equal(req.method,'DELETE');counts.delete++
+        for(const [key,value] of new URLSearchParams(body)){assert.ok(['prorate','invoice_now'].includes(key));assert.equal(value,'false')}
+        subscription.status='canceled'
+        if(behavior==='dropped'){req.socket.destroy();return}
+        if(behavior==='retryable'){res.statusCode=500;res.setHeader('stripe-should-retry','true');res.setHeader('Content-Type','application/json');res.end(JSON.stringify({error:{type:'api_error',message:'Synthetic retryable response'}}));return}
+      }
+      const result=structuredClone(subscription)
+      if(badBinding==='livemode')result.livemode=true
+      if(badBinding==='customer')result.customer='cus_foreign_wire'
+      if(badBinding==='nonce')result.metadata.deletionQaNonce=randomUUID()
+      res.setHeader('Content-Type','application/json');res.setHeader('request-id','req_synthetic_loopback');res.end(JSON.stringify(result))
+    }catch(error){failures.push(error);if(!res.headersSent){res.statusCode=500;res.end(JSON.stringify({error:{message:'Synthetic fixture assertion failed'}}))}}
+  })
+  await new Promise(resolve=>wire.listen(0,'127.0.0.1',resolve))
+  const origin=`http://127.0.0.1:${wire.address().port}`
+  const options={db,auth,bucket,projectId:PROJECT,origin,fixture,executionEnabled:true,assertBeforeMutation:async()=>{assert.ok(scope,'Prepared event scope required');await scope.assertExecution()}}
+  const prepare=async()=>{
+    const transport=createEmulatorLoopbackStripeTransport(options)
+    scope=await f.prepare({getSubscription:transport.getSubscription,cancelSubscription:transport.cancelSubscription})
+    return {scope,transport}
+  }
+  return {...f,fixture,options,counts,subscription,prepare,close:async()=>{wire.closeAllConnections();await new Promise(resolve=>wire.close(resolve));assert.deepEqual(failures,[])}}
+}
+test('private Stripe transport rejects non-loopback origins, disabled execution and changed fixture bounds before IO',async()=>{
+  const f=await stripeWireFixture()
+  try{
+    for(const origin of ['https://api.stripe.com','http://localhost:9999','http://127.0.0.1:9999/foreign','http://127.0.0.1:9999?token=fixture'])assert.throws(()=>createEmulatorLoopbackStripeTransport({...f.options,origin}))
+    assert.throws(()=>createEmulatorLoopbackStripeTransport({...f.options,executionEnabled:false}),/WEBHOOK_TRANSPORT_DISABLED/)
+    assert.throws(()=>createEmulatorLoopbackStripeTransport({...f.options,fixture:{...f.fixture,subscriptionIds:[]}}),/WEBHOOK_TRANSPORT_FIXTURE_REQUIRED/)
+    const transport=createEmulatorLoopbackStripeTransport(f.options)
+    f.fixture.subscriptionIds.push('sub_added_after_capture')
+    await assert.rejects(transport.getSubscription('sub_added_after_capture'),/WEBHOOK_TRANSPORT_FOREIGN_SUBSCRIPTION/)
+    assert.deepEqual(f.counts,{get:0,delete:0})
+  }finally{await f.close()}
+})
+test('private zero-retry Stripe SDK makes bound actual HTTP calls without changing another client and retains observed hold',async()=>{
+  const f=await stripeWireFixture(),unrelated=new Stripe('synthetic-unrelated-not-a-credential',{maxNetworkRetries:2})
+  try{
+    const {scope,transport}=await f.prepare()
+    assert.equal((await scope.cancelSubscription(f.subscription.id,{prorate:false,invoice_now:false})).status,'canceled')
+    assert.deepEqual(f.counts,{get:2,delete:1});assert.equal(unrelated.getMaxNetworkRetries(),2)
+    assert.equal(transport.mode,'emulator-loopback');assert.equal(Object.hasOwn(transport,'client'),false)
+    const intents=await db.doc(scope.leasePath).collection('externalIntents').get()
+    assert.equal(intents.docs[0].data().state,'response_observed');assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
+  }finally{await f.close()}
+})
+for(const behavior of ['retryable','dropped'])test(`actual HTTP ${behavior} response makes one DELETE and original intent prevents resend across restart`,async()=>{
+  const f=await stripeWireFixture({behavior})
+  try{
+    const {scope}=await f.prepare()
+    await assert.rejects(scope.cancelSubscription(f.subscription.id,{prorate:false}))
+    assert.deepEqual(f.counts,{get:2,delete:1});assert.equal(f.subscription.status,'canceled')
+    const intents=await db.doc(scope.leasePath).collection('externalIntents').get()
+    assert.equal(intents.docs[0].data().state,'sending');assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
+    const retry=await f.prepare()
+    await assert.rejects(retry.scope.cancelSubscription(f.subscription.id,{prorate:false}),/WEBHOOK_EXTERNAL_OUTCOME_HELD/)
+    assert.equal(f.counts.delete,1)
+  }finally{await f.close()}
+})
+test('lock during binding read is rechecked before actual DELETE wire IO',async()=>{
+  const f=await stripeWireFixture({lockOnSecondGet:true})
+  try{
+    const {scope}=await f.prepare()
+    await assert.rejects(scope.cancelSubscription(f.subscription.id,{prorate:false}),/ACCOUNT_DELETION_LOCKED/)
+    assert.deepEqual(f.counts,{get:2,delete:0});assert.equal(f.subscription.status,'active')
+    assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
+  }finally{await f.close()}
+})
+for(const badBinding of ['livemode','customer','nonce'])test(`private HTTP ${badBinding} mismatch is rejected before cancellation`,async()=>{
+  const f=await stripeWireFixture({badBinding})
+  try{
+    const {scope}=await f.prepare()
+    await assert.rejects(scope.cancelSubscription(f.subscription.id,{}),/WEBHOOK_TRANSPORT_RESPONSE_BINDING_CHANGED/)
+    assert.deepEqual(f.counts,{get:1,delete:0})
+    assert.equal((await db.doc(scope.leasePath).collection('externalIntents').get()).empty,true)
+  }finally{await f.close()}
 })

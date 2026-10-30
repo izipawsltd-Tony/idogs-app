@@ -59,9 +59,11 @@ async function handler(req, res) {
     try{
       const [{getAuth},{getStorage}]=await Promise.all([import('firebase-admin/auth'),import('firebase-admin/storage')])
       const auth=getAuth(),projectId=auth.app.options.projectId
+      // Never borrow the normal provider client for a prototype invocation.
+      const privateTransportRequired=async()=>{throw Object.assign(new Error('WEBHOOK_PRIVATE_TEST_TRANSPORT_REQUIRED'),{code:'WEBHOOK_PRIVATE_TEST_TRANSPORT_REQUIRED',status:423})}
       const scope=await prepareEmulatorVerifiedStripeEvent({db,auth,projectId,bucket:getStorage().bucket(`${projectId}.firebasestorage.app`),rawBody,signature:sig,
-        verifyEvent:(body,signature)=>stripe.webhooks.constructEvent(body,signature,process.env.STRIPE_WEBHOOK_SECRET),getSubscription,
-        cancelSubscription:(id,params)=>stripe.subscriptions.cancel(id,params),executionEnabled:true})
+        verifyEvent:(body,signature)=>stripe.webhooks.constructEvent(body,signature,process.env.STRIPE_WEBHOOK_SECRET),getSubscription:privateTransportRequired,
+        cancelSubscription:privateTransportRequired,executionEnabled:true})
       const guarded=createWebhookHandler({db:scope.db,constructEvent:scope.constructEvent,getSubscription:scope.getSubscription,cancelSubscription:scope.cancelSubscription})
       const result=await guarded(rawBody,sig)
       if(result.status===200)await grantExtraLitterCreditFromVerifiedEvent({db:scope.db,event:scope.event})
