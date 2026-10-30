@@ -573,7 +573,7 @@ export default function DogNewPage({ toast }: Props) {
     <div style={{ padding: 32, maxWidth: 640 }}>
       <div style={{ marginBottom: 24 }}>
         <Link to="/app/dogs" style={{ fontSize: 13, color: 'var(--light)', textDecoration: 'none' }}>← My dogs</Link>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginTop: 8, marginBottom: 4 }}>{isOwner ? 'Create Dog ID' : 'Add a dog'}</h1>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginTop: 8, marginBottom: 4 }}>Add Dog</h1>
         <p style={{ fontSize: 14, color: 'var(--light)' }}>Scan documents first to auto-fill the form, or fill in manually.</p>
       </div>
 
@@ -750,7 +750,7 @@ export default function DogNewPage({ toast }: Props) {
               <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading || submitting || dogCreated}>
                 {(loading || submitting) ? <span className="spinner" /> : (() => {
                   const recordCount = scannedDocs.reduce((s, d) => s + (d.vaccines?.length || 0), 0)
-                  const base = isOwner ? 'Create Dog ID & passport' : 'Add dog & create passport'
+                  const base = 'Add Dog'
                   return `${base}${recordCount > 0 ? ` (${recordCount} records)` : ''}`
                 })()}
               </button>

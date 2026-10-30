@@ -58,8 +58,8 @@ check('Showcase UI supports revoke and copy-link actions', /revokePrivateAccess\
 check('public Showcase still selects only entry.visible === true puppies', /filter\(\(\[, entry\]\) => entry\?\.visible === true\)/.test(publicSrc))
 check('public Showcase litter projection does not return total puppyIds', !/const litter = \{[\s\S]*?puppyIds[\s\S]*?\n\s*\}/.test(publicSrc))
 check('ProtectedRoute preserves the requested private dog path through sign-in', /next=\$\{encodeURIComponent\(returnTo\)\}/.test(protectedSrc))
-check('login returns the buyer to the validated requested app path', /safeAppReturnTo/.test(loginSrc) && /navigate\(returnTo/.test(loginSrc))
-check('signup carries the requested app path into email verification', /verify-email\?next=\$\{encodeURIComponent\(returnTo\)\}/.test(signupSrc))
+check('login preserves a validated destination and lets protected routes enforce deeper verification', /signupDestination\(params.get\('next'\)\)/.test(loginSrc) && /navigate\(returnTo, \{ replace: true \}\)/.test(loginSrc) && /!discoveryRoute\(location.pathname\)/.test(appSrc))
+check('signup preserves the requested path and delegates deeper verification to the guarded route', /signupDestination/.test(signupSrc) && /navigate\(returnTo/.test(signupSrc) && /!discoveryRoute\(location.pathname\)/.test(appSrc))
 check('email verification returns the buyer to the requested private dog path', /safeAppReturnTo/.test(verifySrc) && /navigate\(returnTo/.test(verifySrc))
 check('post-auth redirect is constrained to internal /app routes', /startsWith\('\/app\/'\)/.test(returnToSrc) && /includes\('\:\/\/'\)/.test(returnToSrc))
 
@@ -125,7 +125,7 @@ check('post-auth redirect is constrained to internal /app routes', /startsWith\(
   check('[req 5 regression] VerifyEmailPage.tsx still redirects to the exact `returnTo` (the requested private Dog ID path) on success — untouched by this fix',
     /navigate\(returnTo, \{ replace: true \}\)/.test(verifySrc))
   check('[req 5 regression] VerifyEmailPage.tsx\'s handleCheck() still shows an error rather than redirecting when checkEmailVerified() resolves falsy',
-    /if \(verified\) \{[\s\S]{0,120}navigate\(returnTo/.test(verifySrc) && /\} else \{[\s\S]{0,80}Not verified yet/.test(verifySrc))
+    /if \(verified && currentEmail\) \{[\s\S]{0,140}navigate\(returnTo/.test(verifySrc) && /\} else \{\s*setError\(currentEmail \? 'This account’s email is not verified yet/.test(verifySrc))
   check('[req 6 regression] handleCheck()\'s try/catch still reports a genuine failure (now including a thrown forced-refresh error) via the existing, accurate "Could not check verification status" message — never silently treated as success',
     /catch \{[\s\S]{0,100}Could not check verification status/.test(verifySrc))
 }

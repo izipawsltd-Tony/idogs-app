@@ -1309,7 +1309,7 @@ function base64ToBlob(base64: string, mediaType: string): Blob {
 // real File/Blob directly (video path — never base64-encoded at all in
 // this flow, since there is no reason to inflate it ~33% just to
 // immediately decode it again).
-export async function uploadShowcaseMediaDirect(dogId: string, kind: 'photo' | 'video', fileOrBase64: Blob | string, contentType: string): Promise<{ mediaId: string; photos: SignedMediaItem[]; videos: SignedMediaItem[] }> {
+export async function uploadShowcaseMediaDirect(dogId: string, kind: 'photo' | 'video', fileOrBase64: Blob | string, contentType: string, purpose: 'gallery' | 'puppy-update' = 'gallery'): Promise<{ mediaId: string; photos: SignedMediaItem[]; videos: SignedMediaItem[] }> {
   if (!auth.currentUser) throw new Error('Not signed in')
   const idToken = await auth.currentUser.getIdToken()
 
@@ -1322,7 +1322,7 @@ export async function uploadShowcaseMediaDirect(dogId: string, kind: 'photo' | '
   const requestRes = await fetch('/api/request-showcase-media-upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-    body: JSON.stringify({ dogId, kind, contentType, sizeBytes: body.size }),
+    body: JSON.stringify({ dogId, kind, contentType, sizeBytes: body.size, purpose }),
   })
   if (!requestRes.ok) {
     const err = await requestRes.json().catch(() => ({}))

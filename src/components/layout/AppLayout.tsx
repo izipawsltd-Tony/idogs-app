@@ -73,6 +73,7 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
       { path: '/app/dashboard', label: 'Dashboard', icon: '⊞' },
       { path: '/app/dogs',      label: 'My Dogs',   icon: '🐕' },
       { path: '/app/litters',   label: 'Litters',   icon: '🐣', littersItem: true },
+      { path: '/app/following-puppies', label: 'Following puppies', icon: '🐾' },
     ],
   },
   {
@@ -196,7 +197,7 @@ export default function AppLayout({ toast }: Props) {
         setDogCount(dogs.filter(isDogEligibleForCap).length)
       })
       .catch(() => { if (req.isCurrent()) { setDogCount(null); setDogCountError(true) } })
-    if (user.email) {
+    if (user.email && user.emailVerified) {
       setPendingClaimError(false)
       claimTransferredDogs(user.uid, user.email, 'check')
         .then(dogs => { if (req.isCurrent()) setPendingClaimCount(dogs.length) })
@@ -241,7 +242,7 @@ export default function AppLayout({ toast }: Props) {
   }, [user?.uid])
 
   useEffect(() => {
-    if (profile && !profile.state) setShowStateModal(true)
+    if (profile?.role === 'breeder' && !profile.state) setShowStateModal(true)
   }, [profile])
 
   useEffect(() => {

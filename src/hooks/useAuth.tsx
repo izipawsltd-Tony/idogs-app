@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -7,8 +7,11 @@ import {
   sendPasswordResetEmail,
   sendEmailVerification,
   reload,
-  User
+  User, GoogleAuthProvider, FacebookAuthProvider, signInWithPopup, updateProfile, getAdditionalUserInfo
 } from 'firebase/auth'
+import { splitDisplayName } from '../lib/quickSignup'
+import { welcomeUser } from '../lib/welcomeUser'
+import { sendInitialVerification, rememberVerificationDelivery } from '../lib/signupVerification'
 import { auth } from '../lib/firebase'
 import { createUserProfile, getUserProfile, getUserProfileFromServer, updateUserProfile, deleteUserData } from '../lib/db'
 import type { UserProfile, SignupFormData } from '../types'
@@ -18,6 +21,8 @@ interface AuthContextType {
   profile: UserProfile | null
   loading: boolean
   signup: (data: SignupFormData) => Promise<void>
+  finishQuickSignIn: (signedInUser: User, isNew: boolean, name?: string, marketingOptIn?: boolean, termsAccepted?: boolean, allowCreate?: boolean) => Promise<void>
+  socialLogin: (provider: 'google.com' | 'facebook.com', marketingOptIn?: boolean, termsAccepted?: boolean) => Promise<boolean>
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   resetPassword: (email: string) => Promise<void>
@@ -31,60 +36,67 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const authGeneration = useRef(0)
   const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
+      const generation = ++authGeneration.current
       setLoading(true)
+      setProfile(null)
       setUser(u)
       if (u) {
         try {
           const p = await getUserProfile(u.uid)
-          setProfile(p)
+          if (generation === authGeneration.current) setProfile(p)
         } catch (err) {
           // Super Admin routing depends on the verified Firebase identity,
           // not on a Firestore profile read succeeding. Fail closed for the
           // normal profile while still allowing the route guards to settle.
           console.error('Failed to load user profile:', err)
-          setProfile(null)
+          if (generation === authGeneration.current) setProfile(null)
         }
       } else {
         setProfile(null)
       }
-      setLoading(false)
+      if (generation === authGeneration.current) setLoading(false)
     })
     return unsub
   }, [])
 
-  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber, marketingOptIn = false }: SignupFormData) {
+  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber, marketingOptIn = false, termsAccepted = false }: SignupFormData) {
     const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password)
     try {
-      await sendEmailVerification(newUser)
+      await updateProfile(newUser, { displayName: `${firstName} ${lastName}`.trim() })
       await createUserProfile(newUser.uid, {
         email,
         firstName,
         lastName,
         kennelName,
-        role: role || 'breeder',
+        role: role || 'owner',
+        ...(termsAccepted && { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' as const } }),
         plan: 'trial',
         marketingConsent: {
           channel: 'email_marketing',
           choice: marketingOptIn ? 'opt_in' : 'opt_out',
-          source: 'explicit_checkbox',
+          source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox',
           checkboxDefault: false,
           policyVersion: 'marketing-v1-2026-10',
           optedInAt: marketingOptIn ? new Date().toISOString() : null,
           revokedAt: null,
           email: newUser.email || email,
-          evidenceRef: 'signup-checkbox-v1',
+          evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1',
         },
         ...(state && { state: state as UserProfile['state'] }),
         ...(breederNumber?.trim() && { breederIdValue: breederNumber.trim() }),
       })
       const p = await getUserProfile(newUser.uid)
-      setProfile(p)
+      await sendInitialVerification(newUser)
+      ++authGeneration.current
+      setProfile(p); setLoading(false)
+      void welcomeUser(newUser)
     } catch (err) {
       // Rollback: remove the Auth user so the email isn't permanently locked
       // behind a half-created account the user can never log into.
@@ -93,8 +105,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  async function socialLogin(provider: 'google.com' | 'facebook.com', marketingOptIn = false, termsAccepted = false): Promise<boolean> {
+    const selected = provider === 'google.com' ? new GoogleAuthProvider() : new FacebookAuthProvider()
+    if (provider === 'facebook.com') selected.addScope('email')
+    const result = await signInWithPopup(auth, selected)
+    if (!result.user.email) { const suggestedName = result.user.displayName || ''; await signOut(auth); throw Object.assign(new Error('auth/email-required'), { suggestedName }) }
+    const existing = await getUserProfile(result.user.uid)
+    if (!existing) {
+      const name = result.user.displayName || result.user.email?.split('@')[0] || 'Dog lover'
+      await createUserProfile(result.user.uid, { email: result.user.email || '', ...splitDisplayName(name), kennelName: '', role: 'owner', marketingConsent: { channel: 'email_marketing', choice: marketingOptIn ? 'opt_in' : 'opt_out', source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox', checkboxDefault: false, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn ? new Date().toISOString() : null, revokedAt: null, email: result.user.email || '', evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1' } })
+    }
+    if (!existing && termsAccepted) await updateUserProfile(result.user.uid, { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' } })
+    if (!existing) await sendInitialVerification(result.user)
+    const loadedProfile = await getUserProfile(result.user.uid)
+    ++authGeneration.current
+    setProfile(loadedProfile); setLoading(false)
+    if (getAdditionalUserInfo(result)?.isNewUser === true) void welcomeUser(result.user)
+    return getAdditionalUserInfo(result)?.isNewUser === true
+  }
+
   async function login(email: string, password: string) {
     await signInWithEmailAndPassword(auth, email, password)
+  }
+
+  async function finishQuickSignIn(signedInUser: User, isNew: boolean, name = '', marketingOptIn = false, termsAccepted = false, allowCreate = true) {
+    const existing = await getUserProfile(signedInUser.uid)
+    if (!existing && !allowCreate) {
+      await signOut(auth)
+      throw new Error('This mobile sign-in is not linked to an existing iDogs profile. Sign in using the email for your existing account. No new iDogs profile has been created.')
+    }
+    if (!existing) {
+      const displayName = name.trim() || signedInUser.displayName || 'Dog lover'
+      if (!signedInUser.displayName) await updateProfile(signedInUser, { displayName })
+      await createUserProfile(signedInUser.uid, {
+        ...splitDisplayName(displayName), email: signedInUser.email || '', phone: signedInUser.phoneNumber || '', kennelName: '', role: 'owner',
+        ...(termsAccepted && { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' as const } }),
+        ...(termsAccepted && signedInUser.phoneNumber && { smsMarketingConsent: { channel: 'sms_marketing' as const, choice: marketingOptIn ? 'opt_in' as const : 'opt_out' as const, source: 'signup' as const, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn ? new Date().toISOString() : null, revokedAt: null, phone: signedInUser.phoneNumber, evidenceRef: 'signup-choice-v2' } }),
+        marketingConsent: { channel: 'email_marketing', choice: marketingOptIn && !!signedInUser.email ? 'opt_in' : 'opt_out', source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox', checkboxDefault: false, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn && signedInUser.email ? new Date().toISOString() : null, revokedAt: null, email: signedInUser.email || '', evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1' },
+      })
+    }
+    const nextProfile = await getUserProfile(signedInUser.uid)
+    ++authGeneration.current
+    setUser(signedInUser); setProfile(nextProfile); setLoading(false)
+    if (isNew) void welcomeUser(signedInUser)
   }
 
   async function logout() {
@@ -122,6 +175,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function resendVerificationEmail() {
     if (!auth.currentUser) return
     await sendEmailVerification(auth.currentUser)
+    rememberVerificationDelivery(auth.currentUser.uid, 'sent')
   }
 
   async function deleteAccount() {
@@ -161,12 +215,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (verified) {
       await auth.currentUser.getIdToken(true)
     }
+    if (verified && auth.currentUser.email) {
+      const currentProfile = await getUserProfile(auth.currentUser.uid)
+      if (currentProfile && currentProfile.email !== auth.currentUser.email) {
+        await updateUserProfile(auth.currentUser.uid, { email: auth.currentUser.email })
+        setProfile({ ...currentProfile, email: auth.currentUser.email })
+      }
+    }
     setUser(auth.currentUser)
     return verified
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signup, login, logout, resetPassword, refreshProfile, upgradeToBreeder, resendVerificationEmail, checkEmailVerified, deleteAccount }}>
+    <AuthContext.Provider value={{ user, profile, loading, signup, finishQuickSignIn, socialLogin, login, logout, resetPassword, refreshProfile, upgradeToBreeder, resendVerificationEmail, checkEmailVerified, deleteAccount }}>
       {children}
     </AuthContext.Provider>
   )

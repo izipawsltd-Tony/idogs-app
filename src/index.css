@@ -922,3 +922,34 @@ h1, h2, h3, h4, h5, h6 {
 .plus-promotion-terms { font-size: 12px; line-height: 1.6; margin-top: 10px; }
 .plus-promotion-consent { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; line-height: 1.6; margin-bottom: 16px; }
 .plus-promotion-consent input { flex: 0 0 auto; width: 20px; height: 20px; margin-top: 2px; }
+
+/* Keep the memory action above mobile navigation and the home indicator. */
+@media (max-width: 767px) {
+  .puppy-update-actions { position: sticky; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 8; padding: 12px 0; background: var(--white, #fff); border-top: 1px solid var(--border); }
+  .puppy-update-actions .btn-primary { flex: 1; min-height: 44px; }
+}
+
+/* Keep gallery controls legible against the dark media viewer. */
+.btn.puppy-gallery-control {
+  background: #ffffff;
+  color: #101413;
+  border: 2px solid #ffffff;
+  min-height: 44px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.btn.puppy-gallery-control:hover {
+  background: #e5f3eb;
+  color: #101413;
+  border-color: #e5f3eb;
+}
+.btn.puppy-gallery-control:focus-visible {
+  outline: 3px solid #8ee5b5;
+  outline-offset: 3px;
+}
+.btn.puppy-gallery-control:disabled {
+  background: #39413d;
+  color: #d7ded9;
+  border-color: #87948c;
+  opacity: 1;
+}

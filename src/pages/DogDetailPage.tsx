@@ -1,5 +1,10 @@
 import ReminderForm from '../components/ui/ReminderForm'
-import { useEffect, useState } from 'react'
+import { UploadModal } from './DocumentsPage'
+import { QrDocumentManager, QrDocumentSharingSummary, QrDocumentShareCheckbox, QrDocumentSharingFooter } from '../components/ui/QrDocuments'
+import PuppyUpdatesManager from '../components/ui/PuppyUpdatesManager'
+import PuppyUpdateFeed from '../components/ui/PuppyUpdateFeed'
+import { puppyUpdates, type PuppyUpdate, puppyShareUrl } from '../lib/puppyUpdates'
+import { useEffect, useRef, useCallback, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../hooks/useAuth'
@@ -161,6 +166,7 @@ export default function DogDetailPage({ toast }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [statusActionLoading, setStatusActionLoading] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
+  const [showDocumentUpload, setShowDocumentUpload] = useState(false)
   const [showEditProfile, setShowEditProfile] = useState(false)
   const [savingProfile, setSavingProfile] = useState(false)
   const [profileDraft, setProfileDraft] = useState({
@@ -398,7 +404,7 @@ export default function DogDetailPage({ toast }: Props) {
           setReminders(history.reminders || []); setRemindersError(false)
           setLifeStageEvents([]); setAuditError(false)
           setScanCount(typeof history.scanCount === 'number' ? history.scanCount : 0); setScanCountError(false)
-          const publicUrl = `${window.location.origin}/p/${d.passportId}`
+          const publicUrl = puppyShareUrl(d.passportId)
           const url = await QRCode.toDataURL(publicUrl, {
             width: 200, margin: 2, errorCorrectionLevel: 'H',
             color: { dark: '#1A3A2A', light: '#FFFFFF' }
@@ -467,7 +473,7 @@ export default function DogDetailPage({ toast }: Props) {
         setDocuments(docsRes.data); setDocumentsError(!docsRes.ok)
         setLifeStageEvents(auditRes.data.filter(e => e.action === 'life_stage_changed'))
         setAuditError(!auditRes.ok)
-        const publicUrl = `${window.location.origin}/p/${d.passportId}`
+        const publicUrl = puppyShareUrl(d.passportId)
         const url = await QRCode.toDataURL(publicUrl, {
           width: 200, margin: 2, errorCorrectionLevel: 'H',
           color: { dark: '#1A3A2A', light: '#FFFFFF' }
@@ -985,7 +991,7 @@ export default function DogDetailPage({ toast }: Props) {
     </div>
   }
 
-  const publicUrl = `${window.location.origin}/p/${dog.passportId}`
+  const publicUrl = puppyShareUrl(dog.passportId)
 
   // Only consider the latest record per vaccine group for the header status.
   // A record is "superseded" if a newer dose of the same type was given —
@@ -1216,6 +1222,7 @@ export default function DogDetailPage({ toast }: Props) {
           {canEditProfile && (
             <button onClick={openEditProfile} className="btn btn-secondary btn-sm">✎ Edit profile</button>
           )}
+          {canEditProfile && !historicalSnapshot && <button onClick={() => setShowDocumentUpload(true)} className="btn btn-primary btn-sm">+ Upload Documents</button>}
           {!isTransferred && (
             <button
               onClick={() => setShowTransfer(true)}
@@ -1322,8 +1329,8 @@ export default function DogDetailPage({ toast }: Props) {
       {tab === 'passport' && (historicalSnapshot
         ? <div className="card" style={{ padding: 20 }}><h2>Passport at transfer</h2><p>{dog.passportId || 'Not recorded'}</p><p>This history does not open the current owner's live passport.</p></div>
         : <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />)}
-      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} onRetry={retryDocuments} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
-      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} dogId={dog.id} toast={toast} error={documentsError} onRetry={retryDocuments} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'timeline' && <TimelineTab key={dog.id + (user?.uid || "")} dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
 
       {tab === 'breeding' && !isOwner && historicalSnapshot && <HistoricalBreedingTab heatCycles={historicalSnapshot.heatCycles || []} />}
       {tab === 'breeding' && !isOwner && !historicalSnapshot && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
@@ -1367,6 +1374,7 @@ export default function DogDetailPage({ toast }: Props) {
         </div>
       )}
 
+      {showDocumentUpload && canEditProfile && !historicalSnapshot && user && <UploadModal key={dog.id} dogs={[dog]} fixedDogId={dog.id} user={user} toast={toast} onClose={() => setShowDocumentUpload(false)} onSuccess={document => { setDocuments(previous => [document, ...previous]); setShowDocumentUpload(false); setTab('documents'); retryDocuments(); toast('Document uploaded. Files stay private until you choose Share on QR.', 'success') }} />}
       {/* Transfer Ownership Modal */}
       {showTransfer && dog && (
         <TransferModal
@@ -2896,8 +2904,8 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetry
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button className="btn btn-primary btn-sm" onClick={downloadQR} style={{ width: '100%' }}>⬇ Download QR PNG</button>
-          <button className="btn btn-secondary btn-sm" onClick={copyUrl} style={{ width: '100%' }}>Copy passport link</button>
-          <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ textAlign: 'center', width: '100%' }}>Preview passport ↗</a>
+          <button className="btn btn-secondary btn-sm" onClick={copyUrl} style={{ width: '100%' }}>Copy puppy / passport link</button>
+          <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ textAlign: 'center', width: '100%' }}>Preview profile &amp; updates ↗</a>
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -2925,7 +2933,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetry
 
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
-function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry, canEdit }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void; canEdit: boolean }) {
+function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, onRetry, canEdit }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; dogId: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void; canEdit: boolean }) {
   const [editingDocId, setEditingDocId] = useState<string | null>(null)
   const [editDocName, setEditDocName] = useState('')
   const { user } = useAuth()
@@ -2948,8 +2956,9 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry,
   }
 
   return (
-    <div>
+    <QrDocumentManager key={dogId} dogId={dogId} documents={documents} enabled={canEdit && !error}><div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Documents</h2>
+      {canEdit && !error && <QrDocumentSharingSummary />}
       {error ? (
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
@@ -2965,11 +2974,11 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry,
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {documents.map((doc, i) => (
-            <div key={i} style={{
+          {documents.map(doc => (
+            <div key={doc.id} style={{
               background: 'var(--white)', border: '1px solid var(--border)',
               borderRadius: 'var(--radius-md)', padding: '12px 16px',
-              display: 'flex', alignItems: 'center', gap: 14,
+              display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
             }}>
               <div style={{
                 width: 44, height: 44, borderRadius: 10,
@@ -2979,7 +2988,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry,
               }}>
                 {getDocIcon(doc.documentType)}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: '1 1 150px', minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 2 }}>
                   {editingDocId === doc.id ? (
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -2996,8 +3005,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry,
                     </div>
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      {doc.name || getDocLabel(doc.documentType)}
-                      {canEdit && <button type="button" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || '') }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>}
+                      {doc.name || doc.title || getDocLabel(doc.documentType)}
                     </span>
                   )}
                 </div>
@@ -3015,13 +3023,15 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry,
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexShrink: 1, flexWrap: 'wrap', maxWidth: '100%', marginLeft: 'auto' }}>
+                {canEdit && <QrDocumentShareCheckbox document={doc} />}
                 <button
                   onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
                   className="btn btn-secondary btn-sm"
                 >
                   View ↗
                 </button>
+                {canEdit && <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || doc.title || '') }}>Edit</button>}
                 {canEdit && <button
                   onClick={async () => {
                     if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
@@ -3044,7 +3054,8 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry,
           ))}
         </div>
       )}
-    </div>
+      {canEdit && !error && <QrDocumentSharingFooter />}
+    </div></QrDocumentManager>
   )
 }
 
@@ -3177,7 +3188,17 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   dogId: string | undefined; onNoteChanged: () => Promise<void>
   canEdit: boolean
 }) {
-  const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
+  const [updates, setUpdates] = useState<PuppyUpdate[]>([])
+  const editUpdate = useRef<(update: PuppyUpdate) => void>(() => {})
+  const bindEdit = useCallback((edit: (update: PuppyUpdate) => void) => { editUpdate.current = edit }, [])
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const events: (StoryEvent & { update?: PuppyUpdate })[] = [...buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes), ...updates.map(update => ({ date: update.date, id: 'update-' + update.id, icon: '📷', title: update.text, kind: 'note' as const, update }))].sort((a, b) => String(b.date).localeCompare(String(a.date)))
+  async function manageUpdate(id: string, action: 'delete' | 'visibility', audience?: import('../lib/puppyUpdates').UpdateAudience) {
+    setUpdateBusy(true)
+    try { await puppyUpdates({ action, dogId: dog.id, updateId: id, audience }); setUpdates(items => action === 'delete' ? items.filter(item => item.id !== id) : items.map(item => item.id === id ? { ...item, audience: audience! } : item)) }
+    catch (error) { toast(error instanceof Error ? error.message : 'Could not update story', 'error') }
+    finally { setUpdateBusy(false) }
+  }
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [editDate, setEditDate] = useState('')
@@ -3191,80 +3212,11 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   // individual event types.
   const hasIncompleteData = !!(notesError || auditError || vaccinesError || wormingError || healthTestsError)
 
-  // FIX (bug: iPhone photos ~3MB fail to upload): there was no
-  // resize/compression step before base64-encoding. Base64 inflates size
-  // by ~33%, so a 3MB photo becomes ~4MB as base64 — right at the edge of
-  // Vercel's default ~4.5MB serverless function body limit once JSON
-  // overhead (dogId, userId, mediaType) is added, and easily over it for
-  // anything slightly larger. Resizing down to a max dimension and
-  // re-encoding as JPEG at a reasonable quality keeps note photos small
-  // without a visible quality loss at the sizes they're displayed.
-
-  async function handlePhotoSelect(e: { target: { files: FileList | null } }) {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    try {
-      const prepared = await prepareImageForUpload(file)
-      setNotePhoto({ ...prepared, preview: `data:${prepared.mediaType};base64,${prepared.base64}` })
-    } catch {
-      toast('This photo could not be processed. Please try another image.', 'error')
-    }
-  }
-
   return (
     <div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>{dog.name}'s story</h2>
       <p style={{ fontSize: 13, color: 'var(--light)', marginBottom: 16 }}>Every milestone, automatically gathered in one place.</p>
-
-      {canEdit ? (
-      <div className="card" style={{ marginBottom: 20 }}>
-        <label style={{ fontSize: 12, color: 'var(--light)', display: 'block', marginBottom: 4 }}>When did this happen?</label>
-        <input
-          className="form-input"
-          type="date"
-          value={newNoteDate}
-          onChange={e => setNewNoteDate(e.target.value)}
-          max={new Date().toISOString().split('T')[0]}
-          style={{ marginBottom: 10, maxWidth: 200 }}
-        />
-        <textarea className="form-textarea" placeholder="Add a note about today…" value={newNote} onChange={e => setNewNote(e.target.value)} style={{ minHeight: 72, marginBottom: 10 }} />
-
-        {notePhoto ? (
-          <div style={{ position: 'relative', display: 'inline-block', marginBottom: 10 }}>
-            <img src={notePhoto.preview} alt="Selected" style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)' }} />
-            <button
-              type="button"
-              onClick={() => setNotePhoto(null)}
-              style={{
-                position: 'absolute', top: -8, right: -8,
-                width: 22, height: 22, borderRadius: '50%',
-                background: 'var(--dark)', color: '#fff', border: 'none',
-                fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}
-            >✕</button>
-          </div>
-        ) : (
-          <label className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', marginBottom: 10, cursor: 'pointer' }}>
-            📷 Add a photo
-            <input type="file" accept="image/*" onChange={handlePhotoSelect} style={{ display: 'none' }} />
-          </label>
-        )}
-
-        <div>
-          <button className="btn btn-primary btn-sm" onClick={onAddNote} disabled={saving || !newNote.trim() || hasIncompleteData} title={hasIncompleteData ? "Some of the dog's story failed to load — retry before adding a note" : undefined}>
-            {saving ? <span className="spinner" /> : uploadingNotePhoto ? 'Uploading photo…' : 'Add note'}
-          </button>
-          {hasIncompleteData && !saving && (
-            <span style={{ fontSize: 12, color: 'var(--light)', marginLeft: 8 }}>Retry the failed sections above before adding a note.</span>
-          )}
-        </div>
-      </div>
-      ) : (
-        <div style={{ marginBottom: 20, padding: '10px 12px', borderRadius: 8, background: 'var(--sand)', color: 'var(--mid)', fontSize: 12 }}>
-          This dog has been transferred. New owner's private notes and photos are hidden from the previous owner.
-        </div>
-      )}
+      {canEdit ? <PuppyUpdatesManager key={dog.id} dog={dog} onUpdates={setUpdates} onEditReady={bindEdit} /> : <div style={{ marginBottom: 20, padding: 12, color: 'var(--mid)', fontSize: 12 }}>This dog has been transferred. New owner's private notes and photos are hidden from the previous owner.</div>}
 
       {hasIncompleteData && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#FFF8E8', border: '1px solid #F0D590', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 13, color: '#8A6D1F' }}>
@@ -3288,7 +3240,9 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
           {/* Vertical timeline line */}
           <div style={{ position: 'absolute', left: 15, top: 6, bottom: 6, width: 2, background: 'var(--border)' }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {events.map((e, i) => (
+            {events.map((e, i) => e.update ? (
+              <div key={e.id} style={{ position: 'relative' }}><div style={{ position: 'absolute', left: -36, top: 0, width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-600)', display: 'grid', placeItems: 'center' }}>📷</div><PuppyUpdateFeed updates={[e.update]} galleryUpdates={updates} busy={updateBusy} edit={canEdit ? update => editUpdate.current(update) : undefined} manage={canEdit ? manageUpdate : undefined} /></div>
+            ) : (
               <div key={e.id ?? i} style={{ position: 'relative' }}>
                 {/* Dot on the timeline */}
                 <div style={{

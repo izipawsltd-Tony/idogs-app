@@ -29,7 +29,9 @@ export default async function handler(req, res) {
 
   let uid
   try {
-    uid = (await getAuth().verifyIdToken(idToken)).uid
+    const identity = await getAuth().verifyIdToken(idToken)
+    if (identity.email_verified !== true) return res.status(403).json({ error: 'Verify your email before transferring ownership' })
+    uid = identity.uid
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }

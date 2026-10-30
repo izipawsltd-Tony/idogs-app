@@ -60,6 +60,7 @@ export default async function handler(req, res) {
   let uid, email
   try {
     const decoded = await getAuth().verifyIdToken(idToken)
+    if (decoded.email_verified !== true) return res.status(403).json({ error: 'Verify your email to continue securely' })
     uid = decoded.uid
     email = decoded.email
   } catch (err) {

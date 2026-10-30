@@ -41,6 +41,7 @@ import { processImageForStorage, processVideoForStorage, ImagePipelineError } fr
 import { signMediaItems, MAX_MEDIA_ITEMS_PER_KIND } from './_lib/showcase-media-access.js'
 import { MEDIA_UPLOAD_GRANTS_COLLECTION, MAX_DIRECT_VIDEO_UPLOAD_BYTES } from './_lib/direct-upload.js'
 import { closePendingGrant, releasePendingQuota } from './_lib/direct-upload-grants.js'
+import { canPublish } from './_lib/puppy-updates-policy.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -126,6 +127,11 @@ async function handler(req, res) {
       return res.status(404).json({ error: 'Dog not found' })
     }
     const dog = dogSnap.data()
+    if (grant.purpose === 'puppy-update' && !canPublish(dog, uid)) {
+      await deleteObjectQuietly(bucket, grant.path)
+      await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
+      return res.status(403).json({ error: 'Only the current owner can add story media' })
+    }
     if (!canAddDogRecord(dog, uid)) {
       const reason = hasDogWriteAccess(dog, uid) && dog?.status === 'restricted' ? 'DOG_RESTRICTED' : 'NOT_OWNER'
       await deleteObjectQuietly(bucket, grant.path)
@@ -135,7 +141,7 @@ async function handler(req, res) {
 
     const kind = grant.kind
     const existingItems = (kind === 'photo' ? dog.photos : dog.videos) || []
-    if (existingItems.length >= MAX_MEDIA_ITEMS_PER_KIND) {
+    if (grant.purpose !== 'puppy-update' && existingItems.length >= MAX_MEDIA_ITEMS_PER_KIND) {
       await deleteObjectQuietly(bucket, grant.path)
       await closePendingGrant(db, grantRef, 'rejected', { rejectedAt: new Date().toISOString() })
       return res.status(409).json({ error: `This puppy already has the maximum of ${MAX_MEDIA_ITEMS_PER_KIND} ${kind}s`, reason: 'MEDIA_LIMIT_REACHED' })
@@ -214,6 +220,15 @@ async function handler(req, res) {
       if (!freshDogSnap.exists) return reject('DOG_NOT_FOUND')
       const freshDog = freshDogSnap.data()
       if (!canAddDogRecord(freshDog, uid)) return reject(hasDogWriteAccess(freshDog, uid) && freshDog?.status === 'restricted' ? 'DOG_RESTRICTED' : 'NOT_OWNER')
+      if (freshGrant.purpose === 'puppy-update') {
+        if (!canPublish(freshDog, uid)) return reject('NOT_OWNER')
+        tx.create(db.collection('puppyProfiles').doc(grant.dogId).collection('media').doc(mediaId), {
+          ...mediaItem, authorUid: uid, sourceDogId: grant.dogId, kind, createdAt: new Date(),
+        })
+        tx.update(grantRef, { status: 'confirmed', confirmedAt: new Date().toISOString() })
+        releasePendingQuota(tx, db, freshGrant)
+        return { ok: true }
+      }
       const freshItems = (kind === 'photo' ? freshDog.photos : freshDog.videos) || []
       if (freshItems.length >= MAX_MEDIA_ITEMS_PER_KIND) return reject('MEDIA_LIMIT_REACHED')
       if (freshItems.some(item => item?.hash === contentHash)) return reject('DUPLICATE_MEDIA')

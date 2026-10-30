@@ -1,3 +1,5 @@
+import EmailSigninFinishPage from '../pages/EmailSigninFinishPage'
+import { discoveryRoute } from '../lib/quickSignup'
 import React from 'react'
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -37,6 +39,8 @@ import BuyersPage from '../pages/BuyersPage'
 import FinanceDocumentsPage from '../pages/FinanceDocumentsPage'
 import ClaimDogPage from '../pages/ClaimDogPage'
 import PrivateDogPage from '../pages/PrivateDogPage'
+import FollowingPuppiesPage from '../pages/FollowingPuppiesPage'
+import PuppyUpdatesPage from '../pages/PuppyUpdatesPage'
 import SuperAdminRoute from '../super-admin/SuperAdminRoute'
 import SuperAdminLayout from '../super-admin/SuperAdminLayout'
 import SuperAdminOverviewPage from '../super-admin/pages/SuperAdminOverviewPage'
@@ -62,7 +66,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const returnTo = `${location.pathname}${location.search}`
   if (loading) return <LoadingScreen />
   if (!user) return <Navigate to={`/login?next=${encodeURIComponent(returnTo)}`} replace />
-  if (!user.emailVerified) return <Navigate to={`/verify-email?next=${encodeURIComponent(returnTo)}`} replace />
+  if (!user.emailVerified && !discoveryRoute(location.pathname)) return <Navigate to={`/verify-email?next=${encodeURIComponent(returnTo)}`} replace />
   return <>{children}</>
 }
 
@@ -90,6 +94,10 @@ function DogDetailRoute({ toast }: { toast: (msg: string, type?: ToastMessage['t
   const { dogId } = useParams<{ dogId: string }>()
   return <DogDetailPage key={dogId} toast={toast} />
 }
+function PassportRoute() {
+  const { passportId } = useParams<{ passportId: string }>()
+  return <PassportPublicPage key={passportId} />
+}
 export default function App() {
   const { toasts, toast, dismiss, dismissAll } = useToast()
 
@@ -100,7 +108,8 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage toast={toast} />} />
         <Route path="/signup" element={<SignupPage toast={toast} />} />
-        <Route path="/p/:passportId" element={<PassportPublicPage />} />
+        <Route path="/auth/finish" element={<EmailSigninFinishPage />} />
+        <Route path="/p/:passportId" element={<PassportRoute />} />
         <Route path="/s/:token" element={<ShowcasePublicPage />} />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/survey" element={<SurveyPage />} />
@@ -117,6 +126,7 @@ export default function App() {
           </ProtectedRoute>
         }>
           <Route index element={<Navigate to="/app/super-admin/dashboard" replace />} />
+          <Route path="start" element={<Navigate to="/app/dashboard" replace />} />
           <Route path="dashboard" element={<SuperAdminOverviewPage />} />
           <Route path="ai-ceo" element={<SuperAdminAiCeoPage />} />
           <Route path="organisations" element={<SuperAdminOrganisationsPage />} />
@@ -139,6 +149,7 @@ export default function App() {
           </ProtectedRoute>
         }>
           <Route index element={<Navigate to="/app/dashboard" replace />} />
+          <Route path="start" element={<Navigate to="/app/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage toast={toast} />} />
           <Route path="dogs" element={<DogListPage toast={toast} />} />
           <Route path="dogs/new" element={<DogNewPage toast={toast} />} />
@@ -159,6 +170,8 @@ export default function App() {
           <Route path="reports" element={<BreederOnlyRoute><ReportsPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="claim-dogs" element={<ClaimDogPage toast={toast} />} />
           <Route path="shared-dogs/:dogId" element={<PrivateDogPage />} />
+          <Route path="following-puppies" element={<FollowingPuppiesPage />} />
+          <Route path="puppy-updates/:passportId" element={<PuppyUpdatesPage />} />
         </Route>
 
         <Route path="*" element={<NotFoundPage />} />

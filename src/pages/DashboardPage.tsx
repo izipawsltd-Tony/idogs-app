@@ -170,6 +170,7 @@ export default function DashboardPage({ toast }: Props) {
 
   return (
     <div style={{ padding: '28px 32px' }}>
+      <Link className="btn btn-secondary" to="/app/following-puppies" style={{ marginBottom: 16 }}>🐾 Following puppies · View saved stories</Link>
 
       {anySectionErrored && (
         <div style={{
@@ -210,7 +211,7 @@ export default function DashboardPage({ toast }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
           {/* Recent Dogs */}
-          <PanelCard title="Recent Dogs" viewAllTo="/app/dogs" viewAllLabel={`View all ${activeDogs.length} →`} action={<Link to="/app/dogs/new" className="btn btn-primary btn-sm">{profile?.role === 'owner' ? '+ Create Dog ID' : '+ Add dog'}</Link>}>
+          <PanelCard title="Recent Dogs" viewAllTo="/app/dogs" viewAllLabel={`View all ${activeDogs.length} →`} action={<Link to="/app/dogs/new" className="btn btn-primary btn-sm">+ Add Dog</Link>}>
             {dogsError ? <LoadErrorState label="your dogs" /> : activeDogs.length === 0 ? (
               <div className="empty-state" style={{ padding: '32px 0' }}>
                 <div className="empty-state-icon">🐾</div>

@@ -1,27 +1,9 @@
-// src/pages/BuyersPage.tsx
-// M7 #5 — Buyers derived view.
-// Buyers are DERIVED, never stored: we read tenant-scoped dogs via getDogs()
-// and group client-side. No Buyers collection, no getDogsByBuyerEmail (not
-// tenant-scoped), no orderBy (JS sort only).
-//
-// VERIFIED IN CLAUDE CODE (index.css / Dog type / App.tsx routes actually read):
-//   1. Flat Dog fields exist: buyerName/buyerEmail/buyerPhone,
-//      reservedForName/reservedForEmail/reservedForPhone,
-//      transferredAt, reservedAt, depositStatus, depositAmount, id, name.
-//   2. index.css only defines badge-green/gold/red/gray/active/closed — there
-//      is no badge-success/badge-warning/badge-muted. Mapped to what the app
-//      already uses elsewhere for the same states: badge-gray for
-//      "Transferred" (matches DogDetailPage.tsx/DogListPage.tsx) and an
-//      inline var(--warning) tint for "Reserved" (matches the Sale &
-//      availability panel in DogDetailPage.tsx). Single source: see
-//      relationshipBadge() below.
-//   3. Dog-detail route is /app/dogs/:dogId (App.tsx) — rows link to
-//      /app/dogs/{id}, unchanged from the pasted draft.
-
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { Dog } from '../types';
 import { getDogs } from '../lib/db';
+import BuyerForm from '../components/ui/BuyerForm';
+import { buyerRequest, buyerStageLabels, type BuyerContact, type BuyerStage } from '../lib/buyers';
 import { useAuth } from '../hooks/useAuth';
 import { useRequestGuard } from '../hooks/useRequestGuard';
 
@@ -39,6 +21,7 @@ interface Buyer {
   email: string;
   phone: string;
   dogs: BuyerDog[];
+  contact?: BuyerContact;
   reservedCount: number;
   transferredCount: number;
   lastActivity: number;
@@ -118,7 +101,7 @@ function resolveIdentity(
   return { key, email, phone, name: name.trim(), relationship };
 }
 
-function buildBuyers(dogs: Dog[]): Buyer[] {
+export function buildBuyers(dogs: Dog[], contacts: BuyerContact[] = []): Buyer[] {
   const map = new Map<string, Buyer>();
 
   for (const dog of dogs) {
@@ -154,6 +137,16 @@ function buildBuyers(dogs: Dog[]): Buyer[] {
     if (activity > buyer.lastActivity) buyer.lastActivity = activity;
   }
 
+  for (const contact of contacts) {
+    const contactKey = contact.email || `finance-${contact.documents?.[0]?.id || contact.id}`;
+    let buyer = map.get(contactKey);
+    if (!buyer) {
+      buyer = { key: contactKey, name: contact.name, email: contact.email, phone: contact.phone, dogs: [], reservedCount: 0, transferredCount: 0, lastActivity: 0 };
+      map.set(contactKey, buyer);
+    }
+    buyer.contact = contact;
+    buyer.name = contact.name; buyer.phone = contact.phone;
+  }
   const buyers = Array.from(map.values());
   for (const b of buyers) {
     b.dogs.sort((a, c) => c.activity - a.activity);
@@ -167,14 +160,28 @@ function buildBuyers(dogs: Dog[]): Buyer[] {
   return buyers;
 }
 
+export function buyerStages(buyer: Buyer): BuyerStage[] {
+  const stages = new Set<BuyerStage>();
+  for (const { dog, relationship } of buyer.dogs) stages.add(relationship === 'transferred' ? 'transferred' : dog.depositStatus === 'received' ? 'deposit' : 'reserved');
+  // Canonical puppy state wins over a previously recorded CRM stage.
+  if (buyer.contact && !(buyer.contact.status === 'enquiry' && buyer.dogs.length > 0) && (!['reserved', 'deposit'].includes(buyer.contact.status) || !buyer.dogs.some(d => d.dog.id === buyer.contact?.dogId))) stages.add(buyer.contact.status);
+  if (buyer.contact?.documents?.some(doc => doc.depositPaidCents > 0)) stages.add('deposit');
+  return [...stages];
+}
+
 // --- component -------------------------------------------------------------
 
 export default function BuyersPage() {
   const { user } = useAuth();
+  const [params] = useSearchParams();
   const [dogs, setDogs] = useState<Dog[]>([]);
+  const [contacts, setContacts] = useState<BuyerContact[]>([]);
+  const [editing, setEditing] = useState<BuyerContact | null | undefined>(undefined);
+  const [stage, setStage] = useState('all');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(params.get('buyerEmail') || '');
 
   const [reloadToken, setReloadToken] = useState(0);
   // Codex round 15: this page previously had NO useAuth/user dependency
@@ -190,16 +197,16 @@ export default function BuyersPage() {
     // Clear the previous account's buyers immediately on an account
     // switch — a stale buyer list from a former account must never
     // linger into the new one's view.
-    setDogs([]);
+    setDogs([]); setContacts([]); setEditing(undefined);
     setError('');
     if (!user) { setLoading(false); return; }
     const req = beginRequest();
     setLoading(true);
     (async () => {
       try {
-        const data = await getDogs();
+        const [data, result] = await Promise.all([getDogs(), buyerRequest({ action: 'list' })]);
         if (!req.isCurrent()) return;
-        setDogs(data);
+        setDogs(data); setContacts(result.buyers);
       } catch {
         if (!req.isCurrent()) return;
         setError('Could not load buyers. Please try again.');
@@ -209,37 +216,43 @@ export default function BuyersPage() {
     })();
   }, [user?.uid, reloadToken]);
 
-  const buyers = useMemo(() => buildBuyers(dogs), [dogs]);
+  const buyers = useMemo(() => buildBuyers(dogs, contacts), [dogs, contacts]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return buyers;
+    const staged = buyers.filter(b => (stage === 'all' || buyerStages(b).includes(stage as BuyerStage)) && (!params.get('documentId') || b.contact?.documents?.some(d => d.id === params.get('documentId'))));
+    if (!q) return staged;
     const qDigits = q.replace(/\D/g, '');
-    return buyers.filter((b) => {
+    return staged.filter((b) => {
       if (b.name.toLowerCase().includes(q)) return true;
       if (b.email.includes(q)) return true;
-      if (qDigits && b.phone.includes(qDigits)) return true;
+      if (qDigits && b.phone.replace(/\D/g, '').includes(qDigits)) return true;
       return b.dogs.some((d) => (d.dog.name || '').toLowerCase().includes(q));
     });
-  }, [buyers, search]);
+  }, [buyers, search, stage, params]);
 
   return (
-    <div style={{ padding: 32 }}>
+    <div style={{ padding: 'clamp(16px, 4vw, 32px)' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap' }}>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)', margin: 0 }}>Buyers</h1>
+        <button className="btn btn-primary" onClick={() => { setEditing(null); setNotice(''); }} disabled={loading || !!error || editing !== undefined}>＋ Add buyer</button>
         {/* Codex round 15: hide the count badge entirely on a load
             failure — showing 0 (or a stale prior count) implies a real,
             current answer that we don't actually have. */}
         {!error && <span className="badge badge-gray">{buyers.length}</span>}
       </div>
       <p style={{ marginTop: '0.25rem', color: 'var(--mid)' }}>
-        Derived from reservations and transfers. Nothing here is stored separately.
+        Manage enquiries, waiting lists, deposits and past buyers in one place.
       </p>
 
+      {notice && <p role="status">{notice}</p>}
+      {editing !== undefined && <BuyerForm key={editing?.id || 'new'} contact={editing || undefined} dogs={dogs.filter(d => d.status !== 'transferred' && (d.currentOwnerId || d.tenantId) === user?.uid && d.tenantId === user?.uid)} cancel={() => setEditing(undefined)} saved={() => { setEditing(undefined); setStage('all'); setSearch(''); setReloadToken(t => t + 1); setNotice('Buyer saved.'); }} />}
       {!loading && !error && buyers.length > 0 && (
-        <div style={{ margin: '1rem 0' }}>
+        <div style={{ margin: '1rem 0', display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          <label>Filter by status<select className="form-input" value={stage} onChange={e => setStage(e.target.value)}><option value="all">All buyers</option>{Object.entries(buyerStageLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <input
             className="form-input"
+            aria-label="Search buyers"
             type="text"
             value={search}
             placeholder="Search buyers, emails, or dogs"
@@ -265,14 +278,14 @@ export default function BuyersPage() {
       {!loading && !error && buyers.length === 0 && (
         <div className="card">
           <p style={{ margin: 0, color: 'var(--mid)' }}>
-            No buyers yet. Buyers appear here once you reserve or transfer a dog.
+            No buyers yet. Choose Add buyer to start your waiting list or record a deposit.
           </p>
         </div>
       )}
 
       {!loading && !error && buyers.length > 0 && filtered.length === 0 && (
         <div className="card">
-          <p style={{ margin: 0, color: 'var(--mid)' }}>No buyers match that search.</p>
+          <p style={{ margin: 0, color: 'var(--mid)' }}>No buyers match these filters.</p>
         </div>
       )}
 
@@ -298,6 +311,8 @@ export default function BuyersPage() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                  {buyerStages(b).map(value => <span key={value} className={value === 'deposit' ? 'badge badge-green' : 'badge badge-gray'}>{buyerStageLabels[value]}</span>)}
+                  <button className="btn btn-secondary btn-sm" disabled={editing !== undefined} onClick={() => { setNotice(''); setEditing(b.contact ? (b.dogs.some(d => d.dog.id === b.contact?.dogId && d.relationship === 'transferred') ? { ...b.contact, status: 'transferred', dogId: '' } : b.contact) : { id: '', name: b.name, email: b.email, phone: b.phone, notes: '', status: b.transferredCount ? 'transferred' : b.dogs.some(d => d.dog.depositStatus === 'received') ? 'deposit' : 'reserved', dogId: b.dogs.find(d => d.relationship === 'reserved')?.dog.id || '', amount: b.dogs.find(d => d.relationship === 'reserved')?.dog.depositAmount ?? null }); }}>Edit buyer</button>
                   {b.reservedCount > 0 && (
                     <span className="badge" style={{ background: 'var(--gray-100)', color: 'var(--warning)' }}>{b.reservedCount} reserved</span>
                   )}
@@ -307,6 +322,13 @@ export default function BuyersPage() {
                 </div>
               </div>
 
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                {(['invoice', 'receipt'] as const).map(type => <Link key={type} className="btn btn-secondary btn-sm" to={`/app/finance?${new URLSearchParams({ buyerEmail: b.email, create: type, dogId: b.dogs.find(d => d.relationship === 'reserved')?.dog.id || b.contact?.dogId || '' })}`}>Create {type}</Link>)}
+                <Link className="btn btn-secondary btn-sm" to={`/app/finance?${new URLSearchParams(b.email ? { buyerEmail: b.email } : { documentId: b.contact?.documents?.[0]?.id || '' })}`}>View invoices / receipts</Link>
+              </div>
+              {!!b.contact?.documents?.length && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 12 }}>{b.contact.documents.map(doc => <Link key={doc.id} to={`/app/finance?documentId=${encodeURIComponent(doc.id)}`}>{doc.documentNumber} · {doc.dogName}</Link>)}</div>}
+              {b.contact?.notes && <p style={{ whiteSpace: 'pre-wrap', color: 'var(--mid)' }}><strong>Private notes: </strong>{b.contact.notes}</p>}
+              {b.contact?.dogId && !b.dogs.some(d => d.dog.id === b.contact?.dogId) && <p><Link to={`/app/dogs/${b.contact.dogId}`}>View linked puppy</Link></p>}
               <div
                 style={{
                   display: 'flex',

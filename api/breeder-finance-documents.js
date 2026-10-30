@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { prepareFinanceBuyer } from './_lib/finance-buyers.js'
 import { FieldValue } from 'firebase-admin/firestore'
 import { verifyBreeder, cleanText, cleanEmail, cleanMoneyCents } from './_lib/breeder-finance-auth.js'
 
@@ -60,8 +62,9 @@ function serialize(doc) {
   }
 }
 
-export default async function handler(req, res) {
-  const auth = await verifyBreeder(req)
+export function createFinanceDocumentsHandler(verify = verifyBreeder) { return async function handler(req, res) {
+  res.setHeader('Cache-Control', 'private, no-store')
+  const auth = await verify(req)
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error })
   const { uid, email, profile, db } = auth
 
@@ -82,7 +85,9 @@ export default async function handler(req, res) {
   const type = TYPES.has(body.type) ? body.type : ''
   if (!type) return res.status(400).json({ error: 'Invalid document type' })
 
-  const dogId = cleanText(body.dogId, 160)
+  const dogId = cleanText(body.dogId, 128)
+  if (!/^[\w-]{1,128}$/.test(dogId)) return res.status(400).json({ error: 'Choose a valid puppy' })
+  if (body.paymentPurpose && !['deposit', 'balance', 'other'].includes(body.paymentPurpose)) return res.status(400).json({ error: 'Invalid payment purpose' })
   if (!dogId) return res.status(400).json({ error: 'Dog is required' })
 
   try {
@@ -108,17 +113,31 @@ export default async function handler(req, res) {
     if (type === 'refund' && refundAmountCents <= 0) return res.status(400).json({ error: 'Refund amount must be greater than zero' })
 
     const counterRef = db.collection('financeCounters').doc(uid)
-    const documentRef = db.collection('financeDocuments').doc()
+    const requestId = typeof body.requestId === 'string' && /^[\w-]{8,100}$/.test(body.requestId) ? body.requestId : ''
+    const documentRef = requestId ? db.collection('financeDocuments').doc(createHash('sha256').update(uid + '\n' + requestId).digest('hex')) : db.collection('financeDocuments').doc()
     const year = docYear(issueDate)
 
     let documentNumber = ''
     await db.runTransaction(async tx => {
+      const existingDocument = await tx.get(documentRef)
+      if (existingDocument.exists) { if (existingDocument.data().tenantId !== uid) throw Object.assign(new Error('Document not authorised'), { status: 403 }); documentNumber = existingDocument.data().documentNumber; return }
+      const freshDog = await tx.get(db.collection('dogs').doc(dogId))
+      if (!freshDog.exists || freshDog.data().tenantId !== uid) throw Object.assign(new Error('Puppy access changed. Refresh and retry.'), { status: 409 })
       const counterSnap = await tx.get(counterRef)
+      if (body.originalDocumentId) {
+        if (!/^[\w-]{1,160}$/.test(body.originalDocumentId)) throw Object.assign(new Error('Invalid linked invoice'), { status: 400 })
+        const original = await tx.get(db.collection('financeDocuments').doc(body.originalDocumentId))
+        const source = original.data()
+        if (!original.exists || source.tenantId !== uid || source.type !== 'invoice' || source.dog?.id !== dogId || (source.buyer?.email || '').toLowerCase() !== buyer.email) throw Object.assign(new Error('Linked invoice does not match this puppy and buyer.'), { status: 409 })
+        body.originalDocumentNumber = source.documentNumber
+      }
+      const link = await prepareFinanceBuyer({ db, tx, uid, buyer, dog: freshDog.data(), dogId, type, body, depositPaidCents, amountPaidCents, timestamp: () => FieldValue.serverTimestamp() })
       const current = counterSnap.exists ? (counterSnap.data() || {}) : {}
       const field = type + 'Seq'
       const next = Number(current[field] || 0) + 1
       documentNumber = `${PREFIX[type]}-${year}-${String(next).padStart(5, '0')}`
 
+      link.apply()
       tx.set(counterRef, { [field]: next, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
       tx.set(documentRef, {
         tenantId: uid,
@@ -128,6 +147,9 @@ export default async function handler(req, res) {
         dueDate: type === 'invoice' ? dueDate : '',
         seller,
         buyer,
+        buyerId: link.buyerId,
+        paymentPurpose: type === 'receipt' ? body.paymentPurpose || 'other' : '',
+        depositTotalCents: link.depositTotalCents,
         dog: {
           id: dogSnap.id,
           name: cleanText(dog.name, 120),
@@ -147,6 +169,7 @@ export default async function handler(req, res) {
         paymentMethod: cleanText(body.paymentMethod, 80),
         paymentReference: cleanText(body.paymentReference, 120),
         originalDocumentNumber: cleanText(body.originalDocumentNumber, 80),
+        originalDocumentId: cleanText(body.originalDocumentId, 160),
         refundReason: cleanText(body.refundReason, 500),
         notes: cleanText(body.notes, 1500),
         status: type === 'invoice' ? 'issued' : type === 'receipt' ? 'paid' : 'refunded',
@@ -159,6 +182,9 @@ export default async function handler(req, res) {
     return res.status(201).json({ document: serialize(created) })
   } catch (error) {
     console.error('finance-documents create failed', { code: error?.code || 'unknown' })
-    return res.status(500).json({ error: 'Failed to create finance document' })
+    return res.status([400,403,409].includes(error?.status) ? error.status : 500).json({ error: [400,403,409].includes(error?.status) ? error.message : 'Failed to create finance document' })
   }
 }
+
+}
+export default createFinanceDocumentsHandler()

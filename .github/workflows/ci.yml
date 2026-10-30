@@ -40,6 +40,11 @@ jobs:
           node --test scripts/test-legacy-history-recovery.mjs
           node scripts/test-webhook-handler.mjs
           node scripts/test-sms-addon-v1.mjs
+          node scripts/test-showcase-media-pipeline.mjs
+          node scripts/test-showcase-v2.mjs
+          node scripts/test-showcase-private-dog-access.mjs
+          node scripts/test-showcase-public-page.mjs
+          node scripts/test-litter-showcase-public.mjs
 
       - name: Production build
         run: npm run build

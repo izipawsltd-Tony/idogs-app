@@ -307,8 +307,9 @@ export default function DocumentsPage({ toast }: Props) {
 
 // ── UPLOAD MODAL ─────────────────────────────────────────────
 
-function UploadModal({ dogs, user, onClose, onSuccess, toast }: {
+export function UploadModal({ dogs, user, onClose, onSuccess, toast, fixedDogId }: {
   dogs: Dog[]
+  fixedDogId?: string
   user: { getIdToken: () => Promise<string> }
   onClose: () => void
   onSuccess: (doc: any) => void
@@ -317,7 +318,8 @@ function UploadModal({ dogs, user, onClose, onSuccess, toast }: {
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [docType, setDocType] = useState('other')
-  const [dogId, setDogId] = useState(dogs[0]?.id || '')
+  const [selectedDogId, setDogId] = useState(dogs[0]?.id || '')
+  const dogId = fixedDogId || selectedDogId
   const [title, setTitle] = useState('')
   const [notes, setNotes] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -373,18 +375,18 @@ function UploadModal({ dogs, user, onClose, onSuccess, toast }: {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+    <div className="modal-overlay" onClick={() => { if (!uploading) onClose() }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="document-upload-title" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Upload Document</h2>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--light)', lineHeight: 1 }}>×</button>
+          <h2 id="document-upload-title" style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Upload Document</h2>
+          <button aria-label="Close upload" disabled={uploading} onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--light)', lineHeight: 1 }}>×</button>
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Dog selector */}
           <div className="form-group">
             <label className="form-label">Dog *</label>
-            <select className="form-select" value={dogId} onChange={e => setDogId(e.target.value)} required>
+            <select aria-label="Dog" className="form-select" value={dogId} disabled={!!fixedDogId || uploading} onChange={e => setDogId(e.target.value)} required>
               {dogs.filter(d => (d as any).status !== 'transferred').map(d => (
                 <option key={d.id} value={d.id}>{d.name} — {d.breed}</option>
               ))}

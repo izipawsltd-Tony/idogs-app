@@ -285,7 +285,7 @@ export default function DogListPage({ toast }: Props) {
             {loadError ? 'Dog count unavailable — load failed' : `${activeDogs.length} dog${activeDogs.length !== 1 ? 's' : ''} registered`}
           </p>
         </div>
-        <Link to="/app/dogs/new" className="btn btn-primary">{isOwner ? '+ Create Dog ID' : '+ Add dog'}</Link>
+        <Link to="/app/dogs/new" className="btn btn-primary">+ Add Dog</Link>
       </div>
 
       {/* Filters — hidden entirely on a load failure: search/stage/
@@ -406,7 +406,7 @@ export default function DogListPage({ toast }: Props) {
             <div className="empty-state-icon">🔍</div>
             <div className="empty-state-title">{search ? 'No dogs found' : 'No dogs yet'}</div>
             <div className="empty-state-desc">{search ? 'Try a different search term.' : 'Add your first dog to get started.'}</div>
-            {!search && <Link to="/app/dogs/new" className="btn btn-primary" style={{ marginTop: 8 }}>{isOwner ? 'Create Dog ID' : 'Add dog'}</Link>}
+            {!search && <Link to="/app/dogs/new" className="btn btn-primary" style={{ marginTop: 8 }}>+ Add Dog</Link>}
           </div>
         </div>
       ) : (

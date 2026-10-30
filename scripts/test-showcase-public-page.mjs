@@ -57,8 +57,9 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
   const forbiddenFieldRefs = [
     '.microchip', '.tenantId', '.currentOwnerId', '.createdByUserId', '.buyerEmail', '.buyerName',
     '.reservedForName', '.reservedForEmail', '.reservedForPhone', '.depositAmount', '.depositStatus',
-    '.notes', '.breederIdValue', '.passportId', '.profilePhoto',
+    '.notes', '.breederIdValue', '.profilePhoto',
   ]
+  check('Approved permanent QR profile link is encoded and offers puppy following', pageSrc.includes('encodeURIComponent(puppy.passportId)') && pageSrc.includes('story →'))
   for (const ref of forbiddenFieldRefs) {
     check(`ShowcasePublicPage source never references "${ref}"`, !pageSrc.includes(ref))
   }

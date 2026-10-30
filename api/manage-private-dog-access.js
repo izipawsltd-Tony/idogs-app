@@ -36,8 +36,11 @@ async function handler(req, res) {
 
   let uid
   try {
-    uid = (await getAuth().verifyIdToken(token)).uid
-  } catch {
+    const identity = await getAuth().verifyIdToken(token)
+    if (identity.email_verified !== true) throw new ApiError(403, 'Verify your email before sharing private updates')
+    uid = identity.uid
+  } catch (error) {
+    if (error?.status === 403) throw error
     throw new ApiError(401, 'Invalid or expired token')
   }
 

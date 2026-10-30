@@ -14,6 +14,7 @@ export const ACCOUNT_QUERIES = {
   mediaUploadQuotas: ['uid', 'userId'], smsDeliveries: ['tenantId'], reminderEmailDeliveries: ['tenantId'], auditLogs: ['tenantId', 'userId'],
   supportConversations: ['ownerUid'], supportMessages: ['senderUid'], supportFaqFeedback: ['ownerUid'],
   accountDeletionRenewalTasks: ['uid'],
+  buyerContacts: ['ownerUid'],
 }
 const DOG_COLLECTIONS = ['vaccineRecords', 'wormingRecords', 'healthTests', 'reminders', 'activityNotes',
   'documents', 'heatCycles', 'dogPrivateAccess', 'scanLogs', 'mediaUploadGrants', 'passportReservations']

@@ -1,130 +1,45 @@
-import { useState, useEffect, FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
-import { safeAppReturnTo } from '../lib/returnTo'
+import { signupDestination } from '../lib/quickSignup'
+import PasswordlessSignIn from '../components/ui/PasswordlessSignIn'
+import AuthLayout from '../components/ui/AuthLayout'
+import SocialSignIn from '../components/ui/SocialSignIn'
+import SignupConsent from '../components/ui/SignupConsent'
 
-interface Props {
-  toast: (msg: string, type?: ToastMessage['type']) => void
-}
-
+interface Props { toast: (msg: string, type?: ToastMessage['type']) => void }
 export default function LoginPage({ toast }: Props) {
-  const { user, login } = useAuth()
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const returnTo = safeAppReturnTo(searchParams.get('next'))
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (user) {
-      navigate(returnTo, { replace: true })
-    }
-  }, [user, navigate, returnTo])
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    setError('')
-    setIsSubmitting(true)
-    try {
-      await login(email, password)
-      // Do not set isSubmitting to false on success, keep showing loading screen
-      // until the useEffect redirects to /app/dashboard
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Login failed'
-      if (msg.includes('user-not-found') || msg.includes('wrong-password') || msg.includes('invalid-credential')) {
-        setError('Incorrect email or password.')
-      } else {
-        setError('Something went wrong. Please try again.')
-      }
-      setIsSubmitting(false)
-    }
+  const { login, socialLogin } = useAuth(), navigate = useNavigate()
+  const [params] = useSearchParams(), returnTo = signupDestination(params.get('next'))
+  const [method, setMethod] = useState<'email' | 'phone'>('email')
+  const [email, setEmail] = useState(''), [password, setPassword] = useState(''), [show, setShow] = useState(false)
+  const [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const [socialChoice, setSocialChoice] = useState<'google.com' | 'facebook.com' | null>(null)
+  const [agreed, setAgreed] = useState(false), [promotions, setPromotions] = useState(true), [promotionsConfirmed, setPromotionsConfirmed] = useState(false)
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError('')
+    try { await login(email.trim(), password); navigate(returnTo, { replace: true }) }
+    catch { setError('Could not sign in. Check your email and password, or reset your password.'); setBusy(false) }
   }
-
-  if (isSubmitting) return <LoadingScreen />
-
-  return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'var(--sand)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 24,
-    }}>
-      <div style={{ width: '100%', maxWidth: 400 }}>
-
-        {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <Link to="/" style={{ display: 'inline-block', textDecoration: 'none' }}>
-            <img
-              src="/01_idogs_primary_horizontal_transparent.png"
-              alt="iDogs"
-              style={{ height: 72, width: 240, objectFit: 'contain' }}
-            />
-          </Link>
-        </div>
-
-        <div className="card" style={{ padding: '32px 28px' }}>
-          <h1 style={{ fontSize: 22, fontFamily: 'var(--font-display)', marginBottom: 6, color: 'var(--dark)' }}>Welcome back</h1>
-          <p style={{ fontSize: 14, color: 'var(--light)', marginBottom: 28 }}>Sign in to your kennel account</p>
-
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div className="form-group">
-              <label className="form-label">Email address</label>
-              <input
-                className="form-input"
-                type="email"
-                placeholder="you@email.com.au"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                required
-                autoFocus
-              />
-            </div>
-
-            <div className="form-group">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <label className="form-label">Password</label>
-                <Link to="/forgot-password" style={{ fontSize: 12, color: 'var(--green)', textDecoration: 'none' }}>Forgot password?</Link>
-              </div>
-              <input
-                className="form-input"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
-              />
-            </div>
-
-            {error && (
-              <div style={{ padding: '10px 12px', borderRadius: 8, background: '#FEF2F2', border: '1px solid #FECACA', fontSize: 13, color: 'var(--error)' }}>
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="btn btn-primary"
-              style={{ width: '100%', height: 46, fontSize: 15, marginTop: 4 }}
-              disabled={isSubmitting}
-            >
-              Sign in
-            </button>
-          </form>
-        </div>
-
-        <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--mid)' }}>
-          Don't have an account?{' '}
-          <Link to={`/signup?next=${encodeURIComponent(returnTo)}`} style={{ color: 'var(--green)', fontWeight: 500, textDecoration: 'none' }}>
-            Create free account
-          </Link>
-        </p>
-      </div>
-    </div>
-  )
+  async function social() {
+    if (!socialChoice || !agreed) return
+    setBusy(true); setError('')
+    try { const created = await socialLogin(socialChoice, promotions && promotionsConfirmed, true); if (created) toast('Welcome to iDogs!'); navigate(returnTo, { replace: true }) }
+    catch { setError('Could not sign in with this provider. Try email or mobile number.'); setBusy(false) }
+  }
+  const puppy = returnTo.startsWith('/p/')
+  return <AuthLayout title="Welcome back" description="Sign in to keep your dog’s story close." backTo={puppy ? returnTo.split('?')[0] : '/'} backLabel={puppy ? 'Back to dog profile' : 'Back to iDogs'}>
+    <div className="idogs-auth-tabs" aria-label="Choose how to sign in"><button type="button" aria-pressed={method === 'email'} disabled={busy} onClick={() => setMethod('email')}>Email</button><button type="button" aria-pressed={method === 'phone'} disabled={busy} onClick={() => setMethod('phone')}>Mobile number</button></div>
+    {method === 'email' ? <form className="idogs-auth-form" onSubmit={submit}>
+      <label>Email address<input className="form-input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required disabled={busy} placeholder="you@example.com" /></label>
+      <label>Password<span className="idogs-auth-password"><input className="form-input" type={show ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required disabled={busy} /><button type="button" className="btn btn-secondary" aria-label={show ? 'Hide password' : 'Show password'} onClick={() => setShow(v => !v)}>{show ? 'Hide' : 'Show'}</button></span></label>
+      <Link to="/forgot-password" style={{ fontSize: 13 }}>Forgot password?</Link>
+      {error && <p role="alert" className="idogs-auth-error">{error}</p>}
+      <button className="btn btn-primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+    </form> : <PasswordlessSignIn next={returnTo} phoneOnly onBusyChange={setBusy} />}
+    <div className="idogs-auth-divider">or</div><SocialSignIn busy={busy} onContinue={setSocialChoice} />
+    {socialChoice && <div className="idogs-auth-form"><p className="idogs-auth-small">For your first visit, please confirm your account preferences. Existing preferences will stay as they are.</p><SignupConsent agreed={agreed} onAgree={setAgreed} promotions={promotions} onPromotions={value => { setPromotions(value); setPromotionsConfirmed(true) }} promotionsConfirmed={promotionsConfirmed} busy={busy} /><button type="button" className="btn btn-primary" disabled={busy || !agreed} onClick={() => void social()}>Continue with {socialChoice === 'google.com' ? 'Google' : 'Facebook'}</button></div>}
+    <p className="idogs-auth-switch">New to iDogs? <Link to={`/signup?next=${encodeURIComponent(returnTo)}`}>Create free account</Link></p>
+  </AuthLayout>
 }

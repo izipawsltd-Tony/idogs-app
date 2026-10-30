@@ -12,6 +12,7 @@ const NATIVE_QA_BLOCKED_API_PATHS = new Set([
   '/api/create-sms-addon-checkout',
   '/api/remove-sms-addon',
   '/api/send-email',
+  '/api/welcome-user',
   '/api/send-reminders',
   '/api/send-sms',
   '/api/create-showcase-enquiry',
