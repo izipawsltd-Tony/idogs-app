@@ -159,8 +159,24 @@ test('uncertain capture without a receipt keeps its source lease active and comp
 })
 test('capture rejects changed identity and a worker that installed its lock first',async()=>{
   const f=await fixture();f.cleanupEmail=`changed-${f.uid}@example.invalid`;await auth.updateUser(f.uid,{email:f.cleanupEmail,emailVerified:true})
-  await assert.rejects(f.outbox().capture({idToken:f.token}),/DELETION_OUTBOX_IDENTITY_CHANGED/)
+  // Email changes may revoke the existing token before the identity hash check.
+  // Both barriers must reject without creating any capture state.
+  await assert.rejects(f.outbox().capture({idToken:f.token}),e=>e.code==='auth/id-token-revoked'||e.message==='DELETION_OUTBOX_IDENTITY_CHANGED')
   assert.equal((await f.lease.get()).exists,false)
+  assert.equal((await f.ref.get()).exists,false)
+  // Exercise the pinned identity check with an actually verified fresh token.
+  // Emulator validSince has millisecond precision while JWT iat is seconds;
+  // bounded real sign-ins may wait for that validity boundary, never alter it.
+  let freshToken
+  for(let attempt=0;attempt<20;attempt++){
+    const response=await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=synthetic`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:f.cleanupEmail,password:'Emulator-fixture-only-42!',returnSecureToken:true})})
+    assert.equal(response.status,200);const token=(await response.json()).idToken
+    try{assert.equal((await auth.verifyIdToken(token,true)).uid,f.uid);freshToken=token;break}
+    catch(e){if(e.code!=='auth/id-token-revoked')throw e;await new Promise(resolve=>setTimeout(resolve,100))}
+  }
+  assert.ok(freshToken,'Fresh sign-in must pass actual revocation verification within the bounded real-time window')
+  await assert.rejects(f.outbox().capture({idToken:freshToken}),/DELETION_OUTBOX_IDENTITY_CHANGED/)
+  assert.equal((await f.lease.get()).exists,false);assert.equal((await f.ref.get()).exists,false)
   const g=await fixture();await db.doc(`accountDeletionLocks/${g.uid}`).set({revision:1,state:'processing'})
   await assert.rejects(g.outbox().capture({idToken:g.token}),/DELETION_OUTBOX_CAPTURE_TOO_LATE/)
   assert.equal((await g.ref.get()).exists,false)
