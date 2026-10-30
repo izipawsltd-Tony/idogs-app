@@ -1,4 +1,4 @@
-import { withAccountMutationFence } from './_lib/deletion-fence.js'
+import { withAccountMutationFence, assertPrototypeAccountLocksTx } from './_lib/deletion-fence.js'
 // api/transfer-dog.js — atomic ownership transfer + immutable privacy snapshot
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -55,6 +55,7 @@ function cleanString(v, max = 500) {
 
       const dog = dogSnap.data()
       if (!hasDogWriteAccess(dog, uid)) throw Object.assign(new Error('NOT_OWNER'), { status: 403 })
+      await assertPrototypeAccountLocksTx(tx, db, [uid])
       if (dog.status === 'transferred' || dog.transferStatus === 'pendingClaim') {
         throw Object.assign(new Error('TRANSFER_ALREADY_PENDING'), { status: 409 })
       }

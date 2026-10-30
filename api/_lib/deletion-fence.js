@@ -40,6 +40,18 @@ export async function assertAccountWritableTx(tx, db, uid) {
   if ((await tx.get(db.collection(DELETION_LOCKS).doc(uid))).exists) throw denied('ACCOUNT_DELETION_LOCKED')
 }
 
+// Route transactions must re-read locks after the outer ingress lease. This
+// stays strictly emulator-only; ordinary deployments retain existing behavior.
+export async function assertPrototypeAccountLocksTx(tx, db, accounts) {
+  if (process.env.ACCOUNT_DELETION_MODE !== 'prototype-emulator') return
+  const [{ getAuth }, { getStorage }] = await Promise.all([
+    import('firebase-admin/auth'), import('firebase-admin/storage'),
+  ])
+  const auth = getAuth(), projectId = auth.app.options.projectId
+  requireDeletionEmulators({ projectId, db, auth, bucket: getStorage().bucket(`${projectId}.firebasestorage.app`) })
+  if (!Array.isArray(accounts) || !accounts.length || accounts.length > 200 || accounts.some(uid => !validAccountId(uid))) throw denied('INVALID_MUTATION_SCOPE')
+  for (const uid of [...new Set(accounts)].sort()) await assertAccountWritableTx(tx, db, uid)
+}
 export async function beginAccountMutation(db, accounts, operation = 'account-mutation') {
   const uids = [...new Set(accounts)].sort()
   if (!uids.length || uids.length > 200 || uids.some(uid => !validAccountId(uid))) throw denied('INVALID_MUTATION_SCOPE')

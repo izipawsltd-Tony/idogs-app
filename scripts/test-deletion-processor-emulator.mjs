@@ -1310,3 +1310,50 @@ test('document storage rechecks the deletion lock after preflight and before the
     assert.equal((await db.doc(`accountMutationLeases/${session.leaseId}`).get()).data().state,'active')
   }finally{await barrier.close()}
 })
+
+async function invokeTransferRoute(modulePath, identity, body) {
+  const handler = (await import(modulePath)).default
+  const response = {statusCode:200,headersSent:false,status(code){this.statusCode=code;return this},json(value){this.body=value;this.headersSent=true;return this}}
+  await handler({method:'POST',headers:{authorization:`Bearer ${identity.token}`},query:{},body},response)
+  return response
+}
+async function withLockAfterIngressLease(uid, run) {
+  const original=db.runTransaction
+  let installed=false
+  db.runTransaction=async function(...args){
+    const result=await original.apply(db,args)
+    if(!installed){installed=true;await db.doc(`accountDeletionLocks/${uid}`).create({revision:1,state:'processing'})}
+    return result
+  }
+  try{return await run()}finally{db.runTransaction=original;assert.equal(installed,true)}
+}
+for(const locked of ['source','destination'])test(`actual claim transaction rejects ${locked} lock installed after ingress lease`,async()=>{
+  const ref=db.doc('dogs/synthetic-transfer-guard')
+  const dog={tenantId:owner.uid,currentOwnerId:owner.uid,status:'transferred',transferStatus:'pendingClaim',buyerEmail:other.email,transferredAt:'2026-01-01T00:00:00Z'}
+  await ref.create(dog);const original=await ref.get()
+  await db.doc(`users/${other.uid}`).create({plan:'free',role:'owner'})
+  const response=await withLockAfterIngressLease(locked==='source'?owner.uid:other.uid,()=>invokeTransferRoute('../api/claim-transferred-dogs.js',other,{action:'claim'}))
+  assert.equal(response.statusCode,423);assert.equal(response.body.message,'ACCOUNT_DELETION_LOCKED')
+  const current=await ref.get();assert.equal(versionOf(current),versionOf(original));assert.deepEqual(current.data(),dog)
+  assert.equal((await db.collection('ownershipHistorySnapshots').get()).empty,true)
+})
+test('actual claim preserves original breeder and plan-cap restriction under transaction lock checks',async()=>{
+  await db.doc(`users/${other.uid}`).create({plan:'free',role:'owner'})
+  for(const index of [1,2])await db.doc(`dogs/synthetic-existing-recipient-${index}`).create({tenantId:other.uid,currentOwnerId:other.uid,status:'active',createdAt:'2025-01-01'})
+  const ref=db.doc('dogs/synthetic-transfer-guard')
+  await ref.create({tenantId:owner.uid,currentOwnerId:owner.uid,status:'transferred',transferStatus:'pendingClaim',buyerEmail:other.email,transferredAt:'2026-01-01T00:00:00Z'})
+  const response=await invokeTransferRoute('../api/claim-transferred-dogs.js',other,{action:'claim'})
+  assert.equal(response.statusCode,200);assert.equal(response.body.claimed,1)
+  const dog=(await ref.get()).data()
+  assert.equal(dog.tenantId,owner.uid);assert.equal(dog.currentOwnerId,other.uid)
+  assert.equal(dog.status,'restricted');assert.equal(dog.restrictionReason,'plan_cap_exceeded')
+  assert.equal(Object.hasOwn(dog,'transferStatus'),false)
+})
+test('actual transfer transaction rejects owner lock installed after ingress lease without creating history',async()=>{
+  const ref=db.doc('dogs/synthetic-transfer-guard'),dog={tenantId:owner.uid,currentOwnerId:owner.uid,status:'active',name:'Synthetic guarded transfer'}
+  await ref.create(dog);const original=await ref.get()
+  const response=await withLockAfterIngressLease(owner.uid,()=>invokeTransferRoute('../api/transfer-dog.js',owner,{dogId:ref.id,buyerName:'Synthetic buyer',buyerEmail:other.email}))
+  assert.equal(response.statusCode,423);assert.equal(response.body.error,'ACCOUNT_DELETION_LOCKED')
+  const current=await ref.get();assert.equal(versionOf(current),versionOf(original));assert.deepEqual(current.data(),dog)
+  assert.equal((await db.collection('ownershipHistorySnapshots').get()).empty,true)
+})
