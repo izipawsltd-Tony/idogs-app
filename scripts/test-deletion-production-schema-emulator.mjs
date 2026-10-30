@@ -100,13 +100,38 @@ test('owned-dog deletion cannot classify cross-dog descendant references as excl
   await unchanged()
 })
 
-test('buyer contact omitted by account query still forces conservative planner hold',async()=>{
-  const s=await seed(),contact=`buyerContacts/contact-${s.nonce}`
+test('owner-scoped buyer contact is discovered while retention and worker holds remain',async()=>{
+  const s=await seed(),contact=`buyerContacts/contact-${s.nonce}`,foreign=`buyerContacts/foreign-${s.nonce}`
   await put(contact,{ownerUid:s.uid,name:'Synthetic buyer',email:`buyer-${s.nonce}@example.invalid`,status:'enquiry'})
+  await put(foreign,{ownerUid:s.other,name:'Other owner buyer',email:`foreign-${s.nonce}@example.invalid`,status:'enquiry'})
   const inventory=await buildDeletionInventory({db,uid:s.uid}),scan=await scanDeletionDocuments(db),plan=await buildEmulatorDeletionPlan({db,bucket,uid:s.uid})
-  assert.equal(inventory.records.some(r=>r.path===contact),false,'Document current query omission explicitly, not completeness')
+  assert.equal(inventory.records.find(r=>r.path===contact)?.disposition,'review_buyer_contact_retention')
+  assert.equal(inventory.records.some(r=>r.path===foreign),false,'A different owner is not admitted by the restored query')
+  assert.equal(JSON.stringify(inventory).includes(`buyer-${s.nonce}@example.invalid`),false,'Manifest does not expose buyer contact contents')
   assert.ok(inventory.unknownCollections.includes('buyerContacts'));assert.ok(inventory.holds.includes('unclassified_collections'))
+  assert.equal(inventory.complete,false);assert.equal(inventory.readyForDeletion,false)
   assert.ok(scan.records.some(r=>r.path===contact));assert.ok(plan.holds.includes('unclassified_record_review'))
+  assert.equal(plan.operations.some(o=>[contact,foreign].includes(o.path)),false);await workerHeld();await unchanged()
+})
+
+test('bounded buyer contact discovery reports truncation without widening owner scope',async()=>{
+  const s=await seed(),paths=[`buyerContacts/contact-a-${s.nonce}`,`buyerContacts/contact-b-${s.nonce}`],foreign=`buyerContacts/contact-foreign-${s.nonce}`
+  for(const path of paths)await put(path,{ownerUid:s.uid,name:'Synthetic bounded buyer'})
+  await put(foreign,{ownerUid:s.other,name:'Synthetic unrelated buyer'})
+  const inventory=await buildDeletionInventory({db,uid:s.uid,limit:1}),contacts=inventory.records.filter(r=>r.path.startsWith('buyerContacts/'))
+  assert.equal(contacts.length,1);assert.ok(paths.includes(contacts[0].path))
+  assert.ok(inventory.truncated.includes('buyerContacts:ownerUid'));assert.ok(inventory.holds.includes('query_truncated'))
+  assert.ok(inventory.unknownCollections.includes('buyerContacts'));assert.equal(inventory.readyForDeletion,false)
+  assert.equal(contacts[0].disposition,'review_buyer_contact_retention');await unchanged()
+})
+
+test('buyer retention review is not replaced by an associated dog disposition',async()=>{
+  const s=await seed(),contact=`buyerContacts/linked-${s.nonce}`
+  await put(`dogs/${s.dog}`,{tenantId:s.uid,currentOwnerId:s.uid,name:'Synthetic owned buyer dog'})
+  await put(contact,{ownerUid:s.uid,dogId:s.dog,name:'Synthetic linked buyer'})
+  const inventory=await buildDeletionInventory({db,uid:s.uid}),plan=await buildEmulatorDeletionPlan({db,bucket,uid:s.uid})
+  assert.equal(inventory.records.find(r=>r.path===contact)?.disposition,'review_buyer_contact_retention')
+  assert.ok(inventory.unknownCollections.includes('buyerContacts'));assert.ok(plan.holds.includes('unclassified_record_review'))
   assert.equal(plan.operations.some(o=>o.path===contact),false);await workerHeld();await unchanged()
 })
 

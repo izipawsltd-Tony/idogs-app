@@ -13,8 +13,12 @@ export const ACCOUNT_QUERIES = {
   litterQuotaLedger: ['tenantId', 'userId'], mediaUploadGrants: ['uid', 'userId', 'tenantId'],
   mediaUploadQuotas: ['uid', 'userId'], smsDeliveries: ['tenantId'], reminderEmailDeliveries: ['tenantId'], auditLogs: ['tenantId', 'userId'],
   supportConversations: ['ownerUid'], supportMessages: ['senderUid'], supportFaqFeedback: ['ownerUid'],
+  buyerContacts: ['ownerUid'],
   accountDeletionRenewalTasks: ['uid'],
 }
+// Query coverage is not a retention/disposition decision. These records stay
+// unclassified even after their owner-scoped discovery query is restored.
+const REVIEW_ONLY_COLLECTIONS = new Set(['buyerContacts'])
 const DOG_COLLECTIONS = ['vaccineRecords', 'wormingRecords', 'healthTests', 'reminders', 'activityNotes',
   'documents', 'heatCycles', 'dogPrivateAccess', 'scanLogs', 'mediaUploadGrants', 'passportReservations']
 const LITTER_COLLECTIONS = ['litterShowcases', 'showcaseEnquiries', 'litterPuppyOperations', 'smsDeliveries']
@@ -108,6 +112,7 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
     else if (dogState === 'review_legacy_ownership') disposition = 'review_legacy_ownership'
     else if (dogId && !dogState) disposition = 'review_unresolved_dog'
     else if (dogState === 'review_owned_data') disposition = 'review_owned_data'
+    if (REVIEW_ONLY_COLLECTIONS.has(collection)) disposition = 'review_buyer_contact_retention'
     // Discovery of unscanned nested data always blocks a complete-inventory claim.
     try { for (const c of await document.ref.listCollections()) subcollections.add(c.path) }
     catch { errors.add(`${collection}:subcollections`) }
@@ -115,7 +120,7 @@ export async function buildDeletionInventory({ db, uid, limit = 200, now = Date.
       disposition, media: collection === 'plusPromotionCheckouts' ? { paths: [], legacyUrlCount: 0 } : mediaReferences(data) })
   }
   records.sort((a, b) => a.path.localeCompare(b.path))
-  const unknownCollections = rootCollections.filter(c => !EXPECTED_GLOBAL_COLLECTIONS.has(c) && c !== 'users').sort()
+  const unknownCollections = rootCollections.filter(c => (REVIEW_ONLY_COLLECTIONS.has(c) || !EXPECTED_GLOBAL_COLLECTIONS.has(c)) && c !== 'users').sort()
   const holds = ['write_freeze_not_verified', 'billing_provider_verification', 'storage_object_inventory',
     'external_provider_retention', 'shared_history_retention_review']
   if (errors.size) holds.push('query_failed')

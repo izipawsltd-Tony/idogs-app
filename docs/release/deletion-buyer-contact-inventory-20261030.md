@@ -1,0 +1,11 @@
+# Buyer-contact read-only discovery restoration — 30 October 2026
+
+The Production baseline has a buyerContacts ownerUid query that was missing from the release inventory. Recursive plan discovery still quarantined matching buyer contacts, but the operator manifest omitted them. Restoring the exact owner-scoped query makes that omission visible without deciding retention or granting deletion.
+
+ACCOUNT_QUERIES now includes buyerContacts:[ownerUid]. Existing per-query limit+1, total cap, error/truncation handling and media/version discovery remain intact. No email query, owner fallback or global buyer collection scan is introduced. The manifest still contains only paths/versions/disposition/media summaries, not buyer names or email values.
+
+Query inclusion must not silently classify the collection: EXPECTED_GLOBAL_COLLECTIONS is derived from query keys, so a new explicit REVIEW_ONLY_COLLECTIONS set preserves buyerContacts in unknownCollections and the unclassified_collections hold. Each discovered contact gets review_buyer_contact_retention after dog-based classification, including a contact linked to an owned dog. readyForDeletion and complete remain false. The execution planner's KNOWN set is unchanged and its actual worker must hold before staging destructive operations.
+
+The existing actual SDK case now verifies inclusion, exclusion of another owner's contact, no buyer email in the manifest and preservation/worker hold. Two new SDK cases verify bounded owner-query truncation and retention-review precedence over an associated owned dog's disposition. Exact nonce/content/version/generation fixture cleanup remains unchanged. This is inventory coverage, not a new retention policy, historical-contact completeness or Production activation.
+
+Syntax and whitespace checks PASS. Actual combined emulator/CI evidence is pending the exact source push; do not substitute the prior131-case result. Local emulator retries remain deferred because the prior machine environment exhausted native memory. The existing shared/pinned suite includes these cases before any isolated cloud fixture stage. No App Store, binary, live provider, credential, IAM, resource, message or original retention fixture changed.
