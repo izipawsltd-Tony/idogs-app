@@ -86,3 +86,15 @@ test('SDK wrappers preserve guard classification and expose only fixed diagnosti
  })
  assert.equal(calls.length,1)
 })
+test('receipt hashes only validated primitive bindings, never opaque SDK response fields',async t=>{
+ const f=fixture()
+ // These unbound fields model values which cannot be serialized by the generic
+ // planner digest. They carry no account/nonce authority and must not enter it.
+ f.values[1].opaqueSdkValue=1n
+ f.values[2].opaqueSdkValue=2n
+ const calls=transport(t,(_,n)=>f.values[n-1])
+ const result=await (await createCloudStripeReadback(f.args)).read()
+ assert.equal(result.httpAttempts,3);assert.equal(result.realTestBindingVerified,true)
+ assert.match(result.providerBindingHash,/^[a-f0-9]{64}$/);assert.equal(calls.length,3)
+ assert.ok(!JSON.stringify(result).includes('opaqueSdkValue'))
+})

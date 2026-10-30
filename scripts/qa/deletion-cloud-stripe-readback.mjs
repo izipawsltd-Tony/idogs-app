@@ -63,12 +63,12 @@ export async function createCloudStripeReadback({db,auth,bucket,runId,manifest,s
   step='customer'
   const customer=await client.customers.retrieve(original.stripeCustomerId)
   binding(customer);ensure(customer.id===original.stripeCustomerId&&!customer.deleted,'STRIPE_READBACK_CUSTOMER_CHANGED')
-  responses.push(digest(customer))
+  responses.push(digest({id:customer.id,livemode:customer.livemode,uid:customer.metadata.firebaseUid,runId:customer.metadata.deletionQaRunId}))
   step='subscription'
   const subscription=await client.subscriptions.retrieve(original.stripeSubscriptionId)
   step='subscription_response'
   binding(subscription);ensure(subscription.id===original.stripeSubscriptionId&&subscription.customer===original.stripeCustomerId,'STRIPE_READBACK_SUBSCRIPTION_CHANGED')
-  responses.push(digest(subscription))
+  responses.push(digest({id:subscription.id,customerId:subscription.customer,livemode:subscription.livemode,uid:subscription.metadata.firebaseUid,runId:subscription.metadata.deletionQaRunId}))
   step='final_runtime'
   await runtime()
   return Object.freeze({schema:1,...ci,manifestHash,accountId,providerBindingHash:digest(responses),readOnly:true,httpAttempts:attempted.size,
