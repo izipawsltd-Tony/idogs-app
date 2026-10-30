@@ -80,7 +80,7 @@ test('SDK wrappers preserve guard classification and expose only fixed diagnosti
  const reader=await createCloudStripeReadback(f.args)
  await assert.rejects(reader.read(),e=>{
   assert.equal(e.code,'STRIPE_READBACK_OUTCOME_UNKNOWN')
-  assert.deepEqual(e.readbackDiagnostic,{step:'account',httpAttempts:1,errorType:'StripeConnectionError'})
+  assert.equal(e.readbackDiagnostic.step,'account');assert.equal(e.readbackDiagnostic.httpAttempts,1);assert.equal(e.readbackDiagnostic.errorType,'StripeConnectionError');assert.equal(e.readbackDiagnostic.errorName,'Error');assert.ok(e.readbackDiagnostic.sourceLocation===null||/^deletion-cloud-stripe-readback[.]mjs:[0-9]+:[0-9]+$/.test(e.readbackDiagnostic.sourceLocation))
   assert.equal(JSON.stringify(e.readbackDiagnostic).includes('private response'),false)
   return true
  })

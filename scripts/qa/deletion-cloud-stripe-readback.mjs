@@ -36,7 +36,7 @@ export async function createCloudStripeReadback({db,auth,bucket,runId,manifest,s
  const paths=['/v1/account',`/v1/customers/${original.stripeCustomerId}`,`/v1/subscriptions/${original.stripeSubscriptionId}`]
  const attempted=new Set(),responses=[]
  const native=Stripe.createNodeHttpClient()
- let client,started=false,accountVerified=false,step='account'
+ let client,started=false,accountVerified=false,step='account',lastHttpStatus=null
  const pinned=()=>ensure(client.getMaxNetworkRetries()===0&&client.getApiField('host')==='api.stripe.com'&&client.getApiField('protocol')==='https'
   &&Number(client.getApiField('port'))===443&&client.getApiField('timeout')===5000,'STRIPE_READBACK_SETTINGS_CHANGED')
  const httpClient={getClientName:()=> 'manifest-bound-test-readback',makeRequest:async(host,port,path,method,headers,body,protocol,timeout)=>{
@@ -47,7 +47,7 @@ export async function createCloudStripeReadback({db,auth,bucket,runId,manifest,s
   ensure(path===paths[0]||accountVerified,'STRIPE_READBACK_ACCOUNT_REQUIRED')
   await runtime();pinned()
   ensure(!attempted.has(path),'STRIPE_READBACK_ALREADY_ATTEMPTED');attempted.add(path)
-  try{return await native.makeRequest(host,port,path,method,headers,body,protocol,timeout)}
+  try{const response=await native.makeRequest(host,port,path,method,headers,body,protocol,timeout);lastHttpStatus=response.getStatusCode();return response}
   catch(cause){throw Object.assign(new Error('STRIPE_READBACK_OUTCOME_UNKNOWN',{cause}),{code:'STRIPE_READBACK_OUTCOME_UNKNOWN'})}
  }}
  client=new Stripe(stripeKey,{host:'api.stripe.com',port:443,protocol:'https',timeout:5000,maxNetworkRetries:0,telemetry:false,httpClient})
@@ -66,6 +66,7 @@ export async function createCloudStripeReadback({db,auth,bucket,runId,manifest,s
   responses.push(digest(customer))
   step='subscription'
   const subscription=await client.subscriptions.retrieve(original.stripeSubscriptionId)
+  step='subscription_response'
   binding(subscription);ensure(subscription.id===original.stripeSubscriptionId&&subscription.customer===original.stripeCustomerId,'STRIPE_READBACK_SUBSCRIPTION_CHANGED')
   responses.push(digest(subscription))
   step='final_runtime'
@@ -78,7 +79,10 @@ export async function createCloudStripeReadback({db,auth,bucket,runId,manifest,s
    const candidate=cause?.code||cause?.detail?.code
    const code=/^(STRIPE_READBACK_|CLOUD_QA_)[A-Z0-9_]+$/.test(candidate||'')?candidate:'STRIPE_READBACK_PROVIDER_FAILURE'
    const type=['StripeConnectionError','StripeAuthenticationError','StripePermissionError','StripeAPIError','StripeInvalidRequestError','StripeRateLimitError'].includes(cause?.type)?cause.type:'other'
-   const error=Object.assign(new Error(code,{cause}),{code,readbackDiagnostic:{step,httpAttempts:attempted.size,errorType:type}})
+   const errorName=['TypeError','RangeError','Error'].includes(cause?.name)?cause.name:'provider'
+   const ownedFrame=String(cause?.stack||'').match(/(deletion-cloud-stripe-readback\.mjs|deletion-plan\.js):(\d+):(\d+)/)
+   const sourceLocation=ownedFrame?`${ownedFrame[1]}:${ownedFrame[2]}:${ownedFrame[3]}`:null
+   const error=Object.assign(new Error(code,{cause}),{code,readbackDiagnostic:{step,httpAttempts:attempted.size,errorType:type,errorName,sourceLocation,lastHttpStatus}})
    if(Number.isInteger(cause?.statusCode))error.statusCode=cause.statusCode
    throw error
   }
