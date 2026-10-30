@@ -44,6 +44,7 @@ const loginSrc = fs.readFileSync(new URL('../src/pages/LoginPage.tsx', import.me
 const signupSrc = fs.readFileSync(new URL('../src/pages/SignupPage.tsx', import.meta.url), 'utf8')
 const verifySrc = fs.readFileSync(new URL('../src/pages/VerifyEmailPage.tsx', import.meta.url), 'utf8')
 const returnToSrc = fs.readFileSync(new URL('../src/lib/returnTo.ts', import.meta.url), 'utf8')
+const signupRouteSrc = fs.readFileSync(new URL('../src/lib/quickSignup.ts', import.meta.url), 'utf8')
 
 check('grant endpoint gates grant on canGrantPrivateDogAccess', /canGrantPrivateDogAccess\(dog, uid\)/.test(manageSrc))
 check('buyer endpoint requires Firebase verified email', /decoded\.email_verified !== true/.test(viewSrc))
@@ -60,7 +61,7 @@ check('public Showcase litter projection does not return total puppyIds', !/cons
 check('ProtectedRoute preserves the requested private dog path through sign-in', /next=\$\{encodeURIComponent\(returnTo\)\}/.test(protectedSrc))
 check('login preserves a validated destination and lets protected routes enforce deeper verification', /signupDestination\(params.get\('next'\)\)/.test(loginSrc) && /navigate\(returnTo, \{ replace: true \}\)/.test(loginSrc) && /!discoveryRoute\(location.pathname\)/.test(appSrc))
 check('signup preserves the requested path and delegates deeper verification to the guarded route', /signupDestination/.test(signupSrc) && /navigate\(returnTo/.test(signupSrc) && /!discoveryRoute\(location.pathname\)/.test(appSrc))
-check('email verification returns the buyer to the requested private dog path', /safeAppReturnTo/.test(verifySrc) && /navigate\(returnTo/.test(verifySrc))
+check('email verification preserves the private dog path through the shared safe app/QR destination policy', /signupDestination\(searchParams.get\('next'\)\)/.test(verifySrc) && /navigate\(returnTo/.test(verifySrc) && signupRouteSrc.includes('safeAppReturnTo(next)') && signupRouteSrc.includes('safeAppReturnTo(nested)'))
 check('post-auth redirect is constrained to internal /app routes', /startsWith\('\/app\/'\)/.test(returnToSrc) && /includes\('\:\/\/'\)/.test(returnToSrc))
 
 // =========================================================================

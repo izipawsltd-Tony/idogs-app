@@ -1,3 +1,4 @@
+import { hasFirebaseAccountAuth } from './_lib/auth-source-check.mjs'
 // scripts/test-showcase-media-pipeline.mjs — regression coverage for the
 // Litter Showcase media/HEIC pipeline (Slice 2, commit 3/5).
 //
@@ -174,7 +175,7 @@ const { check, checkAsync, skip, summary } = makeChecker()
   const uploadMediaSrc = readFileSync(new URL('../api/upload-showcase-media.js', import.meta.url), 'utf8')
   const updateMediaSrc = readFileSync(new URL('../api/update-showcase-media.js', import.meta.url), 'utf8')
 
-  check('upload-showcase-media.js requires a valid Firebase ID token', /verifyIdToken/.test(uploadMediaSrc))
+  check('upload-showcase-media.js requires a valid Firebase ID token', hasFirebaseAccountAuth(uploadMediaSrc))
   check('upload-showcase-media.js reuses canAddDogRecord (ownership + not-restricted), not a bespoke check',
     /canAddDogRecord\(dog, uid\)/.test(uploadMediaSrc))
   check('upload-showcase-media.js generates a safe, unguessable filename via crypto.randomUUID(), never a client-supplied name',
@@ -253,7 +254,7 @@ const { check, checkAsync, skip, summary } = makeChecker()
 
   // ── api/get-showcase-media-urls.js — breeder's own authenticated view ──
   const getUrlsSrc = readFileSync(new URL('../api/get-showcase-media-urls.js', import.meta.url), 'utf8')
-  check('get-showcase-media-urls.js requires a valid Firebase ID token', /verifyIdToken/.test(getUrlsSrc))
+  check('get-showcase-media-urls.js requires a valid Firebase ID token', hasFirebaseAccountAuth(getUrlsSrc))
   check('media viewing uses current ownership or an immutable former-owner snapshot',
     getUrlsSrc.includes('if (!isCurrentOwner)') && getUrlsSrc.includes("collection('ownershipHistorySnapshots')") && getUrlsSrc.includes('mediaDog = latest.data().dog'))
   check('media viewing signs the selected live or historical photo/video arrays',

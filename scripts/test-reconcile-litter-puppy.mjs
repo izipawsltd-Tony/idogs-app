@@ -1,3 +1,4 @@
+import { hasFirebaseAccountAuth } from './_lib/auth-source-check.mjs'
 // scripts/test-reconcile-litter-puppy.mjs — regression coverage for
 // api/reconcile-litter-puppy.js (Codex fix-round, Finding 3), which had
 // NO dedicated test file before this one despite being the actual fix
@@ -34,7 +35,7 @@ const { check, skip, summary } = makeChecker()
 // =========================================================================
 {
   const src = readFileSync(new URL('../api/reconcile-litter-puppy.js', import.meta.url), 'utf8')
-  check('requires a valid Firebase ID token', /verifyIdToken/.test(src))
+  check('requires a valid Firebase ID token', hasFirebaseAccountAuth(src))
   check('requires the caller to be BOTH currentOwnerId and tenantId — never a former breeder or a buyer who merely claimed it',
     /dog\.currentOwnerId !== uid \|\| dog\.tenantId !== uid/.test(src))
   check('refuses a dog with no litterId (not a litter puppy at all)', /NOT_A_LITTER_PUPPY/.test(src))

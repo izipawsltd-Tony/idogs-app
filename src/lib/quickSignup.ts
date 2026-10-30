@@ -5,7 +5,9 @@ export function discoveryRoute(path: string): boolean {
 export function signupDestination(next?: string | null): string {
   if (next === '/verify-email' || next?.startsWith('/verify-email?')) {
     const target = new URL(next, 'https://idogs.invalid')
-    return `/verify-email?next=${encodeURIComponent(safeAppReturnTo(target.searchParams.get('next')))}`
+    const nested = target.searchParams.get('next')
+    const destination = nested && /^\/p\/[A-Za-z0-9_-]{1,128}(?:\?follow=1)?$/.test(nested) ? nested : safeAppReturnTo(nested)
+    return `/verify-email?next=${encodeURIComponent(destination)}`
   }
   if (next && /^\/p\/[A-Za-z0-9_-]{1,128}(?:\?follow=1)?$/.test(next)) return next
   const puppy = next?.match(/^\/app\/puppy-updates\/([A-Za-z0-9_-]{1,128})(\?follow=1)?$/)

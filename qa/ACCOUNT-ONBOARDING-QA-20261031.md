@@ -39,7 +39,7 @@ Link chỉ hoạt động trên máy này khi emulator/server đang chạy. Reco
 
 ## Kết quả đã kiểm chứng
 
-- TypeScript/build local PASS; 67 files / **539 regression tests PASS**.
+- TypeScript/build local PASS; 68 files / **545 regression tests PASS**.
 - **8 Auth + Firestore emulator integration tests PASS**: phone signin đúng UID cũ; email conflict không merge; chưa verified không ready; email verified chưa đủ nếu chưa chứng minh mật khẩu; email-only sync không mở quyền quản lý; password confirmation/reset giữ UID/dog/subscription markers; signin lại bằng email giữ dữ liệu; OTP session sau migration vẫn phải xác nhận password; public GET/POST QR feed chỉ thấy public update; unlink phone không bypass; đổi email/disabled làm readiness mất hiệu lực.
 - Kiểm thử service và UI có session switch, conflict, delivery failure giữ account, unverified email, gate fail-closed, flag-off compatibility và original QR destination. Follow từ QR đi qua setup khi cần, rồi giữ ý định Follow đúng puppy; chọn Keep browsing bỏ auto-follow để không mắc vòng lặp setup.
 - Integration dùng subscription/Stripe customer **dữ liệu giả**, không phải kiểm tra hay thay đổi subscription Stripe thật.
@@ -48,6 +48,8 @@ Link chỉ hoạt động trên máy này khi emulator/server đang chạy. Reco
 ## Giới hạn và trước production
 
 Chưa kiểm tra end-to-end từng nghiệp vụ quản lý trên cloud với gate bật, SMS/email delivery thật, Safari iPhone hay quota/get-call budget của mọi query trong rules prototype. Firebase token/rules có giới hạn freshness thông thường; API đọc lại Auth hiện tại, còn rules dùng claims của token và readiness document. Cần review triển khai/revocation cho rollout thực tế.
+
+Source audits được cập nhật để lần theo shared verifier tới Firebase SDK và readiness gate, thay vì chỉ tìm tên hàm cũ. Audit private-dog redirect cũng kiểm shared safe app/QR policy mới; verify/reset vẫn giữ nguyên QR/follow destination và chặn external redirects. Ngoài các kiểm tra CI bắt buộc, audit landing-media cũ còn 6 lỗi kỳ vọng markup/video-limit và audit showcase-fix-round cũ còn 1 lỗi kỳ vọng compressed-upload path trên các feature không đổi trong task này. Không tính hai suite đó là PASS; không sửa nghiệp vụ landing/upload để ép các kỳ vọng cũ qua.
 
 Thêm kiểm tra Auth/readiness làm tăng request/read: API gate đọc Auth user + readiness; rules có thể thêm một read readiness theo request/cache của Firestore. Password proof thêm một Auth REST verification và các ghi proof/rate-limit. Chưa chốt chi phí cloud; không thay billing/subscription hay nâng Identity Platform.
 

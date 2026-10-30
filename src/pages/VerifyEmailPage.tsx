@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
-import { safeAppReturnTo } from '../lib/returnTo'
+import { signupDestination } from '../lib/quickSignup'
 import { verifyBeforeUpdateEmail } from 'firebase/auth'
 import { verificationDelivery } from '../lib/signupVerification'
 import { auth } from '../lib/firebase'
@@ -17,7 +17,7 @@ export default function VerifyEmailPage({ toast }: Props) {
   const { user, loading, logout, resendVerificationEmail, checkEmailVerified } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const returnTo = safeAppReturnTo(searchParams.get('next'))
+  const returnTo = signupDestination(searchParams.get('next'))
   const [checking, setChecking] = useState(false)
   const [resending, setResending] = useState(false)
   const [cooldown, setCooldown] = useState(0)

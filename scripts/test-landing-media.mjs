@@ -1,3 +1,4 @@
+import { hasFirebaseAccountAuth } from './_lib/auth-source-check.mjs'
 // scripts/test-landing-media.mjs — regression coverage for the
 // self-managed Landing Page Media feature (Super Admin -> Landing Page
 // Media): api/_lib/admin-access.js, api/_lib/landing-media.js,
@@ -46,7 +47,7 @@ const { check, checkAsync, skip, summary } = makeChecker()
   check('isSuperAdminEmail rejects null/undefined/empty', !isSuperAdminEmail(null) && !isSuperAdminEmail(undefined) && !isSuperAdminEmail(''))
 
   const adminAccessSrc = readFileSync(new URL('../api/_lib/admin-access.js', import.meta.url), 'utf8')
-  check('requireSuperAdmin verifies the Firebase ID token before doing anything else', /verifyIdToken\(idToken\)/.test(adminAccessSrc))
+  check('requireSuperAdmin verifies the Firebase ID token before doing anything else', hasFirebaseAccountAuth(adminAccessSrc))
   check('requireSuperAdmin requires email_verified === true, not just a matching email string', /email_verified !== true/.test(adminAccessSrc))
   check('requireSuperAdmin checks the token\'s OWN decoded email, never a client-supplied header/body field', !/req\.body\.email/.test(adminAccessSrc) && !/req\.headers\[.x-.*email/i.test(adminAccessSrc))
 

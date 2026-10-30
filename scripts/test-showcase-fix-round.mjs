@@ -1,3 +1,4 @@
+import { hasFirebaseAccountAuth } from './_lib/auth-source-check.mjs'
 // scripts/test-showcase-fix-round.mjs — regression coverage for three
 // confirmed staging bugs fixed together in one round: puppy Price/Deposit
 // input corruption ("price limited to $10"), HEIC/HEIF upload failure,
@@ -161,7 +162,7 @@ check('Showcase has no queued upload or Promise.allSettled media path',
 {
   const uploadSrc = readFileSync(new URL('../api/upload-showcase-media.js', import.meta.url), 'utf8')
   check('api/upload-showcase-media.js still requires a verified Firebase ID token before anything else (untouched by the HEIC client-side fix)',
-    /verifyIdToken/.test(uploadSrc))
+    hasFirebaseAccountAuth(uploadSrc))
   check('api/upload-showcase-media.js still checks dog ownership/write-access before accepting an upload, via canAddDogRecord/hasDogWriteAccess (untouched by the HEIC client-side fix)',
     /canAddDogRecord|hasDogWriteAccess/.test(uploadSrc))
 }

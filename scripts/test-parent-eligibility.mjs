@@ -1,3 +1,4 @@
+import { hasFirebaseAccountAuth } from './_lib/auth-source-check.mjs'
 // Regression coverage for the canonical server-side breeding-parent
 // eligibility policy (fix/sire-heat-cycle, Codex round 3, Blocker 1).
 //
@@ -189,7 +190,7 @@ function eligibleDog(overrides = {}) {
   check('save-heat-cycle.js does CREATE validation + write inside db.runTransaction (appears at least twice: create and update paths)',
     (heatSrc.match(/await db\.runTransaction\(async \(tx\) => \{/g) || []).length >= 2)
   check('Both endpoints verify a Firebase ID token before doing anything (uid comes from the verified token, never the body)',
-    /verifyIdToken\(idToken\)/.test(apiSrc) && /verifyIdToken\(idToken\)/.test(heatSrc))
+    hasFirebaseAccountAuth(apiSrc) && hasFirebaseAccountAuth(heatSrc))
 }
 
 // ── Emulator integration section (skipped gracefully if unavailable) ──

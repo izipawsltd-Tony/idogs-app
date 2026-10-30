@@ -1,3 +1,4 @@
+import { hasFirebaseAccountAuth } from './_lib/auth-source-check.mjs'
 // scripts/test-pricing-integration-checks.mjs — structural/source checks
 // for the parts of iDogs Pricing v1.1 that aren't cleanly unit-testable
 // in isolation (full HTTP handlers wired directly to firebase-admin, not
@@ -66,7 +67,7 @@ check(
 
 check(
   'export-report.js requires a verified Firebase ID token before touching any data',
-  exportSource.includes('getAuth().verifyIdToken(idToken)')
+  hasFirebaseAccountAuth(exportSource)
 )
 check(
   'export-report.js gates PDF/CSV export on the Plus plan',

@@ -9,7 +9,7 @@ import {
   reload,
   User, GoogleAuthProvider, FacebookAuthProvider, signInWithPopup, updateProfile, getAdditionalUserInfo
 } from 'firebase/auth'
-import { splitDisplayName } from '../lib/quickSignup'
+import { signupDestination, splitDisplayName } from '../lib/quickSignup'
 import { welcomeUser } from '../lib/welcomeUser'
 import { sendInitialVerification, rememberVerificationDelivery } from '../lib/signupVerification'
 import { auth } from '../lib/firebase'
@@ -26,7 +26,7 @@ interface AuthContextType {
   socialLogin: (provider: 'google.com' | 'facebook.com', marketingOptIn?: boolean, termsAccepted?: boolean) => Promise<boolean>
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
-  resetPassword: (email: string) => Promise<void>
+  resetPassword: (email: string, next?: string) => Promise<void>
   refreshProfile: (fromServer?: boolean) => Promise<void>
   upgradeToBreeder: () => Promise<void>
   resendVerificationEmail: () => Promise<void>
@@ -161,8 +161,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(null)
   }
 
-  async function resetPassword(email: string) {
-    await sendPasswordResetEmail(auth, email)
+  async function resetPassword(email: string, next?: string) {
+    if (next && onboardingQaEnabled()) await sendPasswordResetEmail(auth, email, { url: `${location.origin}/login?next=${encodeURIComponent(signupDestination(next))}` })
+    else await sendPasswordResetEmail(auth, email)
   }
 
   async function upgradeToBreeder() {

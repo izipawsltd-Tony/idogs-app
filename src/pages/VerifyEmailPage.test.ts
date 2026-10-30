@@ -12,8 +12,14 @@ let tree: ReactTestRenderer
 function Destination() { const l = useLocation(); return createElement('output', {}, l.pathname + l.search) }
 beforeEach(() => { vi.stubGlobal('location', {origin:'https://qa.example.invalid'}); s.user = { uid: 'phone-qa', email: null, emailVerified: false }; s.check.mockReset().mockResolvedValue(false); s.send.mockReset().mockResolvedValue(undefined); s.resend.mockReset().mockResolvedValue(undefined); s.logout.mockReset().mockResolvedValue(undefined); s.toast.mockClear() })
 afterEach(() => { if (tree) act(() => tree.unmount());vi.unstubAllGlobals() })
-async function render() { await act(async () => { tree = create(createElement(MemoryRouter, { initialEntries: ['/verify-email?next=%2Fapp%2Fshared-dogs%2Fruby'] }, createElement(Routes, {}, createElement(Route, { path: '/verify-email', element: createElement(VerifyEmailPage, { toast: s.toast }) }), createElement(Route, { path: '*', element: createElement(Destination) })))) }) }
+async function render(next='/app/shared-dogs/ruby') { await act(async () => { tree = create(createElement(MemoryRouter, { initialEntries: ['/verify-email?next='+encodeURIComponent(next)] }, createElement(Routes, {}, createElement(Route, { path: '/verify-email', element: createElement(VerifyEmailPage, { toast: s.toast }) }), createElement(Route, { path: '*', element: createElement(Destination) })))) }) }
 function button(label: string) { return tree.root.findAllByType('button').find(b => b.children.includes(label))! }
+it('returns a verified phone customer to the original public puppy and pending Follow',async()=>{
+ await render('/p/QR-RUBY?follow=1')
+ s.check.mockImplementationOnce(async()=>{s.user.email='verified@example.invalid';return true})
+ await act(async()=>{await button("I've verified — continue").props.onClick()})
+ expect(tree.root.findByType('output').children.join('')).toBe('/p/QR-RUBY?follow=1')
+})
 it('places email before Check and Send, and refuses to treat an entered email as a verified identity', async () => {
  await render()
  const controls=tree.root.findAll(n=>n.type==='input'||n.type==='button')

@@ -40,14 +40,14 @@ export default function CompleteAccountPage() {
       <label>New password<input className="form-input" type="password" autoComplete="new-password" minLength={8} maxLength={128} required disabled={busy} value={password} onChange={e=>setPassword(e.target.value)} /></label>
       {error && <p role="alert" className="idogs-auth-error">{error}</p>}
       <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save email and send verification'}</button>
-    </form> : !user.emailVerified ? <><h2 style={{ fontSize: 18 }}>2. Verify your email</h2><p className="idogs-auth-small">Open the verification email for {user.email}. Your existing account is kept.</p><Link className="btn btn-primary" to={`/verify-email?next=${encodeURIComponent(destination.startsWith('/app/') ? destination : '/app/dashboard')}`}>Check or resend verification email</Link></> : <form className="idogs-auth-form" onSubmit={submit}>
+    </form> : !user.emailVerified ? <><h2 style={{ fontSize: 18 }}>2. Verify your email</h2><p className="idogs-auth-small">Open the verification email for {user.email}. Your existing account is kept.</p><Link className="btn btn-primary" to={`/verify-email?next=${encodeURIComponent(destination)}`}>Check or resend verification email</Link></> : <form className="idogs-auth-form" onSubmit={submit}>
       <p>Verified email: <strong style={{ overflowWrap: 'anywhere' }}>{user.email}</strong></p>
       <h2 style={{ fontSize: 18 }}>3. {hasPasswordProvider ? 'Confirm your email password' : 'Create your email password'}</h2>
       <label>{hasPasswordProvider ? 'Current password' : 'New password'}<input className="form-input" type="password" autoComplete={hasPasswordProvider ? 'current-password' : 'new-password'} minLength={hasPasswordProvider ? 1 : 8} maxLength={128} required disabled={busy} value={password} onChange={e => setPassword(e.target.value)} /></label>
       {hasPasswordProvider && <p className="idogs-auth-small">If you previously used an email link and have no password yet, use Reset password to create one through your verified email.</p>}
       {error && <p role="alert" className="idogs-auth-error">{error}</p>}
       <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Confirming your account…' : 'Save and continue'}</button>
-      <Link to="/forgot-password">Reset password</Link>
+      <Link to={`/forgot-password?next=${encodeURIComponent(destination)}`}>Reset password</Link>
       <button type="button" className="btn btn-secondary" disabled={busy} onClick={async () => { if (!user) return; setBusy(true); try { const result = await accountSetupRequest(user); if (result.ready) navigate(destination, {replace:true}); else setError('Email verification and a working password still need to be confirmed.') } catch { setError('Could not check setup. Try again or sign in to this account again.') } finally { setBusy(false) } }}>Check completed setup</button>
     </form>}
     <p className="idogs-auth-small" style={{ marginTop: 20 }}><Link to={`/login?next=${encodeURIComponent(destination)}`}>Return to sign in</Link> · <Link to={destination.startsWith('/p/') ? destination.split('?')[0] : '/'}>Keep browsing public profiles</Link></p>

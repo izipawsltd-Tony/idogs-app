@@ -1,3 +1,4 @@
+import { hasFirebaseAccountAuth } from './_lib/auth-source-check.mjs'
 // scripts/test-direct-media-upload.mjs — regression coverage for
 // Implementation Phase 1 ("Unified Media & Performance" audit): the
 // direct-to-Storage signed-upload flow for Litter Showcase media
@@ -62,7 +63,7 @@ const { check, checkAsync, skip, summary } = makeChecker()
   // ── request-showcase-media-upload.js source ──
   const requestSrc = readFileSync(new URL('../api/request-showcase-media-upload.js', import.meta.url), 'utf8')
   check('request-showcase-media-upload.js verifies the Firebase ID token before doing anything else Storage/Firestore related',
-    /verifyIdToken\(idToken\)/.test(requestSrc))
+    hasFirebaseAccountAuth(requestSrc))
   check('request-showcase-media-upload.js uses canAddDogRecord (current effective owner, never on a restricted dog) — the SAME check every other upload endpoint uses',
     /canAddDogRecord\(dog, uid\)/.test(requestSrc))
   check('request-showcase-media-upload.js NEVER reads a client-supplied path/filePath from the request body — the path is always server-computed',
@@ -101,7 +102,7 @@ const { check, checkAsync, skip, summary } = makeChecker()
   // ── confirm-showcase-media-upload.js source ──
   const confirmSrc = readFileSync(new URL('../api/confirm-showcase-media-upload.js', import.meta.url), 'utf8')
   check('confirm-showcase-media-upload.js verifies the Firebase ID token before doing anything else',
-    /verifyIdToken\(idToken\)/.test(confirmSrc))
+    hasFirebaseAccountAuth(confirmSrc))
   check('confirm-showcase-media-upload.js accepts ONLY mediaId from the client body — dogId/kind/path always come from the stored grant, never the request',
     /const \{ mediaId \} = req\.body/.test(confirmSrc) && !/const \{ mediaId, dogId/.test(confirmSrc) && !/const \{ mediaId, path/.test(confirmSrc))
   check('confirm-showcase-media-upload.js rejects a grant that does not belong to the calling uid',
