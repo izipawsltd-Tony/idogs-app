@@ -3023,7 +3023,7 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap', marginLeft: 'auto' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexShrink: 1, flexWrap: 'wrap', maxWidth: '100%', marginLeft: 'auto' }}>
                 {canEdit && <QrDocumentShareCheckbox document={doc} />}
                 <button
                   onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
