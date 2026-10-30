@@ -1488,7 +1488,8 @@ async function stripeWireFixture({behavior='ok',badBinding=null,lockOnSecondGet=
         if(lockOnSecondGet&&counts.get===2)await db.doc(`accountDeletionLocks/${owner.uid}`).create({revision:1,state:'processing'})
       }else{
         assert.equal(req.method,'DELETE');counts.delete++
-        for(const [key,value] of new URLSearchParams(body)){assert.ok(['prorate','invoice_now'].includes(key));assert.equal(value,'false')}
+        assert.equal(body,'')
+        for(const [key,value] of new URL(req.url,'http://127.0.0.1').searchParams){assert.ok(['prorate','invoice_now'].includes(key));assert.equal(value,'false')}
         subscription.status='canceled'
         if(behavior==='dropped'){req.socket.destroy();return}
         if(behavior==='retryable'){res.statusCode=500;res.setHeader('stripe-should-retry','true');res.setHeader('Content-Type','application/json');res.end(JSON.stringify({error:{type:'api_error',message:'Synthetic retryable response'}}));return}

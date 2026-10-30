@@ -32,7 +32,10 @@ export function createEmulatorLoopbackStripeTransport({db,auth,bucket,projectId,
       &&allowed.has(id)&&['GET','DELETE'].includes(method)&&timeout>0&&timeout<=5000,'WEBHOOK_TRANSPORT_REQUEST_REJECTED')
     const normalized=Object.fromEntries(Object.entries(headers).map(([key,value])=>[key.toLowerCase(),value]))
     ensure(normalized.authorization===`Bearer ${credential}`&&!normalized['stripe-account']&&!normalized['stripe-context'],'WEBHOOK_TRANSPORT_CONTEXT_CHANGED')
-    for(const [key,value] of request.searchParams)ensure(method==='GET'&&/^expand(?:\[\d*\])$/.test(key)&&['items.data.price','latest_invoice'].includes(value),'WEBHOOK_TRANSPORT_QUERY_REJECTED')
+    for(const [key,value] of request.searchParams)ensure(
+      method==='GET'&&/^expand(?:\[\d*\])$/.test(key)&&['items.data.price','latest_invoice'].includes(value)
+      ||method==='DELETE'&&['prorate','invoice_now'].includes(key)&&value==='false','WEBHOOK_TRANSPORT_QUERY_REJECTED')
+    if(method==='DELETE')ensure(!body,'WEBHOOK_TRANSPORT_BODY_REJECTED')
     if(method==='DELETE'){
       ensure(typeof assertBeforeMutation==='function','WEBHOOK_TRANSPORT_EXECUTION_GUARD_REQUIRED')
       await assertBeforeMutation(id)
