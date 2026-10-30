@@ -75,3 +75,14 @@ test('CI repository/ref/source drift and expired actor fail before the first wir
  f.job.authRemovalAttempted=true;await assert.rejects(reader.read(),/JOB_CHANGED/)
  assert.equal(calls.length,0)
 })
+test('SDK wrappers preserve guard classification and expose only fixed diagnostic fields',async t=>{
+ const f=fixture(),calls=transport(t,()=>{throw Object.assign(Error('private response must not escape'),{code:'ECONNRESET'})})
+ const reader=await createCloudStripeReadback(f.args)
+ await assert.rejects(reader.read(),e=>{
+  assert.equal(e.code,'STRIPE_READBACK_OUTCOME_UNKNOWN')
+  assert.deepEqual(e.readbackDiagnostic,{step:'account',httpAttempts:1,errorType:'StripeConnectionError'})
+  assert.equal(JSON.stringify(e.readbackDiagnostic).includes('private response'),false)
+  return true
+ })
+ assert.equal(calls.length,1)
+})

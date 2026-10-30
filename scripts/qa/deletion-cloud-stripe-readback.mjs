@@ -36,7 +36,7 @@ export async function createCloudStripeReadback({db,auth,bucket,runId,manifest,s
  const paths=['/v1/account',`/v1/customers/${original.stripeCustomerId}`,`/v1/subscriptions/${original.stripeSubscriptionId}`]
  const attempted=new Set(),responses=[]
  const native=Stripe.createNodeHttpClient()
- let client,started=false,accountVerified=false
+ let client,started=false,accountVerified=false,step='account'
  const pinned=()=>ensure(client.getMaxNetworkRetries()===0&&client.getApiField('host')==='api.stripe.com'&&client.getApiField('protocol')==='https'
   &&Number(client.getApiField('port'))===443&&client.getApiField('timeout')===5000,'STRIPE_READBACK_SETTINGS_CHANGED')
  const httpClient={getClientName:()=> 'manifest-bound-test-readback',makeRequest:async(host,port,path,method,headers,body,protocol,timeout)=>{
@@ -55,18 +55,32 @@ export async function createCloudStripeReadback({db,auth,bucket,runId,manifest,s
  const binding=value=>ensure(value?.livemode===false&&value.metadata?.deletionQaRunId===runId&&value.metadata?.firebaseUid===scope.uid,'STRIPE_READBACK_RESPONSE_CHANGED')
  return Object.freeze({mode:'isolated-cloud-test-read-only',read:async()=>{
   ensure(!started,'STRIPE_READBACK_ALREADY_STARTED');started=true
+  try{
   await runtime()
   const account=await client.accounts.retrieve()
   ensure(account.id===accountId,'STRIPE_READBACK_ACCOUNT_CHANGED');accountVerified=true
   responses.push(digest({id:account.id}))
+  step='customer'
   const customer=await client.customers.retrieve(original.stripeCustomerId)
   binding(customer);ensure(customer.id===original.stripeCustomerId&&!customer.deleted,'STRIPE_READBACK_CUSTOMER_CHANGED')
   responses.push(digest(customer))
+  step='subscription'
   const subscription=await client.subscriptions.retrieve(original.stripeSubscriptionId)
   binding(subscription);ensure(subscription.id===original.stripeSubscriptionId&&subscription.customer===original.stripeCustomerId,'STRIPE_READBACK_SUBSCRIPTION_CHANGED')
   responses.push(digest(subscription))
+  step='final_runtime'
   await runtime()
   return Object.freeze({schema:1,...ci,manifestHash,accountId,providerBindingHash:digest(responses),readOnly:true,httpAttempts:attempted.size,
    realTestBindingVerified:true,signedWebhookVerified:false,authorizationDrainVerified:false,productionReady:false})
+  }catch(cause){
+   // SDK connection wrappers discard code at the top level. Persist only fixed
+   // classification/counts, never request headers, URLs, raw payloads or messages.
+   const candidate=cause?.code||cause?.detail?.code
+   const code=/^(STRIPE_READBACK_|CLOUD_QA_)[A-Z0-9_]+$/.test(candidate||'')?candidate:'STRIPE_READBACK_PROVIDER_FAILURE'
+   const type=['StripeConnectionError','StripeAuthenticationError','StripePermissionError','StripeAPIError','StripeInvalidRequestError','StripeRateLimitError'].includes(cause?.type)?cause.type:'other'
+   const error=Object.assign(new Error(code,{cause}),{code,readbackDiagnostic:{step,httpAttempts:attempted.size,errorType:type}})
+   if(Number.isInteger(cause?.statusCode))error.statusCode=cause.statusCode
+   throw error
+  }
  }})
 }

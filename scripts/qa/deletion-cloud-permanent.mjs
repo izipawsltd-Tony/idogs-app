@@ -222,7 +222,7 @@ try{
  }
  Object.assign(evidence,{firestoreRemoval:true,exactStorageGenerationsRemoved:true,authRemoval:true,stripeTestRenewalStopped:true,otherOwnerSentinelUnchanged:true,newWorkerRetry:true,duplicateIdempotent:true})
  passed=true
-}catch(e){error={code:/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'CLOUD_PERMANENT_QA_FAILED',httpStatus:Number.isInteger(e.statusCode)?e.statusCode:undefined};}
+}catch(e){error={code:/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'CLOUD_PERMANENT_QA_FAILED',httpStatus:Number.isInteger(e.statusCode)?e.statusCode:undefined,...(e.readbackDiagnostic?{readbackDiagnostic:e.readbackDiagnostic}:{})};}
 finally{
  const clean=async(name,fn)=>{try{await fn();cleanup.push({step:name,status:'success'})}catch(e){cleanupVerified=false;cleanup.push({step:name,status:'failed',code:/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'CLEANUP_FAILED'})}}
  if(httpApi)await clean('http_shutdown',()=>httpApi.close())
