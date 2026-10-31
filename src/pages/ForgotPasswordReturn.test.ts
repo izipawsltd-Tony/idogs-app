@@ -23,6 +23,7 @@ it('cannot turn the reset return path into an external redirect',async()=>{
 })
 it('does not reveal whether the email exists while retaining the account return path',async()=>{
  await render('/app/settings');s.reset.mockRejectedValueOnce(new Error('auth/user-not-found'));await submit()
- expect(JSON.stringify(tree.toJSON())).toContain('If this email is registered')
+ expect(JSON.stringify(tree.toJSON())).toContain('Local QA does not send Gmail')
+ expect(JSON.stringify(tree.toJSON())).toContain('Reset test password')
  expect(tree.root.findAllByProps({role:'alert'})).toHaveLength(0)
 })

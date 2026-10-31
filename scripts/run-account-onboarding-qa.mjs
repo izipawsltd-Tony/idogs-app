@@ -10,7 +10,7 @@ if(process.env.GCLOUD_PROJECT!==projectId||process.env.FIREBASE_AUTH_EMULATOR_HO
 process.env.IDOGS_ACCOUNT_ONBOARDING_GATE='1'
 const app=initializeApp({projectId}),auth=getAuth(app),db=getFirestore(app),uid='onboarding-demo'
 try{await auth.getUser(uid)}catch(err){if(err.code!=='auth/user-not-found')throw err;await auth.createUser({uid,phoneNumber:'+61400000601'})}
-await db.doc(`users/${uid}`).set({firstName:'QA',lastName:'Phone customer',email:'',role:'breeder',kennelName:'Synthetic QA',plan:'plus',stripeCustomerId:'cus_synthetic_unchanged',subscriptionStatus:'active'})
+await db.doc(`users/${uid}`).set({firstName:'QA',lastName:'Phone customer',email:'',role:'breeder',state:'SA',kennelName:'Synthetic QA',plan:'plus',stripeCustomerId:'cus_synthetic_unchanged',subscriptionStatus:'active'})
 await db.doc('dogs/onboarding-demo-dog').set({tenantId:uid,currentOwnerId:uid,name:'Ruby demo',breed:'Toy Poodle',sex:'female',dob:'2026-10-01',status:'active',passportId:'ONBOARDING-DEMO'})
 await db.doc('puppyProfiles/onboarding-demo-dog').set({ownerId:uid,publicEnabled:true})
 for(const audience of ['public','internal'])await db.doc(`puppyProfiles/onboarding-demo-dog/updates/${audience}`).set({authorUid:uid,sourceDogId:'onboarding-demo-dog',text:audience==='public'?'Ruby is enjoying the garden':'Private breeder note',audience,date:'2026-10-31',createdAt:'2026-10-31T00:00:00Z',media:[]})

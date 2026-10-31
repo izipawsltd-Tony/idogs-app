@@ -242,6 +242,8 @@ export default function AppLayout({ toast }: Props) {
   }, [user?.uid])
 
   useEffect(() => {
+    const skipSyntheticQaModal = import.meta.env.DEV && import.meta.env.VITE_ACCOUNT_ONBOARDING_QA === '1' && import.meta.env.VITE_FIREBASE_PROJECT_ID === 'demo-idogs-account-onboarding' && user?.uid === 'onboarding-demo'
+    if (skipSyntheticQaModal) { setShowStateModal(false); return }
     if (profile?.role === 'breeder' && !profile.state) setShowStateModal(true)
   }, [profile])
 

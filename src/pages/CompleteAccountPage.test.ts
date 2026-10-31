@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const s=vi.hoisted(()=>({user:{uid:'existing-phone',email:null as string|null,emailVerified:false,providerData:[] as {providerId:string}[]},check:vi.fn(),link:vi.fn(),finish:vi.fn(),request:vi.fn()}))
+vi.mock('../lib/firebase',()=>({auth:{currentUser:null}}))
 vi.mock('../hooks/useAuth',()=>({useAuth:()=>({user:s.user,loading:false,checkEmailVerified:s.check})}))
 vi.mock('../lib/accountOnboarding',()=>({onboardingQaEnabled:()=>true,linkPrimaryEmail:s.link,finishPrimaryPassword:s.finish,accountSetupRequest:s.request}))
 import CompleteAccountPage from './CompleteAccountPage'

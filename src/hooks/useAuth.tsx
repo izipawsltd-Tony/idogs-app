@@ -222,13 +222,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (verified) {
       await auth.currentUser.getIdToken(true)
     }
-    if (verified && auth.currentUser.email) {
-      const currentProfile = await getUserProfile(auth.currentUser.uid)
-      if (currentProfile && currentProfile.email !== auth.currentUser.email) {
-        await updateUserProfile(auth.currentUser.uid, { email: auth.currentUser.email })
-        setProfile({ ...currentProfile, email: auth.currentUser.email })
+    const verifiedUser = auth.currentUser
+    if (verified && verifiedUser.email) {
+      // Profile sync is independent of Firebase email verification. In the
+      // onboarding QA gate, Firestore may reject this write until readiness.
+      // Never misreport an already verified Firebase identity as unverified.
+      try {
+        const currentProfile = await getUserProfile(verifiedUser.uid)
+        if (currentProfile && currentProfile.email !== verifiedUser.email) {
+          await updateUserProfile(verifiedUser.uid, { email: verifiedUser.email })
+          setProfile({ ...currentProfile, email: verifiedUser.email })
+        }
+      } catch (error) {
+        console.warn('Email verified; profile sync deferred:', error)
       }
     }
+    if (auth.currentUser?.uid !== verifiedUser.uid) throw new Error('AUTH_ACCOUNT_CHANGED')
     setUser(auth.currentUser)
     return verified
   }
