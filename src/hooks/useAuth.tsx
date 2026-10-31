@@ -153,7 +153,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (verified) {
       await auth.currentUser.getIdToken(true)
     }
-    setUser(auth.currentUser)
+    const verifiedUser = auth.currentUser
+    if (verified && verifiedUser.email) {
+      // Firebase verification is authoritative; profile synchronization must
+      // never turn a verified identity into a false verification failure.
+      try {
+        const latestProfile = await getUserProfile(verifiedUser.uid)
+        if (latestProfile && latestProfile.email !== verifiedUser.email) {
+          await updateUserProfile(verifiedUser.uid, { email: verifiedUser.email })
+          if (auth.currentUser?.uid === verifiedUser.uid) {
+            setProfile({ ...latestProfile, email: verifiedUser.email })
+          }
+        }
+      } catch (error) {
+        console.warn('Email verified; profile sync deferred:', error)
+      }
+    }
+    if (auth.currentUser?.uid !== verifiedUser.uid) throw new Error('AUTH_ACCOUNT_CHANGED')
+    setUser(verifiedUser)
     return verified
   }
 
