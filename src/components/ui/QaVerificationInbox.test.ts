@@ -2,6 +2,11 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import type { User } from 'firebase/auth'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+vi.mock('../../lib/firebase', () => ({ auth: { currentUser: null } }))
+vi.mock('firebase/auth', async (importOriginal) => {
+ const original = await importOriginal<typeof import('firebase/auth')>()
+ return { ...original, verifyPasswordResetCode: vi.fn(), confirmPasswordReset: vi.fn() }
+})
 import QaVerificationInbox from './QaVerificationInbox'
 let tree: ReactTestRenderer
 const request = vi.fn(), user = { uid: 'synthetic-user', getIdToken: vi.fn().mockResolvedValue('synthetic-token') } as unknown as User
