@@ -84,3 +84,58 @@ jobs:
           npx --yes firebase-tools@14.12.0 emulators:exec
           --project demo-idogs-phone-link --only auth,firestore
           'node scripts/test-phone-email-link-emulator.mjs'
+
+  ios-simulator:
+    name: Unsigned iOS Simulator compile
+    if: github.ref == 'refs/heads/integration/ios-onboarding-documents-20261031' || github.head_ref == 'integration/ios-onboarding-documents-20261031'
+    needs: [verify, phone-account-emulator]
+    runs-on: macos-latest
+    timeout-minutes: 35
+    env:
+      VITE_IDOGS_NATIVE_PLATFORM: ios
+      VITE_IDOGS_NATIVE_MODE: qa
+      VITE_FIREBASE_PROJECT_ID: idogs-app-staging
+      VITE_IDOGS_PHONE_ACCOUNT_LINK_QA: '0'
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install web dependencies
+        run: npm ci
+      - name: Build unsigned staging QA web payload
+        run: npm run build
+      - name: Install Capacitor dependencies
+        run: npm --prefix mobile install --no-audit --no-fund
+      - name: Prepare iDogs branding
+        run: npm --prefix mobile run branding
+      - name: Generate iOS project
+        run: npm --prefix mobile run add:ios
+      - name: Sync web into Capacitor iOS
+        run: npm --prefix mobile run sync:ios
+      - name: Configure and validate iOS privacy strings
+        run: |
+          python3 -m unittest discover -s mobile/scripts -p 'test_ios_privacy.py'
+          python3 mobile/scripts/ios_privacy.py mobile/ios/App/App/Info.plist
+          python3 mobile/scripts/ios_privacy.py mobile/ios/App/App/Info.plist --check
+      - name: Generate app icons and assets
+        run: npm --prefix mobile run assets:ios
+      - name: Compile unsigned iOS Simulator app
+        run: |
+          set -euo pipefail
+          xcodebuild -project mobile/ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/idogs-qa-derived" CODE_SIGNING_ALLOWED=NO build
+          APP_PATH="$RUNNER_TEMP/idogs-qa-derived/Build/Products/Debug-iphonesimulator/App.app"
+          test -d "$APP_PATH"
+          python3 mobile/scripts/ios_privacy.py "$APP_PATH/Info.plist" --check
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -qx 'au.com.idogs.app'
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" idogs-ios-integration-qa-simulator.zip
+      - name: Upload unsigned simulator artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-ios-integration-qa-simulator
+          path: idogs-ios-integration-qa-simulator.zip
+          if-no-files-found: error
+          retention-days: 7
