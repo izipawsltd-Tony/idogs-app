@@ -238,7 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
     if (auth.currentUser?.uid !== verifiedUser.uid) throw new Error('AUTH_ACCOUNT_CHANGED')
-    setUser(verifiedUser)
+    setUser(auth.currentUser)
     return verified
   }
 
