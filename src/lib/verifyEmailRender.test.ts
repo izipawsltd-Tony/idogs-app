@@ -9,6 +9,7 @@ const auth = vi.hoisted(() => ({
   loading: false, logout: vi.fn(), resendVerificationEmail: vi.fn(), checkEmailVerified: vi.fn(),
 }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => auth }))
+vi.mock('./phoneAccountEmailLink', () => ({ phoneEmailLinkStagingEnabled: () => false }))
 let renderer: ReturnType<typeof create> | undefined
 beforeEach(() => {
   vi.useFakeTimers()
