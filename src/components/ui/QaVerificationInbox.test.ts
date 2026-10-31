@@ -6,6 +6,7 @@ import QaVerificationInbox from './QaVerificationInbox'
 let tree: ReactTestRenderer
 const request = vi.fn(), user = { uid: 'synthetic-user', getIdToken: vi.fn().mockResolvedValue('synthetic-token') } as unknown as User
 const message = (code: string) => ({ label: 'Verify test email', url: `http://127.0.0.1:9399/emulator/action?mode=verifyEmail&oobCode=${code}` })
+const resetMessage = (code: string) => ({ label: 'Reset test password', url: `http://127.0.0.1:9399/emulator/action?mode=resetPassword&oobCode=${code}` })
 beforeEach(() => { vi.stubEnv('DEV', true); vi.stubEnv('VITE_ACCOUNT_ONBOARDING_QA', '1'); vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'demo-idogs-account-onboarding'); vi.stubGlobal('fetch', request); request.mockReset().mockResolvedValue({ ok: true, json: async () => ({ messages: [] }) }) })
 afterEach(() => { if (tree) act(() => tree.unmount()); vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 async function render(value = user) { await act(async () => { tree = create(createElement(QaVerificationInbox, { user: value })) }) }
@@ -24,11 +25,19 @@ it('opens the latest test email inline, without applying any verification code a
  expect(JSON.stringify(tree.toJSON())).toContain('no email is sent to Gmail')
 })
 it('explains how to request a message when the fake mailbox is empty', async () => {
- await render(); await open(); expect(JSON.stringify(tree.toJSON())).toContain('Choose Send verification email above')
+ await render(); await open(); expect(JSON.stringify(tree.toJSON())).toContain('Request a verification or password reset link')
 })
-it('filters external URLs, embedded credentials and password-reset actions from the verification inbox', async () => {
+it('filters external URLs, embedded credentials and mismatched action types from the simulated inbox', async () => {
  request.mockResolvedValue({ ok: true, json: async () => ({ messages: [message('VALID_TEST'), { ...message('X'), url: 'https://attacker.invalid/emulator/action?mode=verifyEmail&oobCode=X' }, { ...message('X'), url: 'http://user:password@127.0.0.1:9399/emulator/action?mode=verifyEmail&oobCode=X' }, { ...message('X'), url: 'http://127.0.0.1:9399/emulator/action?mode=resetPassword&oobCode=X' }] }) })
  await render(); await open(); expect(tree.root.findAllByType('a')).toHaveLength(1); expect(tree.root.findByType('a').props.href).toBe(message('VALID_TEST').url)
+})
+it('displays the latest valid verification and reset links without applying either code', async () => {
+ request.mockResolvedValue({ ok: true, json: async () => ({ messages: [message('VERIFY'), resetMessage('RESET_OLD'), resetMessage('RESET_NEW')] }) })
+ await render(); await open()
+ const links = tree.root.findAllByType('a')
+ expect(links).toHaveLength(2)
+ expect(links[0].props.href).toBe(message('VERIFY').url)
+ expect(links[1].props.href).toBe(resetMessage('RESET_NEW').url)
 })
 it('shows a useful error without exposing response/provider details', async () => {
  request.mockRejectedValue(new Error('sensitive raw response')); await render(); await open()
