@@ -19,7 +19,7 @@ export default function QaVerificationInbox({ user }: { user: User | null }) {
       if (!response.ok) throw new Error()
       const data = await response.json()
       if (!Array.isArray(data.messages)) throw new Error()
-      const safe = data.messages.filter((message: { label?: unknown; url?: unknown }) => {
+      const safe: { label: string; url: string }[] = (data.messages as { label?: unknown; url?: unknown }[]).filter((message): message is { label: string; url: string } => {
         if (!['Verify test email', 'Reset test password'].includes(String(message.label)) || typeof message.url !== 'string') return false
         try { const url = new URL(message.url); return url.origin === 'http://127.0.0.1:9399' && !url.username && !url.password && url.pathname === '/emulator/action' && url.searchParams.get('mode') === (message.label === 'Reset test password' ? 'resetPassword' : 'verifyEmail') && !!url.searchParams.get('oobCode') } catch { return false }
       })
