@@ -1,4 +1,5 @@
 import { viewDocument } from '../lib/documentViewer'
+import { auth } from '../lib/firebase'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -266,7 +267,7 @@ export default function DocumentsPage({ toast }: Props) {
               try {
                 await updateDocument(targetId, name)
                 // Do not display a previous account's document after a sign-in switch.
-                if (user.uid !== accountUid) return
+                if (auth.currentUser?.uid !== accountUid) return
                 setDocuments(previous => previous.map(item => item.id === targetId ? { ...item, name } : item))
                 setEditingDocId(null)
                 toast('Document updated', 'success')
