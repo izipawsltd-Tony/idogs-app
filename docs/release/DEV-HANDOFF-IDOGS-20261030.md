@@ -1,5 +1,5 @@
 # BÀN GIAO iDogs — BUILD, QA VÀ PHÁT HÀNH
-Ngày chốt: 30/10/2026, múi giờ Australia/Adelaide.
+Ngày chốt: 31/10/2026, múi giờ Australia/Adelaide.
 Tài liệu này thay thế việc phải đọc lại toàn bộ chat. Đây là snapshot đã kiểm chứng, không phải xác nhận app đã sẵn sàng Production và không cấp thêm quyền phát hành.
 
 ## 1. Mục tiêu và trạng thái trong một phút
@@ -8,12 +8,19 @@ Owner muốn đưa iDogs ra sử dụng công khai/gửi App Review sớm nhất
 
 App CHƯA public trên App Store, CHƯA gửi App Review. Version 1.0 đang PREPARE_FOR_SUBMISSION. Build 92 đã Owner PASS và đang được chọn. Backend release có nhiều thành phần deletion/renewal/recovery đã QA, nhưng vẫn có guard chỉ emulator/isolated QA; chưa có live fulfilment worker và toàn bộ route/authority/Privacy vận hành.
 
-Bản source mới nhất được kiểm chứng: 6ee333f973d71195d075ea3ab9caa08d7a0d7ec5. Xem deletion-webhook-transport-20261031.md; signature/account scope, transfer transaction, descendant discovery/replay và buyer inventory có proof riêng trước đó.
+Bản source mới nhất được kiểm chứng: 5e4d25766e76159d4a142b36e838fcffee5d8bdc. Xem deletion-stripe-test-readback-20261031.md và deletion-webhook-transport-20261031.md; signature/account scope, transfer transaction, descendant discovery/replay và buyer inventory có proof riêng trước đó.
 HEAD local/remote tại lúc bắt đầu bàn giao: ee77e1ec9b04f098875087d5eb3e3d92ba77bddf (chỉ thêm evidence docs).
 Tài liệu bàn giao có thể nằm ở commit docs mới hơn; không coi đó là runtime mới.
 
-156/156 actual emulator tests, 492 unit tests, TypeScript/build và actual isolated-cloud QA PASS (cloud41141332785, updated30/10 23:02:05UTC); cleanupVerified:true, productionReady:false. Không gửi email hoặc simulation. QA PASS không có nghĩa đã activate Production.
+156/156 shared actual emulator tests, 492 unit tests, TypeScript/build và actual isolated-cloud QA PASS (cloud41147063639/job124374522701, updated30/10 23:59:24UTC); cleanupVerified:true, productionReady:false. Không gửi email hoặc simulation. QA PASS không có nghĩa đã activate Production.
 
+### Stripe TEST chỉ đọc đã được kiểm chứng
+
+Source5e4d25766e76159d4a142b36e838fcffee5d8bdc: push41147063673/PR41147069009/cloud41147063639 PASS. Private client riêng chỉ ba GET gắn original disposable manifest, CI source/run/repo/ref, account/customer/subscription TEST và Auth/profile/revision. Actual provider output realTestBindingVerified:true,httpAttempts:3,readOnly:true. Local9 SDK/no-network contracts/19related PASS; shared156 và492unit/tsc/build PASS. Không chạy lại pinned/ASC unchanged; pinned6ee156 là proof route/emulator riêng trước đó.
+
+Ba source d5a10bb2/8c7fadcb/a98cf39a đã FAIL và cleanupVerified:true; không relabel PASS. A98 chẩn đoán HTTP200 rồi TypeError ở generic digest sau subscription response. Source sửa chỉ hash primitive binding đã kiểm tra, thay vì opaque SDK object; không nới guard. Exact problematic payload field không được export/proven; local non-JSON regression không phải khẳng định datatype của payload thật. Evidence allowlist ở root release-audit-20261030/stripe-test-readback-41147063639.json.
+
+Read-only TEST binding không phải live/webhook mutation adapter, provider-issued signature, cancellation terminal/drain receipt hay quyền release lease. signedWebhookVerified:false,authorizationDrainVerified:false,productionReady:false. Workflow webhook cũ tạo endpoint/preview/config ngoài scope hiện tại và không được chạy. Next: cancellation terminal/readback/reconciliation với original durable intent và private scoped transport; không thêm mutation vào reader chỉ đọc hoặc nới helper loopback. Giữ mọi original7day/managed/Production/IAM/provider/secrets/messages gate.
 ## 2. Repo, checkout và tránh mất công việc
 
 - GitHub: https://github.com/izipawsltd-Tony/idogs-app
