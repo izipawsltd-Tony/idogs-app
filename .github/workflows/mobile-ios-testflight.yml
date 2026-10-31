@@ -5,6 +5,7 @@ on:
     branches:
       - fix/android-v20-qa-blockers
       - fix/ios-resume-20261024
+      - release/ios-app-store-20261025
   workflow_dispatch:
 
 permissions:
@@ -120,6 +121,12 @@ jobs:
       - name: Sync web build into iOS
         run: npm --prefix mobile run sync:ios
 
+      - name: Configure and test camera/photo permission descriptions
+        run: |
+          python3 -m unittest discover -s mobile/scripts -p 'test_ios_privacy.py'
+          python3 mobile/scripts/ios_privacy.py mobile/ios/App/App/Info.plist
+          python3 mobile/scripts/ios_privacy.py mobile/ios/App/App/Info.plist --check
+
       - name: Declare exempt encryption for TestFlight
         shell: bash
         run: |
@@ -206,6 +213,7 @@ jobs:
           APP_PATH=$(find "$VALIDATE_DIR/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)
           test -n "$APP_PATH"
           test -d "$APP_PATH"
+          python3 mobile/scripts/ios_privacy.py "$APP_PATH/Info.plist" --check
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -qx "$IOS_BUNDLE_ID"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist" | grep -qx "$IOS_MARKETING_VERSION"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist" | grep -qx "$IOS_BUILD_NUMBER"

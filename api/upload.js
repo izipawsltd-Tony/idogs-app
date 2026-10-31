@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/upload.js — unified photo upload endpoint.
 //
 // Merges the former api/upload-photo.js + api/upload-note-photo.js into
@@ -50,7 +51,7 @@ if (!getApps().length) {
   })
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const uploadType = req.query.type === 'note' ? 'note' : 'profile'
@@ -169,3 +170,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Upload failed' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/upload.js' })

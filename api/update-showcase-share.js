@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/update-showcase-share.js — trusted server-side toggle for an
 // EXISTING Litter Showcase share link (Slice 2): pause/resume public
 // access, or change its expiry, WITHOUT rotating the token itself — the
@@ -106,4 +107,4 @@ async function handler(req, res) {
   return res.status(200).json({ showcase })
 }
 
-export default withApiErrorHandling('update-showcase-share', handler)
+export default withAccountMutationFence(withApiErrorHandling('update-showcase-share', handler), { route: 'api/update-showcase-share.js' })

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
@@ -110,10 +111,10 @@ async function callAnthropic({ image, mediaType }) {
 
 const db = getFirestore()
 
-export default createScanHandler({
+export default withAccountMutationFence(createScanHandler({
   verifyIdToken: token => getAuth().verifyIdToken(token),
   getUserRef: uid => db.collection('users').doc(uid),
   reserveQuota: userRef => reserveScanQuota(db, userRef),
   rollbackQuota: (userRef, plan, periodStart) => rollbackScanReservation(db, userRef, plan, periodStart),
   callModel: callAnthropic,
-})
+}), { route: 'api/scan.js' })

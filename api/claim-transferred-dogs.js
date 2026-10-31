@@ -1,3 +1,4 @@
+import { withAccountMutationFence, assertPrototypeAccountLocksTx } from './_lib/deletion-fence.js'
 // api/claim-transferred-dogs.js — Auto-claim dogs transferred to this
 // buyer's email, run once whenever a signed-in user loads the dashboard.
 //
@@ -46,7 +47,7 @@ if (!getApps().length) {
   })
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -85,9 +86,10 @@ export default async function handler(req, res) {
   // claimable again, with no error and no visible sign anything was
   // wrong. status is the one field both the old and new transfer
   // paths always set, so it's the backward-compatible match.
-  const buildQuery = () => db.collection('dogs')
+  const buildQuery = () => { const query = db.collection('dogs')
     .where('buyerEmail', '==', email.toLowerCase())
     .where('status', '==', 'transferred')
+    return process.env.ACCOUNT_DELETION_MODE === 'prototype-emulator' ? query.limit(201) : query }
 
   try {
     if (action === 'check') {
@@ -110,6 +112,13 @@ export default async function handler(req, res) {
       // ── Reads first ──
       const dogsSnap = await tx.get(buildQuery())
       if (dogsSnap.empty) return { claimed: 0 }
+      if (process.env.ACCOUNT_DELETION_MODE === 'prototype-emulator') {
+        if (dogsSnap.size > 200) throw Object.assign(new Error('MUTATION_SCOPE_REQUIRES_REVIEW'), { status: 423 })
+        // These source owners come from the exact query snapshots in this
+        // ownership-changing transaction, never request fields or email alone.
+        const sources = dogsSnap.docs.map(d => Object.hasOwn(d.data(), 'currentOwnerId') ? d.data().currentOwnerId : d.data().tenantId)
+        await assertPrototypeAccountLocksTx(tx, db, [uid, ...new Set(sources)])
+      }
 
       const userRef = db.collection('users').doc(uid)
       const userSnap = await tx.get(userRef)
@@ -148,6 +157,8 @@ export default async function handler(req, res) {
     return res.status(200).json({ claimed: result.claimed })
   } catch (err) {
     console.error('claim-transferred-dogs error:', err)
-    return res.status(500).json({ error: 'Internal error', message: err.message })
+    return res.status(process.env.ACCOUNT_DELETION_MODE === 'prototype-emulator' && err.status === 423 ? 423 : 500).json({ error: 'Internal error', message: err.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/claim-transferred-dogs.js' })

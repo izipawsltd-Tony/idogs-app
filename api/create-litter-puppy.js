@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/create-litter-puppy.js — trusted server-side, safely-idempotent
 // puppy creation for a litter (Codex round 4, Blockers 3 + 4; hardened
 // Codex round 5, Blocker 4; hardened further Codex round 6, Blockers 4 + 5).
@@ -347,4 +348,4 @@ async function handler(req, res) {
   throw new ApiError(500, 'Could not generate a unique passport ID — please try again')
 }
 
-export default withApiErrorHandling('create-litter-puppy', handler)
+export default withAccountMutationFence(withApiErrorHandling('create-litter-puppy', handler), { route: 'api/create-litter-puppy.js' })

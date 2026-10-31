@@ -1,0 +1,63 @@
+name: Isolated cloud permanent deletion QA
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['scripts/qa/deletion-cloud-*.mjs', 'scripts/qa/deletion-email-sink.mjs', 'scripts/qa/deletion-restore-replay.mjs', 'scripts/deletion-restore-gate.test.js', 'scripts/qa/deletion-historical-ledger.mjs', 'scripts/test-deletion-historical-ledger.mjs', 'api/_lib/deletion-restore-gate.js', 'api/_lib/deletion-restore-inventory.js', 'scripts/test-deletion-cloud-*.mjs', 'scripts/test-deletion-email-sink.mjs', 'scripts/test-deletion-processor-emulator.mjs', 'scripts/test-deletion-production-schema-emulator.mjs', 'scripts/test-deletion-completion-outbox-emulator.mjs', 'api/_lib/deletion-processor.js', 'api/_lib/deletion-plan.js', 'api/_lib/deletion-fence.js', 'api/_lib/deletion-stripe-ingress.js', 'api/_lib/deletion-stripe-transport.js', 'api/stripe-webhook.js', 'api/transfer-dog.js', 'api/claim-transferred-dogs.js', 'api/_lib/account-deletion-inventory.js', 'api/_lib/deletion-billing.js', 'api/_lib/deletion-renewal-dispatcher.js', 'api/_lib/deletion-renewal-queue.js', 'api/_lib/deletion-document-ingress.js', 'api/_lib/deletion-document-storage.js', 'api/_lib/deletion-independent-ledger.js', 'api/_lib/deletion-intake.js', 'api/_lib/deletion-completion-outbox.js', 'api/_lib/deletion-intake-permit.js', 'api/_lib/account-deletion.js', 'api/_lib/account-deletion-policy.js', 'api/_lib/deletion-synthetic-provider.js', 'scripts/test-deletion-renewal-dispatcher.mjs', 'api/_lib/deletion-stripe-contract.js', 'scripts/test-deletion-billing.mjs', 'scripts/test-deletion-stripe-contract.mjs', '.github/workflows/deletion-cloud-permanent.yml']
+  workflow_dispatch:
+    inputs:
+      qa_email_simulation:
+        description: 'Explicit operator request for the Resend simulation (not needed for restore QA)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: isolated-cloud-deletion-qa
+  cancel-in-progress: false
+jobs:
+  cloud-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Cloud fixture scope and provider regression checks
+        run: node --test scripts/test-deletion-cloud-stripe-readback.mjs scripts/test-deletion-renewal-dispatcher.mjs scripts/test-deletion-cloud-runtime.mjs scripts/test-deletion-cloud-http.mjs scripts/test-deletion-email-sink.mjs scripts/test-deletion-billing.mjs scripts/test-deletion-stripe-contract.mjs scripts/test-deletion-staging-billing.mjs scripts/test-provision-deletion-resources.mjs
+      - name: Restore quarantine regressions
+        run: npx vitest run scripts/deletion-restore-gate.test.js
+      - name: Historical ledger provenance and managed continuation contracts (no cloud IO)
+        run: node --test scripts/test-deletion-historical-ledger.mjs scripts/test-managed-backup-continue.mjs
+      - name: Shared worker Auth Firestore Storage emulator regressions
+        env:
+          GCLOUD_PROJECT: demo-idogs-deletion
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-deletion --only auth,firestore,storage
+          'ACCOUNT_DELETION_MODE=prototype-emulator node --test --test-concurrency=1 scripts/test-deletion-processor-emulator.mjs scripts/test-deletion-production-schema-emulator.mjs scripts/test-deletion-completion-outbox-emulator.mjs'
+      - name: Real isolated Firebase deletion and Stripe Test readback
+        env:
+          IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
+          IDOGS_DELETION_STRIPE_TEST_KEY: ${{ secrets.IDOGS_DELETION_STRIPE_TEST_KEY }}
+          IDOGS_DELETION_RESEND_QA_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.qa_email_simulation && secrets.IDOGS_DELETION_RESEND_QA_KEY || '' }}
+        run: node scripts/qa/deletion-cloud-permanent.mjs
+      - name: Verify optional email simulation scope
+        env:
+          QA_EMAIL_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.qa_email_simulation }}
+          IDOGS_DELETION_RESEND_QA_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.qa_email_simulation && secrets.IDOGS_DELETION_RESEND_QA_KEY || '' }}
+        run: >-
+          node -e 'if(process.env.QA_EMAIL_REQUESTED!=="true"){console.log(JSON.stringify({emailSimulationRequested:false,emailSimulationSent:false,humanEmailSent:false}))}else if(!process.env.IDOGS_DELETION_RESEND_QA_KEY){console.log(JSON.stringify({status:"owner_gate",code:"IDOGS_DELETION_RESEND_QA_KEY_MISSING",humanEmailSent:false}));process.exitCode=2}else{console.log("Explicitly requested simulation used the dedicated QA credential; see the preceding fixture report. No human recipient is configured here.")}'
+      - name: Preserve scoped Storage CAS handoff
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-cas-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: storage-cas-handoff.json
+          if-no-files-found: ignore
+          retention-days: 14

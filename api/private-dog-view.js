@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // Read-only buyer view for exactly one deposited Dog ID. Authorization is
 // server-mediated: a signed-in, verified Firebase email must match the
 // active dogPrivateAccess grant, and that grant must still have been issued
@@ -96,4 +97,4 @@ async function handler(req, res) {
   })
 }
 
-export default withApiErrorHandling('private-dog-view', handler)
+export default withAccountMutationFence(withApiErrorHandling('private-dog-view', handler), { route: 'api/private-dog-view.js' })

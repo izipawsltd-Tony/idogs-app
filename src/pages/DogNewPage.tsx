@@ -578,7 +578,7 @@ export default function DogNewPage({ toast }: Props) {
   }
 
   return (
-    <div style={{ padding: 32, maxWidth: 640 }}>
+    <div className="dog-new-page" style={{ padding: 32, maxWidth: 640 }}>
       <div style={{ marginBottom: 24 }}>
         <Link to="/app/dogs" style={{ fontSize: 13, color: 'var(--light)', textDecoration: 'none' }}>← My dogs</Link>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginTop: 8, marginBottom: 4 }}>{isOwner ? 'Create Dog ID' : 'Add a dog'}</h1>
@@ -656,7 +656,7 @@ export default function DogNewPage({ toast }: Props) {
             </div>
           )}
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="dog-new-fields">
               <div className="form-group">
                 <label className="form-label">Dog&apos;s name *</label>
                 <input className="form-input" type="text" placeholder="Luna" value={form.name} onChange={e => set('name', e.target.value)} required autoFocus />
@@ -679,7 +679,7 @@ export default function DogNewPage({ toast }: Props) {
                 {AU_TOP_BREEDS.map(b => <option key={b} value={b}>{b}</option>)}
               </select>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="dog-new-fields">
               <div className="form-group">
                 <label className="form-label">Date of birth *</label>
                 <input className="form-input" type="date" value={form.dateOfBirth} onChange={e => set('dateOfBirth', e.target.value)} required max={new Date().toISOString().split('T')[0]} />
@@ -689,7 +689,7 @@ export default function DogNewPage({ toast }: Props) {
                 <input className="form-input" type="text" placeholder="Golden, cream chest" value={form.colour} onChange={e => set('colour', e.target.value)} />
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="dog-new-fields">
               <div className="form-group">
                 <label className="form-label">Microchip number</label>
                 <input className="form-input" type="text" placeholder="956000012345678" value={form.microchip} onChange={e => set('microchip', e.target.value)} />
@@ -721,7 +721,7 @@ export default function DogNewPage({ toast }: Props) {
               </div>
             </div>
             {!isOwner && (
-              <div style={{ display: 'grid', gridTemplateColumns: form.breederIdType !== 'NONE' ? '1fr 1fr' : '1fr', gap: 14 }}>
+              <div className="dog-new-fields">
                 <div className="form-group">
                   <label className="form-label">Breeder ID type</label>
                   <select className="form-select" value={form.breederIdType} onChange={e => set('breederIdType', e.target.value)}>
@@ -755,15 +755,15 @@ export default function DogNewPage({ toast }: Props) {
               </div>
             )}
             {creationUnconfirmed && <div role="alert">Could not confirm the saved dog. <Link to="/app/dogs">Check My dogs</Link> before adding it again.</div>}
-            <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
-              <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading || submitting || dogCreated || creationUnconfirmed}>
+            <div className="dog-new-actions">
+              <button type="submit" className="btn btn-primary" disabled={loading || submitting || dogCreated || creationUnconfirmed}>
                 {(loading || submitting) ? <span className="spinner" /> : (() => {
                   const recordCount = scannedDocs.reduce((s, d) => s + (d.vaccines?.length || 0), 0)
                   const base = isOwner ? 'Create Dog ID & passport' : 'Add dog & create passport'
                   return `${base}${recordCount > 0 ? ` (${recordCount} records)` : ''}`
                 })()}
               </button>
-              <button type="button" onClick={() => setStep('scan')} className="btn btn-secondary" style={{ height: 46 }}>
+              <button type="button" onClick={() => setStep('scan')} className="btn btn-secondary">
                 ← Scan more
               </button>
             </div>

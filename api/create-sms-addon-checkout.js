@@ -1,8 +1,11 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { createSmsAddonCheckoutHandler } from './_lib/sms-checkout-handler.js'
+import { smsSessionStore } from './_lib/sms-checkout-session.js'
+import { smsCheckoutTaxReady } from './_lib/sms-checkout-tax.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 if (!getApps().length) {
@@ -16,12 +19,15 @@ if (!getApps().length) {
 }
 const db = getFirestore()
 
-export default createSmsAddonCheckoutHandler({
+export default withAccountMutationFence(createSmsAddonCheckoutHandler({
   verifyIdToken: token => getAuth().verifyIdToken(token),
   getProfile: async uid => {
     const snap = await db.collection('users').doc(uid).get()
     return snap.exists ? snap.data() : null
   },
   retrieveSubscription: id => stripe.subscriptions.retrieve(id, { expand: ['items.data.price'] }),
-  updateSubscription: (id, params) => stripe.subscriptions.update(id, params),
-})
+  verifyCheckout: (profile, priceId, livemode) => smsCheckoutTaxReady(stripe, profile, priceId, livemode),
+  listSubscriptions: params => stripe.subscriptions.list(params),
+  createSession: (params, options) => stripe.checkout.sessions.create(params, options),
+  ...smsSessionStore(db),
+}), { route: 'api/create-sms-addon-checkout.js' })

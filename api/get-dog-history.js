@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/get-dog-history.js — immutable former-owner history snapshots
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -55,7 +56,7 @@ function publicSnapshot(doc) {
   })
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const authHeader = req.headers.authorization || ''
@@ -121,3 +122,5 @@ export default async function handler(req, res) {
   }
 }
 
+
+export default withAccountMutationFence(handler, { route: 'api/get-dog-history.js' })

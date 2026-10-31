@@ -1,0 +1,26 @@
+name: Deletion staging readiness (read only)
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['scripts/qa/deletion-staging-readiness.mjs', 'scripts/test-deletion-staging-readiness.mjs', '.github/workflows/deletion-staging-readiness.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Target guards (mock only)
+        run: node --test scripts/test-deletion-staging-readiness.mjs
+      - name: Verify isolated staging and Stripe Test read access
+        env:
+          IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
+          IDOGS_DELETION_STRIPE_TEST_KEY: ${{ secrets.IDOGS_DELETION_STRIPE_TEST_KEY }}
+        run: node scripts/qa/deletion-staging-readiness.mjs

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/get-signed-url.js — Issues a short-lived signed URL for a private
 // Storage file, after verifying the requesting user actually owns/breeds
 // the dog the document belongs to.
@@ -40,7 +41,7 @@ if (!getApps().length) {
 
 const SIGNED_URL_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -144,3 +145,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Internal error' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/get-signed-url.js' })

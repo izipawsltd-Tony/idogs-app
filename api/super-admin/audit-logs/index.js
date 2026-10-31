@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../../_lib/deletion-fence.js'
 // api/super-admin/audit-logs/index.js — Read-only cross-tenant audit trail overview
 //
 // Read-only. Reuses the same `auditLogs` collection already queried by
@@ -9,7 +10,7 @@ import { normalizeAuditIdentity } from '../_audit-view.js'
 
 const RECENT_LIMIT = 500
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -103,3 +104,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to compile audit logs overview', message: error.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/audit-logs/index.js' })

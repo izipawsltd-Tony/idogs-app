@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // Breeder-managed, pre-transfer private access for one deposited puppy.
 // The grant never changes Dog ownership and never grants client Firestore
 // access. A buyer's verified email is checked server-side by
@@ -95,4 +96,4 @@ async function handler(req, res) {
   return res.status(200).json({ grant: null })
 }
 
-export default withApiErrorHandling('manage-private-dog-access', handler)
+export default withAccountMutationFence(withApiErrorHandling('manage-private-dog-access', handler), { route: 'api/manage-private-dog-access.js' })

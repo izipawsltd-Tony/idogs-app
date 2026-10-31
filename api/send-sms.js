@@ -1,18 +1,13 @@
-// api/send-sms.js — trusted internal SMS relay via AWS SNS.
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
+// api/send-sms.js — trusted internal SMS relay via ClickSend.
 // V1 deliberately rejects browser/user-originated arbitrary SMS sends.
 // The reminder engine sends structured, server-generated messages only.
-import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
+import { sendClickSendSms } from './_lib/clicksend-sms.js'
 import { checkCronAuth } from './_lib/cron-auth.js'
+import { smsSendGate } from './_lib/sms-sender-readiness.js'
 
-const sns = new SNSClient({
-  region: process.env.AWS_SNS_REGION || 'ap-southeast-2',
-  credentials: {
-    accessKeyId: process.env.AWS_SNS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SNS_SECRET_ACCESS_KEY,
-  },
-})
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   const auth = checkCronAuth(req)
   if (!auth.authorized) return res.status(auth.status).json(auth.body)
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -31,18 +26,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Message too long' })
   }
 
+  const gate = smsSendGate()
+  if (!gate.ready) return res.status(503).json({ error: gate.reason })
+
   try {
-    const result = await sns.send(new PublishCommand({
-      Message: message,
-      PhoneNumber: phone,
-      MessageAttributes: {
-        'AWS.SNS.SMS.SenderID': { DataType: 'String', StringValue: 'iDogs' },
-        'AWS.SNS.SMS.SMSType': { DataType: 'String', StringValue: 'Transactional' },
-      },
-    }))
+    const result = await sendClickSendSms(phone, message)
     return res.status(200).json({ success: true, messageId: result.MessageId })
   } catch {
     console.error('send-sms: provider send failed')
     return res.status(502).json({ error: 'Failed to send SMS' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/send-sms.js' })

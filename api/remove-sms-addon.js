@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -16,7 +17,7 @@ if (!getApps().length) {
 }
 const db = getFirestore()
 
-export default createSmsAddonRemoveHandler({
+export default withAccountMutationFence(createSmsAddonRemoveHandler({
   verifyIdToken: token => getAuth().verifyIdToken(token),
   getProfile: async uid => {
     const snap = await db.collection('users').doc(uid).get()
@@ -24,4 +25,5 @@ export default createSmsAddonRemoveHandler({
   },
   retrieveSubscription: id => stripe.subscriptions.retrieve(id, { expand: ['items.data.price'] }),
   updateSubscription: (id, params) => stripe.subscriptions.update(id, params),
-})
+  cancelSubscription: (id, params) => stripe.subscriptions.cancel(id, params),
+}), { route: 'api/remove-sms-addon.js' })

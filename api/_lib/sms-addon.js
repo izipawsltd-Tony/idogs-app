@@ -114,7 +114,7 @@ export async function reserveSmsDelivery({
       idempotencyKey,
       segmentCount,
       status: 'reserved',
-      provider: 'aws_sns',
+      provider: 'clicksend',
       periodStart: profile.smsPeriodStart,
       createdAt: deliverySnap.exists ? (deliverySnap.data().createdAt || nowIso) : nowIso,
       reservedAt: nowIso,
@@ -196,15 +196,21 @@ export async function sendSmsWithQuota({
   let providerResult
   try {
     providerResult = await sendProvider(e164, message)
-  } catch {
+  } catch (error) {
+    if (error?.ambiguous === true) {
+      // May already be queued by ClickSend. Keep reservation and credits,
+      // require receipt/provider reconciliation before any manual retry.
+      return { sent: false, reason: 'PROVIDER_OUTCOME_UNKNOWN',
+        reconciliationRequired: true, deliveryId: reservation.deliveryId, segmentCount }
+    }
     await markSmsDeliveryFailed({
       db,
       tenantId,
       deliveryId: reservation.deliveryId,
-      errorCode: 'PROVIDER_FAILED',
+      errorCode: 'PROVIDER_REJECTED',
       now,
     })
-    return { sent: false, reason: 'PROVIDER_FAILED', deliveryId: reservation.deliveryId, segmentCount }
+    return { sent: false, reason: 'PROVIDER_REJECTED', deliveryId: reservation.deliveryId, segmentCount }
   }
 
   try {
@@ -216,7 +222,7 @@ export async function sendSmsWithQuota({
     })
     return { sent: true, deliveryId: reservation.deliveryId, segmentCount, providerMessageId: providerResult?.MessageId || null }
   } catch {
-    // AWS already accepted the message. Keep the reservation charged and
+    // ClickSend already accepted the message. Keep the reservation charged and
     // unresolved rather than refunding/retrying and risking a duplicate SMS.
     return { sent: true, acceptedUnconfirmed: true, deliveryId: reservation.deliveryId, segmentCount }
   }

@@ -18,7 +18,8 @@ describe('unpublished legal policy review', () => {
   it.each([['Privacy', PrivacyPage], ['Terms', TermsPage]] as const)('%s clearly distinguishes proposed commitments from current capability', (_name, Page) => {
     const html = pageText(Page)
     expect(html).toContain('Draft for review — not effective')
-    expect(html).toContain('not yet enabled')
+    expect(html).toContain('Permanent deletion and automatic cancellation of subscription renewal remain unavailable in the live service.')
+    expect(html).toContain('a target is not confirmation of completion')
     expect(html).toContain('not a statutory deadline or a mandatory waiting period')
     expect(html).toContain('requested, not deleted')
     expect(html).toContain('Australian Consumer Law')
@@ -40,6 +41,25 @@ describe('unpublished legal policy review', () => {
     expect(html).toContain('permission for that document')
     expect(html).toContain('manual entry instead')
     expect(html).toContain('Providers may process information outside Australia')
+  })
+  it('preserves current consent-based Meta disclosure without denying advertising cookies', () => {
+    const html = pageText(PrivacyPage)
+    expect(html).toContain('Meta Pixel')
+    expect(html).toContain('Ad privacy choices')
+    expect(html).toContain('advertising cookies only when you allow it')
+    expect(html).toContain('does not run in the native app or on private account pages')
+    expect(html).not.toContain('We do not use advertising or tracking cookies')
+    expect(html).toContain('Draft for review — not effective')
+  })
+  it('distinguishes request target, recovery copies and resource-specific Singapore location', () => {
+    const html=pageText(PrivacyPage)
+    expect(html).toContain('seven-day processing target and file recovery period are separate')
+    expect(html).toContain('from the time that file is deleted')
+    expect(html).toContain('reaching a date alone is not proof of deletion')
+    expect(html).toContain('asia-southeast1 (Singapore)')
+    expect(html).toContain('object versioning off')
+    expect(html).toContain('where you have opted in')
+    expect(html).toContain('reapply deletion records')
   })
   it('uses the same proposed deletion, billing and retention sections in the app without sending a deletion request', async () => {
     const original = globalThis.fetch

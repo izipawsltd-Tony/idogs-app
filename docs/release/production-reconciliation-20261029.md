@@ -1,0 +1,27 @@
+# Production and App Store release audit — 29 October 2026
+
+This is a release review, not deployment or publication approval. Do not merge/deploy the whole release branch onto the observed Production source.
+
+## Current Production identity and safe readback
+Vercel authenticated get_deployment(idogs.com.au) returned READY Production dpl_Ak4t8B3FGrncm52kfDioahhnaoT7, SHA76c215279567b400b4adeaa499e1a39af511d2c4, public aliases idogs.com.au/www.idogs.com.au. It supersedes the previously recorded isolated Plus deployment baseline. Preserve its puppy-media and advertising changes.
+Unauthenticated GET only: /api/account-deletion401; /api/super-admin/account-deletions401; /api/qa/deletion-account404; /api/qa/deletion-webhook404. These checks prove rejection only, not authenticated deletion fulfilment.
+Source comparison finds101 backend/Privacy files changed between this Production SHA and release HEADd30a9193; notably the release branch lacks Production puppy-updates handler/policy/API. A wholesale release deployment would remove newer work. Future activation must use a fresh Production-based exact-source candidate with reviewed selective changes and fresh checks.
+
+## Concrete remaining capability gap (independent of 2 November)
+Production api/account-deletion.js accepts authenticated requests, supplies status and cancellation; no provider callback executes. Release deployed POST processing route constructs only createEmulatorDeletionProcessor under requireDeletionEmulators. createGuardedDeletionProcessor accepts prototype-emulator or isolated-cloud-qa only. Runtime fences likewise activate only in the emulator. There is no Production worker adapter or dispatcher enabled by vercel.json (only showcase-media cleanup cron). Preserve those guards; changing a mode flag is not a safe activation path.
+Actual staging managed backup restore/replay/cleanup PASS remains valid (run40671427781). Signed HTTPS/Test webhook/human confirmation QA remain separate bounded evidence. They do not supply a Production fulfilment worker, all-route write fencing, live billing cancellation/readback or operational recovery replay. Completing the original Storage clock alone will NOT make Production or App Review ready. These engineering/activation gates need resolution before an exact-source deployment decision; no new mobile binary would fix them.
+
+## Privacy reconciliation and branch fix
+Live browser read of /privacy: Last updated27October2026. Section3 describes optional Meta Pixel and withdrawal; section8 contradicts it by denying advertising/tracking cookies. Providers section omits Anthropic/Vercel/ClickSend; retention still promises permanent deletion after30days and location makes an all-Asia-Pacific assertion despite external providers. No compliance certification is inferred.
+Release draft preserves its not-effective notice and correctly separates request receipt/target from completion, Storage recovery and database backups. Fixed an additional regression: draft now preserves the current Production Meta disclosure, native/private-page exclusion, withdrawal link and consent-based advertising-cookie wording. Added regression against dropping that disclosure or denying advertising cookies. Eight policy-review tests and TypeScript PASS locally. No policy published, Terms accepted, provider configuration changed or new consent transmitted.
+Anthropic owner-confirmed organization binding remains closed: izi’s Individual Org, default30day retention, no ZDR. Release consent/retention component already discloses30days and exceptions. Do not request another key or export any credential.
+
+## App Store GET-only inventory
+Workflow40769206985 SUCCESS, source d30a9193; report checkedAt2026-10-28T21:07:09.865Z (29October07:37Adelaide). Saved allowlisted report under release-audit-20261029/app-store. Correct app6823094602/bundleau.com.idogs.app, version1.0 PREPARE_FOR_SUBMISSION, selected build92. Recent92/93 VALID/unexpired and usesNonExemptEncryption:false. Demo credentials/contact/notes configured; required text/URLs present. APP_IPHONE_61 and APP_IPHONE_58 each4 COMPLETE screenshots. releaseType AFTER_APPROVAL remains unchanged; submission would automatically release after Apple approval under current setting.
+Recent-build listing is intentionally limited to5 and reports PAGINATED_NOT_COMPLETE; do not claim complete build enumeration. Presence of demo credentials does not establish current reviewer login success. App Privacy labels/legal agreements/pricing/territory require portal readback. Existing owner-confirmed AU/free/18+ and reviewer access remain testimony, not newly verified portal state.
+The browser Apple tab still redirects to login authResult=FAILED after owner reported login; requested login in this exact chat tab and continued API inventory independently. No Apple submission, Privacy Publish or release setting changed.
+
+## Fixed time gate
+Original Storage run40271208201/job121405052447/source/manifest untouched; readback only after2026-11-02T04:56:11.242Z (2November15:26:11Adelaide). No replacement fixture, simulated time or early expiry PASS. Existing separate deadline follow-up remains distinct from the paused completed managed-QA loop.
+
+Validation29October: complete existing unit suite466/466 PASS across52 files; policy suite8/8 PASS; TypeScript and Vite build PASS (existing bundle-size advisory only); diff whitespace check PASS. These are local candidate checks, not deployment or proof of Production fulfilment.

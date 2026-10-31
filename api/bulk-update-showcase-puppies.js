@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/bulk-update-showcase-puppies.js — trusted server-side deliberate
 // bulk visibility actions for a Litter Showcase (iDogs Litter Showcase
 // MVP, Slice 1 requirement 6: "Select all" / "Clear all" / "Show
@@ -101,4 +102,4 @@ async function handler(req, res) {
   return res.status(200).json({ showcase })
 }
 
-export default withApiErrorHandling('bulk-update-showcase-puppies', handler)
+export default withAccountMutationFence(withApiErrorHandling('bulk-update-showcase-puppies', handler), { route: 'api/bulk-update-showcase-puppies.js' })

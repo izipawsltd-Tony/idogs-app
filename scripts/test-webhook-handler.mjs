@@ -799,7 +799,7 @@ await checkAsync('invoice.payment_succeeded for a subscription id NEVER seen bef
 // ── invoice.payment_failed — deliberate no-op ─────────────────────────
 
 await checkAsync('invoice.payment_failed is accepted (200) and never throws — deliberately no distinct handling beyond subscription.updated(past_due)', async () => {
-  const { process } = makeHandler()
+  const { process } = makeHandler({ subscriptions: { sub_1: subFixture() } })
   const res = await fire(process, { id: 'evt_failed_invoice', type: 'invoice.payment_failed', created: 100, data: { object: { subscription: 'sub_1' } } })
   return res.status === 200 && !res.body.duplicate
 })

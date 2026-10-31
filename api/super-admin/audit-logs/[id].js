@@ -1,9 +1,10 @@
+import { withAccountMutationFence } from '../../_lib/deletion-fence.js'
 // api/super-admin/audit-logs/[id].js — Get a single audit log event by document id
 import { getFirestore } from 'firebase-admin/firestore'
 import { verifySuperAdmin } from '../_auth.js'
 import { normalizeAuditIdentity } from '../_audit-view.js'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -75,3 +76,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to get audit log event', message: error.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/audit-logs/[id].js' })

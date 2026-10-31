@@ -1,8 +1,9 @@
+import { withAccountMutationFence } from '../_lib/deletion-fence.js'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { verifySuperAdmin } from './_auth.js'
 import { confirmPersistedSupportMessage, exactFields, plainText, safeId, toIso } from '../support/_shared.js'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   res.setHeader('Cache-Control', 'private, no-store, max-age=0')
   const actor = await verifySuperAdmin(req, res)
   if (!actor) return
@@ -59,3 +60,5 @@ export default async function handler(req, res) {
     return res.status(error?.status || 500).json({ error: error?.status ? error.message : 'Support operation failed' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/support-conversation.js' })

@@ -25,7 +25,7 @@ export function plusFeatureList(isAndroid: boolean): string[] {
   return [
     'Up to 5 dogs',
     'Everything in Free',
-    '10 AI Document Scans / month',
+    '10 iDogs Document Scans / month',
     '2 litters per rolling 12 months',
     isAndroid ? 'Extra litters available beyond the included 2' : 'Extra litters A$39 each',
     'PDF & CSV report export',

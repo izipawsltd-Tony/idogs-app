@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -19,7 +20,7 @@ if (!getApps().length) {
 
 const db = getFirestore()
 
-export default createBillingSummaryHandler({
+export default withAccountMutationFence(createBillingSummaryHandler({
   verifyIdToken: token => getAuth().verifyIdToken(token),
   getProfile: async uid => {
     const snap = await db.collection('users').doc(uid).get()
@@ -32,4 +33,4 @@ export default createBillingSummaryHandler({
     if (!verifiedPaidInterval(subscription)) return false
     return reconcileVerifiedPaidSubscription({ db, subscription, userId })
   },
-})
+}), { route: 'api/billing-summary.js' })

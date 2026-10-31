@@ -10,7 +10,7 @@ import {
   User
 } from 'firebase/auth'
 import { auth } from '../lib/firebase'
-import { createUserProfile, getUserProfile, updateUserProfile } from '../lib/db'
+import { createUserProfile, getUserProfile, getUserProfileFromServer, updateUserProfile } from '../lib/db'
 import type { UserProfile, SignupFormData } from '../types'
 
 interface AuthContextType {
@@ -21,7 +21,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   resetPassword: (email: string) => Promise<void>
-  refreshProfile: () => Promise<void>
+  refreshProfile: (fromServer?: boolean) => Promise<void>
   upgradeToBreeder: () => Promise<void>
   resendVerificationEmail: () => Promise<void>
   checkEmailVerified: () => Promise<boolean>
@@ -57,7 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsub
   }, [])
 
-  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber }: SignupFormData) {
+  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber, marketingOptIn = false }: SignupFormData) {
     const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password)
     try {
       await sendEmailVerification(newUser)
@@ -68,6 +68,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         kennelName,
         role: role || 'breeder',
         plan: 'trial',
+        marketingConsent: {
+          channel: 'email_marketing',
+          choice: marketingOptIn ? 'opt_in' : 'opt_out',
+          source: 'explicit_checkbox',
+          checkboxDefault: false,
+          policyVersion: 'marketing-v1-2026-10',
+          optedInAt: marketingOptIn ? new Date().toISOString() : null,
+          revokedAt: null,
+          email: newUser.email || email,
+          evidenceRef: 'signup-checkbox-v1',
+        },
         ...(state && { state: state as UserProfile['state'] }),
         ...(breederNumber?.trim() && { breederIdValue: breederNumber.trim() }),
       })
@@ -101,9 +112,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(p)
   }
 
-  async function refreshProfile() {
+  async function refreshProfile(fromServer = false) {
     if (!user) return
-    const p = await getUserProfile(user.uid)
+    const p = await (fromServer ? getUserProfileFromServer(user.uid) : getUserProfile(user.uid))
     setProfile(p)
   }
 

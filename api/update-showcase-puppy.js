@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/update-showcase-puppy.js — trusted server-side single-puppy
 // visibility/availability update for a Litter Showcase (iDogs Litter
 // Showcase MVP, Slice 1).
@@ -132,4 +133,4 @@ async function handler(req, res) {
   return res.status(200).json({ showcase })
 }
 
-export default withApiErrorHandling('update-showcase-puppy', handler)
+export default withAccountMutationFence(withApiErrorHandling('update-showcase-puppy', handler), { route: 'api/update-showcase-puppy.js' })

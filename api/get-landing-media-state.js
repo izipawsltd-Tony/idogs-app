@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/get-landing-media-state.js — Super Admin -> Landing Page Media.
 // Returns the current published + draft state for all four fixed
 // landing-page slots in one call, so the admin UI can render its four
@@ -87,4 +88,4 @@ async function handler(req, res) {
   }
 }
 
-export default handler
+export default withAccountMutationFence(handler, { route: 'api/get-landing-media-state.js' })

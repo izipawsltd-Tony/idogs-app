@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/showcase-media.js — server-mediated, per-request-revalidated
 // public media delivery (Codex re-review: "server-mediated public media
 // delivery" — the one remaining blocker from the prior fix-round).
@@ -69,7 +70,7 @@ const db = getFirestore()
 const MEDIA_RATE_LIMIT_WINDOW_MS = Number(process.env.SHOWCASE_MEDIA_RATE_LIMIT_WINDOW_MS) || 60_000
 const MEDIA_RATE_LIMIT_MAX_REQUESTS = Number(process.env.SHOWCASE_MEDIA_RATE_LIMIT_MAX_REQUESTS) || 90
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -203,3 +204,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Internal error' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/showcase-media.js' })

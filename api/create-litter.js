@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/create-litter.js — trusted server-side litter creation.
 //
 // POST /api/create-litter
@@ -172,4 +173,4 @@ async function handler(req, res) {
   return res.status(200).json({ litterId: litterRef.id })
 }
 
-export default withApiErrorHandling('create-litter', handler)
+export default withAccountMutationFence(withApiErrorHandling('create-litter', handler), { route: 'api/create-litter.js' })

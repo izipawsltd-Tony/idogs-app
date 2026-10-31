@@ -918,3 +918,30 @@ h1, h2, h3, h4, h5, h6 {
     text-align: left;
   }
 }
+
+/* The add-dog form must accommodate iOS date controls and long registry labels. */
+.dog-new-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.dog-new-fields > .form-group { min-width: 0; }
+.dog-new-page .form-input, .dog-new-page .form-select, .dog-new-page .form-textarea { min-width: 0; max-width: 100%; }
+.dog-new-actions { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 4px; }
+.dog-new-actions .btn { min-width: 0; min-height: 46px; height: auto; white-space: normal; }
+.dog-new-actions .btn-primary { flex: 1 1 240px; }
+@media (max-width: 600px) {
+  .dog-new-page { padding: 20px 16px !important; }
+  .dog-new-page > .card { padding: 20px 16px; }
+  .dog-new-fields { grid-template-columns: minmax(0, 1fr); }
+  .dog-new-actions { flex-direction: column; }
+  .dog-new-actions .btn { flex: none; width: 100%; }
+}
+
+/* Keep the current Plus offer primary and its renewal terms readable together. */
+.plus-promotion { margin: 16px 0; padding: 16px; border-radius: 12px; background: var(--green-light); color: var(--green); }
+.plus-promotion-badge { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+.plus-promotion-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.plus-promotion-price strong { font-size: clamp(36px, 9vw, 46px); line-height: 1.1; }
+.plus-promotion-price span { font-size: 14px; }
+.plus-promotion-dates { font-size: 14px; line-height: 1.5; margin-top: 8px; }
+.plus-promotion-renewal { font-size: 13px; line-height: 1.5; margin-top: 6px; }
+.plus-promotion-terms { font-size: 12px; line-height: 1.6; margin-top: 10px; }
+.plus-promotion-consent { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; line-height: 1.6; margin-bottom: 16px; }
+.plus-promotion-consent input { flex: 0 0 auto; width: 20px; height: 20px; margin-top: 2px; }

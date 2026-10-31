@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/confirm-showcase-media-upload.js — Implementation Phase 1: the
 // second half of the direct-upload flow (see
 // api/request-showcase-media-upload.js for the first half and the
@@ -245,4 +246,4 @@ async function handler(req, res) {
   }
 }
 
-export default handler
+export default withAccountMutationFence(handler, { route: 'api/confirm-showcase-media-upload.js' })

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import { FieldValue } from 'firebase-admin/firestore'
 import { verifyBreeder, cleanEmail, cleanText } from './_lib/breeder-finance-auth.js'
 
@@ -114,7 +115,7 @@ function documentHtml(doc) {
   </div>`
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const auth = await verifyBreeder(req)
@@ -167,3 +168,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to send email' })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/send-finance-document.js' })

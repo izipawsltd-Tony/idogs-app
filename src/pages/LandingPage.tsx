@@ -5,6 +5,7 @@ import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMe
 import { isNativeApp } from '../lib/nativePlatform'
 import { showLandingPaidPromotion } from '../lib/landingPageAndroidGate'
 import { PLUS_MONTHLY_PRICE_AUD, LITTER_QUOTA_PLUS_ROLLING_12_MONTHS, EXTRA_LITTER_PRICE_AUD } from '../lib/pricingCopy'
+import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
 
 // ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
 // Ported from the approved design-review package:
@@ -42,6 +43,7 @@ const FAST_LANDING_MEDIA: Partial<Record<LandingSlotId, { localSrc: string; publ
 }
 
 export default function LandingPage() {
+  const promotionActive = usePlusPromotion()
   const { user, loading } = useAuth()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -112,7 +114,7 @@ export default function LandingPage() {
                 <Link className="btn btn-primary" to="/signup">Start Free</Link>
                 <a className="btn btn-ghost" href="#howitworks">See How It Works</a>
               </div>
-              {showPaidPromotion && <p className="price-note">Plans from A$7/month · No complicated pricing.</p>}
+              {showPaidPromotion && <p className="price-note">{promotionActive ? 'iDogs Plus A$0/month through 31 January 2027 · Then A$7/month.' : 'Plans from A$7/month · No complicated pricing.'}</p>}
             </div>
             {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
             <div className="hero-visual" aria-label="iDogs product preview">
@@ -263,11 +265,11 @@ export default function LandingPage() {
           <div className="wrap">
             <div className="ai-card">
               <div>
-                <h3>AI Document Scan</h3>
+                <h3>iDogs Document Scan</h3>
                 <p>Turn dog documents into organised records faster. Upload a supported document and iDogs will extract key details for you to review before saving.</p>
                 <span className="ai-note">Review extracted information before saving.</span>
               </div>
-              <ol className="ai-flow" aria-label="AI Document Scan steps">
+              <ol className="ai-flow" aria-label="iDogs Document Scan steps">
                 <li><span className="n">1</span> Upload a supported document</li>
                 <li><span className="n">2</span> iDogs extracts key details</li>
                 <li><span className="n">3</span> You review and edit</li>
@@ -285,38 +287,39 @@ export default function LandingPage() {
         </section>
 
         {showPaidPromotion && (
-          <section className="block pricing-block" id="pricing">
-            <div className="wrap">
-              <p className="kicker">Simple pricing</p>
-              <h2>Everything you need, without complicated plans.</h2>
-              <p className="lead">Start free. Upgrade to iDogs Plus when you need more.</p>
-              <div className="pricing-grid">
-                <article className="pricing-card pricing-card-main">
-                  <div className="pricing-card-head">
-                    <div>
-                      <p className="pricing-label">iDogs Plus</p>
-                      <p className="pricing-price"><span>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</span><small>/month</small></p>
-                    </div>
-                    <span className="pricing-badge">Most popular</span>
+        <section className="block pricing-block" id="pricing">
+          <div className="wrap">
+            <p className="kicker">Simple pricing</p>
+            <h2>Everything you need, without complicated plans.</h2>
+            <p className="lead">Start free. Upgrade to iDogs Plus when you need more.</p>
+            <div className="pricing-grid">
+              <article className="pricing-card pricing-card-main">
+                <div className="pricing-card-head">
+                  <div>
+                    <p className="pricing-label">iDogs Plus</p>
+                    {!promotionActive && <p className="pricing-price"><span>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</span><small>/month</small></p>}
                   </div>
-                  <p className="pricing-copy">Organise your dogs and breeding records in one connected workspace.</p>
-                  <ul className="pricing-list">
-                    <li>Dog profiles, health records and documents</li>
-                    <li>Breeder tools for dogs, litters and puppies</li>
-                    <li>{LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} litters per rolling 12 months included</li>
-                    <li>{`Extra litters A$${EXTRA_LITTER_PRICE_AUD} each`}</li>
-                    <li>Digital Passport and QR sharing</li>
-                  </ul>
-                  <Link className="btn btn-primary pricing-cta" to="/signup">Start Free</Link>
-                </article>
-                <article className="pricing-card pricing-card-addon">
-                  <p className="pricing-label">Optional add-on</p>
-                  <h3>SMS Reminders</h3>
-                  <p className="pricing-price"><span>+A$3</span><small>/month</small></p>
-                  <p className="pricing-copy">Add SMS reminders to Plus when you need them.</p>
-                  <div className="sms-credit"><strong>20 SMS credits / month</strong><span>Resets each billing month.</span></div>
-                </article>
-              </div>
+                  <span className="pricing-badge">Most popular</span>
+                </div>
+                {promotionActive && <PlusPromotion />}
+                <p className="pricing-copy">Organise your dogs and breeding records in one connected workspace.</p>
+                <ul className="pricing-list">
+                  <li>Dog profiles, health records and documents</li>
+                  <li>Breeder tools for dogs, litters and puppies</li>
+                  <li>{LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} litters per rolling 12 months included</li>
+                  <li>{`Extra litters A$${EXTRA_LITTER_PRICE_AUD} each`}</li>
+                  <li>Digital Passport and QR sharing</li>
+                </ul>
+                <Link className="btn btn-primary pricing-cta" to={promotionActive ? '/signup?next=%2Fapp%2Fbilling' : '/signup'}>{promotionActive ? 'Get Plus for A$0' : 'Start Free'}</Link>
+              </article>
+              <article className="pricing-card pricing-card-addon">
+                <p className="pricing-label">Optional add-on</p>
+                <h3>SMS Reminders</h3>
+                <p className="pricing-price"><span>+A$3</span><small>/month</small></p>
+                <p className="pricing-copy">Add SMS reminders to Plus when you need them.</p>
+                <div className="sms-credit"><strong>20 SMS credits / month</strong><span>Resets each billing month.</span></div>
+              </article>
+            </div>
               <p className="pricing-footnote">All paid prices are in AUD and include GST. Less than the cost of a coffee each month.</p>
             </div>
           </section>
