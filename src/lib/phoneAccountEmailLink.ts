@@ -30,7 +30,7 @@ export async function linkEmailPasswordToExistingPhoneAccount(
     throw new Error('This account already has email/password credentials. Use password recovery if needed.')
   }
   const email = requestedEmail.trim().toLowerCase()
-  if (!email || email.length > 254 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+  if (!email || email.length > 254 || !/^[^ @]+@[^ @]+[.][^ @]+$/.test(email)) {
     throw new Error('Enter a valid email address.')
   }
   if (password.length < 8 || password.length > 128) throw new Error('Choose a password of 8–128 characters.')
