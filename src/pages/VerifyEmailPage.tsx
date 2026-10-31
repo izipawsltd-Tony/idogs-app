@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
+import { phoneEmailLinkStagingEnabled } from '../lib/phoneAccountEmailLink'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -116,6 +117,11 @@ export default function VerifyEmailPage({ toast }: Props) {
           <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 20 }}>
             {user?.email}
           </p>
+          {phoneEmailLinkStagingEnabled() && user?.providerData.some(provider => provider.providerId === 'phone') && !user.email && (
+            <p style={{ marginBottom: 18 }}>
+              Your existing phone account needs an email. <Link to="/qa/phone-email-link">Link email without creating another account</Link>.
+            </p>
+          )}
           <p style={{ fontSize: 13, color: 'var(--light)', lineHeight: 1.6, marginBottom: 8 }}>
             Click the link in that email, then come back here and press the button below.
           </p>
