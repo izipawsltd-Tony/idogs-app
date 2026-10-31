@@ -31,13 +31,18 @@ it('filters external URLs, embedded credentials and mismatched action types from
  request.mockResolvedValue({ ok: true, json: async () => ({ messages: [message('VALID_TEST'), { ...message('X'), url: 'https://attacker.invalid/emulator/action?mode=verifyEmail&oobCode=X' }, { ...message('X'), url: 'http://user:password@127.0.0.1:9399/emulator/action?mode=verifyEmail&oobCode=X' }, { ...message('X'), url: 'http://127.0.0.1:9399/emulator/action?mode=resetPassword&oobCode=X' }] }) })
  await render(); await open(); expect(tree.root.findAllByType('a')).toHaveLength(1); expect(tree.root.findByType('a').props.href).toBe(message('VALID_TEST').url)
 })
-it('displays the latest valid verification and reset links without applying either code', async () => {
+it('keeps reset code off DOM URLs and opens local password form', async () => {
  request.mockResolvedValue({ ok: true, json: async () => ({ messages: [message('VERIFY'), resetMessage('RESET_OLD'), resetMessage('RESET_NEW')] }) })
  await render(); await open()
  const links = tree.root.findAllByType('a')
- expect(links).toHaveLength(2)
+ expect(links).toHaveLength(1)
  expect(links[0].props.href).toBe(message('VERIFY').url)
- expect(links[1].props.href).toBe(resetMessage('RESET_NEW').url)
+ expect(tree.root.findAllByType('button')).toHaveLength(2)
+ expect(JSON.stringify(tree.toJSON())).not.toContain('RESET_NEW')
+ expect(JSON.stringify(tree.toJSON())).toContain('Reset test password')
+ await act(async () => { tree.root.findAllByType('button')[1].props.onClick() })
+ expect(tree.root.findByProps({ id: 'qa-new-password' }).props.type).toBe('password')
+ expect(JSON.stringify(tree.toJSON())).not.toContain('RESET_NEW')
 })
 it('shows a useful error without exposing response/provider details', async () => {
  request.mockRejectedValue(new Error('sensitive raw response')); await render(); await open()
