@@ -99,9 +99,9 @@ export function fingerprint(model) {
 
 export function renderBody(model) {
   const out = []
-  out.push(`<!-- release-control:fingerprint:${model.fingerprint} -->`)
-  out.push('# iDOGS — BUILD & RELEASE CONTROL', '')
-  out.push('_Maintained automatically by `scripts/release-control/update-issue.mjs` (GitHub Actions + Claude). Do not edit this body — it is regenerated. Comment below; comments are read by humans and are never executed automatically._', '')
+  out.push(`<!-- release-control:dashboard -->`, `<!-- release-control:fingerprint:${model.fingerprint} -->`)
+  out.push('## 📊 Live build & release status (auto-generated)', '')
+  out.push('_This comment is edited in place by `scripts/release-control/update-issue.mjs` (GitHub Actions + Claude) from GitHub data only. The issue description is the Owner charter and is never modified by automation. Comments are read by humans and are never executed automatically._', '')
   out.push(`**Last update:** ${model.generatedAt} UTC${model.event ? ` · trigger: ${model.event}` : ''}`, '')
   out.push('| Line | Stage | Open blockers |', '|---|---|---|')
   for (const line of Object.values(model.lines)) {
@@ -196,11 +196,23 @@ async function collectTestflight(repo, workflowFile, candidateShas, token) {
   return { latest: shape(runs.find(r => candidateShas.includes(r.head_sha))) || null, lastAny: shape(runs[0]) || null }
 }
 
-export async function findControlIssue(repo, title, token) {
-  // Only an issue carrying the release-control label counts: labels require
-  // triage rights, so an outsider cannot plant a look-alike issue.
+export async function findControlIssue(repo, config, token) {
+  const owner = repo.split('/')[0]
+  if (config.issueNumber) {
+    const issue = await gh(`/repos/${repo}/issues/${Number(config.issueNumber)}`, { token })
+    // Only accept the configured issue if the repository owner opened it or it
+    // carries the release-control label (labels need triage rights).
+    if (issue && !issue.pull_request && issue.state === 'open' &&
+        (issue.user?.login === owner || (issue.labels || []).some(l => l.name === ISSUE_LABEL))) return issue
+    throw new Error(`Configured control issue #${config.issueNumber} is missing, closed or not trusted`)
+  }
   const issues = (await gh(`/repos/${repo}/issues?state=open&labels=${ISSUE_LABEL}&per_page=50`, { token })) || []
-  return issues.find(i => !i.pull_request && i.title === title) || null
+  return issues.find(i => !i.pull_request && i.title === config.issueTitle) || null
+}
+
+export function findDashboardComment(comments, trustedAuthors) {
+  const mine = comments.filter(c => trustedAuthors.includes(c.user?.login) && String(c.body || '').startsWith('<!-- release-control:dashboard -->'))
+  return mine[mine.length - 1] || null
 }
 
 export async function main({ argv = process.argv.slice(2), env = process.env, root = process.cwd() } = {}) {
@@ -221,18 +233,30 @@ export async function main({ argv = process.argv.slice(2), env = process.env, ro
   model.fingerprint = fingerprint(model)
   const body = renderBody(model)
   if (dryRun) { process.stdout.write(body + '\n'); return { changed: null } }
-  let issue = await findControlIssue(repo, config.issueTitle, token)
+  let issue = await findControlIssue(repo, config, token)
   if (!issue) {
-    issue = await gh(`/repos/${repo}/issues`, { token, method: 'POST', body: { title: config.issueTitle, body, labels: [ISSUE_LABEL] } })
+    issue = await gh(`/repos/${repo}/issues`, { token, method: 'POST', body: { title: config.issueTitle, body: 'Build & release control. Live status is maintained in the comments below.', labels: [ISSUE_LABEL] } })
     console.log(`Created control issue #${issue.number}`)
-    return { changed: true, issue: issue.number }
   }
-  const previous = /release-control:fingerprint:([0-9a-f]+)/.exec(issue.body || '')?.[1]
+  const comments = []
+  for (let page = 1; page <= 10; page++) {
+    const batch = (await gh(`/repos/${repo}/issues/${issue.number}/comments?per_page=100&page=${page}`, { token })) || []
+    comments.push(...batch)
+    if (batch.length < 100) break
+  }
+  const dashboard = findDashboardComment(comments, config.trustedDashboardAuthors || ['github-actions[bot]'])
+  const previous = dashboard && /release-control:fingerprint:([0-9a-f]+)/.exec(dashboard.body)?.[1]
   if (previous === model.fingerprint) { console.log(`Issue #${issue.number}: no state change`); return { changed: false, issue: issue.number } }
-  await gh(`/repos/${repo}/issues/${issue.number}`, { token, method: 'PATCH', body: { body } })
-  const lines = Object.values(model.lines).map(l => `- **${l.label}:** ${l.readiness.stage}${l.readiness.blockers.length ? ` — blockers: ${l.readiness.blockers.map(b => sanitize(b, 140)).join('; ')}` : ''}`)
-  await gh(`/repos/${repo}/issues/${issue.number}/comments`, { token, method: 'POST', body: { body: [`State changed${model.event ? ` (${model.event})` : ''}:`, ...lines].join('\n') } })
-  console.log(`Issue #${issue.number}: updated (state ${previous || 'none'} → ${model.fingerprint})`)
+  let updated = false
+  if (dashboard) {
+    try { await gh(`/repos/${repo}/issues/comments/${dashboard.id}`, { token, method: 'PATCH', body: { body } }); updated = true } catch { updated = false }
+  }
+  if (!updated) await gh(`/repos/${repo}/issues/${issue.number}/comments`, { token, method: 'POST', body: { body } })
+  if (previous) {
+    const lines = Object.values(model.lines).map(l => `- **${l.label}:** ${l.readiness.stage}${l.readiness.blockers.length ? ` — blockers: ${l.readiness.blockers.map(b => sanitize(b, 140)).join('; ')}` : ''}`)
+    await gh(`/repos/${repo}/issues/${issue.number}/comments`, { token, method: 'POST', body: { body: [`State changed${model.event ? ` (${model.event})` : ''}:`, ...lines].join('\n') } })
+  }
+  console.log(`Issue #${issue.number}: dashboard ${updated ? 'updated' : 'posted'} (state ${previous || 'none'} → ${model.fingerprint})`)
   return { changed: true, issue: issue.number }
 }
 

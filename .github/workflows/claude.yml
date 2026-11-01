@@ -3,7 +3,8 @@ name: Claude (@claude on issues and PRs)
 # Lets the Owner hand work to Claude from GitHub by commenting "@claude …".
 # NOTE: GitHub runs issue_comment workflows only from the DEFAULT branch
 # (master). This file is inert until it is merged to master — Owner Gate G8.
-# Only the repository OWNER can trigger it; comments from anyone else
+# Only the repository OWNER can trigger it, and only with a comment that
+# STARTS with "@claude" (automated status comments never do); comments from anyone else
 # (including bots and ChatGPT-posted comments under other accounts) are ignored.
 
 on:
@@ -22,7 +23,8 @@ permissions:
 jobs:
   claude:
     if: >-
-      contains(github.event.comment.body, '@claude') &&
+      startsWith(github.event.comment.body, '@claude') &&
+      !contains(github.event.comment.body, 'release-control:') &&
       github.event.comment.author_association == 'OWNER' &&
       github.event.comment.user.type == 'User'
     runs-on: ubuntu-latest
