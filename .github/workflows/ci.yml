@@ -146,3 +146,44 @@ jobs:
           path: idogs-ios-integration-qa-simulator.zip
           if-no-files-found: error
           retention-days: 7
+
+  # ── Agent automation (claude/* PRs only) ────────────────────────────────
+  release-control:
+    name: release-control
+    needs: [verify, phone-account-emulator, ios-simulator]
+    if: always() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'claude/')
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      checks: read
+      statuses: read
+      actions: read
+      deployments: read
+    uses: ./.github/workflows/release-control.yml
+    with:
+      event: CI finished on PR
+
+  auto-fix:
+    name: auto-fix
+    needs: [verify, phone-account-emulator, ios-simulator]
+    if: >-
+      failure() && github.event_name == 'pull_request' &&
+      startsWith(github.head_ref, 'claude/') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'agent:claude') &&
+      !contains(github.event.pull_request.labels.*.name, 'agent:hold')
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/claude-autofix.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      branch: ${{ github.head_ref }}
+      failing_run_id: ${{ github.run_id }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

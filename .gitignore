@@ -11,3 +11,7 @@ node_modules/
 dist/
 
 storage-cas-handoff.json
+
+# Playwright
+playwright-report/
+test-results/

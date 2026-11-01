@@ -19,6 +19,9 @@ jobs:
   archive-and-upload:
     name: Sign iOS archive and upload TestFlight
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[testflight]')
+    # Owner Gate G4: configure Environment 'testflight' with the Owner as
+    # required reviewer so every signed upload waits for explicit approval.
+    environment: testflight
     runs-on: macos-latest
     timeout-minutes: 45
     env:
