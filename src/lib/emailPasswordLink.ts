@@ -1,4 +1,4 @@
-import { EmailAuthProvider, linkWithCredential, reload, sendEmailVerification, type User } from 'firebase/auth'
+import { EmailAuthProvider, linkWithCredential, reload, sendEmailVerification, updatePassword, type User } from 'firebase/auth'
 import { auth } from './firebase'
 
 // Production-safe "add email & password sign-in" for an existing account
@@ -54,15 +54,28 @@ export async function linkEmailPasswordToCurrentAccount(
   if (auth.currentUser?.uid !== uid) throw new Error('session-changed')
   if (!needsPasswordSignIn(user)) throw new Error('auth/provider-already-linked')
   const { email } = validateEmailPasswordLink(user, requestedEmail, password, confirmPassword)
-  const result = await linkWithCredential(user, EmailAuthProvider.credential(email, password))
-  if (result.user.uid !== uid || auth.currentUser?.uid !== uid) throw new Error('session-changed')
+  let linkedUser: User
+  if (user.email) {
+    // The account already owns this email (e.g. added and verified through
+    // the verification page). Firebase rejects linking an email credential
+    // for an address the account already holds (auth/email-already-in-use),
+    // so set a password on the SAME account instead — this enables
+    // email/password sign-in for that email without touching the address.
+    await updatePassword(user, password)
+    await reload(user)
+    linkedUser = auth.currentUser as User
+  } else {
+    const result = await linkWithCredential(user, EmailAuthProvider.credential(email, password))
+    linkedUser = result.user
+  }
+  if (!linkedUser || linkedUser.uid !== uid || auth.currentUser?.uid !== uid) throw new Error('session-changed')
   let verificationSent = false
-  if (!result.user.emailVerified) {
+  if (!linkedUser.emailVerified) {
     // Delivery can fail after the credential was linked; never imply the
     // link failed or invite a second link attempt because of it.
-    try { await sendEmailVerification(result.user); verificationSent = true } catch { verificationSent = false }
+    try { await sendEmailVerification(linkedUser); verificationSent = true } catch { verificationSent = false }
   }
-  return { uid, email: result.user.email || email, emailVerified: result.user.emailVerified, verificationSent }
+  return { uid, email: linkedUser.email || email, emailVerified: linkedUser.emailVerified, verificationSent }
 }
 
 export function emailPasswordLinkErrorMessage(err: unknown): string {

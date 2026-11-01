@@ -9,7 +9,7 @@ import { getFirestore as getAdminDb } from 'firebase-admin/firestore'
 import { initializeApp, deleteApp } from 'firebase/app'
 import {
   getAuth, connectAuthEmulator, signInWithCustomToken, EmailAuthProvider,
-  linkWithCredential, signOut, signInWithEmailAndPassword,
+  linkWithCredential, signOut, signInWithEmailAndPassword, updatePassword,
 } from 'firebase/auth'
 
 const project = 'demo-idogs-email-link'
@@ -57,8 +57,14 @@ try {
   await seed('sms-verified', '+61400000982', { email: 'verified@example.invalid', emailVerified: true })
   const before2 = await snapshot('sms-verified')
   const u2 = await signInAs('sms-verified')
-  const l2 = await linkWithCredential(u2, EmailAuthProvider.credential('verified@example.invalid', PASSWORD))
-  assert.equal(l2.user.uid, 'sms-verified'); assert.equal(l2.user.emailVerified, true, 'existing verification kept')
+  // Firebase refuses to LINK a credential for an email the account already
+  // holds — this is why the app uses updatePassword() for this case.
+  await assert.rejects(linkWithCredential(u2, EmailAuthProvider.credential('verified@example.invalid', PASSWORD)),
+    e => /email-already-in-use/.test(String(e?.code || e?.message)))
+  await updatePassword(u2, PASSWORD)
+  await u2.reload()
+  assert.equal(u2.uid, 'sms-verified'); assert.equal(u2.emailVerified, true, 'existing verification kept')
+  assert.ok(u2.providerData.some(p => p.providerId === 'password'), 'password sign-in enabled on the same account')
   await signOut(auth)
   assert.equal((await signInWithEmailAndPassword(auth, 'verified@example.invalid', PASSWORD)).user.uid, 'sms-verified')
   assert.equal(await snapshot('sms-verified'), before2)

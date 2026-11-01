@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-const s = vi.hoisted(() => ({ current: null as any, link: vi.fn(), reload: vi.fn(), verify: vi.fn(), cred: vi.fn() }))
+const s = vi.hoisted(() => ({ current: null as any, link: vi.fn(), reload: vi.fn(), verify: vi.fn(), cred: vi.fn(), setPw: vi.fn() }))
 vi.mock('./firebase', () => ({ auth: { get currentUser() { return s.current } } }))
 vi.mock('firebase/auth', () => ({
-  EmailAuthProvider: { credential: s.cred }, linkWithCredential: s.link, reload: s.reload, sendEmailVerification: s.verify,
+  EmailAuthProvider: { credential: s.cred }, linkWithCredential: s.link, reload: s.reload, sendEmailVerification: s.verify, updatePassword: s.setPw,
 }))
 import { emailPasswordLinkEnabled, emailPasswordLinkErrorMessage, linkEmailPasswordToCurrentAccount, needsPasswordSignIn, validateEmailPasswordLink } from './emailPasswordLink'
 
@@ -12,6 +12,7 @@ beforeEach(() => {
   s.cred.mockReset().mockImplementation((email: string, password: string) => ({ email, password }))
   s.reload.mockReset().mockResolvedValue(undefined)
   s.verify.mockReset().mockResolvedValue(undefined)
+  s.setPw.mockReset().mockResolvedValue(undefined)
   s.link.mockReset().mockImplementation(async (user: any, c: any) => ({ user: { ...user, email: c.email, emailVerified: false, providerData: [...user.providerData, { providerId: 'password' }] } }))
 })
 
@@ -22,12 +23,18 @@ describe('emailPasswordLink', () => {
     expect(s.cred).toHaveBeenCalledWith('owner@example.com', 'longpassword')
     expect(s.link).toHaveBeenCalledOnce()
   })
-  it('keeps an existing verified email and only adds the password', async () => {
+  it('keeps an existing verified email and sets a password on the same account (no credential link)', async () => {
     s.current = { ...phoneUser(), email: 'kept@example.com', emailVerified: true }
-    s.link.mockImplementation(async (user: any) => ({ user: { ...user } }))
     const r = await linkEmailPasswordToCurrentAccount(s.current, 'other@example.com', 'longpassword', 'longpassword')
-    expect(s.cred).toHaveBeenCalledWith('kept@example.com', 'longpassword')
-    expect(r.verificationSent).toBe(false); expect(r.emailVerified).toBe(true); expect(s.verify).not.toHaveBeenCalled()
+    expect(s.setPw).toHaveBeenCalledWith(s.current, 'longpassword')
+    expect(s.link).not.toHaveBeenCalled()
+    expect(r).toEqual({ uid: 'cust-uid-1', email: 'kept@example.com', emailVerified: true, verificationSent: false })
+    expect(s.verify).not.toHaveBeenCalled()
+  })
+  it('sends verification after setting a password for an existing but unverified email', async () => {
+    s.current = { ...phoneUser(), email: 'unverified@example.com', emailVerified: false }
+    const r = await linkEmailPasswordToCurrentAccount(s.current, '', 'longpassword', 'longpassword')
+    expect(s.setPw).toHaveBeenCalledOnce(); expect(r.verificationSent).toBe(true)
   })
   it('refuses when a password provider is already linked', async () => {
     s.current = { ...phoneUser(), providerData: [{ providerId: 'phone' }, { providerId: 'password' }] }
