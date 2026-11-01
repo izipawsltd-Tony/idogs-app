@@ -216,7 +216,8 @@ describe('Actual puppy updates handler', () => {
     expect(JSON.stringify(publicView.body)).not.toContain('breeder@example')
     const buyerView = await call({ dogId: 'puppy1' }, 'buyer')
     expect(buyerView.body.role).toBe('buyer')
-    expect(buyerView.body.updates.map(u => u.id)).toEqual(['public', 'buyer'])
+    // Same event date and posting time → deterministic id tie-break.
+    expect(buyerView.body.updates.map(u => u.id)).toEqual(['buyer', 'public'])
   })
   it('revocation and refund remove private updates on the next request', async () => {
     const { call, db } = setup({ 'puppyProfiles/puppy1/updates/buyer': entry('buyer') })
@@ -273,5 +274,57 @@ describe('Actual puppy updates handler', () => {
     expect((await call({ action: 'create', dogId: 'puppy1' }, 'unverified')).code).toBe(403)
     expect((await call({ action: 'create' }, 'broken')).code).toBe(401)
     expect((await call({ action: 'settings', dogId: 'puppy1', publicEnabled: true }, 'stranger')).code).toBe(403)
+  })
+})
+
+describe('Public QR timeline chronological order (Owner QA, 01 Nov 2026)', () => {
+  // 31 public entries posted in id order but with scrambled event dates, plus private
+  // entries interleaved — exercises sort-before-page, both directions, and privacy.
+  const day = i => `2026-${String(1 + (i * 7) % 12).padStart(2, '0')}-${String(1 + (i * 11) % 28).padStart(2, '0')}`
+  const seed = Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`puppyProfiles/puppy1/updates/u${String(i).padStart(2, '0')}`, entry('public', { date: day(i), createdAt: `2026-11-01T00:${String(i).padStart(2, '0')}:00Z` })]))
+  Object.assign(seed, { 'puppyProfiles/puppy1/updates/zz-private': entry('internal', { date: '2027-01-01' }), 'puppyProfiles/puppy1/updates/zz-buyer': entry('buyer', { date: '2027-01-02' }) })
+  const all = async (call, order) => {
+    const first = await call({ passportId: 'DOG-RUBY', ...(order ? { order } : {}) })
+    const next = first.body.nextCursor ? await call({ passportId: 'DOG-RUBY', ...(order ? { order } : {}), cursor: first.body.nextCursor }) : { body: { updates: [], nextCursor: null } }
+    return { first, next, list: [...first.body.updates, ...next.body.updates] }
+  }
+  const ms = d => Date.parse(`${d}T12:00:00Z`)
+
+  it('defaults to Newest first by EVENT date across pages', async () => {
+    const { call } = setup(seed)
+    const { first, next, list } = await all(call)
+    expect(first.body.order).toBe('newest')
+    expect(first.body.updates).toHaveLength(25)
+    expect(next.body.nextCursor).toBeNull()
+    expect(list).toHaveLength(31)
+    for (let i = 1; i < list.length; i++) expect(ms(list[i - 1].date)).toBeGreaterThanOrEqual(ms(list[i].date))
+  })
+
+  it('Oldest first is chronological across pages', async () => {
+    const { call } = setup(seed)
+    const { list } = await all(call, 'oldest')
+    expect(list).toHaveLength(31)
+    for (let i = 1; i < list.length; i++) expect(ms(list[i - 1].date)).toBeLessThanOrEqual(ms(list[i].date))
+  })
+
+  it('public visitors never receive private entries, even when they are the newest', async () => {
+    const { call } = setup(seed)
+    const { list } = await all(call)
+    expect(list.map(u => u.id)).not.toContain('zz-private')
+    expect(list.map(u => u.id)).not.toContain('zz-buyer')
+  })
+
+  it('an edited (re-dated) update moves to its new chronological position', async () => {
+    const { call } = setup({
+      'puppyProfiles/puppy1/updates/old': entry('public', { date: '2026-01-01', createdAt: '2026-10-01T00:00:00Z' }),
+      'puppyProfiles/puppy1/updates/new': entry('public', { date: '2026-12-01', createdAt: '2026-09-01T00:00:00Z' }),
+    })
+    expect((await call({ passportId: 'DOG-RUBY' })).body.updates.map(u => u.id)).toEqual(['new', 'old'])
+    expect((await call({ passportId: 'DOG-RUBY', order: 'oldest' })).body.updates.map(u => u.id)).toEqual(['old', 'new'])
+  })
+
+  it('rejects a cursor that is not in this viewer\'s list (no probing private ids)', async () => {
+    const { call } = setup(seed)
+    expect((await call({ passportId: 'DOG-RUBY', cursor: 'zz-private' })).code).toBe(400)
   })
 })

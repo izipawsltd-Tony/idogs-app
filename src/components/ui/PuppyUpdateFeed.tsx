@@ -2,6 +2,15 @@ import { useState } from 'react'
 import PuppyMediaViewer from './PuppyMediaViewer'
 import type { PuppyUpdate, UpdateAudience } from '../../lib/puppyUpdates'
 
+// Calendar dates render as-is (no time-zone shift); unusable values say so
+// instead of 'Invalid Date'.
+export function formatUpdateDate(date: unknown): string {
+  const m = typeof date === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(date) : null
+  if (!m) return 'Date not set'
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12))
+  return Number.isNaN(d.getTime()) ? 'Date not set' : d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+}
+
 export const AUDIENCE_LABELS: Record<UpdateAudience, string> = { internal: 'Only me', public: 'Public on QR profile', buyer: 'Deposited buyer only' }
 
 export default function PuppyUpdateFeed({ updates, galleryUpdates, manage, busy, edit }: { updates: PuppyUpdate[]; galleryUpdates?: PuppyUpdate[]; busy?: boolean; edit?: (update: PuppyUpdate) => void; manage?: (id: string, action: 'delete' | 'visibility', audience?: UpdateAudience) => void }) {
@@ -10,7 +19,7 @@ export default function PuppyUpdateFeed({ updates, galleryUpdates, manage, busy,
   if (!updates.length) return <p style={{ color: 'var(--mid)', padding: '18px 0' }}>No updates shared here yet. Check back to follow their story.</p>
   return <div style={{ display: 'grid', gap: 16 }}>{updates.map(update => <article key={update.id} className="card" style={{ padding: 16, minWidth: 0 }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-      <time dateTime={update.date} style={{ fontSize: 13, color: 'var(--mid)' }}>{new Date(`${update.date}T12:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</time>
+      <time dateTime={update.date} style={{ fontSize: 13, color: 'var(--mid)' }}>{formatUpdateDate(update.date)}</time>
       {manage && <span style={{ fontSize: 12, color: 'var(--brand-600)' }}>{AUDIENCE_LABELS[update.audience]}{update.inherited ? ' · From previous owner' : ''}</span>}
     </div>
     {!!update.text && <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: '10px 0' }}>{update.text}</p>}
