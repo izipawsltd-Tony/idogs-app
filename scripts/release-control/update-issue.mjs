@@ -140,7 +140,7 @@ export function renderBody(model) {
   return out.join('\n')
 }
 
-async function gh(path, { token, method = 'GET', body } = {}) {
+async function defaultGh(path, { token, method = 'GET', body } = {}) {
   if (process.env.RC_TRANSPORT === 'gh') {
     // Local operator mode: use the authenticated gh CLI (no token handled here).
     const args = ['api', '-X', method, '-H', 'Accept: application/vnd.github+json', path.replace(/^\//, '')]
@@ -162,6 +162,10 @@ async function gh(path, { token, method = 'GET', body } = {}) {
   if (!res.ok) throw new Error(`GitHub API ${method} ${path} → ${res.status}`)
   return res.status === 204 ? null : res.json()
 }
+
+// Injectable transport (tests replace it with an in-memory fake GitHub).
+let gh = defaultGh
+export function _setTransport(fn) { gh = fn || defaultGh }
 
 async function collectPr(repo, number, previewContext, token) {
   const pr = await gh(`/repos/${repo}/pulls/${number}`, { token })
@@ -197,22 +201,29 @@ async function collectTestflight(repo, workflowFile, candidateShas, token) {
 }
 
 export async function findControlIssue(repo, config, token) {
+  // The control Issue is FIXED (#69, Owner-authored). Never search by title
+  // and never create a replacement: fail closed so a misconfiguration is
+  // visible instead of silently spawning duplicate control issues.
+  const number = Number(config.issueNumber)
+  if (!Number.isInteger(number) || number <= 0) throw new Error('release-control.json must set a fixed issueNumber')
   const owner = repo.split('/')[0]
-  if (config.issueNumber) {
-    const issue = await gh(`/repos/${repo}/issues/${Number(config.issueNumber)}`, { token })
-    // Only accept the configured issue if the repository owner opened it or it
-    // carries the release-control label (labels need triage rights).
-    if (issue && !issue.pull_request && issue.state === 'open' &&
-        (issue.user?.login === owner || (issue.labels || []).some(l => l.name === ISSUE_LABEL))) return issue
-    throw new Error(`Configured control issue #${config.issueNumber} is missing, closed or not trusted`)
+  const issue = await gh(`/repos/${repo}/issues/${number}`, { token })
+  if (!issue || issue.pull_request || issue.state !== 'open' ||
+      !(issue.user?.login === owner || (issue.labels || []).some(l => l.name === ISSUE_LABEL))) {
+    throw new Error(`Control issue #${number} is missing, closed or not trusted — refusing to create another`)
   }
-  const issues = (await gh(`/repos/${repo}/issues?state=open&labels=${ISSUE_LABEL}&per_page=50`, { token })) || []
-  return issues.find(i => !i.pull_request && i.title === config.issueTitle) || null
+  return issue
 }
 
-export function findDashboardComment(comments, trustedAuthors) {
-  const mine = comments.filter(c => trustedAuthors.includes(c.user?.login) && String(c.body || '').startsWith('<!-- release-control:dashboard -->'))
-  return mine[mine.length - 1] || null
+export function findDashboardComments(comments, trustedAuthors) {
+  return comments.filter(c => trustedAuthors.includes(c.user?.login) && String(c.body || '').startsWith('<!-- release-control:dashboard -->'))
+}
+
+// Deterministic choice: the OLDEST trusted dashboard this writer can edit.
+// Concurrent writers therefore converge on the same comment.
+export function findDashboardComment(comments, trustedAuthors, preferAuthor) {
+  const all = findDashboardComments(comments, trustedAuthors)
+  return (preferAuthor && all.find(c => c.user?.login === preferAuthor)) || all[0] || null
 }
 
 export async function main({ argv = process.argv.slice(2), env = process.env, root = process.cwd() } = {}) {
@@ -233,18 +244,14 @@ export async function main({ argv = process.argv.slice(2), env = process.env, ro
   model.fingerprint = fingerprint(model)
   const body = renderBody(model)
   if (dryRun) { process.stdout.write(body + '\n'); return { changed: null } }
-  let issue = await findControlIssue(repo, config, token)
-  if (!issue) {
-    issue = await gh(`/repos/${repo}/issues`, { token, method: 'POST', body: { title: config.issueTitle, body: 'Build & release control. Live status is maintained in the comments below.', labels: [ISSUE_LABEL] } })
-    console.log(`Created control issue #${issue.number}`)
-  }
+  const issue = await findControlIssue(repo, config, token)
   const comments = []
   for (let page = 1; page <= 10; page++) {
     const batch = (await gh(`/repos/${repo}/issues/${issue.number}/comments?per_page=100&page=${page}`, { token })) || []
     comments.push(...batch)
     if (batch.length < 100) break
   }
-  const dashboard = findDashboardComment(comments, config.trustedDashboardAuthors || ['github-actions[bot]'])
+  const dashboard = findDashboardComment(comments, config.trustedDashboardAuthors || ['github-actions[bot]'], env.GITHUB_ACTIONS === 'true' ? 'github-actions[bot]' : null)
   const previous = dashboard && /release-control:fingerprint:([0-9a-f]+)/.exec(dashboard.body)?.[1]
   if (previous === model.fingerprint) { console.log(`Issue #${issue.number}: no state change`); return { changed: false, issue: issue.number } }
   let updated = false
