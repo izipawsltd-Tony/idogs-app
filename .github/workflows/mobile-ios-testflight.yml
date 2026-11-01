@@ -6,6 +6,10 @@ on:
       - fix/android-v20-qa-blockers
       - fix/ios-resume-20261024
       - release/ios-app-store-20261025
+      # Owner Gate G4 path for Claude's iOS candidate: after written approval,
+      # Claude creates claude/ios-testflight-<date> at the exact candidate SHA
+      # with a '[testflight]' commit. Uploads still require '[testflight]'.
+      - 'claude/ios-testflight-*'
   workflow_dispatch:
 
 permissions:
