@@ -49,3 +49,16 @@ class IOSPrivacyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MicrophonePurposeTests(unittest.TestCase):
+    def test_microphone_purpose_required_for_video_capture(self):
+        self.assertIn("NSMicrophoneUsageDescription", PURPOSES)
+        self.assertIn("video", PURPOSES["NSMicrophoneUsageDescription"])
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "Info.plist"
+            without_mic = {k: v for k, v in PURPOSES.items() if k != "NSMicrophoneUsageDescription"}
+            path.write_bytes(plistlib.dumps(without_mic))
+            with self.assertRaises(ValueError):
+                configure(path, check=True)
+

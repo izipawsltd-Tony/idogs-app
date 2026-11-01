@@ -1,4 +1,4 @@
-"""Configure and verify camera/photo purpose strings in generated and built apps."""
+"""Configure and verify camera/photo/microphone purpose strings in generated and built apps."""
 import argparse
 import plistlib
 from pathlib import Path
@@ -6,6 +6,9 @@ from pathlib import Path
 PURPOSES = {
     "NSCameraUsageDescription": "iDogs uses your camera to photograph dog documents for scanning and to add dog profile photos.",
     "NSPhotoLibraryUsageDescription": "iDogs lets you choose existing photos of dogs and documents to add to your dog records or scan with your permission.",
+    # Puppy profile video upload offers "Take Video" in the iOS file picker;
+    # recording with sound requires this key or iOS terminates the app.
+    "NSMicrophoneUsageDescription": "iDogs uses the microphone only while you record a puppy video to add to its profile.",
 }
 
 
@@ -31,4 +34,4 @@ if __name__ == "__main__":
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     configure(args.plist, args.check)
-    print("iOS camera and photo purpose strings verified" if args.check else "iOS camera and photo purpose strings configured")
+    print("iOS camera, photo and microphone purpose strings verified" if args.check else "iOS camera, photo and microphone purpose strings configured")
