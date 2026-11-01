@@ -17,11 +17,12 @@ Use the protected review/demo account or a staging-free test account on **Produc
 3. SMS-signup customer guidance text visible on Login (web Settings flow is the path; no external link).
 4. Registration (new disposable email) → verification email → "I've verified" continues to Dashboard.
 5. Dogs: list loads; open a dog; edit a field; save persists after app restart.
-6. Documents: upload from **Photos** (incl. HEIC) and from **Camera** → permission prompts show the iDogs purpose strings → upload succeeds → **View** opens file → **Edit** rename shows new name → **Delete** asks and removes.
+6. Documents / iDogs Scan: the picker offers **Take Photo, Photo Library and Files** (fixed in `b74d6d2`; previously camera-only) → upload a photo (incl. HEIC), a library image and a **PDF** → permission prompts show the iDogs purpose strings → upload succeeds → **View** opens file → **Edit** rename shows new name → **Delete** asks and removes.
 7. Dog Detail → Documents tab: View → Edit → Delete row fits the screen (no horizontal scroll).
 8. QR Passport: open passport; public link opens in a signed-out browser and shows no private notes.
 9. Plus: an account with Plus shows **Current plan: Plus** and features; **no prices, checkout, A$0 offer, "Upgrade" links or Manage subscription** anywhere in the app (Billing, sidebar, dog limit, litters, landing).
 10. iDogs Scan: consent screen before upload; manual-entry alternative available; result applies to the dog.
+10b. Litters (breeder): puppy media → **Take Video** shows the microphone permission prompt and does **not crash** (purpose string added in `b74d6d2`); a library video uploads.
 11. Reminders/notifications screens open without error; Settings opens; account deletion initiation/status visible (do not complete deletion on the shared demo account).
 12. Background → foreground after 10 min: session retained, no blank screen; rotate/keyboard does not break layout.
 13. Airplane mode: friendly error, no crash; back online recovers.
@@ -35,7 +36,7 @@ Use the protected review/demo account or a staging-free test account on **Produc
 | C4 | Screenshots 6.1"/5.8" × 4 COMPLETE | ✅ delivery / ⏳ content | Visual check of each image vs the candidate's real screens (no real customer data) |
 | C5 | Description, keywords, support/marketing/privacy URLs present | ✅ presence / ⏳ content | Read exact text; ensure no mention of in-app purchasing or web pricing (anti-steering) |
 | C6 | Reviewer contact + demo credentials + notes | ✅ configured / ⏳ verify | Verify demo login on the selected build (B2). Notes must state: digital Plus is not sold in the app; web-purchased Plus works in-app (3.1.3(b)); deletion behaviour described truthfully |
-| C7 | **App Privacy labels** | ⏳ 🔒 portal | Reconcile with actual flows: Contact Info (email, name; phone for SMS sign-in on web only — confirm whether the iOS app collects phone), User Content (photos/documents), Identifiers (Firebase UID), Purchases (plan status only), Diagnostics if any. All **linked to identity**, **not used for tracking** (✅ source: iOS line contains no Meta pixel / ads code). Third-party processors: Firebase/Google, Vercel, Anthropic (document scans, 30-day retention, overseas processing), Resend email |
+| C7 | **App Privacy labels** | ⏳ 🔒 portal | Reconcile with actual flows: Contact Info (email, name; phone for SMS sign-in on web only — confirm whether the iOS app collects phone), User Content (photos/documents; **puppy videos incl. audio** — declare Audio Data / Photos or Videos), Identifiers (Firebase UID), Purchases (plan status only), Diagnostics if any. All **linked to identity**, **not used for tracking** (✅ source: iOS line contains no Meta pixel / ads code). Third-party processors: Firebase/Google, Vercel, Anthropic (document scans, 30-day retention, overseas processing), Resend email |
 | C8 | **Effective Privacy Policy** | ⏳ 🔒 Owner/legal | Release `PrivacyPage` still shows the draft review notice; prior audit found cookie/deletion contradictions. Publish an effective policy matching C7 before submission. "Asia-Pacific" storage wording per CLAUDE.md |
 | C9 | Export compliance | ✅ | usesNonExemptEncryption:false on builds 92/93 |
 | C10 | Account deletion in-app (Guideline 5.1.1(v)) | ⏳ | Initiation present; confirm the deletion request is actually fulfilled operationally (handoff: live fulfilment worker not yet active) — **potential rejection risk** |
