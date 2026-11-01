@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sanitize, summariseChecks, lineReadiness, fingerprint, renderBody, isMetaCheck } from './update-issue.mjs'
+import { sanitize, summariseChecks, lineReadiness, fingerprint, renderBody, isMetaCheck, findDashboardComment } from './update-issue.mjs'
 
 const pr = (over = {}) => ({ number: 67, found: true, title: 't', state: 'open', draft: true, headRef: 'claude/x', baseRef: 'b', headSha: 'abcdef1234', mergeable: 'clean', checks: { items: [], overall: 'success', failing: [] }, preview: { state: 'success', url: null }, ...over })
 const gates = [{ id: 'G3', status: 'pending' }, { id: 'G3P', status: 'pending' }, { id: 'G4', status: 'pending' }, { id: 'G5', status: 'pending' }, { id: 'G6', status: 'pending' }, { id: 'G7', status: 'pending' }]
@@ -40,12 +40,21 @@ describe('release-control', () => {
   })
   it('renders gates and never includes a token-like value', () => {
     const body = renderBody({ repo: 'o/r', fingerprint: 'abc', generatedAt: 'now', event: '', milestones: ['m.md'], milestonesDir: 'docs', reportsRef: 'main', gates: [{ id: 'G4', name: 'TestFlight', status: 'pending', note: 'n' }], lines: { ios: { label: 'iOS', prs: [pr()], testflight: { latest: null }, readiness: { stage: 's', blockers: [] } } } })
-    expect(body).toContain('release-control:fingerprint:abc'); expect(body).toContain('| G4 |')
+    expect(body.startsWith('<!-- release-control:dashboard -->')).toBe(true); expect(body).toContain('release-control:fingerprint:abc'); expect(body).toContain('| G4 |')
     expect(body).not.toMatch(/gh[ps]_[A-Za-z0-9]{20,}/)
   })
   it('ignores automation meta-jobs when judging CI', () => {
     expect(isMetaCheck('release-control / Update release-control issue')).toBe(true)
     expect(isMetaCheck('auto-fix / Claude auto-fix (bounded)')).toBe(true)
     expect(isMetaCheck('Typecheck, tests, build')).toBe(false)
+  })
+  it('only edits a dashboard comment written by a trusted author', () => {
+    const c = [
+      { id: 1, user: { login: 'stranger' }, body: '<!-- release-control:dashboard --> fake' },
+      { id: 2, user: { login: 'github-actions[bot]' }, body: '<!-- release-control:dashboard --> real' },
+      { id: 3, user: { login: 'github-actions[bot]' }, body: 'no marker' },
+    ]
+    expect(findDashboardComment(c, ['github-actions[bot]']).id).toBe(2)
+    expect(findDashboardComment([c[0]], ['github-actions[bot]'])).toBeNull()
   })
 })

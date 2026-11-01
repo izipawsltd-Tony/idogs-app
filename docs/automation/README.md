@@ -71,6 +71,10 @@ No new secret is needed for the control Issue (uses the built-in `GITHUB_TOKEN`)
 - Automation never deploys Production, changes Production Firebase rules, touches Stripe Live or real customer data, or submits to the App Store. Auto-fix may not touch `.github/**`, `firestore.rules`, `storage.rules`, `vercel.json` or billing APIs (enforced by Agent branch guard).
 - Branch protection and security checks are never disabled by automation.
 
+## Identity note
+
+Interactive Claude sessions reach GitHub through the Owner's connected account, so their commits/comments show as `izipawsltd-Tony`; Actions runs show as `github-actions[bot]` / `claude[bot]`. Claude's commits always carry a `Claude-Session:` trailer, and `@claude` triggers require the comment to *start* with `@claude`, so automated status comments can never trigger an agent run.
+
 ## Branch ownership between agents
 
 - Claude works only on `claude/*` branches. Other agents (e.g. Codex) must use their own prefixes and never push to `claude/*`.

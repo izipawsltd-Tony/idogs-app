@@ -1,4 +1,5 @@
 {
+  "issueNumber": 69,
   "issueTitle": "iDOGS — BUILD & RELEASE CONTROL",
   "agentBranchPrefix": "claude/",
   "lines": {
@@ -82,5 +83,10 @@
       "note": "Confirm Vercel production branch first — master is stale"
     }
   ],
-  "milestonesDir": "docs/release/claude"
+  "milestonesDir": "docs/release/claude",
+  "trustedDashboardAuthors": [
+    "github-actions[bot]",
+    "claude[bot]",
+    "izipawsltd-Tony"
+  ]
 }
