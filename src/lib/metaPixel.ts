@@ -5,18 +5,37 @@ type Pixel = ((...args: unknown[]) => void) & { queue?: unknown[][]; push?: Pixe
 type PixelWindow = Window & { fbq?: Pixel; _fbq?: Pixel; Capacitor?: { isNativePlatform?: () => boolean } }
 let lastPage = ''
 
-export function isMarketingWebsitePage() {
+// Standard Meta Ads URL parameters (UTM incl. utm_id, Meta dynamic URL
+// parameters). Values are ad metadata only — never account or form data.
+// Any other key (e.g. ?email=…) still disables measurement for that visit.
+export const META_QUERY_KEYS = [
+  'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'utm_placement',
+  'campaign_id', 'adset_id', 'ad_id', 'campaign_name', 'adset_name', 'ad_name', 'placement', 'site_source_name', 'next',
+]
+const MARKETING_PATHS = ['/', '/signup']
+// CompleteRegistration only: a brand-new account may also be created by the
+// mobile-number form on /login. No PageView is ever sent for /login.
+const REGISTRATION_PATHS = ['/', '/signup', '/login']
+
+function isWebsite() {
   const w = window as PixelWindow
   return !import.meta.env.VITE_IDOGS_NATIVE_PLATFORM && !w.Capacitor?.isNativePlatform?.()
-    && ['/', '/signup'].includes(location.pathname)
+}
+
+export function isMarketingWebsitePage() {
+  return isWebsite() && MARKETING_PATHS.includes(location.pathname)
+}
+
+function canMeasurePath(paths: string[]) {
+  const query = new URLSearchParams(location.search)
+  return isWebsite() && paths.includes(location.pathname)
+    && ['idogs.com.au', 'www.idogs.com.au'].includes(location.hostname)
+    && Array.from(query.keys()).every(key => META_QUERY_KEYS.includes(key))
+    && (!query.has('next') || ['/app/dashboard', '/app/billing'].includes(query.get('next')!))
 }
 
 export function canMeasureMarketingPage() {
-  const query = new URLSearchParams(location.search)
-  return isMarketingWebsitePage()
-    && ['idogs.com.au', 'www.idogs.com.au'].includes(location.hostname)
-    && Array.from(query.keys()).every(key => ['fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'next'].includes(key))
-    && (!query.has('next') || ['/app/dashboard', '/app/billing'].includes(query.get('next')!))
+  return canMeasurePath(MARKETING_PATHS)
 }
 
 export function readMetaConsent(): 'granted' | 'denied' | null {
@@ -34,8 +53,8 @@ function revokePixel() {
   fbq?.('consent', 'revoke')
 }
 
-function pixel() {
-  if (!canMeasureMarketingPage() || readMetaConsent() !== 'granted') return
+function pixel(paths = MARKETING_PATHS) {
+  if (!canMeasurePath(paths) || readMetaConsent() !== 'granted') return
   const w = window as PixelWindow
   if (!w.fbq) {
     const queue: Pixel = (...args) => { queue.callMethod ? queue.callMethod(...args) : queue.queue!.push(args) }
@@ -79,8 +98,26 @@ export function trackMarketingPage() {
   } catch { /* Advertising must never interrupt the app. */ }
 }
 
-export function trackCompletedRegistration() {
-  try { pixel()?.('trackSingle', META_PIXEL_ID, 'CompleteRegistration', { status: true }) } catch { /* non-blocking */ }
+// Resolves once the event can no longer be lost. Callers navigate into the
+// private app right after signup, and suspendMetaTracking() then discards
+// events still queued for an SDK that has not loaded yet (so it can never
+// read a private URL). Wait — bounded, consented visitors only — for the SDK
+// to take the event first. Never rejects; never blocks for non-consented
+// visitors, preview hosts or the native app.
+export function trackCompletedRegistration(timeoutMs = 1500): Promise<void> {
+  try {
+    const fbq = pixel(REGISTRATION_PATHS)
+    if (!fbq) return Promise.resolve()
+    fbq('trackSingle', META_PIXEL_ID, 'CompleteRegistration', { status: true })
+    const ready = () => !!(window as PixelWindow).fbq?.callMethod
+    if (ready()) return Promise.resolve()
+    return new Promise(resolve => {
+      const started = Date.now()
+      const timer = setInterval(() => {
+        if (ready() || Date.now() - started >= timeoutMs) { clearInterval(timer); resolve() }
+      }, 50)
+    })
+  } catch { return Promise.resolve() }
 }
 
 export function suspendMetaTracking() {

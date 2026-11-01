@@ -25,7 +25,7 @@ export default function SignupPage({ toast }: Props) {
     setLoading(true); setError('')
     try {
       await signup({ email: email.trim(), password, ...splitDisplayName(name), kennelName: '', marketingOptIn: promotions && promotionsConfirmed, termsAccepted: true })
-      trackCompletedRegistration(); toast('Welcome to iDogs!'); navigate(returnTo, { replace: true })
+      await trackCompletedRegistration(); toast('Welcome to iDogs!'); navigate(returnTo, { replace: true })
     } catch (err) {
       const message = err instanceof Error ? err.message : ''
       setError(message.includes('email-already-in-use') ? 'This email already has an account. Sign in or reset your password below.' : message.includes('weak-password') ? 'Please choose a stronger password with at least 8 characters.' : 'Could not create your account. Please try again.')
@@ -36,7 +36,7 @@ export default function SignupPage({ toast }: Props) {
     setLoading(true); setError('')
     try {
       const created = await socialLogin(provider, promotions && promotionsConfirmed, true)
-      if (created) { trackCompletedRegistration(); toast('Welcome to iDogs!') }
+      if (created) { await trackCompletedRegistration(); toast('Welcome to iDogs!') }
       navigate(returnTo, { replace: true })
     } catch { setError('Could not sign in with this provider. Try your existing sign-in method or continue with email.') }
     finally { setLoading(false) }
