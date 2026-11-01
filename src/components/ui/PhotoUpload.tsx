@@ -80,7 +80,6 @@ export default function PhotoUpload({ dogId, currentPhoto, onUpload, toast }: Pr
         ref={fileRef}
         type="file"
         accept="image/*"
-        capture="environment"
         style={{ display: 'none' }}
         onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])}
       />

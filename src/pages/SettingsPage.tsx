@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import PhoneSigninSettings from '../components/ui/PhoneSigninSettings'
+import EmailPasswordSettings from '../components/ui/EmailPasswordSettings'
 import { doc, getDocFromServer } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { useAuth } from '../hooks/useAuth'
@@ -365,6 +366,7 @@ export default function SettingsPage({ toast }: Props) {
         )}
       </div>
 
+      <EmailPasswordSettings key={`pw-${user?.uid}`} user={user} profileReady={!!profile} onLinked={() => refreshProfile(true)} />
       <PhoneSigninSettings key={user?.uid} user={user} profileReady={!!profile} onLinked={() => refreshProfile(true)} />
       {/* ── NAVIGATION ── */}
       <div className="card" style={{ marginBottom: 16 }}>
