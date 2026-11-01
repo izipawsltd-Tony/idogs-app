@@ -1,5 +1,6 @@
 import ReminderForm from '../components/ui/ReminderForm'
 import { UploadModal } from './DocumentsPage'
+import { documentDisplayName, documentEditableName } from '../lib/documentName'
 import { QrDocumentManager, QrDocumentSharingSummary, QrDocumentShareCheckbox, QrDocumentSharingFooter } from '../components/ui/QrDocuments'
 import PuppyUpdatesManager from '../components/ui/PuppyUpdatesManager'
 import PuppyUpdateFeed from '../components/ui/PuppyUpdateFeed'
@@ -3005,7 +3006,7 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
                     </div>
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      {doc.name || getDocLabel(doc.documentType)}
+                      {documentDisplayName(doc, getDocLabel)}
 
                     </span>
                   )}
@@ -3033,7 +3034,7 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
                   View ↗
                 </button>
                 {canEdit && <button type="button" className="btn btn-secondary btn-sm"
-                  onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || '') }}>Edit</button>}
+                  onClick={() => { setEditingDocId(doc.id); setEditDocName(documentEditableName(doc)) }}>Edit</button>}
                 {canEdit && <button
                   onClick={async () => {
                     if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {

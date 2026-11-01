@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { documentDisplayName, documentEditableName } from '../lib/documentName'
 import { auth } from '../lib/firebase'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -240,7 +241,7 @@ export default function DocumentsPage({ toast }: Props) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
                     <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)' }}>
-                      {doc.name || doc.title || getDocLabel(doc.documentType)}
+                      {documentDisplayName(doc, getDocLabel)}
                     </span>
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)', fontWeight: 500 }}>
                       {(doc.fileType || 'FILE').toUpperCase()}
@@ -272,7 +273,7 @@ export default function DocumentsPage({ toast }: Props) {
                     View ↗
                   </button>
                   <button type="button" className="btn btn-secondary btn-sm" disabled={savingEdit}
-                    onClick={() => { setEditingDocId(doc.id); setEditingName(doc.name || doc.title || getDocLabel(doc.documentType)) }}>Edit</button>
+                    onClick={() => { setEditingDocId(doc.id); setEditingName(documentEditableName(doc) || getDocLabel(doc.documentType)) }}>Edit</button>
                   <button
                     onClick={async () => {
                       if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
@@ -381,6 +382,9 @@ export function UploadModal({ dogs, user, onClose, onSuccess, toast, fixedDogId 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!file || !dogId) return
+    // The user's own name is kept exactly (trimmed). Never persist the type
+    // label as a name — the type is stored separately as documentType.
+    const customTitle = title.trim()
     setUploading(true)
     setProgress(10)
     try {
@@ -398,13 +402,13 @@ export function UploadModal({ dogs, user, onClose, onSuccess, toast, fixedDogId 
       const response = await fetch('/api/upload-document', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ base64, mediaType: file.type || 'application/octet-stream', dogId, documentType: docType, title: title || getDocLabel(docType), notes: notes || null, source: 'manual', originalFileName: file.name }),
+        body: JSON.stringify({ base64, mediaType: file.type || 'application/octet-stream', dogId, documentType: docType, ...(customTitle ? { title: customTitle } : {}), notes: notes || null, source: 'manual', originalFileName: file.name }),
       })
       if (!response.ok) throw new Error('Upload failed')
       setProgress(90)
       const uploaded = await response.json()
       setProgress(100)
-      onSuccess({ id: uploaded.documentId, dogId, documentType: docType, title: title || getDocLabel(docType), notes: notes || null, filePath: uploaded.filePath, fileType: uploaded.fileType || 'file', source: 'manual', uploadedAt: { toDate: () => new Date() } })
+      onSuccess({ id: uploaded.documentId, dogId, documentType: docType, ...(customTitle ? { title: customTitle } : {}), notes: notes || null, filePath: uploaded.filePath, fileType: uploaded.fileType || 'file', source: 'manual', uploadedAt: { toDate: () => new Date() } })
     } catch {
       console.error('Manual document upload failed')
       toast('Upload failed — please try again', 'error')
