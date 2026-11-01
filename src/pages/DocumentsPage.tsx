@@ -240,7 +240,7 @@ export default function DocumentsPage({ toast }: Props) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
                     <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)' }}>
-                      {doc.title || getDocLabel(doc.documentType)}
+                      {doc.name || doc.title || getDocLabel(doc.documentType)}
                     </span>
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)', fontWeight: 500 }}>
                       {(doc.fileType || 'FILE').toUpperCase()}
