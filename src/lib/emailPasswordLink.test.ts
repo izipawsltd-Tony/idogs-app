@@ -163,7 +163,7 @@ describe('add email for SMS-only accounts (emailed link → verified, same uid)'
 it('keeps where the customer was going (from /verify-email) in the link, only for safe /app paths', async () => {
   s.current = phoneUser()
   await sendAddEmailLink(s.current, 'a@b.co', 'https://idogs.com.au', '/app/dogs/new')
-  expect(s.sendLink.mock.calls.at(-1)[2].url).toBe('https://idogs.com.au/app/settings?addEmail=1&next=%2Fapp%2Fdogs%2Fnew')
+  expect(s.sendLink.mock.calls[s.sendLink.mock.calls.length - 1][2].url).toBe('https://idogs.com.au/app/settings?addEmail=1&next=%2Fapp%2Fdogs%2Fnew')
   await sendAddEmailLink(s.current, 'a@b.co', 'https://idogs.com.au', 'https://evil.example/x')
-  expect(s.sendLink.mock.calls.at(-1)[2].url).toBe('https://idogs.com.au/app/settings?addEmail=1')
+  expect(s.sendLink.mock.calls[s.sendLink.mock.calls.length - 1][2].url).toBe('https://idogs.com.au/app/settings?addEmail=1')
 })
