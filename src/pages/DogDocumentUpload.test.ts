@@ -2,6 +2,8 @@ import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: null }) }))
+// DocumentsPage imports auth for UID guards; isolate this upload-only test from real Firebase initialization.
+vi.mock('../lib/firebase', () => ({ auth: { currentUser: null } }))
 vi.mock('../lib/db', () => ({ getAllDocumentsForUser: vi.fn(), getDogs: vi.fn(), deleteDocument: vi.fn() }))
 import { UploadModal } from './DocumentsPage'
 import type { Dog } from '../types'
