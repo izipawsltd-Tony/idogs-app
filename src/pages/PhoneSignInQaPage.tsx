@@ -11,7 +11,7 @@ import { phoneEmailLinkStagingEnabled } from '../lib/phoneAccountEmailLink'
 export function allowedStagingPhoneQaNumbers(): string[] {
   if (!phoneEmailLinkStagingEnabled()) return []
   return (import.meta.env.VITE_IDOGS_PHONE_OTP_QA_NUMBERS || '')
-    .split(',').map((s: string) => s.trim()).filter((s: string) => /^\\+[1-9][0-9]{7,14}$/.test(s))
+    .split(',').map((s: string) => s.trim()).filter((s: string) => /^\+[1-9][0-9]{7,14}$/.test(s))
 }
 
 export default function PhoneSignInQaPage() {
