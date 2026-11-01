@@ -40,48 +40,52 @@ async function seed() {
   })
 }
 
+// checkAsync() passes only on a truthy result; Firestore writes resolve to
+// undefined, so convert both assertion helpers to explicit booleans.
+const ok = p => assertSucceeds(p).then(() => true)
+const denied = p => assertFails(p).then(() => true)
 const as = uid => testEnv.authenticatedContext(uid).firestore()
 
 await seed()
-await checkAsync('owner can read own document', () => assertSucceeds(getDoc(doc(as(OWNER), 'documents/doc1'))))
-await checkAsync('owner can rename (name)', () => assertSucceeds(updateDoc(doc(as(OWNER), 'documents/doc1'), { name: 'Rabies cert 2026' })))
-await checkAsync('owner can clear name (deleteField)', () => assertSucceeds(updateDoc(doc(as(OWNER), 'documents/doc1'), { name: deleteField() })))
+await checkAsync('owner can read own document', () => ok(getDoc(doc(as(OWNER), 'documents/doc1'))))
+await checkAsync('owner can rename (name)', () => ok(updateDoc(doc(as(OWNER), 'documents/doc1'), { name: 'Rabies cert 2026' })))
+await checkAsync('owner can clear name (deleteField)', () => ok(updateDoc(doc(as(OWNER), 'documents/doc1'), { name: deleteField() })))
 await checkAsync('owner can set manual-upload metadata (name,title,notes,source)', () =>
-  assertSucceeds(updateDoc(doc(as(OWNER), 'documents/doc1'), { name: 'x', title: 'x', notes: null, source: 'manual' })))
+  ok(updateDoc(doc(as(OWNER), 'documents/doc1'), { name: 'x', title: 'x', notes: null, source: 'manual' })))
 await checkAsync('owner CANNOT repoint dogId to victim dog', () =>
-  assertFails(updateDoc(doc(as(OWNER), 'documents/doc1'), { dogId: 'victimDog' })))
+  denied(updateDoc(doc(as(OWNER), 'documents/doc1'), { dogId: 'victimDog' })))
 await checkAsync('owner CANNOT change tenantId', () =>
-  assertFails(updateDoc(doc(as(OWNER), 'documents/doc1'), { tenantId: VICTIM })))
+  denied(updateDoc(doc(as(OWNER), 'documents/doc1'), { tenantId: VICTIM })))
 await checkAsync('owner CANNOT change filePath', () =>
-  assertFails(updateDoc(doc(as(OWNER), 'documents/doc1'), { filePath: `documents/${VICTIM}/victimDog/b.pdf` })))
+  denied(updateDoc(doc(as(OWNER), 'documents/doc1'), { filePath: `documents/${VICTIM}/victimDog/b.pdf` })))
 await checkAsync('owner CANNOT smuggle dogId alongside a rename', () =>
-  assertFails(updateDoc(doc(as(OWNER), 'documents/doc1'), { name: 'ok', dogId: 'victimDog' })))
-await checkAsync('stranger CANNOT rename', () => assertFails(updateDoc(doc(as(STRANGER), 'documents/doc1'), { name: 'pwned' })))
-await checkAsync('stranger CANNOT delete', () => assertFails(deleteDoc(doc(as(STRANGER), 'documents/doc1'))))
+  denied(updateDoc(doc(as(OWNER), 'documents/doc1'), { name: 'ok', dogId: 'victimDog' })))
+await checkAsync('stranger CANNOT rename', () => denied(updateDoc(doc(as(STRANGER), 'documents/doc1'), { name: 'pwned' })))
+await checkAsync('stranger CANNOT delete', () => denied(deleteDoc(doc(as(STRANGER), 'documents/doc1'))))
 await checkAsync('signed-out CANNOT rename', () =>
-  assertFails(updateDoc(doc(testEnv.unauthenticatedContext().firestore(), 'documents/doc1'), { name: 'x' })))
-await checkAsync('owner can delete own document', () => assertSucceeds(deleteDoc(doc(as(OWNER), 'documents/doc1'))))
+  denied(updateDoc(doc(testEnv.unauthenticatedContext().firestore(), 'documents/doc1'), { name: 'x' })))
+await checkAsync('owner can delete own document', () => ok(deleteDoc(doc(as(OWNER), 'documents/doc1'))))
 
 // Sibling dog-scoped collections: edits allowed, ownership keys immutable.
 await seed()
 await checkAsync('owner can edit vaccine record fields', () =>
-  assertSucceeds(updateDoc(doc(as(OWNER), 'vaccineRecords/vac1'), { name: 'C5 booster', nextDue: '2027-01-01', uncertain: false })))
+  ok(updateDoc(doc(as(OWNER), 'vaccineRecords/vac1'), { name: 'C5 booster', nextDue: '2027-01-01', uncertain: false })))
 await checkAsync('owner CANNOT move vaccine record onto victim dog (QR passport injection)', () =>
-  assertFails(updateDoc(doc(as(OWNER), 'vaccineRecords/vac1'), { dogId: 'victimDog' })))
+  denied(updateDoc(doc(as(OWNER), 'vaccineRecords/vac1'), { dogId: 'victimDog' })))
 await checkAsync('owner CANNOT change vaccine tenantId', () =>
-  assertFails(updateDoc(doc(as(OWNER), 'vaccineRecords/vac1'), { tenantId: VICTIM })))
+  denied(updateDoc(doc(as(OWNER), 'vaccineRecords/vac1'), { tenantId: VICTIM })))
 await checkAsync('owner can edit health test + documentPath', () =>
-  assertSucceeds(updateDoc(doc(as(OWNER), 'healthTests/ht1'), { result: '5/5', documentPath: 'x/y.pdf' })))
+  ok(updateDoc(doc(as(OWNER), 'healthTests/ht1'), { result: '5/5', documentPath: 'x/y.pdf' })))
 await checkAsync('owner CANNOT move health test to victim dog', () =>
-  assertFails(updateDoc(doc(as(OWNER), 'healthTests/ht1'), { dogId: 'victimDog' })))
+  denied(updateDoc(doc(as(OWNER), 'healthTests/ht1'), { dogId: 'victimDog' })))
 await checkAsync('owner CANNOT move worming record to victim dog', () =>
-  assertFails(updateDoc(doc(as(OWNER), 'wormingRecords/w1'), { dogId: 'victimDog' })))
+  denied(updateDoc(doc(as(OWNER), 'wormingRecords/w1'), { dogId: 'victimDog' })))
 await checkAsync('owner can edit activity note text', () =>
-  assertSucceeds(updateDoc(doc(as(OWNER), 'activityNotes/n1'), { note: 'edited' })))
+  ok(updateDoc(doc(as(OWNER), 'activityNotes/n1'), { note: 'edited' })))
 await checkAsync('owner CANNOT reassign activity note createdBy', () =>
-  assertFails(updateDoc(doc(as(OWNER), 'activityNotes/n1'), { createdBy: VICTIM })))
+  denied(updateDoc(doc(as(OWNER), 'activityNotes/n1'), { createdBy: VICTIM })))
 await checkAsync('owner can still delete own vaccine record', () =>
-  assertSucceeds(deleteDoc(doc(as(OWNER), 'vaccineRecords/vac1'))))
+  ok(deleteDoc(doc(as(OWNER), 'vaccineRecords/vac1'))))
 
 await testEnv.cleanup()
 await summary()
