@@ -1,0 +1,48 @@
+name: Claude (@claude on issues and PRs)
+
+# Lets the Owner hand work to Claude from GitHub by commenting "@claude …".
+# NOTE: GitHub runs issue_comment workflows only from the DEFAULT branch
+# (master). This file is inert until it is merged to master — Owner Gate G8.
+# Only the repository OWNER can trigger it, and only with a comment that
+# STARTS with "@claude" (automated status comments never do); comments from anyone else
+# (including bots and ChatGPT-posted comments under other accounts) are ignored.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+jobs:
+  claude:
+    if: >-
+      startsWith(github.event.comment.body, '@claude') &&
+      !contains(github.event.comment.body, 'release-control:') &&
+      github.event.comment.author_association == 'OWNER' &&
+      github.event.comment.user.type == 'User'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: idogs-claude-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 30
+      - name: Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          trigger_phrase: '@claude'
+          claude_args: |
+            --max-turns 30
+            --append-system-prompt "Work only on claude/* branches. Never deploy, never change Production Firebase rules, Stripe Live, customer data, secrets or .github/**, and never submit to the App Store. Follow CLAUDE.md and .claude/rules. Report progress on the BUILD & RELEASE CONTROL issue."
