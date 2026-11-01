@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { ConfirmationResult, RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth'
+import { RecaptchaVerifier, signInWithPhoneNumber, signOut, type ConfirmationResult } from 'firebase/auth'
 import { auth } from '../lib/firebase'
 import { useAuth } from '../hooks/useAuth'
 import { phoneEmailLinkStagingEnabled } from '../lib/phoneAccountEmailLink'
@@ -24,6 +24,8 @@ export default function PhoneSignInQaPage() {
   const [error, setError] = useState('')
   const captcha = useRef<RecaptchaVerifier | null>(null)
   const allowed = allowedStagingPhoneQaNumbers()
+  const allowedUid = String(import.meta.env.VITE_IDOGS_PHONE_OTP_QA_EXISTING_UID || '').trim()
+  const canStart = allowed.length > 0 && allowedUid.length > 0
 
   useEffect(() => {
     return () => {
@@ -38,7 +40,7 @@ export default function PhoneSignInQaPage() {
 
   async function sendOtp(event: FormEvent) {
     event.preventDefault()
-    if (busy || !allowed.includes(phone.trim())) return
+    if (busy || !canStart || !allowed.includes(phone.trim())) return
     setBusy(true); setError('')
     try {
       if (!captcha.current) {
@@ -61,22 +63,25 @@ export default function PhoneSignInQaPage() {
     try {
       const result = await pending.confirm(code)
       const hasPhone = result.user.providerData.some(p => p.providerId === 'phone')
-      if (!hasPhone) throw new Error('No phone provider linked')
+      if (!hasPhone || result.user.uid !== allowedUid) {
+        await signOut(auth)
+        throw new Error('This number did not resolve to the pre-approved existing QA account.')
+      }
       navigate('/qa/phone-email-link', { replace: true })
     } catch {
-      setError('Could not confirm this QA code. The original phone account has not been verified.')
+      setError('Could not verify the existing, approved QA phone account. No credential linking was performed.')
     } finally { setBusy(false) }
   }
 
   return <main style={{ maxWidth: 480, margin: '40px auto', padding: 24 }}>
     <h1>Existing mobile account — QA only</h1>
     <p>Only staging Firebase test phone numbers explicitly approved for PR #65 are accepted. Never enter a customer phone number. Phone sign-in may create an account for an unknown number, so the test number must already belong to the original synthetic QA user.</p>
-    {!allowed.length ? <p role="status">QA phone sign-in is disabled until Firebase test numbers are configured in this branch's Preview environment.</p> :
+    {!canStart ? <p role="status">QA phone sign-in is disabled until the approved existing Firebase test phone number AND original UID are configured for this branch.</p> :
       !pending ? <form onSubmit={e => void sendOtp(e)} style={{ display: 'grid', gap: 12 }}>
         <label>Approved test phone number<input className="form-input" type="tel" autoComplete="tel" required
           value={phone} onChange={e => setPhone(e.target.value)} placeholder="+61400000000" /></label>
         <div id="idogs-staging-qa-recaptcha" />
-        <button className="btn btn-primary" type="submit" disabled={busy || !allowed.includes(phone.trim())}>Request QA verification code</button>
+        <button className="btn btn-primary" type="submit" disabled={busy || !canStart || !allowed.includes(phone.trim())}>Request QA verification code</button>
       </form> : <form onSubmit={e => void verifyOtp(e)} style={{ display: 'grid', gap: 12 }}>
         <label>QA verification code<input className="form-input" type="text" autoComplete="one-time-code" required value={code} onChange={e=>setCode(e.target.value)} /></label>
         <button className="btn btn-primary" type="submit" disabled={busy || !code.trim()}>Verify original phone account</button>
