@@ -75,3 +75,40 @@ jobs:
           npx --yes firebase-tools@14.12.0 emulators:exec
           --project demo-idogs-live-rules --only firestore
           'node scripts/test-documents-actions-live-rules-emulator.mjs'
+
+  marketing-consent-browser:
+    name: Consent UI real-browser check (mobile CTAs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Dummy public-config values: the marketing pages under test make no
+      # Firebase calls; nothing here reaches a real project.
+      VITE_FIREBASE_API_KEY: ci-placeholder-api-key
+      VITE_FIREBASE_AUTH_DOMAIN: localhost
+      VITE_FIREBASE_PROJECT_ID: idogs-app
+      VITE_FIREBASE_STORAGE_BUCKET: ci-placeholder
+      VITE_FIREBASE_MESSAGING_SENDER_ID: '1'
+      VITE_FIREBASE_APP_ID: '1:1:web:1'
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies and Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Build
+        run: npx vite build
+      - name: Real-browser consent / CTA checks (320–430px, landscape, Android)
+        run: npm run test:e2e:local
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: consent-browser-report
+          path: playwright-report-local
+          retention-days: 14
