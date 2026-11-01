@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import type { User } from 'firebase/auth'
 import { auth } from '../../lib/firebase'
+import { safeAppReturnTo } from '../../lib/returnTo'
 import {
   addPasswordToVerifiedEmail,
   completeAddEmailLink,
@@ -33,6 +34,8 @@ export default function EmailPasswordSettings({ user, profileReady, onLinked, hr
   const [done, setDone] = useState<string | null>(null)
   const inFlight = useRef(false)
   const linkHandled = useRef(false)
+  // Where the customer was going before being asked for an email (/verify-email).
+  const [continueTo] = useState(() => { try { const n = new URL(href).searchParams.get('next'); return n ? safeAppReturnTo(n) : null } catch { return null } })
 
   // Returning from the emailed link: attach the verified address to this uid.
   useEffect(() => {
@@ -80,6 +83,7 @@ export default function EmailPasswordSettings({ user, profileReady, onLinked, hr
     <h2 style={{ fontSize: 17, marginBottom: 10 }}>Email &amp; password sign-in</h2>
     {done ? <div role="status" style={{ fontSize: 14, lineHeight: 1.6 }}>
       <p>You can now sign in with <strong>{done}</strong> and your new password, including in the iDogs iPhone app. Your mobile sign-in still works. Your dogs, documents, QR passports and plan are unchanged.</p>
+      {continueTo && <Link className="btn btn-primary" to={continueTo}>Continue</Link>}
     </div> : <>
       <p style={{ fontSize: 13, lineHeight: 1.6 }}>Add an email and password to this account so you can sign in on the iDogs iPhone app or if SMS isn’t available. This keeps your existing account — nothing is moved or merged.</p>
       {!profileReady ? <p role="status">Your account profile is not available. Reload Settings before continuing.</p>
@@ -101,6 +105,7 @@ export default function EmailPasswordSettings({ user, profileReady, onLinked, hr
             <p style={{ marginTop: 8, color: 'var(--mid)' }}>Then come back here for step 2: choose a password.</p>
           </div>
         : step === 'set-password' ? <form onSubmit={setNewPassword} style={{ display: 'grid', gap: 12, maxWidth: 440 }}>
+            {emailJustLinked && <p role="status" style={{ fontSize: 13, color: 'var(--green)' }}>Email added and verified: <strong>{emailJustLinked}</strong>.{continueTo && <> <Link to={continueTo}>Continue where you left off</Link> — or set a password first.</>}</p>}
             <p style={{ fontSize: 13 }}><strong>Step 2 of 2:</strong> choose a password for <strong>{emailJustLinked || user.email}</strong> (verified).</p>
             <label>New password<input className="form-input" type="password" autoComplete="new-password" minLength={8} maxLength={128} required disabled={busy} value={password} onChange={e => setPassword(e.target.value)} /></label>
             <label>Confirm password<input className="form-input" type="password" autoComplete="new-password" minLength={8} maxLength={128} required disabled={busy} value={confirm} onChange={e => setConfirm(e.target.value)} /></label>

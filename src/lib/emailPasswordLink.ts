@@ -2,6 +2,7 @@ import {
   EmailAuthProvider, isSignInWithEmailLink, linkWithCredential, reload, sendSignInLinkToEmail, updatePassword, type User,
 } from 'firebase/auth'
 import { auth } from './firebase'
+import { safeAppReturnTo } from './returnTo'
 
 // Production-safe "add email & password sign-in" for an existing account
 // (typically a customer who signed up with SMS only).
@@ -72,13 +73,15 @@ function readPending(): Pending | null {
 function clearPending() { try { localStorage.removeItem(PENDING_EMAIL_LINK_KEY) } catch { /* optional */ } }
 
 /** Step A1: email a one-time link that proves ownership of the address. */
-export async function sendAddEmailLink(user: User, requestedEmail: string, origin: string): Promise<{ email: string }> {
+export async function sendAddEmailLink(user: User, requestedEmail: string, origin: string, next?: string): Promise<{ email: string }> {
   if (!emailPasswordLinkEnabled()) throw new Error('Email and password sign-in can’t be added right now.')
   const uid = user.uid
   assertSameSession(uid)
   if (user.email) throw new Error('This account already has an email address.')
   const email = normalizeEmail(requestedEmail)
-  await sendSignInLinkToEmail(auth, email, { url: `${origin}/app/settings?addEmail=1`, handleCodeInApp: true })
+  const target = safeAppReturnTo(next)
+  const nextParam = next && target !== '/app/dashboard' && target !== '/app/settings' ? `&next=${encodeURIComponent(target)}` : ''
+  await sendSignInLinkToEmail(auth, email, { url: `${origin}/app/settings?addEmail=1${nextParam}`, handleCodeInApp: true })
   try { localStorage.setItem(PENDING_EMAIL_LINK_KEY, JSON.stringify({ uid, email, createdAt: Date.now() } satisfies Pending)) } catch { /* same-device only */ }
   return { email }
 }

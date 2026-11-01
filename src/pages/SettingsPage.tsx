@@ -15,7 +15,7 @@ interface Props {
 const REMINDER_OPTIONS = [3, 7, 14, 30]
 
 export default function SettingsPage({ toast }: Props) {
-  const { user, profile, refreshProfile } = useAuth()
+  const { user, profile, refreshProfile, checkEmailVerified } = useAuth()
   const [showReminderTypes, setShowReminderTypes] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
   const [editingProfile, setEditingProfile] = useState(false)
@@ -365,7 +365,10 @@ export default function SettingsPage({ toast }: Props) {
         )}
       </div>
 
-      <EmailPasswordSettings key={`pw-${user?.uid}`} user={user} profileReady={!!profile} onLinked={() => refreshProfile(true)} />
+      {/* After an email is linked/verified: refresh the ID token's email_verified
+          claim and sync profile.email (reminder emails read the profile), exactly
+          as the /verify-email flow does — then reload the profile. */}
+      <EmailPasswordSettings key={`pw-${user?.uid}`} user={user} profileReady={!!profile} onLinked={async () => { await checkEmailVerified(); await refreshProfile(true) }} />
       {/* ── NAVIGATION ── */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Navigation</div>
