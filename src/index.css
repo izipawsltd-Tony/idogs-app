@@ -939,6 +939,7 @@ h1, h2, h3, h4, h5, h6 {
 .plus-promotion-badge { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
 .plus-promotion-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .plus-promotion-price strong { font-size: clamp(36px, 9vw, 46px); line-height: 1.1; }
+.plus-promotion-original-price { font-size: 24px; font-weight: 600; color: var(--mid); text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: var(--mid); margin-right: 5px; }
 .plus-promotion-price span { font-size: 14px; }
 .plus-promotion-dates { font-size: 14px; line-height: 1.5; margin-top: 8px; }
 .plus-promotion-renewal { font-size: 13px; line-height: 1.5; margin-top: 6px; }
