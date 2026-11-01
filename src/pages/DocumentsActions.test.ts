@@ -110,3 +110,14 @@ it('Delete cancelled at the confirmation does nothing', async () => {
   expect(s.remove).not.toHaveBeenCalled()
   expect(text()).toContain('Old card')
 })
+
+it('shows the upload title, and the edited name replaces it after rename', async () => {
+  s.docs = [{ id: 'doc-2', dogId: 'dog-1', documentType: 'vet_record', title: 'Vet letter', filePath: 'documents/owner-1/dog-1/b.pdf' }]
+  await render()
+  expect(text()).toContain('Vet letter')
+  act(() => buttonNamed('Edit').props.onClick())
+  expect(tree.root.findByProps({ id: 'document-edit-name' }).props.value).toBe('Vet letter')
+  act(() => tree.root.findByProps({ id: 'document-edit-name' }).props.onChange({ target: { value: 'Desexing letter' } }))
+  await act(async () => { await tree.root.findByProps({ 'aria-label': 'Edit document' }).findByType('form').props.onSubmit({ preventDefault() {} }) })
+  expect(text()).toContain('Desexing letter'); expect(text()).not.toContain('Vet letter')
+})
