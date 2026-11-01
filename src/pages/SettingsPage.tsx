@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { doc, getDocFromServer } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { useAuth } from '../hooks/useAuth'
+import EmailPasswordSettings from '../components/ui/EmailPasswordSettings'
 import { updateUserProfile } from '../lib/db'
 import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
 import { REMINDER_TYPES } from '../components/ui/ReminderForm'
@@ -364,6 +365,7 @@ export default function SettingsPage({ toast }: Props) {
         )}
       </div>
 
+      <EmailPasswordSettings key={`pw-${user?.uid}`} user={user} profileReady={!!profile} onLinked={() => refreshProfile(true)} />
       {/* ── NAVIGATION ── */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Navigation</div>
