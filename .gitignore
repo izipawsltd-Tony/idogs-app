@@ -13,3 +13,4 @@ dist/
 # Playwright
 playwright-report/
 test-results/
+playwright-report-local/
