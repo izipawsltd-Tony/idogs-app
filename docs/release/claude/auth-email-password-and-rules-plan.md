@@ -7,16 +7,24 @@ Owner directive: #69 comment 6564223316. Selective port of PR #68 commits `30dd9
 | Customer | What they see in Settings → "Email & password sign-in" | Firebase operation |
 |---|---|---|
 | Email + password already | Card hidden | none |
-| SMS only, no email | Step 1: Add email → existing `/verify-email` (`verifyBeforeUpdateEmail`); the address is attached **only after the link is opened** | none until verified |
-| SMS + unverified email | Step 1: Verify email | none |
-| SMS + verified email | Step 2: choose password | `updatePassword()` on the **same UID** |
+| SMS only, no email | Step 1: enter email → one-time link emailed → opening it (same device, signed in) attaches the address **already verified** | `sendSignInLinkToEmail` → `linkWithCredential(EmailAuthProvider.credentialWithLink)` on the **same UID** |
+| SMS + unverified email | Step 1: Verify email (existing `/verify-email`) | `sendEmailVerification` |
+| Any of the above, now verified | Step 2: choose password | `updatePassword()` on the **same UID** |
 
 - Never creates, merges or switches a user; never attaches an unverified address (no email squatting / typo lock-out).
-- Email owned by another account: Firebase refuses at `/verify-email`; the existing no-merge message is shown.
+- Email owned by another account: Firebase refuses the link (`email-already-in-use`); no-merge message; both accounts unchanged.
+- Link opened on another device or by a different signed-in account: refused, nothing attached; the one-time code is removed from the address bar.
 - Old/revoked session (`requires-recent-login`, `user-token-expired`): clear "sign in again with your mobile number" message; nothing changes.
-- Phone/SMS sign-in is **unchanged** and keeps working after a password is added. Signup, `/login`, and the SMS OTP flow are not modified.
-- iOS app (email/password only) and any future Android/native client: works with the resulting email/password credential; no native change needed.
+- Phone/SMS sign-in is **unchanged**. Signup, `/login` and the SMS OTP flow are not modified.
+- If a customer stops after step 1, they already have a verified email; "Forgot password" then sets a password on the same UID.
+- iOS app (email/password only) and any future native client: works with the resulting credential; no native change needed.
 - Not ported from #68: Owner's unreleased phone-login changes `68d319f`, `b6fedc5`, `b43218e` (not QA'd).
+
+### Why not `verifyBeforeUpdateEmail` (used by live `/verify-email`)?
+Firebase requires an existing email for it. The Auth emulator rejects it for a phone-only account with `auth/missing-email` (CI evidence case 0). If production behaves the same, **live `/verify-email` cannot add an email for SMS-only customers today** — to be confirmed on staging (QA step 1).
+
+### Firebase console precondition (Owner, auth config)
+The emailed-link step needs **Authentication → Sign-in method → Email/Password → "Email link (passwordless sign-in)" ON** — first in `idogs-app-staging`, later in `idogs-app`. Production `/api/auth-options` currently reports `emailLink: false`. While it is off the card shows "Adding an email isn't available yet" — nothing breaks. Side effect of enabling: none in the current UI (`/login` and `/signup` use the mobile-number form; the email-link sign-in UI stays unused).
 
 ## 2. Data preservation
 All dogs, documents, QR passports, timeline entries and Stripe/Plus fields are keyed on the Firebase UID, which never changes. The emulator E2E proves the Firestore snapshot (profile + Plus/Stripe refs, dogs, documents, QR flag) is byte-identical before and after.

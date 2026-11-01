@@ -3,9 +3,12 @@
 // /verify-email). No SMS, email, Stripe or real cloud.
 //
 // Proves, on the SAME Firebase UID:
-//  1. SMS-only customer → verifyBeforeUpdateEmail → link applied → email set
-//     and verified → updatePassword → can sign in with email/password; phone
-//     sign-in kept; profile/Plus/Stripe refs, dogs, documents, QR flag unchanged.
+//  0. EVIDENCE: verifyBeforeUpdateEmail is refused for an account with no
+//     email (auth/missing-email) — so it cannot add an email to SMS-only users.
+//  1. SMS-only customer → emailed sign-in link → credentialWithLink linked to
+//     the SAME uid (email set + verified) → updatePassword → can sign in with
+//     email/password; phone sign-in kept; profile/Plus/Stripe refs, dogs,
+//     documents, QR flag unchanged.
 //  2. SMS customer who already has a verified email → password added only.
 //  3. Email owned by ANOTHER account → never attached; both accounts unchanged.
 //  4. Before the verification link is opened the address is NOT on the account
@@ -19,6 +22,7 @@ import { initializeApp, deleteApp } from 'firebase/app'
 import {
   getAuth, connectAuthEmulator, signInWithCustomToken, signOut, signInWithEmailAndPassword,
   verifyBeforeUpdateEmail, applyActionCode, reload, updatePassword,
+  sendSignInLinkToEmail, EmailAuthProvider, linkWithCredential,
 } from 'firebase/auth'
 
 const project = 'demo-idogs-email-link'
@@ -55,28 +59,34 @@ async function latestOob(email) {
 const passwordSignInFails = email => signInWithEmailAndPassword(auth, email, PASSWORD).then(() => false, () => true)
 
 try {
-  // Case 1 + 4: SMS-only customer adds email via verification, then a password.
+  // Case 0: evidence — verifyBeforeUpdateEmail cannot add a FIRST email.
   await seed('sms-only', '+61400000981')
   const before1 = await snapshot('sms-only')
+  const u0 = await signInAs('sms-only')
+  await assert.rejects(verifyBeforeUpdateEmail(u0, 'sms-only@example.invalid'),
+    e => /missing-email/.test(String(e?.code || e?.message)), 'verifyBeforeUpdateEmail rejects a phone-only account (missing-email)')
+  console.log('EVIDENCE: verifyBeforeUpdateEmail on a phone-only account -> auth/missing-email')
+
+  // Case 1 + 4: SMS-only customer proves the address with an emailed link, then sets a password.
   const u1 = await signInAs('sms-only')
   assert.equal(u1.email, null)
-  await verifyBeforeUpdateEmail(u1, 'sms-only@example.invalid')
+  await sendSignInLinkToEmail(auth, 'sms-only@example.invalid', { url: 'http://localhost/app/settings?addEmail=1', handleCodeInApp: true })
   assert.equal((await authAdmin.getUser('sms-only')).email, undefined, 'email NOT attached before the link is opened')
   await signOut(auth)
   assert.ok(await passwordSignInFails('sms-only@example.invalid'), 'no password sign-in exists before verification')
   const oob = await latestOob('sms-only@example.invalid')
-  assert.ok(oob?.oobCode, 'verification link issued')
-  await applyActionCode(auth, oob.oobCode)
+  assert.ok(oob?.oobLink, 'sign-in link issued')
+  const u1b = await signInAs('sms-only')
+  const linked = await linkWithCredential(u1b, EmailAuthProvider.credentialWithLink('sms-only@example.invalid', oob.oobLink))
+  assert.equal(linked.user.uid, 'sms-only', 'link keeps the ORIGINAL uid')
   const rec1 = await authAdmin.getUser('sms-only')
   assert.equal(rec1.email, 'sms-only@example.invalid'); assert.equal(rec1.emailVerified, true, 'email verified by the link')
-  const u1b = await signInAs('sms-only')
   await reload(u1b)
-  assert.equal(u1b.emailVerified, true)
   await updatePassword(u1b, PASSWORD)
   await signOut(auth)
   const back1 = await signInWithEmailAndPassword(auth, 'sms-only@example.invalid', PASSWORD)
   assert.equal(back1.user.uid, 'sms-only', 'email/password sign-in returns the ORIGINAL UID')
-  const providers1 = (await authAdmin.getUser('sms-only')).providerData.map(p => p.providerId).sort()
+  const providers1 = [...new Set((await authAdmin.getUser('sms-only')).providerData.map(p => p.providerId))].sort()
   assert.deepEqual(providers1, ['password', 'phone'], 'phone sign-in kept, password added')
   assert.equal(await snapshot('sms-only'), before1, 'profile/Plus/Stripe refs, dogs, documents, QR flag unchanged')
 
@@ -90,19 +100,15 @@ try {
   assert.equal(back2.user.uid, 'sms-verified'); assert.equal(back2.user.emailVerified, true, 'verification kept')
   assert.equal(await snapshot('sms-verified'), before2)
 
-  // Case 3: email owned by ANOTHER account → never attached.
+  // Case 3: email owned by ANOTHER account → link refused, nothing attached or moved.
   await seed('sms-collide', '+61400000983')
   const before3 = await snapshot('sms-collide')
+  await signOut(auth)
+  await sendSignInLinkToEmail(auth, 'sms-only@example.invalid', { url: 'http://localhost/app/settings?addEmail=1', handleCodeInApp: true })
+  const oob3 = await latestOob('sms-only@example.invalid')
   const u3 = await signInAs('sms-collide')
-  let rejectedAtSend = false
-  try { await verifyBeforeUpdateEmail(u3, 'sms-only@example.invalid') } catch (e) {
-    rejectedAtSend = /email-already-in-use|email-exists/i.test(String(e?.code || e?.message)); assert.ok(rejectedAtSend, String(e))
-  }
-  if (!rejectedAtSend) {
-    const oob3 = (await (await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${project}/oobCodes`)).json()).oobCodes
-      .filter(c => c.requestType === 'VERIFY_AND_CHANGE_EMAIL' && (c.email || '').toLowerCase() === 'sms-only@example.invalid').pop()
-    if (oob3) await applyActionCode(auth, oob3.oobCode).catch(() => {})
-  }
+  await assert.rejects(linkWithCredential(u3, EmailAuthProvider.credentialWithLink('sms-only@example.invalid', oob3.oobLink)),
+    e => /email-already-in-use|credential-already-in-use|email-exists/i.test(String(e?.code || e?.message)), 'address owned by another uid is refused')
   assert.equal((await authAdmin.getUser('sms-collide')).email, undefined, 'colliding account did not take the address')
   assert.equal(await snapshot('sms-collide'), before3)
   await signOut(auth)
@@ -110,7 +116,7 @@ try {
   assert.equal(await snapshot('sms-only'), before1, 'owner of the email unchanged')
 
   assert.equal((await authAdmin.listUsers(20)).users.length, 3, 'no extra users created')
-  console.log('PASS: verified-email + password on the same UID; dogs, documents, QR, Plus/Stripe refs unchanged; no unverified attach; collisions never attached; no extra users; no real SMS/email/payment')
+  console.log('PASS: link-verified email + password on the same UID; dogs, documents, QR, Plus/Stripe refs unchanged; no unverified attach; collisions never attached; no extra users; no real SMS/email/payment')
 } finally {
   await signOut(auth).catch(() => {})
   await deleteApp(client)
