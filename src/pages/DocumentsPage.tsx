@@ -213,7 +213,7 @@ export default function DocumentsPage({ toast }: Props) {
                     </div>
                   )}
                 </div>
-                <div className="documents-list-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+                <div className="documents-list-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexShrink: 1, flexWrap: 'wrap', maxWidth: '100%', marginLeft: 'auto' }}>
                   <button
                     onClick={() => viewDocument(user, toast, doc.filePath || doc.storagePath, doc.fileUrl)}
                     className="btn btn-secondary btn-sm"

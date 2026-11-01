@@ -5,6 +5,7 @@ import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
 import { phoneEmailLinkStagingEnabled } from '../lib/phoneAccountEmailLink'
+import { isNativeApp } from '../lib/nativePlatform'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -117,6 +118,11 @@ export default function LoginPage({ toast }: Props) {
               Sign in
             </button>
           </form>
+          {isNativeApp() && (
+            <p data-testid="sms-account-help" style={{ marginTop: 16, fontSize: 13, lineHeight: 1.6, color: 'var(--mid)', textAlign: 'center' }}>
+              Signed up with your mobile number? Sign in on the iDogs website, open Settings and choose Email &amp; password sign-in. Then use that email and password here — your dogs and plan stay with your account.
+            </p>
+          )}
           {phoneEmailLinkStagingEnabled() && (
             <p style={{ marginTop: 16, fontSize: 13, textAlign: 'center' }}>
               Existing phone account? <Link to="/qa/phone-sign-in">QA recovery for test accounts</Link>

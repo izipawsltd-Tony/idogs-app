@@ -12,6 +12,7 @@ import SignupPage from '../pages/SignupPage'
 import VerifyEmailPage from '../pages/VerifyEmailPage'
 import PhoneAccountEmailLinkQaPage from '../pages/PhoneAccountEmailLinkQaPage'
 import PhoneSignInQaPage from '../pages/PhoneSignInQaPage'
+import { phoneEmailLinkStagingEnabled } from '../lib/phoneAccountEmailLink'
 import DashboardPage from '../pages/DashboardPage'
 import DogListPage from '../pages/DogListPage'
 import DogDetailPage from '../pages/DogDetailPage'
@@ -109,8 +110,11 @@ export default function App() {
         <Route path="/survey" element={<SurveyPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage toast={toast} />} />
-        <Route path="/qa/phone-email-link" element={<PhoneAccountEmailLinkQaPage />} />
-        <Route path="/qa/phone-sign-in" element={<PhoneSignInQaPage />} />
+        {/* QA-only routes exist solely in opt-in staging QA builds (never Production). */}
+        {phoneEmailLinkStagingEnabled() && <>
+          <Route path="/qa/phone-email-link" element={<PhoneAccountEmailLinkQaPage />} />
+          <Route path="/qa/phone-sign-in" element={<PhoneSignInQaPage />} />
+        </>}
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
         {/* Isolated Super SaaS Admin — intentionally outside AppLayout. */}

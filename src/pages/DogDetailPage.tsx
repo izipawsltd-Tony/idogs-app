@@ -2951,7 +2951,6 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry,
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', overflowWrap: 'anywhere' }}>
                       {doc.name || doc.title || getDocLabel(doc.documentType)}
-                      {canEdit && <button type="button" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || doc.title || '') }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>}
                     </span>
                   )}
                 </div>
@@ -2969,13 +2968,15 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry,
                   </div>
                 )}
               </div>
-              <div className="dog-document-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+              <div className="dog-document-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexShrink: 1, flexWrap: 'wrap', maxWidth: '100%', marginLeft: 'auto' }}>
                 <button
                   onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
                   className="btn btn-secondary btn-sm"
                 >
                   View ↗
                 </button>
+                {canEdit && <button type="button" className="btn btn-secondary btn-sm"
+                  onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || doc.title || '') }}>Edit</button>}
                 {canEdit && <button
                   onClick={async () => {
                     if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
