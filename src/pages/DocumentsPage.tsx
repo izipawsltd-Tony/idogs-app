@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { auth } from '../lib/firebase'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
-import { getAllDocumentsForUser, getDogs, deleteDocument } from '../lib/db'
+import { getAllDocumentsForUser, getDogs, deleteDocument, updateDocument } from '../lib/db'
 import type { Dog, ToastMessage } from '../types'
 
 interface Props {
@@ -93,6 +94,9 @@ export default function DocumentsPage({ toast }: Props) {
   const [loadError, setLoadError] = useState(false)
   const [filter, setFilter] = useState<string>('all')
   const [showUpload, setShowUpload] = useState(false)
+  const [editingDocId, setEditingDocId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
 
   const { beginRequest } = useRequestGuard(user?.uid)
 
@@ -124,7 +128,7 @@ export default function DocumentsPage({ toast }: Props) {
     // Clear the previous account's documents/dog map immediately on an
     // account switch — a stale document list from a former account must
     // never linger into the new one's view.
-    setDocuments([]); setDogs({}); setLoadError(false); setFilter('all')
+    setDocuments([]); setDogs({}); setLoadError(false); setFilter('all'); setEditingDocId(null); setEditingName('')
     loadDocuments()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
@@ -267,6 +271,8 @@ export default function DocumentsPage({ toast }: Props) {
                   >
                     View ↗
                   </button>
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={savingEdit}
+                    onClick={() => { setEditingDocId(doc.id); setEditingName(doc.name || doc.title || getDocLabel(doc.documentType)) }}>Edit</button>
                   <button
                     onClick={async () => {
                       if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
@@ -282,12 +288,45 @@ export default function DocumentsPage({ toast }: Props) {
                     className="btn btn-ghost btn-sm"
                     style={{ color: 'var(--error)' }}
                   >
-                    🗑️ Remove from list
+                    🗑️ Delete
                   </button>
                 </div>
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Edit document title without changing the underlying file */}
+      {editingDocId && (
+        <div role="dialog" aria-modal="true" aria-label="Edit document"
+          style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <form className="card" style={{ width: '100%', maxWidth: 440, padding: 24, background: 'var(--white)' }}
+            onSubmit={async e => {
+              e.preventDefault()
+              if (!user || savingEdit || !editingName.trim()) return
+              const oldUid = user.uid
+              const docId = editingDocId
+              const name = editingName.trim()
+              setSavingEdit(true)
+              try {
+                await updateDocument(docId, name)
+                if (auth.currentUser?.uid !== oldUid) return
+                setDocuments(prev => prev.map(d => d.id === docId ? { ...d, name } : d))
+                setEditingDocId(null)
+                toast('Document updated', 'success')
+              } catch { toast('Failed to update document', 'error') }
+              finally { setSavingEdit(false) }
+            }}>
+            <h2 style={{ fontSize: 20, marginBottom: 12 }}>Edit document</h2>
+            <label htmlFor="document-edit-name">Document name</label>
+            <input id="document-edit-name" className="form-input" value={editingName} required maxLength={150}
+              disabled={savingEdit} onChange={e => setEditingName(e.target.value)} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button type="button" className="btn btn-secondary" disabled={savingEdit} onClick={() => setEditingDocId(null)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={savingEdit || !editingName.trim()}>{savingEdit ? 'Saving…' : 'Save'}</button>
+            </div>
+          </form>
         </div>
       )}
 

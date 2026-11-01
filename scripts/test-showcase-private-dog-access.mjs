@@ -92,7 +92,11 @@ check('post-auth redirect is constrained to internal /app routes', /startsWith\(
   const reloadIdx = authSrc.indexOf('await reload(auth.currentUser)', fnStart)
   const verifiedIdx = authSrc.indexOf('const verified = auth.currentUser.emailVerified', fnStart)
   const refreshIdx = authSrc.indexOf('await auth.currentUser.getIdToken(true)', fnStart)
-  const setUserIdx = authSrc.indexOf('setUser(auth.currentUser)', fnStart)
+  // checkEmailVerified may retain the verified user in a stable local reference
+  // after refreshing the token. Both forms preserve the auth-state ordering.
+  const setUserIdx = authSrc.indexOf('setUser(verifiedUser)', fnStart) >= 0
+    ? authSrc.indexOf('setUser(verifiedUser)', fnStart)
+    : authSrc.indexOf('setUser(auth.currentUser)', fnStart)
 
   check('checkEmailVerified: all four key statements (reload, verified check, forced token refresh, setUser) were located in source',
     fnStart > -1 && reloadIdx > -1 && verifiedIdx > -1 && refreshIdx > -1 && setUserIdx > -1)
