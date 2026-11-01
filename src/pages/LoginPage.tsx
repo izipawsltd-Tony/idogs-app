@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
+import { phoneEmailLinkStagingEnabled } from '../lib/phoneAccountEmailLink'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -116,6 +117,11 @@ export default function LoginPage({ toast }: Props) {
               Sign in
             </button>
           </form>
+          {phoneEmailLinkStagingEnabled() && (
+            <p style={{ marginTop: 16, fontSize: 13, textAlign: 'center' }}>
+              Existing phone account? <Link to="/qa/phone-sign-in">QA recovery for test accounts</Link>
+            </p>
+          )}
         </div>
 
         <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--mid)' }}>
