@@ -1,7 +1,11 @@
 import { createHash } from 'crypto'
+import { compareTimeline, normaliseOrder } from './puppy-timeline.js'
 import { ApiError, parseJsonBody } from './http-helpers.js'
 import { checkRateLimit, getClientIp, hashClientKey } from './rate-limit.js'
 import { validId, ownerId, canPublish, publicSharingLive, viewerRole, mayReadUpdate, safeUpdateMedia, validateUpdate } from './puppy-updates-policy.js'
+
+const TIMELINE_PAGE_SIZE = 25
+const TIMELINE_READ_LIMIT = 1000
 
 export function createPuppyUpdatesHandler({ db, verifyToken, sign, serveVideo, publicBase = '', timestamp = () => new Date().toISOString() }) {
   const profileRef = id => db.collection('puppyProfiles').doc(id)
@@ -179,15 +183,24 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, serveVideo, p
       return res.redirect(302, signed[0].url)
     }
     if (action !== 'view') throw new ApiError(400, 'Unknown action')
-    let page = entriesRef(dog.id).orderBy('createdAt', 'desc')
+    // Order by the EVENT date (what each card shows), not posting time, and
+    // page only after a global sort so every page is in true order.
+    const order = normaliseOrder(body.order)
+    const [snapshot, saved] = await Promise.all([entriesRef(dog.id).limit(TIMELINE_READ_LIMIT).get(), identity ? followRef(identity.uid, dog.id).get() : null])
+    const sorted = snapshot.docs
+      .filter(snap => mayReadUpdate(snap.data(), dog, profile, role))
+      .map(snap => ({ id: snap.id, entry: snap.data() }))
+      .sort(compareTimeline(order))
+    let start = 0
     if (body.cursor) {
       if (!validId(body.cursor)) throw new ApiError(400, 'Invalid page')
-      const cursor = await entriesRef(dog.id).doc(body.cursor).get()
-      if (!cursor.exists) throw new ApiError(400, 'This page is unavailable; refresh updates')
-      page = page.startAfter(cursor)
+      const at = sorted.findIndex(item => item.id === body.cursor)
+      if (at < 0) throw new ApiError(400, 'This page is unavailable; refresh updates')
+      start = at + 1
     }
-    const [snapshot, saved] = await Promise.all([page.limit(25).get(), identity ? followRef(identity.uid, dog.id).get() : null])
-    const visible = snapshot.docs.filter(snap => mayReadUpdate(snap.data(), dog, profile, role)).map(snap => ({ id: snap.id, entry: snap.data(), media: (snap.data().media || []).filter(m => safeUpdateMedia(m, snap.data())) }))
+    const pageItems = sorted.slice(start, start + TIMELINE_PAGE_SIZE)
+    const hasMore = start + TIMELINE_PAGE_SIZE < sorted.length
+    const visible = pageItems.map(({ id, entry }) => ({ id, entry, media: (entry.media || []).filter(m => safeUpdateMedia(m, entry)) }))
     // Sign each visible file once per response, rather than waiting for each
     // update in sequence. Keep authorization request-local and concurrency bounded.
     const mediaByPath = new Map()
@@ -202,7 +215,7 @@ export function createPuppyUpdatesHandler({ db, verifyToken, sign, serveVideo, p
       ? media.map(m => ({ id: m.id, kind: m.kind, url: `${publicBase}/api/puppy-updates?action=media&passportId=${encodeURIComponent(dog.passportId)}&updateId=${id}&mediaId=${m.id}` }))
       : media.flatMap(m => { const url = urls.get(mediaByPath.get(m.path).id); return url ? [{ id: m.id, kind: m.kind, url }] : [] }) }))
     await assertSameAccess(dog, role, profile, identity)
-    return res.status(200).json({ dog: { name: dog.name || 'Puppy', breed: dog.breed || '', passportId: dog.passportId }, role, following: saved?.exists || false, publicEnabled: publicSharingLive(dog, profile), updates, nextCursor: snapshot.docs.length === 25 ? snapshot.docs.at(-1).id : null, ...(role === 'owner' ? { dogId: dog.id } : {}) })
+    return res.status(200).json({ dog: { name: dog.name || 'Puppy', breed: dog.breed || '', passportId: dog.passportId }, role, following: saved?.exists || false, publicEnabled: publicSharingLive(dog, profile), updates, order, nextCursor: hasMore ? pageItems.at(-1).id : null, ...(role === 'owner' ? { dogId: dog.id } : {}) })
   }
 }
 

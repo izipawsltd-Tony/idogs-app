@@ -2,7 +2,7 @@ import { auth } from './firebase'
 
 export type UpdateAudience = 'internal' | 'public' | 'buyer'
 export interface PuppyUpdate { id: string; text: string; date: string; audience: UpdateAudience; inherited: boolean; media: { id: string; kind: 'photo' | 'video'; url: string }[] }
-export interface PuppyStory { dog: { name: string; breed: string; passportId: string }; dogId?: string; role: 'owner' | 'buyer' | 'public'; following: boolean; publicEnabled: boolean; updates: PuppyUpdate[]; nextCursor?: string | null }
+export interface PuppyStory { dog: { name: string; breed: string; passportId: string }; dogId?: string; role: 'owner' | 'buyer' | 'public'; following: boolean; publicEnabled: boolean; updates: PuppyUpdate[]; nextCursor?: string | null; order?: 'newest' | 'oldest' }
 export interface FollowedPuppy { passportId: string; name: string; breed: string; followedAt: string }
 
 export async function puppyUpdates<T = PuppyStory>(body: Record<string, unknown>): Promise<T> {

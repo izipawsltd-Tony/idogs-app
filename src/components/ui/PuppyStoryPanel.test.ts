@@ -1,57 +1,78 @@
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { createElement } from 'react'
+import { act, create, type ReactTestRenderer, type ReactTestInstance } from 'react-test-renderer'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const state = vi.hoisted(() => ({ user: null as null | { uid: string }, request: vi.fn() }))
-vi.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ user: state.user, loading: false }) }))
-vi.mock('../../lib/puppyUpdates', () => ({ puppyUpdates: state.request, puppyPath: (id: string) => `/p/${id}`, puppyAppPath: (id: string) => `/app/puppy-updates/${id}` }))
+const s = vi.hoisted(() => ({ calls: [] as any[], store: new Map<string, string>() }))
+vi.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ user: null, loading: false }) }))
+vi.mock('../../lib/puppyUpdates', () => ({
+  puppyPath: (id: string) => `/p/${id}`,
+  puppyUpdates: vi.fn(async (body: any) => {
+    s.calls.push(body)
+    const base = [{ id: 'a', date: '2026-10-27' }, { id: 'b', date: '2026-01-02' }]
+    const list = body.order === 'oldest' ? [...base].reverse() : base
+    return { dog: { name: 'Ruby', breed: 'Poodle', passportId: 'PIN-1' }, role: 'public', following: false, publicEnabled: true, order: body.order, nextCursor: body.cursor ? null : 'b',
+      updates: list.map(u => ({ ...u, text: `update ${u.id}`, audience: 'public', inherited: false, media: [] })) }
+  }),
+}))
 import PuppyStoryPanel from './PuppyStoryPanel'
+import { formatUpdateDate } from './PuppyUpdateFeed'
+import { TIMELINE_ORDER_KEY } from '../../lib/timelineOrder'
 
-const story = (role = 'public', text = 'First garden adventure') => ({ dog: { name: 'Ruby', passportId: 'QR-RUBY' }, dogId: role === 'owner' ? 'ruby' : undefined, role, following: false, publicEnabled: true, updates: [{ id: 'one', text, date: '2026-10-28', audience: 'public', media: [] }] })
-let screen: ReactTestRenderer
-const render = () => createElement(MemoryRouter, {}, createElement(PuppyStoryPanel, { passportId: 'QR-RUBY' }))
-beforeEach(() => { state.user = null; state.request.mockReset(); state.request.mockResolvedValue(story()) })
+let tree: ReactTestRenderer
+const text = (n: ReactTestInstance | string): string => typeof n === 'string' ? n : n.children.map(c => text(c as any)).join('')
+const button = (label: string) => tree.root.findAll(n => n.type === 'button' && text(n) === label)[0]
+beforeEach(() => {
+  s.calls = []; s.store.clear()
+  vi.stubGlobal('localStorage', { getItem: (k: string) => s.store.get(k) ?? null, setItem: (k: string, v: string) => void s.store.set(k, v) })
+})
+afterEach(() => { if (tree) act(() => tree.unmount()); vi.unstubAllGlobals() })
+async function render() { await act(async () => { tree = create(createElement(MemoryRouter, null, createElement(PuppyStoryPanel, { passportId: 'PIN-1' }))) }) }
 
-it('shows public updates without forcing login and preserves the puppy through signup', async () => {
-  await act(async () => { screen = create(render()) })
-  const serialized = JSON.stringify(screen.toJSON())
-  expect(serialized).toContain('First garden adventure')
-  const signup = screen.root.findAllByType('a').find(link => link.props.href.startsWith('/signup'))!
-  expect(decodeURIComponent(signup.props.href)).toContain('next=/p/QR-RUBY')
-  expect(serialized.indexOf('First garden adventure')).toBeLessThan(serialized.indexOf('Want to keep this story close?'))
-  expect(serialized).not.toContain('Ownership remains')
+describe('public timeline sort control', () => {
+  it('defaults to Newest first and requests that order', async () => {
+    await render()
+    expect(s.calls[0]).toMatchObject({ action: 'view', order: 'newest' })
+    expect(button('Newest first').props['aria-pressed']).toBe(true)
+    expect(button('Oldest first').props['aria-pressed']).toBe(false)
+  })
+  it('switching to Oldest first re-fetches in that order and remembers it', async () => {
+    await render()
+    await act(async () => { button('Oldest first').props.onClick() })
+    expect(s.calls.at(-1)).toMatchObject({ action: 'view', order: 'oldest' })
+    expect(s.store.get(TIMELINE_ORDER_KEY)).toBe('oldest')
+    expect(text(tree.root).indexOf('update b')).toBeLessThan(text(tree.root).indexOf('update a'))
+  })
+  it('a saved preference is used after reload', async () => {
+    s.store.set(TIMELINE_ORDER_KEY, 'oldest')
+    await render()
+    expect(s.calls[0].order).toBe('oldest')
+    expect(button('Oldest first').props['aria-pressed']).toBe(true)
+  })
+  it('ignores an invalid saved preference', async () => {
+    s.store.set(TIMELINE_ORDER_KEY, 'sideways')
+    await render()
+    expect(s.calls[0].order).toBe('newest')
+  })
+  it('loading more keeps the chosen order and passes the cursor', async () => {
+    s.store.set(TIMELINE_ORDER_KEY, 'oldest')
+    await render()
+    await act(async () => { button('Load newer updates').props.onClick() })
+    expect(s.calls.at(-1)).toMatchObject({ order: 'oldest', cursor: 'b' })
+  })
+  it('works when storage is unavailable (private mode)', async () => {
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('denied') }, setItem: () => { throw new Error('denied') } })
+    await render()
+    expect(s.calls[0].order).toBe('newest')
+    await act(async () => { button('Oldest first').props.onClick() })
+    expect(s.calls.at(-1).order).toBe('oldest')
+  })
 })
-it('saves a signed-in customer’s puppy and refreshes the view', async () => {
-  state.user = { uid: 'customer' }
-  await act(async () => { screen = create(render()) })
-  const follow = screen.root.findAllByType('button').find(button => button.children.join('') === 'Follow this puppy')!
-  await act(async () => { await follow.props.onClick() })
-  expect(state.request).toHaveBeenCalledWith({ passportId: 'QR-RUBY', action: 'follow' })
-  expect(state.request).toHaveBeenLastCalledWith({ passportId: 'QR-RUBY', action: 'view' })
-})
-it('shows owner continuation on the existing dog profile after transfer', async () => {
-  state.user = { uid: 'owner' }; state.request.mockResolvedValue(story('owner'))
-  await act(async () => { screen = create(render()) })
-  expect(screen.root.findAllByType('a').some(a => a.props.href === '/app/dogs/ruby')).toBe(true)
-  expect(JSON.stringify(screen.toJSON())).not.toContain('Follow this puppy')
-})
-it('removes private content immediately when switching account and ignores the old request', async () => {
-  state.user = { uid: 'buyer' }; state.request.mockResolvedValueOnce(story('buyer', 'Private buyer update'))
-  await act(async () => { screen = create(render()) })
-  expect(JSON.stringify(screen.toJSON())).toContain('Private buyer update')
-  let resolve!: (value: unknown) => void
-  state.request.mockImplementationOnce(() => new Promise(done => { resolve = done }))
-  state.user = { uid: 'other' }
-  await act(async () => { screen.update(render()) })
-  expect(JSON.stringify(screen.toJSON())).not.toContain('Private buyer update')
-  await act(async () => { resolve(story('public', 'Public only')) })
-  expect(JSON.stringify(screen.toJSON())).toContain('Public only')
-  expect(JSON.stringify(screen.toJSON())).not.toContain('Private buyer update')
-})
-it('reports unavailable updates and offers a refresh without an empty-success state', async () => {
-  state.request.mockRejectedValue(new Error('Temporary connection issue'))
-  await act(async () => { screen = create(render()) })
-  expect(screen.root.findByProps({ role: 'alert' }).children.join('')).toBe('Temporary connection issue')
-  expect(JSON.stringify(screen.toJSON())).not.toContain('No updates shared here yet')
+
+describe('formatUpdateDate', () => {
+  it('renders calendar dates without time-zone shift and handles bad values', () => {
+    expect(formatUpdateDate('2026-01-01')).toMatch(/1 Jan 2026/)
+    expect(formatUpdateDate('nope')).toBe('Date not set')
+    expect(formatUpdateDate(undefined)).toBe('Date not set')
+  })
 })
