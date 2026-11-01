@@ -39,7 +39,7 @@ describe('public timeline sort control', () => {
   it('switching to Oldest first re-fetches in that order and remembers it', async () => {
     await render()
     await act(async () => { button('Oldest first').props.onClick() })
-    expect(s.calls.at(-1)).toMatchObject({ action: 'view', order: 'oldest' })
+    expect(s.calls[s.calls.length - 1]).toMatchObject({ action: 'view', order: 'oldest' })
     expect(s.store.get(TIMELINE_ORDER_KEY)).toBe('oldest')
     expect(text(tree.root).indexOf('update b')).toBeLessThan(text(tree.root).indexOf('update a'))
   })
@@ -58,14 +58,14 @@ describe('public timeline sort control', () => {
     s.store.set(TIMELINE_ORDER_KEY, 'oldest')
     await render()
     await act(async () => { button('Load newer updates').props.onClick() })
-    expect(s.calls.at(-1)).toMatchObject({ order: 'oldest', cursor: 'b' })
+    expect(s.calls[s.calls.length - 1]).toMatchObject({ order: 'oldest', cursor: 'b' })
   })
   it('works when storage is unavailable (private mode)', async () => {
     vi.stubGlobal('localStorage', { getItem: () => { throw new Error('denied') }, setItem: () => { throw new Error('denied') } })
     await render()
     expect(s.calls[0].order).toBe('newest')
     await act(async () => { button('Oldest first').props.onClick() })
-    expect(s.calls.at(-1).order).toBe('oldest')
+    expect(s.calls[s.calls.length - 1].order).toBe('oldest')
   })
 })
 
