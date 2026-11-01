@@ -17,8 +17,21 @@ export async function puppyUpdates<T = PuppyStory>(body: Record<string, unknown>
 export const puppyPath = (passportId: string) => `/p/${encodeURIComponent(passportId)}`
 export const puppyAppPath = (passportId: string) => `/app/puppy-updates/${encodeURIComponent(passportId)}`
 
-export function puppyShareUrl(passportId: string): string {
-  const native = document.documentElement.dataset.idogsNativePlatform
-  const base = native ? (import.meta.env.VITE_FIREBASE_PROJECT_ID === 'idogs-app-staging' ? 'https://idogs-puppy-journey-qa-izipawsltd-tonys-projects.vercel.app' : 'https://idogs.com.au') : window.location.origin
+export const CANONICAL_PUBLIC_ORIGIN = 'https://idogs.com.au'
+const STAGING_NATIVE_QA_ORIGIN = 'https://idogs-puppy-journey-qa-izipawsltd-tonys-projects.vercel.app'
+
+/**
+ * Link encoded in printed/shared QR codes. Production builds ALWAYS use the
+ * canonical customer domain, whatever host the page was opened on (Vercel
+ * alias, deployment URL, www) — a printed QR must never point at a temporary
+ * or non-canonical host. Staging builds keep their own origin for QA.
+ */
+export function puppyShareUrl(passportId: string, env: { projectId?: string; native?: string; origin?: string } = {
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  native: typeof document !== 'undefined' ? document.documentElement.dataset.idogsNativePlatform : undefined,
+  origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+}): string {
+  const staging = env.projectId === 'idogs-app-staging'
+  const base = !staging ? CANONICAL_PUBLIC_ORIGIN : env.native ? STAGING_NATIVE_QA_ORIGIN : (env.origin || CANONICAL_PUBLIC_ORIGIN)
   return `${base}${puppyPath(passportId)}`
 }
