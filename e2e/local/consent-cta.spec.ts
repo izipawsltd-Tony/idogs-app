@@ -20,7 +20,7 @@ async function ctaReport(page: Page) {
 
 for (const path of ['/', '/signup']) {
   test.describe(`consent UI on ${path}`, () => {
-    test.beforeEach(async ({ page }) => { await page.goto(path); await page.waitForLoadState('networkidle') })
+    test.beforeEach(async ({ page }) => { await page.goto(path, { waitUntil: 'load' }); await expect(page.getByRole('button', { name: 'Ad privacy choices' })).toBeVisible(); await page.waitForTimeout(400) })
 
     test('first view: compact pill only, no consent box, no Pixel', async ({ page }) => {
       await expect(page.getByRole('button', { name: 'Ad privacy choices' })).toBeVisible()
@@ -62,7 +62,7 @@ for (const path of ['/', '/signup']) {
     test('Decline persists and keeps Pixel off after reload', async ({ page }) => {
       await page.getByRole('button', { name: 'Ad privacy choices' }).click()
       await page.getByRole('button', { name: 'Decline' }).click()
-      await page.reload(); await page.waitForLoadState('networkidle')
+      await page.reload({ waitUntil: 'load' }); await expect(page.getByRole('button', { name: 'Ad privacy choices' })).toBeVisible()
       expect(await page.evaluate(() => localStorage.getItem('idogs-meta-consent-v1'))).toBe('denied')
       expect(await page.locator('script[src*="fbevents"]').count()).toBe(0)
       await page.getByRole('button', { name: 'Ad privacy choices' }).click()
