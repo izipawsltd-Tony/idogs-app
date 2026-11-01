@@ -234,7 +234,6 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
           ref={fileRef}
           type="file"
           accept="image/*,application/pdf"
-          capture="environment"
           style={{ display: 'none' }}
           onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])}
         />
