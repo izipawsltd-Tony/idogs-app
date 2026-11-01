@@ -15,7 +15,7 @@ async function render(next: string) {
   await act(async () => { view.root.findByProps({ autoComplete: 'email' }).props.onChange({ target: { value: 'qa@example.invalid' } }); view.root.findByProps({ autoComplete: 'current-password' }).props.onChange({ target: { value: 'synthetic-only' } }) })
   return view
 }
-it.each(['/p/QR-RUBY?follow=1', '/app/shared-dogs/ruby', '/app/dashboard'])('signs in with a password by default and preserves intended destination: %s', async next => {
+it.each(['/p/QR-RUBY?follow=1', '/app/shared-dogs/ruby', '/app/dashboard', '/verify-email?next=%2Fapp%2Fshared-dogs%2Fruby'])('signs in with a password by default and preserves intended destination: %s', async next => {
   const view = await render(next)
   await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
   expect(s.login).toHaveBeenCalledWith('qa@example.invalid', 'synthetic-only')

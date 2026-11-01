@@ -21,7 +21,7 @@ export default function PasswordlessSignIn({ next, signup = false, phoneOnly = f
   async function submit(event: FormEvent) {
     event.preventDefault(); if (busy) return; setBusy(true); setError('')
     try {
-      if (phoneOnly && !agreed) throw new Error('Please agree to the Terms & Conditions before continuing.')
+      if (phoneOnly && signup && !agreed) throw new Error('Please agree to the Terms & Conditions before continuing.')
       if (phoneOnly && signup && !name.trim()) throw new Error('Please enter a user name.')
       if (method === 'email') {
         if (!options.emailLink) throw new Error('Email link sign-in is not available yet. Please use Google or your existing password.')
@@ -34,7 +34,7 @@ export default function PasswordlessSignIn({ next, signup = false, phoneOnly = f
         const result = completed.current || await confirmation.current!.confirm(code)
         completed.current = result
         const isNew = getAdditionalUserInfo(result)?.isNewUser === true
-        await finishQuickSignIn(result.user, isNew, name, marketing && (!phoneOnly || promotionsConfirmed), phoneOnly && agreed)
+        await finishQuickSignIn(result.user, isNew, name, marketing && (!phoneOnly || promotionsConfirmed), phoneOnly && agreed, signup)
         if (isNew) trackCompletedRegistration()
         navigate(next, { replace: true })
       } else {
@@ -59,7 +59,8 @@ export default function PasswordlessSignIn({ next, signup = false, phoneOnly = f
       {signup && !sent && <label>{phoneOnly ? 'User name' : 'Your name'}<input className="form-input" autoComplete="nickname" value={name} onChange={e => setName(e.target.value)} required={phoneOnly} maxLength={120} placeholder="What should we call you?" disabled={busy} /></label>}
       {method === 'email' ? <><label>Email address<input className="form-input" type="email" autoComplete="email" value={email} onChange={e => { setEmail(e.target.value); setSent(false) }} required disabled={busy} placeholder="you@example.com" /></label>{sent && <p role="status">Check your inbox for your sign-in link. Open it in this browser to sign in automatically — no need to enter your details again. Check your junk folder too.</p>}</> : <>{!sent ? <label>Mobile number<input className="form-input" type="tel" autoComplete="tel" value={phone} onChange={e => setPhone(e.target.value)} required disabled={busy} placeholder="04xx xxx xxx or +61…" /></label> : <><p role="status">Enter the code for {phone}.</p><label>Verification code<input className="form-input" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} required disabled={busy} /></label><button type="button" className="btn btn-secondary" disabled={busy || cooldown > 0} onClick={() => changeMethod('phone')}>{cooldown ? `Request another code in ${cooldown}s` : 'Change number or request another code'}</button></>}
       <p style={{ fontSize: 12 }}>{optionsLoading ? 'Checking mobile sign-in availability…' : options.phoneTestOnly ? 'QA only: use the test number supplied by iDogs. Your own mobile number is not enabled on this test site.' : options.phone ? 'We’ll send a sign-in code by SMS. Google stores and processes phone numbers to help prevent spam and abuse.' : 'Mobile sign-in could not be loaded. Please retry or choose email.'}</p>{!optionsLoading && !options.phone && <button type="button" className="btn btn-secondary" onClick={() => setOptionsRetry(v => v + 1)}>Retry mobile sign-in</button>}</>}
-      {phoneOnly && !sent && <SignupConsent agreed={agreed} onAgree={setAgreed} promotions={marketing} onPromotions={value => { setMarketing(value); setPromotionsConfirmed(true) }} promotionsConfirmed={promotionsConfirmed} busy={busy} />}
+      {phoneOnly && signup && !sent && <SignupConsent agreed={agreed} onAgree={setAgreed} promotions={marketing} onPromotions={value => { setMarketing(value); setPromotionsConfirmed(true) }} promotionsConfirmed={promotionsConfirmed} busy={busy} />}
+      {phoneOnly && !signup && <p style={{ fontSize: 13 }}>Use the mobile number linked to your iDogs sign-in. A contact number saved on a profile is not a sign-in method. If you registered with email, use Email to open that account.</p>}
       {signup && !sent && method === 'email' && <label style={{ display: 'flex', gap: 10, fontSize: 12 }}><input type="checkbox" checked={marketing} onChange={e => setMarketing(e.target.checked)} disabled={busy} />Email me iDogs news and offers (optional). Unsubscribe any time.</label>}
       {error && <p role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
       <div ref={captchaElement} />

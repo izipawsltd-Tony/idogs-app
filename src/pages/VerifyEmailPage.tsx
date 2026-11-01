@@ -6,6 +6,7 @@ import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
 import { verifyBeforeUpdateEmail } from 'firebase/auth'
 import { verificationDelivery } from '../lib/signupVerification'
+import { auth } from '../lib/firebase'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -20,6 +21,9 @@ export default function VerifyEmailPage({ toast }: Props) {
   const [resending, setResending] = useState(false)
   const [cooldown, setCooldown] = useState(0)
   const [contactEmail, setContactEmail] = useState('')
+  const [error, setError] = useState('')
+  const [sentTo, setSentTo] = useState('')
+  const [needsSignIn, setNeedsSignIn] = useState(false)
   const initialDelivery = verificationDelivery(user?.uid)
 
   // If not logged in at all, send to login
@@ -40,42 +44,51 @@ export default function VerifyEmailPage({ toast }: Props) {
   }, [cooldown])
 
   async function handleCheck() {
+    if (checking || resending) return
     setChecking(true)
+    setError(''); setNeedsSignIn(false)
     try {
       const verified = await checkEmailVerified()
-      if (verified) {
+      const currentEmail = auth.currentUser?.email || user?.email
+      if (verified && currentEmail) {
         toast('Email verified! Welcome to iDogs.')
         navigate(returnTo, { replace: true })
       } else {
-        toast('Not verified yet. Please click the link in your email first.', 'error')
+        setError(currentEmail ? 'This account’s email is not verified yet. Check the address above, open the verification link in your inbox, then choose I’ve verified — continue.' : 'An email has not been verified for this signed-in account yet. Check the address, choose Send verification email, and open the link. If this email belongs to an existing iDogs account, sign in to that account instead.')
       }
     } catch {
-      toast('Could not check verification status. Please try again.', 'error')
+      setError('Could not check verification status. Please try again. Your verification has not been confirmed.')
     } finally {
       setChecking(false)
     }
   }
 
   async function handleResend() {
+    if (checking || resending || cooldown > 0) return
     setResending(true)
+    setError(''); setNeedsSignIn(false)
     try {
       if (user && !user.email) {
-        if (!contactEmail.trim()) { toast('Enter your email address.', 'error'); return }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim())) { setError('Enter a valid email address and check the spelling before sending.'); return }
         await verifyBeforeUpdateEmail(user, contactEmail.trim(), { url: `${location.origin}/verify-email?next=${encodeURIComponent(returnTo)}` })
       } else await resendVerificationEmail()
+      setSentTo(user?.email || contactEmail.trim())
       toast('Verification email sent!')
       setCooldown(60)
     } catch (err) {
       const message = err instanceof Error ? err.message : ''
-      toast(message.includes('email-already-in-use') ? 'This email belongs to an existing account. Sign in to that account; your accounts have not been merged.' : message.includes('requires-recent-login') ? 'Please sign in again before adding your email.' : 'Could not send the verification email. Check the address and try again shortly.', 'error')
+      const recentLogin = message.includes('requires-recent-login') || message.includes('user-token-expired')
+      setNeedsSignIn(recentLogin)
+      setError(message.includes('email-already-in-use') ? 'This email belongs to an existing account. Sign in to that account to access its dogs and records. Your accounts have not been merged.' : recentLogin ? 'For your account’s security, sign in again before adding an email. Use Sign in again below, then return here to retry.' : message.includes('invalid-email') ? 'This email address is not valid. Check the spelling and try again.' : 'Could not send the verification email. Check the address and try again shortly.')
     } finally {
       setResending(false)
     }
   }
 
-  async function handleLogout() {
+  async function handleLogout(returnToVerification = false) {
     await logout()
-    navigate(`/login?next=${encodeURIComponent(returnTo)}`)
+    const next = returnToVerification ? `/verify-email?next=${encodeURIComponent(returnTo)}` : returnTo
+    navigate(`/login?next=${encodeURIComponent(next)}`)
   }
 
   if (loading) {
@@ -117,24 +130,27 @@ export default function VerifyEmailPage({ toast }: Props) {
             💡 Can't find it? Check your <strong>Spam</strong> or <strong>Junk</strong> folder — verification emails sometimes end up there.
           </p>
 
-          <button onClick={handleCheck} className="btn btn-primary" style={{ width: '100%', height: 46 }} disabled={checking}>
+          {!user?.email && <label style={{ display: 'block', textAlign: 'left', marginBottom: 14 }}>Your email address<input className="form-input" type="email" autoComplete="email" value={contactEmail} disabled={checking || resending} onChange={e => { setContactEmail(e.target.value); setError(''); setSentTo('') }} placeholder="The email you use for your dog’s profile" /><span style={{ display: 'block', fontSize: 12, color: 'var(--mid)', marginTop: 6 }}>Check the spelling. Adding an email does not sign you in to another account.</span></label>}
+          {!user?.email && (returnTo.startsWith('/app/shared-dogs/') || returnTo.startsWith('/app/claim-dogs')) && <p style={{ fontSize: 12, color: 'var(--mid)' }}>For a breeder’s private records or ownership invitation, use the email the invitation was sent to.</p>}
+          {error && <p role="alert" style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--danger)', textAlign: 'left' }}>{error}</p>}
+          {sentTo && <p role="status" style={{ fontSize: 13 }}>Verification email requested for {sentTo}. Open the link before continuing.</p>}
+          <button onClick={handleCheck} className="btn btn-primary" style={{ width: '100%', height: 46 }} disabled={checking || resending}>
             {checking ? <span className="spinner" /> : "I've verified — continue"}
           </button>
 
-          {!user?.email && <label>Your email address<input className="form-input" type="email" autoComplete="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="The email you use for your dog’s profile" /></label>}
-          {!user?.email && (returnTo.startsWith('/app/shared-dogs/') || returnTo.startsWith('/app/claim-dogs')) && <p style={{ fontSize: 12, color: 'var(--mid)' }}>For a breeder’s private records or ownership invitation, use the email the invitation was sent to.</p>}
           <button
             onClick={handleResend}
             className="btn btn-secondary"
             style={{ width: '100%', height: 44, marginTop: 10 }}
-            disabled={resending || cooldown > 0}
+            disabled={checking || resending || cooldown > 0}
           >
             {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : initialDelivery?.status === 'sent' ? 'Resend verification email' : 'Send verification email'}
           </button>
+          {needsSignIn && <button type="button" className="btn btn-secondary" style={{ width: '100%', marginTop: 10 }} onClick={() => void handleLogout(true)}>Sign in again</button>}
 
           <p><Link to="/app/start">Keep exploring for now</Link></p>
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-            <button onClick={handleLogout} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--light)', cursor: 'pointer', textDecoration: 'underline' }}>
+            <button onClick={() => void handleLogout()} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--light)', cursor: 'pointer', textDecoration: 'underline' }}>
               Sign out and use a different account
             </button>
           </div>

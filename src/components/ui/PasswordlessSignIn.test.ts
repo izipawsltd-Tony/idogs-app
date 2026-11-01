@@ -22,6 +22,19 @@ async function phoneForm() {
   return view!
 }
 describe('phone sign-in completion', () => {
+  it('does not request signup consent or allow profile creation on the phone Sign in screen', async () => {
+    let view!: ReturnType<typeof create>
+    await act(async()=>{view=create(createElement(MemoryRouter,null,createElement(PasswordlessSignIn,{next:'/app/dashboard',phoneOnly:true})),{createNodeMock:()=>({})})})
+    expect(view.root.findAllByProps({type:'checkbox'})).toHaveLength(0)
+    act(()=>view.root.findByProps({type:'tel'}).props.onChange({target:{value:'+16505553434'}}))
+    await act(async()=>{await view.root.findByType('form').props.onSubmit({preventDefault(){}})})
+    s.finish.mockRejectedValueOnce(new Error('Mobile sign-in not linked to an existing profile'))
+    await act(async()=>{await view.root.findByType('form').props.onSubmit({preventDefault(){}})})
+    expect(s.finish).toHaveBeenCalledWith(expect.objectContaining({uid:'qa-phone'}),true,'',false,false,false)
+    expect(s.track).not.toHaveBeenCalled()
+    expect(view.root.findByProps({role:'alert'}).children.join('')).toContain('not linked')
+    view.unmount()
+  })
   it('requires explicit Terms and a name for new phone signup, and refuses live QA numbers before SMS', async () => {
     let view!: ReturnType<typeof create>
     await act(async () => { view = create(createElement(MemoryRouter, null, createElement(PasswordlessSignIn, { next: '/p/QR-RUBY', signup: true, phoneOnly: true })), { createNodeMock: () => ({}) }) })
@@ -33,7 +46,7 @@ describe('phone sign-in completion', () => {
     await act(async () => { view.root.findByProps({ type: 'tel' }).props.onChange({ target: { value: '+16505553434' } }) })
     await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
     await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
-    expect(s.finish).toHaveBeenCalledWith(expect.objectContaining({ uid: 'qa-phone' }), true, 'Ruby Friend', false, true)
+    expect(s.finish).toHaveBeenCalledWith(expect.objectContaining({ uid: 'qa-phone' }), true, 'Ruby Friend', false, true, true)
     view.unmount()
   })
   it('creates no profile or conversion until Firebase accepts the code', async () => {

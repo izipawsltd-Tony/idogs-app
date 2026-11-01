@@ -3005,8 +3005,7 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
                     </div>
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      {doc.name || getDocLabel(doc.documentType)}
-
+                      {doc.name || doc.title || getDocLabel(doc.documentType)}
                     </span>
                   )}
                 </div>
@@ -3024,7 +3023,7 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap', marginLeft: 'auto' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexShrink: 1, flexWrap: 'wrap', maxWidth: '100%', marginLeft: 'auto' }}>
                 {canEdit && <QrDocumentShareCheckbox document={doc} />}
                 <button
                   onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
@@ -3032,8 +3031,7 @@ function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, o
                 >
                   View ↗
                 </button>
-                {canEdit && <button type="button" className="btn btn-secondary btn-sm"
-                  onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || '') }}>Edit</button>}
+                {canEdit && <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || doc.title || '') }}>Edit</button>}
                 {canEdit && <button
                   onClick={async () => {
                     if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
