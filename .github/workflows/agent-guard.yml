@@ -1,0 +1,58 @@
+name: Agent branch guard
+
+# Keeps concurrent agents off each other's branches and keeps auto-fix commits
+# away from protected areas. Runs on every update of a claude/* PR.
+#  1. Branch ownership: the new head commit on a claude/* branch must carry a
+#     Claude trailer (Claude-Session: / Auto-Fix-Attempt:) unless the PR has
+#     the `agent:override` label (Owner decision). Catches another agent
+#     pushing onto Claude's branch.
+#  2. Protected paths: commits marked Auto-Fix-Attempt may not touch
+#     .github/**, firestore.rules, storage.rules, vercel.json or billing APIs.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    name: Agent branch guard
+    if: startsWith(github.head_ref, 'claude/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 50
+          persist-credentials: false
+      - name: Check ownership and protected paths
+        env:
+          OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'agent:override') }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          msg=$(git log -1 --format=%B "$HEAD_SHA")
+          if ! grep -qE '^(Claude-Session|Auto-Fix-Attempt):' <<<"$msg"; then
+            if [ "$OVERRIDE" = "true" ]; then
+              echo "::warning::Head commit lacks a Claude trailer; allowed by agent:override label."
+            else
+              echo "::error::Head commit $HEAD_SHA on a claude/* branch has no Claude trailer — another agent or person may have pushed here. Coordinate, or add label agent:override."
+              fail=1
+            fi
+          fi
+          range="$HEAD_SHA~20..$HEAD_SHA"
+          if [ -n "${BEFORE:-}" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then range="$BEFORE..$HEAD_SHA"; fi
+          for sha in $(git rev-list --no-merges "$range" 2>/dev/null || true); do
+            if git log -1 --format=%B "$sha" | grep -q '^Auto-Fix-Attempt:'; then
+              bad=$(git diff-tree --no-commit-id --name-only -r "$sha" | grep -E '^(\.github/|firestore\.rules$|storage\.rules$|vercel\.json$|api/stripe|api/.*billing)' || true)
+              if [ -n "$bad" ]; then echo "::error::Auto-fix commit $sha touched protected paths: $bad"; fail=1; fi
+            fi
+          done
+          exit $fail

@@ -1,0 +1,55 @@
+name: Release control report
+
+# Rebuilds the "iDOGS — BUILD & RELEASE CONTROL" issue from GitHub data.
+# Called at the end of CI / Preview E2E on claude/* PRs, or run manually.
+# Uses only the workflow GITHUB_TOKEN (issues:write) — no other secrets.
+
+on:
+  workflow_call:
+    inputs:
+      event:
+        description: Short description of the trigger (rendered as untrusted text)
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      event:
+        description: Short description of the trigger
+        type: string
+        required: false
+        default: manual
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  checks: read
+  statuses: read
+  actions: read
+  deployments: read
+
+jobs:
+  report:
+    name: Update release-control issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: idogs-release-control
+      cancel-in-progress: false
+    steps:
+      - name: Checkout (no persisted credentials)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Update issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RC_EVENT: ${{ inputs.event }}
+          RC_REPORTS_REF: ${{ github.head_ref || github.ref_name }}
+        run: node scripts/release-control/update-issue.mjs
