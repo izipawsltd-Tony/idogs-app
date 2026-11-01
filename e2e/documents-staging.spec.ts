@@ -112,3 +112,39 @@ test.describe('Documents View → Edit → Delete on staging (QA account)', () =
     }
   })
 })
+
+test.describe('Owner QA P0 — custom name from Dog Detail upload', () => {
+  test.skip(!email || !password, 'Staging QA account secrets not configured')
+
+  test(`"Mum's pedigree" stays the name after upload and reload (type Pedigree Certificate)`, async ({ page }, info) => {
+    const name = `Mum's pedigree ${info.project.name} ${Date.now()}`
+    await signIn(page)
+    await page.goto('/app/dogs')
+    const firstDog = page.locator('a[href^="/app/dogs/"]').filter({ hasNotText: /add|new/i }).first()
+    await expect(firstDog, 'staging QA account needs at least one dog').toBeVisible({ timeout: 20_000 })
+    await firstDog.click()
+    await page.getByRole('button', { name: /Documents \(/ }).first().click()
+    await page.getByRole('button', { name: '+ Upload Documents' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Upload Document' })
+    await dialog.locator('select').nth(1).selectOption('pedigree')
+    await dialog.locator('input[type="file"]').setInputFiles({ name: 'mums-pedigree.jpg', mimeType: 'image/jpeg', buffer: PNG })
+    const titleInput = dialog.getByPlaceholder(/^e\.g\. Pedigree Certificate/)
+    await titleInput.fill(name)
+    await dialog.getByRole('button', { name: 'Upload Document' }).click()
+    await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 30_000 })
+    await page.reload()
+    await page.getByRole('button', { name: /Documents \(/ }).first().click()
+    await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 20_000 })
+    // Edit pre-fills with the user's name, not blank / not the type label.
+    await row(page, name).getByRole('button', { name: 'Edit' }).click()
+    await expect(page.locator(`input[value="${name.replace(/"/g, '\\"')}"]`)).toHaveCount(1)
+    await page.getByRole('button', { name: 'Cancel' }).first().click()
+    // Same name on the Documents page.
+    await page.goto('/app/documents')
+    await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 20_000 })
+    // Clean up.
+    page.once('dialog', d => d.accept())
+    await row(page, name).getByRole('button', { name: /Delete/ }).click()
+    await expect(page.getByText(name, { exact: true })).toHaveCount(0)
+  })
+})
