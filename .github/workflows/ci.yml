@@ -59,7 +59,7 @@ jobs:
 
   phone-account-emulator:
     name: Phone-to-email Firebase Emulator E2E
-    if: github.ref == 'refs/heads/integration/ios-onboarding-documents-20261031' || github.head_ref == 'integration/ios-onboarding-documents-20261031'
+    if: github.ref == 'refs/heads/integration/ios-onboarding-documents-20261031' || github.head_ref == 'integration/ios-onboarding-documents-20261031' || startsWith(github.ref, 'refs/heads/claude/') || startsWith(github.head_ref, 'claude/')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -84,10 +84,17 @@ jobs:
           npx --yes firebase-tools@14.12.0 emulators:exec
           --project demo-idogs-phone-link --only auth,firestore
           'node scripts/test-phone-email-link-emulator.mjs'
+      - name: Firestore Rules emulator — dog-scoped record ownership keys immutable
+        env:
+          GCLOUD_PROJECT: demo-idogs-rules-test
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec
+          --project demo-idogs-rules-test --only firestore
+          'node scripts/test-documents-rules-emulator.mjs'
 
   ios-simulator:
     name: Unsigned iOS Simulator compile
-    if: github.ref == 'refs/heads/integration/ios-onboarding-documents-20261031' || github.head_ref == 'integration/ios-onboarding-documents-20261031'
+    if: github.ref == 'refs/heads/integration/ios-onboarding-documents-20261031' || github.head_ref == 'integration/ios-onboarding-documents-20261031' || startsWith(github.ref, 'refs/heads/claude/') || startsWith(github.head_ref, 'claude/')
     needs: [verify, phone-account-emulator]
     runs-on: macos-latest
     timeout-minutes: 35

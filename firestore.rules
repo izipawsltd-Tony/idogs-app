@@ -258,6 +258,15 @@ service cloud.firestore {
     // Requires dogWriteAccess (Codex H8), not dogBelongsToUser — a former
     // breeder must not be able to add NEW records to the current owner's
     // dog any more than they can edit/delete existing ones.
+    // Security fix (01 Nov 2026): an owner must not be able to repoint one of
+    // their own dog-scoped records (vaccine/worming/health/activity) at
+    // another user's dog — e.g. injecting a fake vaccination into a
+    // victim's public QR passport. Ownership keys are immutable from clients.
+    function recordOwnershipKeysUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['dogId', 'tenantId', 'createdBy']);
+    }
+
     function dogAllowsNewRecords(dogId) {
       let dog = get(/databases/$(database)/documents/dogs/$(dogId)).data;
       return dogWriteAccess(dogId) && dog.get('status', 'active') != 'restricted';
@@ -503,17 +512,23 @@ service cloud.firestore {
     // safe and correct, and now consistent across every collection here.
     match /vaccineRecords/{id} {
       allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
-      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      allow update: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId))
+        && recordOwnershipKeysUnchanged();
+      allow delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
       allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId));
     }
     match /wormingRecords/{id} {
       allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
-      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      allow update: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId))
+        && recordOwnershipKeysUnchanged();
+      allow delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
       allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId));
     }
     match /healthTests/{id} {
       allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
-      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      allow update: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId))
+        && recordOwnershipKeysUnchanged();
+      allow delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
       allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId));
     }
     match /activityNotes/{id} {
@@ -527,7 +542,9 @@ service cloud.firestore {
         || (isSignedIn()
             && resource.data.get('createdBy', '') == request.auth.uid
             && dogBelongsToUser(resource.data.dogId));
-      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      allow update: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId))
+        && recordOwnershipKeysUnchanged();
+      allow delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
       allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId)
         && request.resource.data.createdBy == request.auth.uid);
     }
@@ -559,7 +576,13 @@ service cloud.firestore {
     // like dogBelongsToUser doesn't have that restriction.) ──
     match /documents/{id} {
       allow read: if resource == null || dogBelongsToUser(resource.data.dogId);
-      allow update, delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
+      // Client updates may only change user-editable display metadata.
+      // dogId/tenantId/filePath/fileUrl are server-owned (written by
+      // /api/upload-document via Admin SDK).
+      allow update: if isValidDeletionMutation() && dogWriteAccess(resource.data.dogId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['name', 'title', 'notes', 'source']);
+      allow delete: if isValidDeletionMutation() && (dogWriteAccess(resource.data.dogId));
       allow create: if isValidDeletionMutation() && (dogAllowsNewRecords(request.resource.data.dogId));
     }
     // NOTE: get and list are split (rather than a combined `read`) so that
