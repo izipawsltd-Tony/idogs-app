@@ -1,0 +1,95 @@
+name: Preview E2E (staging)
+
+# Runs Playwright against each successful Vercel STAGING Preview deployment
+# (Vercel posts a GitHub deployment_status). Then refreshes the release-control
+# issue. Fail-closed: only https://idogs-app-staging-*.vercel.app URLs are
+# tested, so the protection-bypass secret can never be sent elsewhere.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   VERCEL_AUTOMATION_BYPASS_SECRET  required — Vercel "Protection Bypass for Automation" of the idogs-app-staging project
+#   E2E_STAGING_EMAIL / E2E_STAGING_PASSWORD  optional — dedicated staging QA test account (never a customer)
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  e2e:
+    name: Preview E2E (staging)
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      contains(github.event.deployment.environment, 'idogs-app-staging') &&
+      startsWith(github.event.deployment.environment, 'Preview')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: idogs-preview-e2e-${{ github.event.deployment.sha }}
+      cancel-in-progress: true
+    env:
+      PREVIEW_URL: ${{ github.event.deployment_status.environment_url }}
+    steps:
+      - name: Validate Preview URL (fail closed)
+        id: url
+        run: |
+          set -euo pipefail
+          url="${PREVIEW_URL%/}"
+          if [[ ! "$url" =~ ^https://idogs-app-staging-[a-z0-9-]+\.vercel\.app$ ]]; then
+            echo "::error::Refusing to test non-staging URL"; exit 1
+          fi
+          echo "base=$url" >> "$GITHUB_OUTPUT"
+      - name: Check bypass secret
+        id: secret
+        env:
+          HAS_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET != '' && '1' || '' }}
+        run: |
+          if [ -z "$HAS_BYPASS" ]; then
+            echo "::warning::VERCEL_AUTOMATION_BYPASS_SECRET not set — Preview is Vercel-protected, E2E cannot run."
+            echo "ready=false" >> "$GITHUB_OUTPUT"; exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: Checkout deployed commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.deployment.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies and Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run Playwright
+        env:
+          BASE_URL: ${{ steps.url.outputs.base }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          E2E_STAGING_EMAIL: ${{ secrets.E2E_STAGING_EMAIL }}
+          E2E_STAGING_PASSWORD: ${{ secrets.E2E_STAGING_PASSWORD }}
+        run: npx playwright test
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.event.deployment.sha }}
+          path: playwright-report
+          retention-days: 14
+
+  report:
+    needs: e2e
+    if: always() && needs.e2e.result != 'skipped'
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      checks: read
+      statuses: read
+      actions: read
+      deployments: read
+    uses: ./.github/workflows/release-control.yml
+    with:
+      event: Preview E2E finished

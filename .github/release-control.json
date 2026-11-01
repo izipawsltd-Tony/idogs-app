@@ -1,0 +1,86 @@
+{
+  "issueTitle": "iDOGS — BUILD & RELEASE CONTROL",
+  "agentBranchPrefix": "claude/",
+  "lines": {
+    "web": {
+      "label": "Web / Production (idogs.com.au)",
+      "pullRequests": [
+        68
+      ],
+      "ciWorkflows": [
+        "iDogs CI"
+      ],
+      "previewContext": "Vercel – idogs-app-staging"
+    },
+    "ios": {
+      "label": "iOS app (au.com.idogs.app)",
+      "pullRequests": [
+        67
+      ],
+      "ciWorkflows": [
+        "iDogs CI",
+        "iDogs iOS Build"
+      ],
+      "previewContext": "Vercel – idogs-app-staging",
+      "testflightWorkflow": "iDogs iOS TestFlight",
+      "testflightWorkflowFile": "mobile-ios-testflight.yml"
+    }
+  },
+  "gates": [
+    {
+      "id": "G1",
+      "name": "GitHub write access for Claude",
+      "status": "approved",
+      "note": "Verified by real push 01 Nov 2026"
+    },
+    {
+      "id": "G2",
+      "name": "Agent coordination (Claude owns claude/* branches)",
+      "status": "approved",
+      "note": "Owner: Claude is primary coding owner"
+    },
+    {
+      "id": "G3",
+      "name": "Deploy hardened Firestore rules to STAGING (idogs-app-staging)",
+      "status": "pending",
+      "note": "Owner runs or authorises a staging-only deploy"
+    },
+    {
+      "id": "G3P",
+      "name": "Deploy hardened Firestore rules to PRODUCTION (idogs-app)",
+      "status": "pending",
+      "note": "Only after staging QA PASS"
+    },
+    {
+      "id": "G4",
+      "name": "TestFlight upload of the iOS release candidate",
+      "status": "pending",
+      "note": "Builds against Production backend"
+    },
+    {
+      "id": "G5",
+      "name": "Physical iPhone QA PASS",
+      "status": "pending",
+      "note": "Owner on device"
+    },
+    {
+      "id": "G6",
+      "name": "Production web deploy (exact SHA)",
+      "status": "pending",
+      "note": "Owner approval of exact SHA"
+    },
+    {
+      "id": "G7",
+      "name": "App Store submission (releaseType AFTER_APPROVAL = auto-public)",
+      "status": "pending",
+      "note": "Owner approval required"
+    },
+    {
+      "id": "G8",
+      "name": "Merge automation to master (enables @claude comments)",
+      "status": "pending",
+      "note": "Confirm Vercel production branch first — master is stale"
+    }
+  ],
+  "milestonesDir": "docs/release/claude"
+}
