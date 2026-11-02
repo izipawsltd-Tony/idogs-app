@@ -49,6 +49,9 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: Mobile performance budget (public entry bundle)
+        run: node scripts/perf/bundle-budget.mjs
+
   documents-live-rules-emulator:
     name: Documents actions + hardened Firestore rules (emulator)
     runs-on: ubuntu-latest

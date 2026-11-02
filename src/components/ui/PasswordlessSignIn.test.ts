@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const s = vi.hoisted(() => ({ send: vi.fn(), confirm: vi.fn(), finish: vi.fn(), track: vi.fn() }))
 vi.mock('../../lib/firebase', () => ({ auth: {} }))
+vi.mock('../../lib/firebaseApp', () => ({ auth: {} }))
 vi.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ finishQuickSignIn: s.finish }) }))
 vi.mock('../../lib/metaPixel', () => ({ trackCompletedRegistration: s.track }))
 vi.mock('firebase/auth', () => ({ getAdditionalUserInfo: () => ({ isNewUser: true }), sendSignInLinkToEmail: vi.fn(), signInWithPhoneNumber: s.send, RecaptchaVerifier: class { clear() {} } }))

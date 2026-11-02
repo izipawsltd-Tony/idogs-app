@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer'
 import { beforeEach, expect, it, vi } from 'vitest'
 const state=vi.hoisted(()=>({popup:vi.fn(),read:vi.fn(),write:vi.fn(),signout:vi.fn(),api:null as any,newUser:true}))
 vi.mock('../lib/firebase',()=>({auth:{}}))
+vi.mock('../lib/firebaseApp',()=>({auth:{}}))
 vi.mock('firebase/auth',()=>({createUserWithEmailAndPassword:vi.fn(),signInWithEmailAndPassword:vi.fn(),onAuthStateChanged:()=>()=>{},sendPasswordResetEmail:vi.fn(),sendEmailVerification:vi.fn(),reload:vi.fn(),updateProfile:vi.fn(),signOut:state.signout,signInWithPopup:state.popup,getAdditionalUserInfo:()=>({isNewUser:state.newUser}),GoogleAuthProvider:class{},FacebookAuthProvider:class{addScope(){}}}))
 vi.mock('../lib/db',()=>({createUserProfile:state.write,getUserProfile:state.read,getUserProfileFromServer:vi.fn(),updateUserProfile:vi.fn(),deleteUserData:vi.fn()}))
 import {AuthProvider,useAuth} from './useAuth'

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { auth } from '../../lib/firebase'
+import { auth } from '../../lib/firebaseApp'
 interface SharedDocument { id: string; title: string; url: string }
 async function manageDocuments(dogId: string, action: 'manage' | 'save', documentIds?: string[]): Promise<string[]> {
   const token = await auth.currentUser?.getIdToken()

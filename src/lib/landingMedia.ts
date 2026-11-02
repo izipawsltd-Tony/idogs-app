@@ -9,8 +9,7 @@
 // no MOV, no client-side compression: these are admin-supplied marketing
 // assets, stored byte-for-byte as uploaded).
 
-import { auth, db } from './firebase'
-import { doc, getDoc } from 'firebase/firestore'
+import { auth } from './firebaseApp'
 
 export const SLOT_IDS = ['hero', 'dog-profile', 'puppy-showcase', 'digital-passport'] as const
 export type LandingSlotId = typeof SLOT_IDS[number]
@@ -78,6 +77,8 @@ export function validateFileForKind(file: File, kind: LandingMediaKind): string 
 // surface a broken/empty box.
 export async function fetchPublishedLandingMedia(slotId: LandingSlotId): Promise<PublishedLandingMedia | null> {
   try {
+    // Firestore is loaded on demand so the public landing bundle stays small.
+    const [{ db }, { doc, getDoc }] = await Promise.all([import('./firebase'), import('firebase/firestore')])
     const snap = await getDoc(doc(db, 'landingMediaPublished', slotId))
     if (!snap.exists()) return null
     return snap.data() as PublishedLandingMedia

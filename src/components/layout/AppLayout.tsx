@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useState, useRef } from 'react'
+import React, { Suspense, useEffect, useLayoutEffect, useState, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useRequestGuard } from '../../hooks/useRequestGuard'
@@ -817,7 +817,9 @@ export default function AppLayout({ toast }: Props) {
               must persist as the sidebar shell across navigation) — its
               own uid-dependent counts below use useRequestGuard +
               useLayoutEffect-based clearing directly instead. */}
-          <Outlet key={user?.uid} />
+          <Suspense fallback={<div role="status" aria-label="Loading" style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><div className="spinner" /></div>}>
+            <Outlet key={user?.uid} />
+          </Suspense>
           <SupportChatWidget />
         </main>
       </div>

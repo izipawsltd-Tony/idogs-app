@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const s = vi.hoisted(() => ({ login: vi.fn() }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ login: s.login, socialLogin: vi.fn(), finishQuickSignIn: vi.fn() }) }))
 vi.mock('../lib/firebase', () => ({ auth: {} }))
+vi.mock('../lib/firebaseApp', () => ({ auth: {} }))
 import LoginPage from './LoginPage'
 function Destination() { return createElement('output', {}, useLocation().pathname + useLocation().search) }
 beforeEach(() => { s.login.mockReset().mockResolvedValue(undefined); vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ json: async () => ({ providers: [], phone: true }) })) })

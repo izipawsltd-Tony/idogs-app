@@ -2,6 +2,7 @@ import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 vi.mock('../../lib/firebase', () => ({ auth: { currentUser: { getIdToken: async () => 'test-token' } } }))
+vi.mock('../../lib/firebaseApp', () => ({ auth: { currentUser: { getIdToken: async () => 'test-token' } } }))
 import { QrDocumentManager, QrDocumentShareCheckbox, QrDocumentSharingFooter, QrDocumentSharingSummary } from './QrDocuments'
 const documents = [{ id: 'one', title: 'Certificate', filePath: 'dogs/test/one.pdf' }, { id: 'two', title: 'Photo', filePath: 'dogs/test/two.jpg' }, { id: 'unsupported', filePath: 'dogs/test/file.exe' }]
 let tree: ReactTestRenderer

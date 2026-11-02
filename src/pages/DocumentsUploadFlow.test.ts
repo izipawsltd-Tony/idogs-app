@@ -10,7 +10,7 @@ const uploadApi = readFileSync(fileURLToPath(new URL('../../api/upload-document.
 
 describe('document upload flow regression', () => {
   it('routes manual document uploads through the authenticated server endpoint', () => {
-    expect(documentsPage).toContain("fetch('/api/upload-document'")
+    expect(documentsPage).toMatch(/postJsonWithProgress<[^>]*>\(\s*'\/api\/upload-document'/)
     expect(documentsPage).toContain('Authorization: `Bearer ${idToken}`')
     expect(documentsPage).not.toContain('uploadBytesResumable')
     expect(documentsPage).not.toContain("from 'firebase/storage'")
