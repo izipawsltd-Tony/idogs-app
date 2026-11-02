@@ -11,12 +11,39 @@ export function verificationDelivery(uid?: string): Delivery | null {
     return value && ['sent', 'failed'].includes(value.status) && Date.now() - value.attemptedAt < 86400000 ? value : null
   } catch { return null }
 }
+
+// Kill switch: VITE_IDOGS_BRANDED_VERIFICATION=0 returns to Firebase's default email only.
+export function brandedVerificationEnabled(env: Record<string, unknown> = import.meta.env): boolean {
+  return env.VITE_IDOGS_BRANDED_VERIFICATION !== '0'
+}
+
+// iDogs-branded verification email (Resend, noreply@idogs.com.au) with a
+// Firebase-generated link. 'sent' | 'rate-limited' | 'fallback'.
+export async function sendBrandedVerification(user: User, fetchImpl: typeof fetch = fetch): Promise<'sent' | 'rate-limited' | 'fallback'> {
+  if (!brandedVerificationEnabled()) return 'fallback'
+  try {
+    const token = await user.getIdToken()
+    const res = await fetchImpl('/api/send-verification-email', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    if (res.status === 429) return 'rate-limited'
+    const body = await res.json().catch(() => ({}))
+    return res.ok && body?.sent === true ? 'sent' : 'fallback'
+  } catch { return 'fallback' }
+}
+
+/** Sends a verification email: branded first, Firebase default as fallback. Throws auth/too-many-requests when rate-limited. */
+export async function deliverVerificationEmail(user: User, continueUrl?: string): Promise<void> {
+  const branded = await sendBrandedVerification(user)
+  if (branded === 'sent') return
+  if (branded === 'rate-limited') throw new Error('Firebase: Error (auth/too-many-requests).')
+  await sendEmailVerification(user, continueUrl ? { url: continueUrl } : undefined)
+}
+
 // A delivery outage must never delete a successfully created account.
 export async function sendInitialVerification(user: User): Promise<void> {
   if (!user.email || user.emailVerified) return
   try {
-    const settings = typeof window === 'undefined' ? undefined : { url: `${window.location.origin}/verify-email` }
-    await sendEmailVerification(user, settings)
+    const url = typeof window === 'undefined' ? undefined : `${window.location.origin}/verify-email`
+    await deliverVerificationEmail(user, url)
     rememberVerificationDelivery(user.uid, 'sent')
   } catch { rememberVerificationDelivery(user.uid, 'failed') }
 }
