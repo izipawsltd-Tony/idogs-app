@@ -10,6 +10,7 @@ import {
 } from 'firebase/auth'
 import { splitDisplayName } from '../lib/quickSignup'
 import { welcomeUser } from '../lib/welcomeUser'
+import { signupAcquisition } from '../lib/acquisition'
 import { sendInitialVerification, rememberVerificationDelivery, deliverVerificationEmail } from '../lib/signupVerification'
 import { auth } from '../lib/firebaseApp'
 
@@ -79,6 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await updateProfile(newUser, { displayName: `${firstName} ${lastName}`.trim() })
       await createUserProfile(newUser.uid, {
+        acquisition: signupAcquisition(),
         email,
         firstName,
         lastName,
@@ -121,7 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const existing = await getUserProfile(result.user.uid)
     if (!existing) {
       const name = result.user.displayName || result.user.email?.split('@')[0] || 'Dog lover'
-      await createUserProfile(result.user.uid, { email: result.user.email || '', ...splitDisplayName(name), kennelName: '', role: 'owner', marketingConsent: { channel: 'email_marketing', choice: marketingOptIn ? 'opt_in' : 'opt_out', source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox', checkboxDefault: false, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn ? new Date().toISOString() : null, revokedAt: null, email: result.user.email || '', evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1' } })
+      await createUserProfile(result.user.uid, { acquisition: signupAcquisition(), email: result.user.email || '', ...splitDisplayName(name), kennelName: '', role: 'owner', marketingConsent: { channel: 'email_marketing', choice: marketingOptIn ? 'opt_in' : 'opt_out', source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox', checkboxDefault: false, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn ? new Date().toISOString() : null, revokedAt: null, email: result.user.email || '', evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1' } })
     }
     if (!existing && termsAccepted) await updateUserProfile(result.user.uid, { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' } })
     if (!existing) await sendInitialVerification(result.user)
@@ -142,6 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const displayName = name.trim() || signedInUser.displayName || 'Dog lover'
       if (!signedInUser.displayName) await updateProfile(signedInUser, { displayName })
       await createUserProfile(signedInUser.uid, {
+        acquisition: signupAcquisition(),
         ...splitDisplayName(displayName), email: signedInUser.email || '', phone: signedInUser.phoneNumber || '', kennelName: '', role: 'owner',
         ...(termsAccepted && { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' as const } }),
         ...(termsAccepted && signedInUser.phoneNumber && { smsMarketingConsent: { channel: 'sms_marketing' as const, choice: marketingOptIn ? 'opt_in' as const : 'opt_out' as const, source: 'signup' as const, policyVersion: 'marketing-v1-2026-10', optedInAt: marketingOptIn ? new Date().toISOString() : null, revokedAt: null, phone: signedInUser.phoneNumber, evidenceRef: 'signup-choice-v2' } }),

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { scheduleLandingBeacon } from '../lib/landingBeacon'
+import { captureAcquisition } from '../lib/acquisition'
 import { isMarketingWebsitePage, readMetaConsent, setMetaConsent, suspendMetaTracking, trackMarketingPage } from '../lib/metaPixel'
 
 // Advertising privacy choices for the public marketing pages (/ and /signup).
@@ -39,6 +40,7 @@ export default function MarketingMeasurement() {
   const dialogRef = useRef<HTMLElement>(null)
 
   useEffect(() => { scheduleLandingBeacon(search, pathname) }, [pathname, search])
+  useEffect(() => { captureAcquisition(search, pathname) }, [pathname, search])
 
   useEffect(() => {
     suspendMetaTracking()
