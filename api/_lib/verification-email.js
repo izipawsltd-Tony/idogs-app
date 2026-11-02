@@ -84,7 +84,12 @@ export function verificationEmailHandler({ verifyToken, generateLink, db, apiKey
     if (!allowed) return res.status(429).json({ sent: false, error: 'Too many verification emails. Please wait a few minutes and try again.' })
 
     try {
-      const link = await generateLink(email, { url: continueUrlFor(req.headers.origin) })
+      // A continue URL on a domain that is not in Firebase's authorized
+      // domains (e.g. a new Preview host) makes link generation fail; the
+      // link still verifies without it, so retry plain rather than fail.
+      let link
+      try { link = await generateLink(email, { url: continueUrlFor(req.headers.origin) }) }
+      catch { link = await generateLink(email) }
       const response = await fetchImpl('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },

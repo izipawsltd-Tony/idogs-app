@@ -35,7 +35,13 @@ export async function deliverVerificationEmail(user: User, continueUrl?: string)
   const branded = await sendBrandedVerification(user)
   if (branded === 'sent') return
   if (branded === 'rate-limited') throw new Error('Firebase: Error (auth/too-many-requests).')
-  await sendEmailVerification(user, continueUrl ? { url: continueUrl } : undefined)
+  if (!continueUrl) return sendEmailVerification(user)
+  try { await sendEmailVerification(user, { url: continueUrl }) }
+  catch (err) {
+    // Unauthorized continue domain (new Preview host): still send the email.
+    if (!/unauthorized-continue-uri|invalid-continue-uri|missing-continue-uri/.test(String((err as { code?: string })?.code || (err as Error)?.message))) throw err
+    await sendEmailVerification(user)
+  }
 }
 
 // A delivery outage must never delete a successfully created account.

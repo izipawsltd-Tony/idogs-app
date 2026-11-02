@@ -10,7 +10,7 @@ function setup({ apiKey = 'test-key', identity = { uid: 'new-user', email: 'owne
     runTransaction: async work => work({ get: async r => ({ exists: rows.has(r.key), data: () => rows.get(r.key) }), set: (r, data) => rows.set(r.key, data) }),
   }
   const fetchImpl = vi.fn(async () => ({ ok: providerOk }))
-  const generateLink = vi.fn(async (email, settings) => { if (linkFails) throw new Error('auth/unauthorized-continue-uri'); return `https://idogs-app.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=X&continueUrl=${encodeURIComponent(settings.url)}` })
+  const generateLink = vi.fn(async (email, settings) => { if (linkFails) throw new Error('auth/unauthorized-continue-uri'); return `https://idogs-app.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=X&continueUrl=${encodeURIComponent(settings?.url || "")}` })
   const verifyToken = vi.fn(async token => { if (token !== 'valid') throw new Error('invalid'); return identity })
   const handler = verificationEmailHandler({ verifyToken, generateLink, db, apiKey, fetchImpl, now: () => clock })
   async function request(overrides = {}) {
@@ -62,5 +62,15 @@ describe('branded verification email', () => {
   it('provider or link failure returns 503 so the client falls back', async () => {
     expect((await setup({ providerOk: false }).request()).code).toBe(503)
     const s = setup({ linkFails: true }); expect((await s.request()).code).toBe(503); expect(s.fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('continue URL not authorized in Firebase', () => {
+  it('retries link generation without the continue URL instead of failing', async () => {
+    const s = setup()
+    s.generateLink.mockImplementationOnce(async () => { throw new Error('auth/unauthorized-continue-uri') })
+    const r = await s.request({ headers: { authorization: 'Bearer valid', origin: 'https://idogs-app-staging-git-new-host.vercel.app' } })
+    expect(r.code).toBe(200); expect(r.body.sent).toBe(true)
+    expect(s.generateLink).toHaveBeenCalledTimes(2); expect(s.generateLink.mock.calls[1]).toEqual(['owner@example.invalid'])
   })
 })

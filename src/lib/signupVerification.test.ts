@@ -55,3 +55,9 @@ it('kill switch', () => {
   expect(brandedVerificationEnabled({ VITE_IDOGS_BRANDED_VERIFICATION: '0' })).toBe(false)
   expect(brandedVerificationEnabled({})).toBe(true)
 })
+it('Firebase fallback retries without the continue URL when the domain is not authorized', async () => {
+  vi.stubGlobal('fetch', reply(503, {}))
+  s.send.mockRejectedValueOnce(Object.assign(new Error('Firebase: Error (auth/unauthorized-continue-uri).'), { code: 'auth/unauthorized-continue-uri' })).mockResolvedValueOnce(undefined)
+  await deliverVerificationEmail(tokenUser, 'https://new-preview.vercel.app/verify-email')
+  expect(s.send).toHaveBeenCalledTimes(2); expect(s.send.mock.calls[1]).toEqual([tokenUser])
+})
