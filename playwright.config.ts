@@ -8,7 +8,7 @@ const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
 
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: ['local/**'], // local real-browser checks use playwright.local.config.ts
+  testIgnore: ['local/**', 'journey/**'], // local + emulator journey checks have their own configs
   timeout: 45_000,
   retries: 1,
   workers: 1,

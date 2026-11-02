@@ -6,6 +6,7 @@ import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
 import { verifyBeforeUpdateEmail } from 'firebase/auth'
 import { verificationDelivery } from '../lib/signupVerification'
+import { emailPasswordLinkEnabled, emailPasswordLinkErrorMessage, sendAddEmailLink } from '../lib/emailPasswordLink'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -61,6 +62,16 @@ export default function VerifyEmailPage({ toast }: Props) {
     try {
       if (user && !user.email) {
         if (!contactEmail.trim()) { toast('Enter your email address.', 'error'); return }
+        // verifyBeforeUpdateEmail needs an EXISTING email (auth/missing-email
+        // for SMS-only accounts), so a first email is proved with a one-time
+        // link instead and linked to this same account (see emailPasswordLink).
+        // Kill switch VITE_IDOGS_EMAIL_PASSWORD_LINK=0 restores the old call.
+        if (emailPasswordLinkEnabled()) {
+          try { await sendAddEmailLink(user, contactEmail, location.origin, returnTo) } catch (err) { toast(emailPasswordLinkErrorMessage(err), 'error'); return }
+          toast('Check your inbox and open the link on this device to add your email.')
+          setCooldown(60)
+          return
+        }
         await verifyBeforeUpdateEmail(user, contactEmail.trim(), { url: `${location.origin}/verify-email?next=${encodeURIComponent(returnTo)}` })
       } else await resendVerificationEmail()
       toast('Verification email sent!')
