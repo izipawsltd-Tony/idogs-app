@@ -183,7 +183,7 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Build
         run: npx vite build
-      - name: Real-browser consent / CTA checks (320–430px, landscape, Android)
+      - name: Real-browser consent / CTA + synthetic signup funnel checks (320–430px, landscape, Android)
         run: npm run test:e2e:local
       - name: Upload report
         if: always()

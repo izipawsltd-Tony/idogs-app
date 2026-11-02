@@ -36,7 +36,7 @@ export default function PasswordlessSignIn({ next, signup = false, phoneOnly = f
         completed.current = result
         const isNew = getAdditionalUserInfo(result)?.isNewUser === true
         await finishQuickSignIn(result.user, isNew, name, marketing && (!phoneOnly || promotionsConfirmed), phoneOnly && agreed)
-        if (isNew) trackCompletedRegistration()
+        if (isNew) await trackCompletedRegistration()
         navigate(next, { replace: true })
       } else {
         if (!options.phone) throw new Error('Phone sign-in is not available yet. Please use email or Google.')
