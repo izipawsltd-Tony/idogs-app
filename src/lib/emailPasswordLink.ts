@@ -39,11 +39,26 @@ export function needsPasswordSignIn(user: Pick<User, 'providerData'> | null | un
   return !user.providerData.some(p => p?.providerId === 'password')
 }
 
+// Firebase lists an email-LINK credential under provider 'password' too, so
+// after step A2 the account looks like it already has a password. Remember,
+// on this device, that the customer still has to choose one — so they can
+// add their dog first and set the password afterwards (Owner journey:
+// SMS signup → verify email → add dog → set password → email login).
+// Other device: "Forgot password" sets it on the same uid.
+const PASSWORD_PENDING_PREFIX = 'idogs-password-pending-v1:'
+export function isPasswordPending(uid: string | null | undefined): boolean {
+  if (!uid) return false
+  try { return localStorage.getItem(PASSWORD_PENDING_PREFIX + uid) === '1' } catch { return false }
+}
+function markPasswordPending(uid: string) { try { localStorage.setItem(PASSWORD_PENDING_PREFIX + uid, '1') } catch { /* optional */ } }
+function clearPasswordPending(uid: string) { try { localStorage.removeItem(PASSWORD_PENDING_PREFIX + uid) } catch { /* optional */ } }
+
 export type EmailPasswordStep = 'hidden' | 'add-email' | 'verify-email' | 'set-password'
 
 /** Which step of the flow the account is at. */
 export function emailPasswordStep(user: LinkableAccount | null | undefined): EmailPasswordStep {
-  if (!user || !needsPasswordSignIn(user)) return 'hidden'
+  if (!user) return 'hidden'
+  if (!needsPasswordSignIn(user)) return isPasswordPending(user.uid) && user.email && user.emailVerified ? 'set-password' : 'hidden'
   if (!user.email) return 'add-email'
   return user.emailVerified ? 'set-password' : 'verify-email'
 }
@@ -102,6 +117,7 @@ export async function completeAddEmailLink(user: User, href: string): Promise<{ 
   const result = await linkWithCredential(user, EmailAuthProvider.credentialWithLink(pending.email, href))
   clearPending()
   if (result.user.uid !== uid) throw new Error('session-changed')
+  markPasswordPending(uid)
   await reload(result.user)
   assertSameSession(uid)
   return { uid, email: result.user.email || pending.email }
@@ -121,10 +137,11 @@ export async function addPasswordToVerifiedEmail(
   assertSameSession(uid)
   // Right after step A2 the email-link credential shows as provider
   // 'password' (Firebase groups email link under it) but has no password yet.
-  if (!allowEmailLinkProvider && !needsPasswordSignIn(user)) throw new Error('auth/provider-already-linked')
+  if (!allowEmailLinkProvider && !isPasswordPending(uid) && !needsPasswordSignIn(user)) throw new Error('auth/provider-already-linked')
   if (!user.email || !user.emailVerified) throw new Error('email-not-verified')
   validateNewPassword(password, confirmPassword)
   await updatePassword(user, password)
+  clearPasswordPending(uid)
   await reload(user)
   const after = auth.currentUser
   if (!after || after.uid !== uid) throw new Error('session-changed')

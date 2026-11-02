@@ -110,6 +110,52 @@ jobs:
           --project demo-idogs-email-link --only auth,firestore
           'node scripts/test-email-password-link-emulator.mjs'
 
+  sms-email-journey:
+    name: Journey E2E — SMS signup → verify email → add dog → set password → email login (emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      VITE_FIREBASE_EMULATOR: '1'
+      VITE_FIREBASE_API_KEY: emulator-only-key
+      VITE_FIREBASE_AUTH_DOMAIN: localhost
+      VITE_FIREBASE_PROJECT_ID: demo-idogs-journey
+      VITE_FIREBASE_STORAGE_BUCKET: demo-idogs-journey.appspot.com
+      VITE_FIREBASE_MESSAGING_SENDER_ID: '1'
+      VITE_FIREBASE_APP_ID: '1:1:web:1'
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Java for Firebase Emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install dependencies and Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Build (emulator-only flag, never used by Preview/Production)
+        run: npx vite build
+      - name: Run journey against Auth + Firestore emulators and real api handlers
+        env:
+          GCLOUD_PROJECT: demo-idogs-journey
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec
+          --project demo-idogs-journey --only auth,firestore
+          'npx playwright test -c playwright.journey.config.ts'
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journey-report
+          path: playwright-report-journey
+          retention-days: 14
+
   marketing-consent-browser:
     name: Consent UI real-browser check (mobile CTAs)
     runs-on: ubuntu-latest

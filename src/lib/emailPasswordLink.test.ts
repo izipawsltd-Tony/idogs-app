@@ -130,6 +130,7 @@ describe('add email for SMS-only accounts (emailed link → verified, same uid)'
   it('then a password can be set right away (email-link provider allowed only for that step)', async () => {
     await sendAddEmailLink(s.current, 'a@b.co', 'https://idogs.com.au')
     await completeAddEmailLink(s.current, LINK)
+    for (const k of [...s.store.keys()]) if (k.startsWith('idogs-password-pending-v1:')) s.store.delete(k)  // e.g. another device
     await expect(addPasswordToVerifiedEmail(s.current, 'longpassword', 'longpassword')).rejects.toThrow('provider-already-linked')
     await expect(addPasswordToVerifiedEmail(s.current, 'longpassword', 'longpassword', { allowEmailLinkProvider: true })).resolves.toEqual({ uid: 'cust-uid-1', email: 'a@b.co' })
   })
@@ -166,4 +167,22 @@ it('keeps where the customer was going (from /verify-email) in the link, only fo
   expect(s.sendLink.mock.calls[s.sendLink.mock.calls.length - 1][2].url).toBe('https://idogs.com.au/app/settings?addEmail=1&next=%2Fapp%2Fdogs%2Fnew')
   await sendAddEmailLink(s.current, 'a@b.co', 'https://idogs.com.au', 'https://evil.example/x')
   expect(s.sendLink.mock.calls[s.sendLink.mock.calls.length - 1][2].url).toBe('https://idogs.com.au/app/settings?addEmail=1')
+})
+
+describe('journey order: verify email → add dog → come back → set password', () => {
+  it('after the link, leaving Settings and returning still offers step 2 on this device', async () => {
+    s.current = phoneUser()
+    await sendAddEmailLink(s.current, 'a@b.co', 'https://idogs.com.au')
+    await completeAddEmailLink(s.current, LINK)
+    // Firebase now lists provider 'password' (email link) — card must not hide.
+    expect(emailPasswordStep(s.current)).toBe('set-password')
+    await expect(addPasswordToVerifiedEmail(s.current, 'longpassword', 'longpassword')).resolves.toEqual({ uid: 'cust-uid-1', email: 'a@b.co' })
+    expect(emailPasswordStep(s.current)).toBe('hidden')
+  })
+  it('the pending marker is per account: another uid on the same device sees nothing', async () => {
+    s.current = phoneUser()
+    await sendAddEmailLink(s.current, 'a@b.co', 'https://idogs.com.au')
+    await completeAddEmailLink(s.current, LINK)
+    expect(emailPasswordStep(phoneUser({ uid: 'other', email: 'x@y.co', emailVerified: true, providerData: [{ providerId: 'password' }] }) as any)).toBe('hidden')
+  })
 })
