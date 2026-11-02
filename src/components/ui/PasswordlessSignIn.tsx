@@ -5,6 +5,7 @@ import { auth } from '../../lib/firebase'
 import { emailReturnUrl, normalizeSigninPhone, PENDING_SIGNIN_PREFIX } from '../../lib/passwordless'
 import { useAuth } from '../../hooks/useAuth'
 import { trackCompletedRegistration } from '../../lib/metaPixel'
+import { phoneSignInErrorCode, phoneSignInErrorMessage } from '../../lib/phoneSignInError'
 import SignupConsent from './SignupConsent'
 
 export default function PasswordlessSignIn({ next, signup = false, phoneOnly = false, onBusyChange }: { next: string; signup?: boolean; phoneOnly?: boolean; onBusyChange?: (busy: boolean) => void }) {
@@ -48,8 +49,9 @@ export default function PasswordlessSignIn({ next, signup = false, phoneOnly = f
         setSent(true); setCooldown(60)
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      setError(msg.includes('invalid-verification-code') ? 'That code is not correct. Please try again.' : msg.includes('invalid-phone-number') ? 'Please enter a valid mobile number, such as 0412 345 678 or +61 412 345 678.' : msg.includes('captcha-check-failed') || msg.includes('invalid-app-credential') ? 'The browser security check could not finish. Open this page in Safari or Chrome with cookies enabled, then try again.' : msg.includes('code-expired') || msg.includes('session-expired') ? 'That code has expired. Choose another method, then request a new code.' : msg.includes('too-many-requests') || msg.includes('quota-exceeded') ? 'Too many requests. Please wait and try again, or use email.' : msg.includes('billing-not-enabled') || msg.includes('operation-not-allowed') ? 'SMS sign-in is temporarily unavailable. Please use email and password.' : msg.startsWith('Firebase:') ? 'Could not continue. Please try again or choose another sign-in method.' : msg || 'Could not continue. Please try again.')
+      // Diagnostics: the auth/... code only (no number, OTP, token or user data).
+      if (String((err as Error)?.message || '').startsWith('Firebase:')) console.warn('[idogs] mobile sign-in failed:', phoneSignInErrorCode(err))
+      setError(phoneSignInErrorMessage(err))
     } finally { setBusy(false) }
   }
   function changeMethod(value: 'email' | 'phone') { if (busy) return; setMethod(value); setSent(false); setError(''); setCode(''); confirmation.current = null; completed.current = null; captcha.current?.clear(); captcha.current = null }

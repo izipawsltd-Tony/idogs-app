@@ -50,7 +50,7 @@ jobs:
         run: npm run build
 
   documents-live-rules-emulator:
-    name: Documents actions under live-equivalent Firestore rules
+    name: Documents actions + hardened Firestore rules (emulator)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -75,6 +75,86 @@ jobs:
           npx --yes firebase-tools@14.12.0 emulators:exec
           --project demo-idogs-live-rules --only firestore
           'node scripts/test-documents-actions-live-rules-emulator.mjs'
+      - name: Hardened rules — ownership keys immutable, least privilege
+        env:
+          GCLOUD_PROJECT: demo-idogs-rules-test
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec
+          --project demo-idogs-rules-test --only firestore
+          'node scripts/test-documents-rules-emulator.mjs'
+
+  email-password-link-emulator:
+    name: Email/password sign-in for SMS accounts (Auth+Firestore emulator E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Java for Firebase Emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run isolated Firebase Auth and Firestore E2E
+        env:
+          GCLOUD_PROJECT: demo-idogs-email-link
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec
+          --project demo-idogs-email-link --only auth,firestore
+          'node scripts/test-email-password-link-emulator.mjs'
+
+  sms-email-journey:
+    name: Journey E2E — SMS signup → verify email → add dog → set password → email login (emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      VITE_FIREBASE_EMULATOR: '1'
+      VITE_FIREBASE_API_KEY: emulator-only-key
+      VITE_FIREBASE_AUTH_DOMAIN: localhost
+      VITE_FIREBASE_PROJECT_ID: demo-idogs-journey
+      VITE_FIREBASE_STORAGE_BUCKET: demo-idogs-journey.appspot.com
+      VITE_FIREBASE_MESSAGING_SENDER_ID: '1'
+      VITE_FIREBASE_APP_ID: '1:1:web:1'
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Java for Firebase Emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install dependencies and Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Build (emulator-only flag, never used by Preview/Production)
+        run: npx vite build
+      - name: Run journey against Auth + Firestore emulators and real api handlers
+        env:
+          GCLOUD_PROJECT: demo-idogs-journey
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec
+          --project demo-idogs-journey --only auth,firestore
+          'npx playwright test -c playwright.journey.config.ts'
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journey-report
+          path: playwright-report-journey
+          retention-days: 14
 
   marketing-consent-browser:
     name: Consent UI real-browser check (mobile CTAs)
