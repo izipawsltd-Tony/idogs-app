@@ -80,9 +80,13 @@ export function verificationEmailHandler({ verifyToken, generateLink, db, apiKey
         tx.set(ref, { windowStart: inWindow ? prev.windowStart : t, count: count + 1, lastAt: t, expiresAt: new Date(t + VERIFICATION_LIMITS.WINDOW_MS * 2) })
         return true
       })
-    } catch { return res.status(503).json({ sent: false, error: 'Verification email unavailable' }) }
+    } catch (err) {
+      console.error(JSON.stringify({ event: 'verification_email_failed', stage: 'rate_limit', code: safeCode(err) }))
+      return res.status(503).json({ sent: false, error: 'Verification email unavailable', stage: 'rate_limit' })
+    }
     if (!allowed) return res.status(429).json({ sent: false, error: 'Too many verification emails. Please wait a few minutes and try again.' })
 
+    let stage = 'link'
     try {
       // A continue URL on a domain that is not in Firebase's authorized
       // domains (e.g. a new Preview host) makes link generation fail; the
@@ -90,14 +94,27 @@ export function verificationEmailHandler({ verifyToken, generateLink, db, apiKey
       let link
       try { link = await generateLink(email, { url: continueUrlFor(req.headers.origin) }) }
       catch { link = await generateLink(email) }
+      stage = 'provider'
       const response = await fetchImpl('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ from: 'iDogs <noreply@idogs.com.au>', to: [email], subject: verificationSubject, html: verificationHtml(link), text: verificationText(link) }),
         signal: AbortSignal.timeout(8000),
       })
-      if (!response.ok) throw new Error('provider rejected')
+      if (!response.ok) {
+        const p = await response.json().catch(() => ({}))
+        throw Object.assign(new Error('provider rejected'), { code: `resend_${response.status}_${p?.name || ''}` })
+      }
       return res.status(200).json({ sent: true })
-    } catch { return res.status(503).json({ sent: false, error: 'Verification email unavailable' }) }
+    } catch (err) {
+      // Diagnostics only: stage + provider/Firebase error code, never the email or link.
+      console.error(JSON.stringify({ event: 'verification_email_failed', stage, code: safeCode(err) }))
+      return res.status(503).json({ sent: false, error: 'Verification email unavailable', stage })
+    }
   }
+}
+
+function safeCode(err) {
+  const c = String(err?.code || err?.errorInfo?.code || err?.name || 'unknown')
+  return /^[A-Za-z0-9_./-]{1,80}$/.test(c) ? c : 'unknown'
 }
