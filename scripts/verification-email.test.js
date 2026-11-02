@@ -74,3 +74,11 @@ describe('continue URL not authorized in Firebase', () => {
     expect(s.generateLink).toHaveBeenCalledTimes(2); expect(s.generateLink.mock.calls[1]).toEqual(['owner@example.invalid'])
   })
 })
+
+describe('failed deliveries do not consume the allowance', () => {
+  it('refunds the reservation when link generation or the provider fails', async () => {
+    const s = setup({ providerOk: false })
+    for (let i = 0; i < VERIFICATION_LIMITS.MAX_PER_WINDOW + 2; i++) expect((await s.request()).code).toBe(503)
+    expect([...s.rows.values()][0].count).toBe(0)
+  })
+})

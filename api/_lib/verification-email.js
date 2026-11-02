@@ -109,6 +109,14 @@ export function verificationEmailHandler({ verifyToken, generateLink, db, apiKey
     } catch (err) {
       // Diagnostics only: stage + provider/Firebase error code, never the email or link.
       console.error(JSON.stringify({ event: 'verification_email_failed', stage, code: safeCode(err), detail: safeDetail(err) }))
+      // Our failure must not use up the customer's hourly allowance.
+      try {
+        await db.runTransaction(async tx => {
+          const snap = await tx.get(ref)
+          const d = snap.exists ? snap.data() : null
+          if (d && d.lastAt === t && Number(d.count) > 0) tx.set(ref, { ...d, count: Number(d.count) - 1, lastAt: 0 })
+        })
+      } catch { /* best-effort */ }
       return res.status(503).json({ sent: false, error: 'Verification email unavailable', stage })
     }
   }
