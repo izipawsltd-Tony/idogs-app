@@ -108,10 +108,15 @@ export function verificationEmailHandler({ verifyToken, generateLink, db, apiKey
       return res.status(200).json({ sent: true })
     } catch (err) {
       // Diagnostics only: stage + provider/Firebase error code, never the email or link.
-      console.error(JSON.stringify({ event: 'verification_email_failed', stage, code: safeCode(err) }))
+      console.error(JSON.stringify({ event: 'verification_email_failed', stage, code: safeCode(err), detail: safeDetail(err) }))
       return res.status(503).json({ sent: false, error: 'Verification email unavailable', stage })
     }
   }
+}
+
+function safeDetail(err) {
+  // Firebase/provider message without anything that looks like an email or URL.
+  return String(err?.message || '').replace(/\S+@\S+/g, '<email>').replace(/https?:\/\/\S+/g, '<url>').slice(0, 300)
 }
 
 function safeCode(err) {
