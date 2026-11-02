@@ -6,6 +6,8 @@ import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getAllDocumentsForUser, getDogs, deleteDocument, updateDocument } from '../lib/db'
 import type { Dog, ToastMessage } from '../types'
+import { prepareDocumentFileForUpload } from '../lib/imageCompression'
+import { postJsonWithProgress } from '../lib/uploadWithProgress'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -388,25 +390,17 @@ export function UploadModal({ dogs, user, onClose, onSuccess, toast, fixedDogId 
     setUploading(true)
     setProgress(10)
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result || ''))
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
-      const base64 = dataUrl.split(',')[1]
-      if (!base64) throw new Error('Could not read file')
-      setProgress(35)
+      // Phone photos are resized/converted before upload (HEIC → JPEG);
+      // PDFs and small images are sent unchanged. Progress is real.
+      const prepared = await prepareDocumentFileForUpload(file)
+      setProgress(15)
       const idToken = await user.getIdToken()
-      setProgress(50)
-      const response = await fetch('/api/upload-document', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ base64, mediaType: file.type || 'application/octet-stream', dogId, documentType: docType, ...(customTitle ? { title: customTitle } : {}), notes: notes || null, source: 'manual', originalFileName: file.name }),
-      })
-      if (!response.ok) throw new Error('Upload failed')
-      setProgress(90)
-      const uploaded = await response.json()
+      const uploaded = await postJsonWithProgress<{ documentId: string; filePath: string; fileType?: string }>(
+        '/api/upload-document',
+        { base64: prepared.base64, mediaType: prepared.mediaType, dogId, documentType: docType, ...(customTitle ? { title: customTitle } : {}), notes: notes || null, source: 'manual', originalFileName: file.name },
+        { Authorization: `Bearer ${idToken}` },
+        f => setProgress(15 + Math.round(f * 80)),
+      )
       setProgress(100)
       onSuccess({ id: uploaded.documentId, dogId, documentType: docType, ...(customTitle ? { title: customTitle } : {}), notes: notes || null, filePath: uploaded.filePath, fileType: uploaded.fileType || 'file', source: 'manual', uploadedAt: { toDate: () => new Date() } })
     } catch {

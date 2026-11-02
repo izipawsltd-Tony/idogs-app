@@ -12,8 +12,17 @@ import {
 import { splitDisplayName } from '../lib/quickSignup'
 import { welcomeUser } from '../lib/welcomeUser'
 import { sendInitialVerification, rememberVerificationDelivery } from '../lib/signupVerification'
-import { auth } from '../lib/firebase'
-import { createUserProfile, getUserProfile, getUserProfileFromServer, updateUserProfile, deleteUserData } from '../lib/db'
+import { auth } from '../lib/firebaseApp'
+
+// Firestore (lib/db) is loaded on demand: a signed-out visitor on the public
+// landing/signup pages never needs it, and it is the largest SDK in the app.
+const loadDb = () => import('../lib/db')
+type Db = typeof import('../lib/db')
+const createUserProfile: Db['createUserProfile'] = async (...a) => (await loadDb()).createUserProfile(...a)
+const getUserProfile: Db['getUserProfile'] = async (...a) => (await loadDb()).getUserProfile(...a)
+const getUserProfileFromServer: Db['getUserProfileFromServer'] = async (...a) => (await loadDb()).getUserProfileFromServer(...a)
+const updateUserProfile: Db['updateUserProfile'] = async (...a) => (await loadDb()).updateUserProfile(...a)
+const deleteUserData: Db['deleteUserData'] = async (...a) => (await loadDb()).deleteUserData(...a)
 import type { UserProfile, SignupFormData } from '../types'
 
 interface AuthContextType {

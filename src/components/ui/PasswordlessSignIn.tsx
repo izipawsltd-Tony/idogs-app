@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { getAdditionalUserInfo, RecaptchaVerifier, sendSignInLinkToEmail, signInWithPhoneNumber, type ConfirmationResult, type UserCredential } from 'firebase/auth'
 import { useNavigate } from 'react-router-dom'
-import { auth } from '../../lib/firebase'
+import { auth } from '../../lib/firebaseApp'
 import { emailReturnUrl, normalizeSigninPhone, PENDING_SIGNIN_PREFIX } from '../../lib/passwordless'
 import { useAuth } from '../../hooks/useAuth'
 import { trackCompletedRegistration } from '../../lib/metaPixel'

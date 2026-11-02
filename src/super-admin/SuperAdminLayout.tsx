@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { SUPER_ADMIN_NAV } from './superAdminConfig'
@@ -60,7 +61,9 @@ export default function SuperAdminLayout() {
         </header>
 
         <main className="super-admin-content">
-          <Outlet />
+          <Suspense fallback={<div role="status" aria-label="Loading" style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><div className="spinner" /></div>}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

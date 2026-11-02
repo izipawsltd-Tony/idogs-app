@@ -1,4 +1,4 @@
-import { auth } from './firebase'
+import { auth } from './firebaseApp'
 
 export type UpdateAudience = 'internal' | 'public' | 'buyer'
 export interface PuppyUpdate { id: string; text: string; date: string; audience: UpdateAudience; inherited: boolean; media: { id: string; kind: 'photo' | 'video'; url: string }[] }

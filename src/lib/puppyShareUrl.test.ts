@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('./firebase', () => ({ auth: { currentUser: null } }))
+vi.mock('./firebaseApp', () => ({ auth: { currentUser: null } }))
 import { puppyShareUrl, CANONICAL_PUBLIC_ORIGIN } from './puppyUpdates'
 
 describe('QR share URL', () => {

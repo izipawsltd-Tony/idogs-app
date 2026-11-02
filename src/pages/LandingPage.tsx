@@ -153,9 +153,9 @@ export default function LandingPage() {
                     src="/landing-media-fast/dog-profile.webp"
                     className="ph ph-desktop"
                     alt="Dog records in one organised profile"
-                    loading="eager"
+                    loading="lazy"
                     decoding="async"
-                    fetchPriority="high"
+                    fetchPriority="low"
                   /></div>
                 <div className="shot-cap">Dog records in one organised profile</div>
               </div>
@@ -165,9 +165,9 @@ export default function LandingPage() {
                     src="/landing-media-fast/puppy-showcase.webp"
                     className="ph ph-mobile"
                     alt="A mobile-friendly Puppy Showcase"
-                    loading="eager"
+                    loading="lazy"
                     decoding="async"
-                    fetchPriority="high"
+                    fetchPriority="low"
                   /></div>
                 <div className="shot-cap">A mobile-friendly Puppy Showcase</div>
               </div>
@@ -177,9 +177,9 @@ export default function LandingPage() {
                     src="/landing-media-fast/digital-passport.webp"
                     className="ph ph-mobile"
                     alt="A limited public Passport view"
-                    loading="eager"
+                    loading="lazy"
                     decoding="async"
-                    fetchPriority="high"
+                    fetchPriority="low"
                   /></div>
                 <div className="shot-cap">A limited public Passport view</div>
               </div>

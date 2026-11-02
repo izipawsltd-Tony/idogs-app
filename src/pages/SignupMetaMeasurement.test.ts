@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({ signup: vi.fn(), social: vi.fn(), track: vi.fn() }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ signup: state.signup, socialLogin: state.social, finishQuickSignIn: vi.fn() }) }))
 vi.mock('../lib/firebase', () => ({ auth: {} }))
+vi.mock('../lib/firebaseApp', () => ({ auth: {} }))
 vi.mock('../lib/metaPixel', () => ({ trackCompletedRegistration: state.track }))
 import SignupPage from './SignupPage'
 function Destination() { return createElement('output', {}, useLocation().pathname + useLocation().search) }

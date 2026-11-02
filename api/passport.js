@@ -39,6 +39,9 @@ if (!getApps().length) {
 }
 
 const db = getFirestore()
+// Serverless: Firestore's REST transport avoids the per-instance gRPC channel
+// setup that dominated public QR passport latency (measured on staging).
+try { db.settings({ preferRest: true }) } catch { /* already initialised elsewhere */ }
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'private, no-store')
@@ -61,12 +64,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'passportId required' })
   }
 
+  const t0 = Date.now()
+  const timing = []
+  const mark = name => timing.push(`${name};dur=${Date.now() - t0}`)
   try {
     const dogsSnap = await db.collection('dogs')
       .where('passportId', '==', passportId)
       .limit(1)
       .get()
 
+    mark('dog')
     if (dogsSnap.empty) {
       return res.status(404).json({ error: 'Passport not found' })
     }
@@ -103,6 +110,7 @@ export default async function handler(req, res) {
       db.collection('healthTests').where('dogId', '==', dogDoc.id).get(),
     ])
 
+    mark('records')
     const vaccines = vaccinesSnap.docs.map(v => {
       const d = v.data()
       return {
@@ -140,6 +148,8 @@ export default async function handler(req, res) {
       logSanitizedError('passport-scan', 'SCAN_LOG_FAILED')
     }
 
+    mark('log')
+    res.setHeader('Server-Timing', timing.join(', '))
     return res.status(200).json({ dog, vaccines, healthTests })
   } catch {
     logSanitizedError('passport', 'LOOKUP_FAILED')

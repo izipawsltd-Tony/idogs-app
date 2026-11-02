@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const state=vi.hoisted(()=>({create:vi.fn(),profile:vi.fn(),verifyEmail:vi.fn(),api:null as any}))
 vi.mock('../lib/firebase',()=>({auth:{}}))
+vi.mock('../lib/firebaseApp',()=>({auth:{}}))
 vi.mock('firebase/auth',()=>({
  createUserWithEmailAndPassword:state.create,onAuthStateChanged:()=>()=>{},
  signInWithEmailAndPassword:vi.fn(),signOut:vi.fn(),sendPasswordResetEmail:vi.fn(),sendEmailVerification:state.verifyEmail,reload:vi.fn(),updateProfile:vi.fn().mockResolvedValue(undefined),
