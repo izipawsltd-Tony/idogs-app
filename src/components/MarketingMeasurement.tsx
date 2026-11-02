@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { captureAcquisition } from '../lib/acquisition'
 import { isMarketingWebsitePage, readMetaConsent, setMetaConsent, suspendMetaTracking, trackMarketingPage } from '../lib/metaPixel'
 
 // Advertising privacy choices for the public marketing pages (/ and /signup).
@@ -36,6 +37,8 @@ export default function MarketingMeasurement() {
   const [bottom, setBottom] = useState(0)
   const pillRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
+
+  useEffect(() => { captureAcquisition(search, pathname) }, [pathname, search])
 
   useEffect(() => {
     suspendMetaTracking()
