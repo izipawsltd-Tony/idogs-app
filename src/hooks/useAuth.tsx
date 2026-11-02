@@ -5,13 +5,12 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
-  sendEmailVerification,
   reload,
   User, GoogleAuthProvider, FacebookAuthProvider, signInWithPopup, updateProfile, getAdditionalUserInfo
 } from 'firebase/auth'
 import { splitDisplayName } from '../lib/quickSignup'
 import { welcomeUser } from '../lib/welcomeUser'
-import { sendInitialVerification, rememberVerificationDelivery } from '../lib/signupVerification'
+import { sendInitialVerification, rememberVerificationDelivery, deliverVerificationEmail } from '../lib/signupVerification'
 import { auth } from '../lib/firebase'
 import { createUserProfile, getUserProfile, getUserProfileFromServer, updateUserProfile, deleteUserData } from '../lib/db'
 import type { UserProfile, SignupFormData } from '../types'
@@ -170,7 +169,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function resendVerificationEmail() {
     if (!auth.currentUser) return
-    await sendEmailVerification(auth.currentUser)
+    await deliverVerificationEmail(auth.currentUser)
     rememberVerificationDelivery(auth.currentUser.uid, 'sent')
   }
 
