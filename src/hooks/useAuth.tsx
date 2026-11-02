@@ -5,13 +5,12 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
-  sendEmailVerification,
   reload,
   User, GoogleAuthProvider, FacebookAuthProvider, signInWithPopup, updateProfile, getAdditionalUserInfo
 } from 'firebase/auth'
 import { splitDisplayName } from '../lib/quickSignup'
 import { welcomeUser } from '../lib/welcomeUser'
-import { sendInitialVerification, rememberVerificationDelivery } from '../lib/signupVerification'
+import { sendInitialVerification, rememberVerificationDelivery, deliverVerificationEmail } from '../lib/signupVerification'
 import { auth } from '../lib/firebaseApp'
 
 // Firestore (lib/db) is loaded on demand: a signed-out visitor on the public
@@ -179,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function resendVerificationEmail() {
     if (!auth.currentUser) return
-    await sendEmailVerification(auth.currentUser)
+    await deliverVerificationEmail(auth.currentUser)
     rememberVerificationDelivery(auth.currentUser.uid, 'sent')
   }
 
