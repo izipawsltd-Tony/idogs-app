@@ -46,4 +46,8 @@ describe('signup consent evidence',()=>{
   expect(consent).toMatchObject({choice:marketingOptIn?'opt_in':'opt_out',source:'explicit_checkbox',checkboxDefault:false,channel:'email_marketing',revokedAt:null,email:'qa@example.invalid',evidenceRef:'signup-checkbox-v1'})
   expect(consent.optedInAt).toEqual(marketingOptIn?expect.any(String):null)
  })
+ it('stores first-touch ad attribution on the new profile (direct when none)',async()=>{
+  await act(async()=>{await state.api.signup({email:'qa@example.invalid',password:'synthetic-only',firstName:'QA',lastName:'',kennelName:'',termsAccepted:true})})
+  expect(state.profile.mock.calls[0][1].acquisition).toMatchObject({version:1})
+ })
 })
