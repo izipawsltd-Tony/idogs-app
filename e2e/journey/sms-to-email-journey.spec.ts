@@ -137,6 +137,6 @@ test('SMS signup → verify email → add dog → set password → email login k
   expect(finalProfile.fields.stripeSubscriptionId.stringValue).toBe(`sub_journey_${uid}`)
   expect(finalProfile.fields.plusPromotion.stringValue).toBe('A0_UNTIL_20270131')
   await page.goto('/app/settings', { waitUntil: 'load' })
-  await expect(page.getByText(/Plus/i).first()).toBeVisible()
+  await expect(page.locator('text=/plus/i >> visible=true').first()).toBeVisible()  // mobile hides the sidebar copy
   console.log(`JOURNEY PASS uid=${uid} dog=${dogId} providers=${providers.join(',')} plan=plus`)
 })
