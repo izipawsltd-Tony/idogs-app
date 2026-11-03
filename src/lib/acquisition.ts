@@ -25,8 +25,8 @@ export function parseAcquisition(search: string, pathname: string, now = Date.no
   const out: Acquisition = { fbclid: q.has('fbclid'), landingPath: ['/', '/signup', '/survey'].includes(pathname) ? pathname : 'other', firstSeenAt: new Date(now).toISOString(), version: 1 }
   let any = out.fbclid
   for (const [param, field] of Object.entries(MAP)) {
-    const v = q.get(param)
-    if (v && clean(v)) { (out as Record<string, unknown>)[field] = clean(v); any = true }
+    const v = clean(q.get(param) || '')
+    if (v) { (out as Record<string, unknown>)[field] = v; any = true }
   }
   return any ? out : null
 }
@@ -50,4 +50,9 @@ export function captureAcquisition(search: string, pathname: string): void {
 /** Value to store on a NEW profile; 'direct' when no ad visit was seen on this device. */
 export function signupAcquisition(): Acquisition | { source: 'direct'; version: 1 } {
   return read() || { source: 'direct', version: 1 }
+}
+
+/** Called once the attribution has been written to a new profile. */
+export function clearAcquisition(): void {
+  try { localStorage.removeItem(ACQUISITION_KEY) } catch { /* optional */ }
 }

@@ -78,7 +78,7 @@ export default function VerifyEmailPage({ toast }: Props) {
       setCooldown(60)
     } catch (err) {
       const message = err instanceof Error ? err.message : ''
-      toast(message.includes('email-already-in-use') ? 'This email belongs to an existing account. Sign in to that account; your accounts have not been merged.' : message.includes('requires-recent-login') ? 'Please sign in again before adding your email.' : /too-many-requests|TOO_MANY_ATTEMPTS/.test(message) ? 'Too many verification emails were requested. Please check your inbox and Spam for an earlier email, or try again in about an hour.' : 'Could not send the verification email. Check the address and try again shortly.', 'error')
+      toast(message.includes('email-already-in-use') ? 'This email belongs to an existing account. Sign in to that account; your accounts have not been merged.' : message.includes('requires-recent-login') ? 'Please sign in again before adding your email.' : message.includes('idogs/verification-cooldown') ? 'We just sent a verification email. Please check your inbox and Spam, or wait a minute before requesting another.' : /too-many-requests|TOO_MANY_ATTEMPTS/.test(message) ? 'Too many verification emails were requested. Please check your inbox and Spam for an earlier email, or try again in about an hour.' : 'Could not send the verification email. Check the address and try again shortly.', 'error')
     } finally {
       setResending(false)
     }

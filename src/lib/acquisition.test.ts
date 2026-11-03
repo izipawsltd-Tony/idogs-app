@@ -32,3 +32,10 @@ it('never throws when storage is unavailable', () => {
   expect(() => captureAcquisition(AD, '/')).not.toThrow()
   expect(signupAcquisition()).toEqual({ source: 'direct', version: 1 })
 })
+it('clearAcquisition removes the stored first touch after signup', async () => {
+  const { clearAcquisition } = await import('./acquisition')
+  vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) })
+  captureAcquisition('?utm_source=facebook', '/')
+  clearAcquisition()
+  expect(signupAcquisition()).toEqual({ source: 'direct', version: 1 })
+})

@@ -43,7 +43,7 @@ it('branded email unavailable or erroring falls back to the Firebase default ema
 })
 it('rate-limited branded email is reported, never bypassed through the fallback', async () => {
   vi.stubGlobal('fetch', reply(429, {}))
-  await expect(deliverVerificationEmail(tokenUser)).rejects.toThrow(/too-many-requests/)
+  await expect(deliverVerificationEmail(tokenUser)).rejects.toThrow(/verification-cooldown/)
   expect(s.send).not.toHaveBeenCalled()
 })
 it('successful branded email does not also send the Firebase default email', async () => {

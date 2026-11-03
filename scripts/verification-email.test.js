@@ -68,7 +68,7 @@ describe('branded verification email', () => {
 describe('continue URL not authorized in Firebase', () => {
   it('retries link generation without the continue URL instead of failing', async () => {
     const s = setup()
-    s.generateLink.mockImplementationOnce(async () => { throw new Error('auth/unauthorized-continue-uri') })
+    s.generateLink.mockImplementationOnce(async () => { throw Object.assign(new Error('x'), { code: 'auth/unauthorized-continue-uri' }) })
     const r = await s.request({ headers: { authorization: 'Bearer valid', origin: 'https://idogs-app-staging-git-new-host.vercel.app' } })
     expect(r.code).toBe(200); expect(r.body.sent).toBe(true)
     expect(s.generateLink).toHaveBeenCalledTimes(2); expect(s.generateLink.mock.calls[1]).toEqual(['owner@example.invalid'])
@@ -80,5 +80,38 @@ describe('failed deliveries do not consume the allowance', () => {
     const s = setup({ providerOk: false })
     for (let i = 0; i < VERIFICATION_LIMITS.MAX_PER_WINDOW + 2; i++) expect((await s.request()).code).toBe(503)
     expect([...s.rows.values()][0].count).toBe(0)
+  })
+})
+
+describe('independent review fixes', () => {
+  it('per-account daily cap: at most MAX_PER_DAY branded emails per UTC day', async () => {
+    const s = setup()
+    let ok = 0
+    for (let i = 0; i < 30; i++) { const r = await s.request(); if (r.code === 200) ok++; s.tick(VERIFICATION_LIMITS.WINDOW_MS / 4) }
+    expect(ok).toBeLessThanOrEqual(VERIFICATION_LIMITS.MAX_PER_DAY)
+  })
+  it('global daily ceiling: beyond it the client is told to use the Firebase email (no 429, no Resend call)', async () => {
+    const { DAILY_CEILING } = await import('../api/_lib/verification-email.js')
+    const s = setup()
+    s.rows.set(`_daily_${new Date(10_000_000).toISOString().slice(0, 10)}`, { count: DAILY_CEILING })
+    const r = await s.request()
+    expect(r.code).toBe(200); expect(r.body.reason).toBe('daily_ceiling'); expect(s.fetchImpl).not.toHaveBeenCalled()
+  })
+  it('does not retry link generation on quota errors (no double Firebase usage)', async () => {
+    const s = setup()
+    s.generateLink.mockImplementation(async () => { throw Object.assign(new Error('An internal error has occurred.'), { code: 'auth/internal-error' }) })
+    expect((await s.request()).code).toBe(503)
+    expect(s.generateLink).toHaveBeenCalledTimes(1)
+  })
+  it('Resend timeout is reported as sent (uncertain) so the client does not send a second email', async () => {
+    const s = setup()
+    s.fetchImpl.mockImplementation(async () => { throw Object.assign(new Error('timeout'), { name: 'TimeoutError' }) })
+    const r = await s.request()
+    expect(r.code).toBe(200); expect(r.body).toMatchObject({ sent: true, uncertain: true })
+  })
+  it('continue-URL allowlist is pinned to this Vercel team', async () => {
+    const { continueUrlFor } = await import('../api/_lib/verification-email.js')
+    expect(continueUrlFor('https://idogs-app-evil.vercel.app')).toBe('https://idogs.com.au/verify-email')
+    expect(continueUrlFor('https://idogs-app-staging-git-claude-r-97c005-izipawsltd-tonys-projects.vercel.app')).toMatch(/izipawsltd-tonys-projects\.vercel\.app\/verify-email$/)
   })
 })

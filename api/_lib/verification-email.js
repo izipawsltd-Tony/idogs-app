@@ -16,10 +16,14 @@ import { createHash } from 'node:crypto'
 // - any failure returns a non-"sent" answer so the client falls back to the
 //   unchanged Firebase sendEmailVerification (delivery never gets worse).
 
-export const VERIFICATION_LIMITS = Object.freeze({ WINDOW_MS: 60 * 60 * 1000, MAX_PER_WINDOW: 5, MIN_INTERVAL_MS: 30 * 1000 })
+export const VERIFICATION_LIMITS = Object.freeze({ WINDOW_MS: 60 * 60 * 1000, MAX_PER_WINDOW: 5, MIN_INTERVAL_MS: 30 * 1000, MAX_PER_DAY: 10 })
+// Shared Resend quota protection (independent review, MAJOR): above this many
+// branded emails per UTC day the client silently uses Firebase's default
+// email instead, so reminders/welcome/transfer emails keep their quota.
+export const DAILY_CEILING = Number(process.env.VERIFICATION_EMAIL_DAILY_CEILING) || 60
 const COLLECTION = 'verificationEmailDeliveries'
 const DEFAULT_ORIGIN = 'https://idogs.com.au'
-const ALLOWED_ORIGIN = /^https:\/\/(?:idogs\.com\.au|www\.idogs\.com\.au|idogs-app[a-z0-9-]*\.vercel\.app)$|^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d{2,5})?$/
+const ALLOWED_ORIGIN = /^https:\/\/(?:idogs\.com\.au|www\.idogs\.com\.au|idogs-app(?:-[a-z0-9-]+)?-izipawsltd-tonys-projects\.vercel\.app|idogs-app(?:-staging)?\.vercel\.app)$|^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d{2,5})?$/
 
 export const verificationSubject = 'Verify your email for iDogs'
 
@@ -68,23 +72,31 @@ export function verificationEmailHandler({ verifyToken, generateLink, db, apiKey
 
     const ref = db.collection(COLLECTION).doc(createHash('sha256').update(String(identity.uid)).digest('hex'))
     const t = now()
-    let allowed
+    const day = new Date(t).toISOString().slice(0, 10)
+    const globalRef = db.collection(COLLECTION).doc(`_daily_${day}`)
+    let decision
     try {
-      allowed = await db.runTransaction(async tx => {
-        const snap = await tx.get(ref)
+      decision = await db.runTransaction(async tx => {
+        const [snap, gsnap] = await Promise.all([tx.get(ref), tx.get(globalRef)])
         const prev = snap.exists ? snap.data() : null
         const inWindow = prev && typeof prev.windowStart === 'number' && t - prev.windowStart < VERIFICATION_LIMITS.WINDOW_MS
         const count = inWindow ? Number(prev.count) || 0 : 0
-        if (inWindow && count >= VERIFICATION_LIMITS.MAX_PER_WINDOW) return false
-        if (prev && typeof prev.lastAt === 'number' && t - prev.lastAt < VERIFICATION_LIMITS.MIN_INTERVAL_MS) return false
-        tx.set(ref, { windowStart: inWindow ? prev.windowStart : t, count: count + 1, lastAt: t, expiresAt: new Date(t + VERIFICATION_LIMITS.WINDOW_MS * 2) })
-        return true
+        const dayCount = prev && prev.day === day ? Number(prev.dayCount) || 0 : 0
+        if (inWindow && count >= VERIFICATION_LIMITS.MAX_PER_WINDOW) return 'limited'
+        if (dayCount >= VERIFICATION_LIMITS.MAX_PER_DAY) return 'limited'
+        if (prev && typeof prev.lastAt === 'number' && t - prev.lastAt < VERIFICATION_LIMITS.MIN_INTERVAL_MS) return 'limited'
+        const globalCount = gsnap.exists ? Number(gsnap.data().count) || 0 : 0
+        if (globalCount >= DAILY_CEILING) return 'ceiling'
+        tx.set(ref, { windowStart: inWindow ? prev.windowStart : t, count: count + 1, day, dayCount: dayCount + 1, lastAt: t, expiresAt: new Date(t + 2 * 24 * 60 * 60 * 1000) })
+        tx.set(globalRef, { day, count: globalCount + 1, expiresAt: new Date(t + 3 * 24 * 60 * 60 * 1000) })
+        return 'ok'
       })
     } catch (err) {
       console.error(JSON.stringify({ event: 'verification_email_failed', stage: 'rate_limit', code: safeCode(err) }))
       return res.status(503).json({ sent: false, error: 'Verification email unavailable', stage: 'rate_limit' })
     }
-    if (!allowed) return res.status(429).json({ sent: false, error: 'Too many verification emails. Please wait a few minutes and try again.' })
+    if (decision === 'ceiling') return res.status(200).json({ sent: false, reason: 'daily_ceiling' })
+    if (decision !== 'ok') return res.status(429).json({ sent: false, error: 'Please wait a minute before requesting another verification email.', retryAfterSeconds: 60 })
 
     let stage = 'link'
     try {
@@ -93,7 +105,11 @@ export function verificationEmailHandler({ verifyToken, generateLink, db, apiKey
       // link still verifies without it, so retry plain rather than fail.
       let link
       try { link = await generateLink(email, { url: continueUrlFor(req.headers.origin) }) }
-      catch { link = await generateLink(email) }
+      catch (err) {
+        // Retry plain ONLY for a rejected continue URL; quota/other errors must not double Firebase usage.
+        if (!/continue-uri|unauthorized-domain|domain/i.test(String(err?.code || err?.errorInfo?.code || err?.message))) throw err
+        link = await generateLink(email)
+      }
       stage = 'provider'
       const response = await fetchImpl('https://api.resend.com/emails', {
         method: 'POST',
@@ -107,14 +123,24 @@ export function verificationEmailHandler({ verifyToken, generateLink, db, apiKey
       }
       return res.status(200).json({ sent: true })
     } catch (err) {
+      // Resend accepted the request but did not answer within 8 s: the email
+      // may well have been sent. Report sent (no refund, no client fallback)
+      // rather than risk the customer receiving two different emails.
+      if (stage === 'provider' && /TimeoutError|AbortError/.test(String(err?.name))) {
+        console.error(JSON.stringify({ event: 'verification_email_uncertain', stage, code: safeCode(err) }))
+        return res.status(200).json({ sent: true, uncertain: true })
+      }
       // Diagnostics only: stage + provider/Firebase error code, never the email or link.
       console.error(JSON.stringify({ event: 'verification_email_failed', stage, code: safeCode(err), detail: safeDetail(err) }))
       // Our failure must not use up the customer's hourly allowance.
       try {
         await db.runTransaction(async tx => {
-          const snap = await tx.get(ref)
+          const [snap, gsnap] = await Promise.all([tx.get(ref), tx.get(globalRef)])
           const d = snap.exists ? snap.data() : null
-          if (d && d.lastAt === t && Number(d.count) > 0) tx.set(ref, { ...d, count: Number(d.count) - 1, lastAt: 0 })
+          if (d && d.lastAt === t && Number(d.count) > 0) {
+            tx.set(ref, { ...d, count: Number(d.count) - 1, dayCount: Math.max(0, (Number(d.dayCount) || 1) - 1), lastAt: 0 })
+            if (gsnap.exists && Number(gsnap.data().count) > 0) tx.set(globalRef, { ...gsnap.data(), count: Number(gsnap.data().count) - 1 })
+          }
         })
       } catch { /* best-effort */ }
       return res.status(503).json({ sent: false, error: 'Verification email unavailable', stage })

@@ -30,11 +30,11 @@ export async function sendBrandedVerification(user: User, fetchImpl: typeof fetc
   } catch { return 'fallback' }
 }
 
-/** Sends a verification email: branded first, Firebase default as fallback. Throws auth/too-many-requests when rate-limited. */
+/** Sends a verification email: branded first, Firebase default as fallback. Throws idogs/verification-cooldown when our own per-account limit applies. */
 export async function deliverVerificationEmail(user: User, continueUrl?: string): Promise<void> {
   const branded = await sendBrandedVerification(user)
   if (branded === 'sent') return
-  if (branded === 'rate-limited') throw new Error('Firebase: Error (auth/too-many-requests).')
+  if (branded === 'rate-limited') throw new Error('idogs/verification-cooldown')
   if (!continueUrl) return sendEmailVerification(user)
   try { await sendEmailVerification(user, { url: continueUrl }) }
   catch (err) {

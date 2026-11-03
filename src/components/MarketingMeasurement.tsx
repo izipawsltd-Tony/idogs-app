@@ -14,7 +14,9 @@ import { isMarketingWebsitePage, readMetaConsent, setMetaConsent, suspendMetaTra
 //
 // Consent semantics are UNCHANGED: Meta Pixel stays off until the visitor
 // explicitly chooses "Allow ad measurement" (see lib/metaPixel.ts — pixel()
-// returns nothing without a stored 'granted' choice). No choice = no tracking.
+// returns nothing without a stored 'granted' choice). No choice = no Meta tracking.
+// Separate and first-party only: lib/acquisition (campaign ids on the new
+// profile) and lib/landingBeacon (anonymous load counts) send nothing to Meta.
 
 const GAP = 8 // px between the pill and the sticky CTA bar / screen edge
 
