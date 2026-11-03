@@ -5,7 +5,7 @@ import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
 import { verifyBeforeUpdateEmail } from 'firebase/auth'
-import { verificationDelivery } from '../lib/signupVerification'
+import { verificationDelivery, rememberVerificationDelivery, isThrottleError, THROTTLE_RETRY_MS, type Delivery } from '../lib/signupVerification'
 import { emailPasswordLinkEnabled, emailPasswordLinkErrorMessage, sendAddEmailLink } from '../lib/emailPasswordLink'
 
 interface Props {
@@ -21,7 +21,12 @@ export default function VerifyEmailPage({ toast }: Props) {
   const [resending, setResending] = useState(false)
   const [cooldown, setCooldown] = useState(0)
   const [contactEmail, setContactEmail] = useState('')
-  const initialDelivery = verificationDelivery(user?.uid)
+  const [delivery, setDelivery] = useState<Delivery | null>(() => verificationDelivery(user?.uid))
+  useEffect(() => { setDelivery(verificationDelivery(user?.uid)) }, [user?.uid])
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t) }, [])
+  const throttledUntil = delivery?.status === 'throttled' && delivery.retryAt && delivery.retryAt > now ? delivery.retryAt : 0
+  const at = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
   // If not logged in at all, send to login
   useEffect(() => {
@@ -47,8 +52,12 @@ export default function VerifyEmailPage({ toast }: Props) {
       if (verified) {
         toast('Email verified! Welcome to iDogs.')
         navigate(returnTo, { replace: true })
+      } else if (delivery?.status === 'sent') {
+        toast(`Not verified yet. Open the link in the email we sent at ${at(delivery.attemptedAt)} (check Spam too), then try again.`, 'error')
+      } else if (throttledUntil) {
+        toast(`Not verified yet. We couldn't send your verification email because of a temporary sending limit. Please try again after ${at(throttledUntil)}.`, 'error')
       } else {
-        toast('Not verified yet. Please click the link in your email first.', 'error')
+        toast('Not verified yet. We haven’t been able to send your verification email yet — choose Send verification email.', 'error')
       }
     } catch {
       toast('Could not check verification status. Please try again.', 'error')
@@ -73,12 +82,19 @@ export default function VerifyEmailPage({ toast }: Props) {
           return
         }
         await verifyBeforeUpdateEmail(user, contactEmail.trim(), { url: `${location.origin}/verify-email?next=${encodeURIComponent(returnTo)}` })
-      } else await resendVerificationEmail()
-      toast('Verification email sent!')
+      } else {
+        await resendVerificationEmail()
+        if (user) setDelivery(rememberVerificationDelivery(user.uid, 'sent'))
+      }
+      toast('Verification email sent! It can take a minute to arrive.')
       setCooldown(60)
     } catch (err) {
       const message = err instanceof Error ? err.message : ''
-      toast(message.includes('email-already-in-use') ? 'This email belongs to an existing account. Sign in to that account; your accounts have not been merged.' : message.includes('requires-recent-login') ? 'Please sign in again before adding your email.' : message.includes('idogs/verification-cooldown') ? 'We just sent a verification email. Please check your inbox and Spam, or wait a minute before requesting another.' : /too-many-requests|TOO_MANY_ATTEMPTS/.test(message) ? 'Too many verification emails were requested. Please check your inbox and Spam for an earlier email, or try again in about an hour.' : 'Could not send the verification email. Check the address and try again shortly.', 'error')
+      if (user && user.email && !message.includes('idogs/verification-cooldown')) {
+        setDelivery(isThrottleError(err) ? rememberVerificationDelivery(user.uid, 'throttled', Date.now() + THROTTLE_RETRY_MS) : rememberVerificationDelivery(user.uid, 'failed'))
+      }
+      if (message.includes('idogs/verification-cooldown')) setCooldown(60)
+      toast(message.includes('email-already-in-use') ? 'This email belongs to an existing account. Sign in to that account; your accounts have not been merged.' : message.includes('requires-recent-login') ? 'Please sign in again before adding your email.' : message.includes('idogs/verification-cooldown') ? 'We just sent a verification email. Please check your inbox and Spam, or wait a minute before requesting another.' : isThrottleError(err) ? `Sending is temporarily limited. Please try again after ${at(Date.now() + THROTTLE_RETRY_MS)} — you can keep exploring meanwhile.` : 'We couldn’t send the verification email just now. Please try again in a few minutes.', 'error')
     } finally {
       setResending(false)
     }
@@ -122,11 +138,17 @@ export default function VerifyEmailPage({ toast }: Props) {
             {user?.email}
           </p>
           <p style={{ fontSize: 13, color: 'var(--light)', lineHeight: 1.6, marginBottom: 8 }}>
-            {initialDelivery?.status === 'sent' ? 'A verification email has already been sent. Open the link in your inbox, then return here to continue. You can request another email below.' : initialDelivery?.status === 'failed' ? 'Your account is ready, but the first verification email could not be sent. Choose Send verification email to try again.' : 'Choose Send verification email, open the link in your inbox, then return here to continue.'}
+            {delivery?.status === 'sent'
+              ? `We sent a verification email at ${at(delivery.attemptedAt)}. Open the link in it, then return here to continue.`
+              : throttledUntil
+                ? `We couldn't send your verification email yet: sending is temporarily limited. You can try again after ${at(throttledUntil)} — no need to keep retrying. You can keep exploring meanwhile.`
+                : delivery?.status === 'failed'
+                  ? 'Your account is ready, but we couldn’t send the verification email yet. Choose Send verification email to try again.'
+                  : 'Choose Send verification email to get your link, then open it and return here to continue.'}
           </p>
-          <p style={{ fontSize: 12, color: 'var(--gold)', lineHeight: 1.6, marginBottom: 24, background: 'var(--gold-light)', padding: '8px 12px', borderRadius: 8 }}>
+          {delivery?.status === 'sent' && <p style={{ fontSize: 12, color: 'var(--gold)', lineHeight: 1.6, marginBottom: 24, background: 'var(--gold-light)', padding: '8px 12px', borderRadius: 8 }}>
             💡 Can't find it? Check your <strong>Spam</strong> or <strong>Junk</strong> folder — verification emails sometimes end up there.
-          </p>
+          </p>}
 
           <button onClick={handleCheck} className="btn btn-primary" style={{ width: '100%', height: 46 }} disabled={checking}>
             {checking ? <span className="spinner" /> : "I've verified — continue"}
@@ -138,9 +160,9 @@ export default function VerifyEmailPage({ toast }: Props) {
             onClick={handleResend}
             className="btn btn-secondary"
             style={{ width: '100%', height: 44, marginTop: 10 }}
-            disabled={resending || cooldown > 0}
+            disabled={resending || cooldown > 0 || !!throttledUntil}
           >
-            {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : initialDelivery?.status === 'sent' ? 'Resend verification email' : 'Send verification email'}
+            {resending ? <span className="spinner" /> : throttledUntil ? `Try again after ${at(throttledUntil)}` : cooldown > 0 ? `Resend in ${cooldown}s` : delivery?.status === 'sent' ? 'Resend verification email' : 'Send verification email'}
           </button>
 
           <p><Link to="/app/start">Keep exploring for now</Link></p>

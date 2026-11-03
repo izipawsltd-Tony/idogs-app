@@ -1,14 +1,23 @@
 import { sendEmailVerification, type User } from 'firebase/auth'
-type Delivery = { status: 'sent' | 'failed'; attemptedAt: number }
+// Delivery state shown on /verify-email. 'sent' only after the email request
+// was accepted; 'throttled' when Firebase/our limits refused it (retryAt).
+export type Delivery = { status: 'sent' | 'failed' | 'throttled'; attemptedAt: number; retryAt?: number }
 const key = (uid: string) => `idogs.verification.${uid}`
-export function rememberVerificationDelivery(uid: string, status: Delivery['status']) {
-  try { sessionStorage.setItem(key(uid), JSON.stringify({ status, attemptedAt: Date.now() })) } catch { /* Email delivery must not depend on browser storage. */ }
+export const THROTTLE_RETRY_MS = 60 * 60 * 1000
+export function isThrottleError(err: unknown): boolean {
+  const m = err instanceof Error ? `${(err as { code?: string }).code || ''} ${err.message}` : String(err || '')
+  return /TOO_MANY_ATTEMPTS|too-many-requests|quota-exceeded/i.test(m)
+}
+export function rememberVerificationDelivery(uid: string, status: Delivery['status'], retryAt?: number): Delivery {
+  const d: Delivery = { status, attemptedAt: Date.now(), ...(retryAt ? { retryAt } : {}) }
+  try { sessionStorage.setItem(key(uid), JSON.stringify(d)) } catch { /* Email delivery must not depend on browser storage. */ }
+  return d
 }
 export function verificationDelivery(uid?: string): Delivery | null {
   if (!uid) return null
   try {
     const value = JSON.parse(sessionStorage.getItem(key(uid)) || 'null')
-    return value && ['sent', 'failed'].includes(value.status) && Date.now() - value.attemptedAt < 86400000 ? value : null
+    return value && ['sent', 'failed', 'throttled'].includes(value.status) && Date.now() - value.attemptedAt < 86400000 ? value : null
   } catch { return null }
 }
 
@@ -51,5 +60,8 @@ export async function sendInitialVerification(user: User): Promise<void> {
     const url = typeof window === 'undefined' ? undefined : `${window.location.origin}/verify-email`
     await deliverVerificationEmail(user, url)
     rememberVerificationDelivery(user.uid, 'sent')
-  } catch { rememberVerificationDelivery(user.uid, 'failed') }
+  } catch (err) {
+    if (isThrottleError(err)) rememberVerificationDelivery(user.uid, 'throttled', Date.now() + THROTTLE_RETRY_MS)
+    else rememberVerificationDelivery(user.uid, 'failed')
+  }
 }

@@ -14,7 +14,7 @@ const s = vi.hoisted(() => ({
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: s.user, loading: false, logout: vi.fn(), resendVerificationEmail: vi.fn(), checkEmailVerified: vi.fn() }) }))
 vi.mock('firebase/auth', () => ({ verifyBeforeUpdateEmail: s.verifyBefore }))
 vi.mock('../lib/firebase', () => ({ auth: { currentUser: null }, db: {} }))
-vi.mock('../lib/signupVerification', () => ({ verificationDelivery: () => null }))
+vi.mock('../lib/signupVerification', () => ({ verificationDelivery: () => null, rememberVerificationDelivery: (_u: string, status: string) => ({ status, attemptedAt: Date.now() }), isThrottleError: (e: unknown) => /TOO_MANY_ATTEMPTS|too-many-requests/.test(String((e as Error)?.message)), THROTTLE_RETRY_MS: 3600000 }))
 vi.mock('../lib/emailPasswordLink', async (orig) => ({
   ...(await orig() as object), sendAddEmailLink: s.send, emailPasswordLinkEnabled: () => s.enabled,
 }))

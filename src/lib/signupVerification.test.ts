@@ -61,3 +61,10 @@ it('Firebase fallback retries without the continue URL when the domain is not au
   await deliverVerificationEmail(tokenUser, 'https://new-preview.vercel.app/verify-email')
   expect(s.send).toHaveBeenCalledTimes(2); expect(s.send.mock.calls[1]).toEqual([tokenUser])
 })
+it('signup send refused by the Firebase limit is recorded as throttled with a retry time, never as sent', async () => {
+  vi.stubGlobal('fetch', reply(503, {}))
+  s.send.mockRejectedValue(Object.assign(new Error('Firebase: Error (auth/too-many-requests).'), { code: 'auth/too-many-requests' }))
+  await sendInitialVerification(tokenUser)
+  const d = verificationDelivery(user.uid)
+  expect(d?.status).toBe('throttled'); expect(d?.retryAt).toBeGreaterThan(Date.now())
+})
