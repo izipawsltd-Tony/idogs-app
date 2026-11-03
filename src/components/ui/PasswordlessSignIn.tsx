@@ -7,6 +7,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { trackCompletedRegistration } from '../../lib/metaPixel'
 import { phoneSignInErrorCode, phoneSignInErrorMessage } from '../../lib/phoneSignInError'
 import SignupConsent from './SignupConsent'
+import { acquisitionReturnParam } from '../../lib/acquisition'
 
 export default function PasswordlessSignIn({ next, signup = false, phoneOnly = false, onBusyChange }: { next: string; signup?: boolean; phoneOnly?: boolean; onBusyChange?: (busy: boolean) => void }) {
   const navigate = useNavigate(), { finishQuickSignIn } = useAuth()
@@ -29,7 +30,7 @@ export default function PasswordlessSignIn({ next, signup = false, phoneOnly = f
         const flow = crypto.randomUUID(), key = PENDING_SIGNIN_PREFIX + flow
         // Store contact details locally, never in the emailed URL.
         try { localStorage.setItem(key, JSON.stringify({ email: email.trim(), name: name.trim(), marketingOptIn: marketing, createdAt: Date.now() })) } catch { /* Other-device completion asks for email again. */ }
-        await sendSignInLinkToEmail(auth, email.trim(), { url: emailReturnUrl(location.origin, next, flow), handleCodeInApp: true })
+        await sendSignInLinkToEmail(auth, email.trim(), { url: emailReturnUrl(location.origin, next, flow, acquisitionReturnParam()), handleCodeInApp: true })
         setSent(true); setCooldown(60)
       } else if (confirmation.current || completed.current) {
         const result = completed.current || await confirmation.current!.confirm(code)

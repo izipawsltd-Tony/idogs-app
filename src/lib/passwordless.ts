@@ -8,9 +8,11 @@ export function readPendingSignin(flow: string | null, storage?: Pick<Storage, '
     return value && typeof value.email === 'string' && typeof value.name === 'string' && Date.now() - value.createdAt < 3600000 && value.createdAt <= Date.now() ? value : null
   } catch { return null }
 }
-export function emailReturnUrl(origin: string, next: string, flow: string): string {
+export function emailReturnUrl(origin: string, next: string, flow: string, acquisition?: string | null): string {
   const url = new URL('/auth/finish', origin)
   url.searchParams.set('next', signupDestination(next)); url.searchParams.set('flow', flow)
+  // Campaign labels only (lib/acquisition) — never contact details.
+  if (acquisition) url.searchParams.set('acq', acquisition)
   return url.href
 }
 export function normalizeSigninPhone(value: string): string {
