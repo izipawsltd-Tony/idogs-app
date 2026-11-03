@@ -5,6 +5,7 @@ import {
 import { db, auth } from './firebase'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage, LitterShowcase, ShowcaseAvailability, ShowcasePuppyEntry } from '../types'
 import { calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
+import { clearAcquisition } from './acquisition'
 
 function uid(): string {
   return auth.currentUser?.uid ?? ''
@@ -171,6 +172,8 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
     role: data.role || 'breeder',
     createdAt: serverTimestamp(),
   })
+  // First-touch attribution belongs to this new account only; a second account on the same device must not inherit it.
+  if (profileData.acquisition) clearAcquisition()
 }
 
 // Uses setDoc(..., {merge: true}) rather than updateDoc() — updateDoc()

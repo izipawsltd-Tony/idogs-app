@@ -6,7 +6,9 @@ export function useToast() {
 
   const toast = useCallback((message: string, type: ToastMessage['type'] = 'success') => {
     const id = Math.random().toString(36).slice(2)
-    setToasts(prev => [...prev, { id, message, type }])
+    // Never stack the same message twice (e.g. a quick double tap, or two
+    // code paths reporting one failure) — keep the one already visible.
+    setToasts(prev => prev.some(t => t.message === message && t.type === type) ? prev : [...prev, { id, message, type }])
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id))
     }, 3500)
