@@ -53,6 +53,10 @@ test('SMS signup → verify email → add dog → set password → email login k
   const email = `journey-${n}@example.invalid`
   page.on('pageerror', e => console.log('[pageerror]', e.message))
 
+  // 0. Arrive from a Meta ad link (first-touch attribution, first-party only).
+  await page.goto('/?utm_source=facebook&utm_medium=paid_social&utm_campaign=journey-qa&ad_id=120000000000001&fbclid=JOURNEY_SECRET_CLICK_ID', { waitUntil: 'load' })
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('idogs-acquisition-v1'))).toContain('journey-qa')
+
   // 1. SMS signup.
   await page.goto('/signup', { waitUntil: 'load' })
   await page.locator('.idogs-auth-tabs').getByRole('button', { name: 'Mobile number' }).click()
@@ -67,6 +71,13 @@ test('SMS signup → verify email → add dog → set password → email login k
   const created = (await accounts()).find(a => a.phoneNumber === phone)!
   expect(created, 'Firebase user created by SMS signup').toBeTruthy()
   const uid = created.localId
+  // First-touch attribution is on the NEW profile; fbclid stored as a boolean only; cleared from the device afterwards.
+  await expect.poll(async () => (await fsGet(`users/${uid}`)).fields?.acquisition?.mapValue?.fields?.campaign?.stringValue, { timeout: 15_000 }).toBe('journey-qa')
+  const acq = (await fsGet(`users/${uid}`)).fields.acquisition.mapValue.fields
+  expect(acq.source.stringValue).toBe('facebook'); expect(acq.medium.stringValue).toBe('paid_social'); expect(acq.adId.stringValue).toBe('120000000000001')
+  expect(acq.fbclid.booleanValue).toBe(true); expect(acq.landingPath.stringValue).toBe('/')
+  expect(JSON.stringify(acq)).not.toContain('JOURNEY_SECRET_CLICK_ID')
+  expect(await page.evaluate(() => localStorage.getItem('idogs-acquisition-v1'))).toBeNull()
   expect(created.email).toBeUndefined()
   await grantPlus(uid)
   await dismissStateModal(page)
