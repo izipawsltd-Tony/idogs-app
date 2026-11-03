@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { scheduleLandingBeacon } from '../lib/landingBeacon'
+import { captureAcquisition } from '../lib/acquisition'
 import { isMarketingWebsitePage, readMetaConsent, setMetaConsent, suspendMetaTracking, trackMarketingPage } from '../lib/metaPixel'
 
 // Advertising privacy choices for the public marketing pages (/ and /signup).
@@ -13,7 +14,9 @@ import { isMarketingWebsitePage, readMetaConsent, setMetaConsent, suspendMetaTra
 //
 // Consent semantics are UNCHANGED: Meta Pixel stays off until the visitor
 // explicitly chooses "Allow ad measurement" (see lib/metaPixel.ts — pixel()
-// returns nothing without a stored 'granted' choice). No choice = no tracking.
+// returns nothing without a stored 'granted' choice). No choice = no Meta tracking.
+// Separate and first-party only: lib/acquisition (campaign ids on the new
+// profile) and lib/landingBeacon (anonymous load counts) send nothing to Meta.
 
 const GAP = 8 // px between the pill and the sticky CTA bar / screen edge
 
@@ -39,6 +42,7 @@ export default function MarketingMeasurement() {
   const dialogRef = useRef<HTMLElement>(null)
 
   useEffect(() => { scheduleLandingBeacon(search, pathname) }, [pathname, search])
+  useEffect(() => { captureAcquisition(search, pathname) }, [pathname, search])
 
   useEffect(() => {
     suspendMetaTracking()
