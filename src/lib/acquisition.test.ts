@@ -39,3 +39,33 @@ it('clearAcquisition removes the stored first touch after signup', async () => {
   clearAcquisition()
   expect(signupAcquisition()).toEqual({ source: 'direct', version: 1 })
 })
+
+it('carries the first touch through the email sign-in link, for completion in another browser', async () => {
+  const { acquisitionReturnParam, acquisitionFromReturnParam } = await import('./acquisition')
+  captureAcquisition(AD, '/')
+  const param = acquisitionReturnParam()!
+  expect(param).toMatch(/^[A-Za-z0-9_-]+$/)
+  expect(atob(param.replace(/-/g, '+').replace(/_/g, '/'))).not.toContain('SECRETCLICKID')
+  store.clear()                                                    // the mail app's browser has nothing stored
+  expect(acquisitionFromReturnParam(param)).toMatchObject({ source: 'facebook', campaign: 'Puppy Owners Nov', adId: '3', fbclid: true, landingPath: '/' })
+  captureAcquisition('?next=%2Fapp&flow=abc&acq=' + param, '/auth/finish')
+  expect(signupAcquisition()).toMatchObject({ source: 'facebook', campaign: 'Puppy Owners Nov' })
+})
+it('rejects tampered, stale or oversized return params and keeps only known cleaned fields', async () => {
+  const { acquisitionFromReturnParam } = await import('./acquisition')
+  const enc = (o: unknown) => btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  const now = new Date().toISOString()
+  expect(acquisitionFromReturnParam('not base64!')).toBeNull()
+  expect(acquisitionFromReturnParam('A'.repeat(2000))).toBeNull()
+  expect(acquisitionFromReturnParam(enc({ version: 2, source: 'x', firstSeenAt: now }))).toBeNull()
+  expect(acquisitionFromReturnParam(enc({ version: 1, source: 'x', firstSeenAt: '2020-01-01T00:00:00Z' }))).toBeNull()
+  const a = acquisitionFromReturnParam(enc({ version: 1, source: '<b>fb</b>', email: 'a@b.c', fbclid: 'RAW', landingPath: '/evil', firstSeenAt: now }))!
+  expect(a).toMatchObject({ source: 'bfb/b', fbclid: false, landingPath: 'other' })
+  expect(JSON.stringify(a)).not.toContain('a@b.c')
+})
+it('the email return URL carries campaign labels only', async () => {
+  const { emailReturnUrl } = await import('./passwordless')
+  const u = new URL(emailReturnUrl('https://idogs.com.au', '/app/dashboard', 'f'.repeat(20), 'eyJ4IjoxfQ'))
+  expect(u.searchParams.get('acq')).toBe('eyJ4IjoxfQ')
+  expect(new URL(emailReturnUrl('https://idogs.com.au', '/app/dashboard', 'f'.repeat(20))).searchParams.has('acq')).toBe(false)
+})

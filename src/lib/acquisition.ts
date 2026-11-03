@@ -31,6 +31,51 @@ export function parseAcquisition(search: string, pathname: string, now = Date.no
   return any ? out : null
 }
 
+const FIELDS = ['source', 'medium', 'campaign', 'content', 'term', 'utmId', 'campaignId', 'adsetId', 'adId', 'placement'] as const
+const PATHS = ['/', '/signup', '/survey', 'other']
+export const ACQUISITION_PARAM = 'acq'
+
+const fresh = (a: Acquisition | null) => a && a.version === 1 && Date.now() - Date.parse(a.firstSeenAt) < MAX_AGE_MS && Date.parse(a.firstSeenAt) <= Date.now() + 60_000 ? a : null
+
+/** Rebuilds an attribution from untrusted input, keeping only known, cleaned fields. */
+function sanitize(raw: unknown): Acquisition | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (r.version !== 1 || typeof r.firstSeenAt !== 'string' || Number.isNaN(Date.parse(r.firstSeenAt))) return null
+  const out: Acquisition = { fbclid: r.fbclid === true, landingPath: PATHS.includes(String(r.landingPath)) ? String(r.landingPath) : 'other', firstSeenAt: new Date(Date.parse(r.firstSeenAt)).toISOString(), version: 1 }
+  let any = out.fbclid
+  for (const f of FIELDS) { const v = typeof r[f] === 'string' ? clean(r[f] as string) : ''; if (v) { (out as Record<string, unknown>)[f] = v; any = true } }
+  return any ? fresh(out) : null
+}
+
+/**
+ * Email-link signup is often finished in a different browser (the mail app's),
+ * where this device's first touch is not stored. The campaign labels (never
+ * contact details, never the fbclid value) therefore travel in the sign-in
+ * link's return URL so they still apply to the new account.
+ */
+export function acquisitionReturnParam(): string | null {
+  const a = read()
+  if (!a) return null
+  try {
+    const bytes = new TextEncoder().encode(JSON.stringify(a))
+    let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b) })
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  } catch { return null }
+}
+
+export function acquisitionFromReturnParam(value: string | null | undefined): Acquisition | null {
+  if (!value || value.length > 1500 || !/^[A-Za-z0-9_-]+$/.test(value)) return null
+  try {
+    const bin = atob(value.replace(/-/g, '+').replace(/_/g, '/'))
+    return sanitize(JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)))))
+  } catch { return null }
+}
+
+function fromLocation(): Acquisition | null {
+  try { return acquisitionFromReturnParam(new URLSearchParams(window.location.search).get(ACQUISITION_PARAM)) } catch { return null }
+}
+
 function read(): Acquisition | null {
   try {
     const v = JSON.parse(localStorage.getItem(ACQUISITION_KEY) || 'null') as Acquisition | null
@@ -42,14 +87,14 @@ function read(): Acquisition | null {
 export function captureAcquisition(search: string, pathname: string): void {
   try {
     if (read()) return
-    const a = parseAcquisition(search, pathname)
+    const a = acquisitionFromReturnParam(new URLSearchParams(search).get(ACQUISITION_PARAM)) || parseAcquisition(search, pathname)
     if (a) localStorage.setItem(ACQUISITION_KEY, JSON.stringify(a))
   } catch { /* attribution is optional */ }
 }
 
 /** Value to store on a NEW profile; 'direct' when no ad visit was seen on this device. */
 export function signupAcquisition(): Acquisition | { source: 'direct'; version: 1 } {
-  return read() || { source: 'direct', version: 1 }
+  return read() || fromLocation() || { source: 'direct', version: 1 }
 }
 
 /** Called once the attribution has been written to a new profile. */
