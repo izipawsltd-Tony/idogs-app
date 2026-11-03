@@ -481,6 +481,7 @@ export interface UserProfile {
     phone: string
     evidenceRef: string
   }
+  acquisition?: import('../lib/acquisition').Acquisition | { source: 'direct'; version: 1 }
   marketingConsent?: {
     channel: 'email_marketing'
     choice: 'opt_in' | 'opt_out'
