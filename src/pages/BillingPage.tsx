@@ -3,12 +3,14 @@ import { useAuth } from '../hooks/useAuth'
 import { useSearchParams } from 'react-router-dom'
 import type { ToastMessage } from '../types'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCopy'
-import { isNativeApp } from '../lib/nativePlatform'
+import { isAndroidNativeApp, isNativeApp } from '../lib/nativePlatform'
 import { subscriptionStatusCopy } from '../lib/subscriptionStatusCopy'
 import { getEffectivePlanClient, hasValidInternalEntitlementClient } from '../lib/utils'
 import {
   androidPlanUnavailableNotice,
   billingIntroCopy,
+  nativeIosBillingIntroCopy,
+  showInformationalPlanPrices,
   plusFeatureList,
   showPlanPricingUI,
   showSmsAddonPrice,
@@ -121,6 +123,8 @@ export default function BillingPage({ toast }: Props) {
   // The matching native API routes are blocked in nativeApiRouting.ts. Read-only
   // status and existing entitlements (including cancelling an SMS add-on) still work.
   const nativePurchasesUnavailable = isNativeApp()
+  const isAndroidApp = isAndroidNativeApp()
+  const iosInformationalPricing = nativePurchasesUnavailable && !isAndroidApp
   const showExternalPaymentCopy = showExternalPaymentFaq(nativePurchasesUnavailable)
   const subscriptionCopy = billingDetails?.subscription ? subscriptionStatusCopy(billingDetails.subscription) : null
 
@@ -310,7 +314,7 @@ export default function BillingPage({ toast }: Props) {
           Billing & Plans
         </h1>
         <p style={{ fontSize: 14, color: 'var(--light)' }}>
-          {billingIntroCopy(nativePurchasesUnavailable)}
+          {iosInformationalPricing ? nativeIosBillingIntroCopy() : billingIntroCopy(nativePurchasesUnavailable)}
         </p>
       </div>
 
@@ -410,7 +414,7 @@ export default function BillingPage({ toast }: Props) {
             <div style={{ fontSize: 24, marginBottom: 6 }}>🏆</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Plus</div>
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>For active breeders with a growing kennel</div>
-            {showPlanPricingUI(nativePurchasesUnavailable) && <>
+            {showInformationalPlanPrices(isAndroidApp) && <>
             {promotionActive && interval === 'plus_monthly' && <PlusPromotion />}
             {!(promotionActive && interval === 'plus_monthly') && <><div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
               <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>
@@ -422,7 +426,7 @@ export default function BillingPage({ toast }: Props) {
             </>}
             </>}
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {plusFeatureList(nativePurchasesUnavailable).map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
+              {plusFeatureList(isAndroidApp).map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
             </ul>
             {promotionActive && interval === 'plus_monthly' && !isPlus && !nativePurchasesUnavailable && <label className="plus-promotion-consent">
               <input type="checkbox" checked={promotionConsent} onChange={event => setPromotionConsent(event.target.checked)} />

@@ -31,8 +31,8 @@ export function restrictedSaleAvailabilityMessage(isAndroid: boolean): string {
 
 export function dogLimitReachedBody(isAndroid: boolean): string {
   return isAndroid
-    ? 'More dogs, iDogs Scan, documents, and ownership transfer are Plus-plan features not available on your current plan.'
-    : 'Upgrade to add more dogs, unlock iDogs Scan, documents, and ownership transfer.'
+    ? 'Your current plan includes up to 2 active dogs. Your documents, QR Passports, reminders and ownership transfer stay free.'
+    : 'Upgrade to Plus to keep up to 5 active dogs. Your documents, QR Passports, reminders and ownership transfer stay free.'
 }
 
 export function exportPlanGateMessage(isAndroid: boolean): string {

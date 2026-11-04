@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useId, useState, useRef } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import type { ToastMessage } from '../../types'
 import { isNativeApp } from '../../lib/nativePlatform'
@@ -80,6 +80,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
   const [previewType, setPreviewType] = useState<'image' | 'pdf' | null>(null)
   const [result, setResult] = useState<ScanResult | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const inputId = useId()
   const [currentFile, setCurrentFile] = useState<File | null>(null)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const scanInFlight = useRef(false)
@@ -205,6 +206,8 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
         }
       } else {
         if (scanData) toast('Document scanned!')
+        // Previously silent: a failed scan on Add Dog showed nothing at all.
+        else toast(`iDogs Scan failed: ${scanError || 'please try again'}`, 'error')
       }
 
       // Call onResult AFTER upload so filePath is available for saving to records
@@ -221,15 +224,37 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
 
   return (
     <div>
-      {/* Upload area */}
-      <div
+      {/* Upload area — a native <label> for the file input, so tapping it opens
+          the picker directly on iOS (WKWebView) instead of relying on a
+          scripted input.click(). No `capture` attribute: iOS then offers
+          Take Photo / Photo Library / Choose File, so PDFs and existing photos
+          work and a denied or unavailable camera no longer makes the tap
+          do nothing. Hover styling is CSS-only (see .idogs-scan-dropzone). */}
+      <input
+        ref={fileRef}
+        id={inputId}
+        type="file"
+        accept="image/*,application/pdf"
+        className="idogs-visually-hidden"
+        tabIndex={-1}
+        disabled={scanning || !!pendingFile}
+        onChange={e => {
+          const file = e.target.files?.[0]
+          e.target.value = ''
+          if (file && !scanInFlight.current) setPendingFile(file)
+        }}
+      />
+      <label
+        htmlFor={inputId}
         role="button"
         tabIndex={scanning || pendingFile ? -1 : 0}
-        aria-label="Choose a document for AI scanning"
+        aria-label="Choose a document for iDogs Scan"
         aria-disabled={scanning || !!pendingFile}
+        className="idogs-scan-dropzone"
+        data-disabled={scanning || !!pendingFile ? 'true' : undefined}
         onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && !scanning && !pendingFile) { e.preventDefault(); fileRef.current?.click() } }}
-        onClick={() => !scanning && !pendingFile && fileRef.current?.click()}
         style={{
+          display: 'block',
           border: '2px dashed var(--border)',
           borderRadius: 'var(--radius-lg)',
           padding: '32px 24px',
@@ -239,22 +264,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
           transition: 'border-color .15s, background .15s',
           marginBottom: 16,
         }}
-        onMouseEnter={e => { if (!scanning) { e.currentTarget.style.borderColor = 'var(--green)'; e.currentTarget.style.background = 'var(--green-light)' } }}
-        onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--sand)' }}
       >
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*,application/pdf"
-          capture="environment"
-          style={{ display: 'none' }}
-          disabled={scanning || !!pendingFile}
-          onChange={e => {
-            const file = e.target.files?.[0]
-            e.target.value = ''
-            if (file && !scanInFlight.current) setPendingFile(file)
-          }}
-        />
         {scanning ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
             <div className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
@@ -276,7 +286,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
             </div>
           </div>
         )}
-      </div>
+      </label>
 
       {pendingFile && (
         <section aria-labelledby="ai-consent-heading" style={{ padding: 16, marginBottom: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--white)' }}>

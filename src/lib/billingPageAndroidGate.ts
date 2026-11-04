@@ -45,3 +45,15 @@ export function showSmsAddonPrice(isAndroid: boolean): boolean {
 export function showExternalPaymentFaq(isAndroid: boolean): boolean {
   return !isAndroid
 }
+
+// iOS app: plan prices and the Plus promotion are shown for information only,
+// matching idogs.com.au (Owner decision, 05 Nov 2026). There is still no
+// purchase button, offer-consent checkbox, billing portal or interval picker
+// inside the native app; Android keeps hiding prices entirely (Google Play).
+export function showInformationalPlanPrices(isAndroid: boolean): boolean {
+  return !isAndroid
+}
+
+export function nativeIosBillingIntroCopy(): string {
+  return 'Free forever for 1-2 dogs. Plan prices and what each plan includes are shown below for information. Paid prices are in AUD and include GST.'
+}
