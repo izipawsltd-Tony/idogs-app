@@ -118,7 +118,7 @@ jobs:
             --predicate 'process == "App"' > sim-qa/app-log.txt 2>&1 &
           LOGPID=$!
           fail=0
-          printf '| Route | Launch | Alive after 15s | Screenshot |\n|---|---|---|---|\n' > sim-qa/summary.md
+          printf '| Route | Try | Launch | PID alive after 15s | Screenshot bytes |\n|---|---|---|---|---|\n' > sim-qa/summary.md
           for route in /login /signup /forgot-password /privacy /terms /p/QA-NOT-A-REAL-PASSPORT; do
             name=$(echo "$route" | tr '/' '_' | sed 's/^_//')
             python3 - "$APP/capacitor.config.json" "$route" <<'PY'
@@ -127,13 +127,20 @@ jobs:
           c=json.load(open(p)); c.setdefault("server",{})["startPath"]=r
           json.dump(c,open(p,"w"))
           PY
-            xcrun simctl terminate "$UDID" "$BID" >/dev/null 2>&1 || true
             xcrun simctl install "$UDID" "$APP"
-            if xcrun simctl launch "$UDID" "$BID" > "sim-qa/launch-$name.txt" 2>&1; then launch=PASS; else launch=FAIL; fail=1; fi
-            sleep 15
-            if xcrun simctl spawn "$UDID" launchctl list | grep -q "$BID"; then alive=PASS; else alive=FAIL; fail=1; fi
-            xcrun simctl io "$UDID" screenshot "sim-qa/$name.png" >/dev/null 2>&1 && shot="$name.png" || shot=none
-            echo "| $route | $launch | $alive | $shot |" >> sim-qa/summary.md
+            for try in 1 2 3; do
+              xcrun simctl terminate "$UDID" "$BID" >/dev/null 2>&1 || true
+              sleep 2
+              echo "=== $route try $try $(date -u +%T)" >> sim-qa/app-log.txt
+              if out=$(xcrun simctl launch "$UDID" "$BID" 2>&1); then launch=PASS; else launch=FAIL; fail=1; fi
+              PID=$(echo "$out" | sed -nE 's/.*: ([0-9]+)$/\1/p')
+              sleep 15
+              if [ -n "$PID" ] && ps -p "$PID" >/dev/null 2>&1; then alive=PASS; else alive="FAIL(pid=${PID:-none})"; fail=1; fi
+              f="sim-qa/$name-$try.png"
+              xcrun simctl io "$UDID" screenshot "$f" >/dev/null 2>&1 && bytes=$(stat -f%z "$f") || bytes=none
+              echo "| $route | $try | $launch | $alive | $bytes |" >> sim-qa/summary.md
+              if [ "$alive" != PASS ]; then echo "::group::app log around $route try $try"; tail -60 sim-qa/app-log.txt; echo "::endgroup::"; fi
+            done
           done
           kill $LOGPID 2>/dev/null || true
           # Crash reports for the app process, if any
