@@ -6,6 +6,7 @@ import { useRequestGuard } from '../hooks/useRequestGuard'
 import { getAllRemindersForUser, getDogs, completeReminder } from '../lib/db'
 import { sendReminderEmail } from '../lib/email'
 import { isOverdue, formatDate } from '../lib/utils'
+import { effectiveReminderFilter, parseReminderFilter, reminderEmptyState, REMINDER_FILTERS, type ReminderFilter } from '../lib/reminderView'
 import type { Dog, Reminder, ToastMessage } from '../types'
 
 interface Props {
@@ -20,12 +21,11 @@ export default function RemindersPage({ toast }: Props) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [sending, setSending] = useState(false)
-  const [filter, setFilter] = useState<'upcoming' | 'overdue' | 'all' | 'done'>('upcoming')
   const [searchParams] = useSearchParams()
-  useEffect(() => {
-    const f = searchParams.get('filter')
-    if (f === 'overdue' || f === 'upcoming' || f === 'all' || f === 'done') setFilter(f)
-  }, [])
+  // null = no explicit choice yet; the view then opens on Overdue when
+  // anything is overdue (see lib/reminderView). A ?filter= link or a tap
+  // is an explicit choice and is always kept.
+  const [chosenFilter, setFilter] = useState<ReminderFilter | null>(() => parseReminderFilter(searchParams.get('filter')))
 
   const { beginRequest } = useRequestGuard(user?.uid)
 
@@ -138,6 +138,9 @@ export default function RemindersPage({ toast }: Props) {
 
   const overdueCount = reminders.filter(r => r.status !== 'completed' && isOverdue(r.dueDate)).length
 
+  const filter = effectiveReminderFilter(chosenFilter, overdueCount)
+  const empty = reminderEmptyState(filter, overdueCount)
+
   const filtered = reminders.filter(r => {
     if (filter === 'upcoming') return r.status !== 'completed' && !isOverdue(r.dueDate)
     if (filter === 'overdue') return r.status !== 'completed' && isOverdue(r.dueDate)
@@ -202,10 +205,12 @@ export default function RemindersPage({ toast }: Props) {
       {/* Filter tabs — hidden on load failure since counts/filtering
           against stale/absent data would be misleading */}
       {!loadError && (
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        {(['upcoming', 'overdue', 'all', 'done'] as const).map(f => (
+      <div role="group" aria-label="Filter reminders" style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {REMINDER_FILTERS.map(f => (
           <button
             key={f}
+            type="button"
+            aria-pressed={filter === f}
             onClick={() => setFilter(f)}
             style={{
               background: filter === f ? 'var(--brand-600)' : 'var(--white)',
@@ -239,10 +244,13 @@ export default function RemindersPage({ toast }: Props) {
       ) : filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">🔔</div>
-          <div className="empty-state-title">No {filter} reminders</div>
-          <div className="empty-state-desc">
-            {filter === 'upcoming' ? 'All caught up! No reminders due in the next 7 days.' : `No ${filter} reminders found.`}
-          </div>
+          <div className="empty-state-title">{empty.title}</div>
+          <div className="empty-state-desc">{empty.desc}</div>
+          {empty.showOverdue && (
+            <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={() => setFilter('overdue')}>
+              Show {overdueCount} overdue
+            </button>
+          )}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
