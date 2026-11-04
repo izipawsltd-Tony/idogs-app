@@ -14,7 +14,7 @@ import {cleanupRenewalReceipts} from './deletion-renewal-cleanup.mjs'
 
 const ensure=(v,code)=>{if(!v)throw Object.assign(new Error(code),{code})}
 const runId=`deletion-qa-${randomUUID().replaceAll('-','')}`,uid=`qa-${runId}`,email=`qa-${runId}@example.invalid`
-let app,db,auth,bucket,stripe,customer,product,subscription,manifest,scope,httpApi,idToken,emailSink,authCreated=false,fixtureCreated=false,passed=false,phase='configuration',error,cleanupVerified=true,storageCasPending=false
+let app,db,auth,bucket,stripe,customer,product,subscription,manifest,scope,httpApi,idToken,emailSink,authCreated=false,fixtureCreated=false,passed=false,phase='configuration',error,cleanupVerified=true,storageCasPending=false,restoreReplayPending=false
 const evidence={},cleanup=[]
 try{
  const config=stagingDeletionConfiguration(process.env);ensure(config.status==='configured','CLOUD_QA_CREDENTIALS_REQUIRED')
@@ -207,7 +207,9 @@ try{
  const duplicate=await createCloudFixtureProcessor({scope,provider:provider()}).process({uid,revision:1})
  ensure(duplicate.status==='completed'&&duplicate.duplicate===true,'QA_DUPLICATE_NOT_IDEMPOTENT')
  phase='controlled_restored_record_replay'
+ restoreReplayPending=true
  evidence.restoreReplay=await rehearseDeletedRecordRestore({scope,manifest,records:restoreRecords})
+ restoreReplayPending=false
  ensure(digest((await db.doc(`dogs/${runId}-sentinel`).get()).data())===sentinelBefore,'QA_RESTORE_SENTINEL_CHANGED')
  if(emailSink){
   phase='resend_simulation_delivery_readback'
@@ -227,14 +229,15 @@ finally{
  const clean=async(name,fn)=>{try{await fn();cleanup.push({step:name,status:'success'})}catch(e){cleanupVerified=false;cleanup.push({step:name,status:'failed',code:/^[A-Za-z0-9_/-]{1,100}$/.test(String(e.code||''))?String(e.code):'CLEANUP_FAILED'})}}
  if(httpApi)await clean('http_shutdown',()=>httpApi.close())
  if(storageCasPending){cleanupVerified=false;cleanup.push({step:'firebase_fixture',status:'held',code:'QA_STORAGE_CAS_OUTCOME_UNKNOWN'})}
- if(manifest&&db&&!storageCasPending)await clean('firebase_fixture',async()=>{
+ if(restoreReplayPending){cleanupVerified=false;cleanup.push({step:'firebase_fixture',status:'held',code:'QA_RESTORE_REPLAY_OUTCOME_UNVERIFIED'})}
+ if(manifest&&db&&!storageCasPending&&!restoreReplayPending)await clean('firebase_fixture',async()=>{
   const job=db.doc(`accountDeletionJobs/${uid}`),j=(await job.get()).data();ensure(digest(j?.qaManifest)===digest(manifest),'QA_CLEANUP_BINDING_CHANGED')
   await cleanupRenewalReceipts({scope:scope||cloudFixtureScope({db,auth,bucket,runId,manifest}),db,manifest})
   for(const path of manifest.mediaPaths){const file=bucket.file(path);if((await file.exists())[0]){const [m]=await file.getMetadata();ensure(m.metadata?.deletionQaRunId===runId,'QA_CLEANUP_MEDIA_CHANGED');await file.delete({ifGenerationMatch:m.generation})}}
   const paths=[...manifest.recordPaths,`dogs/${runId}-sentinel`,`accountDeletionRequests/${uid}`,`accountDeletionLocks/${uid}`,`accountDeletionReceipts/${digest([uid,1])}`,`accountDeletionRenewalTasks/${uid}_1`,`supportConversations/account_deletion_${uid}`,`supportMessages/account_deletion_${uid}_1_request`]
   if(fixtureCreated){const batch=db.batch();for(const path of paths)batch.delete(db.doc(path));await batch.commit();await db.recursiveDelete(job)}
  })
- if(authCreated&&!storageCasPending)await clean('auth_fixture',async()=>{try{const u=await auth.getUser(uid);ensure(u.email===email&&u.displayName===runId,'QA_CLEANUP_AUTH_CHANGED');await auth.deleteUser(uid)}catch(e){if(e.code!=='auth/user-not-found')throw e}})
+ if(authCreated&&!storageCasPending&&!restoreReplayPending)await clean('auth_fixture',async()=>{try{const u=await auth.getUser(uid);ensure(u.email===email&&u.displayName===runId,'QA_CLEANUP_AUTH_CHANGED');await auth.deleteUser(uid)}catch(e){if(e.code!=='auth/user-not-found')throw e}})
  if(subscription)await clean('stripe_subscription_prices',async()=>{
   const s=await stripe.subscriptions.retrieve(subscription.id);ensure(s.livemode===false&&s.customer===customer.id&&s.metadata?.deletionQaRunId===runId,'QA_CLEANUP_SUB_CHANGED')
   if(s.status!=='canceled')await stripe.subscriptions.cancel(s.id,{}, {idempotencyKey:`${runId}/cleanup-sub`})
@@ -244,5 +247,5 @@ finally{
  if(customer)await clean('stripe_customer',async()=>{const c=await stripe.customers.retrieve(customer.id);ensure(!c.deleted&&c.livemode===false&&c.metadata?.deletionQaRunId===runId,'QA_CLEANUP_CUSTOMER_CHANGED');await stripe.customers.del(c.id)})
  if(app)await clean('sdk_shutdown',async()=>{const {deleteApp}=await import('firebase-admin/app');await deleteApp(app)})
 }
-console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,storageCasProbePending:storageCasPending,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:process.env.IDOGS_DELETION_HTTP_QA_ORIGIN?'protected-preview-https':'runner-loopback-actual-handler',publicDeploymentVerified:passed&&!!process.env.IDOGS_DELETION_HTTP_QA_ORIGIN,signedWebhookVerified:evidence.actualSignedStripeWebhookVerified===true,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:evidence.humanRecipientProviderDelivered===true,humanInboxOpened:false,productionReady:false},null,2))
+console.log(JSON.stringify({status:passed&&cleanupVerified?'isolated_cloud_permanent_deletion_pass':'blocked',phase,error,storageCasProbePending:storageCasPending,restoreReplayPending,fixtureRunId:runId,evidence,cleanupVerified,cleanup,httpAuthenticationVerified:evidence.realFirebaseTokenHttpVerified===true,httpTransport:process.env.IDOGS_DELETION_HTTP_QA_ORIGIN?'protected-preview-https':'runner-loopback-actual-handler',publicDeploymentVerified:passed&&!!process.env.IDOGS_DELETION_HTTP_QA_ORIGIN,signedWebhookVerified:evidence.actualSignedStripeWebhookVerified===true,emailSimulationVerified:evidence.providerSimulationDelivered===true,emailGate:emailSink?'configured':'IDOGS_DELETION_RESEND_QA_KEY_MISSING',emailDeliveryVerified:evidence.humanRecipientProviderDelivered===true,humanInboxOpened:false,productionReady:false},null,2))
 if(!passed||!cleanupVerified)process.exitCode=2

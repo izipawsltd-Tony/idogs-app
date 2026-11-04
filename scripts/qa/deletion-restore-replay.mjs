@@ -2,7 +2,7 @@ import { assessIsolatedDeletionRestore } from '../../api/_lib/deletion-restore-g
 import { digest, scanDeletionDocuments } from '../../api/_lib/deletion-plan.js'
 import { scopedRestoredRecords } from '../../api/_lib/deletion-restore-inventory.js'
 
-const ensure = (ok, code) => { if (!ok) throw new Error(code) }
+const ensure = (ok, code) => { if (!ok) throw Object.assign(new Error(code), { code }) }
 
 // Controlled restore of exact disposable records, not a managed-backup restore.
 // Deletion job/request/lock history is deliberately outside the restored subset.
@@ -34,19 +34,26 @@ export async function rehearseDeletedRecordRestore({ scope, manifest, records })
   }
   const check = () => assessIsolatedDeletionRestore({ target: { projectId: db.projectId, databaseId: db.databaseId, isolated: true, publicAccess: false }, expectedAccounts: [{ uid, revision: 1 }], readLedger: loadLedger, inspectRestoredAccount: inspect })
   ensure((await check()).replayVerified, 'QA_RESTORE_BASELINE_UNVERIFIED')
-  await db.runTransaction(async tx => {
-    for (const record of records) ensure(!(await tx.get(db.doc(record.path))).exists, 'QA_RESTORE_RECORD_ALREADY_PRESENT')
-    for (const record of records) tx.create(db.doc(record.path), record.data)
-  })
+  // Firestore create preconditions apply atomically across this batch.
+  // The commit itself supplies the exact version of each introduced record.
+  await scope.assertRuntime(uid)
+  const batch = db.batch()
+  for (const record of records) batch.create(db.doc(record.path), record.data)
+  const introduced = await batch.commit()
+  ensure(introduced.length === records.length && introduced.every(write => write.writeTime), 'QA_RESTORE_VERSION_UNVERIFIED')
   const blocked = await check()
   ensure(!blocked.replayVerified && blocked.issues.filter(i => i.code === 'restored_account_data').length === records.length, 'QA_RESTORE_RESURRECTION_NOT_BLOCKED')
-  // Replay only the exact records introduced above, with content preconditions.
+  // A recreated record with identical content has a different commit version.
+  await scope.assertRuntime(uid)
   await db.runTransaction(async tx => {
-    for (const record of records) {
+    for (const [index, record] of records.entries()) {
       const restored = await tx.get(db.doc(record.path))
-      ensure(restored.exists && digest(restored.data()) === digest(record.data), 'QA_RESTORE_RECORD_CHANGED')
+      ensure(restored.exists && restored.updateTime?.isEqual(introduced[index].writeTime)
+        && digest(restored.data()) === digest(record.data), 'QA_RESTORE_RECORD_CHANGED')
     }
-    for (const record of records) tx.delete(db.doc(record.path))
+    for (const [index, record] of records.entries()) {
+      tx.delete(db.doc(record.path), { lastUpdateTime: introduced[index].writeTime })
+    }
   })
   const verified = await check()
   ensure(verified.replayVerified, 'QA_RESTORE_REPLAY_UNVERIFIED')
