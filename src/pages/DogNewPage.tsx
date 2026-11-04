@@ -1,14 +1,16 @@
 import { useState, useEffect, useRef, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { createDog, addVaccineRecord, addHealthTest, getDogs } from '../lib/db'
-import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType, parseDobStrict, isDogEligibleForCap, getEffectivePlanClient } from '../lib/utils'
+import { AU_TOP_BREEDS, BREEDER_ID_CONFIG, suggestBreederIdType, parseDobStrict } from '../lib/utils'
 import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
 import { isAndroidNativeApp } from '../lib/nativePlatform'
-import { dogLimitReachedBody } from '../lib/nativeUpgradeCopy'
-import { PLUS_MONTHLY_PRICE_AUD } from '../lib/pricingCopy'
+import { dogLimitReachedBody, dogLimitUpgradeCta } from '../lib/nativeUpgradeCopy'
+import { usePlusPromotion } from '../components/ui/PlusPromotion'
+import { DOG_CAP_FREE } from '../lib/pricingCopy'
+import { freeDogUsage } from '../lib/dogLimit'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -16,11 +18,11 @@ interface Props {
 
 type Step = 'scan' | 'form'
 
-const FREE_DOG_LIMIT = 2
 
 export default function DogNewPage({ toast }: Props) {
   const navigate = useNavigate()
   const { user, profile } = useAuth()
+  const promotionActive = usePlusPromotion()
   const isOwner = profile?.role === 'owner'
   const [step, setStep] = useState<Step>('scan')
   const [loading, setLoading] = useState(true)
@@ -169,16 +171,15 @@ export default function DogNewPage({ toast }: Props) {
     setLimitCheckError(false)
     getDogs().then(dogs => {
       if (!req.isCurrent()) return
-      const active = dogs.filter(isDogEligibleForCap)
-      setActiveDogCount(active.length)
+      const usage = freeDogUsage(dogs, profile)
+      setActiveDogCount(usage.used)
       // Super Admin fix round: must use the EFFECTIVE plan (real Stripe
       // plan OR a valid internalEntitlement fallback), not the raw
       // profile.plan field — otherwise a Super Admin whose underlying
       // profile.plan is still 'free' gets client-blocked here even though
       // api/create-dog.js would never restrict them. Mirrors AppLayout.tsx's
       // identical fix for the same root cause.
-      const isFreePlan = getEffectivePlanClient(profile) === 'free'
-      setBlocked(isFreePlan && active.length >= FREE_DOG_LIMIT)
+      setBlocked(usage.atLimit)
     }).catch(() => {
       if (req.isCurrent()) setLimitCheckError(true)
     }).finally(() => {
@@ -549,15 +550,15 @@ export default function DogNewPage({ toast }: Props) {
           </h2>
           <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 6, lineHeight: 1.6 }}>
             You have {activeDogCount} dog{activeDogCount !== 1 ? 's' : ''} on your free plan.
-            The free plan supports up to {FREE_DOG_LIMIT} dogs.
+            The free plan supports up to {DOG_CAP_FREE} active dogs.
           </p>
           <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 28, lineHeight: 1.6 }}>
-            {dogLimitReachedBody(isAndroidNativeApp())}
+            {dogLimitReachedBody(isAndroidNativeApp(), promotionActive)}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             {!isAndroidNativeApp() && (
               <Link to="/app/billing" className="btn btn-primary">
-                {`Upgrade — from A$${PLUS_MONTHLY_PRICE_AUD}/mo`}
+                {dogLimitUpgradeCta(promotionActive)}
               </Link>
             )}
             <Link to="/app/dogs" className="btn btn-secondary">

@@ -5,6 +5,10 @@ import { getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS, calculateLifeStage } fr
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
 import type { CoverageType } from '../lib/reports'
+import { freeDogUsage } from '../lib/dogLimit'
+import { dogLimitReachedBody, dogLimitUpgradeCta } from '../lib/nativeUpgradeCopy'
+import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { usePlusPromotion } from '../components/ui/PlusPromotion'
 import type { Dog, HealthTest, LifeStage, ToastMessage } from '../types'
 
 const MISSING_TEST_TYPES: CoverageType[] = ['hip', 'elbow', 'eye', 'dna']
@@ -16,6 +20,31 @@ const MISSING_TEST_LABEL: Record<CoverageType, string> = {
 const HEALTH_ELIGIBLE_STAGES: LifeStage[] = ['young_adult', 'adult', 'senior']
 
 const DOG_LIST_CSS = `
+  .dog-limit-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--green-light, #E1F5EE);
+    color: var(--green, #085041);
+    white-space: nowrap;
+  }
+  .dog-limit-badge[data-at-limit="true"] {
+    background: var(--gold-light, #FDF3DC);
+    color: #6B4E0A;
+  }
+  .dog-limit-notice {
+    margin: -8px 0 20px;
+    padding: 12px 14px;
+    border: 1px solid #E8D7A8;
+    border-radius: var(--radius-md, 10px);
+    background: var(--gold-light, #FDF3DC);
+    color: var(--dark, #1A1917);
+    font-size: 14px;
+    line-height: 1.5;
+  }
   .dog-list-controls {
     display: flex;
     align-items: center;
@@ -104,6 +133,7 @@ type DogFilter = 'all' | 'puppies' | 'young_adult' | 'adult' | 'senior' | 'remem
 
 export default function DogListPage({ toast }: Props) {
   const { user, profile } = useAuth()
+  const promotionActive = usePlusPromotion()
   const isOwner = profile?.role === 'owner'
   const [dogs, setDogs] = useState<Dog[]>([])
   const [loading, setLoading] = useState(true)
@@ -190,6 +220,11 @@ export default function DogListPage({ toast }: Props) {
   }, [missingTest, dogs])
 
   const activeDogs = dogs.filter(d => d.status !== 'transferred' && (d as any).transferStatus !== 'pendingClaim')
+  // Free-plan usage — same cap rules as Add Dog. Only shown once dogs have
+  // loaded successfully, never on a load error (Codex round 15).
+  const usage = freeDogUsage(dogs, profile)
+  const showUsage = usage.isFree && !loading && !loadError
+  const android = isAndroidNativeApp()
   const transferredDogs = dogs.filter(d => d.status === 'transferred' || (d as any).transferStatus === 'pendingClaim')
 
   const filterCounts = useMemo(() => {
@@ -276,17 +311,35 @@ export default function DogListPage({ toast }: Props) {
   return (
     <div style={{ padding: 32 }}>
       <style>{DOG_LIST_CSS}</style>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginBottom: 2 }}>My dogs</h1>
           {/* Codex round 15: a failed load must never show a dog count —
               0 or a stale prior count. */}
           <p style={{ fontSize: 14, color: 'var(--light)' }}>
             {loadError ? 'Dog count unavailable — load failed' : `${activeDogs.length} dog${activeDogs.length !== 1 ? 's' : ''} registered`}
+            {showUsage && (
+              <span className="dog-limit-badge" data-at-limit={usage.atLimit ? 'true' : 'false'} aria-label={`${usage.used} of ${usage.limit} free plan dogs used`}>
+                {usage.used}/{usage.limit} free plan dogs
+              </span>
+            )}
           </p>
         </div>
-        <Link to="/app/dogs/new" className="btn btn-primary">+ Add Dog</Link>
+        {!usage.atLimit || !showUsage ? (
+          <Link to="/app/dogs/new" className="btn btn-primary">+ Add Dog</Link>
+        ) : !android ? (
+          <Link to="/app/billing" className="btn btn-primary">{dogLimitUpgradeCta(promotionActive)}</Link>
+        ) : null}
       </div>
+
+      {/* QA 4 Nov 2026: at the Free limit, say so here — before the user
+          taps into Add Dog — instead of a dead-end page. */}
+      {showUsage && usage.atLimit && (
+        <div className="dog-limit-notice" role="status">
+          <strong>You&apos;re using all {usage.limit} dogs on the Free plan.</strong>{' '}
+          {dogLimitReachedBody(android, promotionActive)}
+        </div>
+      )}
 
       {/* Filters — hidden entirely on a load failure: search/stage/
           transferred filters against stale or incomplete `dogs` data
@@ -406,7 +459,7 @@ export default function DogListPage({ toast }: Props) {
             <div className="empty-state-icon">🔍</div>
             <div className="empty-state-title">{search ? 'No dogs found' : 'No dogs yet'}</div>
             <div className="empty-state-desc">{search ? 'Try a different search term.' : 'Add your first dog to get started.'}</div>
-            {!search && <Link to="/app/dogs/new" className="btn btn-primary" style={{ marginTop: 8 }}>+ Add Dog</Link>}
+            {!search && !(showUsage && usage.atLimit) && <Link to="/app/dogs/new" className="btn btn-primary" style={{ marginTop: 8 }}>+ Add Dog</Link>}
           </div>
         </div>
       ) : (

@@ -1,3 +1,5 @@
+import { DOG_CAP_FREE, DOG_CAP_PLUS, PLUS_MONTHLY_PRICE_AUD, SCAN_QUOTA_PLUS_MONTHLY } from './pricingCopy'
+
 // Google Play forbids steering Android users toward purchases made outside
 // Google Play Billing (server-side purchase calls are already blocked by
 // nativeApiRouting.ts, and BillingPage itself already hides its own
@@ -29,10 +31,21 @@ export function restrictedSaleAvailabilityMessage(isAndroid: boolean): string {
     : "This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Sale & availability."
 }
 
-export function dogLimitReachedBody(isAndroid: boolean): string {
-  return isAndroid
-    ? 'More dogs, iDogs Scan, documents, and ownership transfer are Plus-plan features not available on your current plan.'
-    : 'Upgrade to add more dogs, unlock iDogs Scan, documents, and ownership transfer.'
+// QA 4 Nov 2026: the old copy claimed documents, iDogs Scan and ownership
+// transfer need Plus — all three are available on Free (Billing:
+// FREE_FEATURES). Only the dog count is the limit here, so say exactly that,
+// say what stays free, and quote the live promotion when it is running.
+export function dogLimitReachedBody(isAndroid: boolean, promotionActive = false): string {
+  const stillFree = 'Your documents, QR Passports, reminders and ownership transfer stay free.'
+  if (isAndroid) return `Your current plan includes up to ${DOG_CAP_FREE} active dogs. ${stillFree}`
+  return promotionActive
+    ? `Plus lets you keep up to ${DOG_CAP_PLUS} active dogs, with ${SCAN_QUOTA_PLUS_MONTHLY} iDogs Scans a month and report export — A$0 until 31 January 2027, then A$${PLUS_MONTHLY_PRICE_AUD}/month. ${stillFree}`
+    : `Upgrade to Plus to keep up to ${DOG_CAP_PLUS} active dogs, with ${SCAN_QUOTA_PLUS_MONTHLY} iDogs Scans a month and report export — A$${PLUS_MONTHLY_PRICE_AUD}/month. ${stillFree}`
+}
+
+/** Button label for the Free dog-limit upgrade action (never shown on Android). */
+export function dogLimitUpgradeCta(promotionActive: boolean): string {
+  return promotionActive ? 'Get Plus for A$0' : `Upgrade — A$${PLUS_MONTHLY_PRICE_AUD}/mo`
 }
 
 export function exportPlanGateMessage(isAndroid: boolean): string {
