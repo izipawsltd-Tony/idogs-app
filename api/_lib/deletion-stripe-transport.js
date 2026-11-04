@@ -3,6 +3,12 @@ import { requireDeletionEmulators, validAccountId } from './deletion-fence.js'
 import { digest } from './deletion-plan.js'
 
 const ensure=(ok,code)=>{if(!ok)throw Object.assign(Error(code),{code,status:423})}
+const cancellationEvidence=new WeakMap()
+export function readEmulatorCancellationEvidence(receipt){
+  const evidence=cancellationEvidence.get(receipt)
+  ensure(evidence,'WEBHOOK_CANCELLATION_EVIDENCE_REQUIRED')
+  return structuredClone(evidence)
+}
 const providerId=(v,prefix)=>typeof v==='string'&&new RegExp(`^${prefix}_[A-Za-z0-9_]{1,120}$`).test(v)
 
 // This private client can reach ONLY one explicit loopback fixture. It never
@@ -18,6 +24,7 @@ export function createEmulatorLoopbackStripeTransport({db,auth,bucket,projectId,
   const endpoint=new URL(origin)
   ensure(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&Number(endpoint.port)>=1024&&Number(endpoint.port)<=65535
     &&endpoint.origin===origin&&!endpoint.username&&!endpoint.password&&endpoint.pathname==='/'&&!endpoint.search&&!endpoint.hash,'WEBHOOK_LOOPBACK_ENDPOINT_REQUIRED')
+  const wireResponses=new WeakMap(),observedCancellations=new Map()
   const attemptedDeletes=new Set(),allowed=new Set(scope.subscriptionIds),credential=`synthetic-loopback-${scope.nonce}`
   const nodeClient=Stripe.createNodeHttpClient()
   let client
@@ -42,7 +49,12 @@ export function createEmulatorLoopbackStripeTransport({db,auth,bucket,projectId,
       pinned()
       ensure(!attemptedDeletes.has(id),'WEBHOOK_TRANSPORT_WRITE_ALREADY_ATTEMPTED');attemptedDeletes.add(id)
     }
-    try{return await nodeClient.makeRequest(host,port,path,method,headers,body,protocol,timeout)}
+    try{
+      const response=await nodeClient.makeRequest(host,port,path,method,headers,body,protocol,timeout)
+      const requestId=response.getHeaders()['request-id']
+      wireResponses.set(response.getRawResponse(),{method,id,httpStatus:response.getStatusCode(),requestId:typeof requestId==='string'?requestId:null})
+      return response
+    }
     catch(cause){
       // The SDK special-cases ECONNRESET/EPIPE before checking max retries.
       // Preserve the original cause, but classify the request as an unknown
@@ -61,13 +73,38 @@ export function createEmulatorLoopbackStripeTransport({db,auth,bucket,projectId,
     pinned();ensure(allowed.has(id),'WEBHOOK_TRANSPORT_FOREIGN_SUBSCRIPTION')
     return subscription(await client.subscriptions.retrieve(id,{expand:['items.data.price','latest_invoice']},{maxNetworkRetries:0,timeout:5000}),id)
   }
-  return Object.freeze({mode:'emulator-loopback',bindingHash:digest({...scope,origin}),getSubscription:retrieve,cancelSubscription:async(id,params={})=>{
+  function contextBinding(context,id,paramsHash){
+    ensure(context?.uid===scope.uid&&/^[a-f0-9]{64}$/.test(context.eventHash||'')&&/^[a-f0-9]{64}$/.test(context.intentHash||'')
+      &&context.leasePath===`accountMutationLeases/stripe_${digest([scope.uid,context.eventId])}`&&providerId(context.eventId,'evt'),'WEBHOOK_CANCELLATION_CONTEXT_REQUIRED')
+    return {uid:scope.uid,eventId:context.eventId,eventHash:context.eventHash,intentHash:context.intentHash,leasePath:context.leasePath,
+      subscriptionId:id,customerId:scope.customerId,nonce:scope.nonce,paramsHash}
+  }
+  function wireReceipt(method,id,result){
+    const receipt=wireResponses.get(result?.lastResponse)
+    ensure(receipt?.method===method&&receipt.id===id&&receipt.httpStatus===200&&/^req_[A-Za-z0-9_]{1,120}$/.test(receipt.requestId||''),'WEBHOOK_CANCELLATION_WIRE_RECEIPT_REQUIRED')
+    return {httpStatus:receipt.httpStatus,requestId:receipt.requestId}
+  }
+  return Object.freeze({mode:'emulator-loopback',bindingHash:digest({...scope,origin}),getSubscription:retrieve,cancelSubscription:async(id,params={},context)=>{
+    const receiptContext=context===undefined?undefined:structuredClone(context)
     pinned();ensure(allowed.has(id)&&params&&typeof params==='object'&&!Array.isArray(params),'WEBHOOK_TRANSPORT_CANCEL_SCOPE_REQUIRED')
     ensure(!attemptedDeletes.has(id),'WEBHOOK_TRANSPORT_WRITE_ALREADY_ATTEMPTED')
     const body=structuredClone(params)
     ensure(Object.entries(body).every(([key,value])=>['prorate','invoice_now'].includes(key)&&value===false),'WEBHOOK_TRANSPORT_CANCEL_SCOPE_REQUIRED')
     ensure(typeof assertBeforeMutation==='function','WEBHOOK_TRANSPORT_EXECUTION_GUARD_REQUIRED')
     await retrieve(id);await assertBeforeMutation(id);pinned()
-    return subscription(await client.subscriptions.cancel(id,body,{maxNetworkRetries:0,timeout:5000}),id)
+    const bound=receiptContext===undefined?null:contextBinding(receiptContext,id,digest(body))
+    const result=subscription(await client.subscriptions.cancel(id,body,{maxNetworkRetries:0,timeout:5000}),id)
+    if(bound&&result.status==='canceled')observedCancellations.set(id,{...bound,wire:wireReceipt('DELETE',id,result)})
+    return result
+  },reconcileCancellation:async(id,context)=>{
+    pinned();ensure(allowed.has(id),'WEBHOOK_TRANSPORT_FOREIGN_SUBSCRIPTION')
+    const original=observedCancellations.get(id)
+    ensure(original,'WEBHOOK_CANCELLATION_ORIGINAL_RESPONSE_REQUIRED')
+    ensure(digest(contextBinding(context,id,original.paramsHash))===digest({...original,wire:undefined}),'WEBHOOK_CANCELLATION_CONTEXT_CHANGED')
+    const result=await retrieve(id)
+    ensure(result.status==='canceled','WEBHOOK_CANCELLATION_READBACK_CHANGED')
+    const receipt=Object.freeze({schema:1,kind:'loopback_cancellation_io',...original,readback:wireReceipt('GET',id,result),status:'canceled'})
+    cancellationEvidence.set(receipt,structuredClone(receipt))
+    return receipt
   }})
 }

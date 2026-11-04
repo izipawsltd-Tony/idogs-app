@@ -1506,7 +1506,7 @@ async function stripeWireFixture({behavior='ok',badBinding=null,lockOnSecondGet=
   const options={db,auth,bucket,projectId:PROJECT,origin,fixture,executionEnabled:true,assertBeforeMutation:async()=>{assert.ok(scope,'Prepared event scope required');await scope.assertExecution()}}
   const prepare=async()=>{
     const transport=createEmulatorLoopbackStripeTransport(options)
-    scope=await f.prepare({getSubscription:transport.getSubscription,cancelSubscription:transport.cancelSubscription})
+    scope=await f.prepare({getSubscription:transport.getSubscription,cancelSubscription:transport.cancelSubscription,reconcileCancellation:transport.reconcileCancellation})
     return {scope,transport}
   }
   return {...f,fixture,options,counts,subscription,prepare,close:async()=>{wire.closeAllConnections();await new Promise(resolve=>wire.close(resolve));assert.deepEqual(failures,[])}}
@@ -1565,5 +1565,45 @@ for(const badBinding of ['livemode','customer','nonce'])test(`private HTTP ${bad
     await assert.rejects(scope.cancelSubscription(f.subscription.id,{}),/WEBHOOK_TRANSPORT_RESPONSE_BINDING_CHANGED/)
     assert.deepEqual(f.counts,{get:1,delete:0})
     assert.equal((await db.doc(scope.leasePath).collection('externalIntents').get()).empty,true)
+  }finally{await f.close()}
+})
+test('loopback cancellation receipt survives a lost commit reply without replaying DELETE or releasing the lease',async()=>{
+  const f=await stripeWireFixture()
+  try{
+    const {scope}=await f.prepare(),id=f.subscription.id
+    await scope.cancelSubscription(id,{prorate:false})
+    const original=db.runTransaction
+    let lost=false
+    db.runTransaction=async function(...args){
+      const value=await original.apply(this,args)
+      if(value===false&&!lost){lost=true;throw Error('synthetic cancellation receipt commit reply lost')}
+      return value
+    }
+    try{await assert.rejects(scope.reconcileCancellation(id),/cancellation receipt commit reply lost/)}finally{db.runTransaction=original}
+    assert.equal(lost,true)
+    const before={...f.counts};assert.deepEqual(before,{get:3,delete:1})
+    const {scope:restart}=await f.prepare()
+    const recovered=await restart.reconcileCancellation(id)
+    assert.equal(recovered.duplicate,true);assert.equal(recovered.freshProviderReadback,false)
+    assert.equal(recovered.parentLeaseReleased,false);assert.deepEqual(f.counts,before)
+    const receipts=await db.doc(scope.leasePath).collection('externalReceipts').get()
+    assert.equal(receipts.size,1);assert.equal(receipts.docs[0].data().hash,recovered.receiptHash)
+    assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
+    await receipts.docs[0].ref.update({'evidence.readback.requestId':'req_changed'})
+    await assert.rejects(restart.reconcileCancellation(id),/WEBHOOK_CANCELLATION_RECEIPT_CHANGED/)
+    assert.deepEqual(f.counts,before)
+  }finally{await f.close()}
+})
+
+test('canceled status cannot reconcile a dropped original response',async()=>{
+  const f=await stripeWireFixture({behavior:'dropped'})
+  try{
+    const {scope,transport}=await f.prepare(),id=f.subscription.id
+    await assert.rejects(scope.cancelSubscription(id,{prorate:false}))
+    assert.equal((await transport.getSubscription(id)).status,'canceled')
+    await assert.rejects(scope.reconcileCancellation(id),/WEBHOOK_CANCELLATION_ORIGINAL_RESPONSE_REQUIRED/)
+    assert.deepEqual(f.counts,{get:3,delete:1})
+    assert.equal((await db.doc(scope.leasePath).collection('externalReceipts').get()).empty,true)
+    assert.equal((await db.doc(scope.leasePath).get()).data().state,'active')
   }finally{await f.close()}
 })
