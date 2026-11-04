@@ -75,11 +75,17 @@ test('former-owner story descendants hold while current-owner dog and media rema
   const update=`puppyProfiles/${s.dog}/updates/update-${s.nonce}`,item=`puppyProfiles/${s.dog}/media/media-${s.nonce}`
   await put(update,{authorUid:s.uid,sourceDogId:s.dog,audience:'buyer',text:'Synthetic former owner story',media:[{id:`media-${s.nonce}`,path,kind:'photo'}]})
   await put(item,{authorUid:s.uid,sourceDogId:s.dog,path,kind:'photo'})
+  const privateNote = `puppyProfiles/${s.dog}/updates/private-${s.nonce}`
+  const currentUpdate = `puppyProfiles/${s.dog}/updates/current-${s.nonce}`
+  await put(privateNote,{authorUid:s.uid,sourceDogId:s.dog,audience:'private',text:'Synthetic former owner private note'})
+  // Preserve a legacy reference even when the story and media authors differ.
+  await put(currentUpdate,{authorUid:s.other,sourceDogId:s.dog,audience:'public',media:[{id:`media-${s.nonce}`,path,kind:'photo'}]})
+  const protectedPaths = [update,item,privateNote,currentUpdate]
   const inventory=await buildDeletionInventory({db,uid:s.uid}),scan=await scanDeletionDocuments(db),plan=await buildEmulatorDeletionPlan({db,bucket,uid:s.uid})
   assert.equal(inventory.readyForDeletion,false);assert.ok(inventory.unknownCollections.includes('puppyProfiles'))
-  assert.ok(scan.records.some(r=>r.path===update));assert.ok(scan.records.some(r=>r.path===item))
+  for (const descendant of protectedPaths) assert.ok(scan.records.some(r=>r.path===descendant),descendant)
   assert.ok(plan.holds.includes('unclassified_record_review'))
-  assert.equal(plan.operations.some(o=>[update,item,path].includes(o.path)),false)
+  assert.equal(plan.operations.some(o=>[...protectedPaths,path].includes(o.path)),false)
   assert.equal(plan.operations.some(o=>o.kind==='delete'&&o.path===`dogs/${s.dog}`),false)
   assert.ok(plan.retained.some(r=>r.path===`dogs/${s.dog}`&&r.category==='current_owner_history'))
   await workerHeld()
