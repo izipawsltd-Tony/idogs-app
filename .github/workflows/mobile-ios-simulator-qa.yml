@@ -143,6 +143,11 @@ jobs:
             done
           done
           kill $LOGPID 2>/dev/null || true
+          echo "::group::Distinct screenshots (sha1) and WebView load lines"
+          shasum sim-qa/*.png | tee sim-qa/screenshot-hashes.txt
+          echo "distinct screenshots: $(cut -d' ' -f1 sim-qa/screenshot-hashes.txt | sort -u | wc -l) of $(wc -l < sim-qa/screenshot-hashes.txt)"
+          grep -E '===|Loading app at|capacitor://localhost' sim-qa/app-log.txt | head -80
+          echo "::endgroup::"
           # Crash reports for the app process, if any
           find "$HOME/Library/Logs/DiagnosticReports" -name 'App*' -newer sim-qa/summary.md -print 2>/dev/null > sim-qa/crash-reports.txt || true
           grep -E '\[error\]|Uncaught|TypeError|ReferenceError|auth/invalid' sim-qa/app-log.txt > sim-qa/js-errors.txt || true
