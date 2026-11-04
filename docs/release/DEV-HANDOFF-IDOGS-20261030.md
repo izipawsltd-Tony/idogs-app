@@ -266,3 +266,12 @@ Không chỉ tăng test count. Cần candidate dựa trên live baseline không 
 Không cam kết02/11 là ngày public. Đó là ngày kiểm chứng một chốt Storage. Thời điểm Apple review không được kiểm soát bởi dev.
 
 Gói bàn giao không chứa secret, browser cookie, reviewer login, .env, signing material, node_modules hoặc full repo snapshot. Code chuẩn lấy từ GitHub nhánh release; credential giữ ở nơi quản lý hiện có.
+
+
+## 15. Synthetic cancellation reconciliation, 4 November 2026
+
+Runtime source `0761ded9824e3f1d4beca1190953e105861f60f9` passed [push CI](https://github.com/izipawsltd-Tony/idogs-app/actions/runs/41789076134), [PR CI](https://github.com/izipawsltd-Tony/idogs-app/actions/runs/41789079888), [pinned emulator](https://github.com/izipawsltd-Tony/idogs-app/actions/runs/41789076238/job/126437971389) and [isolated cloud QA](https://github.com/izipawsltd-Tony/idogs-app/actions/runs/41789076205/job/126437970933). Both QA runs passed 158/158 shared SDK cases. Cloud QA completed at 2026-11-04T07:03:59Z and reported `cleanupVerified: true` and `storageCasProbePending: false`.
+
+The synthetic loopback receipt binds the exact DELETE and readback responses to the original intent. Recovery after a lost receipt commit response preserves the original lease and sends no second DELETE. A dropped provider response still requires a hold even if readback shows the subscription canceled. Provider-issued signature and authorization drain remain unverified. Production readiness is false.
+
+The original seven-day Storage run 40271208201 remains at attempt 1. Its last result was `waiting_for_cloud_expiry`. The exact pinned script can allocate and seed when durable state is missing. Fresh authenticated read-only verification of the original manifest and seeded state is required before rerunning the original job.
