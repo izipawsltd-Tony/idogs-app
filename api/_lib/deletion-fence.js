@@ -1,3 +1,4 @@
+import { checkCronAuth } from './cron-auth.js'
 import { randomUUID } from 'node:crypto'
 
 export const DELETION_LOCKS = 'accountDeletionLocks'
@@ -80,6 +81,14 @@ export function withAccountMutationFence(handler, { route }) {
     if (process.env.ACCOUNT_DELETION_MODE !== 'prototype-emulator') return handler(req, res)
     // This route verifies its signature before resolving its exact account scope.
     if (route === 'api/stripe-webhook.js') return handler(req, res)
+    if (route === 'api/cleanup-showcase-media-uploads.js') {
+      if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+      const auth = checkCronAuth(req)
+      if (!auth.authorized) return res.status(auth.status).json(auth.body)
+      // A verified cron caller does not establish who owns each grant or object.
+      // Hold both methods until the prototype has a per-account resolver.
+      return res.status(423).json({ error: 'Cleanup is held during deletion safety checks.', code: 'MUTATION_SCOPE_REQUIRES_REVIEW' })
+    }
     let close
     try {
       const [{ getAuth }, { getFirestore }, { getApp }, { getStorage }] = await Promise.all([
