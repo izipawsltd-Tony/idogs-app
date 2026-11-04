@@ -1,0 +1,146 @@
+name: iDogs iOS Simulator Smoke QA
+
+# Boots an iPhone simulator, installs an unsigned build of an EXACT candidate
+# SHA and checks that public native screens launch and render without a crash.
+# Uses a demo Firebase config: no staging/production backend, no real
+# accounts, no email/SMS, no Apple credentials, no secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact 40-char candidate SHA to test
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-ios-sim-qa-${{ inputs.sha }}
+  cancel-in-progress: false
+
+jobs:
+  simulator-smoke:
+    name: Simulator smoke (exact SHA)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      CANDIDATE_SHA: ${{ inputs.sha }}
+      VITE_IDOGS_NATIVE_PLATFORM: ios
+      IDOGS_MOBILE_APP_ID: au.com.idogs.app
+      IDOGS_MOBILE_APP_NAME: iDogs
+      # Demo-only Firebase identity: initialises the SDK without reaching a real project.
+      VITE_FIREBASE_API_KEY: demo-ios-sim-qa-key
+      VITE_FIREBASE_AUTH_DOMAIN: demo-idogs-ios-sim.firebaseapp.com
+      VITE_FIREBASE_PROJECT_ID: demo-idogs-ios-sim
+      VITE_FIREBASE_STORAGE_BUCKET: demo-idogs-ios-sim.appspot.com
+      VITE_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+      VITE_FIREBASE_APP_ID: 1:000000000000:ios:0000000000000000
+    steps:
+      - name: Validate SHA input
+        shell: bash
+        run: |
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be 40 lowercase hex chars"; exit 1; }
+
+      - name: Checkout candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Verify exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo "Testing exact SHA $CANDIDATE_SHA"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build web app and iOS project
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run test:native-release-env
+          npm run build
+          npm --prefix mobile install --no-audit --no-fund
+          npm --prefix mobile run branding
+          npm --prefix mobile run add:ios
+          npm --prefix mobile run sync:ios
+          python3 mobile/scripts/ios_privacy.py mobile/ios/App/App/Info.plist
+          npm --prefix mobile run assets:ios
+
+      - name: Compile unsigned simulator app
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project mobile/ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO build | tail -5
+          APP="$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/App.app"
+          test -f "$APP/capacitor.config.json"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
+      - name: Boot iPhone simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys,re
+          d=json.load(sys.stdin)["devices"]
+          c=[(rt,x) for rt,xs in d.items() if "iOS" in rt for x in xs if re.match(r"iPhone \d+( Pro)?$",x["name"])]
+          c.sort(key=lambda t:(t[0],t[1]["name"]))
+          rt,x=c[-1]; print(x["udid"]); print(rt, x["name"], file=sys.stderr)')
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          mkdir -p sim-qa
+
+      - name: Launch public screens and capture evidence
+        shell: bash
+        run: |
+          set -uo pipefail
+          BID=au.com.idogs.app
+          xcrun simctl spawn "$UDID" log stream --style compact --level debug \
+            --predicate 'process == "App"' > sim-qa/app-log.txt 2>&1 &
+          LOGPID=$!
+          fail=0
+          printf '| Route | Launch | Alive after 15s | Screenshot |\n|---|---|---|---|\n' > sim-qa/summary.md
+          for route in /login /signup /forgot-password /privacy /terms /p/QA-NOT-A-REAL-PASSPORT; do
+            name=$(echo "$route" | tr '/' '_' | sed 's/^_//')
+            python3 - "$APP/capacitor.config.json" "$route" <<'PY'
+          import json,sys
+          p,r=sys.argv[1],sys.argv[2]
+          c=json.load(open(p)); c.setdefault("server",{})["startPath"]=r
+          json.dump(c,open(p,"w"))
+          PY
+            xcrun simctl terminate "$UDID" "$BID" >/dev/null 2>&1 || true
+            xcrun simctl install "$UDID" "$APP"
+            if xcrun simctl launch "$UDID" "$BID" > "sim-qa/launch-$name.txt" 2>&1; then launch=PASS; else launch=FAIL; fail=1; fi
+            sleep 15
+            if xcrun simctl spawn "$UDID" launchctl list | grep -q "$BID"; then alive=PASS; else alive=FAIL; fail=1; fi
+            xcrun simctl io "$UDID" screenshot "sim-qa/$name.png" >/dev/null 2>&1 && shot="$name.png" || shot=none
+            echo "| $route | $launch | $alive | $shot |" >> sim-qa/summary.md
+          done
+          kill $LOGPID 2>/dev/null || true
+          # Crash reports for the app process, if any
+          find "$HOME/Library/Logs/DiagnosticReports" -name 'App*' -newer sim-qa/summary.md -print 2>/dev/null > sim-qa/crash-reports.txt || true
+          grep -E '\[error\]|Uncaught|TypeError|ReferenceError|auth/invalid' sim-qa/app-log.txt > sim-qa/js-errors.txt || true
+          {
+            echo; echo "SHA: $CANDIDATE_SHA"
+            echo "JS error lines: $(wc -l < sim-qa/js-errors.txt)"
+            echo "Crash reports: $(wc -l < sim-qa/crash-reports.txt)"
+          } >> sim-qa/summary.md
+          cat sim-qa/summary.md | tee -a "$GITHUB_STEP_SUMMARY"
+          test -s sim-qa/crash-reports.txt && fail=1
+          exit $fail
+
+      - name: Upload simulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-ios-sim-qa-${{ inputs.sha }}
+          path: sim-qa
+          retention-days: 14
