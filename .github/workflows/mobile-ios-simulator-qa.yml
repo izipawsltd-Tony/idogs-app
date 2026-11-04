@@ -5,6 +5,9 @@ name: iDogs iOS Simulator Smoke QA
 # Uses a demo Firebase config: no staging/production backend, no real
 # accounts, no email/SMS, no Apple credentials, no secrets.
 on:
+  push:
+    branches: [claude/ios-sim-qa-20261105]
+    paths: ['.github/ios-sim-qa-target', '.github/workflows/mobile-ios-simulator-qa.yml']
   workflow_dispatch:
     inputs:
       sha:
@@ -15,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: idogs-ios-sim-qa-${{ inputs.sha }}
+  group: idogs-ios-sim-qa-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +27,6 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     env:
-      CANDIDATE_SHA: ${{ inputs.sha }}
       VITE_IDOGS_NATIVE_PLATFORM: ios
       IDOGS_MOBILE_APP_ID: au.com.idogs.app
       IDOGS_MOBILE_APP_NAME: iDogs
@@ -36,15 +38,24 @@ jobs:
       VITE_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
       VITE_FIREBASE_APP_ID: 1:000000000000:ios:0000000000000000
     steps:
+      - name: Resolve candidate SHA (dispatch input, else .github/ios-sim-qa-target)
+        uses: actions/checkout@v4
+        with:
+          path: qa-target
+          sparse-checkout: .github
       - name: Validate SHA input
         shell: bash
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
         run: |
+          CANDIDATE_SHA="${INPUT_SHA:-$(tr -d '[:space:]' < qa-target/.github/ios-sim-qa-target)}"
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be 40 lowercase hex chars"; exit 1; }
 
       - name: Checkout candidate SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.CANDIDATE_SHA }}
 
       - name: Verify exact SHA
         shell: bash
@@ -141,6 +152,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: idogs-ios-sim-qa-${{ inputs.sha }}
+          name: idogs-ios-sim-qa-${{ env.CANDIDATE_SHA }}
           path: sim-qa
           retention-days: 14
