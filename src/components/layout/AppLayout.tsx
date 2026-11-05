@@ -107,7 +107,11 @@ const BOTTOM_NAV_ITEMS = [
   { path: '/app/dogs',      icon: '🐕', label: 'Dogs' },
   { path: '/app/litters',   icon: '🐣', label: 'Litters', littersItem: true },
   { path: '/app/reminders', icon: '🔔', label: 'Reminders', remindersItem: true },
-  { path: '/app/audit',     icon: '📋', label: 'Activity' },
+  // Documents is a primary record, so it takes the fifth slot on mobile.
+  // Activity stays one tap away from Home ("Full history"); it returns to
+  // this bar only for users who hid Documents in Settings.
+  { path: '/app/documents', icon: '📄', label: 'Documents', documentsItem: true },
+  { path: '/app/audit',     icon: '📋', label: 'Activity', activityItem: true },
 ]
 
 export default function AppLayout({ toast }: Props) {
@@ -274,7 +278,8 @@ export default function AppLayout({ toast }: Props) {
 
   async function handleLogout() {
     await logout()
-    navigate('/')
+    // The app starts on sign-in; return there ("Welcome back"), not the web landing page.
+    navigate(isNativeApp() ? '/login' : '/')
   }
 
   const ownerHasLitters = isOwner && litterCount !== null && litterCount > 0
@@ -832,6 +837,8 @@ export default function AppLayout({ toast }: Props) {
             if (hideLitters) return false
           }
           if ((item as any).remindersItem && hideReminders) return false
+          if ((item as any).documentsItem && hideDocuments) return false
+          if ((item as any).activityItem && !hideDocuments) return false
           return true
         }).map(item => (
           <NavLink

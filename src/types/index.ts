@@ -470,10 +470,11 @@ export interface ActivityNote {
 }
 
 export interface UserProfile {
+  termsAcceptance?: { version: string; acceptedAt: string; source: 'signup' }
   marketingConsent?: {
     channel: 'email_marketing'
     choice: 'opt_in' | 'opt_out'
-    source: 'explicit_checkbox' | 'account_settings'
+    source: 'explicit_checkbox' | 'explicit_choice' | 'account_settings'
     checkboxDefault: false
     policyVersion: string
     optedInAt: string | null
@@ -600,6 +601,7 @@ export interface AuthFormData {
 
 export interface SignupFormData extends AuthFormData {
   marketingOptIn?: boolean
+  termsAccepted?: boolean
   firstName: string
   lastName: string
   kennelName: string

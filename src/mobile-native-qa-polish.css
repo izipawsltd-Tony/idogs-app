@@ -54,3 +54,7 @@
     display: none !important;
   }
 }
+
+/* Stand-alone native screens (Verify Email, Forgot password) reserve the
+   painted status-bar band so their logo is not covered. */
+html[data-idogs-native-platform] .idogs-native-safe-page{padding-top:calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 24px)!important;padding-bottom:calc(24px + var(--safe-area-bottom, env(safe-area-inset-bottom, 0px)))!important}

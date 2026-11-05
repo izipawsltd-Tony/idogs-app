@@ -1257,6 +1257,13 @@ export default function DogDetailPage({ toast }: Props) {
           throw err
         }
       }} />}
+      {tab === 'scan' && !historicalSnapshot && !isCurrentOwner(dog, user?.uid || '') && (
+        <div className="card" role="note" style={{ maxWidth: 480, padding: 20 }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>iDogs Scan is for the current owner</h2>
+          <p style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.6, marginBottom: 16 }}>Only {dog.name}&apos;s current owner can scan and save documents to this profile. You can still view the records shared with you.</p>
+          <button type="button" className="btn btn-secondary" onClick={() => setTab('overview')}>Back to overview</button>
+        </div>
+      )}
       {tab === 'scan' && !historicalSnapshot && isCurrentOwner(dog, user?.uid || '') && (
         <div style={{ maxWidth: 480 }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>iDogs Document Scan</h2>
