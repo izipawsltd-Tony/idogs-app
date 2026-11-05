@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { DELETION_POLICY } from '../../shared/account-deletion-copy.js'
+import AIProviderRetention from '../components/legal/AIProviderRetention'
 
 export default function PrivacyPage() {
   const lastUpdated = '6 November 2026'
@@ -47,6 +48,8 @@ export default function PrivacyPage() {
               <li>Comply with legal obligations</li>
             </ul>
             <p>We do <strong>not</strong> sell your personal information to third parties.</p>
+            <p><strong>iDogs Scan (optional):</strong> If you choose to scan a document and allow it, iDogs sends that photo or PDF to Anthropic to read the dog and health record details. Documents can contain names, addresses and vet contact details. You can enter records manually instead.</p>
+            <AIProviderRetention />
             <p><strong>Optional advertising measurement:</strong> If you choose “Allow ad measurement”, Meta Pixel shares visits to our home and signup pages and successful registrations with Meta (Facebook) to measure and improve our advertising. Meta may receive page URLs, IP address, browser information and advertising cookies. We do not send form entries, account contact details, dog records or documents through this integration. It does not run in the native app or on private account pages. You can decline or withdraw permission using “Ad privacy choices” on our home or signup page. Declining does not affect your ability to use iDogs. See <a href="https://www.facebook.com/privacy/policy/" target="_blank" rel="noopener noreferrer">Meta’s privacy policy</a> for how Meta handles this information.</p>
             <p><strong>Campaign source (first-party):</strong> If you arrive from one of our advertisements or links, your browser keeps the campaign labels from that link (for example utm_source, utm_campaign and the ad, ad set and campaign IDs) for up to 30 days. If you then create an account, we save these labels and the first page you landed on with your account so we can see which campaigns bring in real members. We only record whether a Facebook click ID was present, never its value. This information stays with iDogs and is not shared with Meta or anyone else, and it is saved whether or not you allow ad measurement. If you did not arrive from a campaign link, we record your source as “direct”.</p>
           </LegalSection>
@@ -61,7 +64,7 @@ export default function PrivacyPage() {
             <p>We share your information only in these limited circumstances:</p>
             <ul>
               <li><strong>Ownership transfer:</strong> When you transfer a dog to a new owner, their contact details and the dog's records are shared with that owner as you direct</li>
-              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure) — all under strict data processing agreements</li>
+              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure), Vercel (hosting), Anthropic (iDogs Scan, only for documents you choose to scan) — all under strict data processing agreements</li>
               <li><strong>Legal requirements:</strong> If required by Australian law, court order, or government authority</li>
               <li><strong>Public passport:</strong> Information displayed on a dog's public QR passport page is visible to anyone with the link</li>
             </ul>
