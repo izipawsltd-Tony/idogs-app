@@ -21,7 +21,9 @@ const config: CapacitorConfig = {
     },
     SystemBars: {
       insetsHandling: 'css',
-      style: 'DARK',
+      // SystemBars names the background theme: LIGHT gives dark status icons.
+      // iOS uses a white safe-area band; Android retains its dark green band.
+      style: process.env.VITE_IDOGS_NATIVE_PLATFORM === 'ios' ? 'LIGHT' : 'DARK',
       hidden: false,
     },
   },

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../../../_lib/deletion-fence.js'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { randomUUID } from 'node:crypto'
@@ -9,7 +10,7 @@ function identity(uid, authUser, profile) {
   return { uid, email: authUser?.email || null, organisationId: profile?.role === 'breeder' ? uid : null, organisationName }
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
   const actorToken = await verifySuperAdmin(req, res)
   if (!actorToken) return
@@ -50,3 +51,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Password reset email operation failed', referenceId: requestId })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/users/[uid]/password-reset.js' })

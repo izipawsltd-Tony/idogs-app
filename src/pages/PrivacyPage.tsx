@@ -46,9 +46,11 @@ export default function PrivacyPage() {
               <li>Process subscription payments via Stripe</li>
               <li>Generate compliance export reports</li>
               <li>Respond to support requests</li>
+              <li>Send optional iDogs offers and product marketing where you have opted in; you can change your marketing preference in Settings</li>
               <li>Comply with legal obligations</li>
             </ul>
-            <p>This draft does not authorise sale of personal information or advertising use. Actual business practices and any third-party tracking must be verified before the policy becomes effective.</p>
+            <p>Optional marketing consent is separate from essential account, security and service messages. Withdrawing that consent does not itself delete your account or cancel your subscription. Actual campaign practices and any third-party tracking must be verified before the policy becomes effective.</p>
+            <p><strong>Optional advertising measurement:</strong> If you choose “Allow ad measurement”, Meta Pixel shares visits to our home and signup pages and successful registrations with Meta (Facebook) to measure and improve our advertising. Meta may receive page URLs, IP address, browser information and advertising cookies. We do not send form entries, account contact details, dog records or documents through this integration. It does not run in the native app or on private account pages. You can decline or withdraw permission using “Ad privacy choices” on our home or signup page. Declining does not affect your ability to use iDogs. See <a href="https://www.facebook.com/privacy/policy/" target="_blank" rel="noopener noreferrer">Meta’s privacy policy</a> for how Meta handles this information.</p>
           </LegalSection>
 
           <LegalSection title="4. Data Storage and Security">
@@ -61,7 +63,7 @@ export default function PrivacyPage() {
             <p>We share your information only in these limited circumstances:</p>
             <ul>
               <li><strong>Ownership transfer:</strong> A transfer can share the dog records needed by its new owner. Former-owner access is limited to the available historical record; later current-owner updates are private</li>
-              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure); Vercel (hosting), Amazon Web Services/SNS (SMS where enabled) and Anthropic (optional AI scanning). Provider arrangements require verification before this draft becomes effective</li>
+              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure); Vercel (hosting), ClickSend (SMS where enabled) and Anthropic (optional AI scanning). Provider arrangements and any legacy SMS provider records require verification before this draft becomes effective</li>
               <li><strong>Legal requirements:</strong> If required by Australian law, court order, or government authority</li>
               <li><strong>Public passport:</strong> Information displayed on a dog's public QR passport page is visible to anyone with the link</li>
             </ul>
@@ -92,6 +94,7 @@ export default function PrivacyPage() {
 
           <LegalSection title="8. Cookies">
             <p>Firebase Authentication uses browser or device storage to maintain your sign-in session. The full cookie, analytics and SDK inventory must be verified before this draft becomes effective.</p>
+            <p>Optional Meta advertising measurement on our home and signup pages uses advertising cookies only when you allow it. You can decline or withdraw that permission through “Ad privacy choices”; authentication and account use do not depend on that choice.</p>
             <p>Restricting storage required for authentication may prevent sign-in or session persistence.</p>
           </LegalSection>
 

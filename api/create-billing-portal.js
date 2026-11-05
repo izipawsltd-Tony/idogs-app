@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -18,11 +19,11 @@ if (!getApps().length) {
 
 const db = getFirestore()
 
-export default createBillingPortalHandler({
+export default withAccountMutationFence(createBillingPortalHandler({
   verifyIdToken: token => getAuth().verifyIdToken(token),
   getProfile: async uid => {
     const snap = await db.collection('users').doc(uid).get()
     return snap.exists ? snap.data() : null
   },
   createPortalSession: params => stripe.billingPortal.sessions.create(params),
-})
+}), { route: 'api/create-billing-portal.js' })

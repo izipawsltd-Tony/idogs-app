@@ -1,0 +1,38 @@
+name: Recover exact original renewal QA fixture cleanup
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['scripts/qa/deletion-renewal-cleanup.mjs', 'scripts/qa/deletion-renewal-recover.mjs', 'scripts/test-deletion-renewal-cleanup.mjs', '.github/workflows/deletion-renewal-recover.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: isolated-cloud-deletion-qa
+  cancel-in-progress: false
+jobs:
+  exact-cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/test-deletion-renewal-cleanup.mjs scripts/test-deletion-renewal-dispatcher.mjs scripts/test-deletion-cloud-runtime.mjs
+      - name: Recover only the authenticated original completed QA fixture
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
+          IDOGS_DELETION_STRIPE_TEST_KEY: ${{ secrets.IDOGS_DELETION_STRIPE_TEST_KEY }}
+        run: node scripts/qa/deletion-renewal-recover.mjs
+      - uses: actions/upload-artifact@v4
+        if: always() && github.event_name == 'workflow_dispatch'
+        with:
+          name: original-renewal-cleanup-evidence
+          path: renewal-cleanup-recovery-*.json
+          if-no-files-found: ignore
+          retention-days: 14

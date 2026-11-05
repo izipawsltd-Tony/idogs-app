@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/manage-landing-media.js — Super Admin -> Landing Page Media.
 // Consolidates the three post-upload lifecycle actions (Publish, Remove,
 // Cancel draft) into one endpoint differentiated by `action` in the
@@ -187,4 +188,4 @@ async function handler(req, res) {
   }
 }
 
-export default handler
+export default withAccountMutationFence(handler, { route: 'api/manage-landing-media.js' })

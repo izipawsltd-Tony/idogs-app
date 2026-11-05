@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../../_lib/deletion-fence.js'
 // api/super-admin/users/[uid].js — Get details for a single user
 import { getFirestore } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
@@ -7,7 +8,7 @@ import { ALLOWED_ADMINS, verifySuperAdmin } from '../_auth.js'
 import { supportsPasswordSignIn } from '../_password-reset.js'
 import { buildAccountSecurityOverview } from '../_account-security.js'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -185,3 +186,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to get user details', message: error.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/users/[uid].js' })

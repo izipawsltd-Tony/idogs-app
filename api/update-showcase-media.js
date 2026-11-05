@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/update-showcase-media.js — trusted server-side reorder/delete
 // (and, implicitly, "set cover") for an already-uploaded litter puppy's
 // Showcase gallery (Slice 2). Cover/reorder/delete are all just array
@@ -148,4 +149,4 @@ async function handler(req, res) {
   }
 }
 
-export default handler
+export default withAccountMutationFence(handler, { route: 'api/update-showcase-media.js' })

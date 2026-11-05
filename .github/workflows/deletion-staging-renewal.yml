@@ -1,0 +1,29 @@
+name: Deletion staging renewal QA (Test fixtures only)
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['api/_lib/deletion-staging-billing.js', 'scripts/qa/deletion-staging-renewal.mjs', 'scripts/test-deletion-staging-billing.mjs', '.github/workflows/deletion-staging-renewal.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: deletion-staging-renewal-fixtures
+  cancel-in-progress: false
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Fixture binding and existing billing regressions
+        run: node --test scripts/test-deletion-staging-billing.mjs scripts/test-deletion-billing.mjs scripts/test-deletion-stripe-contract.mjs
+      - name: Disposable staging request and Stripe Test renewal QA
+        env:
+          IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
+          IDOGS_DELETION_STRIPE_TEST_KEY: ${{ secrets.IDOGS_DELETION_STRIPE_TEST_KEY }}
+        run: node scripts/qa/deletion-staging-renewal.mjs

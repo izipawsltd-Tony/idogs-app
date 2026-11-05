@@ -14,6 +14,7 @@ const qa = vi.hoisted(() => ({
 }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => qa }))
 vi.mock('./db', () => ({ updateUserProfile: vi.fn() }))
+vi.mock('./firebase', () => ({ db: {} }))
 
 afterEach(() => vi.unstubAllGlobals())
 

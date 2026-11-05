@@ -7,6 +7,8 @@ const state = vi.hoisted(() => ({ profile: { role: 'owner', emailReminders: true
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'qa' }, profile: state.profile, refreshProfile: state.refresh }) }))
 vi.mock('../lib/nativePlatform', () => ({ isNativeApp: () => false }))
 vi.mock('../lib/db', () => ({ updateUserProfile: state.update, addReminder: vi.fn() }))
+vi.mock('../lib/firebase', () => ({ db: {} }))
+vi.mock('firebase/firestore', () => ({ doc: vi.fn(), getDocFromServer: vi.fn() }))
 import SettingsPage from './SettingsPage'
 
 beforeEach(() => { state.update.mockReset().mockResolvedValue(undefined); state.refresh.mockReset().mockResolvedValue(undefined); state.profile = { role: 'owner', emailReminders: true, manualReminderEmails: false, careEmailTypes: {} } })

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../_lib/deletion-fence.js'
 // api/super-admin/support.js — Read-only support operational signals
 //
 // iDogs V1 has no formal support/ticket collection (checked: support, supportTickets,
@@ -17,7 +18,7 @@ const RECENT_ACCOUNTS_LIMIT = 10
 const DATA_MODEL_NOTICE =
   'iDogs V1 does not yet have a formal support ticket collection. This page currently surfaces support-related platform signals only.'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -119,3 +120,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to compile support signals overview', message: error.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/support.js' })

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../_lib/deletion-fence.js'
 // api/super-admin/plans-pricing.js — Read-only plan catalogue & usage overview
 //
 // Read-only. No Stripe calls, no price IDs, no plan/pricing writes. The catalogue in
@@ -7,7 +8,7 @@ import { verifySuperAdmin } from './_auth.js'
 import { computeEffectivePlan, hasValidInternalEntitlement } from '../_lib/entitlements.js'
 import { PRICING_POLICY_VERSION, SUPER_ADMIN_DATA_MODEL_NOTICE, SUPER_ADMIN_PLAN_CATALOGUE, getEstimatedMonthlyPrice } from './_pricing.js'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -78,3 +79,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to compile plans & pricing overview', message: error.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/plans-pricing.js' })

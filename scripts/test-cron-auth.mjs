@@ -6,6 +6,8 @@
 import { makeChecker } from './_lib/test-check.mjs'
 import { checkCronAuth } from '../api/_lib/cron-auth.js'
 
+import { withAccountMutationFence } from '../api/_lib/deletion-fence.js'
+
 const { check, summary } = makeChecker()
 
 const ORIGINAL_SECRET = process.env.CRON_SECRET
@@ -106,5 +108,34 @@ check('a provided secret of a totally different length than the configured one d
     return false
   }
 }))
+
+const previousMode = process.env.ACCOUNT_DELETION_MODE
+let cleanupCalls = 0
+const cleanup = withAccountMutationFence(async (_req, res) => {
+  cleanupCalls++
+  return res.status(204).json(null)
+}, { route: 'api/cleanup-showcase-media-uploads.js' })
+async function requestCleanup(method, headers) {
+  const res = { status(code) { this.code = code; return this }, json(body) { this.body = body; return this } }
+  return cleanup({ method, headers }, res)
+}
+try {
+  process.env.ACCOUNT_DELETION_MODE = 'prototype-emulator'
+  process.env.CRON_SECRET = 'synthetic-cron-secret'
+  for (const method of ['GET', 'POST']) {
+    const denied = await requestCleanup(method, { authorization: 'Bearer invalid' })
+    const held = await requestCleanup(method, { authorization: 'Bearer synthetic-cron-secret' })
+    check(`prototype cleanup ${method} authenticates before holding, without handler IO`,
+      denied.code === 401 && held.code === 423 && held.body.code === 'MUTATION_SCOPE_REQUIRES_REVIEW' && cleanupCalls === 0)
+  }
+  delete process.env.ACCOUNT_DELETION_MODE
+  const normal = await requestCleanup('GET', {})
+  check('cleanup outside prototype still delegates to the original handler', normal.code === 204 && cleanupCalls === 1)
+} finally {
+  if (previousMode === undefined) delete process.env.ACCOUNT_DELETION_MODE
+  else process.env.ACCOUNT_DELETION_MODE = previousMode
+  if (ORIGINAL_SECRET === undefined) delete process.env.CRON_SECRET
+  else process.env.CRON_SECRET = ORIGINAL_SECRET
+}
 
 await summary()

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/enforce-billing-grace.js — daily cron: downgrade any account whose
 // §4.2 7-day past_due grace period has expired (Pricing_Decision_Record_
 // v1.1.md, LOCKED). Stripe's own dunning/retry schedule does not reliably
@@ -32,7 +33,7 @@ if (!getApps().length) {
   })
 }
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
 
   // Fails closed on a missing/empty CRON_SECRET (Codex H4) — see
@@ -74,3 +75,5 @@ export default async function handler(req, res) {
 
   return res.status(200).json({ checked, downgraded, failed: errors.length })
 }
+
+export default withAccountMutationFence(handler, { route: 'api/enforce-billing-grace.js' })

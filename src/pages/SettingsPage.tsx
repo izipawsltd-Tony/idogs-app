@@ -1,6 +1,8 @@
 import { DATA_PROCESSING_SUMMARY } from '../components/legal/PolicyReview'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { doc, getDocFromServer } from 'firebase/firestore'
+import { db } from '../lib/firebase'
 import { useAuth } from '../hooks/useAuth'
 import { updateUserProfile } from '../lib/db'
 import { BREEDER_ID_CONFIG, suggestBreederIdType, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../lib/utils'
@@ -32,6 +34,7 @@ export default function SettingsPage({ toast }: Props) {
   const [savingProfile, setSavingProfile] = useState(false)
   const [changingRole, setChangingRole] = useState(false)
 
+  const marketingEnabled = Boolean(user?.email && profile?.marketingConsent?.channel === 'email_marketing' && profile.marketingConsent.choice === 'opt_in' && !profile.marketingConsent.revokedAt && profile.marketingConsent.email?.toLowerCase() === user.email.toLowerCase())
   const isOwner = profile?.role === 'owner'
   const effectivePlan = getEffectivePlanClient(profile)
   const includedAccess = hasValidInternalEntitlementClient(profile?.internalEntitlement, new Date())
@@ -56,6 +59,43 @@ export default function SettingsPage({ toast }: Props) {
     } finally {
       setSaving(null)
     }
+  }
+
+  async function setMarketingConsent(enabled: boolean) {
+    if (!user || saving) return
+    setSaving('marketingConsent')
+    try {
+      const existing = profile?.marketingConsent
+      const now = new Date().toISOString()
+      await updateUserProfile(user.uid, {
+        marketingConsent: {
+          channel: 'email_marketing',
+          choice: enabled ? 'opt_in' : 'opt_out',
+          source: 'account_settings',
+          checkboxDefault: false,
+          policyVersion: 'marketing-v1-2026-10',
+          optedInAt: enabled ? now : existing?.optedInAt || null,
+          revokedAt: enabled ? null : now,
+          email: user.email || '',
+          evidenceRef: enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1',
+        },
+      })
+      // Do not trust a local-cache echo as evidence of remote persistence.
+      // Read back from Firestore server before reporting success.
+      const stored = await getDocFromServer(doc(db, 'users', user.uid))
+      const actual = stored.data()?.marketingConsent
+      if (!stored.exists() || actual?.choice !== (enabled ? 'opt_in' : 'opt_out') ||
+          actual?.source !== 'account_settings' || actual?.channel !== 'email_marketing' ||
+          actual?.email?.toLowerCase() !== user.email?.toLowerCase() ||
+          actual?.evidenceRef !== (enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1') ||
+          (enabled ? actual?.revokedAt != null : !actual?.revokedAt)) {
+        throw new Error('MARKETING_CONSENT_NOT_PERSISTED')
+      }
+      await refreshProfile(true)
+      toast(enabled ? 'Marketing email preference saved' : 'Marketing emails disabled', 'success')
+    } catch {
+      toast('Could not save marketing preference. Please try again.', 'error')
+    } finally { setSaving(null) }
   }
 
   async function setEmailSetting(field: 'emailReminders' | 'manualReminderEmails', enabled: boolean) {
@@ -180,14 +220,14 @@ export default function SettingsPage({ toast }: Props) {
               {includedAccess ? 'Unlimited dogs' : effectivePlan === 'plus' ? 'Up to 5 dogs' : 'Up to 2 dogs'} · Health records, reminders, documents and QR Passport
             </p>
             <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 12px' }}>
-              {effectivePlan === 'plus' ? '10 AI document scans per month' : '2 AI document scans for the life of your account'}. Dogs over your plan limit stay saved and become read-only.
+              {effectivePlan === 'plus' ? '10 iDogs Document Scans per month' : '2 iDogs Document Scans for the life of your account'}. Dogs over your plan limit stay saved and become read-only.
             </p>
           </>
         ) : (
           <p role="status" style={{ fontSize: 13, color: 'var(--mid)' }}>Your plan is temporarily unavailable. Please try again after reconnecting.</p>
         )}
         {nativeApp && <p style={{ fontSize: 13, color: 'var(--mid)', margin: '0 0 12px' }}>Purchases are unavailable in this app. Your existing plan access remains available.</p>}
-        <Link to="/app/billing" className="btn btn-secondary" style={{ display: 'inline-flex', minHeight: 44, alignItems: 'center', textDecoration: 'none' }}>View plan details</Link>
+        <Link to="/app/billing" className="btn btn-secondary" style={{ display: 'inline-flex', minHeight: 44, alignItems: 'center', textDecoration: 'none' }}>Billing &amp; plan details</Link>
       </section>
 
       {/* ── PROFILE ── */}
@@ -381,7 +421,7 @@ export default function SettingsPage({ toast }: Props) {
           {/* Email reminders toggle */}
           <ToggleRow
             icon="✉️" label="Email Reminders"
-            description="Receive scheduled emails. Turning this off also pauses existing scheduled SMS; saved in-app reminders remain."
+            description="Receive scheduled emails. Turning this off does not disable SMS or in-app reminders."
             enabled={emailReminders}
             saving={saving !== null}
             onToggle={() => setEmailSetting('emailReminders', !emailReminders)}
@@ -413,7 +453,6 @@ export default function SettingsPage({ toast }: Props) {
           </div>
 
           {/* Reminder lead time */}
-          {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>⏰ Reminder lead time</div>
               <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>Default lead time for recorded health reminders. Manual reminders use their own lead time.</div>
@@ -436,13 +475,11 @@ export default function SettingsPage({ toast }: Props) {
                 ))}
               </div>
             </div>
-          )}
 
           {/* Reminder frequency */}
-          {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>🔁 Reminder frequency</div>
-              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How often to remind you once a due date is approaching.</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How often to email you once a due date is approaching. SMS is sent once per due date, subject to your add-on and credits.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 {([
                   { id: 'once', label: 'Once' },
@@ -465,11 +502,10 @@ export default function SettingsPage({ toast }: Props) {
                 ))}
               </div>
             </div>
-          )}
 
           {/* Heat cycle reminder lead time — breeding-specific, not
               relevant to a Pet Owner account (see Litters above). */}
-          {emailReminders && !isOwner && (
+          {!isOwner && (
             <div style={{ paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 4 }}>🌸 Heat cycle reminder lead time</div>
               <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>
@@ -515,6 +551,20 @@ export default function SettingsPage({ toast }: Props) {
           </div>
         </div>
       </div>
+
+      {/* Marketing emails are separate from transactional and care reminders. */}
+      <div className="card" style={{ marginBottom: 16, padding: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', marginBottom: 14 }}>Marketing emails</div>
+        <ToggleRow
+          icon="✉️"
+          label="iDogs news and promotional offers"
+          description="Optional product news and offers. You can turn this off at any time. Dog-care and account emails are separate."
+          enabled={Boolean(marketingEnabled)}
+          saving={saving === 'marketingConsent'}
+          onToggle={() => setMarketingConsent(!marketingEnabled)}
+        />
+        <p style={{ fontSize: 12, color: 'var(--light)', marginTop: 10 }}>Existing accounts are off unless they explicitly opt in.</p>
+       </div>
 
       {/* ── DATA & PRIVACY ── */}
       <AccountDeletion />

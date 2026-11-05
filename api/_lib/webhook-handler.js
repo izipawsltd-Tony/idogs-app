@@ -64,12 +64,14 @@
 //      association and always adopts whatever customer id it carries.
 
 import { randomBytes } from 'node:crypto'
-import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS } from './checkout-handler.js'
+import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS, LEGACY_PLUS_PRICE_INTERVALS } from './checkout-handler.js'
 import { reconcileDogCapTx, reactivateUpToCapTx } from './dog-cap.js'
 import { anchorDayFromDate } from './entitlements.js'
 import { SMS_MONTHLY_CREDITS } from './sms-addon.js'
+import { applySeparateSmsEvent, isSeparateSms, verifiedSeparateSms } from './sms-subscription-events.js'
 
 const PRICE_INTERVAL = Object.freeze({
+  ...LEGACY_PLUS_PRICE_INTERVALS,
   [CHECKOUT_PRICE_IDS.plus_monthly]: 'monthly',
   [CHECKOUT_PRICE_IDS.plus_annual]: 'annual',
   [LEGACY_PAID_PRICE_IDS.basic]: 'monthly',
@@ -106,6 +108,10 @@ function smsEntitlementFields(profile, subscription, smsPriceId, nowIso) {
 
   const item = smsItemOf(subscription, smsPriceId)
   if (!item) {
+    // The independent SMS subscription has its own lifecycle and period.
+    if (profile?.smsStripeSubscriptionId === profile?.verifiedSeparateSmsId &&
+        profile?.verifiedSeparateSmsBaseId === subscription.id &&
+        ['active', 'trialing', 'past_due'].includes(subscription.status)) return {}
     const hadSms = profile?.smsAddonStatus && profile.smsAddonStatus !== 'inactive'
     return {
       smsAddonStatus: hadSms ? 'cancelled' : 'inactive',
@@ -126,8 +132,7 @@ function smsEntitlementFields(profile, subscription, smsPriceId, nowIso) {
 
   const period = smsPeriodOf(subscription, item)
   const periodChanged = smsStatus === 'active' && period &&
-    (profile?.smsAddonStatus !== 'active' ||
-      profile?.smsPeriodStart !== period.start ||
+    (profile?.smsPeriodStart !== period.start ||
       profile?.smsPeriodEnd !== period.end)
 
   return {
@@ -153,7 +158,7 @@ function subscriptionStartAnchorDay(subscription) {
 }
 
 function subscriptionIdOf(invoiceOrSub) {
-  const raw = invoiceOrSub?.subscription
+  const raw = invoiceOrSub?.subscription || invoiceOrSub?.parent?.subscription_details?.subscription
   if (typeof raw === 'string') return raw
   if (raw && typeof raw.id === 'string') return raw.id
   return null
@@ -387,11 +392,58 @@ export async function runFencedTransaction(db, eventRef, leaseToken, fn) {
 export function createWebhookHandler({
   constructEvent,
   getSubscription,
+  cancelSubscription,
   db,
   getSmsPriceId = () => process.env.STRIPE_SMS_ADDON_PRICE_ID,
   now = () => new Date(),
 }) {
+  async function profileWithSmsState(tx, snap, uid) {
+    const state = (await tx.get(db.collection('smsSubscriptionState').doc(uid))).data()
+    return { ...(snap.exists ? snap.data() : {}), verifiedSeparateSmsId: state?.subscriptionId || null,
+      verifiedSeparateSmsBaseId: state?.baseSubscriptionId || null }
+  }
   async function applyEvent(event, eventRef, leaseToken) {
+    const fetched = new Map()
+    const fetchSubscription = async id => {
+      if (!fetched.has(id)) fetched.set(id, await getSubscription(id))
+      return fetched.get(id)
+    }
+    const object = event.data.object
+    const isCheckout = ['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)
+    const isInvoice = ['invoice.paid', 'invoice.payment_succeeded', 'invoice.payment_failed'].includes(event.type)
+    const isSubscription = ['customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted'].includes(event.type)
+    const subId = isCheckout ? (typeof object.subscription === 'string' ? object.subscription : object.subscription?.id) :
+      isInvoice ? subscriptionIdOf(object) : isSubscription ? object.id : null
+    if (subId) {
+      let current = isSubscription && !isSeparateSms(object) ? object : await fetchSubscription(subId)
+      if (isSeparateSms(current)) {
+        await applySeparateSmsEvent({ subscription: current, event, db, getSubscription: fetchSubscription, smsPriceId: getSmsPriceId(), now,
+          cancelSubscription,
+          transact: fn => runFencedTransaction(db, eventRef, leaseToken, fn), entitlementFields: smsEntitlementFields,
+          validBase: base => Boolean(resolveInterval(base)) })
+        return
+      }
+      // A canceled Plus subscription must not leave a paid standalone SMS
+      // renewal running. Verify both ownership and the exact SMS price first.
+      if (['canceled', 'unpaid', 'incomplete_expired'].includes(current?.status) && resolveInterval(current)) {
+        const uid = extractUserId(current)
+        const snap = uid ? await db.collection('users').doc(uid).get() : null
+        const profile = snap?.data()
+        const smsState = uid ? (await db.collection('smsSubscriptionState').doc(uid).get()).data() : null
+        const smsId = profile?.smsStripeSubscriptionId || smsState?.subscriptionId
+        if (smsId && smsId !== current.id &&
+            profile.stripeCustomerId === customerIdOf(current)) {
+          current = await fetchSubscription(current.id)
+          if (!['canceled', 'unpaid', 'incomplete_expired'].includes(current.status)) return
+          const sms = await fetchSubscription(smsId)
+          if (isSeparateSms(sms) && (!verifiedSeparateSms(sms, getSmsPriceId()) || extractUserId(sms) !== uid || customerIdOf(sms) !== profile.stripeCustomerId)) throw new Error('SMS_CANCEL_MISMATCH')
+          if (isSeparateSms(sms) && sms.metadata.baseSubscriptionId === current.id && !['canceled', 'incomplete_expired'].includes(sms.status)) {
+            if (!cancelSubscription) throw new Error('SMS_CANCEL_UNAVAILABLE')
+            await cancelSubscription(sms.id, { prorate: false, invoice_now: false })
+          }
+        }
+      }
+    }
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object
@@ -402,7 +454,7 @@ export function createWebhookHandler({
           })
           return
         }
-        const subscription = await getSubscription(session.subscription)
+        const subscription = await fetchSubscription(session.subscription)
         const interval = resolveInterval(subscription)
         if (!interval) {
           // Diagnostic only — never logs the actual price id (that's not
@@ -421,7 +473,7 @@ export function createWebhookHandler({
         // dog query) must precede writes in this transaction.
         await runFencedTransaction(db, eventRef, leaseToken, async tx => {
           const snap = await tx.get(userRef)
-          const profile = snap.exists ? snap.data() : {}
+          const profile = await profileWithSmsState(tx, snap, userId)
           const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId: session.subscription, eventCreated: event.created, eventCustomerId })
           if (evaluation.stale) return
           await reactivateUpToCapTx(tx, db, userId, 'plus')
@@ -462,7 +514,7 @@ export function createWebhookHandler({
           if (!interval) return
           await runFencedTransaction(db, eventRef, leaseToken, async tx => {
             const snap = await tx.get(userRef)
-            const profile = snap.exists ? snap.data() : {}
+            const profile = await profileWithSmsState(tx, snap, userId)
             const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
             if (evaluation.stale) return
             // §3.1 "Switching Monthly <-> Annual: No new quota granted...
@@ -498,7 +550,7 @@ export function createWebhookHandler({
           // the grace window.
           await runFencedTransaction(db, eventRef, leaseToken, async tx => {
             const snap = await tx.get(userRef)
-            const profile = snap.exists ? snap.data() : {}
+            const profile = await profileWithSmsState(tx, snap, userId)
             const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
             if (evaluation.stale) return
             tx.set(userRef, {
@@ -511,7 +563,7 @@ export function createWebhookHandler({
         } else if (DOWNGRADE_STATUSES.has(status)) {
           await runFencedTransaction(db, eventRef, leaseToken, async tx => {
             const snap = await tx.get(userRef)
-            const profile = snap.exists ? snap.data() : {}
+            const profile = await profileWithSmsState(tx, snap, userId)
             const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
             if (evaluation.stale) return
             await reconcileDogCapTx(tx, db, userId, 'free')
@@ -533,7 +585,7 @@ export function createWebhookHandler({
         } else {
           await runFencedTransaction(db, eventRef, leaseToken, async tx => {
             const snap = await tx.get(userRef)
-            const profile = snap.exists ? snap.data() : {}
+            const profile = await profileWithSmsState(tx, snap, userId)
             const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
             if (evaluation.stale) return
             tx.set(userRef, {
@@ -555,7 +607,7 @@ export function createWebhookHandler({
         const eventCustomerId = customerIdOf(subscription)
         await runFencedTransaction(db, eventRef, leaseToken, async tx => {
           const snap = await tx.get(userRef)
-          const profile = snap.exists ? snap.data() : {}
+          const profile = await profileWithSmsState(tx, snap, userId)
           const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
           if (evaluation.stale) return
           await reconcileDogCapTx(tx, db, userId, 'free')
@@ -591,7 +643,7 @@ export function createWebhookHandler({
         const invoice = event.data.object
         const subscriptionId = subscriptionIdOf(invoice)
         if (!subscriptionId) return
-        const subscription = await getSubscription(subscriptionId)
+        const subscription = await fetchSubscription(subscriptionId)
         const userId = extractUserId(subscription)
         if (!userId) return
         const userRef = db.collection('users').doc(userId)
@@ -600,7 +652,7 @@ export function createWebhookHandler({
         const eventCustomerId = customerIdOf(invoice) || customerIdOf(subscription)
         await runFencedTransaction(db, eventRef, leaseToken, async tx => {
           const snap = await tx.get(userRef)
-          const profile = snap.exists ? snap.data() : {}
+          const profile = await profileWithSmsState(tx, snap, userId)
           const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
           if (evaluation.stale) return
           const tracking = subscriptionTrackingFields(profile, subscriptionId, event.created, eventCustomerId)

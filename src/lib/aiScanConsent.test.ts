@@ -19,6 +19,9 @@ describe('AI document permission', () => {
     act(() => input.props.onChange({ target }))
     expect(target.value).toBe('')
     expect(JSON.stringify(renderer.toJSON())).toContain('Anthropic, a third-party AI provider')
+    expect(JSON.stringify(renderer.toJSON())).toContain('up to 30 days')
+    expect(JSON.stringify(renderer.toJSON())).toContain('does not immediately erase copies retained by Anthropic')
+    expect(renderer.root.findAllByType('a').some(a => a.props.href === 'https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data')).toBe(true)
     expect(fetchMock).not.toHaveBeenCalled()
     const cancel = renderer.root.findAllByType('button').find(b => b.children.join('').startsWith('Cancel'))!
     act(() => cancel.props.onClick())

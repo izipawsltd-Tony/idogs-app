@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/rotate-showcase-share.js — trusted server-side generation of a
 // NEW public share link for a Litter Showcase (Slice 2).
 //
@@ -107,4 +108,4 @@ async function handler(req, res) {
   return res.status(200).json({ showcase, shareToken: rawToken })
 }
 
-export default withApiErrorHandling('rotate-showcase-share', handler)
+export default withAccountMutationFence(withApiErrorHandling('rotate-showcase-share', handler), { route: 'api/rotate-showcase-share.js' })

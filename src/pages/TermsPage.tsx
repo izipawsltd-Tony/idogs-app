@@ -59,7 +59,7 @@ export default function TermsPage() {
             <p>iDogs offers the following plans and add-ons in Australian dollars. Displayed prices include GST where applicable:</p>
             <ul>
               <li><strong>Free:</strong> Up to {DOG_CAP_FREE} dogs, QR passport, health records, email reminders — free forever</li>
-              <li><strong>Plus Monthly — A${PLUS_MONTHLY_PRICE_AUD}/month:</strong> Up to {DOG_CAP_PLUS} dogs, AI Document Scans, document storage, PDF/CSV export, and up to {LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} included litters per rolling 365-day period</li>
+              <li><strong>Plus Monthly — A${PLUS_MONTHLY_PRICE_AUD}/month:</strong> Up to {DOG_CAP_PLUS} dogs, iDogs Document Scans, document storage, PDF/CSV export, and up to {LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} included litters per rolling 365-day period</li>
               <li><strong>Plus Annual — A${PLUS_ANNUAL_PRICE_AUD}/year:</strong> Same Plus features as Plus Monthly, billed annually</li>
               <li><strong>Extra Litter Credit — A${EXTRA_LITTER_PRICE_AUD} each:</strong> A one-time add-on that permits one additional litter after the included litter allowance has been used</li>
             </ul>

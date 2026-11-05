@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/request-showcase-media-upload.js — Implementation Phase 1: issues
 // a short-lived, single-object signed Storage PUT URL for a puppy's
 // Showcase gallery photo/video, so the browser can upload the file
@@ -196,4 +197,4 @@ async function handler(req, res) {
   }
 }
 
-export default handler
+export default withAccountMutationFence(handler, { route: 'api/request-showcase-media-upload.js' })

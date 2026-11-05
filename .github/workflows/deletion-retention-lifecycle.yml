@@ -1,0 +1,28 @@
+name: Actual seven-day deletion retention QA
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['scripts/qa/deletion-retention-lifecycle.mjs', '.github/workflows/deletion-retention-lifecycle.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: isolated-cloud-deletion-qa
+  cancel-in-progress: false
+jobs:
+  retention:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/test-deletion-cloud-runtime.mjs scripts/test-provision-retention-bucket.mjs
+      - name: Start or resume exact durable retention fixture
+        env:
+          IDOGS_RETENTION_QA_APPROVAL: 2026-10-26-new-seven-day-qa-bucket
+          IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/qa/deletion-retention-lifecycle.mjs

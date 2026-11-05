@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/reconcile-litter-puppy.js — Codex fix-round (Finding 3, HIGH):
 // explicit, scoped, authenticated reconciliation for a SINGLE legacy
 // litter puppy that may have been mis-restricted by the old (pre-Pricing
@@ -150,4 +151,4 @@ async function handler(req, res) {
   )
 }
 
-export default withApiErrorHandling('reconcile-litter-puppy', handler)
+export default withAccountMutationFence(withApiErrorHandling('reconcile-litter-puppy', handler), { route: 'api/reconcile-litter-puppy.js' })

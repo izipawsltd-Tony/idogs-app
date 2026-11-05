@@ -7,6 +7,10 @@ function fakeDoc(platform: string | undefined): Pick<Document, 'documentElement'
 }
 
 describe('native platform markers', () => {
+  it('treats server rendering without a document as web', () => {
+    expect(isNativeApp()).toBe(false)
+    expect(isAndroidNativeApp()).toBe(false)
+  })
   it('keeps Android-only detection Android-specific', () => {
     expect(isAndroidNativeApp(fakeDoc('android'))).toBe(true)
     expect(isAndroidNativeApp(fakeDoc('ios'))).toBe(false)

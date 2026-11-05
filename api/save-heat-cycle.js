@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/save-heat-cycle.js — trusted server-side heat cycle create/update
 // (Codex round 3, Blocker 1; hardened Codex round 4, Blocker 1; hardened
 // Codex round 5, Blocker 5).
@@ -176,4 +177,4 @@ async function handler(req, res) {
   return res.status(200).json({ cycleId })
 }
 
-export default withApiErrorHandling('save-heat-cycle', handler)
+export default withAccountMutationFence(withApiErrorHandling('save-heat-cycle', handler), { route: 'api/save-heat-cycle.js' })

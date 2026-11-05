@@ -3,6 +3,7 @@ import { useAuth } from '../../hooks/useAuth'
 import type { ToastMessage } from '../../types'
 import { isNativeApp } from '../../lib/nativePlatform'
 import { aiScanQuotaExhaustedMessage } from '../../lib/nativeUpgradeCopy'
+import AIProviderRetention from '../legal/AIProviderRetention'
 
 interface ScanResult {
   documentType: string
@@ -179,9 +180,9 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
               toast('Document scanned & saved! ✓')
             } else {
               if (scanError.includes('ANTHROPIC_API_KEY not set')) {
-                toast('AI scan is not configured yet. The document was uploaded, but automatic extraction is unavailable.', 'info')
+                toast('iDogs Scan is not configured yet. The document was uploaded, but automatic extraction is unavailable.', 'info')
               } else {
-                toast(`The document was uploaded, but AI scan failed: ${scanError}`, 'info')
+                toast(`The document was uploaded, but iDogs Scan failed: ${scanError}`, 'info')
               }
             }
           } else {
@@ -257,7 +258,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
         {scanning ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
             <div className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
-            <div style={{ fontSize: 14, color: 'var(--green)', fontWeight: 500 }}>AI scanning document…</div>
+            <div style={{ fontSize: 14, color: 'var(--green)', fontWeight: 500 }}>iDogs scanning document…</div>
             <div style={{ fontSize: 12, color: 'var(--light)' }}>Reading fields automatically</div>
           </div>
         ) : (
@@ -282,6 +283,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
           <h3 id="ai-consent-heading">Allow AI processing of this document?</h3>
           <p>{pendingFile.name}</p>
           <p>iDogs will send the selected photo or PDF to Anthropic, a third-party AI provider, to extract dog and health record details. The full document may include personal information, such as names, addresses or vet details.</p>
+          <AIProviderRetention />
           <p>If this dog is selected, iDogs will also save the document to its profile. AI results can be incorrect; check all extracted details before saving records.</p>
           <p>You can cancel and enter records manually without sending this document for AI processing.</p>
           <a href="/privacy" target="_blank" rel="noopener noreferrer">iDogs privacy policy</a>
@@ -296,8 +298,8 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
       <div style={{ fontSize: 12, color: scanQuotaRemaining > 0 ? 'var(--light)' : 'var(--error)', marginTop: -10, marginBottom: 16, textAlign: 'center' }}>
         {scanQuotaRemaining > 0
           ? isPlus
-            ? `${scanQuotaRemaining} of 10 AI scans left this month`
-            : `${scanQuotaRemaining} of 2 free AI scans left (one-time)`
+            ? `${scanQuotaRemaining} of 10 iDogs Scans left this month`
+            : `${scanQuotaRemaining} of 2 free iDogs Scans left (one-time)`
           : aiScanQuotaExhaustedMessage(isNativeApp(), isPlus)}
       </div>
 

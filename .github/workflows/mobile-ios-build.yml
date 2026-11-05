@@ -4,10 +4,14 @@ on:
   push:
     branches:
       - fix/android-v20-qa-blockers
+      - release/ios-app-store-20261025
     paths:
       - 'mobile/**'
       - 'src/**'
       - 'public/**'
+      - 'shared/**'
+      - 'scripts/validate-native-production-env.mjs'
+      - 'scripts/test-native-production-env.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/mobile-ios-build.yml'
@@ -60,6 +64,12 @@ jobs:
       - name: Sync web build into iOS
         run: npm --prefix mobile run sync:ios
 
+      - name: Configure and test camera/photo permission descriptions
+        run: |
+          python3 -m unittest discover -s mobile/scripts -p 'test_ios_privacy.py'
+          python3 mobile/scripts/ios_privacy.py mobile/ios/App/App/Info.plist
+          python3 mobile/scripts/ios_privacy.py mobile/ios/App/App/Info.plist --check
+
       - name: Generate iOS assets
         run: npm --prefix mobile run assets:ios
 
@@ -80,6 +90,7 @@ jobs:
           xcodebuild -project mobile/ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/idogs-simulator-derived" CODE_SIGNING_ALLOWED=NO build
           APP_PATH="$RUNNER_TEMP/idogs-simulator-derived/Build/Products/Debug-iphonesimulator/App.app"
           test -d "$APP_PATH"
+          python3 mobile/scripts/ios_privacy.py "$APP_PATH/Info.plist" --check
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -qx 'au.com.idogs.app'
           /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist" | grep -qx 'iDogs'
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" idogs-ios-simulator-${GITHUB_SHA}.zip
@@ -91,6 +102,7 @@ jobs:
           xcodebuild -project mobile/ios/App/App.xcodeproj -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/idogs-device-derived" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
           APP_PATH="$RUNNER_TEMP/idogs-device-derived/Build/Products/Release-iphoneos/App.app"
           test -d "$APP_PATH"
+          python3 mobile/scripts/ios_privacy.py "$APP_PATH/Info.plist" --check
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -qx 'au.com.idogs.app'
           EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")
           test -f "$APP_PATH/$EXECUTABLE"

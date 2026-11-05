@@ -3,10 +3,10 @@
 // nativeApiRouting.ts). This reads the same data-idogsNativePlatform marker
 // main.tsx sets at boot so billing UI can also hide the purchase controls
 // themselves, not just fail the request behind them.
-export function isAndroidNativeApp(doc: Pick<Document, 'documentElement'> = document): boolean {
-  return doc.documentElement.dataset.idogsNativePlatform === 'android'
+export function isAndroidNativeApp(doc: Pick<Document, 'documentElement'> | undefined = typeof document === 'undefined' ? undefined : document): boolean {
+  return doc?.documentElement.dataset.idogsNativePlatform === 'android'
 }
 
-export function isNativeApp(doc: Pick<Document, 'documentElement'> = document): boolean {
-  return ['android', 'ios'].includes(doc.documentElement.dataset.idogsNativePlatform || '')
+export function isNativeApp(doc: Pick<Document, 'documentElement'> | undefined = typeof document === 'undefined' ? undefined : document): boolean {
+  return ['android', 'ios'].includes(doc?.documentElement.dataset.idogsNativePlatform || '')
 }

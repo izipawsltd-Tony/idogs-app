@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../_lib/deletion-fence.js'
 // api/super-admin/subscriptions.js — Read-only subscription & plan overview
 //
 // iDogs V1 has no formal `subscriptions` Firestore collection. This endpoint derives
@@ -9,7 +10,7 @@ import { verifySuperAdmin } from './_auth.js'
 import { computeEffectivePlan, hasValidInternalEntitlement } from '../_lib/entitlements.js'
 import { SUPER_ADMIN_DATA_MODEL_NOTICE, getEstimatedMonthlyPrice } from './_pricing.js'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -124,3 +125,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to compile subscriptions overview', message: error.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/subscriptions.js' })

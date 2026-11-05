@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/survey.js — Save survey response to Firestore + send notification email
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
@@ -14,7 +15,7 @@ if (!getApps().length) {
 
 const db = getFirestore()
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const { name, email, state, ankc, dogCount, litterCount, tools, toolsOther,
@@ -120,3 +121,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to save survey', message: String(err) })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/survey.js' })

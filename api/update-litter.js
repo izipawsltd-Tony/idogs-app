@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/update-litter.js — trusted server-side litter field edits, with
 // DOB propagation to still-owned puppies and Breeder Profile quota enforcement.
 //
@@ -180,4 +181,4 @@ async function handler(req, res) {
   return res.status(200).json({ updatedPuppyCount: result.updatedPuppyCount })
 }
 
-export default withApiErrorHandling('update-litter', handler)
+export default withAccountMutationFence(withApiErrorHandling('update-litter', handler), { route: 'api/update-litter.js' })

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/set-showcase-enabled.js — trusted server-side enable/disable
 // toggle for a Litter Showcase (iDogs Litter Showcase MVP, Slice 1).
 //
@@ -87,4 +88,4 @@ async function handler(req, res) {
   return res.status(200).json({ showcase })
 }
 
-export default withApiErrorHandling('set-showcase-enabled', handler)
+export default withAccountMutationFence(withApiErrorHandling('set-showcase-enabled', handler), { route: 'api/set-showcase-enabled.js' })

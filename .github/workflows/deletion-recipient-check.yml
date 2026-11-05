@@ -1,0 +1,17 @@
+name: Check deletion QA recipient secret availability
+on:
+  push:
+    branches: [release/ios-app-store-20261025]
+    paths: ['.github/workflows/deletion-recipient-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  presence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Report availability only without revealing recipient
+        env:
+          QA_RECIPIENT: ${{ secrets.IDOGS_DELETION_QA_RECIPIENT_EMAIL }}
+        run: node -e 'console.log(JSON.stringify({recipientSecretAvailable:Boolean(process.env.QA_RECIPIENT?.trim()),emailSent:false}))'

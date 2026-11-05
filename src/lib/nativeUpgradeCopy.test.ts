@@ -48,7 +48,7 @@ describe('native upgrade copy — Android Play policy gate', () => {
   })
 
   it('AI scan quota message ignores the Android flag once the user is on Plus', () => {
-    const plusMessage = "You've used all 10 AI scans for this billing period — resets next period."
+    const plusMessage = "You've used all 10 iDogs Scans for this billing period — resets next period."
     expect(aiScanQuotaExhaustedMessage(true, true)).toBe(plusMessage)
     expect(aiScanQuotaExhaustedMessage(false, true)).toBe(plusMessage)
   })

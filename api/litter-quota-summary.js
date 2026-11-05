@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
@@ -76,4 +77,4 @@ async function handler(req, res) {
   return res.status(200).json(summary)
 }
 
-export default withApiErrorHandling('litter-quota-summary', handler)
+export default withAccountMutationFence(withApiErrorHandling('litter-quota-summary', handler), { route: 'api/litter-quota-summary.js' })

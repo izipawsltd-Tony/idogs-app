@@ -1,7 +1,9 @@
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 import { computeEffectivePlan } from './entitlements.js'
-import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
+import { CHECKOUT_PRICE_IDS, LEGACY_PLUS_PRICE_INTERVALS } from './checkout-handler.js'
+import { requireAppUrl } from './require-config.js'
+import { createSeparateSmsCheckout } from './sms-checkout-session.js'
 
 // This is the verified iDogs Plus test-mode price in the iDogs Stripe Test mode
 // environment. It is accepted only on Vercel Preview for the isolated iDogs
@@ -25,7 +27,7 @@ function subscriptionPriceIds(subscription) {
 }
 
 function allowedBasePlusPriceIds() {
-  const allowed = [...Object.values(CHECKOUT_PRICE_IDS)]
+  const allowed = [...Object.values(CHECKOUT_PRICE_IDS), ...Object.keys(LEGACY_PLUS_PRICE_INTERVALS)]
   if (process.env.VERCEL_ENV === 'preview' && process.env.FIREBASE_PROJECT_ID === 'idogs-app-staging') {
     allowed.push(STAGING_PLUS_PRICE_ID)
   }
@@ -50,7 +52,9 @@ export function createSmsAddonCheckoutHandler({
   verifyIdToken,
   getProfile,
   retrieveSubscription,
-  updateSubscription,
+  listSubscriptions, createSession, getSmsAttempt, saveSmsSession,
+  verifyCheckout = async () => false,
+  getAppUrl = requireAppUrl,
   getPriceId = () => process.env.STRIPE_SMS_ADDON_PRICE_ID,
 } = {}) {
   return async function handler(req, res) {
@@ -100,27 +104,23 @@ export function createSmsAddonCheckoutHandler({
       if (!hasBasePlusPrice(subscription)) {
         return reject409(res, 'SMS_GUARD_PLUS_PRICE_MISMATCH', 'Verified iDogs Plus price not found on subscription')
       }
+      if (!['active', 'trialing'].includes(subscription.status)) {
+        return reject409(res, 'SMS_GUARD_STRIPE_STATUS', 'Resolve your Plus billing status before adding SMS')
+      }
       if (hasPrice(subscription, priceId)) {
         return reject409(res, 'SMS_GUARD_ALREADY_PRESENT', 'SMS add-on already exists; manage it in Billing')
       }
 
-      const updated = await updateSubscription(subscription.id, {
-        items: [{ price: priceId, quantity: 1 }],
-        proration_behavior: 'always_invoice',
-        payment_behavior: 'pending_if_incomplete',
-        expand: ['latest_invoice'],
-      })
-
-      const pending = Boolean(updated?.pending_update)
-      const hostedInvoiceUrl = typeof updated?.latest_invoice === 'object'
-        ? updated.latest_invoice?.hosted_invoice_url || null
-        : null
-
-      return res.status(pending ? 202 : 200).json({
-        success: true,
-        status: pending ? 'pending_payment' : 'activating',
-        hostedInvoiceUrl,
-      })
+      // A subscription-wide trial also makes newly attached items free. Use
+      // an independent paid SMS subscription, preserving the Plus promotion.
+      {
+        const origin = getAppUrl()
+        if (!origin || !listSubscriptions || !createSession || !getSmsAttempt || !saveSmsSession) throw new Error('SMS_CHECKOUT_NOT_CONFIGURED')
+        if (!await verifyCheckout(profile, priceId, subscription.livemode)) throw new Error('SMS_PRICE_TAX_UNVERIFIED')
+        const session = await createSeparateSmsCheckout({ uid: identity.uid, profile, priceId, origin,
+          listSubscriptions, createSession, getSmsAttempt, saveSmsSession })
+        return res.status(200).json({ url: session.url })
+      }
     } catch (err) {
       logSanitizedError('create-sms-addon-checkout', 'SMS_ADDON_UPDATE_FAILED', { code: err?.code })
       return res.status(500).json({ error: 'Failed to add SMS to your Plus subscription' })
@@ -134,6 +134,7 @@ export function createSmsAddonRemoveHandler({
   getProfile,
   retrieveSubscription,
   updateSubscription,
+  cancelSubscription,
   getPriceId = () => process.env.STRIPE_SMS_ADDON_PRICE_ID,
 } = {}) {
   return async function handler(req, res) {
@@ -179,6 +180,16 @@ export function createSmsAddonRemoveHandler({
       }
       if (!hasBasePlusPrice(subscription)) {
         return reject409(res, 'SMS_REMOVE_PLUS_PRICE_MISMATCH', 'Verified iDogs Plus price not found on subscription')
+      }
+
+      if (profile.smsStripeSubscriptionId && profile.smsStripeSubscriptionId !== subscription.id) {
+        const sms = await retrieveSubscription(profile.smsStripeSubscriptionId)
+        if (customerIdOf(sms) !== profile.stripeCustomerId || sms.metadata?.userId !== identity.uid ||
+            sms.metadata?.purchaseType !== 'sms_addon' || !hasPrice(sms, priceId) || hasBasePlusPrice(sms)) {
+          return reject409(res, 'SMS_REMOVE_SEPARATE_MISMATCH', 'SMS subscription could not be verified')
+        }
+        if (!['canceled', 'incomplete_expired'].includes(sms.status)) await cancelSubscription(sms.id, { prorate: false, invoice_now: false })
+        return res.status(200).json({ success: true, status: 'removing' })
       }
 
       const smsItem = (subscription.items?.data || []).find(item => item?.price?.id === priceId)

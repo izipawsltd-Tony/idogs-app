@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/set-dog-status.js — trusted server-side dog status transitions for
 // iDogs Pricing v1.1/v1.2 (Pricing_Decision_Record_v1.1.md §3.2/§3.3,
 // LOCKED, plus the v1.2 litter-puppy cap-eligibility change — see
@@ -221,4 +222,4 @@ async function handler(req, res) {
   )
 }
 
-export default withApiErrorHandling('set-dog-status', handler)
+export default withAccountMutationFence(withApiErrorHandling('set-dog-status', handler), { route: 'api/set-dog-status.js' })

@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/stripe-webhook.js — Stripe webhook entrypoint. All subscription
 // entitlement logic lives in api/_lib/webhook-handler.js; one-time Extra
 // Litter credit grants are verified/idempotent in extra-litter-webhook.js.
@@ -6,7 +7,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { createWebhookHandler } from './_lib/webhook-handler.js'
 import { grantExtraLitterCreditFromVerifiedEvent } from './_lib/extra-litter-webhook.js'
-import { reconcileVerifiedPlusSubscription, verifiedPlusInterval } from './_lib/billing-reconcile.js'
+import { prepareEmulatorVerifiedStripeEvent } from './_lib/deletion-stripe-ingress.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 
@@ -32,45 +33,16 @@ async function getRawBody(req) {
 }
 
 const db = getFirestore()
-const getSubscription = subscriptionId => stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] })
+const getSubscription = subscriptionId => stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price', 'latest_invoice'] })
 
 const processWebhook = createWebhookHandler({
   constructEvent: (rawBody, sig) => stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET),
   getSubscription,
+  cancelSubscription: (id, params) => stripe.subscriptions.cancel(id, params),
   db,
 })
 
-function subscriptionIdFromVerifiedEvent(event) {
-  const object = event?.data?.object
-  if (!object) return null
-  if (event.type === 'checkout.session.completed') {
-    return typeof object.subscription === 'string' ? object.subscription : object.subscription?.id || null
-  }
-  if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated') {
-    return object.id || null
-  }
-  if (event.type === 'invoice.payment_succeeded' || event.type === 'invoice.paid') {
-    const legacy = typeof object.subscription === 'string' ? object.subscription : object.subscription?.id
-    if (legacy) return legacy
-    const current = object.parent?.subscription_details?.subscription
-    return typeof current === 'string' ? current : current?.id || null
-  }
-  return null
-}
-
-async function reconcileActivePlusFromVerifiedEvent(event) {
-  const subscriptionId = subscriptionIdFromVerifiedEvent(event)
-  if (!subscriptionId) return
-  const subscription = event.type.startsWith('customer.subscription.')
-    ? event.data.object
-    : await getSubscription(subscriptionId)
-  if (!verifiedPlusInterval(subscription)) return
-  const userId = subscription?.metadata?.userId
-  if (!userId) return
-  await reconcileVerifiedPlusSubscription({ db, subscription, userId, eventCreated: event.created })
-}
-
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
 
   const sig = req.headers['stripe-signature']
@@ -83,6 +55,21 @@ export default async function handler(req, res) {
     // The core handler owns the canonical 400 response for invalid signatures.
   }
 
+  if(process.env.ACCOUNT_DELETION_MODE==='prototype-emulator'&&verifiedEvent){
+    try{
+      const [{getAuth},{getStorage}]=await Promise.all([import('firebase-admin/auth'),import('firebase-admin/storage')])
+      const auth=getAuth(),projectId=auth.app.options.projectId
+      // Never borrow the normal provider client for a prototype invocation.
+      const privateTransportRequired=async()=>{throw Object.assign(new Error('WEBHOOK_PRIVATE_TEST_TRANSPORT_REQUIRED'),{code:'WEBHOOK_PRIVATE_TEST_TRANSPORT_REQUIRED',status:423})}
+      const scope=await prepareEmulatorVerifiedStripeEvent({db,auth,projectId,bucket:getStorage().bucket(`${projectId}.firebasestorage.app`),rawBody,signature:sig,
+        verifyEvent:(body,signature)=>stripe.webhooks.constructEvent(body,signature,process.env.STRIPE_WEBHOOK_SECRET),getSubscription:privateTransportRequired,
+        cancelSubscription:privateTransportRequired,executionEnabled:true})
+      const guarded=createWebhookHandler({db:scope.db,constructEvent:scope.constructEvent,getSubscription:scope.getSubscription,cancelSubscription:scope.cancelSubscription})
+      const result=await guarded(rawBody,sig)
+      if(result.status===200)await grantExtraLitterCreditFromVerifiedEvent({db:scope.db,event:scope.event})
+      return res.status(result.status).json(result.body)
+    }catch(error){return res.status(error.status===423?423:503).json({error:'Verified webhook safety checks held processing',code:error.code||'WEBHOOK_INGRESS_HELD'})}
+  }
   const result = await processWebhook(rawBody, sig)
   if (result.status === 200 && verifiedEvent) {
     try {
@@ -90,13 +77,14 @@ export default async function handler(req, res) {
       // Extra Litter Checkout session. Deterministic session-id document
       // makes Stripe redelivery safe and prevents double-credit.
       await grantExtraLitterCreditFromVerifiedEvent({ db, event: verifiedEvent })
-      await reconcileActivePlusFromVerifiedEvent(verifiedEvent)
     } catch (error) {
       console.error('stripe-webhook: verified post-processing failed', { code: error?.message || 'POST_PROCESSING_FAILED' })
       // Return 500 so Stripe retries. Extra-litter grants are idempotent,
-      // and the subscription reconciler is already designed for retries.
+      // and subscription effects remain in the fenced core handler.
       return res.status(500).json({ error: 'Webhook entitlement post-processing failed' })
     }
   }
   return res.status(result.status).json(result.body)
 }
+
+export default withAccountMutationFence(handler, { route: 'api/stripe-webhook.js' })

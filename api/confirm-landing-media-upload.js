@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 // api/confirm-landing-media-upload.js — Super Admin -> Landing Page
 // Media. The second half of the direct-upload flow (see
 // api/request-landing-media-upload.js for the first half). Called AFTER
@@ -191,4 +192,4 @@ async function handler(req, res) {
   }
 }
 
-export default handler
+export default withAccountMutationFence(handler, { route: 'api/confirm-landing-media-upload.js' })

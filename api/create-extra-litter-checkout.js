@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 import Stripe from 'stripe'
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
@@ -24,7 +25,7 @@ if (!getApps().length) {
 
 const db = getFirestore()
 
-export default createExtraLitterCheckoutHandler({
+export default withAccountMutationFence(createExtraLitterCheckoutHandler({
   verifyIdToken: token => getAuth().verifyIdToken(token),
   getProfile: async uid => {
     const snap = await db.collection('users').doc(uid).get()
@@ -49,4 +50,4 @@ export default createExtraLitterCheckoutHandler({
     }
   }),
   createSession: (params, options) => stripe.checkout.sessions.create(params, options),
-})
+}), { route: 'api/create-extra-litter-checkout.js' })

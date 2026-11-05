@@ -1,3 +1,4 @@
+import { withAccountMutationFence } from '../_lib/deletion-fence.js'
 // api/super-admin/settings.js — Read-only platform configuration & safety overview
 //
 // Read-only. Returns only safe, non-secret metadata: the Firebase project id
@@ -7,7 +8,7 @@
 // tokens, or any other credential material.
 import { verifySuperAdmin, ALLOWED_ADMINS } from './_auth.js'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -111,3 +112,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to compile settings overview', message: error.message })
   }
 }
+
+export default withAccountMutationFence(handler, { route: 'api/super-admin/settings.js' })

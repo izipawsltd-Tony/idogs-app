@@ -1,7 +1,8 @@
+import { withAccountMutationFence } from './_lib/deletion-fence.js'
 const EXPECTED_PROJECT = 'idogs-app-staging'
 const EXPECTED_BRANCH = 'feat/mobile-app-foundation'
 
-export default async function handler(req, res) {
+  async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0')
 
   if (req.method !== 'GET') {
@@ -32,3 +33,5 @@ export default async function handler(req, res) {
 
   return res.status(200).json(body)
 }
+
+export default withAccountMutationFence(handler, { route: 'api/native-qa-health.js' })

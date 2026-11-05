@@ -1,0 +1,11 @@
+# Isolated staging read-access gate
+
+The signed iPhone app still cannot QA permanent deletion: no production worker or real deletion-renewal adapter is enabled. Emulator success must not be reported as Firebase staging or Stripe Test integration success.
+
+Prepared `Deletion staging readiness (read only)` Actions workflow on the isolated release branch. It uses only the existing canonical `IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON` and a dedicated `IDOGS_DELETION_STRIPE_TEST_KEY` Actions secret. It never pulls production environment variables, creates identities, lists customer files, changes subscriptions, sends email or deletes data. Credentials stay inside Actions and SDK errors are reduced to safe codes. Prefer a restricted Test key for existing iDogs account acct_1TiU0IGHgBd6ZgJE, with only the required read permissions for Accounts and Subscriptions for this preflight. No live key or new IAM grant is implied.
+
+The script pins idogs-app-staging and its exact bucket, rejects emulator/endpoint overrides, checks service-account target before SDK construction, probes one fixed readiness document and an Auth probe UID without listing users, verifies the Stripe account, validates test-mode subscription responses and reports bucket location. Missing credentials produce an explicit nonzero gate. A successful result means read access only; it does not establish permission to delete, a working processor, renewal cancellation, webhook reconciliation or email delivery.
+
+Five mock tests cover missing credentials, production/live rejection before IO, output privacy, returned-target mismatch, endpoint overrides and access failures. This is a prerequisite for the cloud QA harness, not an activation path. The permanent processor remains emulator-only; no environment flag introduced here enables it on cloud resources. Existing taxes, pricing and Stripe configuration remain unchanged.
+
+Before public release, reconcile the latest independently deployed web/SMS source with the iOS candidate, implement and review isolated staging ingress/storage/provider processing, run disposable-fixture deletion and test subscription cancellation through signed-webhook readback, test delivery after Auth revocation, prepare effective policy and device screenshots, and obtain separate exact-source approval before Production activation.
