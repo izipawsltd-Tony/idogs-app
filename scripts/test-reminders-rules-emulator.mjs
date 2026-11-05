@@ -59,6 +59,8 @@ async function seed() {
     // permanent), so this is the exact document the production bug could
     // never surface to OWNER.
     await setDoc(doc(db, 'reminders/rem1'), { dogId: 'dog1', tenantId: BREEDER, status: 'pending', title: 'Vaccine' })
+    // rem1b: second reminder on claimed dog1, used for the current-owner delete case.
+    await setDoc(doc(db, 'reminders/rem1b'), { dogId: 'dog1', tenantId: BREEDER, status: 'pending', title: 'Worming' })
     // rem2: BREEDER's own reminder on their own dog2 — must keep working
     // via the pre-existing tenantId path, unchanged.
     await setDoc(doc(db, 'reminders/rem2'), { dogId: 'dog2', tenantId: BREEDER, status: 'pending', title: 'Worming' })
@@ -90,18 +92,58 @@ await checkAsync('OWNER can LIST reminders via the real dogId "in" claimed-dog q
   return snap.size === 1 && snap.docs[0].id === 'rem1'
 })
 
-// ── 2. Original breeder can still read historical reminders (unchanged) ──
+// ── 2. Former owner (original breeder) loses live access to the transferred
+//      dog's reminders. Current rules are owner-based (dogBelongsToUser /
+//      dogWriteAccess): live dog data is current-owner-only; former owners
+//      see history only through immutable server-side transfer snapshots.
+//      Their own, never-transferred dogs are unaffected. ──────────────────
 
-await checkAsync('BREEDER (tenantId match) can still GET rem1 — pre-existing provenance access unchanged', async () => {
+await checkAsync('FORMER OWNER (BREEDER, tenantId match) cannot GET rem1 on the transferred dog1', async () => {
   const db = testEnv.authenticatedContext(BREEDER).firestore()
-  await assertSucceeds(getDoc(doc(db, 'reminders/rem1')))
+  await assertFails(getDoc(doc(db, 'reminders/rem1')))
   return true
 })
 
-await checkAsync('BREEDER can still LIST their own reminders via the tenant-scoped query — unchanged', async () => {
+await checkAsync('FORMER OWNER cannot LIST dog1 reminders via the dogId query', async () => {
   const db = testEnv.authenticatedContext(BREEDER).firestore()
-  const snap = await assertSucceeds(getDocs(query(collection(db, 'reminders'), where('tenantId', '==', BREEDER))))
-  return snap.size === 2 && new Set(snap.docs.map(d => d.id)).has('rem1') && new Set(snap.docs.map(d => d.id)).has('rem2')
+  await assertFails(getDocs(query(collection(db, 'reminders'), where('dogId', '==', 'dog1'))))
+  return true
+})
+
+await checkAsync('FORMER OWNER cannot LIST via the legacy tenantId-only query (it would include the transferred dog)', async () => {
+  const db = testEnv.authenticatedContext(BREEDER).firestore()
+  await assertFails(getDocs(query(collection(db, 'reminders'), where('tenantId', '==', BREEDER))))
+  return true
+})
+
+await checkAsync('FORMER OWNER cannot UPDATE rem1 on the transferred dog', async () => {
+  const db = testEnv.authenticatedContext(BREEDER).firestore()
+  await assertFails(updateDoc(doc(db, 'reminders/rem1'), { status: 'completed' }))
+  return true
+})
+
+await checkAsync('FORMER OWNER cannot DELETE rem1 on the transferred dog', async () => {
+  const db = testEnv.authenticatedContext(BREEDER).firestore()
+  await assertFails(deleteDoc(doc(db, 'reminders/rem1')))
+  return true
+})
+
+await checkAsync('FORMER OWNER cannot CREATE a new reminder on the transferred dog', async () => {
+  const db = testEnv.authenticatedContext(BREEDER).firestore()
+  await assertFails(setDoc(doc(db, 'reminders/rem-former'), { dogId: 'dog1', tenantId: BREEDER, status: 'pending' }))
+  return true
+})
+
+await checkAsync('BREEDER keeps GET on their own never-transferred dog2 reminder', async () => {
+  const db = testEnv.authenticatedContext(BREEDER).firestore()
+  await assertSucceeds(getDoc(doc(db, 'reminders/rem2')))
+  return true
+})
+
+await checkAsync('BREEDER keeps LIST on their own dog2 via the real dogId query shape', async () => {
+  const db = testEnv.authenticatedContext(BREEDER).firestore()
+  const snap = await assertSucceeds(getDocs(query(collection(db, 'reminders'), where('dogId', '==', 'dog2'))))
+  return snap.size === 1 && snap.docs[0].id === 'rem2'
 })
 
 // ── 3. Unrelated third party cannot get/list ──────────────────────────
@@ -118,16 +160,29 @@ await checkAsync('STRANGER cannot LIST rem1 via dogId query', async () => {
   return true
 })
 
-// ── 4. Claimed owner cannot create/update/delete through the new read grant ──
+// ── 4. Current owner manages the claimed dog's reminders; forging is still denied ──
 
-await checkAsync('OWNER cannot UPDATE rem1 (tenantId still BREEDER — write rules untouched by this fix)', async () => {
+await checkAsync('CURRENT OWNER can UPDATE rem1 on the claimed dog (tenantId may stay the breeder)', async () => {
   const db = testEnv.authenticatedContext(OWNER).firestore()
-  await assertFails(updateDoc(doc(db, 'reminders/rem1'), { status: 'completed' }))
+  await assertSucceeds(updateDoc(doc(db, 'reminders/rem1'), { status: 'completed' }))
   return true
 })
 
-await checkAsync('OWNER cannot DELETE rem1 (tenantId still BREEDER — write rules untouched by this fix)', async () => {
+await checkAsync('CURRENT OWNER cannot move rem1 to an unrelated dog', async () => {
   const db = testEnv.authenticatedContext(OWNER).firestore()
+  await assertFails(updateDoc(doc(db, 'reminders/rem1'), { dogId: 'dog3' }))
+  return true
+})
+
+await checkAsync('CURRENT OWNER can DELETE a reminder (rem1b) on the claimed dog', async () => {
+  const db = testEnv.authenticatedContext(OWNER).firestore()
+  await assertSucceeds(deleteDoc(doc(db, 'reminders/rem1b')))
+  return true
+})
+
+await checkAsync('STRANGER cannot UPDATE or DELETE rem1', async () => {
+  const db = testEnv.authenticatedContext(STRANGER).firestore()
+  await assertFails(updateDoc(doc(db, 'reminders/rem1'), { status: 'pending' }))
   await assertFails(deleteDoc(doc(db, 'reminders/rem1')))
   return true
 })

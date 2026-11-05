@@ -11,8 +11,13 @@ if (!process.env.FIRESTORE_EMULATOR_HOST || process.env.GCLOUD_PROJECT !== PROJE
   throw new Error('Emulator-only: refuses every non-demo project')
 }
 initializeApp({ projectId: PROJECT_ID })
-const identities = { former: { uid: 'former', email: 'former@emulator.local' },
-  buyer: { uid: 'buyer', email: 'buyer@emulator.local' }, stranger: { uid: 'stranger', email: 'stranger@emulator.local' } }
+// Handlers require a verified email (transfer, claim, export). Stub tokens
+// must carry email_verified like real Firebase ID tokens do; 'unverified'
+// proves the guard still refuses unverified accounts.
+const identities = { former: { uid: 'former', email: 'former@emulator.local', email_verified: true },
+  buyer: { uid: 'buyer', email: 'buyer@emulator.local', email_verified: true },
+  stranger: { uid: 'stranger', email: 'stranger@emulator.local', email_verified: true },
+  unverified: { uid: 'unverified', email: 'unverified@emulator.local', email_verified: false } }
 mock.module('firebase-admin/auth', { namedExports: { getAuth: () => ({ verifyIdToken: async token => {
   if (!identities[token]) throw new Error('Invalid')
   return identities[token]
@@ -33,6 +38,12 @@ async function call(handler, body, token) {
   return res
 }
 
+{
+  await db.collection('dogs').doc('unverified-dog').set({ name: 'Unverified', tenantId: 'unverified', currentOwnerId: 'unverified', status: 'active' })
+  const r = await call(transfer, { dogId: 'unverified-dog', buyerName: 'QA Buyer', buyerEmail: 'buyer@emulator.local' }, 'unverified')
+  check(r.code === 403, 'unverified email cannot start a transfer')
+  check((await db.collection('dogs').doc('unverified-dog').get()).data().currentOwnerId === 'unverified', 'refused transfer leaves the dog unchanged')
+}
 for (const dogId of ['privacy-first', 'privacy-second']) {
   await db.collection('dogs').doc(dogId).set({ name: `Before ${dogId}`, tenantId: 'former', currentOwnerId: 'former',
     sex: 'female', breed: 'Labrador Retriever', dateOfBirth: '2023-01-01', createdAt: '2023-01-01', status: 'active', photos: ['before-photo'], passportId: dogId })
