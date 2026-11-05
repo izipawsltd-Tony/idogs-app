@@ -82,3 +82,13 @@ describe('owner QA on 1.0 (167)', () => {
     expect(appLayout).toContain("navigate(isNativeApp() ? '/login' : '/')")
   })
 })
+
+describe('native status-bar band does not cover auth screens', () => {
+  const authCss = read('../components/ui/auth-layout.css')
+  const nativeCss = read('../mobile-native-qa-polish.css')
+  it('auth layout and stand-alone screens reserve the safe-area top only in the app', () => {
+    expect(authCss).toMatch(/html\[data-idogs-native-platform\] \.idogs-auth\{padding-top:calc\(var\(--safe-area-top/)
+    expect(nativeCss).toMatch(/html\[data-idogs-native-platform\] \.idogs-native-safe-page\{padding-top:calc\(var\(--safe-area-top/)
+    for (const page of ['VerifyEmailPage', 'ForgotPasswordPage']) expect(read(`../pages/${page}.tsx`)).toContain('className="idogs-native-safe-page"')
+  })
+})

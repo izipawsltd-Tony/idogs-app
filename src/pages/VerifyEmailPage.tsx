@@ -91,7 +91,7 @@ export default function VerifyEmailPage({ toast }: Props) {
   }
 
   return (
-    <div style={{
+    <div className="idogs-native-safe-page" style={{
       minHeight: '100vh',
       background: 'var(--sand)',
       display: 'flex',
