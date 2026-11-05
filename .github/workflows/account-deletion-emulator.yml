@@ -2,7 +2,7 @@ name: Account deletion emulator integration
 
 on:
   push:
-    branches: [fix/android-v20-qa-blockers, fix/account-deletion-backend-20261019, fix/deletion-policy-backend-20261021, feat/plus-promotion-20261021]
+    branches: [fix/android-v20-qa-blockers, fix/account-deletion-backend-20261019, fix/deletion-policy-backend-20261021, feat/plus-promotion-20261021, claude/web-deletion-ops-20261106]
     paths:
       - api/account-deletion.js
       - api/_lib/account-deletion.js
@@ -10,6 +10,9 @@ on:
       - api/_lib/account-deletion-inventory.js
       - scripts/test-account-deletion-emulator.mjs
       - scripts/test-account-deletion.mjs
+      - scripts/test-account-deletion-operator-emulator.mjs
+      - api/_lib/account-deletion-operator.js
+      - api/super-admin/account-deletions.js
       - .github/workflows/account-deletion-emulator.yml
       - firestore.rules
   workflow_dispatch:
@@ -37,3 +40,7 @@ jobs:
         env:
           GCLOUD_PROJECT: demo-idogs-account-deletion
         run: npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-account-deletion --only auth,firestore 'node --test scripts/test-account-deletion-emulator.mjs'
+      - name: Operator flow (preview, process, mark completed) on emulators
+        env:
+          GCLOUD_PROJECT: demo-idogs-account-deletion
+        run: npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-account-deletion --only auth,firestore 'node --test scripts/test-account-deletion-operator-emulator.mjs'
