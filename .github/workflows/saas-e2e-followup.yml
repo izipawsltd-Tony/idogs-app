@@ -1,0 +1,42 @@
+name: SaaS E2E follow-up (emulator only)
+
+# Runs the two suites from Issue #69 that are not in iDogs CI: transfer
+# privacy (real handlers, demo project) and reminder rules (owner-based
+# policy). Demo projects only; no secrets, no staging/production access.
+on:
+  push:
+    branches: [claude/saas-e2e-fixes-20261105]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulator-suites:
+    name: Transfer privacy + reminder rules (emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - name: Reminder authorization rules (owner-based)
+        env:
+          GCLOUD_PROJECT: demo-idogs-rules-test
+        run: |
+          npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-rules-test --only firestore \
+            'node scripts/test-reminders-rules-emulator.mjs'
+      - name: Transfer privacy E2E (real handlers)
+        if: always()
+        env:
+          GCLOUD_PROJECT: demo-idogs-h8
+        run: |
+          npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-h8 --only firestore \
+            'node --experimental-test-module-mocks scripts/test-transfer-privacy-e2e.mjs'

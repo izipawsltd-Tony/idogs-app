@@ -40,6 +40,7 @@ for (const dogId of ['privacy-first', 'privacy-second']) {
     name: 'Before transfer', tenantId: 'former', createdBy: 'former', createdAt: '2026-10-01T00:00:00Z',
     filePath: `documents/former/${dogId}/before.pdf`, status: 'pending' })
   const r = await call(transfer, { dogId, buyerName: 'QA Buyer', buyerEmail: 'buyer@emulator.local' }, 'former')
+  if (r.code !== 200) console.log(`DIAG ${dogId} transfer status=${r.code} error=${JSON.stringify(r.body?.error ?? null)}`)
   check(r.code === 200, `${dogId}: atomic transfer succeeds`)
   const s = await db.collection('ownershipHistorySnapshots').doc(r.body.snapshotId).get()
   check(s.exists && s.data().fromOwnerId === 'former', `${dogId}: snapshot exists with verified former owner`)
