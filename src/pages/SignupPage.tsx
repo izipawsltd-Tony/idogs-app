@@ -20,6 +20,9 @@ export default function SignupPage({ toast }: Props) {
   const [showPassword, setShowPassword] = useState(false), [agreed, setAgreed] = useState(false), [promotions, setPromotions] = useState(true), [promotionsConfirmed, setPromotionsConfirmed] = useState(false)
   const [loading, setLoading] = useState(false), [error, setError] = useState('')
   const returnTo = signupDestination(params.get('next')), puppy = returnTo.startsWith('/p/')
+  // The landing CTA's choice ("…as a Breeder" / "…as a Dog Owner") arrives as
+  // ?role= and becomes the editable default; plain /signup stays Pet owner.
+  const [role, setRole] = useState<'owner' | 'breeder'>(params.get('role') === 'breeder' ? 'breeder' : 'owner')
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -28,7 +31,7 @@ export default function SignupPage({ toast }: Props) {
     if (!agreed) { setError('Please agree to the Terms & Conditions to create your account.'); return }
     setLoading(true); setError('')
     try {
-      await signup({ email: email.trim(), password, ...splitDisplayName(name), kennelName: '', role: 'owner', marketingOptIn: promotions && promotionsConfirmed, termsAccepted: true })
+      await signup({ email: email.trim(), password, ...splitDisplayName(name), kennelName: '', role, marketingOptIn: promotions && promotionsConfirmed, termsAccepted: true })
       toast('Welcome to iDogs!')
       navigate(`/verify-email?next=${encodeURIComponent(returnTo)}`, { replace: true })
     } catch (err) {
@@ -44,6 +47,13 @@ export default function SignupPage({ toast }: Props) {
   return <AuthLayout title={puppy ? 'Keep their story close' : 'Welcome to iDogs'} description={puppy ? 'Save this dog’s profile to find it again. You can keep viewing shared photos and records without an account.' : 'A place for your dog’s photos, memories and important records. Create your free account and make yourself at home.'} backTo={puppy ? returnTo.split('?')[0] : '/'} backLabel={puppy ? 'Back to dog profile' : 'Back to iDogs'}>
     <div className="idogs-auth-tabs" aria-label="Choose how to register"><button type="button" aria-pressed={method === 'email'} disabled={loading} onClick={() => { setMethod('email'); setError('') }}>Email</button><button type="button" aria-pressed={method === 'phone'} disabled={loading} onClick={() => { setMethod('phone'); setError('') }}>Mobile number</button></div>
     {method === 'email' ? <form className="idogs-auth-form" onSubmit={submit}>
+      <fieldset className="idogs-auth-role" disabled={loading} style={{ border: 0, padding: 0, margin: 0 }}>
+        <legend style={{ fontWeight: 600, marginBottom: 6 }}>I am a</legend>
+        <div className="idogs-auth-tabs" style={{ marginBottom: 0 }}>
+          <button type="button" aria-pressed={role === 'owner'} onClick={() => setRole('owner')}>Pet owner</button>
+          <button type="button" aria-pressed={role === 'breeder'} onClick={() => setRole('breeder')}>Breeder</button>
+        </div>
+      </fieldset>
       <label>User name<input className="form-input" autoComplete="nickname" value={name} onChange={e => setName(e.target.value)} required maxLength={120} disabled={loading} placeholder="What should we call you?" /></label>
       <label>Email address<input className="form-input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required disabled={loading} placeholder="you@example.com" /></label>
       <label>Password<span className="idogs-auth-password"><input className="form-input" type={showPassword ? 'text' : 'password'} autoComplete="new-password" minLength={8} value={password} onChange={e => setPassword(e.target.value)} required disabled={loading} placeholder="At least 8 characters" /><button className="btn btn-secondary" type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(v => !v)}>{showPassword ? 'Hide' : 'Show'}</button></span></label>

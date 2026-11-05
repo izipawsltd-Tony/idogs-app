@@ -225,7 +225,7 @@ jobs:
           set -euo pipefail
           xcrun altool             --upload-app             --type ios             --file "$IOS_IPA_PATH"             --apiKey "$APPLE_KEY_ID"             --apiIssuer "$APPLE_ISSUER_ID"
 
-      - name: Assign processed build to existing internal testers
+      - name: Add processed build to the internal beta group
         shell: bash
         run: |
           set -euo pipefail
@@ -265,57 +265,57 @@ jobs:
           done
           test -n "$BUILD_ID" || { echo "::error::Timed out waiting for App Store Connect build $IOS_BUILD_NUMBER"; exit 1; }
 
-          JWT_TOKEN="$(make_jwt)"
-          TESTERS="$(
+          # Add the build to the internal group (the group distributes it to
+          # its testers). Per-tester assignment returned 409 STATE_ERROR /
+          # 404 NOT_FOUND on builds 168-169 although the build still reached
+          # the tester, so group membership is the contract we verify.
+          group_has_build() {
+            JWT_TOKEN="$(make_jwt)"
             curl --fail-with-body --silent --show-error \
-              "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID/relationships/betaTesters?limit=200" \
-              -H "Authorization: Bearer $JWT_TOKEN"
-          )"
-          TESTER_IDS="$(printf '%s' "$TESTERS" | ruby -rjson -e 'j=JSON.parse(STDIN.read); puts j.fetch("data",[]).map{|x| x["id"]}.compact')"
-          test -n "$TESTER_IDS" || { echo "::error::No internal testers found in iDogs Internal QA"; exit 1; }
-
-          ASSIGNED=0
-          while IFS= read -r TESTER_ID; do
-            [ -n "$TESTER_ID" ] || continue
-            VERIFIED=0
-            for assignment_attempt in $(seq 1 6); do
-              JWT_TOKEN="$(make_jwt)"
-              VERIFY="$(curl --fail-with-body --silent --show-error \
-                "https://api.appstoreconnect.apple.com/v1/betaTesters/$TESTER_ID/relationships/builds?limit=200" \
-                -H "Authorization: Bearer $JWT_TOKEN")"
-              if printf '%s' "$VERIFY" | BUILD_ID="$BUILD_ID" ruby -rjson -e '
+              "https://api.appstoreconnect.apple.com/v1/builds/$BUILD_ID/relationships/betaGroups?limit=200" \
+              -H "Authorization: Bearer $JWT_TOKEN" \
+            | ASC_INTERNAL_BETA_GROUP_ID="$ASC_INTERNAL_BETA_GROUP_ID" ruby -rjson -e '
                 ids = JSON.parse(STDIN.read).fetch("data", []).map { |x| x["id"] }
-                exit(ids.include?(ENV.fetch("BUILD_ID")) ? 0 : 1)
-              '; then
-                VERIFIED=1
-                break
-              fi
-              JWT_TOKEN="$(make_jwt)"
-              BODY="$(printf '{"data":[{"type":"builds","id":"%s"}]}' "$BUILD_ID")"
-              RESPONSE_FILE="$RUNNER_TEMP/testflight-assignment.json"
-              HTTP_STATUS="$(curl --silent --show-error --output "$RESPONSE_FILE" --write-out '%{http_code}' \
-                -X POST \
-                "https://api.appstoreconnect.apple.com/v1/betaTesters/$TESTER_ID/relationships/builds" \
-                -H "Authorization: Bearer $JWT_TOKEN" \
-                -H "Content-Type: application/json" --data "$BODY")"
-              if [[ "$HTTP_STATUS" != 2* ]]; then
-                # Emit only provider error codes; never the tester response/body.
-                ruby -rjson -e '
-                  j = JSON.parse(File.read(ARGV[0])) rescue {}
-                  codes = j.fetch("errors", []).map { |e| e["code"].to_s.gsub(/[^A-Z0-9_.-]/, "")[0,100] }
-                  puts "Assignment response HTTP #{ARGV[1]}: #{codes.join(",") }"
-                ' "$RESPONSE_FILE" "$HTTP_STATUS"
-                [[ "$HTTP_STATUS" == 409 || "$HTTP_STATUS" == 429 || "$HTTP_STATUS" == 5* ]] || exit 1
-              fi
-              # A conflict may race automatic assignment or build availability.
-              # Success requires a subsequent GET proving the relationship.
-              sleep 10
-            done
-            test "$VERIFIED" = 1 || { echo "::error::Build assignment not verified after bounded retries"; exit 1; }
-            ASSIGNED=$((ASSIGNED + 1))
-          done <<< "$TESTER_IDS"
+                exit(ids.include?(ENV.fetch("ASC_INTERNAL_BETA_GROUP_ID")) ? 0 : 1)
+              '
+          }
 
-          echo "Internal tester assignment PASS for build $IOS_BUILD_NUMBER ($ASSIGNED tester(s))"
+          # Internal groups with access to all builds receive every VALID build
+          # automatically; there is no relationship to add in that case.
+          JWT_TOKEN="$(make_jwt)"
+          AUTO="$(curl --fail-with-body --silent --show-error \
+            "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID?fields%5BbetaGroups%5D=isInternalGroup,hasAccessToAllBuilds" \
+            -H "Authorization: Bearer $JWT_TOKEN" \
+            | ruby -rjson -e 'a = JSON.parse(STDIN.read).dig("data","attributes") || {}; print(a["isInternalGroup"] == true && a["hasAccessToAllBuilds"] == true ? "yes" : "no")')"
+          if [ "$AUTO" = yes ]; then
+            echo "Internal group assignment PASS for build $IOS_BUILD_NUMBER (internal group has access to all builds)"
+            exit 0
+          fi
+
+          VERIFIED=0
+          for attempt in $(seq 1 6); do
+            if group_has_build; then VERIFIED=1; break; fi
+            JWT_TOKEN="$(make_jwt)"
+            BODY="$(printf '{"data":[{"type":"builds","id":"%s"}]}' "$BUILD_ID")"
+            RESPONSE_FILE="$RUNNER_TEMP/testflight-group-assignment.json"
+            HTTP_STATUS="$(curl --silent --show-error --output "$RESPONSE_FILE" --write-out '%{http_code}' \
+              -X POST \
+              "https://api.appstoreconnect.apple.com/v1/betaGroups/$ASC_INTERNAL_BETA_GROUP_ID/relationships/builds" \
+              -H "Authorization: Bearer $JWT_TOKEN" \
+              -H "Content-Type: application/json" --data "$BODY")"
+            if [[ "$HTTP_STATUS" != 2* ]]; then
+              # Emit only provider error codes; never the response body.
+              ruby -rjson -e '
+                j = JSON.parse(File.read(ARGV[0])) rescue {}
+                codes = j.fetch("errors", []).map { |e| e["code"].to_s.gsub(/[^A-Z0-9_.-]/, "")[0,100] }
+                puts "Group assignment attempt HTTP #{ARGV[1]}: #{codes.join(",")}"
+              ' "$RESPONSE_FILE" "$HTTP_STATUS"
+              [[ "$HTTP_STATUS" == 409 || "$HTTP_STATUS" == 429 || "$HTTP_STATUS" == 5* ]] || exit 1
+            fi
+            sleep 15
+          done
+          test "$VERIFIED" = 1 || { echo "::error::Build $IOS_BUILD_NUMBER not in the internal beta group after bounded retries"; exit 1; }
+          echo "Internal group assignment PASS for build $IOS_BUILD_NUMBER (verified by readback)"
 
       - name: Upload signed IPA evidence
         if: always() && env.IOS_IPA_PATH != ''

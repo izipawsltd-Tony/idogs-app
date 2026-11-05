@@ -57,7 +57,7 @@ describe('iOS auth screens match idogs.com.au', () => {
     expect(login).toContain('title="Welcome back"')
     expect(signup).toContain("'Welcome to iDogs'")
     expect(signup).toContain('<SignupConsent')
-    expect(signup).toContain("role: 'owner'")
+    expect(signup).toContain("params.get('role') === 'breeder' ? 'breeder' : 'owner'")
     expect(signup).toContain('termsAccepted: true')
   })
 

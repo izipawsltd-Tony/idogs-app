@@ -203,7 +203,7 @@ export default function LandingPage() {
                   <li>Health and vaccination records</li>
                   <li>QR sharing</li>
                 </ul>
-                <Link className="btn btn-path" to="/signup">Start Free as a Dog Owner</Link>
+                <Link className="btn btn-path" to="/signup?role=owner">Start Free as a Dog Owner</Link>
               </div>
               <div className="path" id="for-breeders">
                 <h3>For Breeders</h3>
@@ -213,7 +213,7 @@ export default function LandingPage() {
                   <li>Create a Puppy Showcase</li>
                   <li>Add puppy photos</li>
                 </ul>
-                <Link className="btn btn-path" to="/signup">Start Free as a Breeder</Link>
+                <Link className="btn btn-path" to="/signup?role=breeder">Start Free as a Breeder</Link>
               </div>
             </div>
           </div>
