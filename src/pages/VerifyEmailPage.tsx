@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { verificationDelivery } from '../lib/signupVerification'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
@@ -16,6 +17,7 @@ export default function VerifyEmailPage({ toast }: Props) {
   const returnTo = safeAppReturnTo(searchParams.get('next'))
   const [checking, setChecking] = useState(false)
   const [resending, setResending] = useState(false)
+  const initialDelivery = verificationDelivery(user?.uid)
   const [cooldown, setCooldown] = useState(0)
   const [sendStatus, setSendStatus] = useState('')
 
@@ -117,7 +119,9 @@ export default function VerifyEmailPage({ toast }: Props) {
             {user?.email}
           </p>
           <p style={{ fontSize: 13, color: 'var(--light)', lineHeight: 1.6, marginBottom: 8 }}>
-            Click the link in that email, then come back here and press the button below.
+            {initialDelivery?.status === 'failed'
+              ? 'We could not send the first verification email. Tap “Send verification email” below; your account is saved.'
+              : 'Click the link in that email, then come back here and press the button below.'}
           </p>
           <p style={{ fontSize: 12, color: 'var(--gold)', lineHeight: 1.6, marginBottom: 24, background: 'var(--gold-light)', padding: '8px 12px', borderRadius: 8 }}>
             💡 Can't find it? Check your <strong>Spam</strong> or <strong>Junk</strong> folder — verification emails sometimes end up there.
@@ -133,7 +137,7 @@ export default function VerifyEmailPage({ toast }: Props) {
             style={{ width: '100%', height: 44, marginTop: 10 }}
             disabled={!user || resending || cooldown > 0}
           >
-            {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend verification email'}
+            {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : initialDelivery?.status === 'failed' ? 'Send verification email' : 'Resend verification email'}
           </button>
           {sendStatus && <p role="status" style={{ fontSize: 13, lineHeight: 1.6, marginTop: 12 }}>{sendStatus}</p>}
           <p style={{ fontSize: 12, color: 'var(--mid)', lineHeight: 1.6, marginTop: 16 }}>

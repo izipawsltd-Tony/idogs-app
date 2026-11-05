@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
+import { sendInitialVerification } from '../lib/signupVerification'
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -57,27 +58,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsub
   }, [])
 
-  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber, marketingOptIn = false }: SignupFormData) {
+  async function signup({ email, password, firstName, lastName, kennelName, role, state, breederNumber, marketingOptIn = false, termsAccepted = false }: SignupFormData) {
     const { user: newUser } = await createUserWithEmailAndPassword(auth, email, password)
     try {
-      await sendEmailVerification(newUser)
       await createUserProfile(newUser.uid, {
         email,
         firstName,
         lastName,
         kennelName,
         role: role || 'breeder',
+        ...(termsAccepted && { termsAcceptance: { version: 'terms-2026-10-29', acceptedAt: new Date().toISOString(), source: 'signup' as const } }),
         plan: 'trial',
         marketingConsent: {
           channel: 'email_marketing',
           choice: marketingOptIn ? 'opt_in' : 'opt_out',
-          source: 'explicit_checkbox',
+          source: termsAccepted ? 'explicit_choice' : 'explicit_checkbox',
           checkboxDefault: false,
           policyVersion: 'marketing-v1-2026-10',
           optedInAt: marketingOptIn ? new Date().toISOString() : null,
           revokedAt: null,
           email: newUser.email || email,
-          evidenceRef: 'signup-checkbox-v1',
+          evidenceRef: termsAccepted ? 'signup-choice-v2' : 'signup-checkbox-v1',
         },
         ...(state && { state: state as UserProfile['state'] }),
         ...(breederNumber?.trim() && { breederIdValue: breederNumber.trim() }),
@@ -90,6 +91,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try { await newUser.delete() } catch { /* best-effort; ignore if already gone */ }
       throw err
     }
+    // The account and profile now exist. A verification-email failure (for
+    // example Firebase throttling) must never delete them: Verify Email
+    // shows the delivery state and offers Resend.
+    await sendInitialVerification(newUser)
   }
 
   async function login(email: string, password: string) {
