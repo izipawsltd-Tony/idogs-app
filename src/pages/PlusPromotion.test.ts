@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const fixture = vi.hoisted(() => ({ user: { getIdToken: async () => 'synthetic-token' }, profile: { role: 'breeder', plan: 'free' } as any, refreshProfile: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: fixture.user, profile: fixture.profile, refreshProfile: fixture.refreshProfile }) }))
-vi.mock('../lib/nativePlatform', () => ({ isNativeApp: () => false }))
+vi.mock('../lib/nativePlatform', () => ({ isNativeApp: () => false, isAndroidNativeApp: () => false }))
 import BillingPage from './BillingPage'
 import { PLUS_PROMOTION_END, PLUS_PROMOTION_ID } from '../../shared/plus-promotion.js'
 
