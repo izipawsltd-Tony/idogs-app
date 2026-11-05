@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom'
+import { DELETION_POLICY } from '../../shared/account-deletion-copy.js'
 
 export default function PrivacyPage() {
-  const lastUpdated = '3 November 2026'
+  const lastUpdated = '6 November 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
       {/* Nav */}
@@ -71,7 +72,7 @@ export default function PrivacyPage() {
             <ul>
               <li><strong>Access</strong> your personal information held by us</li>
               <li><strong>Correct</strong> inaccurate or incomplete information</li>
-              <li><strong>Delete</strong> your account and associated data</li>
+              <li><strong>Delete</strong> your account and associated data (see section 7)</li>
               <li><strong>Export</strong> your data at any time via PDF or CSV</li>
               <li><strong>Opt out</strong> of marketing communications</li>
               <li><strong>Complain</strong> to the Office of the Australian Information Commissioner (OAIC) if you believe we've breached your privacy</li>
@@ -79,12 +80,10 @@ export default function PrivacyPage() {
             <p>To exercise these rights, contact us at hello@idogs.com.au.</p>
           </LegalSection>
 
-          <LegalSection title="7. Data Retention">
-            <p>We retain your data for as long as your account is active. After account cancellation:</p>
+          <LegalSection title="7. Data Retention and Account Deletion">
+            <p>We retain your data for as long as your account is active.</p>
             <ul>
-              <li>Your data is kept for 30 days, during which you can export it</li>
-              <li>After 30 days, data is permanently deleted from our systems</li>
-              <li>Stripe may retain payment records as required by Australian financial regulations</li>
+              {DELETION_POLICY.map(point => <li key={point}>{point}</li>)}
             </ul>
           </LegalSection>
 

@@ -96,7 +96,7 @@ export default function TermsPage() {
 
           <LegalSection title="9. Termination">
             <p>We may terminate or suspend your account at any time for violation of these Terms, with or without notice.</p>
-            <p>Upon termination, your access to the Service ceases. Your data is retained for 30 days after termination, during which you may export it. After 30 days, data may be permanently deleted.</p>
+            <p>Upon termination, your access to the Service ceases. Your data is retained for 30 days after termination, during which you may export it. After 30 days, data may be permanently deleted. If you ask us to delete your account, we complete it within 7 days as described in our <Link to="/privacy">Privacy Policy</Link> (section 7).</p>
           </LegalSection>
 
           <LegalSection title="10. Changes to Terms">

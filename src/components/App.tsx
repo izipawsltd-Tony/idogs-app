@@ -57,6 +57,7 @@ const SuperAdminAuditLogDetailPage = lazy(() => import('../super-admin/pages/Sup
 const SuperAdminSettingsPage = lazy(() => import('../super-admin/pages/SuperAdminSettingsPage'))
 const SuperAdminSupportInboxPage = lazy(() => import('../super-admin/pages/SuperAdminSupportInboxPage'))
 const SuperAdminFaqManagementPage = lazy(() => import('../super-admin/pages/SuperAdminFaqManagementPage'))
+const SuperAdminAccountDeletionsPage = lazy(() => import('../super-admin/pages/SuperAdminAccountDeletionsPage'))
 
 const AppLayout = lazy(() => import('./layout/AppLayout'))
 import LoadingScreen from './ui/LoadingScreen'
@@ -149,6 +150,7 @@ export default function App() {
           <Route path="plans-pricing" element={<SuperAdminPlansPricingPage />} />
           <Route path="support-inbox" element={<SuperAdminSupportInboxPage />} />
           <Route path="support-faqs" element={<SuperAdminFaqManagementPage />} />
+          <Route path="account-deletions" element={<SuperAdminAccountDeletionsPage />} />
           <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
           <Route path="audit-logs/:id" element={<SuperAdminAuditLogDetailPage />} />
           <Route path="settings" element={<SuperAdminSettingsPage />} />

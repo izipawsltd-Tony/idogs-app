@@ -79,6 +79,11 @@ export const SUPER_ADMIN_NAV: SuperAdminNavSection[] = [
         description: 'Draft and publish support answers',
       },
       {
+        label: 'Account Deletions',
+        path: `${SUPER_ADMIN_BASE_PATH}/account-deletions`,
+        description: 'Process deletion requests within 7 days',
+      },
+      {
         label: 'Audit Logs',
         path: `${SUPER_ADMIN_BASE_PATH}/audit-logs`,
         description: 'Administrative activity, targets, reasons, and state changes',

@@ -22,8 +22,8 @@ export function deletionStatus(data) {
     // No internal notes, identity, billing identifiers or inventory leaks.
     message: data.status === 'cancelled' ? 'Your deletion request was cancelled.'
       : data.status === 'completed' ? 'Your account deletion has completed.'
-        : data.status === 'processing' ? 'Account deletion is being processed. Cancellation is no longer available.'
-          : 'Your request is saved for review. Your account has not been deleted. You can cancel before processing begins.',
+        : data.status === 'processing' || data.status === 'processed' ? 'Account deletion is being processed. Cancellation is no longer available.'
+          : 'Request received. We complete account deletion within 7 days and email you when it is done. You can cancel until processing starts.',
   }
 }
 
@@ -79,7 +79,7 @@ export async function changeDeletionRequest({ db, token, body, now = Date.now() 
     // requests a subscription restart. Provider execution remains disabled.
     tx.set(db.collection(RENEWAL_TASK_COLLECTION).doc(`${token.uid}_${next.revision}`),
       newRenewalTask({ uid: token.uid, revision: next.revision, commitment }))
-    const message = 'Account deletion requested. Review ownership, pending transfers, billing and record retention before processing. No permanent deletion is confirmed.'
+    const message = 'Account deletion requested. Process it within 7 days in Super Admin → Account Deletions (preview, process, then mark completed).'
     tx.set(conversationRef, {
       ...(conversation.exists ? conversation.data() : {}),
       ownerUid: token.uid, ownerEmail: token.email || null, ownerName: token.name || null,
