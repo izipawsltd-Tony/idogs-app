@@ -30,10 +30,21 @@ interface ScanResult {
 }
 
 interface Props {
-  onResult: (result: ScanResult, filePath?: string, rawFile?: { base64: string; mediaType: string; documentType: string }) => void
+  onResult: (result: ScanResult, filePath?: string, rawFile?: { base64: string; mediaType: string; documentType: string }, meta?: { scanFailed: boolean }) => void
   toast: (msg: string, type?: ToastMessage['type']) => void
   dogId?: string
   tenantId?: string
+}
+
+// Turn a failed /api/scan response into an actionable, non-sensitive message.
+// Quota refusals keep the server text; a provider failure shows only the
+// upstream HTTP status code (never the provider's raw error body).
+export function scanFailureMessage(httpStatus: number, body: { error?: unknown; reason?: unknown; status?: unknown }): string {
+  if (body?.reason === 'SCAN_QUOTA_EXCEEDED' && typeof body.error === 'string') return body.error
+  if (httpStatus === 401) return 'Please sign in again to use iDogs Scan.'
+  if (httpStatus === 403 && typeof body?.error === 'string') return body.error
+  const upstream = typeof body?.status === 'number' ? ` (code ${body.status})` : ` (code ${httpStatus})`
+  return `iDogs Scan is unavailable right now${upstream}. Nothing was charged to your scan allowance.`
 }
 
 // Resize image to max 1600px
@@ -139,7 +150,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
 
         if (!response.ok) {
           const err = await response.json().catch(() => ({}))
-          throw new Error(err.error || 'Scan failed')
+          throw new Error(scanFailureMessage(response.status, err))
         }
         scanData = await response.json()
       } catch (err: any) {
@@ -207,13 +218,13 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
       } else {
         if (scanData) toast('Document scanned!')
         // Previously silent: a failed scan on Add Dog showed nothing at all.
-        else toast(`iDogs Scan failed: ${scanError || 'please try again'}`, 'error')
+        else toast(`${scanError || 'iDogs Scan failed — please try again.'} Your document is kept and will be saved with the dog; enter the details manually.`, 'error')
       }
 
       // Call onResult AFTER upload so filePath is available for saving to records
       // Even if scanData is null, we can call onResult so the parent component can refresh document lists
       const resultData = scanData || { documentType: 'other', dogName: null, breed: null, dateOfBirth: null, microchip: null, vaccines: [], healthTest: null, ankc: null, notes: null }
-      onResult(resultData, filePath, dogId ? undefined : { base64, mediaType, documentType: resultData.documentType || 'other' })
+      onResult(resultData, filePath, dogId ? undefined : { base64, mediaType, documentType: resultData.documentType || 'other' }, { scanFailed: !scanData })
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : 'Scan failed', 'error')
     } finally {

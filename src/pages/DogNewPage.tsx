@@ -223,7 +223,7 @@ export default function DogNewPage({ toast }: Props) {
     return scannedBreed.trim()
   }
 
-  function handleScanResult(result: any, _fileUrl?: string, rawFile?: { base64: string; mediaType: string; documentType: string }) {
+  function handleScanResult(result: any, _fileUrl?: string, rawFile?: { base64: string; mediaType: string; documentType: string }, meta?: { scanFailed: boolean }) {
     setScannedDocs(prev => [...prev, result])
     if (rawFile) setPendingFiles(prev => [...prev, rawFile])
     setForm(prev => ({
@@ -238,7 +238,8 @@ export default function DogNewPage({ toast }: Props) {
     }))
     const vaccineCount = result.vaccines?.length || 0
     const hasHealth = result.healthTest?.result ? 1 : 0
-    toast(`Scanned! ${vaccineCount} vaccine(s)${hasHealth ? ' + 1 health test' : ''} will be saved.`)
+    // A failed scan already showed its own error; never follow it with a success toast.
+    if (!meta?.scanFailed) toast(`Scanned! ${vaccineCount} vaccine(s)${hasHealth ? ' + 1 health test' : ''} will be saved.`)
   }
 
   async function handleSubmit(e: FormEvent) {
