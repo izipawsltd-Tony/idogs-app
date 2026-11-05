@@ -6,6 +6,7 @@ import PrivacyPage from '../pages/PrivacyPage'
 import TermsPage from '../pages/TermsPage'
 import AccountDeletion from '../components/ui/AccountDeletion'
 import { act, create } from 'react-test-renderer'
+import { DELETION_POLICY } from '../../shared/account-deletion-copy.js'
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: { getIdToken: async () => 'synthetic' } }) }))
 
 const pageText = (page: typeof PrivacyPage) => {
@@ -14,69 +15,48 @@ const pageText = (page: typeof PrivacyPage) => {
   act(() => renderer.unmount())
   return text
 }
-describe('unpublished legal policy review', () => {
-  it.each([['Privacy', PrivacyPage], ['Terms', TermsPage]] as const)('%s clearly distinguishes proposed commitments from current capability', (_name, Page) => {
-    const html = pageText(Page)
-    expect(html).toContain('Draft for review — not effective')
-    expect(html).toContain('Permanent deletion and automatic cancellation of subscription renewal remain unavailable in the live service.')
-    expect(html).toContain('a target is not confirmation of completion')
-    expect(html).toContain('not a statutory deadline or a mandatory waiting period')
-    expect(html).toContain('requested, not deleted')
-    expect(html).toContain('Australian Consumer Law')
-    expect(html).toContain('does not apply to every dog profile')
-    expect(html).not.toContain('After 30 days, data')
-    expect(html).not.toContain('All data is stored securely in Asia-Pacific')
-    expect(html).not.toContain('No refunds are provided for partial months')
-    expect(html).not.toContain('iDogs is compliant with')
+describe('effective policy, synced with idogs.com.au (06 Nov 2026)', () => {
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+  it('in-app Privacy and Terms are the same files the website publishes, with no draft notice', () => {
+    for (const page of ['Privacy', 'Terms']) {
+      const html = pageText(page === 'Privacy' ? PrivacyPage : TermsPage)
+      expect(html).not.toMatch(/Draft for review|not effective|Review version/)
+    }
+    expect(pageText(PrivacyPage)).toContain('Last updated: ')
   })
-  it('does not make viewing the Terms acceptance or set a retrospective effective date', () => {
-    const html = pageText(TermsPage)
-    expect(html).toContain('viewing this review does not accept new terms')
-    expect(html).toContain('14 days advance notice')
-    expect(html).not.toContain('Last updated:')
-  })
-  it('keeps AI processing opt-in and the manual alternative in the privacy disclosure', () => {
+  it('Privacy states the 7-day deletion commitment, subscription cancellation and what is kept', () => {
     const html = pageText(PrivacyPage)
-    expect(html).toContain('Anthropic')
-    expect(html).toContain('permission for that document')
-    expect(html).toContain('manual entry instead')
-    expect(html).toContain('Providers may process information outside Australia')
+    for (const point of DELETION_POLICY) expect(html).toContain(JSON.stringify(point).slice(1, -1))
+    expect(html).toContain('within 7 days of your confirmed request and email you when it is done')
+    expect(html).not.toContain('After 30 days, data is permanently deleted')
   })
-  it('preserves current consent-based Meta disclosure without denying advertising cookies', () => {
+  it('discloses iDogs Scan sharing with Anthropic as opt-in with a manual alternative, and Meta consent', () => {
     const html = pageText(PrivacyPage)
+    expect(html).toContain('sends that photo or PDF to Anthropic')
+    expect(html).toContain('You can enter records manually instead')
     expect(html).toContain('Meta Pixel')
-    expect(html).toContain('Ad privacy choices')
-    expect(html).toContain('advertising cookies only when you allow it')
-    expect(html).toContain('does not run in the native app or on private account pages')
-    expect(html).not.toContain('We do not use advertising or tracking cookies')
-    expect(html).toContain('Draft for review — not effective')
+    expect(html).toContain('It does not run in the native app')
   })
-  it('distinguishes request target, recovery copies and resource-specific Singapore location', () => {
-    const html=pageText(PrivacyPage)
-    expect(html).toContain('seven-day processing target and file recovery period are separate')
-    expect(html).toContain('from the time that file is deleted')
-    expect(html).toContain('reaching a date alone is not proof of deletion')
-    expect(html).toContain('asia-southeast1 (Singapore)')
-    expect(html).toContain('object versioning off')
-    expect(html).toContain('where you have opted in')
-    expect(html).toContain('reapply deletion records')
+  it('Terms point account deletion at the same 7-day Privacy section', () => {
+    expect(pageText(TermsPage)).toContain('we complete it within 7 days as described in our')
   })
-  it('uses the same proposed deletion, billing and retention sections in the app without sending a deletion request', async () => {
+  it('Delete account screen shows the same deletion wording and only reads status on open', async () => {
     const original = globalThis.fetch
     const http = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ status: 'none', canCancel: false })))
     globalThis.fetch = http
     const renderer = create(createElement(AccountDeletion))
     try {
       await act(async () => renderer.root.findByType('button').props.onClick())
-      for (const section of ['deletion', 'billing', 'retention']) {
-        expect(renderer.root.findAllByProps({ 'data-policy-section': section })).toHaveLength(1)
-        expect(pageText(PrivacyPage)).toContain(`"data-policy-section":"${section}"`)
-        expect(pageText(TermsPage)).toContain(`"data-policy-section":"${section}"`)
-      }
-      expect(renderer.root.findAllByProps({ 'aria-label': 'Draft policy status' })).toHaveLength(1)
+      expect(renderer.root.findAllByProps({ 'data-policy-section': 'deletion' })).toHaveLength(1)
+      const out = JSON.stringify(renderer.toJSON())
+      for (const point of DELETION_POLICY) expect(out).toContain(JSON.stringify(point).slice(1, -1))
+      expect(out).not.toContain('Draft for review')
       expect(http).toHaveBeenCalledTimes(1)
       expect(http.mock.calls[0]?.[1]?.method).toBe('GET')
     } finally { act(() => renderer.unmount()); globalThis.fetch = original }
+  })
+  it('the deletion copy module is byte-identical to the web copy shipped with it', () => {
+    expect(read('../../shared/account-deletion-copy.js')).toContain("DELETION_POLICY_UPDATED = '6 November 2026'")
   })
 })
 

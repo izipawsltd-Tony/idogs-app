@@ -1,12 +1,9 @@
-import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { PolicyReviewNotice, POLICY_REVIEW_VERSION, DeletionPolicyDraft, BillingPolicyDraft, RetentionPolicyDraft, InternationalProcessingDraft, AIScanningDisclosure } from '../components/legal/PolicyReview'
+import { DELETION_POLICY } from '../../shared/account-deletion-copy.js'
+import AIProviderRetention from '../components/legal/AIProviderRetention'
 
 export default function PrivacyPage() {
-  useEffect(() => {
-    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') window.scrollTo(0, 0)
-  }, [])
-  const lastUpdated = POLICY_REVIEW_VERSION
+  const lastUpdated = '6 November 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
       {/* Nav */}
@@ -20,8 +17,10 @@ export default function PrivacyPage() {
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '48px 24px 80px' }}>
         <div style={{ marginBottom: 40 }}>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 700, color: 'var(--dark)', marginBottom: 8, letterSpacing: '-0.02em' }}>Privacy Policy</h1>
-          <p style={{ fontSize: 14, color: 'var(--light)' }}>Review version: {lastUpdated} · iziPaws Pty Ltd ABN 42 693 563 745</p>
-          <PolicyReviewNotice />
+          <p style={{ fontSize: 14, color: 'var(--light)' }}>Last updated: {lastUpdated} · iziPaws Pty Ltd ABN 42 693 563 745</p>
+          <div style={{ marginTop: 16, padding: '12px 16px', background: 'var(--green-light)', borderRadius: 10, fontSize: 13, color: '#0F6E56' }}>
+            🇦🇺 iDogs is compliant with the <strong>Australian Privacy Act 1988 (Cth)</strong> and the 13 Australian Privacy Principles (APPs).
+          </div>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
@@ -35,7 +34,7 @@ export default function PrivacyPage() {
             <p><strong>Dog records:</strong> Dog profiles, vaccination records, health test results, pedigree information, microchip numbers, photographs, and documents you upload.</p>
             <p><strong>Payment information:</strong> Subscription plan and billing history. Payment card details are processed and stored by Stripe — we never see or store your full card number.</p>
             <p><strong>Usage data:</strong> Log files, IP addresses, browser type, pages visited, and actions taken within the Service (for security and improvement purposes).</p>
-            <p><strong>Public passport logs:</strong> Requests can produce service and security logs. Scanning a passport does not itself create an account for a visitor. Logged fields and retention must be verified before publication.</p>
+            <p><strong>QR scan logs:</strong> When a dog's QR passport is scanned, we log the timestamp and result (not the scanner's identity).</p>
           </LegalSection>
 
           <LegalSection title="3. How We Use Your Information">
@@ -46,56 +45,54 @@ export default function PrivacyPage() {
               <li>Process subscription payments via Stripe</li>
               <li>Generate compliance export reports</li>
               <li>Respond to support requests</li>
-              <li>Send optional iDogs offers and product marketing where you have opted in; you can change your marketing preference in Settings</li>
               <li>Comply with legal obligations</li>
             </ul>
-            <p>Optional marketing consent is separate from essential account, security and service messages. Withdrawing that consent does not itself delete your account or cancel your subscription. Actual campaign practices and any third-party tracking must be verified before the policy becomes effective.</p>
+            <p>We do <strong>not</strong> sell your personal information to third parties.</p>
+            <p><strong>iDogs Scan (optional):</strong> If you choose to scan a document and allow it, iDogs sends that photo or PDF to Anthropic to read the dog and health record details. Documents can contain names, addresses and vet contact details. You can enter records manually instead.</p>
+            <AIProviderRetention />
             <p><strong>Optional advertising measurement:</strong> If you choose “Allow ad measurement”, Meta Pixel shares visits to our home and signup pages and successful registrations with Meta (Facebook) to measure and improve our advertising. Meta may receive page URLs, IP address, browser information and advertising cookies. We do not send form entries, account contact details, dog records or documents through this integration. It does not run in the native app or on private account pages. You can decline or withdraw permission using “Ad privacy choices” on our home or signup page. Declining does not affect your ability to use iDogs. See <a href="https://www.facebook.com/privacy/policy/" target="_blank" rel="noopener noreferrer">Meta’s privacy policy</a> for how Meta handles this information.</p>
+            <p><strong>Campaign source (first-party):</strong> If you arrive from one of our advertisements or links, your browser keeps the campaign labels from that link (for example utm_source, utm_campaign and the ad, ad set and campaign IDs) for up to 30 days. If you then create an account, we save these labels and the first page you landed on with your account so we can see which campaigns bring in real members. We only record whether a Facebook click ID was present, never its value. This information stays with iDogs and is not shared with Meta or anyone else, and it is saved whether or not you allow ad measurement. If you did not arrive from a campaign link, we record your source as “direct”.</p>
           </LegalSection>
 
           <LegalSection title="4. Data Storage and Security">
-            <InternationalProcessingDraft />
-            <p><strong>Security:</strong> iDogs uses HTTPS and Firebase Authentication with access controls. Security, storage configuration and operational procedures must be assessed together; no system can guarantee absolute security.</p>
+            <p><strong>Location:</strong> All data is stored securely in Asia-Pacific in compliance with the Australian Privacy Act 1988. Full Australian data sovereignty is available via iziPaws — our professional breeder platform hosted on AWS Sydney.</p>
+            <p><strong>Security measures:</strong> Data is encrypted in transit (TLS/HTTPS) and at rest. Access is protected by Firebase Authentication. We conduct regular security reviews.</p>
             <p><strong>File storage:</strong> Documents and photos uploaded via the Service are stored in Firebase Storage with the same security standards.</p>
           </LegalSection>
 
           <LegalSection title="5. Sharing Your Information">
             <p>We share your information only in these limited circumstances:</p>
             <ul>
-              <li><strong>Ownership transfer:</strong> A transfer can share the dog records needed by its new owner. Former-owner access is limited to the available historical record; later current-owner updates are private</li>
-              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure); Vercel (hosting), ClickSend (SMS where enabled) and Anthropic (optional AI scanning). Provider arrangements and any legacy SMS provider records require verification before this draft becomes effective</li>
+              <li><strong>Ownership transfer:</strong> When you transfer a dog to a new owner, their contact details and the dog's records are shared with that owner as you direct</li>
+              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure), Vercel (hosting), Anthropic (iDogs Scan, only for documents you choose to scan) — all under strict data processing agreements</li>
               <li><strong>Legal requirements:</strong> If required by Australian law, court order, or government authority</li>
               <li><strong>Public passport:</strong> Information displayed on a dog's public QR passport page is visible to anyone with the link</li>
             </ul>
           </LegalSection>
 
-          <LegalSection title="Optional AI Document Scanning">
-            <AIScanningDisclosure />
-          </LegalSection>
-
-          <LegalSection title="6. Requests and Privacy Choices">
-            <p>You can ask us to access or correct personal information, request account deletion, and raise privacy concerns. Applicable legal rights depend on the circumstances; this draft does not certify the scope of the Privacy Act for our business.</p>
+          <LegalSection title="6. Your Rights (Australian Privacy Principles)">
+            <p>Under the Australian Privacy Act, you have the right to:</p>
             <ul>
               <li><strong>Access</strong> your personal information held by us</li>
               <li><strong>Correct</strong> inaccurate or incomplete information</li>
-              <li><strong>Request account deletion</strong> in Settings, subject to the scope and status explained below</li>
-              <li><strong>Export</strong> records using the available export tools</li>
+              <li><strong>Delete</strong> your account and associated data (see section 7)</li>
+              <li><strong>Export</strong> your data at any time via PDF or CSV</li>
               <li><strong>Opt out</strong> of marketing communications</li>
               <li><strong>Complain</strong> to the Office of the Australian Information Commissioner (OAIC) if you believe we've breached your privacy</li>
             </ul>
-            <p>Use Settings to initiate account deletion; no separate email or support chat is required to submit that request. For access, correction or privacy complaints, contact hello@idogs.com.au.</p>
-            <DeletionPolicyDraft />
-            <BillingPolicyDraft />
+            <p>To exercise these rights, contact us at hello@idogs.com.au.</p>
           </LegalSection>
 
-          <LegalSection title="7. Data Retention">
-            <RetentionPolicyDraft />
+          <LegalSection title="7. Data Retention and Account Deletion">
+            <p>We retain your data for as long as your account is active.</p>
+            <ul>
+              {DELETION_POLICY.map(point => <li key={point}>{point}</li>)}
+            </ul>
           </LegalSection>
 
           <LegalSection title="8. Cookies">
-            <p>Firebase Authentication uses browser or device storage to maintain your sign-in session. The full cookie, analytics and SDK inventory must be verified before this draft becomes effective.</p>
-            <p>Optional Meta advertising measurement on our home and signup pages uses advertising cookies only when you allow it. You can decline or withdraw that permission through “Ad privacy choices”; authentication and account use do not depend on that choice.</p>
-            <p>Restricting storage required for authentication may prevent sign-in or session persistence.</p>
+            <p>iDogs uses essential cookies for authentication (Firebase Auth session cookies). We do not use advertising or tracking cookies.</p>
+            <p>You can disable cookies in your browser, but this will prevent you from logging in to the Service.</p>
           </LegalSection>
 
           <LegalSection title="9. Children's Privacy">

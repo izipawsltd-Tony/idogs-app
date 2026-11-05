@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth'
 import { useAuth } from '../../hooks/useAuth'
-import { PolicyReviewNotice, DeletionPolicyDraft, BillingPolicyDraft, RetentionPolicyDraft } from '../legal/PolicyReview'
+import { DeletionPolicyDraft, BillingPolicyDraft } from '../legal/PolicyReview'
 
 interface Status {
   status: string
@@ -94,11 +94,9 @@ export default function AccountDeletion() {
       <p>Request permanent deletion of your iDogs account and associated personal data.</p>
       {!open ? <button type="button" className="btn btn-secondary" onClick={() => { setOpen(true); void call() }}>Delete account…</button> : (
         <div>
-          <PolicyReviewNotice />
           <DeletionPolicyDraft />
-          <details><summary>Subscriptions, refunds and retained records</summary>
+          <details><summary>Subscriptions and refunds</summary>
             <BillingPolicyDraft />
-            <RetentionPolicyDraft />
           </details>
           {error && <p role="alert">{error}</p>}
           <div aria-live="polite" aria-label="Account deletion request status">
