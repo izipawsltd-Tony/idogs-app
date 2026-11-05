@@ -1,3 +1,4 @@
+import { rehearseDeletedRecordRestore } from './qa/deletion-restore-replay.mjs'
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {cloudFixtureScope,createCloudFixtureProcessor,createCloudFixtureRenewalDispatcher,createCloudFixtureRenewalQueue} from './qa/deletion-cloud-runtime.mjs'
@@ -87,4 +88,47 @@ test('controlled replay exposes only exact create versions without a generic bat
  f.db.databaseId='(default)'
  await assert.rejects(scope.createReplayRecords(records),/CLOUD_QA_TARGET_REQUIRED/)
  assert.equal(commits,1)
+})
+
+
+test('controlled replay rejects identical data recreated at a different commit version',async()=>{
+ const f=fixture(),live=new Map(),deleted=[]
+ const version=n=>({toMillis:()=>n,toDate:()=>new Date(n),seconds:n,nanoseconds:0,isEqual:other=>other?.seconds===n})
+ const introduced=[version(1),version(2)]
+ const records=f.manifest.recordPaths.map(path=>({path,data:{uid,synthetic:true}}))
+ const ledger={
+  [`accountDeletionRequests/${uid}`]:{status:'completed'},
+  [`accountDeletionJobs/${uid}`]:{stage:'completed',revision:1,qaManifest:f.manifest,retained:[]},
+  [`accountDeletionLocks/${uid}`]:{state:'completed',revision:1},
+ }
+ const snapshot=path=>({
+  exists:live.has(path)||!!ledger[path],
+  ref:{path,listCollections:async()=>[]},
+  data:()=>live.get(path)?.data||ledger[path],
+  updateTime:live.get(path)?.version,
+ })
+ const db={
+  projectId:f.db.projectId,databaseId:f.db.databaseId,
+  doc:path=>({path,get:async()=>snapshot(path)}),
+  listCollections:async()=>['users','dogs'].map(id=>({
+   id,path:id,
+   orderBy(){return this},limit(){return this},
+   async get(){const docs=[...live.keys()].filter(path=>path.startsWith(id+'/')).map(snapshot);return {docs,size:docs.length}},
+   async listDocuments(){return []},
+  })),
+  async runTransaction(fn){return fn({get:async ref=>snapshot(ref.path),delete:ref=>deleted.push(ref.path)})},
+ }
+ const scope={
+  db,uid,auth:{getUser:async()=>{throw {code:'auth/user-not-found'}}},
+  assertRuntime:async()=>{},
+  async createReplayRecords(){
+   records.forEach((record,index)=>live.set(record.path,{data:record.data,version:introduced[index]}))
+   // Same data and path, independently recreated after the original commit.
+   live.set(records[1].path,{data:records[1].data,version:version(3)})
+   return introduced
+  },
+ }
+ await assert.rejects(rehearseDeletedRecordRestore({scope,manifest:f.manifest,records}),{code:'QA_RESTORE_RECORD_CHANGED'})
+ assert.deepEqual(deleted,[])
+ assert.equal(live.size,2)
 })

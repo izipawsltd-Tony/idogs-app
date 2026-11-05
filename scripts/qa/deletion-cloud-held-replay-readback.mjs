@@ -2,6 +2,7 @@ import { initializeApp, cert, deleteApp } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { getAuth } from 'firebase-admin/auth'
 import { getStorage } from 'firebase-admin/storage'
+import { verifyRetentionBucket } from './provision-retention-bucket.mjs'
 import { cloudFixtureScope } from './deletion-cloud-runtime.mjs'
 import { digest } from '../../api/_lib/deletion-plan.js'
 import { writeFileSync } from 'node:fs'
@@ -39,9 +40,28 @@ try {
   })))
   const fresh = await db.doc(`accountDeletionJobs/${manifest.uid}`).get()
   ensure(job.updateTime?.isEqual(fresh.updateTime), 'HELD_FIXTURE_JOB_CHANGED')
+  const retentionMaster = db.doc('accountDeletionJobs/retention-session-40271208201')
+  const retentionSnap = await retentionMaster.get()
+  ensure(retentionSnap.exists, 'ORIGINAL_RETENTION_MASTER_MISSING')
+  const retention = retentionSnap.data()
+  ensure(retention.source === 'e8dc2b1471397885502c7c13389d73f038813a70'
+    && retention.seeded === true && retention.restoreVerified === true
+    && retention.manifest && retention.originalGeneration, 'ORIGINAL_RETENTION_STATE_UNVERIFIED')
+  const retentionBucket = getStorage(app).bucket('idogs-app-staging-retention-qa')
+  verifyRetentionBucket((await retentionBucket.getMetadata())[0])
+  const retentionScope = cloudFixtureScope({ db, auth, bucket: retentionBucket,
+    runId: retention.runId, manifest: retention.manifest, retentionMode: 'seven-day' })
+  await retentionScope.assertRuntime(retention.manifest.uid)
+  const retentionAfter = await retentionMaster.get()
+  ensure(retentionSnap.updateTime.isEqual(retentionAfter.updateTime), 'ORIGINAL_RETENTION_MASTER_CHANGED')
+  const originalRetention = { readOnly: true, originalRunId: '40271208201',
+    source: retention.source, status: retention.status, seeded: true, restoreVerified: true,
+    dueAt: retention.dueAt || null, manifestHash: digest(retention.manifest),
+    originalGeneration: String(retention.originalGeneration),
+    masterVersion: retentionSnap.updateTime.toDate().toISOString() }
   const report = { schema: 1, readOnly: true, originalRunId: '41932867457',
     originalSource: 'aadf3b70adad192bafc6840d1f570478769a993d',
-    manifestHash: digest(manifest), jobStage: job.data()?.stage || null,
+    originalRetention, manifestHash: digest(manifest), jobStage: job.data()?.stage || null,
     requestStatus: request.data()?.status || null, lockState: lock.data()?.state || null,
     authAbsent, records, media, cleanupVerified: false, productionReady: false }
   writeFileSync('held-replay-readback.json', JSON.stringify(report, null, 2))
