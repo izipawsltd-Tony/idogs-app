@@ -275,3 +275,10 @@ Runtime source `0761ded9824e3f1d4beca1190953e105861f60f9` passed [push CI](https
 The synthetic loopback receipt binds the exact DELETE and readback responses to the original intent. Recovery after a lost receipt commit response preserves the original lease and sends no second DELETE. A dropped provider response still requires a hold even if readback shows the subscription canceled. Provider-issued signature and authorization drain remain unverified. Production readiness is false.
 
 The original seven-day Storage run 40271208201 remains at attempt 1. Its last result was `waiting_for_cloud_expiry`. The exact pinned script can allocate and seed when durable state is missing. Fresh authenticated read-only verification of the original manifest and seeded state is required before rerunning the original job.
+
+
+### Original seven-day Storage lifecycle verified
+
+The original [run 40271208201, attempt 2, job 127136832528](https://github.com/izipawsltd-Tony/idogs-app/actions/runs/40271208201/attempts/2) passed at 2026-11-05T08:34:20Z on original source e8dc2b1471397885502c7c13389d73f038813a70. It reported seven_day_lifecycle_pass and actualSevenDayLifecyclePassed true after the original dueAt 2026-11-02T04:56:11.242Z. The exact original job 121405052447 was rerun only after authenticated read-only CI 41994724668/job 127135034831 verified master source, seeded state, restore verification, manifest binding and original generation 1792990522278975. Original manifest digest eccd7c6013efd5548940e2efd80b91864c9610b5e2d435247b965c26cc182547. No replacement fixture or clock override. productionReady remains false.
+
+Source 30e570b8af3d12e5add6e06a161dc6e718f05ea8 supplies the prior read-only verification and the local same-content replacement regression. This read-only workflow does not establish full cloud replay PASS. The separate held fixture from 41932867457 still retains its ledger, and cleanupVerified remains false.
