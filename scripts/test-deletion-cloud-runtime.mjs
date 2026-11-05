@@ -64,3 +64,27 @@ test('seven-day runtime permits only its fixed private bucket and an explicit du
  f.bucket.getMetadata=async()=>[{name:f.bucket.name}]
  await assert.rejects(cloudFixtureScope(f.args).assertRuntime(uid),/BUCKET_MISMATCH/)
 })
+
+
+test('controlled replay exposes only exact create versions without a generic batch API',async()=>{
+ const f=fixture(),scope=cloudFixtureScope(f.args),created=[]
+ const records=f.manifest.recordPaths.map(path=>({path,data:{fixture:true}}))
+ const versions=[{seconds:1,nanoseconds:10},{seconds:1,nanoseconds:11}]
+ let commits=0
+ f.db.batch=()=>({
+  create(ref,data){created.push({path:ref.path,data})},
+  async commit(){commits++;return versions.map(writeTime=>({writeTime}))},
+ })
+ assert.equal(scope.db.batch,undefined)
+ for(const invalid of [[records[0],records[0]],[records[0],{path:'dogs/foreign',data:{}}],[records[1]]]){
+  await assert.rejects(scope.createReplayRecords(invalid),/QA_RESTORE_SCOPE_REQUIRED/)
+ }
+ assert.deepEqual(created,[])
+ assert.equal(commits,0)
+ assert.deepEqual(await scope.createReplayRecords(records),versions)
+ assert.deepEqual(created,records)
+ assert.equal(commits,1)
+ f.db.databaseId='(default)'
+ await assert.rejects(scope.createReplayRecords(records),/CLOUD_QA_TARGET_REQUIRED/)
+ assert.equal(commits,1)
+})

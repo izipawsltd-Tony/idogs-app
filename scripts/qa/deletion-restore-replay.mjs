@@ -36,11 +36,8 @@ export async function rehearseDeletedRecordRestore({ scope, manifest, records })
   ensure((await check()).replayVerified, 'QA_RESTORE_BASELINE_UNVERIFIED')
   // Firestore create preconditions apply atomically across this batch.
   // The commit itself supplies the exact version of each introduced record.
-  await scope.assertRuntime(uid)
-  const batch = db.batch()
-  for (const record of records) batch.create(db.doc(record.path), record.data)
-  const introduced = await batch.commit()
-  ensure(introduced.length === records.length && introduced.every(write => write.writeTime), 'QA_RESTORE_VERSION_UNVERIFIED')
+  const introduced = await scope.createReplayRecords(records)
+  ensure(introduced.length === records.length && introduced.every(Boolean), 'QA_RESTORE_VERSION_UNVERIFIED')
   const blocked = await check()
   ensure(!blocked.replayVerified && blocked.issues.filter(i => i.code === 'restored_account_data').length === records.length, 'QA_RESTORE_RESURRECTION_NOT_BLOCKED')
   // A recreated record with identical content has a different commit version.
@@ -48,11 +45,11 @@ export async function rehearseDeletedRecordRestore({ scope, manifest, records })
   await db.runTransaction(async tx => {
     for (const [index, record] of records.entries()) {
       const restored = await tx.get(db.doc(record.path))
-      ensure(restored.exists && restored.updateTime?.isEqual(introduced[index].writeTime)
+      ensure(restored.exists && restored.updateTime?.isEqual(introduced[index])
         && digest(restored.data()) === digest(record.data), 'QA_RESTORE_RECORD_CHANGED')
     }
     for (const [index, record] of records.entries()) {
-      tx.delete(db.doc(record.path), { lastUpdateTime: introduced[index].writeTime })
+      tx.delete(db.doc(record.path), { lastUpdateTime: introduced[index] })
     }
   })
   const verified = await check()

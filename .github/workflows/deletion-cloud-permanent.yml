@@ -41,12 +41,12 @@ jobs:
         run: >-
           npx --yes firebase-tools@14.12.0 emulators:exec --project demo-idogs-deletion --only auth,firestore,storage
           'ACCOUNT_DELETION_MODE=prototype-emulator node --test --test-concurrency=1 scripts/test-deletion-processor-emulator.mjs scripts/test-deletion-production-schema-emulator.mjs scripts/test-deletion-completion-outbox-emulator.mjs'
-      - name: Real isolated Firebase deletion and Stripe Test readback
+      - name: Read-only original held replay fixture
         env:
           IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.IDOGS_STAGING_FIREBASE_SERVICE_ACCOUNT_JSON }}
           IDOGS_DELETION_STRIPE_TEST_KEY: ${{ secrets.IDOGS_DELETION_STRIPE_TEST_KEY }}
           IDOGS_DELETION_RESEND_QA_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.qa_email_simulation && secrets.IDOGS_DELETION_RESEND_QA_KEY || '' }}
-        run: node scripts/qa/deletion-cloud-permanent.mjs
+        run: node scripts/qa/deletion-cloud-held-replay-readback.mjs
       - name: Verify optional email simulation scope
         env:
           QA_EMAIL_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.qa_email_simulation }}
@@ -58,6 +58,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: storage-cas-handoff-${{ github.run_id }}-${{ github.run_attempt }}
-          path: storage-cas-handoff.json
+          path: |
+            storage-cas-handoff.json
+            held-replay-readback.json
           if-no-files-found: ignore
           retention-days: 14

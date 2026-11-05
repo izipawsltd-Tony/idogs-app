@@ -42,7 +42,21 @@ export function cloudFixtureScope({db,auth,bucket,runId,manifest,env=process.env
   verifyBucket((await bucket.getMetadata())[0])
   await boundAuth(uid,{allowMissing:job.authRemovalAttempted===true||job.stage==='completed'})
  }
- return {uid,db:scopedDb,auth:scopedAuth,bucket:scopedBucket,assertRuntime,assertTarget:target,boundAuth,allowed}
+ async function createReplayRecords(records){
+  await assertRuntime(uid)
+  if(recovery||!Array.isArray(records)||records.length!==2||new Set(records.map(record=>record?.path)).size!==2
+   ||!records.some(record=>record?.path===`users/${uid}`)
+   ||records.some(record=>!manifest.recordPaths.includes(record?.path)
+    ||!(record.path===`users/${uid}`||record.path.startsWith('dogs/'))))throw fail('QA_RESTORE_SCOPE_REQUIRED')
+  const batch=db.batch()
+  for(const record of records){
+   const ref=db.doc(record.path)
+   write(ref)
+   batch.create(ref,record.data)
+  }
+  return (await batch.commit()).map(result=>result.writeTime)
+ }
+ return {uid,db:scopedDb,auth:scopedAuth,bucket:scopedBucket,assertRuntime,assertTarget:target,boundAuth,allowed,createReplayRecords}
 }
 
 export function createCloudFixtureProcessor({scope,provider,...options}){
