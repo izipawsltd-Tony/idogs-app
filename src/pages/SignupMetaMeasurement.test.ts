@@ -37,7 +37,7 @@ describe('simple email signup and QR return', () => {
     expect(view.root.findAllByProps({ type: 'radio' })[0].props.checked).toBe(true)
     await act(async () => { view.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }) })
     await act(async () => { await view.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
-    expect(state.signup).toHaveBeenCalledWith({ firstName: 'Ruby', lastName: '', kennelName: '', email: 'qa@example.invalid', password: 'synthetic-only', marketingOptIn: false, termsAccepted: true })
+    expect(state.signup).toHaveBeenCalledWith({ firstName: 'Ruby', lastName: '', kennelName: '', role: 'owner', email: 'qa@example.invalid', password: 'synthetic-only', marketingOptIn: false, termsAccepted: true })
     expect(state.track).toHaveBeenCalledTimes(1)
     expect(view.root.findByType('output').children.join('')).toBe('/p/QR-RUBY?follow=1')
     view.unmount()
