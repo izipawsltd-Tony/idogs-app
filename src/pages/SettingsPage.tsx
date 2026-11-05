@@ -3,6 +3,7 @@ import { doc, getDocFromServer } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { useAuth } from '../hooks/useAuth'
 import EmailPasswordSettings from '../components/ui/EmailPasswordSettings'
+import AccountDeletion from '../components/ui/AccountDeletion'
 import { updateUserProfile } from '../lib/db'
 import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
 import { REMINDER_TYPES } from '../components/ui/ReminderForm'
@@ -564,6 +565,7 @@ export default function SettingsPage({ toast }: Props) {
        </div>
 
       {/* ── DATA & PRIVACY ── */}
+      <AccountDeletion />
       <div className="card">
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Data & Privacy</div>
         <div style={{ fontSize: 13, color: 'var(--green)', background: 'var(--green-light)', padding: '10px 14px', borderRadius: 8, marginBottom: 12 }}>
