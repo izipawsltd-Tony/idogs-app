@@ -100,7 +100,13 @@ describe('iOS Free/Plus parity with idogs.com.au', () => {
 
 describe('scan failure messages', () => {
   it('keeps quota and auth guidance, hides provider details', () => {
-    expect(scanFailureMessage(403, { reason: 'SCAN_QUOTA_EXCEEDED', error: 'You have used both of your free iDogs Scans.' })).toBe('You have used both of your free iDogs Scans.')
+    // Server copy says "AI scans" + upgrade; the app now builds its own text.
+    const plusNative = scanFailureMessage(403, { reason: 'SCAN_QUOTA_EXCEEDED', plan: 'plus', error: 'You have used all 10 AI scans for this billing period.' }, true)
+    expect(plusNative).toBe("You've used all 10 iDogs Scans for this billing period — resets next period.")
+    const freeNative = scanFailureMessage(403, { reason: 'SCAN_QUOTA_EXCEEDED', plan: 'free', error: 'You have used both of your free AI scans. Upgrade to Plus for 10 scans/month.' }, true)
+    expect(freeNative).toBe('Free iDogs Scans used up for this account.')
+    for (const m of [plusNative, freeNative]) { expect(m).not.toMatch(/\bAI scans\b|Upgrade/) }
+    expect(scanFailureMessage(403, { reason: 'SCAN_QUOTA_EXCEEDED', plan: 'free' }, false)).toContain('upgrade to Plus')
     expect(scanFailureMessage(401, {})).toBe('Please sign in again to use iDogs Scan.')
     expect(scanFailureMessage(500, { error: 'Claude API error', status: 529 })).toBe('iDogs Scan is unavailable right now (code 529). Nothing was charged to your scan allowance.')
     expect(scanFailureMessage(502, {})).toContain('(code 502)')

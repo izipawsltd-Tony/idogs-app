@@ -3,6 +3,7 @@ import { useAuth } from '../../hooks/useAuth'
 import type { ToastMessage } from '../../types'
 import { isNativeApp } from '../../lib/nativePlatform'
 import { aiScanQuotaExhaustedMessage } from '../../lib/nativeUpgradeCopy'
+import { getEffectivePlanClient } from '../../lib/utils'
 import AIProviderRetention from '../legal/AIProviderRetention'
 
 interface ScanResult {
@@ -39,8 +40,10 @@ interface Props {
 // Turn a failed /api/scan response into an actionable, non-sensitive message.
 // Quota refusals keep the server text; a provider failure shows only the
 // upstream HTTP status code (never the provider's raw error body).
-export function scanFailureMessage(httpStatus: number, body: { error?: unknown; reason?: unknown; status?: unknown }): string {
-  if (body?.reason === 'SCAN_QUOTA_EXCEEDED' && typeof body.error === 'string') return body.error
+export function scanFailureMessage(httpStatus: number, body: { error?: unknown; reason?: unknown; status?: unknown; plan?: unknown }, isNative = false): string {
+  // Quota text is built here from the server's plan, so it always says
+  // "iDogs Scans" and never shows an upgrade prompt inside the native app.
+  if (body?.reason === 'SCAN_QUOTA_EXCEEDED') return aiScanQuotaExhaustedMessage(isNative, body.plan === 'plus')
   if (httpStatus === 401) return 'Please sign in again to use iDogs Scan.'
   if (httpStatus === 403 && typeof body?.error === 'string') return body.error
   const upstream = typeof body?.status === 'number' ? ` (code ${body.status})` : ` (code ${httpStatus})`
@@ -106,7 +109,9 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
   // actually have right after an unreported rollover), never the other
   // way around, so it can't cause a client-side false "you have scans
   // left" that the server would then reject.
-  const isPlus = profile?.plan === 'plus'
+  // Same effective plan as the server (paid Plus, grace period, or included
+  // access), so the remaining-scans line matches what /api/scan enforces.
+  const isPlus = getEffectivePlanClient(profile) === 'plus'
   const scanQuotaRemaining = isPlus
     ? Math.max(0, 10 - (profile?.plusScansUsed || 0))
     : Math.max(0, 2 - (profile?.freeScansUsed || 0))
@@ -150,7 +155,7 @@ export default function AIScan({ onResult, toast, dogId }: Props) {
 
         if (!response.ok) {
           const err = await response.json().catch(() => ({}))
-          throw new Error(scanFailureMessage(response.status, err))
+          throw new Error(scanFailureMessage(response.status, err, isNativeApp()))
         }
         scanData = await response.json()
       } catch (err: any) {
