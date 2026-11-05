@@ -101,9 +101,8 @@ export default function VerifyEmailPage({ toast }: Props) {
     }}>
       <div style={{ width: '100%', maxWidth: 460 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Link to="/" style={{ display: 'inline-flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
-            <div style={{ width: 40, height: 40, background: 'var(--green)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>🐾</div>
-            <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, color: 'var(--dark)' }}>iDogs</span>
+          <Link to="/" aria-label="iDogs home" style={{ display: 'inline-block' }}>
+            <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ height: 56, width: 'auto', objectFit: 'contain' }} />
           </Link>
         </div>
 

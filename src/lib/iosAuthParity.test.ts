@@ -6,6 +6,8 @@ const read = (p: string) => readFileSync(fileURLToPath(new URL(p, import.meta.ur
 const useAuth = read('../hooks/useAuth.tsx')
 const login = read('../pages/LoginPage.tsx')
 const signup = read('../pages/SignupPage.tsx')
+const verify = read('../pages/VerifyEmailPage.tsx')
+const appLayout = read('../components/layout/AppLayout.tsx')
 
 const sendEmailVerification = vi.hoisted(() => vi.fn())
 vi.mock('firebase/auth', () => ({ sendEmailVerification }))
@@ -63,5 +65,20 @@ describe('iOS auth screens match idogs.com.au', () => {
     for (const page of [login, signup]) {
       expect(page).not.toMatch(/SocialSignIn|PasswordlessSignIn|socialLogin|trackCompletedRegistration/)
     }
+  })
+})
+
+describe('owner QA on 1.0 (167)', () => {
+  it('sets the display name before the verification email so it greets the user by name', () => {
+    const body = useAuth.slice(useAuth.indexOf('async function signup'), useAuth.indexOf('async function login'))
+    expect(body.indexOf('updateProfile(newUser, { displayName })')).toBeGreaterThan(-1)
+    expect(body.indexOf('updateProfile(newUser, { displayName })')).toBeLessThan(body.indexOf('sendInitialVerification(newUser)'))
+  })
+  it('Verify Email uses the official iDogs logo', () => {
+    expect(verify).toContain('/01_idogs_primary_horizontal_transparent.png')
+    expect(verify).not.toMatch(/fontSize: 20 }}>🐾<\/div>/)
+  })
+  it('signing out in the app returns to the Welcome back screen', () => {
+    expect(appLayout).toContain("navigate(isNativeApp() ? '/login' : '/')")
   })
 })

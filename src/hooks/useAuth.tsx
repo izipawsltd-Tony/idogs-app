@@ -7,6 +7,7 @@ import {
   onAuthStateChanged,
   sendPasswordResetEmail,
   sendEmailVerification,
+  updateProfile,
   reload,
   User
 } from 'firebase/auth'
@@ -94,6 +95,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // The account and profile now exist. A verification-email failure (for
     // example Firebase throttling) must never delete them: Verify Email
     // shows the delivery state and offers Resend.
+    // Firebase's verification email greets the user by display name
+    // ("Hello %DISPLAY_NAME%,"), as on idogs.com.au. Best-effort: a failure
+    // here must not block the account.
+    const displayName = `${firstName} ${lastName}`.trim()
+    if (displayName) { try { await updateProfile(newUser, { displayName }) } catch { /* keep going */ } }
     await sendInitialVerification(newUser)
   }
 

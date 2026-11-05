@@ -274,7 +274,8 @@ export default function AppLayout({ toast }: Props) {
 
   async function handleLogout() {
     await logout()
-    navigate('/')
+    // The app starts on sign-in; return there ("Welcome back"), not the web landing page.
+    navigate(isNativeApp() ? '/login' : '/')
   }
 
   const ownerHasLitters = isOwner && litterCount !== null && litterCount > 0
