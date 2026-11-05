@@ -8,12 +8,9 @@ vi.mock('../lib/nativePlatform', () => ({ isNativeApp: () => true, isAndroidNati
 import BillingPage from './BillingPage'
 
 let page: ReactTestRenderer
-const requests = vi.fn()
 beforeEach(() => {
-  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-05T01:00:00Z'))
-  fixture.profile = { role: 'breeder', plan: 'free' }
-  requests.mockReset().mockImplementation(async () => ({ ok: true, json: async () => ({ entitlement: { plan: 'free' }, canManageBilling: false, invoices: [], sms: { status: 'inactive' } }) }))
-  vi.stubGlobal('fetch', requests)
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-06T01:00:00Z'))
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ entitlement: { plan: 'free' }, canManageBilling: false, invoices: [], sms: { status: 'inactive' } }) })))
   vi.stubGlobal('window', { location: { href: '' }, addEventListener: vi.fn(), removeEventListener: vi.fn() })
   vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
 })
@@ -23,26 +20,20 @@ async function render() {
 }
 const allText = () => page.root.findAll(() => true).flatMap(n => n.children.filter(c => typeof c === 'string')).join(' ')
 
-it('iOS shows the website Free/Plus details and promotion for information, with no purchase controls', async () => {
-  fixture.platform = 'ios'
-  await render()
-  const t = allText()
-  for (const s of ['Up to 2 dogs', 'Permanent Dog ID & QR Passport', 'Ownership transfer', '2 free iDogs Scan — one-time',
-    'Up to 5 dogs', '10 iDogs Document Scans / month', '2 litters per rolling 12 months', 'Extra litters A$39 each', 'PDF & CSV report export',
-    '31 January 2027', '1 February 2027, including GST.', 'Payment details required', 'SMS and extra litters are not included']) expect(t).toContain(s)
-  expect(page.root.findAllByType('del').map(d => d.children.join(''))).toEqual(['A$7'])
-  expect(page.root.findAllByProps({ type: 'checkbox' })).toHaveLength(0)
-  const buttons = page.root.findAllByType('button').map(b => JSON.stringify(b.children))
-  expect(buttons.some(b => /Get Plus|Upgrade to Plus|Manage subscription|Monthly|Annual/.test(b))).toBe(false)
-  expect(t).toContain('Purchases are unavailable in this app.')
-  expect(requests.mock.calls.filter(([u]) => u === '/api/create-checkout')).toHaveLength(0)
-})
-
-it('Android still shows no prices or promotion', async () => {
-  fixture.platform = 'android'
-  await render()
-  const t = allText()
-  expect(t).not.toContain('A$0')
-  expect(page.root.findAllByType('del')).toHaveLength(0)
-  expect(t).not.toContain('A$39')
-})
+// App Store Guideline 3.1.1/3.1.3 (RC9): no digital-subscription prices, offers,
+// renewal terms or purchase calls to action in any native app.
+for (const platform of ['ios', 'android'] as const) {
+  it(`${platform}: shows current plan and plan features, no prices, offer, renewal terms or purchase controls`, async () => {
+    fixture.platform = platform
+    await render()
+    const t = allText()
+    expect(t).toContain('Current plan')
+    expect(t).toContain('Up to 5 dogs')
+    expect(t).toContain('10 iDogs Document Scans / month')
+    for (const banned of ['A$0', 'A$7', '$7', 'A$39', '31 January 2027', 'Renews automatically', 'Payment details required', 'MOST POPULAR', 'Get Plus', 'Upgrade to Plus', 'Stripe']) expect(t).not.toContain(banned)
+    expect(page.root.findAllByType('del')).toHaveLength(0)
+    expect(page.root.findAllByProps({ type: 'checkbox' })).toHaveLength(0)
+    expect(page.root.findAllByType('button').map(b => JSON.stringify(b.children)).some(b => /Monthly|Annual|Manage subscription|Upgrade/.test(b))).toBe(false)
+    expect(t).toContain('Purchases are unavailable in this app.')
+  })
+}

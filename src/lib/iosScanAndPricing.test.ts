@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import AIScan, { scanFailureMessage } from '../components/ui/AIScan'
 import PlusPromotion from '../components/ui/PlusPromotion'
 import { PLUS_PROMOTION_TERMS } from '../../shared/plus-promotion.js'
-import { plusFeatureList, showInformationalPlanPrices, showPlanPricingUI, nativeIosBillingIntroCopy } from './billingPageAndroidGate'
+import { plusFeatureList, showPlanPricingUI } from './billingPageAndroidGate'
 import { dogLimitReachedBody } from './nativeUpgradeCopy'
 
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({
@@ -68,26 +68,11 @@ describe('iOS Free/Plus parity with idogs.com.au', () => {
     expect(PLUS_PROMOTION_TERMS).toContain('Payment details required. Renews automatically unless cancelled before renewal. SMS and extra litters are not included.')
   })
 
-  it('iOS gets informational prices and the full Plus list; Android stays price-free; no plan picker in any app', () => {
-    expect(showInformationalPlanPrices(false)).toBe(true)
-    expect(showInformationalPlanPrices(true)).toBe(false)
+  it('native apps (iOS and Android) get no plan prices or purchase UI; web keeps them', () => {
     expect(showPlanPricingUI(true)).toBe(false)
-    expect(plusFeatureList(false)).toEqual([
-      'Up to 5 dogs', 'Everything in Free', '10 iDogs Document Scans / month',
-      '2 litters per rolling 12 months', 'Extra litters A$39 each', 'PDF & CSV report export',
-    ])
-    expect(nativeIosBillingIntroCopy()).toContain('include GST')
-    expect(nativeIosBillingIntroCopy()).not.toMatch(/idogs\.com\.au|website|web/i)
-  })
-
-  it('BillingPage keeps every purchase control (button, consent, portal) web-only', () => {
-    expect(billingPage).toContain("{promotionActive && interval === 'plus_monthly' && !isPlus && !nativePurchasesUnavailable && <label className=\"plus-promotion-consent\">")
-    expect(billingPage).toMatch(/\) : nativePurchasesUnavailable \? \(\s*<div[^>]*>\{androidPlanUnavailableNotice\(\)\}/)
-    expect(billingPage).toContain('{showInformationalPlanPrices(isAndroidApp) && <>')
-    expect(billingPage).toContain('plusFeatureList(isAndroidApp)')
-    for (const f of ['Up to 2 dogs', 'Permanent Dog ID & QR Passport', 'Health records & email reminders', 'Ownership transfer', '2 free iDogs Scan — one-time']) {
-      expect(billingPage).toContain(`'${f}'`)
-    }
+    expect(showPlanPricingUI(false)).toBe(true)
+    expect(plusFeatureList(true)).not.toContain('Extra litters A$39 each')
+    expect(plusFeatureList(false)).toContain('Extra litters A$39 each')
   })
 
   it('dog-limit copy no longer claims free features need Plus', () => {
