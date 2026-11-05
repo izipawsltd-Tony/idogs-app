@@ -83,13 +83,13 @@ await checkAsync('OWNER can GET rem1 (claimed dog1, reminder still tagged with b
 await checkAsync('OWNER can LIST reminders via the real dogId-only claimed-dog query shape (matches db.ts getReminders)', async () => {
   const db = testEnv.authenticatedContext(OWNER).firestore()
   const snap = await assertSucceeds(getDocs(query(collection(db, 'reminders'), where('dogId', '==', 'dog1'))))
-  return snap.size === 1 && snap.docs[0].id === 'rem1'
+  return snap.size === 2 && new Set(snap.docs.map(d => d.id)).has('rem1') && new Set(snap.docs.map(d => d.id)).has('rem1b')
 })
 
 await checkAsync('OWNER can LIST reminders via the real dogId "in" claimed-dog query shape (matches db.ts getAllPendingReminders/getAllRemindersForUser)', async () => {
   const db = testEnv.authenticatedContext(OWNER).firestore()
   const snap = await assertSucceeds(getDocs(query(collection(db, 'reminders'), where('dogId', 'in', ['dog1']))))
-  return snap.size === 1 && snap.docs[0].id === 'rem1'
+  return snap.size === 2 && new Set(snap.docs.map(d => d.id)).has('rem1') && new Set(snap.docs.map(d => d.id)).has('rem1b')
 })
 
 // ── 2. Former owner (original breeder) loses live access to the transferred
