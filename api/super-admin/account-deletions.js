@@ -34,6 +34,17 @@ export function makeAccountDeletionsHandler(deps) {
     if (!admin) return
     try {
       const { db } = deps
+      if (req.method === 'GET' && req.query?.environment === '1') {
+        // Non-secret backend identity, so an operator can prove which systems a deletion will touch.
+        const key = process.env.STRIPE_SECRET_KEY || ''
+        return res.status(200).json({ environment: {
+          vercelEnv: process.env.VERCEL_ENV || null,
+          firebaseProject: process.env.FIREBASE_PROJECT_ID || null,
+          storageBucket: process.env.FIREBASE_STORAGE_BUCKET || null,
+          stripeMode: key.startsWith('sk_test_') || key.startsWith('rk_test_') ? 'test' : key.startsWith('sk_live_') || key.startsWith('rk_live_') ? 'live' : key ? 'unknown' : 'not_configured',
+          emailConfigured: Boolean(process.env.RESEND_API_KEY),
+        } })
+      }
       if (req.method === 'GET') {
         const uid = req.query?.uid
         if (uid !== undefined && (typeof uid !== 'string' || !UID.test(uid))) return res.status(400).json({ error: 'Invalid account identifier' })
@@ -50,6 +61,8 @@ export function makeAccountDeletionsHandler(deps) {
       const operator = admin.email
       if (action === 'preview') return res.status(200).json({ plan: await planDeletion({ db, uid }) })
       if (action === 'process') {
+        const key = process.env.STRIPE_SECRET_KEY || ''
+        if (process.env.VERCEL_ENV === 'preview' && /^(sk|rk)_live_/.test(key)) return res.status(409).json({ error: 'Preview is configured with live Stripe; refusing to process.' })
         if (confirmation !== `DELETE ${uid}`) return res.status(400).json({ error: 'Type the confirmation exactly to process this deletion.' })
         const result = await processDeletion({ db, auth: deps.auth, bucket: deps.bucket(), stripe: deps.stripe(), sendEmail: deps.sendEmail, uid, operator })
         return res.status(200).json(result)

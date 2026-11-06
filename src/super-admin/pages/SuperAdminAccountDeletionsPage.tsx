@@ -19,6 +19,7 @@ export default function SuperAdminAccountDeletionsPage() {
   const [confirm, setConfirm] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null)
+  const [env, setEnv] = useState<Record<string, string | boolean | null> | null>(null)
 
   const call = useCallback(async (method: 'GET' | 'POST', body?: Record<string, string>) => {
     const token = await user!.getIdToken()
@@ -30,7 +31,12 @@ export default function SuperAdminAccountDeletionsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    try { setRequests((await call('GET')).requests || []) } catch (e) { setMessage({ kind: 'error', text: (e as Error).message }) } finally { setLoading(false) }
+    try {
+      setRequests((await call('GET')).requests || [])
+      const token = await user!.getIdToken()
+      const r = await fetch('/api/super-admin/account-deletions?environment=1', { headers: { Authorization: `Bearer ${token}` } })
+      if (r.ok) setEnv((await r.json()).environment)
+    } catch (e) { setMessage({ kind: 'error', text: (e as Error).message }) } finally { setLoading(false) }
   }, [call])
   useEffect(() => { if (user) load() }, [user, load])
 
@@ -49,6 +55,7 @@ export default function SuperAdminAccountDeletionsPage() {
   return (
     <div>
       <div className="super-admin-page-header"><div><span className="super-admin-kicker">Operations</span><h2>Account Deletions</h2><p>Complete each request within 7 days: preview, process, then record completion.</p></div></div>
+      {env && <p data-testid="deletion-environment" style={{ fontSize: 12, color: 'var(--mid)', margin: '0 0 10px' }}>Systems: {String(env.vercelEnv)} · Firebase {String(env.firebaseProject)} · Storage {String(env.storageBucket)} · Stripe {String(env.stripeMode)} · Email {env.emailConfigured ? 'configured' : 'not configured'}</p>}
       {message && <div role="status" className="super-admin-panel" style={{ padding: 12, marginBottom: 12, color: message.kind === 'error' ? '#991b1b' : '#085041' }}>{message.text}</div>}
       <section className="super-admin-panel" style={{ padding: 16 }}>
         {loading ? <p role="status">Loading…</p> : requests.length === 0 ? <p>No open deletion requests.</p> : (
