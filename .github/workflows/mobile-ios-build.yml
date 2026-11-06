@@ -5,6 +5,7 @@ on:
     branches:
       - fix/android-v20-qa-blockers
       - release/ios-app-store-20261025
+      - integration/ios-onboarding-documents-20261031
     paths:
       - 'mobile/**'
       - 'src/**'

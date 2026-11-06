@@ -1,0 +1,39 @@
+name: Phone to email same-UID emulator E2E
+
+on:
+  push:
+    branches:
+      - integration/ios-onboarding-documents-20261031
+    paths:
+      - scripts/test-phone-email-link-emulator.mjs
+      - src/lib/phoneAccountEmailLink.ts
+      - src/lib/phoneAccountEmailLink.test.ts
+      - .github/workflows/phone-email-link-emulator.yml
+      - firebase.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  same-uid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - name: Run synthetic UID, Ruby dog and Plus continuity regression
+        env:
+          GCLOUD_PROJECT: demo-idogs-phone-link
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec
+          --project demo-idogs-phone-link --only auth,firestore
+          'node scripts/test-phone-email-link-emulator.mjs'
