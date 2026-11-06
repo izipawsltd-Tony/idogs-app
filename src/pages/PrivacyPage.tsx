@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import LegalNav from '../components/legal/LegalNav'
 import { DELETION_POLICY } from '../../shared/account-deletion-copy.js'
 import AIProviderRetention from '../components/legal/AIProviderRetention'
 
@@ -6,13 +7,7 @@ export default function PrivacyPage() {
   const lastUpdated = '6 November 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
-      {/* Nav */}
-      <nav style={{ position: 'sticky', top: 0, zIndex: 100, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
-          <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ height: 34 }} />
-        </Link>
-        <Link to="/signup" className="btn btn-primary btn-sm">Start free</Link>
-      </nav>
+      <LegalNav />
 
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '48px 24px 80px' }}>
         <div style={{ marginBottom: 40 }}>
