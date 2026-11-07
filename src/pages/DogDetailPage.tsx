@@ -13,7 +13,7 @@ import {
   getDog, getDogs, getVaccineRecords, getWormingRecords, getHealthTests,
   addWormingReminder, getReminders, getActivityNotes, addActivityNote, updateActivityNote, deleteActivityNote,
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder, addReminder, updateReminder,
-  addWormingRecord, deleteWormingRecord, updateWormingRecord,
+  addWormingRecord, deleteWormingRecord, updateWormingRecord, getShowcaseMediaUrls,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, updateDocument, logAudit, syncLifeStage,
   getAuditLogs, type AuditEntry, isCurrentOwner, safeReadFirestoreErrorCode
 } from '../lib/db'
@@ -32,6 +32,7 @@ import { prepareImageForUpload } from '../lib/imageCompression'
 import { saveNoteWithPhoto, TimelinePhotoError } from '../lib/timelineNoteSave'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import RecoveredDogHistory from '../components/ui/RecoveredDogHistory'
+import HistoricalPassport from '../components/ui/HistoricalPassport'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
 import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
@@ -1335,7 +1336,7 @@ export default function DogDetailPage({ toast }: Props) {
           "Unavailable" copy covers that (round 13); round 17 adds an
           explicit Retry action alongside it. */}
       {tab === 'passport' && (historicalSnapshot
-        ? <div className="card" style={{ padding: 20 }}><h2>Passport at transfer</h2><p>{dog.passportId || 'Not recorded'}</p><p>This history does not open the current owner's live passport.</p></div>
+        ? <HistoricalPassport dog={historicalSnapshot.dog || dog} transferredAt={historicalSnapshot.transferredAt} vaccines={vaccines} healthTests={healthTests} loadPhotos={() => getShowcaseMediaUrls(dog.id)} />
         : <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />)}
       {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} dogId={dog.id} toast={toast} error={documentsError} onRetry={retryDocuments} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
       {tab === 'timeline' && <TimelineTab key={dog.id + (user?.uid || "")} dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
