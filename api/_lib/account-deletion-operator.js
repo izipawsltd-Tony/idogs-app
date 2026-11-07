@@ -58,15 +58,25 @@ export async function planDeletion({ db, uid, now = Date.now() }) {
   }
 }
 
-async function cancelStripe({ stripe, profile }) {
+async function cancelStripe({ stripe, profile, uid }) {
   const ids = new Set([profile?.stripeSubscriptionId, profile?.smsStripeSubscriptionId].filter(x => typeof x === 'string' && x))
   const customer = typeof profile?.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
-  if (!ids.size && !customer) return { checked: true, customer: null, cancelled: [], alreadyEnded: [] }
-  if (!stripe) throw fail('Stripe is not configured; billing cannot be checked.', 503)
+  if (!stripe) {
+    if (!ids.size && !customer) return { checked: true, customer: null, searched: false, cancelled: [], alreadyEnded: [] }
+    throw fail('Stripe is not configured; billing cannot be checked.', 503)
+  }
   if (customer) {
     const list = await stripe.subscriptions.list({ customer, status: 'all', limit: 100 })
     for (const s of list.data) if (ACTIVE_STRIPE.has(s.status)) ids.add(s.id)
   }
+  // Also find subscriptions by the account id that checkout writes into subscription metadata,
+  // so a subscription whose webhook never reached the profile is still cancelled.
+  let page
+  do {
+    const found = await stripe.subscriptions.search({ query: `metadata['userId']:'${uid}'`, limit: 100, ...(page ? { page } : {}) })
+    for (const s of found.data) if (ACTIVE_STRIPE.has(s.status)) ids.add(s.id)
+    page = found.has_more ? found.next_page : null
+  } while (page)
   const cancelled = [], alreadyEnded = []
   for (const id of ids) {
     const sub = await stripe.subscriptions.retrieve(id)
@@ -74,7 +84,7 @@ async function cancelStripe({ stripe, profile }) {
     await stripe.subscriptions.cancel(id, { prorate: false, invoice_now: false })
     cancelled.push(id)
   }
-  return { checked: true, customer: customer ? 'present' : null, cancelled, alreadyEnded }
+  return { checked: true, customer: customer ? 'present' : null, searched: true, cancelled, alreadyEnded }
 }
 
 async function deleteStorage({ bucket, plan }) {
@@ -166,7 +176,7 @@ export async function processDeletion({ db, auth, bucket, stripe, sendEmail, uid
       await save()
       // 1. Billing first: never delete the account while a web subscription could renew.
       if (evidence.stripe?.checked !== true) {
-        try { evidence.stripe = await cancelStripe({ stripe, profile }) }
+        try { evidence.stripe = await cancelStripe({ stripe, profile, uid }) }
         catch { evidence.stripe = { checked: false, error: 'stripe_failed' }; await release({ status: evidence.firestore ? 'processing' : 'review_required' }); throw fail('Stripe subscription could not be checked or cancelled. Nothing more was deleted.', 502) }
       }
       // Freeze writes: sign the account out everywhere before data is removed.

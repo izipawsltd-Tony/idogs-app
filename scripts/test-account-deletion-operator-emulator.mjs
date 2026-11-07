@@ -24,8 +24,17 @@ const bucket = {
   file: k => ({ exists: async () => [files.has(k)], delete: async () => files.delete(k) }),
 }
 const subs = { sub_plus: 'active', sub_old: 'canceled' }
+// Subscriptions found only by metadata.userId (webhook never wrote them onto the profile).
+const subOwner = {}, searches = []
 const stripe = { subscriptions: {
-  list: async () => { if (stripeFails) throw new Error('down'); return { data: Object.entries(subs).map(([id, status]) => ({ id, status })) } },
+  list: async () => { if (stripeFails) throw new Error('down'); return { data: Object.entries(subs).filter(([id]) => !subOwner[id]).map(([id, status]) => ({ id, status })) } },
+  search: async ({ query }) => {
+    if (stripeFails) throw new Error('down')
+    searches.push(query)
+    const uid = /^metadata\['userId'\]:'([A-Za-z0-9_-]+)'$/.exec(query)?.[1]
+    if (!uid) throw new Error(`unexpected query ${query}`)
+    return { data: Object.entries(subOwner).filter(([, o]) => o === uid).map(([id]) => ({ id, status: subs[id] })), has_more: false }
+  },
   retrieve: async id => ({ id, status: subs[id] }),
   cancel: async id => { stripeCalls.push(id); subs[id] = 'canceled' },
 } }
@@ -190,4 +199,34 @@ test('overlapping runs: a second process call is refused while the first holds t
   assert.equal(results.filter(x => x.status === 'rejected' && x.reason.status === 409).length, 1)
   const d = (await db.collection('accountDeletionRequests').doc(u).get()).data()
   assert.equal(d.status, 'processed'); assert.equal(d.evidence.verification.passed, true); assert.equal(d.lease, null)
+})
+
+test('a Stripe Test subscription missing from the profile is found by account id and cancelled', async () => {
+  const t = await signup('operator-orphan')
+  const u = t.localId
+  // Profile has no Stripe fields at all: the webhook never landed.
+  await db.collection('users').doc(u).set({ email: 'operator-orphan@example.invalid' })
+  subs.sub_orphan = 'trialing'; subOwner.sub_orphan = u
+  subs.sub_someone_else = 'active'; subOwner.sub_someone_else = 'not-this-account'
+  await changeDeletionRequest({ db, token: { uid: u, email: 'operator-orphan@example.invalid', auth_time: Date.now() / 1000 }, body: { action: 'request', confirmation: 'DELETE MY ACCOUNT' } })
+  const r = await admin('POST', { action: 'process', uid: u, confirmation: `DELETE ${u}` })
+  assert.equal(r.status, 200)
+  assert.equal(subs.sub_orphan, 'canceled')
+  assert.equal(subs.sub_someone_else, 'active')
+  assert.deepEqual(r.body.evidence.stripe.cancelled, ['sub_orphan'])
+  assert.equal(r.body.evidence.stripe.searched, true)
+  assert.ok(searches.includes(`metadata['userId']:'${u}'`))
+})
+
+test('Stripe search failure stops before anything is deleted', async () => {
+  const t = await signup('operator-searchfail')
+  const u = t.localId
+  await db.collection('users').doc(u).set({ email: 'operator-searchfail@example.invalid' })
+  await changeDeletionRequest({ db, token: { uid: u, email: 'operator-searchfail@example.invalid', auth_time: Date.now() / 1000 }, body: { action: 'request', confirmation: 'DELETE MY ACCOUNT' } })
+  stripeFails = true
+  const r = await admin('POST', { action: 'process', uid: u, confirmation: `DELETE ${u}` })
+  stripeFails = false
+  assert.equal(r.status, 502)
+  assert.equal((await db.doc(`users/${u}`).get()).exists, true)
+  assert.equal((await auth.getUser(u)).disabled, false)
 })
