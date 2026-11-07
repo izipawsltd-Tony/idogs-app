@@ -85,7 +85,7 @@ export default function SuperAdminAccountDeletionsPage() {
           {plan.notScanned.length > 0 && <p style={{ fontSize: 12 }}>Collections not tied to accounts (not scanned): {plan.notScanned.join(', ')}</p>}
           {plan.blockers.length === 0 && (
             <div style={{ marginTop: 12, padding: 12, border: '1px solid #d7b45a', borderRadius: 8, background: '#fffbeb' }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 700 }}>Type <code>DELETE {selected}</code> to process
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 700 }}>To process, type exactly: <code>DELETE {selected}</code>
                 <input value={confirm} onChange={e => setConfirm(e.target.value)} disabled={busy} style={{ display: 'block', width: '100%', marginTop: 5 }} />
               </label>
               <button className="btn btn-danger btn-sm" style={{ marginTop: 10 }} type="button" disabled={busy || confirm.trim() !== `DELETE ${selected}`} onClick={() => run('process', selected)}>{busy ? 'Processing…' : 'Process deletion'}</button>

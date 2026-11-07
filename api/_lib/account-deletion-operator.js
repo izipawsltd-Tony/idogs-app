@@ -119,7 +119,10 @@ export async function processDeletion({ db, auth, bucket, stripe, sendEmail, uid
     let authUser = null
     try { authUser = await auth.getUser(uid) } catch (e) { if (e?.code !== 'auth/user-not-found') throw e }
     evidence.contactEmail = (profile?.email || authUser?.email || '').trim() || null
-    evidence.contactName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim() || authUser?.displayName || null
+    // Greet by real name only; quick sign-up display names are often the email prefix.
+    const display = (authUser?.displayName || '').trim()
+    evidence.contactName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim()
+      || (display && !/[@+]/.test(display) && display.toLowerCase() !== (evidence.contactEmail || '').split('@')[0].toLowerCase() ? display : null)
 
     const plan = await planDeletion({ db, uid, now })
     if (plan.blockers.length) {
