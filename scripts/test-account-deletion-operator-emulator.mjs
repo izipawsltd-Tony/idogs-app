@@ -191,14 +191,24 @@ test('overlapping runs: a second process call is refused while the first holds t
   const r = await admin('POST', { action: 'process', uid: u, confirmation: `DELETE ${u}` })
   assert.equal(r.status, 409); assert.match(r.body.error, /already being processed/)
   assert.equal((await db.doc(`users/${u}`).get()).exists, true)
-  // Two real runs at once: exactly one proceeds.
+  // Two real runs: run A is held mid-flight (inside the Stripe check, lease held) while run B starts.
   await db.collection('accountDeletionRequests').doc(u).update({ lease: null })
-  const deps = { db, auth, bucket, stripe, sendEmail, uid: u, operator: 'operator@example.invalid' }
-  const results = await Promise.allSettled([processDeletion({ ...deps, runId: 'a' }), processDeletion({ ...deps, runId: 'b' })])
-  assert.equal(results.filter(x => x.status === 'fulfilled').length, 1)
-  assert.equal(results.filter(x => x.status === 'rejected' && x.reason.status === 409).length, 1)
+  let reached, resume
+  const inStripe = new Promise(r => { reached = r }), gate = new Promise(r => { resume = r })
+  const heldStripe = { subscriptions: { ...stripe.subscriptions, search: async q => { reached(); await gate; return stripe.subscriptions.search(q) } } }
+  const deps = { db, auth, bucket, sendEmail, uid: u, operator: 'operator@example.invalid' }
+  const runA = processDeletion({ ...deps, stripe: heldStripe, runId: 'a' })
+  await inStripe
+  await assert.rejects(processDeletion({ ...deps, stripe, runId: 'b' }), e => e.status === 409 && /already being processed/.test(e.message))
+  resume()
+  assert.equal((await runA).status, 'processed')
   const d = (await db.collection('accountDeletionRequests').doc(u).get()).data()
   assert.equal(d.status, 'processed'); assert.equal(d.evidence.verification.passed, true); assert.equal(d.lease, null)
+  // A later Process after completion is a no-op: no second email.
+  const sent = emails.filter(m => m.to === 'operator-overlap@example.invalid').length
+  assert.equal(sent, 1)
+  assert.equal((await processDeletion({ ...deps, stripe, runId: 'c' })).status, 'processed')
+  assert.equal(emails.filter(m => m.to === 'operator-overlap@example.invalid').length, sent)
 })
 
 test('a Stripe Test subscription missing from the profile is found by account id and cancelled', async () => {
