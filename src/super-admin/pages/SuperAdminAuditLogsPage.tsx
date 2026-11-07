@@ -50,6 +50,7 @@ const ACTION_LABELS: Record<string, string> = {
   health_test_added: 'Health test added',
   health_test_deleted: 'Health test deleted',
   worming_added: 'Worming added',
+  worming_updated: 'Worming edited',
   worming_deleted: 'Worming deleted',
   document_uploaded: 'Document uploaded',
   reminder_completed: 'Reminder completed',
