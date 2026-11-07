@@ -28,12 +28,12 @@ const stageCopy: Record<string,string> = {
 }
 
 const renewalCopy: Record<string, string> = {
-  pending_verification: 'Stopping future renewal is pending verification. No subscription cancellation is confirmed yet.',
-  review_required: 'Subscription renewal needs review. No subscription cancellation is confirmed yet.',
+  pending_verification: 'Any iDogs Plus subscription bought on idogs.com.au is cancelled when we process the deletion.',
+  review_required: 'We are checking your subscription before deleting. It is cancelled before any data is deleted.',
   verified_stopped: 'Future renewal has been verified as stopped for the subscriptions checked for this request.',
   verified_no_subscription: 'No subscription requiring cancellation was found in the verified provider check for this request.',
 }
-const displayDate = (value?: string) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : null
+const displayDate = (value?: string) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' }) : null
 
 export default function AccountDeletion() {
   const { user } = useAuth()
@@ -89,7 +89,7 @@ export default function AccountDeletion() {
   }
 
   return (
-    <section className="card" aria-labelledby="delete-account-heading">
+    <section className="card" aria-labelledby="delete-account-heading" style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', boxSizing: 'border-box' }}>
       <h2 id="delete-account-heading" style={{ fontSize: 16 }}>Delete account</h2>
       <p>Request permanent deletion of your iDogs account and associated personal data.</p>
       {!open ? <button type="button" className="btn btn-secondary" onClick={() => { setOpen(true); void call() }}>Delete account…</button> : (
@@ -101,29 +101,27 @@ export default function AccountDeletion() {
           {error && <p role="alert">{error}</p>}
           <div aria-live="polite" aria-label="Account deletion request status">
             {busy ? <p role="status">Checking…</p> : status && <>
-              <p><strong>Status: {status.status === 'none' ? 'No request' : status.status.replaceAll('_', ' ')}</strong></p>
+              <p><strong>Status: {status.status === 'none' ? 'No request' : status.status === 'processed' ? 'processing' : status.status.replaceAll('_', ' ')}</strong></p>
               {status.message && <p>{status.message}</p>}
               {status.processingStage && stageCopy[status.processingStage] && <p>{stageCopy[status.processingStage]}</p>}
               {status.status === 'completed' && displayDate(status.completedAt) && <p>Completed: {displayDate(status.completedAt)}</p>}
               {status.status === 'completed' && status.retainedCategories?.length ? <p>Some reviewed financial or shared ownership records remain retained with restricted access. Completion does not mean every historical record or backup was erased.</p> : null}
-              {status.requestedAt && <p>Requested: {new Date(status.requestedAt).toLocaleString()}</p>}
+              {displayDate(status.requestedAt) && <p>Requested: {displayDate(status.requestedAt)}</p>}
               {status.status === 'processing' && status.processingStage === 'waiting_for_storage' && displayDate(status.storageReviewAfter) && <p>Storage verification can resume after: {displayDate(status.storageReviewAfter)}. This is a review time, not confirmation that every copy has been erased.</p>}
               {!['cancelled', 'completed'].includes(status.status) && <>
-                {displayDate(status.targetAt) && <p>Processing target: {displayDate(status.targetAt)}. This is a service target, not confirmation of completion.</p>}
-                {displayDate(status.nextUpdateDueAt) && <p>Next update due: {displayDate(status.nextUpdateDueAt)}</p>}
+                {displayDate(status.targetAt) && <p>Deletion due by: {displayDate(status.targetAt)}</p>}
               </>}
               {status.renewalStatus && renewalCopy[status.renewalStatus] && <p>{renewalCopy[status.renewalStatus]}</p>}
             </>}
           </div>
           {status && (status.canCancel || ['none', 'cancelled'].includes(status.status)) && (
             <form onSubmit={e => { e.preventDefault(); if (status.canCancel || confirmed) void call(status.canCancel ? 'cancel' : 'request') }}>
-              {status.canCancel && <p>Cancelling this request does not restart subscription renewal already stopped for this request.</p>}
               <label htmlFor="delete-account-password">Confirm your password</label>
               <input id="delete-account-password" type="password" autoComplete="current-password" value={password}
-                onChange={e => setPassword(e.target.value)} required disabled={busy} />
+                onChange={e => setPassword(e.target.value)} required disabled={busy} style={{ display: 'block', width: '100%', maxWidth: 360, boxSizing: 'border-box', marginTop: 4 }} />
               {!status.canCancel && <label style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} disabled={busy} />
-                I understand this requests permanent account deletion. I can cancel only before processing starts. Cancelling this request does not restart subscription renewal already stopped for this request.
+                I understand my account and data will be permanently deleted within 7 days. I can cancel until processing starts.
               </label>}
               <button type="submit" className="btn btn-secondary" style={{ marginTop: 12 }} disabled={busy || !password || (!status.canCancel && !confirmed)}>
                 {status.canCancel ? 'Cancel deletion request' : 'Confirm deletion request'}
