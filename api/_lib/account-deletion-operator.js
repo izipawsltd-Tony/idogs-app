@@ -97,65 +97,118 @@ export function deletionConfirmationEmail(name) {
   return { subject: 'Your iDogs account has been deleted', text }
 }
 
-export async function processDeletion({ db, auth, bucket, stripe, sendEmail, uid, operator, now = Date.now() }) {
+const LEASE_MS = 15 * 60 * 1000
+const union = (a = [], b = []) => [...new Set([...a, ...b])]
+
+async function verifyRemoved({ db, bucket, targets }) {
+  const firestoreLeft = []
+  for (const path of targets.deletePaths) if ((await db.doc(path).get()).exists) firestoreLeft.push(path)
+  let storageLeft = 0
+  for (const prefix of targets.storagePrefixes) storageLeft += (await bucket.getFiles({ prefix }))[0].length
+  for (const path of targets.storagePaths) if ((await bucket.file(path).exists())[0]) storageLeft++
+  return { firestoreLeft, storageLeft }
+}
+
+export async function processDeletion({ db, auth, bucket, stripe, sendEmail, uid, operator, now = Date.now(), runId = `${now}-${Math.random().toString(36).slice(2, 10)}` }) {
   const ref = db.collection(DELETION_COLLECTION).doc(uid)
+  // One run at a time: a lease taken in a transaction; a second run is refused while it is live.
   const started = await db.runTransaction(async tx => {
     const snap = await tx.get(ref)
     if (!snap.exists) throw fail('Deletion request not found.', 404)
     const data = snap.data()
     if (!PROCESSABLE.includes(data.status)) throw fail(`Request is ${data.status}; it cannot be processed.`, 409)
-    if (data.status !== 'processed') tx.update(ref, { status: 'processing', processingStartedAt: new Date(now).toISOString(), processedBy: operator, updatedAt: new Date(now).toISOString() })
+    if (data.lease && data.lease.runId !== runId && Date.parse(data.lease.until) > Date.now()) throw fail('This deletion is already being processed. Try again in a few minutes.', 409)
+    const at = new Date(now).toISOString()
+    tx.update(ref, { status: data.status === 'processed' ? 'processed' : 'processing', ...(data.processingStartedAt ? {} : { processingStartedAt: at }), processedBy: operator, updatedAt: at,
+      lease: { runId, until: new Date(Date.now() + LEASE_MS).toISOString() } })
     return data
   })
   const evidence = { ...(started.evidence || {}) }
-  const save = (fields = {}) => ref.update({ evidence, updatedAt: new Date().toISOString(), ...fields })
+  let targets = started.targets || null
+  // Every write re-checks that this run still holds the lease.
+  const save = (fields = {}) => db.runTransaction(async tx => {
+    const cur = (await tx.get(ref)).data() || {}
+    if (cur.lease?.runId !== runId) throw fail('Another run took over this deletion; this run stopped.', 409)
+    tx.update(ref, { evidence, ...(targets ? { targets } : {}), updatedAt: new Date().toISOString(), lease: { runId, until: new Date(Date.now() + LEASE_MS).toISOString() }, ...fields })
+  })
+  const release = (fields = {}) => save({ lease: null, ...fields }).catch(() => {})
 
-  // Email only remains to be retried once data and account are gone.
-  if (started.status === 'processed') {
-    if (evidence.email === 'sent' || evidence.email === 'no_email') return { status: 'processed', evidence }
-  } else {
-    const profileSnap = await db.collection('users').doc(uid).get()
-    const profile = profileSnap.exists ? profileSnap.data() : null
-    let authUser = null
-    try { authUser = await auth.getUser(uid) } catch (e) { if (e?.code !== 'auth/user-not-found') throw e }
-    evidence.contactEmail = (profile?.email || authUser?.email || '').trim() || null
-    // Greet by real name only; quick sign-up display names are often the email prefix.
-    const display = (authUser?.displayName || '').trim()
-    evidence.contactName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim()
-      || (display && !/[@+]/.test(display) && display.toLowerCase() !== (evidence.contactEmail || '').split('@')[0].toLowerCase() ? display : null)
-
-    const plan = await planDeletion({ db, uid, now })
-    if (plan.blockers.length) {
-      evidence.blockers = plan.blockers
-      await save({ status: 'review_required' })
-      throw fail('Deletion needs review before it can run.', 409, { blockers: plan.blockers })
+  try {
+    const dataDone = evidence.auth === 'deleted' && evidence.verification?.passed === true
+    if (!dataDone) {
+      const profileSnap = await db.collection('users').doc(uid).get()
+      const profile = profileSnap.exists ? profileSnap.data() : null
+      let authUser = null
+      try { authUser = await auth.getUser(uid) } catch (e) { if (e?.code !== 'auth/user-not-found') throw e }
+      if (!evidence.contactEmail) {
+        evidence.contactEmail = (profile?.email || authUser?.email || '').trim() || null
+        // Greet by real name only; quick sign-up display names are often the email prefix.
+        const display = (authUser?.displayName || '').trim()
+        evidence.contactName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim()
+          || (display && !/[@+]/.test(display) && display.toLowerCase() !== (evidence.contactEmail || '').split('@')[0].toLowerCase() ? display : null)
+      }
+      const plan = await planDeletion({ db, uid, now })
+      if (!targets) {
+        // First run: blockers apply, and the cleanup targets are saved BEFORE anything is
+        // deleted, so a retry after a partial failure still knows every original file.
+        if (plan.blockers.length) {
+          evidence.blockers = plan.blockers
+          await release({ status: 'review_required' })
+          throw fail('Deletion needs review before it can run.', 409, { blockers: plan.blockers })
+        }
+        targets = { deletePaths: plan.deletePaths, storagePrefixes: plan.storagePrefixes, storagePaths: plan.storagePaths,
+          retained: plan.retained, notScanned: plan.notScanned, legacyUrlRecords: plan.legacyUrlRecords.length, capturedAt: new Date().toISOString() }
+      } else {
+        // Retry: keep every saved target and add anything that appeared since.
+        targets = { ...targets, deletePaths: union(targets.deletePaths, plan.deletePaths), storagePrefixes: union(targets.storagePrefixes, plan.storagePrefixes), storagePaths: union(targets.storagePaths, plan.storagePaths) }
+      }
+      delete evidence.blockers
+      await save()
+      // 1. Billing first: never delete the account while a web subscription could renew.
+      if (evidence.stripe?.checked !== true) {
+        try { evidence.stripe = await cancelStripe({ stripe, profile }) }
+        catch { evidence.stripe = { checked: false, error: 'stripe_failed' }; await release({ status: evidence.firestore ? 'processing' : 'review_required' }); throw fail('Stripe subscription could not be checked or cancelled. Nothing more was deleted.', 502) }
+      }
+      // Freeze writes: sign the account out everywhere before data is removed.
+      if (authUser && !evidence.signInFrozen) { await auth.updateUser(uid, { disabled: true }); await auth.revokeRefreshTokens(uid) }
+      evidence.signInFrozen = true
+      await save()
+      // 2. Data (subcollections included), 3. files. Both idempotent over the saved targets.
+      for (const path of targets.deletePaths) await db.recursiveDelete(db.doc(path))
+      evidence.firestore = { deleted: targets.deletePaths.length, retained: targets.retained, notScanned: targets.notScanned, legacyUrlRecords: targets.legacyUrlRecords }
+      await save()
+      const removed = await deleteStorage({ bucket, plan: targets })
+      evidence.storage = { deleted: (evidence.storage?.deleted || 0) + removed.deleted, missing: removed.missing }
+      // 4. Verify nothing in scope is left before the sign-in is deleted or anyone is emailed.
+      const left = await verifyRemoved({ db, bucket, targets })
+      if (left.firestoreLeft.length || left.storageLeft) {
+        evidence.verification = { passed: false, firestoreLeft: left.firestoreLeft.length, storageLeft: left.storageLeft }
+        await release()
+        throw fail('Some data or files are still present. Run Process again.', 500)
+      }
+      evidence.verification = { passed: true, checkedAt: new Date().toISOString() }
+      await save()
+      try { await auth.deleteUser(uid) } catch (e) { if (e?.code !== 'auth/user-not-found') throw e }
+      evidence.auth = 'deleted'
+      evidence.dataDeletedAt = new Date().toISOString()
+      await save({ status: 'processed' })
     }
-    // 1. Billing first: never delete the account while a web subscription could renew.
-    try { evidence.stripe = await cancelStripe({ stripe, profile }) }
-    catch (e) { evidence.stripe = { checked: false, error: 'stripe_failed' }; await save({ status: 'review_required' }); throw fail('Stripe subscription could not be checked or cancelled. Nothing was deleted.', 502) }
-    // Freeze writes: sign the account out everywhere before data is removed.
-    if (authUser) { await auth.updateUser(uid, { disabled: true }); await auth.revokeRefreshTokens(uid) }
-    evidence.signInFrozen = true
-    await save()
-    // 2. Data (subcollections included), 3. files, 4. sign-in.
-    for (const path of plan.deletePaths) await db.recursiveDelete(db.doc(path))
-    evidence.firestore = { deleted: plan.deletePaths.length, retained: plan.retained, notScanned: plan.notScanned, legacyUrlRecords: plan.legacyUrlRecords.length }
-    await save()
-    evidence.storage = await deleteStorage({ bucket, plan })
-    await save()
-    try { await auth.deleteUser(uid) } catch (e) { if (e?.code !== 'auth/user-not-found') throw e }
-    evidence.auth = 'deleted'
-    evidence.dataDeletedAt = new Date().toISOString()
-    await save({ status: 'processed' })
+    if (evidence.email === 'sent' || evidence.email === 'no_email') {
+      await release({ status: 'processed' })
+      return { status: 'processed', evidence }
+    }
+    // 5. Confirmation email (idempotent per account).
+    if (!evidence.contactEmail) evidence.email = 'no_email'
+    else {
+      try { await sendEmail({ to: evidence.contactEmail, idempotencyKey: `account-deletion-v1/${uid}`, ...deletionConfirmationEmail(evidence.contactName) }); evidence.email = 'sent'; evidence.emailSentAt = new Date().toISOString() }
+      catch { evidence.email = 'failed' }
+    }
+    await release({ status: 'processed' })
+    return { status: 'processed', evidence }
+  } catch (error) {
+    if (!error?.status) { evidence.lastError = { at: new Date().toISOString(), message: 'step_failed' }; await release() }
+    throw error
   }
-  // 5. Confirmation email (idempotent per account).
-  if (!evidence.contactEmail) evidence.email = 'no_email'
-  else {
-    try { await sendEmail({ to: evidence.contactEmail, idempotencyKey: `account-deletion-v1/${uid}`, ...deletionConfirmationEmail(evidence.contactName) }); evidence.email = 'sent'; evidence.emailSentAt = new Date().toISOString() }
-    catch { evidence.email = 'failed' }
-  }
-  await save({ status: 'processed' })
-  return { status: 'processed', evidence }
 }
 
 export async function markDeletionCompleted({ db, uid, operator, now = Date.now() }) {
@@ -170,6 +223,7 @@ export async function markDeletionCompleted({ db, uid, operator, now = Date.now(
     if (e.stripe?.checked !== true) missing.push('Stripe check')
     if (!e.firestore) missing.push('data deletion')
     if (!e.storage) missing.push('file deletion')
+    if (e.verification?.passed !== true) missing.push('removal check')
     if (e.auth !== 'deleted') missing.push('sign-in deletion')
     if (!['sent', 'no_email'].includes(e.email)) missing.push('confirmation email')
     if (missing.length) throw fail(`Cannot record completion yet: ${missing.join(', ')}.`, 409, { missing })

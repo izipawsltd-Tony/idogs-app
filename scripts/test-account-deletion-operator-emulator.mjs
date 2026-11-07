@@ -5,6 +5,7 @@ import { initializeApp, deleteApp } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore } from 'firebase-admin/firestore'
 import { makeAccountDeletionsHandler } from '../api/super-admin/account-deletions.js'
+import { processDeletion } from '../api/_lib/account-deletion-operator.js'
 import { changeDeletionRequest } from '../api/_lib/account-deletion.js'
 
 // Full operator flow against the Auth + Firestore emulators. Storage, Stripe
@@ -17,9 +18,9 @@ if (process.env.GCLOUD_PROJECT !== PROJECT) throw new Error('Refusing non-demo p
 
 let app, db, auth, server, origin, owner, other
 const files = new Map(), emails = [], stripeCalls = []
-let stripeFails = false, emailFails = false
+let stripeFails = false, emailFails = false, storageFailsOnce = false
 const bucket = {
-  async getFiles({ prefix }) { return [[...files.keys()].filter(k => k.startsWith(prefix)).map(k => ({ delete: async () => files.delete(k) }))] },
+  async getFiles({ prefix }) { if (storageFailsOnce) { storageFailsOnce = false; throw new Error('storage outage') } return [[...files.keys()].filter(k => k.startsWith(prefix)).map(k => ({ delete: async () => files.delete(k) }))] },
   file: k => ({ exists: async () => [files.has(k)], delete: async () => files.delete(k) }),
 }
 const subs = { sub_plus: 'active', sub_old: 'canceled' }
@@ -141,4 +142,52 @@ test('pending transfer blocks processing', async () => {
   const r = await admin('POST', { action: 'process', uid: u, confirmation: `DELETE ${u}` })
   assert.equal(r.status, 409)
   assert.equal((await db.doc(`users/${u}`).get()).exists, true)
+})
+
+test('Storage failure after data removal: retry still removes the original files before email/completion', async () => {
+  const t = await signup('operator-retry')
+  const u = t.localId
+  await db.collection('users').doc(u).set({ email: 'operator-retry@example.invalid', firstName: 'Retry' })
+  await db.collection('dogs').doc('retry-dog').set({ tenantId: u, currentOwnerId: u, status: 'active', name: 'R' })
+  await db.collection('documents').doc('retry-doc').set({ dogId: 'retry-dog', tenantId: u, filePath: `documents/${u}/retry-dog/cert.pdf` })
+  files.set(`documents/${u}/retry-dog/cert.pdf`, 1); files.set(`dogs/${u}/retry-dog/profile.jpg`, 1)
+  await changeDeletionRequest({ db, token: { uid: u, email: 'operator-retry@example.invalid', auth_time: Date.now() / 1000 }, body: { action: 'request', confirmation: 'DELETE MY ACCOUNT' } })
+  const sentBefore = emails.length
+  storageFailsOnce = true
+  const first = await admin('POST', { action: 'process', uid: u, confirmation: `DELETE ${u}` })
+  assert.equal(first.status, 500)
+  // Records that pointed at the files are already gone; the files are not.
+  assert.equal((await db.doc('dogs/retry-dog').get()).exists, false)
+  assert.ok(files.has(`dogs/${u}/retry-dog/profile.jpg`))
+  const mid = (await db.collection('accountDeletionRequests').doc(u).get()).data()
+  assert.equal(mid.status, 'processing'); assert.equal(mid.lease, null)
+  assert.ok(mid.targets.storagePrefixes.includes(`dogs/${u}/retry-dog/`))
+  assert.equal((await admin('POST', { action: 'mark_completed', uid: u })).status, 409)
+  assert.equal(emails.length, sentBefore)
+  const retry = await admin('POST', { action: 'process', uid: u, confirmation: `DELETE ${u}` })
+  assert.equal(retry.status, 200)
+  assert.equal(retry.body.evidence.verification.passed, true)
+  assert.equal(files.has(`dogs/${u}/retry-dog/profile.jpg`), false)
+  assert.equal(files.has(`documents/${u}/retry-dog/cert.pdf`), false)
+  assert.equal(emails.length, sentBefore + 1)
+  assert.equal((await admin('POST', { action: 'mark_completed', uid: u })).status, 200)
+})
+
+test('overlapping runs: a second process call is refused while the first holds the lease', async () => {
+  const t = await signup('operator-overlap')
+  const u = t.localId
+  await db.collection('users').doc(u).set({ email: 'operator-overlap@example.invalid' })
+  await changeDeletionRequest({ db, token: { uid: u, email: 'operator-overlap@example.invalid', auth_time: Date.now() / 1000 }, body: { action: 'request', confirmation: 'DELETE MY ACCOUNT' } })
+  await db.collection('accountDeletionRequests').doc(u).update({ lease: { runId: 'other-run', until: new Date(Date.now() + 600000).toISOString() } })
+  const r = await admin('POST', { action: 'process', uid: u, confirmation: `DELETE ${u}` })
+  assert.equal(r.status, 409); assert.match(r.body.error, /already being processed/)
+  assert.equal((await db.doc(`users/${u}`).get()).exists, true)
+  // Two real runs at once: exactly one proceeds.
+  await db.collection('accountDeletionRequests').doc(u).update({ lease: null })
+  const deps = { db, auth, bucket, stripe, sendEmail, uid: u, operator: 'operator@example.invalid' }
+  const results = await Promise.allSettled([processDeletion({ ...deps, runId: 'a' }), processDeletion({ ...deps, runId: 'b' })])
+  assert.equal(results.filter(x => x.status === 'fulfilled').length, 1)
+  assert.equal(results.filter(x => x.status === 'rejected' && x.reason.status === 409).length, 1)
+  const d = (await db.collection('accountDeletionRequests').doc(u).get()).data()
+  assert.equal(d.status, 'processed'); assert.equal(d.evidence.verification.passed, true); assert.equal(d.lease, null)
 })
