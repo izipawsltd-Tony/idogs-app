@@ -13,7 +13,7 @@ import {
   getDog, getDogs, getVaccineRecords, getWormingRecords, getHealthTests,
   addWormingReminder, getReminders, getActivityNotes, addActivityNote, updateActivityNote, deleteActivityNote,
   addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder, addReminder, updateReminder,
-  addWormingRecord, deleteWormingRecord,
+  addWormingRecord, deleteWormingRecord, updateWormingRecord,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, updateDocument, logAudit, syncLifeStage,
   getAuditLogs, type AuditEntry, isCurrentOwner, safeReadFirestoreErrorCode
 } from '../lib/db'
@@ -2451,6 +2451,39 @@ function WormingTab({ onReminderSaved, dogId, dogName, tenantId, userEmail, worm
     }
   }
 
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
+  function startEdit(w: WormingRecord) {
+    setReminderRecord(null); setShowForm(false)
+    setEditingId(w.id)
+    setEditForm({ product: w.product || '', dateGiven: w.dateGiven || '', nextDue: w.nextDue || '', weightKg: w.weightKg ? String(w.weightKg) : '' })
+  }
+  async function handleSaveEdit() {
+    if (!editingId || saving) return
+    if (!editForm.product.trim() || !editForm.dateGiven) { toast('Please fill in product and date given', 'error'); return }
+    setSaving(true)
+    try {
+      await updateWormingRecord(dogId, editingId, editForm)
+      await logAudit({
+        tenantId,
+        dogId,
+        dogName,
+        action: 'worming_updated',
+        details: `Worming "${editForm.product.trim()}" edited (given: ${editForm.dateGiven}, next due: ${editForm.nextDue || '—'})`,
+        performedBy: tenantId,
+        performedByEmail: userEmail,
+      })
+      await onReminderSaved()
+      setWormings(await getWormingRecords(dogId))
+      setEditingId(null)
+      toast('Worming record updated ✓')
+    } catch (e) {
+      toast(e instanceof Error && /required|valid|Weight/.test(e.message) && !/Current owner/.test(e.message) ? e.message : 'Failed to update worming record', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleDelete(id: string) {
     const w = wormings.find(x => x.id === id)
     await deleteWormingRecord(id)
@@ -2524,7 +2557,32 @@ function WormingTab({ onReminderSaved, dogId, dogName, tenantId, userEmail, worm
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          {wormings.map((w, i) => (
+          {wormings.map((w, i) => editingId === w.id && canEdit ? (
+            <div key={w.id} data-testid="worming-edit-form" style={{ padding: '12px 16px', borderBottom: i < wormings.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label" htmlFor={`worm-edit-product-${w.id}`}>Product *</label>
+                  <input id={`worm-edit-product-${w.id}`} className="form-input" type="text" value={editForm.product} onChange={e => setEditForm(p => ({ ...p, product: e.target.value }))} disabled={saving} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor={`worm-edit-given-${w.id}`}>Date given *</label>
+                  <input id={`worm-edit-given-${w.id}`} className="form-input" type="date" value={editForm.dateGiven} max={new Date().toISOString().split('T')[0]} onChange={e => setEditForm(p => ({ ...p, dateGiven: e.target.value }))} disabled={saving} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor={`worm-edit-next-${w.id}`}>Next due (optional)</label>
+                  <input id={`worm-edit-next-${w.id}`} className="form-input" type="date" value={editForm.nextDue} onChange={e => setEditForm(p => ({ ...p, nextDue: e.target.value }))} disabled={saving} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor={`worm-edit-weight-${w.id}`}>Weight (kg)</label>
+                  <input id={`worm-edit-weight-${w.id}`} className="form-input" type="number" step="0.1" min="0" value={editForm.weightKg} onChange={e => setEditForm(p => ({ ...p, weightKg: e.target.value }))} disabled={saving} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-primary btn-sm" onClick={handleSaveEdit} disabled={saving}>{saving ? <span className="spinner" /> : 'Save changes'}</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setEditingId(null)} disabled={saving}>Cancel</button>
+              </div>
+            </div>
+          ) : (
             <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderBottom: i < wormings.length - 1 ? '1px solid var(--border)' : 'none' }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{w.product}</div>
@@ -2537,7 +2595,8 @@ function WormingTab({ onReminderSaved, dogId, dogName, tenantId, userEmail, worm
               ) : w.nextDue ? (
                 <span className={`badge ${isOverdue(w.nextDue) ? 'badge-red' : 'badge-green'}`}>{isOverdue(w.nextDue) ? 'Overdue' : 'Current'}</span>
               ) : null}
-              {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => { setReminderRecord(w); setReminderDate(w.nextDue || '') }}>Add reminder</button>}
+              {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => startEdit(w)} disabled={saving} aria-label={`Edit ${w.product}`}>Edit</button>}
+              {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => { setEditingId(null); setReminderRecord(w); setReminderDate(w.nextDue || '') }}>Add reminder</button>}
               {canEdit && <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>}
             </div>
           ))}

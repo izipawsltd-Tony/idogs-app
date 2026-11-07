@@ -6,6 +6,7 @@ import { db, auth } from './firebase'
 import type { Dog, DogFormData, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, UserProfile, Litter, LifeStage, LitterShowcase, ShowcaseAvailability, ShowcasePuppyEntry } from '../types'
 import { calculateLifeStage, LIFE_STAGE_LABELS } from './utils'
 import { clearAcquisition } from './acquisition'
+import { wormingEditChanges, type WormingEdit } from './wormingEdit'
 
 function uid(): string {
   return auth.currentUser?.uid ?? ''
@@ -728,6 +729,33 @@ export async function addWormingReminder(dogId: string, wormingId: string, dueDa
     tx.set(ref, { dogId, tenantId: ownerId, type: 'worming', wormingId,
       title: `Worming: ${worm.data().product}`, dueDate, notifyDaysBefore: 3,
       status: 'pending', createdAt: serverTimestamp() })
+  })
+}
+
+// Current owner only. Keeps the record's dog link; a pending reminder for this
+// record follows the new product/next-due date (or is removed when the next-due
+// date is cleared); a completed one is left alone.
+export async function updateWormingRecord(dogId: string, wormingId: string, form: WormingEdit): Promise<void> {
+  const { set, clear } = wormingEditChanges(form)
+  const ownerId = uid()
+  await runTransaction(db, async tx => {
+    const dog = await tx.get(doc(db, 'dogs', dogId))
+    const wormRef = doc(db, 'wormingRecords', wormingId)
+    const worm = await tx.get(wormRef)
+    const reminderRef = doc(db, 'reminders', `worming_${dogId}_${wormingId}`)
+    const reminder = await tx.get(reminderRef)
+    if (!ownerId || !dog.exists() || (dog.data().currentOwnerId || dog.data().tenantId) !== ownerId || dog.data().status === 'transferred' || !worm.exists() || worm.data().dogId !== dogId) throw new Error('Current owner required')
+    tx.update(wormRef, { ...set, ...Object.fromEntries(clear.map(k => [k, deleteField()])) })
+    const title = `Worming: ${set.product}`
+    if (reminder.exists()) {
+      if (reminder.data().status !== 'completed') {
+        if (set.nextDue) tx.update(reminderRef, { title, dueDate: set.nextDue })
+        else tx.delete(reminderRef)
+      }
+    } else if (set.nextDue) {
+      tx.set(reminderRef, { dogId, tenantId: ownerId, type: 'worming', wormingId, title, dueDate: set.nextDue,
+        notifyDaysBefore: 3, status: 'pending', createdAt: serverTimestamp() })
+    }
   })
 }
 
@@ -1515,7 +1543,7 @@ export type AuditAction =
   | 'dog_created' | 'dog_updated' | 'dog_deleted' | 'dog_transferred'
   | 'vaccine_added' | 'vaccine_deleted'
   | 'health_test_added' | 'health_test_deleted'
-  | 'worming_added' | 'worming_deleted'
+  | 'worming_added' | 'worming_updated' | 'worming_deleted'
   | 'document_uploaded'
   | 'reminder_completed'
   | 'litter_created' | 'puppy_added'

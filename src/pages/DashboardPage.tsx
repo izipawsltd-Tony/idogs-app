@@ -41,6 +41,7 @@ function auditLabel(entry: AuditEntry): string {
     case 'health_test_added': return `Health test added${n}`
     case 'health_test_deleted': return 'Health test removed'
     case 'worming_added':     return `Worming added${n}`
+    case 'worming_updated':   return `Worming edited${n}`
     case 'worming_deleted':   return 'Worming removed'
     case 'document_uploaded': return `Document uploaded${n}`
     case 'reminder_completed': return 'Reminder completed'

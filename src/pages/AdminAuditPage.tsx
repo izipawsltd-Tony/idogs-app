@@ -28,6 +28,7 @@ const ACTION_CONFIG: Record<string, { icon: string; color: string; label: string
   health_test_added:  { icon: '🔬', color: 'var(--brand-600)', label: 'Health test added' },
   health_test_deleted:{ icon: '🔬', color: 'var(--danger)',      label: 'Health test deleted' },
   worming_added:      { icon: '💊', color: 'var(--brand-600)', label: 'Worming added' },
+  worming_updated:    { icon: '💊', color: 'var(--brand-600)', label: 'Worming edited' },
   worming_deleted:    { icon: '💊', color: 'var(--danger)',      label: 'Worming deleted' },
   document_uploaded:  { icon: '📄', color: 'var(--brand-600)', label: 'Document uploaded' },
   reminder_completed: { icon: '✅', color: 'var(--brand-600)', label: 'Reminder completed' },
