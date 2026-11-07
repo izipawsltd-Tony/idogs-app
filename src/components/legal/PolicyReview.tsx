@@ -8,7 +8,7 @@ export const CONSUMER_RIGHTS = 'Nothing in these Terms or our refund policy excl
 // Effective 6 November 2026 — the same deletion wording as idogs.com.au/privacy.
 export function DeletionPolicyDraft() {
   return <div data-policy-section="deletion">
-    <ul>{DELETION_POLICY.map(point => <li key={point}>{point}</li>)}</ul>
+    <ul style={{ paddingLeft: 20, margin: '8px 0' }}>{DELETION_POLICY.map(point => <li key={point} style={{ marginBottom: 4 }}>{point}</li>)}</ul>
   </div>
 }
 
