@@ -31,7 +31,7 @@ describe('Account deletion confirmation UI', () => {
     expect(renderer.root.findAllByType('form')).toHaveLength(0)
     act(() => renderer.unmount())
   })
-  it('shows server targets and pending renewal without claiming cancellation or deletion', async () => {
+  it('shows the 7-day due date and that a web subscription is cancelled at processing, in Australian date format', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       status: 'requested', canCancel: true, targetAt: '2026-10-28T00:00:00Z',
       nextUpdateDueAt: '2026-10-28T00:00:00Z', renewalStatus: 'pending_verification',
@@ -39,10 +39,11 @@ describe('Account deletion confirmation UI', () => {
     const renderer = create(createElement(AccountDeletion))
     await act(async () => renderer.root.findByType('button').props.onClick())
     const text = JSON.stringify(renderer.toJSON())
-    expect(text).toContain('Processing target:')
-    expect(text).toContain('Next update due:')
-    expect(text).toContain('No subscription cancellation is confirmed yet.')
-    expect(text).toContain('does not restart subscription renewal')
+    expect(text).toContain('Deletion due by:')
+    expect(text).toContain('28 Oct 2026')
+    expect(text).not.toContain('Next update due:')
+    expect(text).toContain('is cancelled when we process the deletion')
+    expect(text).not.toMatch(/does not restart|service target|pending verification/)
     act(() => renderer.unmount())
   })
   it('cancelled receipts hide obsolete deletion targets but retain verified renewal outcome', async () => {
@@ -53,8 +54,7 @@ describe('Account deletion confirmation UI', () => {
     const renderer = create(createElement(AccountDeletion))
     await act(async () => renderer.root.findByType('button').props.onClick())
     const text = JSON.stringify(renderer.toJSON())
-    expect(text).not.toContain('Processing target:')
-    expect(text).not.toContain('Next update due:')
+    expect(text).not.toContain('Deletion due by:')
     expect(text).toContain('Future renewal has been verified as stopped')
     act(() => renderer.unmount())
   })
