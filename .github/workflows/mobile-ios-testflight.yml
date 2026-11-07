@@ -118,6 +118,12 @@ jobs:
       - name: Generate iOS project
         run: npm --prefix mobile run add:ios
 
+      - name: Make the iOS project iPhone-only
+        run: |
+          python3 -m unittest discover -s mobile/scripts -p 'test_ios_device_family.py'
+          python3 mobile/scripts/ios_device_family.py mobile/ios/App/App.xcodeproj/project.pbxproj
+          python3 mobile/scripts/ios_device_family.py mobile/ios/App/App.xcodeproj/project.pbxproj --check
+
       - name: Sync web build into iOS
         run: npm --prefix mobile run sync:ios
 

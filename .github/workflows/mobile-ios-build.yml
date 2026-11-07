@@ -61,6 +61,12 @@ jobs:
       - name: Generate iOS project
         run: npm --prefix mobile run add:ios
 
+      - name: Make the iOS project iPhone-only
+        run: |
+          python3 -m unittest discover -s mobile/scripts -p 'test_ios_device_family.py'
+          python3 mobile/scripts/ios_device_family.py mobile/ios/App/App.xcodeproj/project.pbxproj
+          python3 mobile/scripts/ios_device_family.py mobile/ios/App/App.xcodeproj/project.pbxproj --check
+
       - name: Sync web build into iOS
         run: npm --prefix mobile run sync:ios
 
@@ -104,6 +110,7 @@ jobs:
           test -d "$APP_PATH"
           python3 mobile/scripts/ios_privacy.py "$APP_PATH/Info.plist" --check
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -qx 'au.com.idogs.app'
+          python3 mobile/scripts/ios_device_family.py --check-plist "$APP_PATH/Info.plist"
           EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")
           test -f "$APP_PATH/$EXECUTABLE"
           lipo -info "$APP_PATH/$EXECUTABLE" | grep -q 'arm64'
