@@ -89,11 +89,25 @@ jobs:
           test -f mobile/ios/App/App/Info.plist
           echo "iOS identity and assets verified"
 
+      - name: Resolve Swift packages (retry on GitHub download errors)
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Capacitor's xcframeworks come from GitHub Releases, which can return 5xx for a while.
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if xcodebuild -resolvePackageDependencies -project mobile/ios/App/App.xcodeproj -scheme App -clonedSourcePackagesDirPath "$RUNNER_TEMP/idogs-spm"; then
+              echo "Swift packages resolved on attempt $attempt"; exit 0
+            fi
+            echo "::warning::Swift package resolution failed (attempt $attempt); retrying in $((attempt * 30))s"
+            sleep $((attempt * 30))
+          done
+          echo "::error::Swift packages could not be resolved after 8 attempts"; exit 1
+
       - name: Compile unsigned iOS simulator app
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild -project mobile/ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/idogs-simulator-derived" CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project mobile/ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/idogs-simulator-derived" -clonedSourcePackagesDirPath "$RUNNER_TEMP/idogs-spm" CODE_SIGNING_ALLOWED=NO build
           APP_PATH="$RUNNER_TEMP/idogs-simulator-derived/Build/Products/Debug-iphonesimulator/App.app"
           test -d "$APP_PATH"
           python3 mobile/scripts/ios_privacy.py "$APP_PATH/Info.plist" --check
@@ -105,7 +119,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild -project mobile/ios/App/App.xcodeproj -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/idogs-device-derived" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -project mobile/ios/App/App.xcodeproj -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/idogs-device-derived" -clonedSourcePackagesDirPath "$RUNNER_TEMP/idogs-spm" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
           APP_PATH="$RUNNER_TEMP/idogs-device-derived/Build/Products/Release-iphoneos/App.app"
           test -d "$APP_PATH"
           python3 mobile/scripts/ios_privacy.py "$APP_PATH/Info.plist" --check

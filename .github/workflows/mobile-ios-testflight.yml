@@ -167,13 +167,27 @@ jobs:
           grep -q "BEGIN PRIVATE KEY" "$KEY_PATH"
           echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
 
+      - name: Resolve Swift packages (retry on GitHub download errors)
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Capacitor's xcframeworks come from GitHub Releases, which can return 5xx for a while.
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if xcodebuild -resolvePackageDependencies -project mobile/ios/App/App.xcodeproj -scheme App -clonedSourcePackagesDirPath "$RUNNER_TEMP/idogs-spm"; then
+              echo "Swift packages resolved on attempt $attempt"; exit 0
+            fi
+            echo "::warning::Swift package resolution failed (attempt $attempt); retrying in $((attempt * 30))s"
+            sleep $((attempt * 30))
+          done
+          echo "::error::Swift packages could not be resolved after 8 attempts"; exit 1
+
       - name: Archive signed iPhone app
         shell: bash
         run: |
           set -euo pipefail
           ARCHIVE_PATH="$RUNNER_TEMP/iDogs.xcarchive"
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
-          xcodebuild             -project mobile/ios/App/App.xcodeproj             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             -archivePath "$ARCHIVE_PATH"             PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Automatic             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             MARKETING_VERSION="$IOS_MARKETING_VERSION"             CURRENT_PROJECT_VERSION="$BUILD_NUMBER"             archive
+          xcodebuild             -project mobile/ios/App/App.xcodeproj             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             -archivePath "$ARCHIVE_PATH" -clonedSourcePackagesDirPath "$RUNNER_TEMP/idogs-spm"             PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Automatic             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             MARKETING_VERSION="$IOS_MARKETING_VERSION"             CURRENT_PROJECT_VERSION="$BUILD_NUMBER"             archive
           test -d "$ARCHIVE_PATH"
           echo "IOS_ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
           echo "IOS_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
