@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { act, create } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import AccountDeletion from '../components/ui/AccountDeletion'
+import AccountDeletion, { deletionFailureMessage } from '../components/ui/AccountDeletion'
 
 const qa = vi.hoisted(() => ({ reauth: vi.fn(), token: vi.fn(async () => 'synthetic-token') }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: { email: 'synthetic@example.invalid', getIdToken: qa.token } }) }))
@@ -177,4 +177,22 @@ describe('Account deletion confirmation UI', () => {
     act(() => renderer.unmount())
   })
 
+})
+
+describe('account deletion failure messages (device diagnosis)', () => {
+  it('shows the HTTP code and server text instead of a bare "unavailable"', () => {
+    expect(deletionFailureMessage(500, { error: 'Account deletion service is temporarily unavailable. No completion is confirmed.' }))
+      .toBe('The deletion service is unavailable (HTTP 500: Account deletion service is temporarily unavailable. No completion is confirmed.). Request status is not confirmed; refresh to check before retrying.')
+    expect(deletionFailureMessage(404, null)).toContain('(HTTP 404)')
+    expect(deletionFailureMessage(200, { status: 1 })).toContain('(HTTP 200)')
+  })
+  it('passes through user-facing 4xx reasons and keeps 401 as sign-in again', () => {
+    expect(deletionFailureMessage(429, { error: 'Please wait a minute before requesting again.' })).toBe('Please wait a minute before requesting again. (HTTP 429)')
+    expect(deletionFailureMessage(409, { error: 'This request cannot be cancelled.' })).toBe('This request cannot be cancelled. (HTTP 409)')
+    expect(deletionFailureMessage(401, { error: 'x' })).toBe('Please sign in again and retry.')
+  })
+  it('never reflects non-string or oversized server bodies', () => {
+    expect(deletionFailureMessage(503, { error: { stack: 'secret' } })).not.toContain('secret')
+    expect(deletionFailureMessage(400, { error: 'a'.repeat(500) }).length).toBeLessThan(260)
+  })
 })
