@@ -35,6 +35,17 @@ const renewalCopy: Record<string, string> = {
 }
 const displayDate = (value?: string) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' }) : null
 
+// Show what the server actually said (its error texts are written for account
+// holders) plus the HTTP code, so a failure on a device can be diagnosed from
+// a screenshot instead of a generic "unavailable".
+export function deletionFailureMessage(httpStatus: number, body: unknown): string {
+  if (httpStatus === 401) return 'Please sign in again and retry.'
+  const raw = body && typeof body === 'object' ? (body as { error?: unknown }).error : undefined
+  const serverText = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, 200) : ''
+  if (httpStatus >= 400 && httpStatus < 500 && httpStatus !== 404 && serverText) return `${serverText} (HTTP ${httpStatus})`
+  return `The deletion service is unavailable (HTTP ${httpStatus || 'no response'}${serverText ? `: ${serverText}` : ''}). Request status is not confirmed; refresh to check before retrying.`
+}
+
 export default function AccountDeletion() {
   const { user } = useAuth()
   const [open, setOpen] = useState(false)
@@ -70,13 +81,14 @@ export default function AccountDeletion() {
       })
       const result = await response.json().catch(() => null)
       if (!response.ok || !result || typeof result.status !== 'string' || typeof result.canCancel !== 'boolean') {
-        throw new Error(response.status === 401 ? 'Please sign in again and retry.' : 'The deletion service is unavailable. Request status is not confirmed; refresh to check before retrying.')
+        throw new Error(deletionFailureMessage(response.status, result))
       }
       setStatus(result)
       setConfirmed(false)
     } catch (err) {
       const code = (err as { code?: string }).code
       setError(code?.startsWith('auth/') ? 'Unable to verify your password. Please sign in again if needed and retry.'
+        : err instanceof TypeError ? `Couldn't reach iDogs (${err.message || 'network error'}). Request status is not confirmed; refresh to check before retrying.`
         : err instanceof Error ? err.message : 'Request failed. Refresh to check its status.')
     } finally { inFlight.current = false; setBusy(false) }
   }
