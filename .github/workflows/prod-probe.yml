@@ -1,0 +1,20 @@
+name: Production read-only probe
+on:
+  push:
+    branches: [claude/prod-probe-20261108]
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unauthenticated GET/OPTIONS (no writes, no credentials)
+        run: |
+          for p in /api/account-deletion /api/passport?id=x /api/get-signed-url; do
+            echo "== GET $p"
+            curl -sS -m 20 -o body.txt -D h.txt -w 'HTTP %{http_code}\n' "https://idogs.com.au$p" || true
+            grep -i -E '^(content-type|x-vercel-id|x-matched-path|cache-control)' h.txt || true
+            head -c 300 body.txt; echo
+          done
+          echo "== GET /api/account-deletion with invalid bearer"
+          curl -sS -m 20 -H 'Authorization: Bearer invalid' -o body.txt -D h.txt -w 'HTTP %{http_code}\n' https://idogs.com.au/api/account-deletion || true
+          grep -i -E '^(content-type|x-matched-path)' h.txt || true; head -c 300 body.txt; echo
