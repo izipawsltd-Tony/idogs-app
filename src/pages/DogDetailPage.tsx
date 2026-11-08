@@ -2342,11 +2342,11 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
 
               return (
                 <div key={v.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px',
+                  display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px 14px', padding: '12px 16px',
                   borderBottom: i < vaccines.length - 1 ? '1px solid var(--border)' : 'none',
                   background: v.uncertain ? '#FBF3E4' : 'transparent',
                 }}>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: '1 1 220px', minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>
                       {v.name}
                       {v.uncertain && <span style={{ fontSize: 11, color: 'var(--warning)', marginLeft: 6, fontWeight: 600 }}>⚠ Unclear from scan — please verify</span>}
@@ -2355,6 +2355,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
                       Given: {formatDate(v.dateGiven)}{v.nextDue ? ` · Due: ${formatDate(v.nextDue)}` : ''}{v.vetClinic ? ` · ${v.vetClinic}` : ''}
                     </div>
                   </div>
+                  <div data-testid="record-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginLeft: 'auto' }}>
                   {showOverdueBadge ? (
                     <span className={`badge ${v.nextDue && isOverdue(v.nextDue) ? 'badge-red' : 'badge-green'}`}>{v.nextDue && isOverdue(v.nextDue) ? 'Overdue' : 'Current'}</span>
                   ) : v.nextDue ? (
@@ -2371,8 +2372,9 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
                   )}
                   {canEdit && <>
                     <button onClick={() => startEdit(v)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
-                    <button onClick={() => handleDelete(v.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+                    <button onClick={() => handleDelete(v.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }} aria-label={`Delete ${v.name}`}>✕</button>
                   </>}
+                  </div>
                 </div>
               )
             })
@@ -2584,13 +2586,14 @@ function WormingTab({ onReminderSaved, dogId, dogName, tenantId, userEmail, worm
               </div>
             </div>
           ) : (
-            <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderBottom: i < wormings.length - 1 ? '1px solid var(--border)' : 'none' }}>
-              <div style={{ flex: 1 }}>
+            <div key={w.id} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px 14px', padding: '12px 16px', borderBottom: i < wormings.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              <div style={{ flex: '1 1 220px', minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{w.product}</div>
                 <div style={{ fontSize: 12, color: 'var(--light)' }}>
                   Given: {formatDate(w.dateGiven)}{w.nextDue ? ` · Next due: ${formatDate(w.nextDue)}` : ''}{w.weightKg ? ` · ${w.weightKg}kg` : ''}
                 </div>
               </div>
+              <div data-testid="record-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginLeft: 'auto' }}>
               {w.dateGiven < latestGivenDate ? (
                 <span className="badge badge-gray">Superseded</span>
               ) : w.nextDue ? (
@@ -2598,7 +2601,8 @@ function WormingTab({ onReminderSaved, dogId, dogName, tenantId, userEmail, worm
               ) : null}
               {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => startEdit(w)} disabled={saving} aria-label={`Edit ${w.product}`}>Edit</button>}
               {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => { setEditingId(null); setReminderRecord(w); setReminderDate(w.nextDue || '') }}>Add reminder</button>}
-              {canEdit && <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>}
+              {canEdit && <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }} aria-label={`Delete ${w.product}`}>✕</button>}
+              </div>
             </div>
           ))}
         </div>
@@ -2843,13 +2847,13 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
             }
 
             return (
-            <div key={h.id} style={{ padding: '12px 16px', borderBottom: i < healthTests.length - 1 ? '1px solid var(--border)' : 'none', display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ flex: 1 }}>
+            <div key={h.id} style={{ padding: '12px 16px', borderBottom: i < healthTests.length - 1 ? '1px solid var(--border)' : 'none', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px 12px' }}>
+              <div style={{ flex: '1 1 220px', minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{h.testType.toUpperCase()} — {formatHealthResult(h.result)}</div>
                 <div style={{ fontSize: 12, color: 'var(--light)' }}>Tested: {formatDate(h.dateTested)}{h.lab ? ` · ${h.lab}` : ''}</div>
                 {h.certNumber && <div style={{ fontSize: 12, color: 'var(--light)' }}>Cert: {h.certNumber}</div>}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <div data-testid="record-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginLeft: 'auto' }}>
                 <span className="badge badge-green">Verified</span>
                 {((h as any).documentPath || (h as any).documentUrl) && (
                   <button
