@@ -25,6 +25,7 @@ import {
   calculateLifeStage, parseDobStrict
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
+import { activeWormingReminder } from '../lib/wormingEdit'
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
 import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
@@ -1327,7 +1328,7 @@ export default function DogDetailPage({ toast }: Props) {
         </div>
       )}
       {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} onRetry={retryVaccines} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
-      {tab === 'worming' && <WormingTab onReminderSaved={refreshReminders} dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'worming' && <WormingTab onReminderSaved={refreshReminders} reminders={reminders} dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
       {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} onRetry={retryHealthTests} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
       {tab === 'reminders' && <RemindersTab dog={dog} tenantId={user?.uid || ''} onSaved={refreshReminders} reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} onRetry={retryReminders} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
       {/* scanCount === null unambiguously means "failed to load" (never
@@ -2387,8 +2388,9 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
 
 // ── WORMING TAB ───────────────────────────────────────────────
 
-function WormingTab({ onReminderSaved, dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error, onRetry, canEdit }: {
+function WormingTab({ onReminderSaved, reminders = [], dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error, onRetry, canEdit }: {
   onReminderSaved: () => Promise<void>;
+  reminders?: Reminder[];
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -2600,7 +2602,11 @@ function WormingTab({ onReminderSaved, dogId, dogName, tenantId, userEmail, worm
                 <span className={`badge ${isOverdue(w.nextDue) ? 'badge-red' : 'badge-green'}`}>{isOverdue(w.nextDue) ? 'Overdue' : 'Current'}</span>
               ) : null}
               {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => startEdit(w)} disabled={saving} aria-label={`Edit ${w.product}`}>Edit</button>}
-              {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => { setEditingId(null); setReminderRecord(w); setReminderDate(w.nextDue || '') }}>Add reminder</button>}
+              {(() => {
+                const active = activeWormingReminder(reminders, dogId, w.id)
+                if (active) return <span className="badge badge-green" data-testid="worming-reminder-set" title="Change the date with Edit">🔔 Reminder {formatDate(active.dueDate)}</span>
+                return canEdit && <button className="btn btn-secondary btn-sm" onClick={() => { setEditingId(null); setReminderRecord(w); setReminderDate(w.nextDue || '') }}>Add reminder</button>
+              })()}
               {canEdit && <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }} aria-label={`Delete ${w.product}`}>✕</button>}
               </div>
             </div>

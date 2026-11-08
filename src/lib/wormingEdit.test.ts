@@ -46,3 +46,28 @@ describe('worming edit', () => {
     expect(tab).toContain('editingId === w.id && canEdit')
   })
 })
+
+describe('worming reminder state (Owner QA 176: Add reminder still shown after saving)', () => {
+  const base = { dogId: 'd1', type: 'worming', title: 'Worming: Drontal', dueDate: '2027-11-01', notifyDaysBefore: 3, createdAt: '' } as const
+  it('finds the pending reminder for that record only', async () => {
+    const { activeWormingReminder } = await import('./wormingEdit')
+    const reminders = [
+      { ...base, id: 'worming_d1_w1', status: 'pending' as const },
+      { ...base, id: 'worming_d1_w2', status: 'completed' as const },
+      { ...base, id: 'worming_d2_w3', dogId: 'd2', status: 'pending' as const },
+    ]
+    expect(activeWormingReminder(reminders, 'd1', 'w1')?.id).toBe('worming_d1_w1')
+    expect(activeWormingReminder(reminders, 'd1', 'w2')).toBeUndefined()
+    expect(activeWormingReminder(reminders, 'd1', 'w3')).toBeUndefined()
+    expect(activeWormingReminder([{ ...base, id: 'other', status: 'overdue' as const, wormingId: 'w9' } as never], 'd1', 'w9')?.id).toBe('other')
+  })
+  it('the row shows the reminder instead of Add reminder while one is active', () => {
+    const page = read('../pages/DogDetailPage.tsx')
+    const tab = page.slice(page.indexOf('function WormingTab'), page.indexOf('// ── HEALTH TAB'))
+    const check = tab.indexOf('activeWormingReminder(reminders, dogId, w.id)')
+    expect(check).toBeGreaterThan(0)
+    expect(tab.indexOf('data-testid="worming-reminder-set"')).toBeGreaterThan(check)
+    expect(tab.indexOf('>Add reminder</button>')).toBeGreaterThan(tab.indexOf('data-testid="worming-reminder-set"'))
+    expect(page).toContain("<WormingTab onReminderSaved={refreshReminders} reminders={reminders} ")
+  })
+})

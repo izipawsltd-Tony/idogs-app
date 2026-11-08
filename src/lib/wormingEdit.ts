@@ -1,4 +1,4 @@
-import type { WormingRecord } from '../types'
+import type { Reminder, WormingRecord } from '../types'
 
 export interface WormingEdit { product: string; dateGiven: string; nextDue: string; weightKg: string }
 
@@ -16,4 +16,12 @@ export function wormingEditChanges(form: WormingEdit): { set: Partial<WormingRec
   if (form.nextDue) set.nextDue = form.nextDue; else clear.push('nextDue')
   if (weight !== null) set.weightKg = weight; else clear.push('weightKg')
   return { set, clear }
+}
+
+// The reminder created for one worming record (id worming_<dog>_<record>),
+// unless it was completed. While one is active, the row shows it instead of
+// offering "Add reminder" again; its date moves with Edit.
+export function activeWormingReminder(reminders: Reminder[], dogId: string, wormingId: string): Reminder | undefined {
+  return reminders.find(r => (r.id === `worming_${dogId}_${wormingId}` || (r as Reminder & { wormingId?: string }).wormingId === wormingId)
+    && r.dogId === dogId && r.status !== 'completed')
 }
