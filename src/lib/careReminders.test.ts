@@ -42,8 +42,18 @@ describe('care reminder transactions', () => {
     f.records.set('wormingRecords/worm', { dogId: 'dog', product: 'Treatment' })
     await addWormingReminder('dog', 'worm', '2026-11-19')
     await addWormingReminder('dog', 'worm', '2026-11-19')
-    expect(f.writes.filter(w => w.ref.name === 'reminders')).toHaveLength(1)
+    // Still exactly one reminder document (fixed id); the retry updates it.
+    expect(f.writes.filter(w => w.ref.name === 'reminders' && w.op === 'set')).toHaveLength(1)
+    expect([...f.records.keys()].filter(k => k.startsWith('reminders/'))).toEqual(['reminders/worming_dog_worm'])
     expect(f.records.get('wormingRecords/worm')).toMatchObject({ nextDue: '2026-11-19' })
+  })
+  it('re-adding after the reminder was completed reopens it with the new date (Owner QA 178)', async () => {
+    f.records.set('wormingRecords/worm', { dogId: 'dog', product: 'Treatment' })
+    f.records.set('reminders/worming_dog_worm', { dogId: 'dog', tenantId: 'owner', type: 'worming', wormingId: 'worm', dueDate: '2026-01-01', status: 'completed', completedAt: '2026-01-02' })
+    await addWormingReminder('dog', 'worm', '2027-11-01')
+    expect(f.writes.filter(w => w.ref.name === 'reminders' && w.op === 'set')).toHaveLength(0)
+    expect(f.records.get('reminders/worming_dog_worm')).toMatchObject({ dogId: 'dog', tenantId: 'owner', status: 'pending', dueDate: '2027-11-01', title: 'Worming: Treatment' })
+    expect(f.records.get('wormingRecords/worm')).toMatchObject({ nextDue: '2027-11-01' })
   })
   it('refuses a treatment from a different dog', async () => {
     f.records.set('wormingRecords/worm', { dogId: 'other', product: 'Treatment' })

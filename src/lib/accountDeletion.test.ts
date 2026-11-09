@@ -102,6 +102,23 @@ describe('Account deletion confirmation UI', () => {
     act(() => renderer.unmount())
   })
 
+  it('a pending request can be cancelled: the button is not greyed out and the label says a password is needed (Owner QA 178)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(reply('requested', true)).mockResolvedValueOnce(reply('cancelled'))
+    vi.stubGlobal('fetch', fetchMock)
+    const renderer = create(createElement(AccountDeletion))
+    await act(async () => renderer.root.findByType('button').props.onClick())
+    expect(JSON.stringify(renderer.toJSON())).toContain('Enter your password to cancel this request')
+    const cancel = renderer.root.findAll(n => n.type === 'button' && n.props.type === 'submit')[0]
+    expect(cancel.props.disabled).toBe(false)
+    // Submitting without a password explains why instead of doing nothing.
+    await act(async () => renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }))
+    expect(JSON.stringify(renderer.toJSON())).toContain('Enter your password to confirm this action.')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    act(() => renderer.root.findByProps({ type: 'password' }).props.onChange({ target: { value: 'QA-only-secret' } }))
+    await act(async () => renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }))
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ action: 'cancel' })
+    act(() => renderer.unmount())
+  })
   it('does not submit a request after failed reauthentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(reply('none'))
     vi.stubGlobal('fetch', fetchMock)
