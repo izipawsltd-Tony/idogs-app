@@ -128,14 +128,14 @@ export default function AccountDeletion() {
           </div>
           {status && (status.canCancel || ['none', 'cancelled'].includes(status.status)) && (
             <form onSubmit={e => { e.preventDefault(); if (status.canCancel || confirmed) void call(status.canCancel ? 'cancel' : 'request') }}>
-              <label htmlFor="delete-account-password">Confirm your password</label>
+              <label htmlFor="delete-account-password">{status.canCancel ? 'Enter your password to cancel this request' : 'Enter your password to confirm deletion'}</label>
               <input id="delete-account-password" type="password" autoComplete="current-password" value={password}
                 onChange={e => setPassword(e.target.value)} required disabled={busy} style={{ display: 'block', width: '100%', maxWidth: 360, boxSizing: 'border-box', marginTop: 4 }} />
               {!status.canCancel && <label style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} disabled={busy} />
                 I understand my account and data will be permanently deleted within 7 days. I can cancel until processing starts.
               </label>}
-              <button type="submit" className="btn btn-secondary" style={{ marginTop: 12 }} disabled={busy || !password || (!status.canCancel && !confirmed)}>
+              <button type="submit" className="btn btn-secondary" style={{ marginTop: 12 }} disabled={busy || (!status.canCancel && !confirmed)}>
                 {status.canCancel ? 'Cancel deletion request' : 'Confirm deletion request'}
               </button>
             </form>
