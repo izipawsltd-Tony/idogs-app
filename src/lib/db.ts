@@ -723,9 +723,14 @@ export async function addWormingReminder(dogId: string, wormingId: string, dueDa
     const ref = doc(db, 'reminders', `worming_${dogId}_${wormingId}`)
     const existing = await tx.get(ref)
     if (!ownerId || !dog.exists() || (dog.data().currentOwnerId || dog.data().tenantId) !== ownerId || dog.data().status === 'transferred' || !worm.exists() || worm.data().dogId !== dogId) throw new Error('Current owner required')
-    if (existing.exists()) return
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new Error('Choose a due date')
     tx.update(doc(db, 'wormingRecords', wormingId), { nextDue: dueDate })
+    if (existing.exists()) {
+      // One reminder per dose (fixed id). Re-adding after it was completed
+      // reopens it with the new date instead of silently doing nothing.
+      tx.update(ref, { title: `Worming: ${worm.data().product}`, dueDate, status: 'pending', completedAt: deleteField() })
+      return
+    }
     tx.set(ref, { dogId, tenantId: ownerId, type: 'worming', wormingId,
       title: `Worming: ${worm.data().product}`, dueDate, notifyDaysBefore: 3,
       status: 'pending', createdAt: serverTimestamp() })

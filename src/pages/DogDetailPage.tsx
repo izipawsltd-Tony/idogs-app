@@ -2604,7 +2604,7 @@ function WormingTab({ onReminderSaved, reminders = [], dogId, dogName, tenantId,
               {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => startEdit(w)} disabled={saving} aria-label={`Edit ${w.product}`}>Edit</button>}
               {(() => {
                 const active = activeWormingReminder(reminders, dogId, w.id)
-                if (active) return <span className="badge badge-green" data-testid="worming-reminder-set" title="Change the date with Edit">🔔 Reminder {formatDate(active.dueDate)}</span>
+                if (active) return <span className="badge badge-green" data-testid="worming-reminder-set" title="Reminder set. Change the date with Edit" aria-label={`Reminder set for ${formatDate(active.dueDate)}`}>🔔 {formatDate(active.dueDate)}</span>
                 return canEdit && <button className="btn btn-secondary btn-sm" onClick={() => { setEditingId(null); setReminderRecord(w); setReminderDate(w.nextDue || '') }}>Add reminder</button>
               })()}
               {canEdit && <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }} aria-label={`Delete ${w.product}`}>✕</button>}

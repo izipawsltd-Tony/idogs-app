@@ -71,3 +71,13 @@ describe('worming reminder state (Owner QA 176: Add reminder still shown after s
     expect(page).toContain("<WormingTab onReminderSaved={refreshReminders} reminders={reminders} ")
   })
 })
+
+describe('Add reminder on a dose whose reminder was completed (Owner QA 178)', () => {
+  it('reopens the existing reminder with the new date instead of silently returning', () => {
+    const db = read('./db.ts')
+    const fn = db.slice(db.indexOf('export async function addWormingReminder'), db.indexOf('export async function updateWormingRecord'))
+    expect(fn).not.toMatch(/if \(existing\.exists\(\)\) return\b/)
+    expect(fn).toContain("tx.update(ref, { title: `Worming: ${worm.data().product}`, dueDate, status: 'pending', completedAt: deleteField() })")
+    expect(fn.indexOf("Choose a due date")).toBeLessThan(fn.indexOf('existing.exists()'))
+  })
+})
