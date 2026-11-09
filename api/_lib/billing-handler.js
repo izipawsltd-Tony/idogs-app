@@ -63,6 +63,8 @@ function profileEntitlement(profile) {
   }
 }
 
+const ENDED_SUBSCRIPTION_STATUSES = ['canceled', 'incomplete_expired', 'unpaid']
+
 export function createBillingSummaryHandler({
   verifyIdToken,
   getProfile,
@@ -70,6 +72,11 @@ export function createBillingSummaryHandler({
   listInvoices,
   isSmsConfigured = () => false,
   reconcileVerifiedPlus = async () => false,
+  // Newest active/trialing Plus subscription for this Stripe customer that was
+  // created for this account (metadata.userId). Used only when the stored one
+  // has ended or is missing, so a delayed or undelivered webhook cannot leave a
+  // paying account showing Free.
+  findReplacementSubscription = async () => null,
 } = {}) {
   return async function billingSummaryHandler(req, res) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
@@ -97,12 +104,21 @@ export function createBillingSummaryHandler({
       }
 
       let subscription = null
-      if (subscriptionId) {
-        const stripeSubscription = await retrieveSubscription(subscriptionId)
-        if (customerIdOf(stripeSubscription?.customer) !== customerId) {
-          logSanitizedError('billing-summary', 'SUBSCRIPTION_CUSTOMER_MISMATCH')
-          return res.status(409).json({ error: 'Billing account mismatch' })
+      let stripeSubscription = subscriptionId ? await retrieveSubscription(subscriptionId) : null
+      if (stripeSubscription && customerIdOf(stripeSubscription.customer) !== customerId) {
+        logSanitizedError('billing-summary', 'SUBSCRIPTION_CUSTOMER_MISMATCH')
+        return res.status(409).json({ error: 'Billing account mismatch' })
+      }
+      if (!stripeSubscription || ENDED_SUBSCRIPTION_STATUSES.includes(stripeSubscription.status)) {
+        const replacement = await findReplacementSubscription({ customerId, userId: auth.uid, excludeId: stripeSubscription?.id || null })
+        if (replacement && replacement.id !== stripeSubscription?.id
+          && customerIdOf(replacement.customer) === customerId
+          && replacement.metadata?.userId === auth.uid
+          && ['active', 'trialing'].includes(replacement.status)) {
+          stripeSubscription = replacement
         }
+      }
+      if (stripeSubscription) {
 
         const reconciled = await reconcileVerifiedPlus({
           subscription: stripeSubscription,
@@ -128,7 +144,7 @@ export function createBillingSummaryHandler({
         }
         // A canceled Stripe subscription cannot be shown as active from a stale
         // Firestore profile. This response does not rewrite customer records.
-        if (['canceled', 'incomplete_expired', 'unpaid'].includes(stripeSubscription.status)) {
+        if (ENDED_SUBSCRIPTION_STATUSES.includes(stripeSubscription.status)) {
           entitlement = { plan: 'free', billingInterval: null, subscriptionStatus: stripeSubscription.status }
           sms.status = 'cancelled'
         }

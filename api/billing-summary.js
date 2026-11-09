@@ -28,6 +28,12 @@ export default createBillingSummaryHandler({
   retrieveSubscription: id => stripe.subscriptions.retrieve(id, { expand: ['items.data.price'] }),
   listInvoices: params => stripe.invoices.list(params),
   isSmsConfigured: () => Boolean(process.env.STRIPE_SMS_ADDON_PRICE_ID),
+  findReplacementSubscription: async ({ customerId, userId, excludeId }) => {
+    const list = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 20, expand: ['data.items.data.price'] })
+    return (list.data || [])
+      .filter(s => s.id !== excludeId && ['active', 'trialing'].includes(s.status) && s.metadata?.userId === userId && verifiedPaidInterval(s))
+      .sort((a, b) => (b.created || 0) - (a.created || 0))[0] || null
+  },
   reconcileVerifiedPlus: async ({ subscription, userId }) => {
     if (!verifiedPaidInterval(subscription)) return false
     return reconcileVerifiedPaidSubscription({ db, subscription, userId })
