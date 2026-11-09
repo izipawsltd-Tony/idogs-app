@@ -61,10 +61,10 @@ export async function planDeletion({ db, uid, now = Date.now() }) {
 async function cancelStripe({ stripe, profile, uid }) {
   const ids = new Set([profile?.stripeSubscriptionId, profile?.smsStripeSubscriptionId].filter(x => typeof x === 'string' && x))
   const customer = typeof profile?.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
-  if (!stripe) {
-    if (!ids.size && !customer) return { checked: true, customer: null, searched: false, cancelled: [], alreadyEnded: [] }
-    throw fail('Stripe is not configured; billing cannot be checked.', 503)
-  }
+  // Fail closed: a subscription can exist only in Stripe (found by
+  // metadata.userId), so billing is never "checked" without a Stripe client,
+  // even when the profile has no billing ids. Nothing is deleted before this.
+  if (!stripe) throw fail('Stripe is not configured; billing cannot be checked.', 503)
   if (customer) {
     const list = await stripe.subscriptions.list({ customer, status: 'all', limit: 100 })
     for (const s of list.data) if (ACTIVE_STRIPE.has(s.status)) ids.add(s.id)

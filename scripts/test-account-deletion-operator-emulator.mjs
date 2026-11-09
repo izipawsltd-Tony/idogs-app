@@ -240,3 +240,20 @@ test('Stripe search failure stops before anything is deleted', async () => {
   assert.equal((await db.doc(`users/${u}`).get()).exists, true)
   assert.equal((await auth.getUser(u)).disabled, false)
 })
+
+test('missing Stripe configuration stops before anything is deleted, even with no billing ids on the profile (Codex P1 6739341824)', async () => {
+  const t = await signup('operator-nostripe')
+  const u = t.localId
+  await db.collection('users').doc(u).set({ email: 'operator-nostripe@example.invalid' })
+  await changeDeletionRequest({ db, token: { uid: u, email: 'operator-nostripe@example.invalid', auth_time: Date.now() / 1000 }, body: { action: 'request', confirmation: 'DELETE MY ACCOUNT' } })
+  const sentBefore = emails.length
+  await assert.rejects(processDeletion({ db, auth, bucket, stripe: null, sendEmail, uid: u, operator: 'operator@example.invalid', runId: 'nostripe' }),
+    e => e.status === 502 && /Nothing more was deleted/.test(e.message))
+  assert.equal((await db.doc(`users/${u}`).get()).exists, true)
+  assert.equal((await auth.getUser(u)).disabled, false)
+  assert.equal(emails.length, sentBefore)
+  const d = (await db.collection('accountDeletionRequests').doc(u).get()).data()
+  assert.deepEqual(d.evidence.stripe, { checked: false, error: 'stripe_failed' })
+  assert.equal(d.status, 'review_required')
+  assert.equal(d.lease, null)
+})
