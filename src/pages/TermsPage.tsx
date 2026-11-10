@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import LegalNav from '../components/legal/LegalNav'
 import {
   PLUS_MONTHLY_PRICE_AUD,
   PLUS_ANNUAL_PRICE_AUD,
@@ -12,13 +13,7 @@ export default function TermsPage() {
   const lastUpdated = '29 October 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
-      {/* Nav */}
-      <nav style={{ position: 'sticky', top: 0, zIndex: 100, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
-          <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ height: 34 }} />
-        </Link>
-        <Link to="/signup" className="btn btn-primary btn-sm">Start free</Link>
-      </nav>
+      <LegalNav />
 
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '48px 24px 80px' }}>
         <div style={{ marginBottom: 40 }}>
@@ -54,7 +49,7 @@ export default function TermsPage() {
             <p>iDogs offers the following plans and add-ons in Australian dollars. Displayed prices include GST where applicable:</p>
             <ul>
               <li><strong>Free:</strong> Up to {DOG_CAP_FREE} dogs, QR passport, health records, email reminders — free forever</li>
-              <li><strong>Plus Monthly — A${PLUS_MONTHLY_PRICE_AUD}/month:</strong> Up to {DOG_CAP_PLUS} dogs, AI Document Scans, document storage, PDF/CSV export, and up to {LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} included litters per rolling 365-day period</li>
+              <li><strong>Plus Monthly — A${PLUS_MONTHLY_PRICE_AUD}/month:</strong> Up to {DOG_CAP_PLUS} dogs, iDogs Scans, document storage, PDF/CSV export, and up to {LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} included litters per rolling 365-day period</li>
               <li><strong>Plus Annual — A${PLUS_ANNUAL_PRICE_AUD}/year:</strong> Same Plus features as Plus Monthly, billed annually</li>
               <li><strong>Extra Litter Credit — A${EXTRA_LITTER_PRICE_AUD} each:</strong> A one-time add-on that permits one additional litter after the included litter allowance has been used</li>
             </ul>
@@ -96,7 +91,7 @@ export default function TermsPage() {
 
           <LegalSection title="9. Termination">
             <p>We may terminate or suspend your account at any time for violation of these Terms, with or without notice.</p>
-            <p>Upon termination, your access to the Service ceases. Your data is retained for 30 days after termination, during which you may export it. After 30 days, data may be permanently deleted.</p>
+            <p>Upon termination, your access to the Service ceases. Your data is retained for 30 days after termination, during which you may export it. After 30 days, data may be permanently deleted. If you ask us to delete your account, we complete it within 7 days as described in our <Link to="/privacy">Privacy Policy</Link> (section 7).</p>
           </LegalSection>
 
           <LegalSection title="10. Changes to Terms">

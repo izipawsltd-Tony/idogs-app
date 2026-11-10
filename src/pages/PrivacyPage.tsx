@@ -1,16 +1,13 @@
 import { Link } from 'react-router-dom'
+import LegalNav from '../components/legal/LegalNav'
+import { DELETION_POLICY } from '../../shared/account-deletion-copy.js'
+import AIProviderRetention from '../components/legal/AIProviderRetention'
 
 export default function PrivacyPage() {
-  const lastUpdated = '3 November 2026'
+  const lastUpdated = '6 November 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
-      {/* Nav */}
-      <nav style={{ position: 'sticky', top: 0, zIndex: 100, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
-          <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ height: 34 }} />
-        </Link>
-        <Link to="/signup" className="btn btn-primary btn-sm">Start free</Link>
-      </nav>
+      <LegalNav />
 
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '48px 24px 80px' }}>
         <div style={{ marginBottom: 40 }}>
@@ -46,6 +43,8 @@ export default function PrivacyPage() {
               <li>Comply with legal obligations</li>
             </ul>
             <p>We do <strong>not</strong> sell your personal information to third parties.</p>
+            <p><strong>iDogs Scan (optional):</strong> If you choose to scan a document and allow it, iDogs sends that photo or PDF to Anthropic to read the dog and health record details. Documents can contain names, addresses and vet contact details. You can enter records manually instead.</p>
+            <AIProviderRetention />
             <p><strong>Optional advertising measurement:</strong> If you choose “Allow ad measurement”, Meta Pixel shares visits to our home and signup pages and successful registrations with Meta (Facebook) to measure and improve our advertising. Meta may receive page URLs, IP address, browser information and advertising cookies. We do not send form entries, account contact details, dog records or documents through this integration. It does not run in the native app or on private account pages. You can decline or withdraw permission using “Ad privacy choices” on our home or signup page. Declining does not affect your ability to use iDogs. See <a href="https://www.facebook.com/privacy/policy/" target="_blank" rel="noopener noreferrer">Meta’s privacy policy</a> for how Meta handles this information.</p>
             <p><strong>Campaign source (first-party):</strong> If you arrive from one of our advertisements or links, your browser keeps the campaign labels from that link (for example utm_source, utm_campaign and the ad, ad set and campaign IDs) for up to 30 days. If you then create an account, we save these labels and the first page you landed on with your account so we can see which campaigns bring in real members. We only record whether a Facebook click ID was present, never its value. This information stays with iDogs and is not shared with Meta or anyone else, and it is saved whether or not you allow ad measurement. If you did not arrive from a campaign link, we record your source as “direct”.</p>
           </LegalSection>
@@ -60,7 +59,7 @@ export default function PrivacyPage() {
             <p>We share your information only in these limited circumstances:</p>
             <ul>
               <li><strong>Ownership transfer:</strong> When you transfer a dog to a new owner, their contact details and the dog's records are shared with that owner as you direct</li>
-              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure) — all under strict data processing agreements</li>
+              <li><strong>Service providers:</strong> Stripe (payments), Resend (email notifications), Firebase/Google (infrastructure), Vercel (hosting), Anthropic (iDogs Scan, only for documents you choose to scan) — all under strict data processing agreements</li>
               <li><strong>Legal requirements:</strong> If required by Australian law, court order, or government authority</li>
               <li><strong>Public passport:</strong> Information displayed on a dog's public QR passport page is visible to anyone with the link</li>
             </ul>
@@ -71,7 +70,7 @@ export default function PrivacyPage() {
             <ul>
               <li><strong>Access</strong> your personal information held by us</li>
               <li><strong>Correct</strong> inaccurate or incomplete information</li>
-              <li><strong>Delete</strong> your account and associated data</li>
+              <li><strong>Delete</strong> your account and associated data (see section 7)</li>
               <li><strong>Export</strong> your data at any time via PDF or CSV</li>
               <li><strong>Opt out</strong> of marketing communications</li>
               <li><strong>Complain</strong> to the Office of the Australian Information Commissioner (OAIC) if you believe we've breached your privacy</li>
@@ -79,12 +78,10 @@ export default function PrivacyPage() {
             <p>To exercise these rights, contact us at hello@idogs.com.au.</p>
           </LegalSection>
 
-          <LegalSection title="7. Data Retention">
-            <p>We retain your data for as long as your account is active. After account cancellation:</p>
+          <LegalSection title="7. Data Retention and Account Deletion">
+            <p>We retain your data for as long as your account is active.</p>
             <ul>
-              <li>Your data is kept for 30 days, during which you can export it</li>
-              <li>After 30 days, data is permanently deleted from our systems</li>
-              <li>Stripe may retain payment records as required by Australian financial regulations</li>
+              {DELETION_POLICY.map(point => <li key={point}>{point}</li>)}
             </ul>
           </LegalSection>
 

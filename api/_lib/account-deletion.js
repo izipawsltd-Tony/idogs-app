@@ -23,7 +23,7 @@ export function deletionStatus(data) {
     message: data.status === 'cancelled' ? 'Your deletion request was cancelled.'
       : data.status === 'completed' ? 'Your account deletion has completed.'
         : data.status === 'processing' ? 'Account deletion is being processed. Cancellation is no longer available.'
-          : 'Your request is saved for review. Your account has not been deleted. You can cancel before processing begins.',
+          : 'Request received. We complete account deletion within 7 days and email you when it is done. You can cancel until processing starts.',
   }
 }
 
