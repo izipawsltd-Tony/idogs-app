@@ -5,6 +5,7 @@ import { CHECKOUT_PRICE_IDS } from './checkout-handler.js'
 import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from './pricing-policy.js'
 import { computeEffectivePlan, hasValidInternalEntitlement } from './entitlements.js'
 import { ALLOWED_ADMINS } from '../super-admin/_auth.js'
+import { buildGrowthSnapshot } from './control-center-growth.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const SUPPORT_NEEDS_ACTION = new Set(['new', 'open', 'waiting_for_support'])
@@ -760,6 +761,7 @@ export async function buildAiCeoV12() {
     revenueTruth,
     customerRevenueTruth,
     accountClassification,
+    growthSnapshot: buildGrowthSnapshot({ users, accounts: accountClassification.accounts, now }),
     facts: {
       totalUsers: users.length, breeders, owners, newUsers7d, newUsers30d,
       plusEntitledAccounts, internalEntitlementAccounts,

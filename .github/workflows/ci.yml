@@ -37,6 +37,7 @@ jobs:
       - name: Unit tests
         run: |
           npm test
+          node --test scripts/control-center-*.test.mjs
           node --test scripts/test-legacy-history-recovery.mjs
           node scripts/test-webhook-handler.mjs
           node scripts/test-sms-addon-v1.mjs

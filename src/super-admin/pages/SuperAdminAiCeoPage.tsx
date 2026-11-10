@@ -6,6 +6,13 @@ type Confidence = 'HIGH' | 'MEDIUM' | 'LOW'
 type Horizon = 'NOW' | 'THIS_WEEK' | 'NEXT_BUILD' | 'WATCH'
 type Classification = 'REAL_CUSTOMER' | 'INTERNAL' | 'TEST_QA' | 'LIKELY_REAL' | 'UNCLASSIFIED'
 
+type SiteHealth = {
+  checkedAt: string
+  status: 'PASS' | 'FAIL' | 'UNKNOWN'
+  scope: string
+  checks: Array<{ id: string; status: 'PASS' | 'FAIL' | 'UNKNOWN'; latencyMs: number; reason: string }>
+}
+
 type PriceTruth = {
   id: string
   active: boolean
@@ -69,6 +76,23 @@ type Decision = {
 }
 
 type AiCeoPayload = {
+  growthSnapshot?: {
+    windowDays: number
+    eligibleSignups: number
+    confirmedCustomers: number
+    likelyReal: number
+    excludedInternalQa: number
+    unclassified: number
+    invalidCreatedAt: number
+    channels: Record<string, number>
+    basis: string
+    limitations: string[]
+  }
+  evidence?: {
+    freshness: 'FRESH' | 'STALE' | 'UNKNOWN'
+    revenue: { status: 'VERIFIED' | 'UNVERIFIED'; verifiedCustomerMrrAud: number | null }
+    limitations: string[]
+  }
   generatedAt: string
   osVersion: string
   operatingMode: {
@@ -251,6 +275,14 @@ export default function SuperAdminAiCeoPage() {
   const [data, setData] = useState<AiCeoPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [clock, setClock] = useState(Date.now())
+  const [health, setHealth] = useState<SiteHealth | null>(null)
+  const [healthLoading, setHealthLoading] = useState(false)
+  const [healthError, setHealthError] = useState<string | null>(null)
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   async function load() {
     if (!user) return
@@ -262,6 +294,7 @@ export default function SuperAdminAiCeoPage() {
       const json = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(json.message || json.error || `HTTP ${response.status}`)
       setData(json)
+      setClock(Date.now())
     } catch (reason: any) {
       setError(reason?.message || 'Failed to load AI CEO Control Center.')
     } finally {
@@ -270,6 +303,23 @@ export default function SuperAdminAiCeoPage() {
   }
 
   useEffect(() => { load() }, [user])
+
+  async function checkHealth() {
+    if (!user || healthLoading) return
+    setHealthLoading(true)
+    setHealthError(null)
+    try {
+      const token = await user.getIdToken()
+      const response = await fetch('/api/super-admin/site-health', { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } })
+      if (!response.ok) throw new Error('Health check unavailable. Try again.')
+      setHealth(await response.json())
+    } catch {
+      setHealth(null)
+      setHealthError('Health check unavailable. Try again.')
+    } finally {
+      setHealthLoading(false)
+    }
+  }
 
   if (loading) return <div className="super-admin-page"><p>Loading AI CEO customer revenue truth...</p></div>
   if (error || !data) return (
@@ -280,8 +330,12 @@ export default function SuperAdminAiCeoPage() {
   )
 
   const priorityDecision = data.decisions.find(item => item.id === data.brief.priorityDecisionId) || data.decisions[0]
+  const age = clock - Date.parse(data.generatedAt)
+  const fresh = Number.isFinite(age) && age >= 0 && age <= 300000 && data.evidence?.freshness === 'FRESH'
+  const revenueVerified = fresh && data.evidence?.revenue.status === 'VERIFIED'
+  const revenueLabel = revenueVerified ? `A$${data.evidence?.revenue.verifiedCustomerMrrAud}` : 'Unverified'
   const headline = [
-    ['Verified Customer MRR', `A$${data.customerRevenueTruth.verifiedCustomerMrrAud}`, `${data.customerRevenueTruth.verifiedCustomerActiveSubscriptions} verified customer LIVE subscription(s)`],
+    ['Verified Customer MRR', revenueLabel, revenueVerified ? `${data.customerRevenueTruth.verifiedCustomerActiveSubscriptions} verified customer LIVE subscription(s)` : 'Refresh or resolve incomplete billing evidence'],
     ['Gross LIVE Stripe MRR', `A$${data.customerRevenueTruth.grossLiveStripeMrrAud}`, 'Billing truth before customer classification'],
     ['QA / Internal LIVE MRR', `A$${data.customerRevenueTruth.qaInternalLiveMrrAud}`, `${data.customerRevenueTruth.qaInternalLiveActiveSubscriptions} excluded LIVE subscription(s)`],
     ['Unresolved LIVE MRR', `A$${data.customerRevenueTruth.unresolvedLiveMrrAud}`, `${data.customerRevenueTruth.failedSubscriptionProfiles} failed subscription profile(s)`],
@@ -300,12 +354,43 @@ export default function SuperAdminAiCeoPage() {
         <button type="button" className="btn btn-secondary" onClick={load}>Refresh customer revenue truth</button>
       </section>
 
+      <section className="super-admin-panel" style={panel} aria-label="Evidence status">
+        <strong>Operating evidence: {fresh ? 'Current snapshot' : 'Refresh required'}</strong>
+        <p style={{ fontSize: 13, lineHeight: 1.6 }}>Updated {new Date(data.generatedAt).toLocaleString('en-AU', { timeZone: 'Australia/Adelaide' })}. This snapshot does not update automatically.</p>
+        {!revenueVerified && <p role="status" style={{ color: '#8a4b13' }}>Customer revenue is not fully verified. Missing or failed billing reads must not be interpreted as A$0 revenue.</p>}
+        <p style={{ fontSize: 13 }}>AI assistant: not connected · Background monitoring: not connected</p>
+      </section>
+
+      <section className="super-admin-panel" style={panel} aria-label="Website reachability">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <h3 style={{ margin: 0 }}>Website reachability</h3>
+          <button type="button" className="btn btn-secondary" disabled={healthLoading} onClick={checkHealth}>{healthLoading ? 'Checking…' : 'Check website now'}</button>
+        </div>
+        <p style={{ fontSize: 13 }}>On-demand check of the public website and signup page. Login, checkout and customer data access need separate checks.</p>
+        {healthError && <p role="alert">{healthError}</p>}
+        {health && <div aria-live="polite">
+          <p><strong>{health.status === 'PASS' ? 'Public pages reachable' : health.status === 'FAIL' ? 'A public page check failed' : 'Unable to confirm reachability'}</strong> · {new Date(health.checkedAt).toLocaleString('en-AU', { timeZone: 'Australia/Adelaide' })}</p>
+          <ul>{health.checks.map(check => <li key={check.id}>{check.id}: {check.status} · {check.latencyMs} ms · {check.reason.replaceAll('_', ' ').toLowerCase()}</li>)}</ul>
+        </div>}
+      </section>
+
+      {data.growthSnapshot && <section className="super-admin-panel" style={panel} aria-label="Signup acquisition">
+        <h3 style={{ marginTop: 0 }}>Signup sources · last {data.growthSnapshot.windowDays} days</h3>
+        <p style={{ fontSize: 13, lineHeight: 1.6 }}>{data.growthSnapshot.eligibleSignups} eligible signup profile(s): {data.growthSnapshot.confirmedCustomers} confirmed customer(s), {data.growthSnapshot.likelyReal} likely-real account(s). Excludes {data.growthSnapshot.excludedInternalQa} internal/QA and {data.growthSnapshot.unclassified} unclassified account(s).</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12 }}>
+          {Object.entries(data.growthSnapshot.channels).map(([channel, count]) => <MetricCard key={channel} label={channel} value={count} />)}
+        </div>
+        <p style={{ fontSize: 12, color: '#53635a', lineHeight: 1.6 }}>{data.growthSnapshot.basis}</p>
+        <ul style={{ fontSize: 12 }}>{data.growthSnapshot.limitations.map(item => <li key={item}>{item}</li>)}</ul>
+        {data.growthSnapshot.invalidCreatedAt > 0 && <p role="status">{data.growthSnapshot.invalidCreatedAt} profile(s) have missing, invalid or future signup dates and were excluded.</p>}
+      </section>}
+
       <section className="super-admin-panel" style={panel}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 20 }}>
           <div>
             <p className="super-admin-kicker">CEO brief</p>
             <h3 style={{ marginTop: 0 }}>{data.brief.status.replaceAll('_', ' ')}</h3>
-            <p style={{ lineHeight: 1.65, color: '#42544a' }}>{data.brief.summary}</p>
+            <p style={{ lineHeight: 1.65, color: '#42544a' }}>{revenueVerified ? data.brief.summary : `Customer revenue needs verification before it can be used as the business baseline. ${data.accountClassification.realCustomer} confirmed customer account(s); ${data.customerRevenueTruth.failedSubscriptionProfiles} subscription profile read(s) failed. Review the evidence and priority below.`}</p>
             {priorityDecision && <div style={{ borderLeft: '4px solid #1a3a2a', background: '#f7faf8', padding: '11px 13px' }}>
               <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 7 }}><Pill tone={horizonTone(priorityDecision.horizon)}>{priorityDecision.horizon.replaceAll('_', ' ')}</Pill><Pill>Score {priorityDecision.score}/100</Pill></div>
               <strong>Priority #1: {priorityDecision.title}</strong>
@@ -330,7 +415,7 @@ export default function SuperAdminAiCeoPage() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><h3 style={{ margin: 0 }}>Business MRR after account classification</h3><Pill tone={truthTone(data.customerRevenueTruth.status)}>{data.customerRevenueTruth.status}</Pill></div>
         <p style={{ fontSize: 13, color: '#53635a', lineHeight: 1.6 }}>{data.customerRevenueTruth.note}</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <MetricCard label="Verified Customer MRR" value={`A$${data.customerRevenueTruth.verifiedCustomerMrrAud}`} note="CEO revenue baseline" />
+          <MetricCard label="Verified Customer MRR" value={revenueLabel} note={revenueVerified ? 'CEO revenue baseline' : 'Incomplete or stale evidence'} />
           <MetricCard label="Gross LIVE Stripe MRR" value={`A$${data.customerRevenueTruth.grossLiveStripeMrrAud}`} note="Before customer classification" />
           <MetricCard label="QA / Internal LIVE MRR" value={`A$${data.customerRevenueTruth.qaInternalLiveMrrAud}`} note="Excluded from customer revenue" />
           <MetricCard label="Unresolved LIVE MRR" value={`A$${data.customerRevenueTruth.unresolvedLiveMrrAud}`} note="Excluded until customer evidence exists" />
