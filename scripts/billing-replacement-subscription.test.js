@@ -62,3 +62,51 @@ describe('Billing uses the current subscription when the stored one has ended', 
     expect(out.body.subscription.id).toBe('sub_old')
   })
 })
+
+describe('stored subscription id that Stripe no longer has (Codex P2 6752876307)', () => {
+  async function runWith(error, replacement = fresh) {
+    const find = vi.fn(async () => replacement)
+    const reconcileVerifiedPlus = vi.fn(async ({ subscription }) => ({ plan: 'plus', billingInterval: 'monthly', subscriptionStatus: subscription.status }))
+    const handler = createBillingSummaryHandler({
+      verifyIdToken: async () => ({ uid: 'qa' }),
+      getProfile: async () => ({ plan: 'plus', stripeCustomerId: 'cus_qa', stripeSubscriptionId: 'sub_gone' }),
+      retrieveSubscription: async () => { throw error },
+      listInvoices: async () => ({ data: [] }),
+      findReplacementSubscription: find,
+      reconcileVerifiedPlus,
+    })
+    const out = {}; const res = { status: s => { out.status = s; return res }, json: b => { out.body = b } }
+    await handler({ method: 'GET', headers: { authorization: 'Bearer synthetic' } }, res)
+    return { out, find, reconcileVerifiedPlus }
+  }
+  const missing = () => Object.assign(new Error('No such subscription'), { type: 'StripeInvalidRequestError', code: 'resource_missing', statusCode: 404 })
+
+  it('recovers through the guarded replacement lookup', async () => {
+    const { out, find, reconcileVerifiedPlus } = await runWith(missing())
+    expect(out.status).toBe(200)
+    expect(find).toHaveBeenCalledWith({ customerId: 'cus_qa', userId: 'qa', excludeId: null })
+    expect(reconcileVerifiedPlus).toHaveBeenCalledWith({ subscription: expect.objectContaining({ id: 'sub_new' }), userId: 'qa' })
+    expect(out.body.entitlement.plan).toBe('plus')
+  })
+
+  it('without a replacement it shows no subscription instead of failing', async () => {
+    const { out, reconcileVerifiedPlus } = await runWith(missing(), null)
+    expect(out.status).toBe(200)
+    expect(out.body.subscription).toBeNull()
+    expect(reconcileVerifiedPlus).not.toHaveBeenCalled()
+  })
+
+  it('other Stripe failures still fail closed without lookup or reconciliation', async () => {
+    for (const error of [
+      Object.assign(new Error('auth'), { type: 'StripeAuthenticationError', statusCode: 401 }),
+      Object.assign(new Error('net'), { type: 'StripeConnectionError' }),
+      Object.assign(new Error('rate'), { type: 'StripeRateLimitError', code: 'rate_limit', statusCode: 429 }),
+      Object.assign(new Error('bad'), { type: 'StripeInvalidRequestError', code: 'parameter_invalid', statusCode: 400 }),
+    ]) {
+      const { out, find, reconcileVerifiedPlus } = await runWith(error)
+      expect(out.status).toBe(500)
+      expect(find).not.toHaveBeenCalled()
+      expect(reconcileVerifiedPlus).not.toHaveBeenCalled()
+    }
+  })
+})

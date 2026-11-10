@@ -65,6 +65,10 @@ function profileEntitlement(profile) {
 
 const ENDED_SUBSCRIPTION_STATUSES = ['canceled', 'incomplete_expired', 'unpaid']
 
+function isMissingStripeResource(error) {
+  return error?.code === 'resource_missing' && (error?.statusCode === 404 || error?.raw?.statusCode === 404 || error?.type === 'StripeInvalidRequestError')
+}
+
 export function createBillingSummaryHandler({
   verifyIdToken,
   getProfile,
@@ -104,7 +108,17 @@ export function createBillingSummaryHandler({
       }
 
       let subscription = null
-      let stripeSubscription = subscriptionId ? await retrieveSubscription(subscriptionId) : null
+      let stripeSubscription = null
+      if (subscriptionId) {
+        try {
+          stripeSubscription = await retrieveSubscription(subscriptionId)
+        } catch (error) {
+          // Only a stored id that Stripe no longer has falls through to the
+          // guarded replacement lookup; every other failure stays a 500.
+          if (!isMissingStripeResource(error)) throw error
+          logSanitizedError('billing-summary', 'STORED_SUBSCRIPTION_MISSING')
+        }
+      }
       if (stripeSubscription && customerIdOf(stripeSubscription.customer) !== customerId) {
         logSanitizedError('billing-summary', 'SUBSCRIPTION_CUSTOMER_MISMATCH')
         return res.status(409).json({ error: 'Billing account mismatch' })
