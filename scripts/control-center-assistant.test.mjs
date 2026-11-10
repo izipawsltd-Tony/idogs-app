@@ -74,9 +74,11 @@ test('only projected server evidence reaches provider; no question stored in aud
   const calls = []
   const handler = createAssistantHandler({
     verifySuperAdmin: async () => ({ uid: 'admin' }), buildBrief: async () => evidence(),
+    deploymentEnvironment: 'preview',
     provider: { enabled: () => true, answer: async (question, context) => {
       assert.equal(question, 'How is iDogs?')
       assert.equal(context.metrics.totalUsers, 8)
+      assert.equal(context.deploymentEnvironment, 'preview')
       assert.doesNotMatch(JSON.stringify(context), /PRIVATE CUSTOMER/)
       return { answer: 'Review data gaps.' }
     } },
