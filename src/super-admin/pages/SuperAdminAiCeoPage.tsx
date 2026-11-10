@@ -283,6 +283,7 @@ export default function SuperAdminAiCeoPage() {
   const [assistantEnabled, setAssistantEnabled] = useState<boolean | null>(null)
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState<string | null>(null)
+  const [answerTruncated, setAnswerTruncated] = useState(false)
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [assistantError, setAssistantError] = useState<string | null>(null)
   useEffect(() => {
@@ -339,7 +340,8 @@ export default function SuperAdminAiCeoPage() {
         body: JSON.stringify({ question: question.trim() }),
       })
       const result = await response.json().catch(() => ({}))
-      if (!response.ok || typeof result.answer !== 'string') throw new Error(response.status === 429 ? 'Daily analysis limit reached. Try again tomorrow (UTC).' : 'Analysis unavailable. No operating action was executed.')
+      if (!response.ok || typeof result.answer !== 'string') throw new Error(response.status === 429 ? 'Daily analysis limit reached. Try again tomorrow (UTC).' : result.code === 'PROVIDER_TIMEOUT' ? 'Analysis took too long. Try a shorter question.' : 'Analysis unavailable. No operating action was executed.')
+      setAnswerTruncated(result.truncated === true)
       setAnswer(result.answer)
     } catch (reason) {
       setAssistantError(reason instanceof Error ? reason.message : 'Analysis unavailable.')
@@ -414,7 +416,7 @@ export default function SuperAdminAiCeoPage() {
           <button className="btn btn-primary" type="submit" disabled={!assistantEnabled || assistantBusy || !question.trim()}>{assistantBusy ? 'Analysing…' : 'Analyse'}</button>
         </form>
         {assistantError && <p role="alert">{assistantError}</p>}
-        {answer && <div aria-live="polite" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.65, marginTop: 16 }}>{answer}</div>}
+        {answer && <div aria-live="polite" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.65, marginTop: 16 }}>{answerTruncated && <p role="status">This answer reached the response limit and may be incomplete. Ask a narrower question for more detail.</p>}{answer}</div>}
       </section>
 
       <section className="super-admin-panel" style={panel} aria-label="Website reachability">

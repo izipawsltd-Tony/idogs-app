@@ -32,13 +32,25 @@ test('fixed provider, no tools, bounded output and no redirects or automatic ret
   assert.equal((await provider.answer('question', {})).answer, completion.content[0].text)
   assert.equal(calls, 1)
 })
-test('provider failures, truncated answers, tool requests and oversized responses are rejected', async () => {
-  for (const response of [reply({ error: 'SECRET' }, 429), reply({ ...completion, stop_reason: 'max_tokens' }), reply({ stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'delete_user' }] }), reply({ ...completion, content: [{ type: 'text', text: 'x'.repeat(70000) }] })]) {
+test('provider failures, tool requests and oversized responses are rejected', async () => {
+  for (const response of [reply({ error: 'SECRET' }, 429), reply({ stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'delete_user' }] }), reply({ ...completion, content: [{ type: 'text', text: 'x'.repeat(70000) }] })]) {
     let calls = 0
     const provider = createAssistantProvider({ env, fetchImpl: async () => { calls++; return response } })
     await assert.rejects(provider.answer('question', {}), error => error.message === 'Assistant unavailable')
     assert.equal(calls, 1)
   }
+})
+test('usable text at the approved token ceiling is returned with an explicit incomplete flag', async () => {
+  let calls = 0
+  const provider = createAssistantProvider({ env, fetchImpl: async (_url, options) => {
+    calls++
+    assert.equal(JSON.parse(options.body).max_tokens, 600)
+    return reply({ ...completion, stop_reason: 'max_tokens' })
+  } })
+  const result = await provider.answer('Three priorities with evidence', {})
+  assert.equal(result.answer, completion.content[0].text)
+  assert.equal(result.truncated, true)
+  assert.equal(calls, 1)
 })
 test('timeout bounds transport and slow response body, including fetch ignoring abort', async () => {
   for (const fetchImpl of [async () => new Promise(() => {}), async () => new Response(new ReadableStream({ start() {} }))]) {
@@ -85,4 +97,21 @@ test('exhausted budget and stale evidence prevent model calls', async () => {
   response = res()
   await createAssistantHandler({ ...deps, buildBrief: async () => ({ generatedAt: '2020-01-01' }), budget: { reserve: forbidden } })({ method: 'POST', body: { question: 'hi' } }, response)
   assert.equal(response.code, 503)
+})
+test('provider failure records only safe diagnostics and does not refund or retry', async () => {
+  const reports = [], audits = []
+  let calls = 0
+  const handler = createAssistantHandler({
+    verifySuperAdmin: async () => ({ uid: 'PRIVATE_ADMIN' }), buildBrief: async () => evidence(),
+    provider: { enabled: () => true, answer: async () => { calls++; throw new Error('SECRET provider body') } },
+    budget: { reserve: async () => ({ auditId: 'audit-1' }), finish: async (...args) => audits.push(args) },
+    report: event => reports.push(event),
+  })
+  const response = res()
+  await handler({ method: 'POST', body: { question: 'PRIVATE QUESTION' } }, response)
+  assert.equal(response.code, 503)
+  assert.equal(calls, 1)
+  assert.deepEqual(reports, [{ stage: 'PROVIDER', code: 'ASSISTANT_UNAVAILABLE' }])
+  assert.deepEqual(audits, [[{ auditId: 'audit-1' }, 'UNAVAILABLE']])
+  assert.doesNotMatch(JSON.stringify({ reports, body: response.body }), /SECRET|PRIVATE/)
 })
