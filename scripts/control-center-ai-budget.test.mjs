@@ -1,6 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createAiBudget, AI_DAILY_REQUEST_LIMIT } from '../api/_lib/control-center-ai-budget.js'
+import { createAiBudget, AI_DAILY_REQUEST_LIMIT, assertAssistantDatabase } from '../api/_lib/control-center-ai-budget.js'
+test('preview quota writes cannot target production or unknown database projects', () => {
+  assert.doesNotThrow(() => assertAssistantDatabase('preview', 'idogs-app-staging'))
+  assert.doesNotThrow(() => assertAssistantDatabase('production', 'idogs-app'))
+  for (const [environment, project] of [['preview', 'idogs-app'], ['preview', 'other'], ['production', 'idogs-app-staging'], [undefined, 'idogs-app']]) {
+    assert.throws(() => assertAssistantDatabase(environment, project), /environment mismatch/)
+  }
+})
 
 // Serial transaction harness checks policy and adapter interactions, not
 // actual cloud IO; emulator/provider verification is a separate release gate.

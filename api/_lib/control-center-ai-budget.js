@@ -3,6 +3,11 @@ import { createHash, randomUUID } from 'node:crypto'
 // Hard global ceiling across all function instances and both admins. Each
 // attempt is charged before transport; unknown outcomes are never refunded.
 export const AI_DAILY_REQUEST_LIMIT = 20
+export function assertAssistantDatabase(deploymentEnvironment, projectId) {
+  if (deploymentEnvironment === 'preview' && projectId === 'idogs-app-staging') return
+  if (deploymentEnvironment === 'production' && projectId === 'idogs-app') return
+  throw new Error('Assistant database environment mismatch')
+}
 export function createAiBudget(db, { now = () => new Date(), newId = randomUUID } = {}) {
   return {
     async reserve(actorUid) {
