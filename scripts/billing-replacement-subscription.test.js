@@ -96,6 +96,55 @@ describe('stored subscription id that Stripe no longer has (Codex P2 6752876307)
     expect(reconcileVerifiedPlus).not.toHaveBeenCalled()
   })
 
+  // Codex P2 6762625363: a stale profile.plan='plus' must not be reported when
+  // nothing in Stripe backs it. Response is normalized; no profile write.
+  it('a stale Plus profile with a missing subscription and no replacement reports Free', async () => {
+    const { out, find, reconcileVerifiedPlus } = await runWith(missing(), null)
+    expect(find).toHaveBeenCalledTimes(1)
+    expect(out.body.entitlement).toEqual({ plan: 'free', billingInterval: null, subscriptionStatus: null })
+    expect(reconcileVerifiedPlus).not.toHaveBeenCalled()
+  })
+
+  it('rejects another account, another customer or an inactive replacement on the missing-object path and reports Free', async () => {
+    for (const replacement of [
+      { ...fresh, metadata: { userId: 'someone-else' } },
+      { ...fresh, metadata: {} },
+      { ...fresh, customer: 'cus_other' },
+      { ...fresh, status: 'past_due' },
+      { ...fresh, status: 'canceled' },
+      { ...fresh, status: 'incomplete' },
+    ]) {
+      const { out, reconcileVerifiedPlus } = await runWith(missing(), replacement)
+      expect(out.status).toBe(200)
+      expect(out.body.subscription).toBeNull()
+      expect(out.body.entitlement.plan).toBe('free')
+      expect(reconcileVerifiedPlus).not.toHaveBeenCalled()
+    }
+  })
+
+  it('an unrelated 404 (not resource_missing) still fails closed and never downgrades', async () => {
+    const error = Object.assign(new Error('not found'), { type: 'StripeInvalidRequestError', code: 'url_invalid', statusCode: 404 })
+    const { out, find, reconcileVerifiedPlus } = await runWith(error)
+    expect(out.status).toBe(500)
+    expect(out.body?.entitlement).toBeUndefined()
+    expect(find).not.toHaveBeenCalled()
+    expect(reconcileVerifiedPlus).not.toHaveBeenCalled()
+  })
+
+  it('a Plus profile with no stored subscription id keeps its plan (no Stripe evidence either way)', async () => {
+    const handler = createBillingSummaryHandler({
+      verifyIdToken: async () => ({ uid: 'qa' }),
+      getProfile: async () => ({ plan: 'plus', billingInterval: 'monthly', stripeCustomerId: 'cus_qa' }),
+      retrieveSubscription: vi.fn(),
+      listInvoices: async () => ({ data: [] }),
+      findReplacementSubscription: async () => null,
+    })
+    const out = {}; const res = { status: s => { out.status = s; return res }, json: b => { out.body = b } }
+    await handler({ method: 'GET', headers: { authorization: 'Bearer synthetic' } }, res)
+    expect(out.status).toBe(200)
+    expect(out.body.entitlement.plan).toBe('plus')
+  })
+
   it('other Stripe failures still fail closed without lookup or reconciliation', async () => {
     for (const error of [
       Object.assign(new Error('auth'), { type: 'StripeAuthenticationError', statusCode: 401 }),

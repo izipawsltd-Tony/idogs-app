@@ -109,6 +109,7 @@ export function createBillingSummaryHandler({
 
       let subscription = null
       let stripeSubscription = null
+      let storedSubscriptionMissing = false
       if (subscriptionId) {
         try {
           stripeSubscription = await retrieveSubscription(subscriptionId)
@@ -116,6 +117,7 @@ export function createBillingSummaryHandler({
           // Only a stored id that Stripe no longer has falls through to the
           // guarded replacement lookup; every other failure stays a 500.
           if (!isMissingStripeResource(error)) throw error
+          storedSubscriptionMissing = true
           logSanitizedError('billing-summary', 'STORED_SUBSCRIPTION_MISSING')
         }
       }
@@ -131,6 +133,13 @@ export function createBillingSummaryHandler({
           && ['active', 'trialing'].includes(replacement.status)) {
           stripeSubscription = replacement
         }
+      }
+      if (storedSubscriptionMissing && !stripeSubscription) {
+        // The stored subscription no longer exists in Stripe and no verified
+        // replacement was found, so nothing backs a Plus plan from the stale
+        // profile. Response only: the profile is not rewritten here
+        // (Codex P2 6762625363).
+        entitlement = { plan: 'free', billingInterval: null, subscriptionStatus: null }
       }
       if (stripeSubscription) {
 
