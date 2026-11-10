@@ -89,6 +89,7 @@ type AiCeoPayload = {
     limitations: string[]
   }
   evidence?: {
+    deploymentEnvironment?: string
     freshness: 'FRESH' | 'STALE' | 'UNKNOWN'
     revenue: { status: 'VERIFIED' | 'UNVERIFIED'; verifiedCustomerMrrAud: number | null }
     limitations: string[]
@@ -396,6 +397,7 @@ export default function SuperAdminAiCeoPage() {
       </section>
 
       <section className="super-admin-panel" style={panel} aria-label="Evidence status">
+        <p style={{ marginTop: 0, fontWeight: 700 }}>Environment: {data.evidence?.deploymentEnvironment || 'unknown'}</p>
         <strong>Operating evidence: {fresh ? 'Current snapshot' : 'Refresh required'}</strong>
         <p style={{ fontSize: 13, lineHeight: 1.6 }}>Updated {new Date(data.generatedAt).toLocaleString('en-AU', { timeZone: 'Australia/Adelaide' })}. This snapshot does not update automatically.</p>
         {!revenueVerified && <p role="status" style={{ color: '#8a4b13' }}>Customer revenue is not fully verified. Missing or failed billing reads must not be interpreted as A$0 revenue.</p>}
@@ -443,7 +445,7 @@ export default function SuperAdminAiCeoPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 20 }}>
           <div>
             <p className="super-admin-kicker">CEO brief</p>
-            <h3 style={{ marginTop: 0 }}>{data.brief.status.replaceAll('_', ' ')}</h3>
+            <h3 style={{ marginTop: 0 }}>{revenueVerified ? data.brief.status.replaceAll('_', ' ') : 'CUSTOMER REVENUE NEEDS VERIFICATION'}</h3>
             <p style={{ lineHeight: 1.65, color: '#42544a' }}>{revenueVerified ? data.brief.summary : `Customer revenue needs verification before it can be used as the business baseline. ${data.accountClassification.realCustomer} confirmed customer account(s); ${data.customerRevenueTruth.failedSubscriptionProfiles} subscription profile read(s) failed. Review the evidence and priority below.`}</p>
             {priorityDecision && <div style={{ borderLeft: '4px solid #1a3a2a', background: '#f7faf8', padding: '11px 13px' }}>
               <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 7 }}><Pill tone={horizonTone(priorityDecision.horizon)}>{priorityDecision.horizon.replaceAll('_', ' ')}</Pill><Pill>Score {priorityDecision.score}/100</Pill></div>
@@ -466,8 +468,8 @@ export default function SuperAdminAiCeoPage() {
 
       <section className="super-admin-panel" style={panel}>
         <p className="super-admin-kicker">Customer Revenue Truth</p>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><h3 style={{ margin: 0 }}>Business MRR after account classification</h3><Pill tone={truthTone(data.customerRevenueTruth.status)}>{data.customerRevenueTruth.status}</Pill></div>
-        <p style={{ fontSize: 13, color: '#53635a', lineHeight: 1.6 }}>{data.customerRevenueTruth.note}</p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><h3 style={{ margin: 0 }}>Business MRR after account classification</h3><Pill tone={revenueVerified ? 'good' : 'warn'}>{revenueVerified ? 'VERIFIED' : 'UNVERIFIED'}</Pill></div>
+        <p style={{ fontSize: 13, color: '#53635a', lineHeight: 1.6 }}>{revenueVerified ? data.customerRevenueTruth.note : 'Customer allocation alone cannot verify business revenue. Fresh LIVE Stripe verification and complete customer classification are both required.'}</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <MetricCard label="Verified Customer MRR" value={revenueLabel} note={revenueVerified ? 'CEO revenue baseline' : 'Incomplete or stale evidence'} />
           <MetricCard label="Gross LIVE Stripe MRR" value={`A$${data.customerRevenueTruth.grossLiveStripeMrrAud}`} note="Before customer classification" />

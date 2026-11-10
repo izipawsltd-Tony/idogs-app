@@ -1,7 +1,7 @@
 import { buildControlCenterEvidence } from './control-center-evidence.js'
 
 // Dependency injection keeps auth/data access testable without credentials.
-export function createControlCenterHandler({ verifySuperAdmin, buildBrief }) {
+export function createControlCenterHandler({ verifySuperAdmin, buildBrief, deploymentEnvironment = process.env.VERCEL_ENV }) {
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'private, no-store')
     res.setHeader('Vary', 'Authorization')
@@ -16,6 +16,7 @@ export function createControlCenterHandler({ verifySuperAdmin, buildBrief }) {
     try {
       const payload = await buildBrief()
       const evidence = buildControlCenterEvidence(payload)
+      evidence.deploymentEnvironment = ['production', 'preview', 'development'].includes(deploymentEnvironment) ? deploymentEnvironment : 'unknown'
       return res.status(200).json(view === 'evidence' ? evidence : { ...payload, evidence })
     } catch {
       // Do not expose provider errors, credentials or customer records.

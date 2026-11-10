@@ -79,6 +79,15 @@ describe('Control Center evidence and health UI', () => {
     const button = renderer!.root.findAllByType('button').find(item => item.children.includes('Analyse'))!
     expect(button.props.disabled).toBe(true)
   })
+  it('does not label partial billing as a verified customer baseline even if allocation is complete', async () => {
+    const payload = fixture('VERIFIED')
+    payload.evidence.revenue.status = 'UNVERIFIED'
+    payload.evidence.revenue.verifiedCustomerMrrAud = null
+    await mount(payload)
+    expect(rendered()).toContain('CUSTOMER REVENUE NEEDS VERIFICATION')
+    expect(rendered()).toContain('Customer allocation alone cannot verify business revenue')
+    expect(rendered()).not.toContain('Unverified headline must be hidden')
+  })
   it('sends only the question and renders model output as plain text', async () => {
     const request = await mount(fixture(), true)
     request.mockResolvedValueOnce({ ok: true, json: async () => ({ answer: '<script>example</script> Review revenue evidence.' }) } as any)

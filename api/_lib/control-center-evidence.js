@@ -2,6 +2,7 @@
 // source payload: it contains customer emails, account IDs and provider IDs.
 const METRICS = ['totalUsers', 'newUsers7d', 'newUsers30d', 'totalDogs', 'totalLitters', 'supportNeedsAction']
 const amount = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+export const hasVerifiedLiveBilling = revenueTruth => revenueTruth?.status === 'VERIFIED' && revenueTruth?.stripeMode === 'LIVE'
 
 export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs = 300000 } = {}) {
   if (!Number.isFinite(now.getTime()) || !Number.isFinite(maxAgeMs) || maxAgeMs <= 0) throw new Error('Invalid evidence clock')
@@ -11,6 +12,7 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
   const freshness = !Number.isFinite(ageMs) || ageMs < 0 ? 'UNKNOWN' : ageMs > maxAgeMs ? 'STALE' : 'FRESH'
   const revenue = source.customerRevenueTruth || {}
   const revenueVerified = freshness === 'FRESH' && revenue.status === 'VERIFIED'
+    && hasVerifiedLiveBilling(source.revenueTruth)
     && amount(revenue.verifiedCustomerMrrAud) !== null
   return {
     schemaVersion: '1.0',
@@ -20,6 +22,7 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
     capabilities: { modelConnected: false, backgroundMonitoringConnected: false, productionWrites: false },
     revenue: {
       status: revenueVerified ? 'VERIFIED' : 'UNVERIFIED',
+      billingMode: ['LIVE', 'TEST', 'MIXED'].includes(source.revenueTruth?.stripeMode) ? source.revenueTruth.stripeMode : 'UNKNOWN',
       // Unverified zero must never become an assertion of zero revenue.
       verifiedCustomerMrrAud: revenueVerified ? revenue.verifiedCustomerMrrAud : null,
       failedSubscriptionProfiles: amount(revenue.failedSubscriptionProfiles),

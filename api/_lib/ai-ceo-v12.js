@@ -6,6 +6,7 @@ import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from './pricing-policy.
 import { computeEffectivePlan, hasValidInternalEntitlement } from './entitlements.js'
 import { ALLOWED_ADMINS } from '../super-admin/_auth.js'
 import { buildGrowthSnapshot } from './control-center-growth.js'
+import { hasVerifiedLiveBilling } from './control-center-evidence.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const SUPPORT_NEEDS_ACTION = new Set(['new', 'open', 'waiting_for_support'])
@@ -437,7 +438,7 @@ function compileCustomerRevenueTruth(revenueTruth, classification) {
   const allocatedLiveMrrAud = roundMoney(verifiedCustomerMrrAud + qaInternalLiveMrrAud + unresolvedLiveMrrAud)
   const allocationDeltaAud = roundMoney(grossLiveStripeMrrAud - allocatedLiveMrrAud)
 
-  const status = revenueTruth.failedSubscriptionReads === 0 && unresolvedLiveMrrAud === 0 && allocationDeltaAud === 0
+  const status = hasVerifiedLiveBilling(revenueTruth) && revenueTruth.failedSubscriptionReads === 0 && unresolvedLiveMrrAud === 0 && allocationDeltaAud === 0
     ? 'VERIFIED'
     : 'PARTIAL'
 
@@ -455,7 +456,7 @@ function compileCustomerRevenueTruth(revenueTruth, classification) {
     failedRevenueAccounts,
     note: status === 'VERIFIED'
       ? 'Every retrieved LIVE recurring dollar is classified as verified customer, QA/internal, or deliberately unresolved; no stored subscription read failed.'
-      : 'Customer revenue truth is partial. Unresolved LIVE revenue and failed stored subscription reads are excluded from Verified Customer MRR.',
+      : 'Customer revenue truth is partial. Verified LIVE billing and complete customer allocation are required; TEST, unknown and incomplete billing cannot certify business revenue.',
   }
 }
 
@@ -755,7 +756,9 @@ export async function buildAiCeoV12() {
     },
     brief: {
       status: customerRevenueTruth.status === 'VERIFIED' ? 'CUSTOMER_REVENUE_BASELINE_ACTIVE' : 'CUSTOMER_REVENUE_BASELINE_PARTIAL',
-      summary: `iDogs has A$${customerRevenueTruth.verifiedCustomerMrrAud} Verified Customer MRR from A$${customerRevenueTruth.grossLiveStripeMrrAud} gross LIVE Stripe MRR. A$${customerRevenueTruth.qaInternalLiveMrrAud} is QA/internal LIVE revenue and A$${customerRevenueTruth.unresolvedLiveMrrAud} remains unresolved. ${accountClassification.realCustomer} REAL_CUSTOMER, ${accountClassification.likelyReal} LIKELY_REAL and ${accountClassification.unclassified} UNCLASSIFIED account(s) are currently visible. The highest-scored CEO action is ${priorityDecision.title.toLowerCase()} (${priorityDecision.score}/100).`,
+      summary: customerRevenueTruth.status === 'VERIFIED'
+        ? `iDogs has A$${customerRevenueTruth.verifiedCustomerMrrAud} Verified Customer MRR from A$${customerRevenueTruth.grossLiveStripeMrrAud} gross LIVE Stripe MRR. A$${customerRevenueTruth.qaInternalLiveMrrAud} is QA/internal LIVE revenue and A$${customerRevenueTruth.unresolvedLiveMrrAud} remains unresolved. ${accountClassification.realCustomer} REAL_CUSTOMER, ${accountClassification.likelyReal} LIKELY_REAL and ${accountClassification.unclassified} UNCLASSIFIED account(s) are currently visible. The highest-scored CEO action is ${priorityDecision.title.toLowerCase()} (${priorityDecision.score}/100).`
+        : `Customer revenue is not verified. LIVE billing and complete customer allocation are both required before establishing a business MRR baseline. ${customerRevenueTruth.failedSubscriptionProfiles} subscription profile read(s) failed. The highest-scored CEO action is ${priorityDecision.title.toLowerCase()} (${priorityDecision.score}/100).`,
       priorityDecisionId: priorityDecision.id,
     },
     revenueTruth,
