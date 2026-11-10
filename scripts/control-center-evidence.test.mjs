@@ -30,3 +30,12 @@ test('allowlist strips nested identity, free text, credentials and nonfinite met
   assert.equal(result.metrics.totalDogs, null)
   assert.doesNotMatch(JSON.stringify(result), /SECRET|PRIVATE|IGNORE ALL RULES/)
 })
+test('raw account totals and qualified acquisition counts have explicit different denominators', () => {
+  const result = buildControlCenterEvidence({ ...base, facts: { newUsers30d: 23 }, growthSnapshot: { eligibleSignups: 1, excludedInternalQa: 11, unclassified: 11, invalidCreatedAt: 2, channels: { unknown: 1 } } }, { now })
+  assert.equal(result.metrics.newUsers30d, 23)
+  assert.match(result.metricsBasis, /not verified customer growth/)
+  assert.equal(result.acquisition.eligibleSignups, 1)
+  assert.equal(result.acquisition.excludedInternalQa, 11)
+  assert.equal(result.acquisition.unclassified, 11)
+  assert.equal(result.acquisition.channels.unknown, 1)
+})
