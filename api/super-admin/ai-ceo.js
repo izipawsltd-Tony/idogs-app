@@ -6,7 +6,7 @@
 // to review or roll back. The kernel is read-only: Firestore/Auth/Stripe reads
 // only, with no model-provider call and no production-side mutation.
 import { verifySuperAdmin } from './_auth.js'
-import { buildAiCeoV12 } from '../_lib/ai-ceo-v12.js'
+import { getControlCenterBrief } from '../_lib/control-center-runtime.js'
 import { createControlCenterHandler } from '../_lib/control-center-handler.js'
 
-export default createControlCenterHandler({ verifySuperAdmin, buildBrief: buildAiCeoV12 })
+export default createControlCenterHandler({ verifySuperAdmin, buildBrief: getControlCenterBrief })

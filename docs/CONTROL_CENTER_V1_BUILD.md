@@ -48,3 +48,11 @@ firebase emulators:exec --config firebase.control-center-qa.json --project demo-
 First increment preview: https://idogs-3z78lor1l-izipawsltd-tonys-projects.vercel.app (READY at ec22f0b6). Protected-preview access via a temporary share link was rejected by automatic review pending explicit approval; no access protection was disabled. Live authenticated preview behavior and actual model responses remain unverified.
 
 First increment GitHub CI run42799278937 succeeded. Staging Preview E2E run42799723692 failed at `Check bypass secret` because its automation bypass secret was absent; no Playwright result is claimed. Current local verification:27 Node regression tests,32 Vitest tests, actual budget/rules emulator, TypeScript and bundle PASS.
+
+## Preview readback and aggregation cache
+
+Second increment `0db71faf` passed GitHub CI run42813272549 and Vercel deployment dpl_2ELpe5th4UyZSDswJWMVx6CqRQT8 is READY at https://idogs-6x9qn4qno-izipawsltd-tonys-projects.vercel.app . User approved temporary share-link access. The Vercel connector created a link but returned deployment_authentication_required; existing Vercel CLI credentials successfully accessed the exact preview instead. No deployment protection or provider settings were changed, and no credentials exported.
+
+Actual unauthenticated GETs to assistant, ai-ceo?view=evidence and site-health each returned HTTP401 with missing Authorization header. Chrome reached the preview's login page. Google login currently requests terms/privacy agreement and marketing preference; the user has been asked to complete this step. No authenticated dashboard or model-provider PASS is claimed.
+
+The operating brief now has a per-function-instance single-flight cache, capped at60seconds from the source timestamp. Auth checks remain before cache access. Concurrent requests share one pending aggregation, failed refreshes never fall back to expired data, and generatedAt is never reset to disguise old evidence. Four new cache tests PASS. This reduces repeated reads within an instance; collection-wide scans and cross-instance aggregation remain future work.

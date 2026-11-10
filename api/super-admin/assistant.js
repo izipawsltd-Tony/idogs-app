@@ -1,6 +1,6 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { verifySuperAdmin } from './_auth.js'
-import { buildAiCeoV12 } from '../_lib/ai-ceo-v12.js'
+import { getControlCenterBrief } from '../_lib/control-center-runtime.js'
 import { createAiBudget } from '../_lib/control-center-ai-budget.js'
 import { createAssistantHandler, createAssistantProvider } from '../_lib/control-center-assistant.js'
 
@@ -11,4 +11,4 @@ const budget = {
   finish: (ticket, outcome) => createAiBudget(getFirestore()).finish(ticket, outcome),
 }
 export const config = { maxDuration: 60 }
-export default createAssistantHandler({ verifySuperAdmin, buildBrief: buildAiCeoV12, provider, budget })
+export default createAssistantHandler({ verifySuperAdmin, buildBrief: getControlCenterBrief, provider, budget })
