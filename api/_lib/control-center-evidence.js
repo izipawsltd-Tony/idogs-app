@@ -25,6 +25,16 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
       failedSubscriptionProfiles: amount(revenue.failedSubscriptionProfiles),
     },
     metrics: Object.fromEntries(METRICS.map(key => [key, amount(source.facts?.[key])])),
+    acquisition: {
+      windowDays: amount(source.growthSnapshot?.windowDays),
+      eligibleSignups: amount(source.growthSnapshot?.eligibleSignups),
+      confirmedCustomers: amount(source.growthSnapshot?.confirmedCustomers),
+      likelyReal: amount(source.growthSnapshot?.likelyReal),
+      channels: Object.fromEntries(['meta', 'google', 'bing', 'direct', 'other', 'unknown'].map(key => [key, amount(source.growthSnapshot?.channels?.[key])])),
+      visitorToSignupRate: null,
+      retentionRate: null,
+      basis: 'Observed signup profiles, not a historical event funnel. LIKELY_REAL is a signal, not confirmed customer revenue.',
+    },
     limitations: [
       ...(freshness !== 'FRESH' ? ['Operating evidence is stale or its timestamp cannot be trusted.'] : []),
       ...(!revenueVerified ? ['Customer revenue is not fully verified. Missing values are not zero.'] : []),

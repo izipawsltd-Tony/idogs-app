@@ -13,4 +13,8 @@ dist/
 # Playwright
 playwright-report/
 test-results/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.control-center-monitor/
 playwright-report-local/

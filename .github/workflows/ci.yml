@@ -86,6 +86,12 @@ jobs:
           npx --yes firebase-tools@14.12.0 emulators:exec
           --project demo-idogs-rules-test --only firestore
           'node scripts/test-documents-rules-emulator.mjs'
+      - name: Control Center AI budget — actual SDK transaction ceiling
+        run: >-
+          npx --yes firebase-tools@14.12.0 emulators:exec
+          --config firebase.control-center-qa.json
+          --project demo-idogs-control-center --only firestore
+          'node scripts/test-control-center-ai-budget-emulator.mjs'
 
   email-password-link-emulator:
     name: Email/password sign-in for SMS accounts (Auth+Firestore emulator E2E)

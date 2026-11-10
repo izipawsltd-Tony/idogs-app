@@ -279,6 +279,11 @@ export default function SuperAdminAiCeoPage() {
   const [health, setHealth] = useState<SiteHealth | null>(null)
   const [healthLoading, setHealthLoading] = useState(false)
   const [healthError, setHealthError] = useState<string | null>(null)
+  const [assistantEnabled, setAssistantEnabled] = useState<boolean | null>(null)
+  const [question, setQuestion] = useState('')
+  const [answer, setAnswer] = useState<string | null>(null)
+  const [assistantBusy, setAssistantBusy] = useState(false)
+  const [assistantError, setAssistantError] = useState<string | null>(null)
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 30000)
     return () => window.clearInterval(timer)
@@ -303,6 +308,42 @@ export default function SuperAdminAiCeoPage() {
   }
 
   useEffect(() => { load() }, [user])
+
+  useEffect(() => {
+    let active = true
+    setAssistantEnabled(null)
+    setAnswer(null)
+    if (user) (async () => {
+      try {
+        const token = await user.getIdToken()
+        const response = await fetch('/api/super-admin/assistant', { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } })
+        const status = response.ok ? await response.json() : null
+        if (active) setAssistantEnabled(status?.enabled === true)
+      } catch { if (active) setAssistantEnabled(false) }
+    })()
+    return () => { active = false }
+  }, [user])
+
+  async function askAssistant(event: React.FormEvent) {
+    event.preventDefault()
+    if (!user || !assistantEnabled || assistantBusy || !question.trim()) return
+    setAssistantBusy(true)
+    setAssistantError(null)
+    setAnswer(null)
+    try {
+      const token = await user.getIdToken()
+      const response = await fetch('/api/super-admin/assistant', {
+        method: 'POST', cache: 'no-store',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: question.trim() }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok || typeof result.answer !== 'string') throw new Error(response.status === 429 ? 'Daily analysis limit reached. Try again tomorrow (UTC).' : 'Analysis unavailable. No operating action was executed.')
+      setAnswer(result.answer)
+    } catch (reason) {
+      setAssistantError(reason instanceof Error ? reason.message : 'Analysis unavailable.')
+    } finally { setAssistantBusy(false) }
+  }
 
   async function checkHealth() {
     if (!user || healthLoading) return
@@ -358,7 +399,20 @@ export default function SuperAdminAiCeoPage() {
         <strong>Operating evidence: {fresh ? 'Current snapshot' : 'Refresh required'}</strong>
         <p style={{ fontSize: 13, lineHeight: 1.6 }}>Updated {new Date(data.generatedAt).toLocaleString('en-AU', { timeZone: 'Australia/Adelaide' })}. This snapshot does not update automatically.</p>
         {!revenueVerified && <p role="status" style={{ color: '#8a4b13' }}>Customer revenue is not fully verified. Missing or failed billing reads must not be interpreted as A$0 revenue.</p>}
-        <p style={{ fontSize: 13 }}>AI assistant: not connected · Background monitoring: not connected</p>
+        <p style={{ fontSize: 13 }}>AI assistant: {assistantEnabled === null ? 'checking configuration' : assistantEnabled ? 'configured for analysis only' : 'not enabled'} · Background monitoring: not connected</p>
+      </section>
+
+      <section className="super-admin-panel" style={panel} aria-label="Operating assistant">
+        <h3 style={{ marginTop: 0 }}>Ask about iDogs</h3>
+        <p style={{ fontSize: 13 }}>Analyse operating metrics and propose next steps. The assistant cannot execute changes. Only aggregate evidence is attached; avoid pasting customer details.</p>
+        {assistantEnabled === false && <p role="status">AI analysis is not enabled in this environment. Your operating dashboard and website checks remain available.</p>}
+        <form onSubmit={askAssistant}>
+          <label htmlFor="operating-question">Your question</label>
+          <textarea id="operating-question" rows={3} maxLength={2000} value={question} onChange={event => setQuestion(event.target.value)} disabled={!assistantEnabled || assistantBusy} placeholder="What should I prioritise for iDogs today?" style={{ display: 'block', width: '100%', boxSizing: 'border-box', margin: '8px 0 12px', padding: 10 }} />
+          <button className="btn btn-primary" type="submit" disabled={!assistantEnabled || assistantBusy || !question.trim()}>{assistantBusy ? 'Analysing…' : 'Analyse'}</button>
+        </form>
+        {assistantError && <p role="alert">{assistantError}</p>}
+        {answer && <div aria-live="polite" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.65, marginTop: 16 }}>{answer}</div>}
       </section>
 
       <section className="super-admin-panel" style={panel} aria-label="Website reachability">

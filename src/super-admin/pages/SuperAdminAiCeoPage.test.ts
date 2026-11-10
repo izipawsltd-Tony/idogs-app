@@ -28,9 +28,9 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function mount(payload = fixture()) {
+async function mount(payload = fixture(), enabled = false) {
   vi.stubGlobal('window', { setInterval, clearInterval })
-  const fetchMock = vi.fn(async () => ({ ok: true, json: async () => payload }))
+  const fetchMock = vi.fn(async (url: string) => ({ ok: true, json: async () => url === '/api/super-admin/assistant' ? { enabled } : payload }))
   vi.stubGlobal('fetch', fetchMock)
   await act(async () => { renderer = create(createElement(SuperAdminAiCeoPage)) })
   return fetchMock
@@ -66,11 +66,26 @@ describe('Control Center evidence and health UI', () => {
   })
   it('checks health only on demand using the authenticated endpoint', async () => {
     const request = await mount()
-    expect(request).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledTimes(2)
     request.mockResolvedValueOnce({ ok: true, json: async () => ({ checkedAt: new Date().toISOString(), status: 'PASS', checks: [{ id: 'website', status: 'PASS', latencyMs: 40, reason: 'HTML_REACHABLE' }] }) } as any)
     const button = renderer!.root.findAllByType('button').find(item => item.children.includes('Check website now'))!
     await act(async () => { await button.props.onClick() })
-    expect(request.mock.calls[1]).toEqual(['/api/super-admin/site-health', expect.objectContaining({ headers: { Authorization: 'Bearer test-token' } })])
+    expect(request.mock.calls[2]).toEqual(['/api/super-admin/site-health', expect.objectContaining({ headers: { Authorization: 'Bearer test-token' } })])
     expect(rendered()).toContain('Public pages reachable')
+  })
+  it('keeps analysis disabled when runtime configuration is unavailable', async () => {
+    await mount()
+    expect(rendered()).toContain('AI analysis is not enabled in this environment')
+    const button = renderer!.root.findAllByType('button').find(item => item.children.includes('Analyse'))!
+    expect(button.props.disabled).toBe(true)
+  })
+  it('sends only the question and renders model output as plain text', async () => {
+    const request = await mount(fixture(), true)
+    request.mockResolvedValueOnce({ ok: true, json: async () => ({ answer: '<script>example</script> Review revenue evidence.' }) } as any)
+    await act(async () => { renderer!.root.findByType('textarea').props.onChange({ target: { value: 'What should I prioritise?' } }) })
+    await act(async () => { await renderer!.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(request.mock.calls[2]).toEqual(['/api/super-admin/assistant', expect.objectContaining({ method: 'POST', body: JSON.stringify({ question: 'What should I prioritise?' }), headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' } })])
+    expect(rendered()).toContain('<script>example</script> Review revenue evidence.')
+    expect(renderer!.root.findAllByType('script')).toHaveLength(0)
   })
 })

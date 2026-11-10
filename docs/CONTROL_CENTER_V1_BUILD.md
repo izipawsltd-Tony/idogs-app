@@ -28,3 +28,23 @@ Live public probe at 2026-11-10T10:18:56Z: homepage and signup returned HTTP 200
 ## Next increments
 
 External scheduled monitoring and deduplicated incident lifecycle; bounded/cacheable aggregation; durable server-authoritative growth events; scoped AI tools/MCP authorization and audit; model integration; preview browser QA and exact-source production review. Existing secrets must remain in the runtime and are never copied into source or chat.
+
+## Second increment: bounded assistant and incident lifecycle
+
+`/api/super-admin/assistant` uses the existing Super Admin guard. GET reports runtime enablement; POST accepts exactly one question (maximum 2000 characters). The server builds a fresh evidence projection, reserves one of 20 global daily attempts in a Firestore transaction, then makes one Anthropic request with a 600-token output ceiling and 20-second timeout. No execution tools, redirects, automatic retries or conversation history. Only projected aggregate metrics accompany the question; UI renders answers as plain text. The question itself goes to the provider, so the form advises against pasting customer details.
+
+Enablement requires both `IDOGS_CONTROL_CENTER_AI_ENABLED=true` and the existing server-side `ANTHROPIC_API_KEY`. The flag has NOT been set and no paid provider request has been made. Environment metadata shows the key exists for production only; it has not been read, copied or added to preview. Model ID matches the existing iDogs integration: `claude-sonnet-4-6`. API contract checked against https://platform.claude.com/docs/en/api/messages/create .
+
+Operational metadata, once enabled, goes only to `controlCenterAiBudgets/{UTC-day}` and `controlCenterAiAudit/{request-id}`. Audit contains hashed admin UID, timestamps and outcome; never question, answer, key or customer data. Reservations are not refunded on failures/unknown outcomes. This is a request ceiling, not a currency budget. Existing default-deny Firestore rules cover both collections, with no rules changes.
+
+Actual Firestore Standard SDK verification (isolated `demo-idogs-control-center`, loopback port 8285) passed: cross-instance contention admits only the final available slot; attempted usage never exceeds 20; audit updates work; failed attempts do not refund; unauthenticated audit reads return 403. Run with:
+
+```powershell
+firebase emulators:exec --config firebase.control-center-qa.json --project demo-idogs-control-center --only firestore 'node scripts/test-control-center-ai-budget-emulator.mjs'
+```
+
+`control-center-incidents.js` adds deduplicated incidents: two consecutive HTTP failures open an HTTP incident; two uncertain probes open an observation gap; two successful probes resolve. Replayed/future observations are rejected. `scripts/control-center-monitor.mjs` runs fixed probes and saves an atomic state/report under gitignored `.control-center-monitor/`; it sends no messages and is NOT scheduled yet. A scheduler outside the website hosting runtime and an approved notification channel remain to be connected.
+
+First increment preview: https://idogs-3z78lor1l-izipawsltd-tonys-projects.vercel.app (READY at ec22f0b6). Protected-preview access via a temporary share link was rejected by automatic review pending explicit approval; no access protection was disabled. Live authenticated preview behavior and actual model responses remain unverified.
+
+First increment GitHub CI run42799278937 succeeded. Staging Preview E2E run42799723692 failed at `Check bypass secret` because its automation bypass secret was absent; no Playwright result is claimed. Current local verification:27 Node regression tests,32 Vitest tests, actual budget/rules emulator, TypeScript and bundle PASS.
