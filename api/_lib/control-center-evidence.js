@@ -14,6 +14,10 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
   const revenueVerified = freshness === 'FRESH' && revenue.status === 'VERIFIED'
     && hasVerifiedLiveBilling(source.revenueTruth)
     && amount(revenue.verifiedCustomerMrrAud) !== null
+  const growth = source.growthSnapshot || {}
+  const observedCount = (value, cohort) => freshness === 'FRESH'
+    && Number.isSafeInteger(value) && value >= 0
+    && Number.isSafeInteger(cohort) && value <= cohort ? value : null
   return {
     schemaVersion: '1.0',
     generatedAt: Number.isFinite(generated) ? new Date(generated).toISOString() : null,
@@ -37,10 +41,14 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
       excludedInternalQa: amount(source.growthSnapshot?.excludedInternalQa),
       unclassified: amount(source.growthSnapshot?.unclassified),
       invalidCreatedAt: amount(source.growthSnapshot?.invalidCreatedAt),
+      accountsWithDogAfterSignup: observedCount(growth.accountsWithDogAfterSignup, growth.eligibleSignups),
+      accountsWithActiveLitterAfterSignup: observedCount(growth.accountsWithActiveLitterAfterSignup, growth.eligibleSignups),
+      accountsWithVerifiedActiveSubscription: hasVerifiedLiveBilling(source.revenueTruth) && source.revenueTruth.failedSubscriptionReads === 0
+        ? observedCount(growth.accountsWithVerifiedActiveSubscription, growth.confirmedCustomers) : null,
       channels: Object.fromEntries(['meta', 'google', 'bing', 'direct', 'other', 'unknown'].map(key => [key, amount(source.growthSnapshot?.channels?.[key])])),
       visitorToSignupRate: null,
       retentionRate: null,
-      basis: 'Observed signup profiles, not a historical event funnel. LIKELY_REAL is a signal, not confirmed customer revenue.',
+      basis: 'Counts describe currently existing dog records, active litters and confirmed customers with active live subscriptions within the signup cohort. Each measure is independent. Historical first creation, event order, paid conversion and retention are unknown.',
     },
     limitations: [
       ...(freshness !== 'FRESH' ? ['Operating evidence is stale or its timestamp cannot be trusted.'] : []),
