@@ -38,3 +38,18 @@ test('replayed, out-of-order and future observations cannot modify state', () =>
   assert.throws(() => advanceMonitor({ ...previous, streak: -1 }, observation('PASS', 3), { now }), /Invalid monitor state/)
   assert.throws(() => advanceMonitor({ ...previous, lastCheckedAt: 'invalid' }, observation('PASS', 3), { now }), /Invalid monitor state/)
 })
+
+test('a missed monitoring window breaks failure and recovery streaks', () => {
+  let result = advance(null, 'FAIL', 1)
+  result = advance(result.state, 'FAIL', 32)
+  assert.equal(result.state.incident, null)
+  result = advance(result.state, 'FAIL', 33)
+  assert.equal(result.state.incident.kind, 'HTTP_FAILURE')
+
+  const later = new Date('2026-11-10T13:00:00Z')
+  result = advance(result.state, 'PASS', 34)
+  result = advanceMonitor(result.state, { status: 'PASS', checkedAt: '2026-11-10T12:05:00Z' }, { now: later })
+  assert.equal(result.state.incident.kind, 'HTTP_FAILURE')
+  result = advanceMonitor(result.state, { status: 'PASS', checkedAt: '2026-11-10T12:20:00Z' }, { now: later })
+  assert.equal(result.events[0].type, 'RESOLVED')
+})

@@ -1,6 +1,8 @@
 // Deterministic incident lifecycle for an independent scheduler. An HTTP
 // failure and a probe's inability to observe the site are different incidents.
 // Replayed, invalid and future observations cannot open or resolve incidents.
+const MAX_CONSECUTIVE_GAP_MS = 30 * 60 * 1000
+
 export function advanceMonitor(previous, observation, { now = new Date(), threshold = 2 } = {}) {
   if (!Number.isInteger(threshold) || threshold < 2 || threshold > 10) throw new Error('Invalid incident threshold')
   const at = Date.parse(observation?.checkedAt)
@@ -11,7 +13,8 @@ export function advanceMonitor(previous, observation, { now = new Date(), thresh
     || !Number.isSafeInteger(previous.streak) || previous.streak < 1
     || (previous.incident !== null && (!previous.incident || typeof previous.incident.id !== 'string' || !['HTTP_FAILURE', 'OBSERVATION_GAP'].includes(previous.incident.kind))))) throw new Error('Invalid monitor state')
   const condition = observation.status === 'PASS' ? 'HEALTHY' : observation.status === 'FAIL' ? 'HTTP_FAILURE' : 'OBSERVATION_GAP'
-  const streak = previous?.condition === condition ? Math.min(previous.streak + 1, threshold) : 1
+  const continuesStreak = previous?.condition === condition && at - priorAt <= MAX_CONSECUTIVE_GAP_MS
+  const streak = continuesStreak ? Math.min(previous.streak + 1, threshold) : 1
   let incident = previous?.incident || null
   const events = []
   if (condition === 'HEALTHY' && streak >= threshold && incident) {
