@@ -86,6 +86,7 @@ type AiCeoPayload = {
     invalidCreatedAt: number
     accountsWithDogAfterSignup?: number | null
     accountsWithActiveLitterAfterSignup?: number | null
+    accountsWithDogBeforeActiveLitter?: number | null
     accountsWithVerifiedActiveSubscription?: number | null
     channels: Record<string, number>
     basis: string
@@ -447,6 +448,9 @@ export default function SuperAdminAiCeoPage() {
         </p>}
         {data.growthSnapshot.accountsWithActiveLitterAfterSignup != null && <p style={{ fontSize: 13 }}>
           {data.growthSnapshot.accountsWithActiveLitterAfterSignup} eligible signup account(s) have a currently active litter dated on or after signup. Archived and deleted litters are outside this count.
+        </p>}
+        {data.growthSnapshot.accountsWithDogBeforeActiveLitter != null && <p style={{ fontSize: 13 }}>
+          {data.growthSnapshot.accountsWithDogBeforeActiveLitter} eligible signup account(s) have a dog record dated before their earliest currently active litter.
         </p>}
         <p style={{ fontSize: 13 }}>
           Current active live subscriptions for confirmed customers in this signup cohort{' '}

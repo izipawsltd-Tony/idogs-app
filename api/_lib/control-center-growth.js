@@ -15,17 +15,17 @@ function timestamp(value) {
   } catch { return null }
 }
 
-function countAccountsWithDatedRecords(records, signupDates, nowMs) {
+function earliestRecordDates(records, signupDates, nowMs) {
   if (!records) return null
-  const accountIds = new Set()
+  const dates = new Map()
   for (const record of records) {
     const signup = signupDates.get(record.tenantId)
     const created = timestamp(record.createdAt)
     if (signup !== undefined && created !== null && created >= signup && created <= nowMs) {
-      accountIds.add(record.tenantId)
+      dates.set(record.tenantId, Math.min(dates.get(record.tenantId) ?? Infinity, created))
     }
   }
-  return accountIds.size
+  return dates
 }
 
 // Aggregate current records without retaining campaign text or identities.
@@ -60,12 +60,18 @@ export function buildGrowthSnapshot({ users, accounts, dogs, activeLitters, veri
       return account.classification === 'REAL_CUSTOMER' && account.revenueBucket === 'VERIFIED_CUSTOMER'
     }).length
     : null
+  const dogDates = earliestRecordDates(dogs, signupDates, now.getTime())
+  const litterDates = earliestRecordDates(activeLitters, signupDates, now.getTime())
+  const accountsWithDogBeforeActiveLitter = dogDates && litterDates
+    ? [...litterDates].filter(([uid, litterDate]) => dogDates.get(uid) < litterDate).length
+    : null
   return {
     windowDays: days, observedAt: now.toISOString(),
     eligibleSignups, confirmedCustomers, likelyReal, excludedInternalQa, unclassified, invalidCreatedAt,
     channels,
-    accountsWithDogAfterSignup: countAccountsWithDatedRecords(dogs, signupDates, now.getTime()),
-    accountsWithActiveLitterAfterSignup: countAccountsWithDatedRecords(activeLitters, signupDates, now.getTime()),
+    accountsWithDogAfterSignup: dogDates?.size ?? null,
+    accountsWithActiveLitterAfterSignup: litterDates?.size ?? null,
+    accountsWithDogBeforeActiveLitter,
     accountsWithVerifiedActiveSubscription,
     visitors: null, visitorToSignupRate: null, retentionRate: null,
     basis: 'Current signup profiles classified REAL_CUSTOMER or LIKELY_REAL. Likely-real signals are not verified customers. Source is self-reported attribution, not proof of ad performance.',

@@ -71,3 +71,19 @@ test('attributes dog records to their original tenant and exposes billing only w
   assert.equal(result.accountsWithVerifiedActiveSubscription, 1)
   assert.equal(buildGrowthSnapshot(inputs).accountsWithVerifiedActiveSubscription, null)
 })
+
+test('ordered milestone requires a dog before the earliest active litter', () => {
+  const users = ['ordered', 'reversed', 'same', 'qa'].map(id => profile(id, 'direct', '2026-11-01'))
+  const accounts = users.map(user => ({ uid: user.id, classification: user.id === 'qa' ? 'TEST_QA' : 'REAL_CUSTOMER' }))
+  const dogs = users.map(user => ({ tenantId: user.id, createdAt: '2026-11-04' }))
+  const activeLitters = users.map(user => ({
+    tenantId: user.id,
+    createdAt: user.id === 'same' ? '2026-11-04' : '2026-11-05',
+  }))
+  activeLitters.push({ tenantId: 'reversed', createdAt: '2026-11-03' })
+  const result = buildGrowthSnapshot({ users, accounts, dogs, activeLitters, now })
+  assert.equal(result.accountsWithDogAfterSignup, 3)
+  assert.equal(result.accountsWithActiveLitterAfterSignup, 3)
+  assert.equal(result.accountsWithDogBeforeActiveLitter, 1)
+  assert.equal(buildGrowthSnapshot({ users, accounts, dogs, now }).accountsWithDogBeforeActiveLitter, null)
+})
