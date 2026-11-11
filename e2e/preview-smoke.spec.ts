@@ -53,19 +53,31 @@ test.describe('Preview smoke', () => {
     await expect(page).toHaveURL(/\/login/)
   })
 
-  test('Control Center APIs reject signed-out requests after Vercel access', async ({ request }) => {
-    const responses = await Promise.all([
-      request.get('/api/super-admin/ai-ceo?view=evidence', { maxRedirects: 0 }),
-      request.get('/api/super-admin/site-health', { maxRedirects: 0 }),
-      request.post('/api/super-admin/assistant', {
-        data: { question: 'Staging authorization smoke test' },
-        maxRedirects: 0,
-      }),
-    ])
-    for (const response of responses) {
-      expect(response.status()).toBe(401)
-      expect(response.headers()['cache-control']).toContain('no-store')
-      expect(await response.json()).toEqual({ error: 'Unauthorized: Missing Authorization header' })
+  test('Control Center APIs reject signed-out requests after Vercel access', async ({ playwright, baseURL }) => {
+    expect(baseURL).toMatch(/^https:\/\/idogs-app-staging-[a-z0-9-]+\.vercel\.app\/?$/)
+    const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+    if (!bypass) throw new Error('Staging preview bypass secret is required')
+    // Authenticate at the Vercel edge without requesting a bypass-cookie redirect.
+    const request = await playwright.request.newContext({
+      baseURL,
+      extraHTTPHeaders: { 'x-vercel-protection-bypass': bypass },
+    })
+    try {
+      const responses = await Promise.all([
+        request.get('/api/super-admin/ai-ceo?view=evidence', { maxRedirects: 0 }),
+        request.get('/api/super-admin/site-health', { maxRedirects: 0 }),
+        request.post('/api/super-admin/assistant', {
+          data: { question: 'Staging authorization smoke test' },
+          maxRedirects: 0,
+        }),
+      ])
+      for (const response of responses) {
+        expect(response.status()).toBe(401)
+        expect(response.headers()['cache-control']).toContain('no-store')
+        expect(await response.json()).toEqual({ error: 'Unauthorized: Missing Authorization header' })
+      }
+    } finally {
+      await request.dispose()
     }
   })
 })
