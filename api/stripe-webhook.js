@@ -6,6 +6,7 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { createWebhookHandler } from './_lib/webhook-handler.js'
 import { grantExtraLitterCreditFromVerifiedEvent } from './_lib/extra-litter-webhook.js'
+import { grantFoundingFromVerifiedEvent } from './_lib/founding-webhook.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 
@@ -60,6 +61,9 @@ export default async function handler(req, res) {
       // Extra Litter Checkout session. Deterministic session-id document
       // makes Stripe redelivery safe and prevents double-credit.
       await grantExtraLitterCreditFromVerifiedEvent({ db, event: verifiedEvent })
+      // Same posture for a fully-paid Founding Member Checkout (15 months
+      // of Plus via users/{uid}.accessGrant; session-id document = idempotent).
+      await grantFoundingFromVerifiedEvent({ db, event: verifiedEvent })
     } catch (error) {
       console.error('stripe-webhook: verified post-processing failed', { code: error?.message || 'POST_PROCESSING_FAILED' })
       // Return 500 so Stripe retries. Extra-litter grants are idempotent,

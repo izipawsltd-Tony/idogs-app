@@ -169,6 +169,8 @@ const protectedFields = [
   // this file only needs the same protected-field/strip checks every
   // other billing field already gets below.
   'internalEntitlement',
+  // Founding Member / kennel gift pass (shared/access-grants.js).
+  'accessGrant',
 ]
 
 for (const field of protectedFields) {

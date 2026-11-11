@@ -66,6 +66,14 @@
 import { randomBytes } from 'node:crypto'
 import { CHECKOUT_PRICE_IDS, LEGACY_PAID_PRICE_IDS, LEGACY_PLUS_PRICE_INTERVALS } from './checkout-handler.js'
 import { reconcileDogCapTx, reactivateUpToCapTx } from './dog-cap.js'
+import { hasActiveAccessGrant } from './entitlements.js'
+
+// When a paid subscription ends, a still-valid Founding/gift grant keeps
+// the account on Plus caps; `plan` itself still records 'free' because it
+// mirrors Stripe state only.
+function planAfterPaidPlanEnds(profile) {
+  return hasActiveAccessGrant(profile) ? 'plus' : 'free'
+}
 import { anchorDayFromDate } from './entitlements.js'
 import { SMS_MONTHLY_CREDITS } from './sms-addon.js'
 import { applySeparateSmsEvent, isSeparateSms, verifiedSeparateSms } from './sms-subscription-events.js'
@@ -566,7 +574,7 @@ export function createWebhookHandler({
             const profile = await profileWithSmsState(tx, snap, userId)
             const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
             if (evaluation.stale) return
-            await reconcileDogCapTx(tx, db, userId, 'free')
+            await reconcileDogCapTx(tx, db, userId, planAfterPaidPlanEnds(profile))
             tx.set(userRef, {
               plan: 'free',
               subscriptionStatus: status,
@@ -610,7 +618,7 @@ export function createWebhookHandler({
           const profile = await profileWithSmsState(tx, snap, userId)
           const evaluation = evaluateSubscriptionEvent(profile, { subscriptionId, eventCreated: event.created, eventCustomerId })
           if (evaluation.stale) return
-          await reconcileDogCapTx(tx, db, userId, 'free')
+          await reconcileDogCapTx(tx, db, userId, planAfterPaidPlanEnds(profile))
           tx.set(userRef, {
             plan: 'free',
             subscriptionStatus: 'canceled',

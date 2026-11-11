@@ -6,6 +6,7 @@ import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCop
 import { isAndroidNativeApp } from '../lib/nativePlatform'
 import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
 import { PLUS_PROMOTION_ID } from '../../shared/plus-promotion.js'
+import FoundingMemberCard from '../components/billing/FoundingMemberCard'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -24,6 +25,7 @@ interface BillingInvoice {
 }
 
 interface BillingSummary {
+  accessGrant?: { kind: 'founding' | 'gift'; expiresAt: string } | null
   subscription: {
     id: string
     status: string
@@ -113,6 +115,9 @@ export default function BillingPage({ toast }: Props) {
   const subscriptionStatus = verifiedEntitlement?.subscriptionStatus
     ?? ((profile as any)?.subscriptionStatus as string | undefined)
   const isPastDue = isPlus && subscriptionStatus === 'past_due'
+  const accessGrant = billingDetails?.accessGrant ?? null
+  const hasLiveSubscription = Boolean(billingDetails?.subscription) ||
+    ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(subscriptionStatus || '')
   // Google Play does not allow purchase/subscription UI for digital services
   // inside the Android app; the matching server-side calls are already
   // blocked in nativeApiRouting.ts. Read-only status and existing
@@ -125,6 +130,12 @@ export default function BillingPage({ toast }: Props) {
     }
     if (searchParams.get('cancelled')) {
       toast('Checkout cancelled — you can try again anytime.', 'info')
+    }
+    if (searchParams.get('founding') === 'success') {
+      toast('Thank you for becoming a Founding Member! Your 15 months of Plus appear as soon as Stripe confirms the payment.', 'success')
+    }
+    if (searchParams.get('founding') === 'cancelled') {
+      toast('Checkout cancelled. No payment has been taken.', 'info')
     }
     if (searchParams.get('sms_success')) {
       toast('SMS add-on checkout completed. Activation will appear after Stripe confirms it.', 'success')
@@ -318,8 +329,13 @@ export default function BillingPage({ toast }: Props) {
         <div>
           <span style={{ fontSize: 14, fontWeight: 600, color: isPastDue ? 'var(--gold)' : isPlus ? 'var(--green)' : 'var(--dark)' }}>
             {isPastDue ? '⚠️ ' : isPlus ? '✓ ' : '🐾 '}
-            Current plan: {isPlus ? `Plus (${billingInterval === 'annual' ? 'Annual' : 'Monthly'})` : 'Free'}
+            Current plan: {isPlus ? `Plus (${billingInterval === 'annual' ? 'Annual' : 'Monthly'})` : accessGrant ? 'Plus' : 'Free'}
           </span>
+          {accessGrant && (
+            <div data-testid="access-grant-status" style={{ fontSize: 12, color: 'var(--mid)', marginTop: 2 }}>
+              {accessGrant.kind === 'founding' ? 'Founding Member pass' : 'Gift from your breeder'}: iDogs Plus until {formatBillingDate(accessGrant.expiresAt)}. No automatic renewal.
+            </div>
+          )}
           {isPastDue && (
             <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 2 }}>
               Your last payment failed. Plus access continues for a 7-day grace period — please update your payment method.
@@ -327,6 +343,8 @@ export default function BillingPage({ toast }: Props) {
           )}
         </div>
       </div>
+
+      <FoundingMemberCard user={user ?? null} hasSubscription={hasLiveSubscription} hasPass={Boolean(accessGrant)} toast={toast} />
 
       {(detailsLoading || detailsError || billingDetails?.canManageBilling) && (
         <div className="card" style={{ marginBottom: 24, padding: 20 }}>

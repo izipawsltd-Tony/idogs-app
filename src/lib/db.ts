@@ -164,6 +164,8 @@ export async function createUserProfile(userId: string, data: Partial<UserProfil
     // — same server-owned-only contract; a signup request can never grant
     // itself internal access.
     internalEntitlement: _internalEntitlement,
+    // Founding Member / kennel gift pass — server-owned (shared/access-grants.js).
+    accessGrant: _accessGrant,
     ...profileData
   } = data
   await setDoc(doc(db, 'users', userId), {

@@ -563,6 +563,16 @@ export interface UserProfile {
     revokedAt?: string
     revokedBy?: string
   } | null
+  // Founding Member / kennel gift Plus pass — server-owned (see
+  // shared/access-grants.js); never renews and never charges.
+  accessGrant?: {
+    granted: boolean
+    kind: 'founding' | 'gift'
+    offerId: string
+    grantedAt: string
+    expiresAt: string
+    lastSourceId?: string
+  } | null
   // Account-level Breeder ID (e.g. DACO number for SA breeders). Mandatory
   // for active breeders in most states, but some breeders genuinely don't
   // have one yet (e.g. dogs too young to be bred from yet) — so this is

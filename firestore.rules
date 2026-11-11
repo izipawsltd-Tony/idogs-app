@@ -309,7 +309,11 @@ service cloud.firestore {
         // directly could self-grant full Plus access with no payment and
         // no admin action at all; only a trusted Admin SDK path
         // (scripts/grant-internal-entitlement.mjs) may ever write it.
-        'internalEntitlement'
+        'internalEntitlement',
+        // Founding Member / kennel gift Plus access (shared/access-grants.js).
+        // Written only by api/_lib/access-grant-store.js via the Admin SDK;
+        // a client that could write it could self-grant Plus.
+        'accessGrant'
       ];
     }
 

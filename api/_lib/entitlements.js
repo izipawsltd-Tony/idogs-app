@@ -7,6 +7,20 @@
 // Nothing here trusts client input — every caller passes in a
 // users/{uid} profile already read from Firestore via the Admin SDK.
 
+import { hasValidAccessGrant } from '../../shared/access-grants.js'
+
+// Founding Member / kennel gift access (shared/access-grants.js). Honoured
+// only once IDOGS_ACCESS_GRANTS_ENABLED=true, which must not be set before
+// firestore.rules (accessGrant in userBillingFields) is deployed to the
+// same Firebase project — until then a client could write the field.
+export function accessGrantsEnabled(env = process.env) {
+  return env?.IDOGS_ACCESS_GRANTS_ENABLED === 'true'
+}
+
+export function hasActiveAccessGrant(profile, now = new Date(), env = process.env) {
+  return accessGrantsEnabled(env) && hasValidAccessGrant(profile, now)
+}
+
 export const SCAN_QUOTA = Object.freeze({ freeLifetime: 2, plusMonthly: 10 })
 
 const GRACE_MS = 7 * 24 * 60 * 60 * 1000 // §4.2 — 7-day past_due grace
@@ -89,6 +103,10 @@ export function computeEffectivePlan(profile, now = new Date()) {
   }
   if (paidPlanActive) return 'plus'
   if (hasValidInternalEntitlement(profile, now)) return 'plus'
+  // A time-limited grant maps to plain Plus (finite Plus caps apply). It is
+  // deliberately NOT part of hasValidInternalEntitlement(), which means
+  // "unlimited Super Admin bypass".
+  if (hasActiveAccessGrant(profile, now)) return 'plus'
   return 'free'
 }
 

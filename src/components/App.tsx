@@ -24,6 +24,7 @@ const DocumentsPage = lazy(() => import('../pages/DocumentsPage'))
 const ExportPage = lazy(() => import('../pages/ExportPage'))
 const AuditPage = lazy(() => import('../pages/AuditPage'))
 const BillingPage = lazy(() => import('../pages/BillingPage'))
+const GiftRedeemPage = lazy(() => import('../pages/GiftRedeemPage'))
 const SurveyPage = lazy(() => import('../pages/SurveyPage'))
 const AdminSurveyPage = lazy(() => import('../pages/AdminSurveyPage'))
 const AdminAuditPage = lazy(() => import('../pages/AdminAuditPage'))
@@ -175,6 +176,7 @@ export default function App() {
           <Route path="export" element={<BreederOnlyRoute><ExportPage toast={toast} /></BreederOnlyRoute>} />
           <Route path="audit" element={<AuditPage toast={toast} />} />
           <Route path="billing" element={<BillingPage toast={toast} />} />
+          <Route path="gift" element={<GiftRedeemPage toast={toast} />} />
           <Route path="admin/survey" element={<AdminSurveyPage toast={toast} />} />
           <Route path="admin/audit" element={<AdminAuditPage toast={toast} />} />
           <Route path="admin/landing-media" element={<LandingMediaAdminPage toast={toast} />} />
