@@ -37,3 +37,18 @@ test('window handles Firestore timestamps and excludes invalid, future and older
   assert.equal(result.invalidCreatedAt, 2)
   assert.equal(result.channels.google, 1)
 })
+
+test('counts an eligible account once for dated active litters after signup', () => {
+  const users = ['a', 'b', 'qa'].map(id => profile(id, 'direct', '2026-11-01'))
+  const accounts = users.map(user => ({ uid: user.id, classification: user.id === 'qa' ? 'TEST_QA' : 'REAL_CUSTOMER' }))
+  const activeLitters = [
+    { tenantId: 'a', createdAt: '2026-11-02' },
+    { tenantId: 'a', createdAt: '2026-11-03' },
+    { tenantId: 'b', createdAt: '2026-10-31' },
+    { tenantId: 'b', createdAt: '2026-11-11' },
+    { tenantId: 'b', createdAt: 'invalid' },
+    { tenantId: 'qa', createdAt: '2026-11-02' },
+  ]
+  assert.equal(buildGrowthSnapshot({ users, accounts, activeLitters, now }).accountsWithActiveLitterAfterSignup, 1)
+  assert.equal(buildGrowthSnapshot({ users, accounts, now }).accountsWithActiveLitterAfterSignup, null)
+})

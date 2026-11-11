@@ -17,12 +17,13 @@ function timestamp(value) {
 
 // Current profile observations, NOT an ordered event funnel. All free-text
 // campaign fields and identities stay out of the returned aggregate.
-export function buildGrowthSnapshot({ users, accounts, now = new Date(), days = 30 }) {
+export function buildGrowthSnapshot({ users, accounts, activeLitters, now = new Date(), days = 30 }) {
   if (!Number.isFinite(now.getTime()) || !Number.isInteger(days) || days < 1 || days > 365) throw new Error('Invalid growth window')
   const classified = new Map(accounts.map(account => [account.uid, account.classification]))
   const channels = { meta: 0, google: 0, bing: 0, direct: 0, other: 0, unknown: 0 }
   let eligibleSignups = 0, confirmedCustomers = 0, likelyReal = 0, excludedInternalQa = 0, unclassified = 0, invalidCreatedAt = 0
   const seen = new Set()
+  const signupDates = new Map()
   for (const user of users) {
     if (typeof user.id !== 'string' || !user.id || seen.has(user.id)) continue
     seen.add(user.id)
@@ -33,6 +34,7 @@ export function buildGrowthSnapshot({ users, accounts, now = new Date(), days = 
     if (EXCLUDED.has(classification)) { excludedInternalQa++; continue }
     if (!ELIGIBLE.has(classification)) { unclassified++; continue }
     eligibleSignups++
+    signupDates.set(user.id, created)
     if (classification === 'REAL_CUSTOMER') confirmedCustomers++
     else likelyReal++
     const raw = user.acquisition?.source
@@ -40,10 +42,19 @@ export function buildGrowthSnapshot({ users, accounts, now = new Date(), days = 
     // fbclid presence alone is not proof of a particular source.
     channels[source ? CHANNELS.get(source) || 'other' : 'unknown']++
   }
+  const litterAccounts = new Set()
+  for (const litter of activeLitters ?? []) {
+    const signup = signupDates.get(litter.tenantId)
+    const created = timestamp(litter.createdAt)
+    if (signup !== undefined && created !== null && created >= signup && created <= now.getTime()) {
+      litterAccounts.add(litter.tenantId)
+    }
+  }
   return {
     windowDays: days, observedAt: now.toISOString(),
     eligibleSignups, confirmedCustomers, likelyReal, excludedInternalQa, unclassified, invalidCreatedAt,
     channels,
+    accountsWithActiveLitterAfterSignup: activeLitters ? litterAccounts.size : null,
     visitors: null, visitorToSignupRate: null, retentionRate: null,
     basis: 'Current signup profiles classified REAL_CUSTOMER or LIKELY_REAL. Likely-real signals are not verified customers. Source is self-reported attribution, not proof of ad performance.',
     limitations: ['Visitor denominator is not connected.', 'No durable activation, cancellation or retention event history is established by this snapshot.', 'Direct means recorded direct attribution; missing source remains unknown.'],

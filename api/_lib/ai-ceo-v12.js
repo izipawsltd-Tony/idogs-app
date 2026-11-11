@@ -764,7 +764,7 @@ export async function buildAiCeoV12() {
     revenueTruth,
     customerRevenueTruth,
     accountClassification,
-    growthSnapshot: buildGrowthSnapshot({ users, accounts: accountClassification.accounts, now }),
+    growthSnapshot: buildGrowthSnapshot({ users, accounts: accountClassification.accounts, activeLitters, now }),
     facts: {
       totalUsers: users.length, breeders, owners, newUsers7d, newUsers30d,
       plusEntitledAccounts, internalEntitlementAccounts,
