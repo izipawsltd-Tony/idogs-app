@@ -36,4 +36,5 @@ test('replayed, out-of-order and future observations cannot modify state', () =>
     assert.throws(() => advanceMonitor(previous, input, { now }), /Invalid or replayed/)
   }
   assert.throws(() => advanceMonitor({ ...previous, streak: -1 }, observation('PASS', 3), { now }), /Invalid monitor state/)
+  assert.throws(() => advanceMonitor({ ...previous, lastCheckedAt: 'invalid' }, observation('PASS', 3), { now }), /Invalid monitor state/)
 })

@@ -7,7 +7,7 @@ export function advanceMonitor(previous, observation, { now = new Date(), thresh
   const priorAt = Date.parse(previous?.lastCheckedAt)
   if (!Number.isFinite(at) || !Number.isFinite(now.getTime()) || at > now.getTime() || (Number.isFinite(priorAt) && at <= priorAt)
     || !['PASS', 'FAIL', 'UNKNOWN'].includes(observation?.status)) throw new Error('Invalid or replayed health observation')
-  if (previous && (previous.version !== 1 || !['HEALTHY', 'HTTP_FAILURE', 'OBSERVATION_GAP'].includes(previous.condition)
+  if (previous && (previous.version !== 1 || !Number.isFinite(priorAt) || !['HEALTHY', 'HTTP_FAILURE', 'OBSERVATION_GAP'].includes(previous.condition)
     || !Number.isSafeInteger(previous.streak) || previous.streak < 1
     || (previous.incident !== null && (!previous.incident || typeof previous.incident.id !== 'string' || !['HTTP_FAILURE', 'OBSERVATION_GAP'].includes(previous.incident.kind))))) throw new Error('Invalid monitor state')
   const condition = observation.status === 'PASS' ? 'HEALTHY' : observation.status === 'FAIL' ? 'HTTP_FAILURE' : 'OBSERVATION_GAP'

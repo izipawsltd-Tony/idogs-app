@@ -19,9 +19,10 @@ try {
 const observation = await checkSiteHealth()
 const result = advanceMonitor(previous, observation)
 await mkdir(directory, { recursive: true })
-await writeFile(resolve(directory, 'state.next.json'), JSON.stringify(result.state, null, 2))
+// Commit the observation and incident transition together. A crash before the
+// rename leaves the previous observation and incident state readable together.
+await writeFile(resolve(directory, 'state.next.json'), JSON.stringify({ ...result.state, observation, events: result.events }, null, 2))
 await rename(resolve(directory, 'state.next.json'), path)
-await writeFile(resolve(directory, 'latest.json'), JSON.stringify({ observation, events: result.events }, null, 2))
 console.log(JSON.stringify({ status: observation.status, checkedAt: observation.checkedAt, incident: result.state.incident, events: result.events }, null, 2))
 // No emails, messages or production writes. The eventual scheduler owns
 // notification routing; an active incident is a nonzero job result.
