@@ -84,7 +84,9 @@ type AiCeoPayload = {
     excludedInternalQa: number
     unclassified: number
     invalidCreatedAt: number
+    accountsWithDogAfterSignup?: number | null
     accountsWithActiveLitterAfterSignup?: number | null
+    accountsWithVerifiedActiveSubscription?: number | null
     channels: Record<string, number>
     basis: string
     limitations: string[]
@@ -440,9 +442,16 @@ export default function SuperAdminAiCeoPage() {
           {Object.entries(data.growthSnapshot.channels).map(([channel, count]) => <MetricCard key={channel} label={channel} value={count} />)}
         </div>
         <p style={{ fontSize: 12, color: '#53635a', lineHeight: 1.6 }}>{data.growthSnapshot.basis}</p>
+        {data.growthSnapshot.accountsWithDogAfterSignup != null && <p style={{ fontSize: 13 }}>
+          {data.growthSnapshot.accountsWithDogAfterSignup} eligible signup account(s) have an existing dog record dated on or after signup under their original tenant.
+        </p>}
         {data.growthSnapshot.accountsWithActiveLitterAfterSignup != null && <p style={{ fontSize: 13 }}>
           {data.growthSnapshot.accountsWithActiveLitterAfterSignup} eligible signup account(s) have a currently active litter dated on or after signup. Archived and deleted litters are outside this count.
         </p>}
+        <p style={{ fontSize: 13 }}>
+          Current active live subscriptions for confirmed customers in this signup cohort{' '}
+          <strong>{data.growthSnapshot.accountsWithVerifiedActiveSubscription ?? 'Unverified'}</strong>
+        </p>
         <ul style={{ fontSize: 12 }}>{data.growthSnapshot.limitations.map(item => <li key={item}>{item}</li>)}</ul>
         {data.growthSnapshot.invalidCreatedAt > 0 && <p role="status">{data.growthSnapshot.invalidCreatedAt} profile(s) have missing, invalid or future signup dates and were excluded.</p>}
       </section>}

@@ -52,3 +52,22 @@ test('counts an eligible account once for dated active litters after signup', ()
   assert.equal(buildGrowthSnapshot({ users, accounts, activeLitters, now }).accountsWithActiveLitterAfterSignup, 1)
   assert.equal(buildGrowthSnapshot({ users, accounts, now }).accountsWithActiveLitterAfterSignup, null)
 })
+
+test('attributes dog records to their original tenant and exposes billing only when verified', () => {
+  const users = ['original', 'recipient', 'qa'].map(id => profile(id, 'direct', '2026-11-01'))
+  const accounts = [
+    { uid: 'original', classification: 'REAL_CUSTOMER', revenueBucket: 'VERIFIED_CUSTOMER' },
+    { uid: 'recipient', classification: 'LIKELY_REAL', revenueBucket: 'UNRESOLVED' },
+    { uid: 'qa', classification: 'TEST_QA', revenueBucket: 'QA_INTERNAL' },
+  ]
+  const dogs = [
+    { tenantId: 'original', currentOwnerId: 'recipient', createdAt: '2026-11-02' },
+    { tenantId: 'original', createdAt: '2026-11-03' },
+    { tenantId: 'qa', createdAt: '2026-11-03' },
+  ]
+  const inputs = { users, accounts, dogs, now }
+  const result = buildGrowthSnapshot({ ...inputs, verifiedLiveBilling: true })
+  assert.equal(result.accountsWithDogAfterSignup, 1)
+  assert.equal(result.accountsWithVerifiedActiveSubscription, 1)
+  assert.equal(buildGrowthSnapshot(inputs).accountsWithVerifiedActiveSubscription, null)
+})

@@ -15,11 +15,23 @@ function timestamp(value) {
   } catch { return null }
 }
 
-// Current profile observations, NOT an ordered event funnel. All free-text
-// campaign fields and identities stay out of the returned aggregate.
-export function buildGrowthSnapshot({ users, accounts, activeLitters, now = new Date(), days = 30 }) {
+function countAccountsWithDatedRecords(records, signupDates, nowMs) {
+  if (!records) return null
+  const accountIds = new Set()
+  for (const record of records) {
+    const signup = signupDates.get(record.tenantId)
+    const created = timestamp(record.createdAt)
+    if (signup !== undefined && created !== null && created >= signup && created <= nowMs) {
+      accountIds.add(record.tenantId)
+    }
+  }
+  return accountIds.size
+}
+
+// Aggregate current records without retaining campaign text or identities.
+export function buildGrowthSnapshot({ users, accounts, dogs, activeLitters, verifiedLiveBilling = false, now = new Date(), days = 30 }) {
   if (!Number.isFinite(now.getTime()) || !Number.isInteger(days) || days < 1 || days > 365) throw new Error('Invalid growth window')
-  const classified = new Map(accounts.map(account => [account.uid, account.classification]))
+  const classified = new Map(accounts.map(account => [account.uid, account]))
   const channels = { meta: 0, google: 0, bing: 0, direct: 0, other: 0, unknown: 0 }
   let eligibleSignups = 0, confirmedCustomers = 0, likelyReal = 0, excludedInternalQa = 0, unclassified = 0, invalidCreatedAt = 0
   const seen = new Set()
@@ -30,7 +42,7 @@ export function buildGrowthSnapshot({ users, accounts, activeLitters, now = new 
     const created = timestamp(user.createdAt)
     if (created === null || created > now.getTime()) { invalidCreatedAt++; continue }
     if (created < now.getTime() - days * DAY) continue
-    const classification = classified.get(user.id)
+    const classification = classified.get(user.id)?.classification
     if (EXCLUDED.has(classification)) { excludedInternalQa++; continue }
     if (!ELIGIBLE.has(classification)) { unclassified++; continue }
     eligibleSignups++
@@ -42,19 +54,19 @@ export function buildGrowthSnapshot({ users, accounts, activeLitters, now = new 
     // fbclid presence alone is not proof of a particular source.
     channels[source ? CHANNELS.get(source) || 'other' : 'unknown']++
   }
-  const litterAccounts = new Set()
-  for (const litter of activeLitters ?? []) {
-    const signup = signupDates.get(litter.tenantId)
-    const created = timestamp(litter.createdAt)
-    if (signup !== undefined && created !== null && created >= signup && created <= now.getTime()) {
-      litterAccounts.add(litter.tenantId)
-    }
-  }
+  const accountsWithVerifiedActiveSubscription = verifiedLiveBilling
+    ? [...signupDates.keys()].filter(uid => {
+      const account = classified.get(uid)
+      return account.classification === 'REAL_CUSTOMER' && account.revenueBucket === 'VERIFIED_CUSTOMER'
+    }).length
+    : null
   return {
     windowDays: days, observedAt: now.toISOString(),
     eligibleSignups, confirmedCustomers, likelyReal, excludedInternalQa, unclassified, invalidCreatedAt,
     channels,
-    accountsWithActiveLitterAfterSignup: activeLitters ? litterAccounts.size : null,
+    accountsWithDogAfterSignup: countAccountsWithDatedRecords(dogs, signupDates, now.getTime()),
+    accountsWithActiveLitterAfterSignup: countAccountsWithDatedRecords(activeLitters, signupDates, now.getTime()),
+    accountsWithVerifiedActiveSubscription,
     visitors: null, visitorToSignupRate: null, retentionRate: null,
     basis: 'Current signup profiles classified REAL_CUSTOMER or LIKELY_REAL. Likely-real signals are not verified customers. Source is self-reported attribution, not proof of ad performance.',
     limitations: ['Visitor denominator is not connected.', 'No durable activation, cancellation or retention event history is established by this snapshot.', 'Direct means recorded direct attribution; missing source remains unknown.'],
