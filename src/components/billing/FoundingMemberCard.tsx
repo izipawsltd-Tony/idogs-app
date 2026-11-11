@@ -29,6 +29,9 @@ export default function FoundingMemberCard({ user, hasSubscription, hasPass, toa
   const [accepted, setAccepted] = useState(false)
   const [loading, setLoading] = useState(false)
 
+  // Shown only where the Owner has opened the offer (Vercel env
+  // VITE_IDOGS_FOUNDING_OFFER=1, alongside FOUNDING_CHECKOUT_ENABLED=true).
+  if (import.meta.env.VITE_IDOGS_FOUNDING_OFFER !== '1') return null
   if (isNativeRuntime()) return null
   if (!(now >= FOUNDING_OFFER.salesStart && now < FOUNDING_OFFER.salesEnd)) return null
   if (hasSubscription) return null
