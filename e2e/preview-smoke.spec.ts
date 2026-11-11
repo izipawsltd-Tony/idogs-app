@@ -52,6 +52,22 @@ test.describe('Preview smoke', () => {
     await page.goto('/app/documents')
     await expect(page).toHaveURL(/\/login/)
   })
+
+  test('Control Center APIs reject signed-out requests after Vercel access', async ({ request }) => {
+    const responses = await Promise.all([
+      request.get('/api/super-admin/ai-ceo?view=evidence', { maxRedirects: 0 }),
+      request.get('/api/super-admin/site-health', { maxRedirects: 0 }),
+      request.post('/api/super-admin/assistant', {
+        data: { question: 'Staging authorization smoke test' },
+        maxRedirects: 0,
+      }),
+    ])
+    for (const response of responses) {
+      expect(response.status()).toBe(401)
+      expect(response.headers()['cache-control']).toContain('no-store')
+      expect(await response.json()).toEqual({ error: 'Unauthorized: Missing Authorization header' })
+    }
+  })
 })
 
 test.describe('Signed-in staging QA account (read-only)', () => {
