@@ -56,13 +56,22 @@ describe('Control Center evidence and health UI', () => {
     expect(rendered()).not.toContain('Unverified headline must be hidden')
     expect(request.mock.calls[0]).toEqual(['/api/super-admin/ai-ceo', expect.objectContaining({ headers: { Authorization: 'Bearer test-token' } })])
   })
-  it('ages fresh verified revenue out without a reload', async () => {
+  it('ages verified revenue and signup metrics out without a reload', async () => {
     vi.useFakeTimers()
-    await mount(fixture('VERIFIED'))
+    await mount({ ...fixture('VERIFIED'), growthSnapshot: {
+      windowDays: 30, eligibleSignups: 1, confirmedCustomers: 1, likelyReal: 0,
+      excludedInternalQa: 0, unclassified: 0, invalidCreatedAt: 0,
+      channels: { direct: 1 }, basis: '', limitations: [],
+      accountsWithDogBeforeActiveLitter: 1, accountsWithVerifiedActiveSubscription: 1,
+    } } as any)
     expect(rendered()).toContain('Current snapshot')
+    expect(rendered()).toContain('before their earliest currently active litter')
+    expect(rendered()).toContain('Current active live subscriptions')
     await act(async () => { vi.advanceTimersByTime(330000) })
     expect(rendered()).toContain('Refresh required')
     expect(rendered()).toContain('Unverified')
+    expect(rendered()).toContain('Refresh operating evidence to see current signup and activation counts.')
+    expect(rendered()).not.toContain('Current active live subscriptions')
   })
   it('checks health only on demand using the authenticated endpoint', async () => {
     const request = await mount()

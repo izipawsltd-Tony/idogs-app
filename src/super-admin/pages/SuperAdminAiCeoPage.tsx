@@ -436,7 +436,11 @@ export default function SuperAdminAiCeoPage() {
         </div>}
       </section>
 
-      {data.growthSnapshot && <section className="super-admin-panel" style={panel} aria-label="Signup acquisition">
+      {data.growthSnapshot && !fresh && <section className="super-admin-panel" style={panel} aria-label="Signup acquisition">
+        <h3 style={{ marginTop: 0 }}>Signup acquisition</h3>
+        <p>Refresh operating evidence to see current signup and activation counts.</p>
+      </section>}
+      {data.growthSnapshot && fresh && <section className="super-admin-panel" style={panel} aria-label="Signup acquisition">
         <h3 style={{ marginTop: 0 }}>Signup sources · last {data.growthSnapshot.windowDays} days</h3>
         <p style={{ fontSize: 13, lineHeight: 1.6 }}>{data.growthSnapshot.eligibleSignups} eligible signup profile(s): {data.growthSnapshot.confirmedCustomers} confirmed customer(s), {data.growthSnapshot.likelyReal} likely-real account(s). Excludes {data.growthSnapshot.excludedInternalQa} internal/QA and {data.growthSnapshot.unclassified} unclassified account(s).</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12 }}>
