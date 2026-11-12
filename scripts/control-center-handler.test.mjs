@@ -1,17 +1,29 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createControlCenterHandler } from '../api/_lib/control-center-handler.js'
+import { verifySuperAdmin } from '../api/super-admin/_auth.js'
 
 function response() {
   return { headers: {}, setHeader(k, v) { this.headers[k] = v }, status(code) { this.code = code; return this }, json(body) { this.body = body; return this } }
 }
 test('anonymous callers cannot trigger operating reads', async () => {
   let reads = 0
-  const handler = createControlCenterHandler({ verifySuperAdmin: async (_req, res) => { res.status(401).json({ error: 'Unauthorized' }); return null }, buildBrief: async () => { reads++ } })
+  const handler = createControlCenterHandler({ verifySuperAdmin, buildBrief: async () => { reads++ } })
   const res = response()
-  await handler({ method: 'GET' }, res)
+  await handler({ method: 'GET', headers: {} }, res)
   assert.equal(res.code, 401)
   assert.equal(reads, 0)
+  assert.equal(res.headers['Cache-Control'], 'private, no-store')
+})
+test('a verified non-admin session cannot read the aggregate evidence', async () => {
+  const auth = { verifyIdToken: async () => ({ uid: 'regular-user', email: 'user@example.test', email_verified: true }) }
+  const handler = createControlCenterHandler({
+    verifySuperAdmin: (req, res) => verifySuperAdmin(req, res, auth),
+    buildBrief: async () => assert.fail('must not load operating evidence'),
+  })
+  const res = response()
+  await handler({ method: 'GET', headers: { authorization: 'Bearer test-token' }, query: { view: 'evidence' } }, res)
+  assert.equal(res.code, 403)
   assert.equal(res.headers['Cache-Control'], 'private, no-store')
 })
 test('write methods are rejected before authentication or data access', async () => {
