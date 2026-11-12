@@ -16,7 +16,16 @@ export async function sendInitialVerification(user: User): Promise<void> {
   if (!user.email || user.emailVerified) return
   try {
     const settings = typeof window === 'undefined' ? undefined : { url: `${window.location.origin}/verify-email` }
-    await sendEmailVerification(user, settings)
+    try {
+      await sendEmailVerification(user, settings)
+    } catch (err) {
+      // A host that is not an authorized Firebase domain (e.g. a per-deployment
+      // Preview URL) rejects the continue URL; the email itself still works
+      // without one, so retry once without it instead of failing the signup email.
+      const code = (err as { code?: string })?.code || ''
+      if (!settings || !/unauthorized-continue-uri|invalid-continue-uri|unauthorized-domain/.test(code)) throw err
+      await sendEmailVerification(user)
+    }
     rememberVerificationDelivery(user.uid, 'sent')
   } catch { rememberVerificationDelivery(user.uid, 'failed') }
 }

@@ -102,6 +102,8 @@ export default function BillingPage({ toast }: Props) {
   const [detailsLoading, setDetailsLoading] = useState(true)
   const [detailsError, setDetailsError] = useState<string | null>(null)
   const [billingDetails, setBillingDetails] = useState<BillingSummary | null>(null)
+  // Bumped after a free-year claim so the banner and plan cards re-read the server.
+  const [billingReloadKey, setBillingReloadKey] = useState(0)
   const [interval, setInterval] = useState<IntervalKey>('plus_monthly')
 
   // Billing entitlement is server-owned and Stripe-verified. Use the secure
@@ -196,7 +198,7 @@ export default function BillingPage({ toast }: Props) {
       window.removeEventListener('pageshow', refreshAfterExternalBilling)
       document.removeEventListener('visibilitychange', refreshAfterExternalBilling)
     }
-  }, [user])
+  }, [user, billingReloadKey])
 
   async function handleOpenPortal() {
     if (!user) return
@@ -346,7 +348,7 @@ export default function BillingPage({ toast }: Props) {
         </div>
       </div>
 
-      <LaunchOfferCard status={offerStatus} user={user ?? null} hasPass={Boolean(accessGrant)} toast={toast} />
+      <LaunchOfferCard status={offerStatus} user={user ?? null} hasPass={Boolean(accessGrant)} toast={toast} onClaimed={() => setBillingReloadKey(k => k + 1)} />
       <FoundingMemberCard passActive={Boolean(offerStatus?.pass.active)} user={user ?? null} hasSubscription={hasLiveSubscription} hasPass={Boolean(accessGrant)} toast={toast} />
 
       {(detailsLoading || detailsError || billingDetails?.canManageBilling) && (
@@ -410,8 +412,8 @@ export default function BillingPage({ toast }: Props) {
           <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {FREE_FEATURES.map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--mid)', flexShrink: 0 }}>✓</span>{f}</li>)}
           </ul>
-          <div style={{ textAlign: 'center', padding: '9px', background: !isPlus ? 'var(--green-light)' : 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: !isPlus ? 'var(--green)' : 'var(--mid)' }}>
-            {!isPlus ? '✓ Current plan' : 'Always free'}
+          <div style={{ textAlign: 'center', padding: '9px', background: !isPlus && !accessGrant ? 'var(--green-light)' : 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: !isPlus && !accessGrant ? 'var(--green)' : 'var(--mid)' }}>
+            {!isPlus && !accessGrant ? '✓ Current plan' : 'Always free'}
           </div>
         </div>
 
@@ -433,13 +435,16 @@ export default function BillingPage({ toast }: Props) {
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               {PLUS_FEATURES.map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
             </ul>
-            {promotionActive && interval === 'plus_monthly' && !isPlus && !androidPurchasesUnavailable && <label className="plus-promotion-consent">
+            {promotionActive && interval === 'plus_monthly' && !isPlus && !accessGrant && !androidPurchasesUnavailable && <label className="plus-promotion-consent">
               <input type="checkbox" checked={promotionConsent} onChange={event => setPromotionConsent(event.target.checked)} />
               <span>I agree to the Plus offer terms above, including automatic renewal at A$7/month after the promotion.</span>
             </label>}
             {promotionActive && isPlus && <p style={{ fontSize: 12, lineHeight: 1.6 }}>Already subscribed? The offer also includes existing customers. Your current billing continues until your account’s promotion adjustment is confirmed. Do not start another subscription.</p>}
             {isPlus ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan</div>
+            ) : accessGrant ? (
+              // A pass already gives Plus: never invite a second, renewing subscription.
+              <div data-testid="plus-included-by-pass" style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan · until {formatBillingDate(accessGrant.expiresAt)}</div>
             ) : androidPurchasesUnavailable ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>Purchases are unavailable in this Android app.</div>
             ) : (
