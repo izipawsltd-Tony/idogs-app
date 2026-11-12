@@ -91,7 +91,7 @@ const PLUS_FEATURES = [
 type IntervalKey = 'plus_monthly' | 'plus_annual'
 
 export default function BillingPage({ toast }: Props) {
-  const promotionActive = usePlusPromotion()
+  const promotionDateActive = usePlusPromotion()
   const [promotionConsent, setPromotionConsent] = useState(false)
   const { user, profile, refreshProfile } = useAuth()
   const [searchParams] = useSearchParams()
@@ -121,6 +121,8 @@ export default function BillingPage({ toast }: Props) {
   const accessGrant = billingDetails?.accessGrant ?? null
   const offerStatus = useOfferStatus()
   const launchActive = Boolean(offerStatus?.launch.active)
+  // A$0 promotion is not offered to new customers while the voucher supersedes it.
+  const promotionActive = promotionDateActive && !offerStatus?.promotionSuperseded
   const hasLiveSubscription = Boolean(billingDetails?.subscription) ||
     ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(subscriptionStatus || '')
   // Google Play does not allow purchase/subscription UI for digital services

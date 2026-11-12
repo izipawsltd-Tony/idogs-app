@@ -31,7 +31,8 @@ export default createCheckoutHandler({
     vercelUrl: process.env.VERCEL_URL, requestOrigin: req.headers?.origin }),
   ...promotionSessionStore(getFirestore()),
   ...(promotionConfig.prices ? { checkoutPriceIds: promotionConfig.prices } : {}),
-  promotionCheckoutEnabled: promotionConfig.enabled,
+  // No new A$0 promotion sign-ups while the voucher campaign supersedes it.
+  promotionCheckoutEnabled: promotionConfig.enabled && process.env.LAUNCH_OFFER_ENABLED !== 'true',
   getPromotionTaxStatus: (priceId, customerId) => promotionTaxReady(stripe, priceId, /^(?:sk|rk)_live_/.test(process.env.STRIPE_SECRET_KEY || ''), customerId),
   verifyIdToken: token => getAuth().verifyIdToken(token),
   createSession: (params, options) => stripe.checkout.sessions.create(params, options),

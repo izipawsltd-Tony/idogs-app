@@ -40,12 +40,15 @@ describe('launch status', () => {
     expect(await run(10)).toMatchObject({ launch: { active: true, showRemaining: false }, pass: { active: false } })
     expect(await run(60)).toMatchObject({ launch: { active: true, remaining: 40, showRemaining: true }, pass: { active: false } })
     expect(await run(100)).toMatchObject({ launch: { active: false }, pass: { active: true } })
+    // A$0 promotion stays superseded for new customers while the campaign flag is on, even after it ends.
+    expect((await run(100)).promotionSuperseded).toBe(true)
   })
   it('is off by default', async () => {
     const res = mockRes()
     await createOfferStatusHandler({ getLaunchClaimed: async () => 0, now: () => NOW })({ method: 'GET' }, res)
     expect(res.body.launch.active).toBe(false)
     expect(res.body.pass.active).toBe(false)
+    expect(res.body.promotionSuperseded).toBe(false)
     expect(FOUNDING_OFFER.terms).not.toMatch(/Founding|first 20/)
   })
 })

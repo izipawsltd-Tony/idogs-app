@@ -42,11 +42,12 @@ const FAST_LANDING_MEDIA: Partial<Record<LandingSlotId, { localSrc: string; publ
 }
 
 export default function LandingPage() {
-  const promotionActive = usePlusPromotion()
+  const promotionDateActive = usePlusPromotion()
   // Launch campaign (1 year of Plus free, 100 places): the single headline offer while
   // it runs; the A$0 subscription promotion stays available in Pricing.
   const offerStatus = useOfferStatus()
   const launchActive = Boolean(offerStatus?.launch.active)
+  const promotionActive = promotionDateActive && !offerStatus?.promotionSuperseded
   const { user, loading } = useAuth()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)

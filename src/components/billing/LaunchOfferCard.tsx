@@ -5,6 +5,7 @@ import { LAUNCH_OFFER, daysLeft } from '../../../shared/access-grants.js'
 import { isNativeRuntime } from './FoundingMemberCard'
 
 export interface OfferStatus {
+  promotionSuperseded?: boolean
   launch: { active: boolean; remaining: number; endsAt: string; showRemaining: boolean }
   pass: { active: boolean; endsAt: string }
 }

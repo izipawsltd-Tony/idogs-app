@@ -34,6 +34,10 @@ export function createOfferStatusHandler({
       const passOpen = passEnabled() && t >= FOUNDING_OFFER.salesStart && t < FOUNDING_OFFER.salesEnd && !launch.active
       res.setHeader?.('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=60')
       return res.status(200).json({
+        // Owner decision 12 Nov 2026: while the voucher campaign is switched on
+        // (and afterwards, until the flag is removed) the A$0 subscription
+        // promotion is not offered to new customers — the voucher is better.
+        promotionSuperseded: launchEnabled(),
         launch: { ...launch, showRemaining: launch.active && launch.remaining <= LAUNCH_OFFER.showRemainingAtOrBelow },
         pass: { active: passOpen, endsAt: new Date(FOUNDING_OFFER.salesEnd).toISOString() },
       })
