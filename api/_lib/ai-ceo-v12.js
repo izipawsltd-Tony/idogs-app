@@ -553,11 +553,12 @@ export async function buildAiCeoV12() {
     db.collection('showcaseEnquiries').get(),
   ])
 
-  const users = usersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-  const dogs = dogsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-  const litters = littersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-  const supportConversations = supportSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-  const enquiries = enquiriesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+  // Joins must use the document key even if a stored payload has its own id.
+  const users = usersSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))
+  const dogs = dogsSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))
+  const litters = littersSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))
+  const supportConversations = supportSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))
+  const enquiries = enquiriesSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }))
   const activeLitters = litters.filter(litter => !litter.archived)
 
   const revenueTruth = await compileRevenueTruth(users)
