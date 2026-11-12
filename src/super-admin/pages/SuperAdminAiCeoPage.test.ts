@@ -108,10 +108,15 @@ describe('Control Center evidence and health UI', () => {
   })
   it('keeps a limited answer visible and labels it incomplete instead of showing a generic failure', async () => {
     const request = await mount(fixture(), true)
-    request.mockResolvedValueOnce({ ok: true, json: async () => ({ answer: '1. Verify revenue evidence.', truncated: true }) } as any)
+    request.mockResolvedValueOnce({ ok: true, json: async () => ({
+      answer: '1. Verify revenue evidence.', truncated: true,
+      evidenceGeneratedAt: new Date(Date.now() - 360000).toISOString(),
+    }) } as any)
     await act(async () => { renderer!.root.findByType('textarea').props.onChange({ target: { value: 'What should I prioritise?' } }) })
     await act(async () => { await renderer!.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
     expect(rendered()).toContain('1. Verify revenue evidence.')
+    expect(rendered()).toContain('Evidence as of')
+    expect(rendered()).toContain('Ask again for analysis using fresh evidence.')
     expect(rendered()).toContain('may be incomplete')
     expect(rendered()).not.toContain('Analysis unavailable')
     expect(request).toHaveBeenCalledTimes(3)
