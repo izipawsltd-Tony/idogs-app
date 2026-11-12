@@ -264,7 +264,7 @@ await test('active Audit Logs navigation route mounts the Phase 2 component and 
   const page = fs.readFileSync(path.join(root, 'src/super-admin/pages/SuperAdminAuditLogsPage.tsx'), 'utf8')
   const api = fs.readFileSync(path.join(root, 'api/super-admin/audit-logs/index.js'), 'utf8')
 
-  assert.match(app, /import SuperAdminAuditLogsPage from ['"]\.\.\/super-admin\/pages\/SuperAdminAuditLogsPage['"]/)
+  assert.match(app, /const SuperAdminAuditLogsPage = lazy\(\(\) => import\(['"]\.\.\/super-admin\/pages\/SuperAdminAuditLogsPage['"]\)\)/)
   assert.match(app, /<Route path="audit-logs" element=\{<SuperAdminAuditLogsPage \/>\} \/>/)
   assert.match(nav, /path: `\$\{SUPER_ADMIN_BASE_PATH\}\/audit-logs`/)
   assert.match(page, /fetch\(['"]\/api\/super-admin\/audit-logs['"]/)
