@@ -38,6 +38,8 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
       : source.facts?.supportSampleAtLimit === false ? 'COMPLETE' : 'UNKNOWN',
     metricsBasis: 'Raw operating/account counts include internal, QA and unclassified profiles. New user counts are not verified customer growth. Acquisition uses a separate eligible-signup denominator.',
     acquisition: {
+      classificationCoverage: source.accountClassification?.status === 'VERIFIED' ? 'COMPLETE'
+        : source.accountClassification?.status === 'PARTIAL' ? 'PARTIAL' : 'UNKNOWN',
       windowDays: amount(source.growthSnapshot?.windowDays),
       eligibleSignups: amount(source.growthSnapshot?.eligibleSignups),
       confirmedCustomers: amount(source.growthSnapshot?.confirmedCustomers),
@@ -60,6 +62,7 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
       ...(freshness !== 'FRESH' ? ['Operating evidence is stale or its timestamp cannot be trusted.'] : []),
       ...(!revenueVerified ? ['Customer revenue is not fully verified. Missing values are not zero.'] : []),
       ...(source.facts?.supportSampleAtLimit === true ? ['Support counts cover a capped sample. The inbox may contain additional conversations requiring action.'] : []),
+      ...(source.accountClassification?.status === 'PARTIAL' ? ['Signup classification is provisional because Firebase Auth lookup was incomplete. Do not use these cohort counts as confirmed customer growth.'] : []),
       'Current account counts are not historical acquisition or retention cohorts.',
       'Monitoring and AI connections require separate verified integrations.',
     ],

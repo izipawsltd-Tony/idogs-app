@@ -456,6 +456,9 @@ export default function SuperAdminAiCeoPage() {
       </section>}
       {data.growthSnapshot && fresh && <section className="super-admin-panel" style={panel} aria-label="Signup acquisition">
         <h3 style={{ marginTop: 0 }}>Signup sources · last {data.growthSnapshot.windowDays} days</h3>
+        {data.accountClassification.status === 'PARTIAL' && <p role="status">
+          Signup classifications are provisional. The account identity check was incomplete.
+        </p>}
         <p style={{ fontSize: 13, lineHeight: 1.6 }}>{data.growthSnapshot.eligibleSignups} eligible signup profile(s): {data.growthSnapshot.confirmedCustomers} confirmed customer(s), {data.growthSnapshot.likelyReal} likely-real account(s). Excludes {data.growthSnapshot.excludedInternalQa} internal/QA and {data.growthSnapshot.unclassified} unclassified account(s).</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12 }}>
           {Object.entries(data.growthSnapshot.channels).map(([channel, count]) => <MetricCard key={channel} label={channel} value={count} />)}
