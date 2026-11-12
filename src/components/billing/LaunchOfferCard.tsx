@@ -79,7 +79,7 @@ export default function LaunchOfferCard({ status, user, hasPass, toast, onClaime
         <LaunchCountdownLine status={status} />
       </div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, margin: '6px 0 4px', color: 'var(--dark)' }}>
-        100 free years of iDogs Plus
+        1 year of iDogs Plus, free — for 100 dog owners
       </h2>
       <p style={{ fontSize: 14, color: 'var(--mid)', margin: '0 0 12px' }}>
         Snap your vaccination book — iDogs Scan fills in the records for you. Up to 5 dogs, litters and more, free for a full year.

@@ -43,7 +43,7 @@ const FAST_LANDING_MEDIA: Partial<Record<LandingSlotId, { localSrc: string; publ
 
 export default function LandingPage() {
   const promotionActive = usePlusPromotion()
-  // Launch campaign (100 free years of Plus): the single headline offer while
+  // Launch campaign (1 year of Plus free, 100 places): the single headline offer while
   // it runs; the A$0 subscription promotion stays available in Pricing.
   const offerStatus = useOfferStatus()
   const launchActive = Boolean(offerStatus?.launch.active)
@@ -118,7 +118,7 @@ export default function LandingPage() {
               </div>
               {launchActive && offerStatus ? (
                 <p className="price-note" data-testid="hero-launch-offer">
-                  🎁 <strong>100 free years of iDogs Plus</strong> — no card needed. <LaunchCountdownLine status={offerStatus} />{' '}
+                  🎁 <strong>1 year of iDogs Plus, free</strong> — for 100 dog owners, no card needed. <LaunchCountdownLine status={offerStatus} />{' '}
                   <Link to="/signup?next=%2Fapp%2Fbilling" style={{ fontWeight: 700, textDecoration: 'underline', color: 'inherit' }}>Claim your free year</Link>
                 </p>
               ) : (
@@ -311,7 +311,7 @@ export default function LandingPage() {
                 </div>
                 {launchActive && offerStatus && (
                   <div data-testid="pricing-launch-offer" style={{ border: '2px solid var(--green-mid, #1D9E75)', borderRadius: 12, padding: '12px 14px', margin: '8px 0 12px', background: 'var(--green-light, #E1F5EE)' }}>
-                    <p style={{ fontWeight: 700, margin: 0 }}>🎁 100 free years of iDogs Plus — no card needed</p>
+                    <p style={{ fontWeight: 700, margin: 0 }}>🎁 1 year of iDogs Plus, free — for 100 dog owners, no card needed</p>
                     <p style={{ fontSize: 13, margin: '4px 0 0' }}><LaunchCountdownLine status={offerStatus} /> · add your first dog, then claim. Nothing renews.</p>
                   </div>
                 )}

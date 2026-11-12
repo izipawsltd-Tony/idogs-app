@@ -1,4 +1,4 @@
-// api/_lib/launch-offer-handler.js — public launch campaign: 100 free years
+// api/_lib/launch-offer-handler.js — public launch campaign: 1 year of Plus free for 100 accounts
 // of iDogs Plus until 31 Dec 2026 (Adelaide), for verified accounts that have
 // added at least one dog. Plus a public, cache-friendly status endpoint whose
 // "remaining" figure is the real counter (no fake scarcity, no reset).
