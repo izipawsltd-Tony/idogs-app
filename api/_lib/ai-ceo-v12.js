@@ -481,7 +481,7 @@ function localDateParts(date) {
   return { date: `${parts.year}-${parts.month}-${parts.day}`, weekday: parts.weekday }
 }
 
-function buildSevenDayPlan({ now, revenueTruth, customerRevenueTruth, classification, supportNeedsAction, supportOldestOpenDays, rawBreeders, breedersWithDogs, breedersWithLitters, verifiedCustomerPaidBreeders }) {
+function buildSevenDayPlan({ now, revenueTruth, customerRevenueTruth, classification, supportActions, rawBreeders, breedersWithDogs, breedersWithLitters, verifiedCustomerPaidBreeders }) {
   const days = [
     {
       focus: 'Revenue truth + account truth', owner: 'AI CEO / Finance + Ops', lane: 'AUTO',
@@ -495,7 +495,7 @@ function buildSevenDayPlan({ now, revenueTruth, customerRevenueTruth, classifica
     },
     {
       focus: 'Clear support debt', owner: 'AI CEO / Customer', lane: 'AUTO',
-      actions: [`Triage ${supportNeedsAction} support conversation(s) requiring action.`, `Prioritise the oldest item (${supportOldestOpenDays} day(s)) and classify root cause.`],
+      actions: supportActions,
       kpi: 'Action-required support backlog',
       successCondition: 'Backlog is zero or every remaining conversation has a clear owner/status/root cause.',
     },
@@ -663,14 +663,27 @@ export async function buildAiCeoV12() {
     }))
   }
 
-  if (supportNeedsActionItems.length > 0 || supportUnread > 0) {
+  const supportSampleAtLimit = supportConversations.length === SUPPORT_SAMPLE_LIMIT
+  const supportActions = supportSampleAtLimit
+    ? ['Review the full inbox to confirm the backlog and oldest open item before prioritising.']
+    : supportNeedsActionItems.length > 0
+      ? [`Triage ${supportNeedsActionItems.length} action-required conversation(s), starting with the oldest.`]
+      : supportUnread > 0
+        ? ['Review unread conversations for any required follow-up.']
+        : ['Check the inbox for newly opened conversations.']
+  if (supportNeedsActionItems.length > 0 || supportUnread > 0 || supportSampleAtLimit) {
     decisions.push(scoredDecision({
       id: 'clear-support-friction', title: 'Clear customer support friction before scaling acquisition',
       decision: 'Resolve or classify action-required conversations and feed repeated root causes into the product backlog.',
       rationale: 'Support debt hides product/onboarding failures and compounds when acquisition scales.',
       owner: 'AI CEO / Customer + Product', kpi: 'Action-required backlog and oldest open age',
-      evidence: [`${supportNeedsActionItems.length} conversation(s) require action`, `${supportUnread} admin unread`, `Oldest action-required item: ${supportOldestOpenDays} day(s)`],
-      nextAction: 'Triage oldest-first, assign root cause, and close or explicitly own every outstanding conversation.',
+      evidence: [
+        `${supportNeedsActionItems.length} conversation(s) require action among records read`,
+        `${supportUnread} admin unread among records read`,
+        ...(supportSampleAtLimit ? ['The support sample reached its limit. The full inbox may contain additional or older cases.'] : []),
+        ...(supportNeedsActionItems.length > 0 ? [`Oldest action-required item among records read: ${supportOldestOpenDays} day(s)`] : []),
+      ],
+      nextAction: supportActions[0],
       checkpoint: 'Backlog reaches zero or every remaining case has a clear owner/status/root cause.',
       confidence: 'HIGH', impact: 4, urgency: supportOldestOpenDays >= 7 ? 5 : 4, reversibility: 5, cost: 1,
     }))
@@ -733,8 +746,7 @@ export async function buildAiCeoV12() {
     revenueTruth,
     customerRevenueTruth,
     classification: accountClassification,
-    supportNeedsAction: supportNeedsActionItems.length,
-    supportOldestOpenDays,
+    supportActions,
     rawBreeders: breeders,
     breedersWithDogs,
     breedersWithLitters,
@@ -781,7 +793,7 @@ export async function buildAiCeoV12() {
       puppyFunnel,
       showcaseEnquiriesTotal: enquiries.length, showcaseEnquiries7d, showcaseEnquiries30d, showcaseNotificationFailures30d,
       supportConversations: supportConversations.length, supportNeedsAction: supportNeedsActionItems.length, supportUnread, supportOldestOpenDays,
-      supportSampleAtLimit: supportConversations.length === SUPPORT_SAMPLE_LIMIT,
+      supportSampleAtLimit,
     },
     decisions,
     actionPlan7d,
