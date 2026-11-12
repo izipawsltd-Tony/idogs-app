@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
 import { PLUS_MONTHLY_PRICE_AUD, LITTER_QUOTA_PLUS_ROLLING_12_MONTHS, EXTRA_LITTER_PRICE_AUD } from '../lib/pricingCopy'
 import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
+import LaunchBanner from '../components/billing/LaunchBanner'
 
 // ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
 // Ported from the approved design-review package:
@@ -71,6 +72,7 @@ export default function LandingPage() {
   return (
     <div className="lv2-page">
       <style>{LV2_CSS}</style>
+      <LaunchBanner />
 
       <div ref={pageContentRef} id="lv2-page-content">
         <header className="nav">

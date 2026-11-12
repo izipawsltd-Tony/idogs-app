@@ -10,7 +10,7 @@
 // the hardened rules are deployed without opening a self-grant path.
 //
 // Shape (all strings are ISO-8601 UTC):
-//   { granted: true, kind: 'founding' | 'gift', offerId, grantedAt,
+//   { granted: true, kind: 'founding' | 'gift' | 'launch', offerId, grantedAt,
 //     expiresAt, lastSourceId }
 // A grant never renews and never charges anyone: when expiresAt passes,
 // the account simply falls back to whatever its own plan is.
@@ -25,8 +25,8 @@ export const FOUNDING_OFFER = Object.freeze({
   // Sales window (Adelaide midnight 31 Dec 2026 = 13:30 UTC).
   salesStart: Date.parse('2026-11-12T00:00:00Z'),
   salesEnd: Date.parse('2026-12-31T13:30:00Z'),
-  productName: 'iDogs Plus – Founding Member (15 months)',
-  terms: 'One-off payment of A$49 including GST for 15 months of iDogs Plus. No subscription and no automatic renewal. Limited to the first 20 Founding Members.',
+  productName: 'iDogs Plus – 15-Month Pass (12 months + 3 months free)',
+  terms: 'One-off payment of A$49 including GST for 15 months of iDogs Plus (12 months + 3 months free). No subscription and no automatic renewal. Limited places; offer ends 31 December 2026.',
 })
 
 export const GIFT_OFFER = Object.freeze({
@@ -39,7 +39,26 @@ export const GIFT_OFFER = Object.freeze({
   redeemEnd: Date.parse('2027-03-31T13:30:00Z'),
 })
 
-export const ACCESS_GRANT_KINDS = Object.freeze(['founding', 'gift'])
+// Public launch campaign (Owner decision 12 Nov 2026): 100 free years of
+// Plus for accounts that have added at least one dog, until 31 Dec 2026
+// Adelaide. The remaining count shown to visitors is the real counter.
+export const LAUNCH_OFFER = Object.freeze({
+  id: 'launch-free-year-2026',
+  kind: 'launch',
+  months: 12,
+  maxRedemptions: 100,
+  claimStart: Date.parse('2026-11-12T00:00:00Z'),
+  claimEnd: Date.parse('2026-12-31T13:30:00Z'),
+  // Show the remaining number only once it is genuinely low.
+  showRemainingAtOrBelow: 50,
+})
+
+export const ACCESS_GRANT_KINDS = Object.freeze(['founding', 'gift', 'launch'])
+
+// Whole days left until `endMs` (rounded up), never negative.
+export function daysLeft(endMs, nowMs = Date.now()) {
+  return Math.max(0, Math.ceil((endMs - nowMs) / 86_400_000))
+}
 
 // Calendar-month addition in UTC; a day that does not exist in the target
 // month (31 Jan + 1 month) clamps to that month's last day.

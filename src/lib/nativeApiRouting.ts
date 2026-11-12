@@ -11,6 +11,7 @@ const NATIVE_QA_BLOCKED_API_PATHS = new Set([
   '/api/create-extra-litter-checkout',
   '/api/create-founding-checkout',
   '/api/redeem-gift',
+  '/api/claim-launch-offer',
   '/api/create-sms-addon-checkout',
   '/api/remove-sms-addon',
   '/api/send-email',

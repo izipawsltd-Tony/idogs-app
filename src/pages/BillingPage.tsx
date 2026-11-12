@@ -7,6 +7,7 @@ import { isAndroidNativeApp } from '../lib/nativePlatform'
 import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
 import { PLUS_PROMOTION_ID } from '../../shared/plus-promotion.js'
 import FoundingMemberCard from '../components/billing/FoundingMemberCard'
+import LaunchOfferCard, { useOfferStatus } from '../components/billing/LaunchOfferCard'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -25,7 +26,7 @@ interface BillingInvoice {
 }
 
 interface BillingSummary {
-  accessGrant?: { kind: 'founding' | 'gift'; expiresAt: string } | null
+  accessGrant?: { kind: 'founding' | 'gift' | 'launch'; expiresAt: string } | null
   subscription: {
     id: string
     status: string
@@ -116,6 +117,7 @@ export default function BillingPage({ toast }: Props) {
     ?? ((profile as any)?.subscriptionStatus as string | undefined)
   const isPastDue = isPlus && subscriptionStatus === 'past_due'
   const accessGrant = billingDetails?.accessGrant ?? null
+  const offerStatus = useOfferStatus()
   const hasLiveSubscription = Boolean(billingDetails?.subscription) ||
     ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(subscriptionStatus || '')
   // Google Play does not allow purchase/subscription UI for digital services
@@ -333,7 +335,7 @@ export default function BillingPage({ toast }: Props) {
           </span>
           {accessGrant && (
             <div data-testid="access-grant-status" style={{ fontSize: 12, color: 'var(--mid)', marginTop: 2 }}>
-              {accessGrant.kind === 'founding' ? 'Founding Member pass' : 'Gift from your breeder'}: iDogs Plus until {formatBillingDate(accessGrant.expiresAt)}. No automatic renewal.
+              {accessGrant.kind === 'founding' ? '15-Month Pass' : accessGrant.kind === 'launch' ? 'Free year of Plus' : 'Gift from your breeder'}: iDogs Plus until {formatBillingDate(accessGrant.expiresAt)}. No automatic renewal.
             </div>
           )}
           {isPastDue && (
@@ -344,7 +346,8 @@ export default function BillingPage({ toast }: Props) {
         </div>
       </div>
 
-      <FoundingMemberCard user={user ?? null} hasSubscription={hasLiveSubscription} hasPass={Boolean(accessGrant)} toast={toast} />
+      <LaunchOfferCard status={offerStatus} user={user ?? null} hasPass={Boolean(accessGrant)} toast={toast} />
+      <FoundingMemberCard passActive={Boolean(offerStatus?.pass.active)} user={user ?? null} hasSubscription={hasLiveSubscription} hasPass={Boolean(accessGrant)} toast={toast} />
 
       {(detailsLoading || detailsError || billingDetails?.canManageBilling) && (
         <div className="card" style={{ marginBottom: 24, padding: 20 }}>
@@ -402,7 +405,7 @@ export default function BillingPage({ toast }: Props) {
         <div style={{ background: '#fff', border: '2px solid var(--border)', borderRadius: 16, padding: 20 }}>
           <div style={{ fontSize: 24, marginBottom: 6 }}>🐾</div>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Free</div>
-          <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>Perfect for pet owners with 1-2 dogs</div>
+          <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>Free plan – always available · up to 2 dogs</div>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--dark)', marginBottom: 16 }}>$0</div>
           <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {FREE_FEATURES.map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--mid)', flexShrink: 0 }}>✓</span>{f}</li>)}
@@ -417,7 +420,7 @@ export default function BillingPage({ toast }: Props) {
           <div style={{ padding: 20 }}>
             <div style={{ fontSize: 24, marginBottom: 6 }}>🏆</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Plus</div>
-            <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>For active breeders with a growing kennel</div>
+            <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>Snap your vaccination book with iDogs Scan · up to 5 dogs · litters</div>
             {promotionActive && interval === 'plus_monthly' && <PlusPromotion />}
             {!(promotionActive && interval === 'plus_monthly') && <><div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
               <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>

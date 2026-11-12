@@ -18,6 +18,8 @@ function requestId(): string {
 }
 
 interface Props {
+  // From /api/offer-status: the pass is offered once the free places are gone.
+  passActive: boolean
   user: User | null
   hasSubscription: boolean
   hasPass: boolean
@@ -25,7 +27,7 @@ interface Props {
   now?: number
 }
 
-export default function FoundingMemberCard({ user, hasSubscription, hasPass, toast, now = Date.now() }: Props) {
+export default function FoundingMemberCard({ passActive, user, hasSubscription, hasPass, toast, now = Date.now() }: Props) {
   const [accepted, setAccepted] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -33,6 +35,7 @@ export default function FoundingMemberCard({ user, hasSubscription, hasPass, toa
   // VITE_IDOGS_FOUNDING_OFFER=1, alongside FOUNDING_CHECKOUT_ENABLED=true).
   if (import.meta.env.VITE_IDOGS_FOUNDING_OFFER !== '1') return null
   if (isNativeRuntime()) return null
+  if (!passActive) return null
   if (!(now >= FOUNDING_OFFER.salesStart && now < FOUNDING_OFFER.salesEnd)) return null
   if (hasSubscription) return null
 
@@ -57,17 +60,17 @@ export default function FoundingMemberCard({ user, hasSubscription, hasPass, toa
   }
 
   return (
-    <div data-testid="founding-member-card" style={{
+    <div data-testid="plus-pass-card" style={{
       border: '2px solid var(--gold)', borderRadius: 14, padding: '18px 20px', marginBottom: 28, background: 'var(--gold-light)',
     }}>
       <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.6, color: 'var(--gold)', textTransform: 'uppercase' }}>
-        Founding Member · first {FOUNDING_OFFER.seats} only
+        Limited time · ends 31 December
       </div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, margin: '6px 0 4px', color: 'var(--dark)' }}>
-        A$49 for {FOUNDING_OFFER.months} months of iDogs Plus
+        iDogs Plus – 15-Month Pass
       </h2>
       <p style={{ fontSize: 14, color: 'var(--mid)', margin: '0 0 12px' }}>
-        One payment, no subscription and no automatic renewal. Help shape iDogs as one of our first members.
+        A$49 one-off — 12 months + 3 months free. No subscription and no automatic renewal.
         {hasPass ? ' Buying now adds 15 months on top of your current pass.' : ''}
       </p>
       <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, color: 'var(--mid)', marginBottom: 12 }}>
@@ -75,7 +78,7 @@ export default function FoundingMemberCard({ user, hasSubscription, hasPass, toa
         <span>{FOUNDING_OFFER.terms}</span>
       </label>
       <button className="btn btn-primary" disabled={!user || !accepted || loading} onClick={buy}>
-        {loading ? 'Opening checkout…' : 'Become a Founding Member'}
+        {loading ? 'Opening checkout…' : 'Get the 15-Month Pass'}
       </button>
     </div>
   )

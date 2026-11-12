@@ -567,7 +567,7 @@ export interface UserProfile {
   // shared/access-grants.js); never renews and never charges.
   accessGrant?: {
     granted: boolean
-    kind: 'founding' | 'gift'
+    kind: 'founding' | 'gift' | 'launch'
     offerId: string
     grantedAt: string
     expiresAt: string
