@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
 import { PLUS_MONTHLY_PRICE_AUD, LITTER_QUOTA_PLUS_ROLLING_12_MONTHS, EXTRA_LITTER_PRICE_AUD } from '../lib/pricingCopy'
 import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
-import LaunchBanner from '../components/billing/LaunchBanner'
+import { LaunchCountdownLine, useOfferStatus } from '../components/billing/LaunchOfferCard'
 
 // ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
 // Ported from the approved design-review package:
@@ -43,6 +43,10 @@ const FAST_LANDING_MEDIA: Partial<Record<LandingSlotId, { localSrc: string; publ
 
 export default function LandingPage() {
   const promotionActive = usePlusPromotion()
+  // Launch campaign (100 free years of Plus): the single headline offer while
+  // it runs; the A$0 subscription promotion stays available in Pricing.
+  const offerStatus = useOfferStatus()
+  const launchActive = Boolean(offerStatus?.launch.active)
   const { user, loading } = useAuth()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -72,7 +76,6 @@ export default function LandingPage() {
   return (
     <div className="lv2-page">
       <style>{LV2_CSS}</style>
-      <LaunchBanner />
 
       <div ref={pageContentRef} id="lv2-page-content">
         <header className="nav">
@@ -113,7 +116,14 @@ export default function LandingPage() {
                 <Link className="btn btn-primary" to="/signup">Start Free</Link>
                 <a className="btn btn-ghost" href="#howitworks">See How It Works</a>
               </div>
-              <p className="price-note">{promotionActive ? 'iDogs Plus A$0/month through 31 January 2027 · Then A$7/month.' : 'Plans from A$7/month · No complicated pricing.'}</p>
+              {launchActive && offerStatus ? (
+                <p className="price-note" data-testid="hero-launch-offer">
+                  🎁 <strong>100 free years of iDogs Plus</strong> — no card needed. <LaunchCountdownLine status={offerStatus} />{' '}
+                  <Link to="/signup?next=%2Fapp%2Fbilling" style={{ fontWeight: 700, textDecoration: 'underline', color: 'inherit' }}>Claim your free year</Link>
+                </p>
+              ) : (
+                <p className="price-note">{promotionActive ? 'iDogs Plus A$0/month through 31 January 2027 · Then A$7/month.' : 'Plans from A$7/month · No complicated pricing.'}</p>
+              )}
             </div>
             {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
             <div className="hero-visual" aria-label="iDogs product preview">
@@ -299,6 +309,12 @@ export default function LandingPage() {
                   </div>
                   <span className="pricing-badge">Most popular</span>
                 </div>
+                {launchActive && offerStatus && (
+                  <div data-testid="pricing-launch-offer" style={{ border: '2px solid var(--green-mid, #1D9E75)', borderRadius: 12, padding: '12px 14px', margin: '8px 0 12px', background: 'var(--green-light, #E1F5EE)' }}>
+                    <p style={{ fontWeight: 700, margin: 0 }}>🎁 100 free years of iDogs Plus — no card needed</p>
+                    <p style={{ fontSize: 13, margin: '4px 0 0' }}><LaunchCountdownLine status={offerStatus} /> · add your first dog, then claim. Nothing renews.</p>
+                  </div>
+                )}
                 {promotionActive && <PlusPromotion />}
                 <p className="pricing-copy">Organise your dogs and breeding records in one connected workspace.</p>
                 <ul className="pricing-list">
@@ -308,7 +324,18 @@ export default function LandingPage() {
                   <li>{`Extra litters A$${EXTRA_LITTER_PRICE_AUD} each`}</li>
                   <li>Digital Passport and QR sharing</li>
                 </ul>
-                <Link className="btn btn-primary pricing-cta" to={promotionActive ? '/signup?next=%2Fapp%2Fbilling' : '/signup'}>{promotionActive ? 'Get Plus for A$0' : 'Start Free'}</Link>
+                {launchActive ? (
+                  <>
+                    <Link className="btn btn-primary pricing-cta" to="/signup?next=%2Fapp%2Fbilling">Claim your free year — no card needed</Link>
+                    {promotionActive && (
+                      <p style={{ fontSize: 13, marginTop: 10 }}>
+                        Prefer a monthly subscription? <Link to="/signup?next=%2Fapp%2Fbilling" style={{ textDecoration: 'underline', color: 'inherit' }}>Get Plus for A$0/month until 31 January 2027</Link>, then A$7/month.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <Link className="btn btn-primary pricing-cta" to={promotionActive ? '/signup?next=%2Fapp%2Fbilling' : '/signup'}>{promotionActive ? 'Get Plus for A$0' : 'Start Free'}</Link>
+                )}
               </article>
               <article className="pricing-card pricing-card-addon">
                 <p className="pricing-label">Optional add-on</p>

@@ -74,7 +74,7 @@ export default function LaunchOfferCard({ status, user, hasPass, toast, onClaime
   }
 
   return (
-    <div data-testid="launch-offer-card" style={{ border: '2px solid var(--green-mid)', borderRadius: 14, padding: '18px 20px', marginBottom: 28, background: 'var(--green-light)' }}>
+    <div id="launch-offer" data-testid="launch-offer-card" style={{ border: '2px solid var(--green-mid)', borderRadius: 14, padding: '18px 20px', marginBottom: 28, background: 'var(--green-light)' }}>
       <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.6, color: 'var(--green)', textTransform: 'uppercase' }}>
         <LaunchCountdownLine status={status} />
       </div>

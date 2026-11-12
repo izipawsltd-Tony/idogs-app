@@ -120,6 +120,7 @@ export default function BillingPage({ toast }: Props) {
   const isPastDue = isPlus && subscriptionStatus === 'past_due'
   const accessGrant = billingDetails?.accessGrant ?? null
   const offerStatus = useOfferStatus()
+  const launchActive = Boolean(offerStatus?.launch.active)
   const hasLiveSubscription = Boolean(billingDetails?.subscription) ||
     ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(subscriptionStatus || '')
   // Google Play does not allow purchase/subscription UI for digital services
@@ -447,6 +448,17 @@ export default function BillingPage({ toast }: Props) {
               <div data-testid="plus-included-by-pass" style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan · until {formatBillingDate(accessGrant.expiresAt)}</div>
             ) : androidPurchasesUnavailable ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>Purchases are unavailable in this Android app.</div>
+            ) : launchActive ? (
+              // While the free-year campaign runs, the free year is the main
+              // action; the A$0 subscription stays available as a secondary choice.
+              <>
+                <button type="button" onClick={() => document.getElementById('launch-offer')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                  Claim your free year — no card needed
+                </button>
+                <button onClick={() => handleSubscribe(interval)} disabled={loading || detailsLoading || !!detailsError || (promotionActive && interval === 'plus_monthly' && !promotionConsent)} style={{ width: '100%', marginTop: 8, padding: '9px', background: 'transparent', color: 'var(--green)', border: '1px solid var(--green)', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
+                  {loading ? 'Processing…' : promotionActive && interval === 'plus_monthly' ? 'Or subscribe: Plus A$0/month until 31 Jan, then A$7' : `Or subscribe — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}
+                </button>
+              </>
             ) : (
               <button onClick={() => handleSubscribe(interval)} disabled={loading || detailsLoading || !!detailsError || (promotionActive && interval === 'plus_monthly' && !promotionConsent)} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
                 {loading ? <><span className="spinner" style={{ width: 13, height: 13, borderTopColor: '#fff' }} /> Processing…</> : promotionActive && interval === 'plus_monthly' ? 'Get Plus for A$0' : `Upgrade to Plus — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}
