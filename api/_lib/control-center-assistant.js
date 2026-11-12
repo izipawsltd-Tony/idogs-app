@@ -88,7 +88,9 @@ export function createAssistantHandler({ verifySuperAdmin, buildBrief, provider,
     try {
       const evidence = buildControlCenterEvidence(await buildBrief())
       evidence.deploymentEnvironment = ['production', 'preview', 'development'].includes(deploymentEnvironment) ? deploymentEnvironment : 'unknown'
-      if (evidence.freshness !== 'FRESH') return res.status(503).json({ error: 'Fresh operating evidence is unavailable.' })
+      if (evidence.freshness !== 'FRESH') {
+        return res.status(503).json({ error: 'Fresh operating evidence is unavailable.', code: 'EVIDENCE_NOT_FRESH' })
+      }
       stage = 'QUOTA'
       ticket = await budget.reserve(actor.uid)
       if (!ticket) return res.status(429).json({ error: 'Daily assistant request limit reached. Try again tomorrow (UTC).' })

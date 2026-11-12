@@ -344,7 +344,12 @@ export default function SuperAdminAiCeoPage() {
         body: JSON.stringify({ question: question.trim() }),
       })
       const result = await response.json().catch(() => ({}))
-      if (!response.ok || typeof result.answer !== 'string') throw new Error(response.status === 429 ? 'Daily analysis limit reached. Try again tomorrow (UTC).' : result.code === 'PROVIDER_TIMEOUT' ? 'Analysis took too long. Try a shorter question.' : 'Analysis unavailable. No operating action was executed.')
+      if (!response.ok || typeof result.answer !== 'string') {
+        if (response.status === 429) throw new Error('Daily analysis limit reached. Try again tomorrow (UTC).')
+        if (result.code === 'PROVIDER_TIMEOUT') throw new Error('Analysis took too long. Try a shorter question.')
+        if (result.code === 'EVIDENCE_NOT_FRESH') throw new Error('Current operating evidence is unavailable. Refresh the Control Center before asking again.')
+        throw new Error('Analysis unavailable. No operating action was executed.')
+      }
       setAnswer({ text: result.answer, truncated: result.truncated === true, evidenceAt: Date.parse(result.evidenceGeneratedAt) })
       setClock(Date.now())
     } catch (reason) {
