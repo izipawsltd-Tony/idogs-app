@@ -34,6 +34,8 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
       failedSubscriptionProfiles: amount(revenue.failedSubscriptionProfiles),
     },
     metrics: Object.fromEntries(METRICS.map(key => [key, amount(source.facts?.[key])])),
+    supportCoverage: source.facts?.supportSampleAtLimit === true ? 'POTENTIALLY_PARTIAL'
+      : source.facts?.supportSampleAtLimit === false ? 'COMPLETE' : 'UNKNOWN',
     metricsBasis: 'Raw operating/account counts include internal, QA and unclassified profiles. New user counts are not verified customer growth. Acquisition uses a separate eligible-signup denominator.',
     acquisition: {
       windowDays: amount(source.growthSnapshot?.windowDays),
@@ -57,6 +59,7 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
     limitations: [
       ...(freshness !== 'FRESH' ? ['Operating evidence is stale or its timestamp cannot be trusted.'] : []),
       ...(!revenueVerified ? ['Customer revenue is not fully verified. Missing values are not zero.'] : []),
+      ...(source.facts?.supportSampleAtLimit === true ? ['Support counts cover a capped sample. The inbox may contain additional conversations requiring action.'] : []),
       'Current account counts are not historical acquisition or retention cohorts.',
       'Monitoring and AI connections require separate verified integrations.',
     ],

@@ -201,6 +201,7 @@ type AiCeoPayload = {
     showcaseEnquiries30d: number
     showcaseNotificationFailures30d: number
     supportConversations: number
+    supportSampleAtLimit?: boolean
     supportNeedsAction: number
     supportUnread: number
     supportOldestOpenDays: number
@@ -387,7 +388,9 @@ export default function SuperAdminAiCeoPage() {
     ['QA / Internal LIVE MRR', `A$${data.customerRevenueTruth.qaInternalLiveMrrAud}`, `${data.customerRevenueTruth.qaInternalLiveActiveSubscriptions} excluded LIVE subscription(s)`],
     ['Unresolved LIVE MRR', `A$${data.customerRevenueTruth.unresolvedLiveMrrAud}`, `${data.customerRevenueTruth.failedSubscriptionProfiles} failed subscription profile(s)`],
     ['REAL_CUSTOMER', data.accountClassification.realCustomer, `${data.accountClassification.likelyReal} likely-real signal(s)`],
-    ['Support needs action', data.facts.supportNeedsAction, `oldest ${data.facts.supportOldestOpenDays} day(s)`],
+    ['Support needs action', data.facts.supportNeedsAction, data.facts.supportSampleAtLimit
+      ? `Sample limit reached · oldest in sample ${data.facts.supportOldestOpenDays} day(s)`
+      : `oldest ${data.facts.supportOldestOpenDays} day(s)`],
   ] as const
 
   return (

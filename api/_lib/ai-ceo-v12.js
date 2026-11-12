@@ -10,6 +10,7 @@ import { hasVerifiedLiveBilling } from './control-center-evidence.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const SUPPORT_NEEDS_ACTION = new Set(['new', 'open', 'waiting_for_support'])
+const SUPPORT_SAMPLE_LIMIT = 100
 const TEST_TOKENS = /(^|[^a-z0-9])(qa|test|testing|staging|preview|demo|sandbox)([^a-z0-9]|$)/i
 const TEST_DOMAINS = new Set(['example.com', 'example.org', 'example.net', 'test.com', 'invalid'])
 const CONFIDENCE_WEIGHT = Object.freeze({ HIGH: 1, MEDIUM: 0.75, LOW: 0.5 })
@@ -548,7 +549,7 @@ export async function buildAiCeoV12() {
     db.collection('users').get(),
     db.collection('dogs').get(),
     db.collection('litters').get(),
-    db.collection('supportConversations').limit(100).get(),
+    db.collection('supportConversations').limit(SUPPORT_SAMPLE_LIMIT).get(),
     db.collection('showcaseEnquiries').get(),
   ])
 
@@ -780,6 +781,7 @@ export async function buildAiCeoV12() {
       puppyFunnel,
       showcaseEnquiriesTotal: enquiries.length, showcaseEnquiries7d, showcaseEnquiries30d, showcaseNotificationFailures30d,
       supportConversations: supportConversations.length, supportNeedsAction: supportNeedsActionItems.length, supportUnread, supportOldestOpenDays,
+      supportSampleAtLimit: supportConversations.length === SUPPORT_SAMPLE_LIMIT,
     },
     decisions,
     actionPlan7d,
