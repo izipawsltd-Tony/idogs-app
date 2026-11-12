@@ -3,6 +3,19 @@
 // Replayed, invalid and future observations cannot open or resolve incidents.
 const MAX_CONSECUTIVE_GAP_MS = 30 * 60 * 1000
 
+export function summarizeMonitor(state, now = new Date()) {
+  if (!state) return { status: 'NO_OBSERVATION', checkedAt: null, incident: null }
+  const at = Date.parse(state.lastCheckedAt)
+  const age = now.getTime() - at
+  if (state.version !== 1 || !Number.isFinite(age) || age < 0
+    || !['HEALTHY', 'HTTP_FAILURE', 'OBSERVATION_GAP'].includes(state.condition)) throw new Error('Invalid monitor state')
+  return {
+    status: age > MAX_CONSECUTIVE_GAP_MS ? 'STALE' : state.condition,
+    checkedAt: new Date(at).toISOString(),
+    incident: state.incident ?? null,
+  }
+}
+
 export function advanceMonitor(previous, observation, { now = new Date(), threshold = 2 } = {}) {
   if (!Number.isInteger(threshold) || threshold < 2 || threshold > 10) throw new Error('Invalid incident threshold')
   const at = Date.parse(observation?.checkedAt)

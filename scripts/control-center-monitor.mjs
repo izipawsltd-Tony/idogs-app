@@ -1,7 +1,7 @@
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { checkSiteHealth } from '../api/_lib/control-center-health.js'
-import { advanceMonitor } from '../api/_lib/control-center-incidents.js'
+import { advanceMonitor, summarizeMonitor } from '../api/_lib/control-center-incidents.js'
 
 // Designed for a scheduler outside the website's hosting runtime. State path
 // is fixed; no user-provided filesystem paths or network targets are accepted.
@@ -15,6 +15,11 @@ try {
 } catch (error) {
   // Missing first-run state is acceptable. Corruption is not a clean slate.
   if (error.code !== 'ENOENT') throw error
+}
+if (process.argv.includes('--status')) {
+  const summary = summarizeMonitor(previous)
+  console.log(JSON.stringify(summary, null, 2))
+  process.exit(summary.status === 'HEALTHY' && !summary.incident ? 0 : 1)
 }
 const observation = await checkSiteHealth()
 const result = advanceMonitor(previous, observation)

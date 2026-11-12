@@ -45,6 +45,8 @@ firebase emulators:exec --config firebase.control-center-qa.json --project demo-
 
 `control-center-incidents.js` adds deduplicated incidents. Two consecutive HTTP failures open an HTTP incident, two uncertain probes open an observation gap, and two successful probes resolve an incident. More than 30 minutes between observations resets the streak. The runner rejects replayed or future observations. `scripts/control-center-monitor.mjs` runs fixed probes and publishes the observation, incident state and transition events together in the gitignored `.control-center-monitor/state.json`. Existing state files remain readable. Read the observation timestamp before using the result.
 
+From the runner's working directory, `node scripts/control-center-monitor.mjs --status` reads local state without probing the site or writing a new observation. It reports `NO_OBSERVATION` before the first run and `STALE` after 30 minutes without an observation. Exit code zero means a recent healthy observation with no open incident. This check does not supply independent monitoring when the computer is offline.
+
 The Windows pilot runs every 15 minutes while the machine is awake and the user is signed in. It skips overlapping runs and expires at midnight on 15 November 2026 Adelaide time. Automatic execution and recovery after an overnight gap were verified. Results are stored locally. Off-device execution and notification routing are pending.
 
 First increment preview: https://idogs-3z78lor1l-izipawsltd-tonys-projects.vercel.app (READY at ec22f0b6). Protected-preview access via a temporary share link was rejected by automatic review pending explicit approval; no access protection was disabled. Live authenticated preview behavior and actual model responses remain unverified.
