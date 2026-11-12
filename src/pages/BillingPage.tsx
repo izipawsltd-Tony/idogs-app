@@ -428,8 +428,9 @@ export default function BillingPage({ toast }: Props) {
             <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>Snap your vaccination book with iDogs Scan · up to 5 dogs · litters</div>
             {promotionActive && interval === 'plus_monthly' && <PlusPromotion />}
             {!(promotionActive && interval === 'plus_monthly') && <><div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
-              <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>
-              <span style={{ fontSize: 12, color: 'var(--light)' }}>{interval === 'plus_annual' ? 'AUD/year' : 'AUD/month'}</span>
+              {launchActive && !isPlus && !accessGrant && <del data-testid="billing-voucher-strike" style={{ fontSize: 18, color: 'var(--light)' }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</del>}
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{launchActive && !isPlus && !accessGrant ? '$0' : interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>
+              <span style={{ fontSize: 12, color: 'var(--light)' }}>{launchActive && !isPlus && !accessGrant ? 'for 12 months with the Gift Voucher' : interval === 'plus_annual' ? 'AUD/year' : 'AUD/month'}</span>
             </div>
             <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 16 }}>
               {interval === 'plus_annual' ? `≈ $${(PLUS_ANNUAL_PRICE_AUD / 12).toFixed(2)}/month, billed annually` : `$${PLUS_MONTHLY_PRICE_AUD * 12} AUD/year if paid monthly`}
