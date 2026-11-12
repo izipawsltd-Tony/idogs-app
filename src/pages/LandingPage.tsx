@@ -308,7 +308,7 @@ export default function LandingPage() {
                     <p className="pricing-label">iDogs Plus</p>
                     {launchActive ? (
                       // A$7 is the real regular price (genuine reference price); the voucher makes the first year free.
-                      <p className="pricing-price" data-testid="pricing-voucher-price"><del style={{ opacity: 0.55, fontSize: '0.6em', marginRight: 8 }}>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</del><span>A$0</span><small>/month for 12 months with the Gift Voucher</small></p>
+                      <p className="pricing-price" data-testid="pricing-voucher-price"><del style={{ fontFamily: "'Fraunces','Georgia',serif", fontSize: 30, fontWeight: 600, lineHeight: 1, color: 'var(--ink-soft)', opacity: 0.75, marginRight: 6, textDecorationThickness: 2 }}>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</del><span>A$0</span><small>/month for 12 months with the Gift Voucher</small></p>
                     ) : !promotionActive && <p className="pricing-price"><span>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</span><small>/month</small></p>}
                   </div>
                   <span className="pricing-badge">Most popular</span>
