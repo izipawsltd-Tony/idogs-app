@@ -21,6 +21,10 @@ export function createFoundingCheckoutHandler({
   createSession,
   getAppUrl,
   isEnabled = () => process.env.FOUNDING_CHECKOUT_ENABLED === 'true',
+  // Owner decision 12 Nov 2026: the 15-month pass is sold only once the free
+  // Gift Vouchers are gone (or the voucher campaign is off). Same rule as
+  // /api/offer-status, enforced here so a direct API call cannot bypass it.
+  isLaunchActive = async () => false,
   now = Date.now,
   offer = FOUNDING_OFFER,
 } = {}) {
@@ -66,6 +70,9 @@ export function createFoundingCheckoutHandler({
     }
 
     try {
+      if (await isLaunchActive()) {
+        return res.status(409).json({ error: 'Free Gift Vouchers are still available — claim yours instead. No payment has been taken.', code: 'FOUNDING_VOUCHERS_AVAILABLE' })
+      }
       const profile = await getProfile(uid)
       if (!profile) return res.status(409).json({ error: 'Account details are not ready. Please refresh Billing.' })
       // Never sell a one-off pass on top of a live subscription (including

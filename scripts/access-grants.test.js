@@ -119,6 +119,7 @@ describe('founding checkout', () => {
       [{ now: () => FOUNDING_OFFER.salesEnd }, 'FOUNDING_OFFER_CLOSED'],
       [{ getSeatsSold: async () => FOUNDING_OFFER.seats }, 'FOUNDING_SOLD_OUT'],
       [{ getProfile: async () => ({ plan: 'plus', subscriptionStatus: 'trialing', stripeSubscriptionId: 'sub_1' }) }, 'FOUNDING_HAS_SUBSCRIPTION'],
+      [{ isLaunchActive: async () => true }, 'FOUNDING_VOUCHERS_AVAILABLE'],
     ]) {
       const d = deps(over); const res = mockRes()
       await createFoundingCheckoutHandler(d)(authed(body), res)

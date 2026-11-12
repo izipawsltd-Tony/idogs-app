@@ -9,7 +9,8 @@ import { ACCESS_GRANT_COUNTERS, counterCount } from './_lib/access-grant-store.j
 import { CHECKOUT_PRICE_IDS } from './_lib/checkout-handler.js'
 import { promotionEnvironment, checkoutReturnOrigin } from './_lib/promotion-environment.js'
 import { requireAppUrl } from './_lib/require-config.js'
-import { FOUNDING_OFFER } from '../shared/access-grants.js'
+import { FOUNDING_OFFER, LAUNCH_OFFER } from '../shared/access-grants.js'
+import { launchOfferState } from './_lib/launch-offer-handler.js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
 const envConfig = promotionEnvironment({ environment: process.env.VERCEL_ENV, projectId: process.env.VERCEL_PROJECT_ID,
@@ -39,6 +40,8 @@ export default createFoundingCheckoutHandler({
     const snap = await db.collection('users').doc(uid).get()
     return snap.exists ? snap.data() : null
   },
+  isLaunchActive: async () => process.env.LAUNCH_OFFER_ENABLED === 'true' &&
+    launchOfferState({ claimed: counterCount(await db.collection(ACCESS_GRANT_COUNTERS).doc(LAUNCH_OFFER.id).get()), nowMs: Date.now() }).active,
   getSeatsSold: async () => counterCount(await db.collection(ACCESS_GRANT_COUNTERS).doc(FOUNDING_OFFER.id).get()),
   getTaxProductId: async () => {
     const price = await stripe.prices.retrieve(plusMonthlyPriceId)
