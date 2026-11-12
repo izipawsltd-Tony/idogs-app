@@ -18,6 +18,8 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
   const observedCount = (value, cohort) => freshness === 'FRESH'
     && Number.isSafeInteger(value) && value >= 0
     && Number.isSafeInteger(cohort) && value <= cohort ? value : null
+  const dogs = observedCount(growth.accountsWithDogAfterSignup, growth.eligibleSignups)
+  const litters = observedCount(growth.accountsWithActiveLitterAfterSignup, growth.eligibleSignups)
   return {
     schemaVersion: '1.0',
     generatedAt: Number.isFinite(generated) ? new Date(generated).toISOString() : null,
@@ -41,14 +43,16 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
       excludedInternalQa: amount(source.growthSnapshot?.excludedInternalQa),
       unclassified: amount(source.growthSnapshot?.unclassified),
       invalidCreatedAt: amount(source.growthSnapshot?.invalidCreatedAt),
-      accountsWithDogAfterSignup: observedCount(growth.accountsWithDogAfterSignup, growth.eligibleSignups),
-      accountsWithActiveLitterAfterSignup: observedCount(growth.accountsWithActiveLitterAfterSignup, growth.eligibleSignups),
+      accountsWithDogAfterSignup: dogs,
+      accountsWithActiveLitterAfterSignup: litters,
+      accountsWithDogBeforeActiveLitter: dogs === null || litters === null ? null
+        : observedCount(growth.accountsWithDogBeforeActiveLitter, Math.min(dogs, litters)),
       accountsWithVerifiedActiveSubscription: hasVerifiedLiveBilling(source.revenueTruth) && source.revenueTruth.failedSubscriptionReads === 0
         ? observedCount(growth.accountsWithVerifiedActiveSubscription, growth.confirmedCustomers) : null,
       channels: Object.fromEntries(['meta', 'google', 'bing', 'direct', 'other', 'unknown'].map(key => [key, amount(source.growthSnapshot?.channels?.[key])])),
       visitorToSignupRate: null,
       retentionRate: null,
-      basis: 'Counts describe currently existing dog records, active litters and confirmed customers with active live subscriptions within the signup cohort. Each measure is independent. Historical first creation, event order, paid conversion and retention are unknown.',
+      basis: 'Counts use surviving records in the signup cohort. The ordered milestone counts accounts with a dog record dated after or at signup and strictly before their earliest currently active litter. Historical first creation, paid conversion and retention are unknown.',
     },
     limitations: [
       ...(freshness !== 'FRESH' ? ['Operating evidence is stale or its timestamp cannot be trusted.'] : []),

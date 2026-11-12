@@ -39,3 +39,19 @@ test('raw account totals and qualified acquisition counts have explicit differen
   assert.equal(result.acquisition.unclassified, 11)
   assert.equal(result.acquisition.channels.unknown, 1)
 })
+
+test('ordered milestone requires fresh evidence and valid counts for both stages', () => {
+  const growthSnapshot = {
+    eligibleSignups: 5,
+    accountsWithDogAfterSignup: 4,
+    accountsWithActiveLitterAfterSignup: 2,
+    accountsWithDogBeforeActiveLitter: 2,
+  }
+  const project = (overrides = {}) => buildControlCenterEvidence({
+    ...base, growthSnapshot, ...overrides,
+  }, { now }).acquisition.accountsWithDogBeforeActiveLitter
+  assert.equal(project(), 2)
+  assert.equal(project({ growthSnapshot: { ...growthSnapshot, accountsWithDogBeforeActiveLitter: 3 } }), null)
+  assert.equal(project({ growthSnapshot: { ...growthSnapshot, accountsWithActiveLitterAfterSignup: undefined } }), null)
+  assert.equal(project({ generatedAt: '2026-11-09T00:00:00Z' }), null)
+})
