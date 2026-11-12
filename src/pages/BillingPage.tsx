@@ -453,7 +453,7 @@ export default function BillingPage({ toast }: Props) {
               // action; the A$0 subscription stays available as a secondary choice.
               <>
                 <button type="button" onClick={() => document.getElementById('launch-offer')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                  Claim your free year — no card needed
+                  Claim your Gift Voucher — no card needed
                 </button>
                 <button onClick={() => handleSubscribe(interval)} disabled={loading || detailsLoading || !!detailsError || (promotionActive && interval === 'plus_monthly' && !promotionConsent)} style={{ width: '100%', marginTop: 8, padding: '9px', background: 'transparent', color: 'var(--green)', border: '1px solid var(--green)', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
                   {loading ? 'Processing…' : promotionActive && interval === 'plus_monthly' ? 'Or subscribe: Plus A$0/month until 31 Jan, then A$7' : `Or subscribe — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}

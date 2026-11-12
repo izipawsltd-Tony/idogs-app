@@ -91,7 +91,7 @@ export default function LaunchOfferCard({ status, user, hasPass, toast, onClaime
         <Link to="/app/dogs/new" className="btn btn-primary">Add your first dog</Link>
       ) : (
         <button className="btn btn-primary" disabled={!user || loading} onClick={claim}>
-          {loading ? 'Claiming…' : 'Claim your free year'}
+          {loading ? 'Claiming…' : 'Claim your Gift Voucher'}
         </button>
       )}
     </div>

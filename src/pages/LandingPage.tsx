@@ -119,7 +119,7 @@ export default function LandingPage() {
               {launchActive && offerStatus ? (
                 <p className="price-note" data-testid="hero-launch-offer">
                   🎁 <strong>FREE Gift Voucher</strong> - 1 year of iDogs Plus for 100 dog owners &amp; dog breeders, no card needed. <LaunchCountdownLine status={offerStatus} />{' '}
-                  <Link to="/signup?next=%2Fapp%2Fbilling" style={{ fontWeight: 700, textDecoration: 'underline', color: 'inherit' }}>Claim your free year</Link>
+                  <Link to="/signup?next=%2Fapp%2Fbilling" style={{ fontWeight: 700, textDecoration: 'underline', color: 'inherit' }}>Claim your Gift Voucher</Link>
                 </p>
               ) : (
                 <p className="price-note">{promotionActive ? 'iDogs Plus A$0/month through 31 January 2027 · Then A$7/month.' : 'Plans from A$7/month · No complicated pricing.'}</p>
@@ -315,7 +315,7 @@ export default function LandingPage() {
                     <p style={{ fontSize: 13, margin: '4px 0 0' }}><LaunchCountdownLine status={offerStatus} /> · add your first dog, then claim. Nothing renews.</p>
                   </div>
                 )}
-                {promotionActive && <PlusPromotion />}
+                {promotionActive && !launchActive && <PlusPromotion />}
                 <p className="pricing-copy">Organise your dogs and breeding records in one connected workspace.</p>
                 <ul className="pricing-list">
                   <li>Dog profiles, health records and documents</li>
@@ -326,11 +326,16 @@ export default function LandingPage() {
                 </ul>
                 {launchActive ? (
                   <>
-                    <Link className="btn btn-primary pricing-cta" to="/signup?next=%2Fapp%2Fbilling">Claim your free year — no card needed</Link>
+                    <Link className="btn btn-primary pricing-cta" to="/signup?next=%2Fapp%2Fbilling">Claim your Gift Voucher — no card needed</Link>
                     {promotionActive && (
-                      <p style={{ fontSize: 13, marginTop: 10 }}>
-                        Prefer a monthly subscription? <Link to="/signup?next=%2Fapp%2Fbilling" style={{ textDecoration: 'underline', color: 'inherit' }}>Get Plus for A$0/month until 31 January 2027</Link>, then A$7/month.
-                      </p>
+                      // The A$0 subscription offer stays available with its full
+                      // terms, shown as the secondary choice under the voucher CTA.
+                      <div style={{ marginTop: 16 }}>
+                        <p style={{ fontSize: 13, margin: '0 0 8px' }}>
+                          Prefer a monthly subscription? <Link to="/signup?next=%2Fapp%2Fbilling" style={{ textDecoration: 'underline', color: 'inherit' }}>Get Plus for A$0/month until 31 January 2027</Link>, then A$7/month.
+                        </p>
+                        <div style={{ fontSize: 12, opacity: 0.9 }}><PlusPromotion /></div>
+                      </div>
                     )}
                   </>
                 ) : (
