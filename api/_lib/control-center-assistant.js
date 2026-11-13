@@ -99,7 +99,11 @@ export function createAssistantHandler({ verifySuperAdmin, buildBrief, provider,
       const result = await provider.answer(req.body.question.trim(), evidence)
       stage = 'AUDIT'
       await budget.finish(ticket, 'SUCCESS')
-      return res.status(200).json({ ...result, evidenceGeneratedAt: evidence.generatedAt, readOnly: true, auditId: ticket.auditId })
+      // Scope comes from the server runtime, not the model's wording: the
+      // model may omit the staging caveat, so the UI labels it deterministically.
+      const evidenceScope = evidence.deploymentEnvironment === 'production' ? 'PRODUCTION'
+        : evidence.deploymentEnvironment === 'unknown' ? 'UNKNOWN' : 'STAGING'
+      return res.status(200).json({ ...result, evidenceGeneratedAt: evidence.generatedAt, evidenceScope, readOnly: true, auditId: ticket.auditId })
     } catch (error) {
       const code = error instanceof AssistantUnavailable && /^PROVIDER_(TIMEOUT|TRANSPORT|UNAVAILABLE|RESPONSE_FORMAT|HTTP_[1-5][0-9]{2})$/.test(error.code) ? error.code : 'ASSISTANT_UNAVAILABLE'
       // Fixed codes/stages only: no prompt, customer identifier, key or raw error.

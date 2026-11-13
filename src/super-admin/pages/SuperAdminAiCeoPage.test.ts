@@ -121,4 +121,23 @@ describe('Control Center evidence and health UI', () => {
     expect(rendered()).not.toContain('Analysis unavailable')
     expect(request).toHaveBeenCalledTimes(3)
   })
+  it.each([
+    ['STAGING', 'Scope: staging evidence from this preview'],
+    [undefined, 'Scope: evidence environment unknown'],
+    ['production', 'Scope: evidence environment unknown'],
+  ])('labels the answer scope deterministically for %s evidence', async (evidenceScope, label) => {
+    const request = await mount(fixture(), true)
+    request.mockResolvedValueOnce({ ok: true, json: async () => ({ answer: '1. Check billing evidence.', evidenceScope, evidenceGeneratedAt: new Date().toISOString() }) } as any)
+    await act(async () => { renderer!.root.findByType('textarea').props.onChange({ target: { value: 'Priorities?' } }) })
+    await act(async () => { await renderer!.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(rendered()).toContain(label)
+  })
+  it('omits the scope caveat only for server-confirmed production evidence', async () => {
+    const request = await mount(fixture(), true)
+    request.mockResolvedValueOnce({ ok: true, json: async () => ({ answer: '1. Check billing evidence.', evidenceScope: 'PRODUCTION', evidenceGeneratedAt: new Date().toISOString() }) } as any)
+    await act(async () => { renderer!.root.findByType('textarea').props.onChange({ target: { value: 'Priorities?' } }) })
+    await act(async () => { await renderer!.root.findByType('form').props.onSubmit({ preventDefault() {} }) })
+    expect(rendered()).toContain('1. Check billing evidence.')
+    expect(rendered()).not.toContain('Scope:')
+  })
 })

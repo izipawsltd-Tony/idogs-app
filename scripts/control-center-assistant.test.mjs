@@ -88,7 +88,24 @@ test('only projected server evidence reaches provider; no question stored in aud
   await handler({ method: 'POST', body: { question: 'How is iDogs?' } }, response)
   assert.equal(response.code, 200)
   assert.equal(response.body.readOnly, true)
+  assert.equal(response.body.evidenceScope, 'STAGING')
   assert.deepEqual(calls, ['admin', [{ auditId: 'audit-1' }, 'SUCCESS']])
+})
+test('evidence scope is set by the server runtime, never by the model answer', async () => {
+  const scopeFor = async deploymentEnvironment => {
+    const response = res()
+    await createAssistantHandler({
+      verifySuperAdmin: async () => ({ uid: 'admin' }), buildBrief: async () => evidence(), deploymentEnvironment,
+      provider: { enabled: () => true, answer: async () => ({ answer: 'Production revenue is strong.', evidenceScope: 'PRODUCTION' }) },
+      budget: { reserve: async () => ({ auditId: 'a' }), finish: async () => {} },
+    })({ method: 'POST', body: { question: 'hi' } }, response)
+    return response.body.evidenceScope
+  }
+  assert.equal(await scopeFor('production'), 'PRODUCTION')
+  assert.equal(await scopeFor('preview'), 'STAGING')
+  assert.equal(await scopeFor('development'), 'STAGING')
+  assert.equal(await scopeFor(undefined), 'UNKNOWN')
+  assert.equal(await scopeFor('prod'), 'UNKNOWN')
 })
 test('exhausted budget and stale evidence prevent model calls', async () => {
   const forbidden = () => { throw new Error('must not run') }

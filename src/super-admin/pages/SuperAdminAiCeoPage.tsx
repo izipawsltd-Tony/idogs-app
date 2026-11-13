@@ -287,7 +287,7 @@ export default function SuperAdminAiCeoPage() {
   const [healthError, setHealthError] = useState<string | null>(null)
   const [assistantEnabled, setAssistantEnabled] = useState<boolean | null>(null)
   const [question, setQuestion] = useState('')
-  const [answer, setAnswer] = useState<{ text: string; truncated: boolean; evidenceAt: number } | null>(null)
+  const [answer, setAnswer] = useState<{ text: string; truncated: boolean; evidenceAt: number; scope: 'PRODUCTION' | 'STAGING' | 'UNKNOWN' } | null>(null)
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [assistantError, setAssistantError] = useState<string | null>(null)
   useEffect(() => {
@@ -350,7 +350,11 @@ export default function SuperAdminAiCeoPage() {
         if (result.code === 'EVIDENCE_NOT_FRESH') throw new Error('Current operating evidence is unavailable. Refresh the Control Center before asking again.')
         throw new Error('Analysis unavailable. No operating action was executed.')
       }
-      setAnswer({ text: result.answer, truncated: result.truncated === true, evidenceAt: Date.parse(result.evidenceGeneratedAt) })
+      setAnswer({
+        text: result.answer, truncated: result.truncated === true, evidenceAt: Date.parse(result.evidenceGeneratedAt),
+        // Anything other than an explicit production scope is never shown as production.
+        scope: result.evidenceScope === 'PRODUCTION' ? 'PRODUCTION' : result.evidenceScope === 'STAGING' ? 'STAGING' : 'UNKNOWN',
+      })
       setClock(Date.now())
     } catch (reason) {
       setAssistantError(reason instanceof Error ? reason.message : 'Analysis unavailable.')
@@ -428,6 +432,11 @@ export default function SuperAdminAiCeoPage() {
         </form>
         {assistantError && <p role="alert">{assistantError}</p>}
         {answer && <div aria-live="polite" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.65, marginTop: 16 }}>
+          {answer.scope !== 'PRODUCTION' && <p role="note" style={{ fontSize: 12, fontWeight: 600 }}>
+            {answer.scope === 'STAGING'
+              ? 'Scope: staging evidence from this preview. Not production business results; the production baseline is unknown from this answer.'
+              : 'Scope: evidence environment unknown. Do not treat this answer as production business results.'}
+          </p>}
           {Number.isFinite(answer.evidenceAt) && <p style={{ fontSize: 12 }}>
             Evidence as of {new Date(answer.evidenceAt).toLocaleString('en-AU', { timeZone: 'Australia/Adelaide' })} Adelaide time.
             {clock - answer.evidenceAt > 300000 && ' Ask again for analysis using fresh evidence.'}
