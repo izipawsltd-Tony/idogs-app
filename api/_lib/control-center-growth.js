@@ -75,6 +75,11 @@ export function buildGrowthSnapshot({ users, accounts, dogs, activeLitters, veri
     accountsWithVerifiedActiveSubscription,
     visitors: null, visitorToSignupRate: null, retentionRate: null,
     basis: 'Current signup profiles classified REAL_CUSTOMER or LIKELY_REAL. Likely-real signals are not verified customers. Source is self-reported attribution, not proof of ad performance.',
-    limitations: ['Visitor denominator is not connected.', 'No durable activation, cancellation or retention event history is established by this snapshot.', 'Direct means recorded direct attribution; missing source remains unknown.'],
+    limitations: [
+      'Visitor denominator is not connected.',
+      'Active subscriptions show current billing status. Collected payments and first payment dates are unverified.',
+      'No durable activation, cancellation or retention event history is established by this snapshot.',
+      'Direct means recorded direct attribution; missing source remains unknown.',
+    ],
   }
 }
