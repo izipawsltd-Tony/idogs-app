@@ -44,8 +44,8 @@ export function createScanHandler({ verifyIdToken, getUserRef, reserveQuota, rol
     if (!reservation.reserved) {
       return res.status(403).json({
         error: reservation.plan === 'plus'
-          ? 'You have used all 10 AI scans for this billing period.'
-          : 'You have used both of your free AI scans. Upgrade to Plus for 10 scans/month.',
+          ? 'You have used all 10 iDogs Scans for this billing period.'
+          : 'You have used both of your free iDogs Scans. Upgrade to Plus for 10 scans/month.',
         reason: 'SCAN_QUOTA_EXCEEDED',
         plan: reservation.plan,
       })
