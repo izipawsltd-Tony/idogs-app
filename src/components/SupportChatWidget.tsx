@@ -1,6 +1,14 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { SUPPORT_WHATSAPP_DISPLAY, whatsappSupportUrl } from '../lib/supportContact'
 import './supportChat.css'
+
+function WhatsAppLink({ question, category, label, compact = false }: { question?: string; category?: string; label: string; compact?: boolean }) {
+  return <a className={`support-whatsapp${compact ? ' compact' : ''}`} href={whatsappSupportUrl(question, category)} target="_blank" rel="noopener noreferrer" data-testid="support-whatsapp-link" aria-label={`${label} (opens WhatsApp, ${SUPPORT_WHATSAPP_DISPLAY})`}>
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>
+    <span>{label}</span>
+  </a>
+}
 
 type Conversation = { id: string; subject: string; status: string; updatedAt?: string; userUnreadCount?: number }
 type Suggestion = { id: string; question: string; answer: string; category: string }
@@ -22,7 +30,8 @@ export default function SupportChatWidget() {
   const [category, setCategory] = useState('')
   const [categories, setCategories] = useState<string[]>([])
   const [faqItems, setFaqItems] = useState<Suggestion[]>([])
-  type ChatTurn = { id: string; role: 'user' | 'assistant'; text: string }
+  // whatsapp: question to pre-fill when the assistant offers WhatsApp after a hand-off.
+  type ChatTurn = { id: string; role: 'user' | 'assistant'; text: string; whatsapp?: string }
   const [chatLog, setChatLog] = useState<ChatTurn[]>([])
   const [chatInput, setChatInput] = useState('')
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -182,9 +191,9 @@ export default function SupportChatWidget() {
         // Khong co trong FAQ -> tao conversation cho support tra loi qua email/inbox
         const result2 = await call('/api/support', { method: 'POST', body: JSON.stringify({ action: 'handoff', subject: q.slice(0, 120), message: q }) })
         if (typeof result2.conversationId === 'string') {
-          setChatLog(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: "Thanks for your question! I don't have a ready answer for this one, so I've passed it to our support team — they'll get back to you by email as soon as someone's available." }])
+          setChatLog(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: "Thanks for your question! I don't have a ready answer for this one, so I've passed it to our support team — they'll get back to you by email as soon as someone's available. For a faster reply, message us on WhatsApp.", whatsapp: q }])
         } else {
-          setChatLog(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: 'Sorry, something went wrong sending that. Please try again.' }])
+          setChatLog(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: 'Sorry, something went wrong sending that. Please try again, or message us on WhatsApp.', whatsapp: q }])
         }
       }
     } catch (reason) {
@@ -237,6 +246,10 @@ export default function SupportChatWidget() {
     {open && <div id="support-chat-panel" className="support-chat-panel" role="dialog" aria-modal="false" aria-label="iDogs Support" tabIndex={-1} ref={panel}>
       <header><div><strong>iDogs Support</strong><small>We usually reply within 1 business day.</small></div><button type="button" aria-label="Close support" onClick={() => setOpen(false)}>×</button></header>
       <p className="support-privacy">Do not share passwords, card details or sensitive medical information.</p>
+      <div className="support-whatsapp-row">
+        <WhatsAppLink question={chatInput || [...chatLog].reverse().find(turn => turn.role === 'user')?.text} category={category} label="Chat with us on WhatsApp" />
+        <small>Talk to a real person · {SUPPORT_WHATSAPP_DISPLAY}</small>
+      </div>
       {error && <p role="alert" className="support-error">{error}</p>}
       <p className="support-sr-live" aria-live="polite" aria-atomic="true">{announcement}</p>
       {active ? <div className="support-thread-view">
@@ -257,7 +270,7 @@ export default function SupportChatWidget() {
               </div>
             )}
             {chatLog.map(turn => (
-              <div key={turn.id} className={`support-message ${turn.role === 'user' ? 'user' : 'assistant'}`}><p>{turn.text}</p></div>
+              <div key={turn.id} className={`support-message ${turn.role === 'user' ? 'user' : 'assistant'}`}><p>{turn.text}</p>{turn.whatsapp !== undefined && <WhatsAppLink question={turn.whatsapp} category={category} label="Message us on WhatsApp" compact />}</div>
             ))}
           </div>
           <form className="support-composer" onSubmit={event => { event.preventDefault(); askAssistant(chatInput) }}>
