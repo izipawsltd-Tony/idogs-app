@@ -45,17 +45,21 @@ interface Props {
   status: OfferStatus | null
   user: User | null
   hasPass: boolean
+  // A live Plus subscription already includes everything; the free places are
+  // for accounts without a paid plan (the server refuses them too).
+  hasSubscription?: boolean
   toast: (msg: string, type?: 'success' | 'error' | 'info') => void
   onClaimed?: () => void
 }
 
-export default function LaunchOfferCard({ status, user, hasPass, toast, onClaimed }: Props) {
+export default function LaunchOfferCard({ status, user, hasPass, hasSubscription = false, toast, onClaimed }: Props) {
   const [loading, setLoading] = useState(false)
   const [needsDog, setNeedsDog] = useState(false)
   const [claimedUntil, setClaimedUntil] = useState<string | null>(null)
 
   if (isNativeRuntime() || !status?.launch.active) return null
   if (hasPass && !claimedUntil) return null
+  if (hasSubscription && !claimedUntil) return null
 
   async function claim() {
     if (!user || loading) return

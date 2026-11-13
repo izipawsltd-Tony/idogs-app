@@ -351,7 +351,7 @@ export default function BillingPage({ toast }: Props) {
         </div>
       </div>
 
-      <LaunchOfferCard status={offerStatus} user={user ?? null} hasPass={Boolean(accessGrant)} toast={toast} onClaimed={() => setBillingReloadKey(k => k + 1)} />
+      <LaunchOfferCard status={offerStatus} user={user ?? null} hasPass={Boolean(accessGrant)} hasSubscription={hasLiveSubscription} toast={toast} onClaimed={() => setBillingReloadKey(k => k + 1)} />
       <FoundingMemberCard passActive={Boolean(offerStatus?.pass.active)} user={user ?? null} hasSubscription={hasLiveSubscription} hasPass={Boolean(accessGrant)} toast={toast} />
 
       {(detailsLoading || detailsError || billingDetails?.canManageBilling) && (
@@ -451,7 +451,7 @@ export default function BillingPage({ toast }: Props) {
               <div data-testid="plus-included-by-pass" style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan · until {formatBillingDate(accessGrant.expiresAt)}</div>
             ) : androidPurchasesUnavailable ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>Purchases are unavailable in this Android app.</div>
-            ) : launchActive ? (
+            ) : launchActive && !hasLiveSubscription ? (
               // While the free-year campaign runs, the free year is the main
               // action; the A$0 subscription stays available as a secondary choice.
               <>

@@ -85,4 +85,27 @@ describe('launch claim', () => {
     res = mockRes(); await handler(fakeDb({ 'users/u1': { accessGrant: { granted: true, kind: 'gift', expiresAt: '2027-11-01T00:00:00Z' } } }))(post, res)
     expect(res.body.code).toBe('LAUNCH_HAS_PASS')
   })
+  it('refuses accounts with a live Plus subscription and never uses up a place', async () => {
+    for (const profile of [
+      { stripeSubscriptionId: 'sub_1', subscriptionStatus: 'active', plan: 'plus' },
+      { subscriptionStatus: 'past_due' },
+      { subscriptionStatus: 'trialing' },
+      { stripeSubscriptionId: 'sub_2' },
+    ]) {
+      const db = fakeDb({ 'users/u1': profile })
+      const res = mockRes(); await handler(db)(post, res)
+      expect(res.statusCode).toBe(409)
+      expect(res.body.code).toBe('LAUNCH_HAS_SUBSCRIPTION')
+      expect(db.store.get(counterPath)).toBeUndefined()
+      expect(db.store.get('users/u1').accessGrant).toBeUndefined()
+      expect(db.store.get(`giftRedemptions/${LAUNCH_OFFER.id}_u1`)).toBeUndefined()
+    }
+  })
+  it('still lets a former subscriber (subscription ended, id cleared) claim', async () => {
+    const db = fakeDb({ 'users/u1': { stripeSubscriptionId: null, subscriptionStatus: 'canceled', plan: 'free' } })
+    const res = mockRes(); await handler(db)(post, res)
+    expect(res.statusCode).toBe(200)
+    expect(res.body.hasSubscription).toBeUndefined()
+    expect(db.store.get(counterPath).count).toBe(1)
+  })
 })

@@ -10,6 +10,12 @@ import { logSanitizedError } from './http-helpers.js'
 
 const LIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'])
 
+// The webhook clears stripeSubscriptionId when a subscription is deleted, so a
+// stored id (or a live status) means the account is still being billed.
+export function hasLiveSubscription(profile) {
+  return Boolean(profile?.stripeSubscriptionId) || LIVE_SUBSCRIPTION_STATUSES.has(profile?.subscriptionStatus)
+}
+
 export function launchOfferState({ claimed, nowMs, offer = LAUNCH_OFFER }) {
   const remaining = Math.max(0, offer.maxRedemptions - claimed)
   const open = nowMs >= offer.claimStart && nowMs < offer.claimEnd
@@ -97,6 +103,13 @@ export function createLaunchClaimHandler({
         if (hasValidAccessGrant(profile, t)) {
           return { status: 409, body: { error: 'You already have an iDogs Plus pass.', code: 'LAUNCH_HAS_PASS', grantedUntil: profile.accessGrant.expiresAt } }
         }
+        // The free places are for accounts without a paid plan: a live Plus
+        // subscription already includes everything, and a voucher on top would
+        // use up one of the 100 places while the subscription keeps charging.
+        // Same rule as the 15-Month Pass (founding-checkout-handler.js).
+        if (hasLiveSubscription(profile)) {
+          return { status: 409, body: { error: 'You already have iDogs Plus through your subscription. The free year is for accounts without a paid plan.', code: 'LAUNCH_HAS_SUBSCRIPTION' } }
+        }
         const count = counterCount(counterSnap)
         if (!(count < offer.maxRedemptions)) {
           return { status: 409, body: { error: 'All 100 free places have been claimed.', code: 'LAUNCH_SOLD_OUT' } }
@@ -108,8 +121,7 @@ export function createLaunchClaimHandler({
         tx.set(redemptionRef, { userId: uid, offerId: offer.id, grantedUntil: grant.expiresAt, createdAt: new Date(t).toISOString() })
         tx.set(counterRef, { count: count + 1, updatedAt: new Date(t).toISOString() }, { merge: true })
         tx.set(userRef, { accessGrant: grant }, { merge: true })
-        const hasSubscription = Boolean(profile?.stripeSubscriptionId) || LIVE_SUBSCRIPTION_STATUSES.has(profile?.subscriptionStatus)
-        return { status: 200, body: { ok: true, grantedUntil: grant.expiresAt, hasSubscription, remaining: offer.maxRedemptions - count - 1 } }
+        return { status: 200, body: { ok: true, grantedUntil: grant.expiresAt, remaining: offer.maxRedemptions - count - 1 } }
       })
       return res.status(result.status).json(result.body)
     } catch (err) {
