@@ -1,7 +1,7 @@
 import { computeEffectivePlan } from './entitlements.js'
 import { breederIdentity } from './breeder-profile.js'
 import { checkoutTaxRatesForStripeMode } from './checkout-handler.js'
-import { verifiedPlusInterval } from './billing-reconcile.js'
+import { verifiedPaidInterval as verifiedPlusInterval } from './billing-reconcile.js'
 import { requireAppUrl, logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
 import { EXTRA_LITTER_PRICE_CENTS } from './litter-quota.js'

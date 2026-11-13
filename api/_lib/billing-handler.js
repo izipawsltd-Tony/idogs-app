@@ -1,5 +1,12 @@
 import { requireAppUrl } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
+import { hasActiveAccessGrant } from './entitlements.js'
+
+// Founding Member / kennel gift pass, shown read-only on Billing.
+function accessGrantSummary(profile) {
+  if (!hasActiveAccessGrant(profile)) return null
+  return { kind: profile.accessGrant.kind, expiresAt: profile.accessGrant.expiresAt }
+}
 
 function bearerToken(req) {
   const value = req.headers?.authorization || ''
@@ -104,7 +111,7 @@ export function createBillingSummaryHandler({
       const customerId = typeof profile.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
       const subscriptionId = typeof profile.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : null
       if (!customerId) {
-        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms, entitlement })
+        return res.status(200).json({ accessGrant: accessGrantSummary(profile), subscription: null, invoices: [], canManageBilling: false, sms, entitlement })
       }
 
       let subscription = null
@@ -175,7 +182,7 @@ export function createBillingSummaryHandler({
 
       const result = await listInvoices({ customer: customerId, limit: 12 })
       const invoices = (result?.data || []).map(mapInvoice).filter(invoice => invoice.id)
-      return res.status(200).json({ subscription, invoices, canManageBilling: true, sms, entitlement })
+      return res.status(200).json({ accessGrant: accessGrantSummary(profile), subscription, invoices, canManageBilling: true, sms, entitlement })
     } catch {
       logSanitizedError('billing-summary', 'BILLING_SUMMARY_FAILED')
       return res.status(500).json({ error: 'Failed to load billing details' })

@@ -1,5 +1,6 @@
 import { format, formatDistance, isAfter, isBefore, addDays, differenceInYears, differenceInMonths } from 'date-fns'
 import type { Dog, LifeStage, UserProfile } from '../types'
+import { hasValidAccessGrant } from '../../shared/access-grants.js'
 
 // ── ID GENERATION ─────────────────────────────────────────────
 
@@ -437,7 +438,7 @@ export function hasValidInternalEntitlementClient(
 }
 
 export function getEffectivePlanClient(
-  profile: Pick<UserProfile, 'plan' | 'subscriptionStatus' | 'pastDueSince' | 'internalEntitlement'> | null | undefined,
+  profile: (Pick<UserProfile, 'plan' | 'subscriptionStatus' | 'pastDueSince' | 'internalEntitlement'> & Partial<Pick<UserProfile, 'accessGrant'>>) | null | undefined,
   now: Date = new Date()
 ): 'free' | 'plus' {
   const rawPlan = profile?.plan === 'plus' ? 'plus' : 'free'
@@ -448,6 +449,8 @@ export function getEffectivePlanClient(
   }
   if (paidPlanActive) return 'plus'
   if (hasValidInternalEntitlementClient(profile?.internalEntitlement, now)) return 'plus'
+  // Founding Member / kennel gift pass (server-written, rules-protected).
+  if (hasValidAccessGrant(profile, now.getTime())) return 'plus'
   return 'free'
 }
 

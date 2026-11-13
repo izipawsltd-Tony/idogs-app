@@ -6,6 +6,8 @@ import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from '../lib/pricingCop
 import { isAndroidNativeApp } from '../lib/nativePlatform'
 import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
 import { PLUS_PROMOTION_ID } from '../../shared/plus-promotion.js'
+import FoundingMemberCard from '../components/billing/FoundingMemberCard'
+import LaunchOfferCard, { useOfferStatus } from '../components/billing/LaunchOfferCard'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -24,6 +26,7 @@ interface BillingInvoice {
 }
 
 interface BillingSummary {
+  accessGrant?: { kind: 'founding' | 'gift' | 'launch'; expiresAt: string } | null
   subscription: {
     id: string
     status: string
@@ -88,7 +91,7 @@ const PLUS_FEATURES = [
 type IntervalKey = 'plus_monthly' | 'plus_annual'
 
 export default function BillingPage({ toast }: Props) {
-  const promotionActive = usePlusPromotion()
+  const promotionDateActive = usePlusPromotion()
   const [promotionConsent, setPromotionConsent] = useState(false)
   const { user, profile, refreshProfile } = useAuth()
   const [searchParams] = useSearchParams()
@@ -99,6 +102,8 @@ export default function BillingPage({ toast }: Props) {
   const [detailsLoading, setDetailsLoading] = useState(true)
   const [detailsError, setDetailsError] = useState<string | null>(null)
   const [billingDetails, setBillingDetails] = useState<BillingSummary | null>(null)
+  // Bumped after a free-year claim so the banner and plan cards re-read the server.
+  const [billingReloadKey, setBillingReloadKey] = useState(0)
   const [interval, setInterval] = useState<IntervalKey>('plus_monthly')
 
   // Billing entitlement is server-owned and Stripe-verified. Use the secure
@@ -113,6 +118,13 @@ export default function BillingPage({ toast }: Props) {
   const subscriptionStatus = verifiedEntitlement?.subscriptionStatus
     ?? ((profile as any)?.subscriptionStatus as string | undefined)
   const isPastDue = isPlus && subscriptionStatus === 'past_due'
+  const accessGrant = billingDetails?.accessGrant ?? null
+  const offerStatus = useOfferStatus()
+  const launchActive = Boolean(offerStatus?.launch.active)
+  // A$0 promotion is not offered to new customers while the voucher supersedes it.
+  const promotionActive = promotionDateActive && !offerStatus?.promotionSuperseded
+  const hasLiveSubscription = Boolean(billingDetails?.subscription) ||
+    ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(subscriptionStatus || '')
   // Google Play does not allow purchase/subscription UI for digital services
   // inside the Android app; the matching server-side calls are already
   // blocked in nativeApiRouting.ts. Read-only status and existing
@@ -125,6 +137,12 @@ export default function BillingPage({ toast }: Props) {
     }
     if (searchParams.get('cancelled')) {
       toast('Checkout cancelled — you can try again anytime.', 'info')
+    }
+    if (searchParams.get('founding') === 'success') {
+      toast('Thank you for becoming a Founding Member! Your 15 months of Plus appear as soon as Stripe confirms the payment.', 'success')
+    }
+    if (searchParams.get('founding') === 'cancelled') {
+      toast('Checkout cancelled. No payment has been taken.', 'info')
     }
     if (searchParams.get('sms_success')) {
       toast('SMS add-on checkout completed. Activation will appear after Stripe confirms it.', 'success')
@@ -183,7 +201,7 @@ export default function BillingPage({ toast }: Props) {
       window.removeEventListener('pageshow', refreshAfterExternalBilling)
       document.removeEventListener('visibilitychange', refreshAfterExternalBilling)
     }
-  }, [user])
+  }, [user, billingReloadKey])
 
   async function handleOpenPortal() {
     if (!user) return
@@ -318,8 +336,13 @@ export default function BillingPage({ toast }: Props) {
         <div>
           <span style={{ fontSize: 14, fontWeight: 600, color: isPastDue ? 'var(--gold)' : isPlus ? 'var(--green)' : 'var(--dark)' }}>
             {isPastDue ? '⚠️ ' : isPlus ? '✓ ' : '🐾 '}
-            Current plan: {isPlus ? `Plus (${billingInterval === 'annual' ? 'Annual' : 'Monthly'})` : 'Free'}
+            Current plan: {isPlus ? `Plus (${billingInterval === 'annual' ? 'Annual' : 'Monthly'})` : accessGrant ? 'Plus' : 'Free'}
           </span>
+          {accessGrant && (
+            <div data-testid="access-grant-status" style={{ fontSize: 12, color: 'var(--mid)', marginTop: 2 }}>
+              {accessGrant.kind === 'founding' ? '15-Month Pass' : accessGrant.kind === 'launch' ? 'Free year of Plus' : 'Gift from your breeder'}: iDogs Plus until {formatBillingDate(accessGrant.expiresAt)}. No automatic renewal.
+            </div>
+          )}
           {isPastDue && (
             <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 2 }}>
               Your last payment failed. Plus access continues for a 7-day grace period — please update your payment method.
@@ -327,6 +350,9 @@ export default function BillingPage({ toast }: Props) {
           )}
         </div>
       </div>
+
+      <LaunchOfferCard status={offerStatus} user={user ?? null} hasPass={Boolean(accessGrant)} hasSubscription={hasLiveSubscription} toast={toast} onClaimed={() => setBillingReloadKey(k => k + 1)} />
+      <FoundingMemberCard passActive={Boolean(offerStatus?.pass.active)} user={user ?? null} hasSubscription={hasLiveSubscription} hasPass={Boolean(accessGrant)} toast={toast} />
 
       {(detailsLoading || detailsError || billingDetails?.canManageBilling) && (
         <div className="card" style={{ marginBottom: 24, padding: 20 }}>
@@ -384,13 +410,13 @@ export default function BillingPage({ toast }: Props) {
         <div style={{ background: '#fff', border: '2px solid var(--border)', borderRadius: 16, padding: 20 }}>
           <div style={{ fontSize: 24, marginBottom: 6 }}>🐾</div>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Free</div>
-          <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>Perfect for pet owners with 1-2 dogs</div>
+          <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>Free plan – always available · up to 2 dogs</div>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--dark)', marginBottom: 16 }}>$0</div>
           <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {FREE_FEATURES.map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--mid)', flexShrink: 0 }}>✓</span>{f}</li>)}
           </ul>
-          <div style={{ textAlign: 'center', padding: '9px', background: !isPlus ? 'var(--green-light)' : 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: !isPlus ? 'var(--green)' : 'var(--mid)' }}>
-            {!isPlus ? '✓ Current plan' : 'Always free'}
+          <div style={{ textAlign: 'center', padding: '9px', background: !isPlus && !accessGrant ? 'var(--green-light)' : 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: !isPlus && !accessGrant ? 'var(--green)' : 'var(--mid)' }}>
+            {!isPlus && !accessGrant ? '✓ Current plan' : 'Always free'}
           </div>
         </div>
 
@@ -399,11 +425,12 @@ export default function BillingPage({ toast }: Props) {
           <div style={{ padding: 20 }}>
             <div style={{ fontSize: 24, marginBottom: 6 }}>🏆</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--dark)', marginBottom: 2 }}>Plus</div>
-            <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>For active breeders with a growing kennel</div>
+            <div style={{ fontSize: 12, color: 'var(--light)', marginBottom: 12 }}>Snap your vaccination book with iDogs Scan · up to 5 dogs · litters</div>
             {promotionActive && interval === 'plus_monthly' && <PlusPromotion />}
             {!(promotionActive && interval === 'plus_monthly') && <><div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
-              <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>
-              <span style={{ fontSize: 12, color: 'var(--light)' }}>{interval === 'plus_annual' ? 'AUD/year' : 'AUD/month'}</span>
+              {launchActive && !isPlus && !accessGrant && <del data-testid="billing-voucher-strike" style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--mid)', opacity: 0.75, textDecorationThickness: 2 }}>{interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</del>}
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 700, color: 'var(--green)' }}>{launchActive && !isPlus && !accessGrant ? '$0' : interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}` : `$${PLUS_MONTHLY_PRICE_AUD}`}</span>
+              <span style={{ fontSize: 12, color: 'var(--light)' }}>{launchActive && !isPlus && !accessGrant ? 'for 12 months with the Gift Voucher' : interval === 'plus_annual' ? 'AUD/year' : 'AUD/month'}</span>
             </div>
             <div style={{ fontSize: 11, color: 'var(--light)', marginBottom: 16 }}>
               {interval === 'plus_annual' ? `≈ $${(PLUS_ANNUAL_PRICE_AUD / 12).toFixed(2)}/month, billed annually` : `$${PLUS_MONTHLY_PRICE_AUD * 12} AUD/year if paid monthly`}
@@ -412,15 +439,29 @@ export default function BillingPage({ toast }: Props) {
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               {PLUS_FEATURES.map(f => <li key={f} style={{ fontSize: 12, color: 'var(--dark)', display: 'flex', gap: 7 }}><span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>{f}</li>)}
             </ul>
-            {promotionActive && interval === 'plus_monthly' && !isPlus && !androidPurchasesUnavailable && <label className="plus-promotion-consent">
+            {promotionActive && interval === 'plus_monthly' && !isPlus && !accessGrant && !androidPurchasesUnavailable && <label className="plus-promotion-consent">
               <input type="checkbox" checked={promotionConsent} onChange={event => setPromotionConsent(event.target.checked)} />
               <span>I agree to the Plus offer terms above, including automatic renewal at A$7/month after the promotion.</span>
             </label>}
             {promotionActive && isPlus && <p style={{ fontSize: 12, lineHeight: 1.6 }}>Already subscribed? The offer also includes existing customers. Your current billing continues until your account’s promotion adjustment is confirmed. Do not start another subscription.</p>}
             {isPlus ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan</div>
+            ) : accessGrant ? (
+              // A pass already gives Plus: never invite a second, renewing subscription.
+              <div data-testid="plus-included-by-pass" style={{ textAlign: 'center', padding: '9px', background: 'var(--green-light)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Current plan · until {formatBillingDate(accessGrant.expiresAt)}</div>
             ) : androidPurchasesUnavailable ? (
               <div style={{ textAlign: 'center', padding: '9px', background: 'var(--sand)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--mid)' }}>Purchases are unavailable in this Android app.</div>
+            ) : launchActive && !hasLiveSubscription ? (
+              // While the free-year campaign runs, the free year is the main
+              // action; the A$0 subscription stays available as a secondary choice.
+              <>
+                <button type="button" onClick={() => document.getElementById('launch-offer')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                  Claim your Gift Voucher — no card needed
+                </button>
+                <button onClick={() => handleSubscribe(interval)} disabled={loading || detailsLoading || !!detailsError || (promotionActive && interval === 'plus_monthly' && !promotionConsent)} style={{ width: '100%', marginTop: 8, padding: '9px', background: 'transparent', color: 'var(--green)', border: '1px solid var(--green)', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
+                  {loading ? 'Processing…' : promotionActive && interval === 'plus_monthly' ? 'Or subscribe: Plus A$0/month until 31 Jan, then A$7' : `Or subscribe — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}
+                </button>
+              </>
             ) : (
               <button onClick={() => handleSubscribe(interval)} disabled={loading || detailsLoading || !!detailsError || (promotionActive && interval === 'plus_monthly' && !promotionConsent)} style={{ width: '100%', padding: '10px', background: 'var(--green)', color: '#fff', border: '2px solid var(--green)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
                 {loading ? <><span className="spinner" style={{ width: 13, height: 13, borderTopColor: '#fff' }} /> Processing…</> : promotionActive && interval === 'plus_monthly' ? 'Get Plus for A$0' : `Upgrade to Plus — ${interval === 'plus_annual' ? `$${PLUS_ANNUAL_PRICE_AUD}/year` : `$${PLUS_MONTHLY_PRICE_AUD}/month`}`}

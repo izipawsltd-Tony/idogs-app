@@ -46,6 +46,19 @@ export const LEGACY_PAID_PRICE_IDS = Object.freeze({
 // (monthly vs annual) only matters for the Stripe price/checkout UI and for
 // computing the AI-scan reset anchor (api/stripe-webhook.js); it is never a
 // separate entitlement tier.
+// Restored (removed from this line while api/_lib/extra-litter-checkout-
+// handler.js still imports it, which made that function fail to load):
+// GST tax rate for one-time Checkout line items, chosen by Stripe mode.
+// Values are the ones introduced in 36a745c0 (31 Aug 2026).
+export const LIVE_GST_TAX_RATE_ID = 'txr_1U9iaFGHgBd6ZgJE5FsztFar'
+export const STAGING_GST_TAX_RATE_ID = 'txr_1U9b6XGHgBd6ZgJEwaS4bfLx'
+
+export function checkoutTaxRatesForStripeMode(livemode, env = process.env) {
+  if (livemode === true) return [LIVE_GST_TAX_RATE_ID]
+  if (livemode === false) return [STAGING_GST_TAX_RATE_ID]
+  return env.FIREBASE_PROJECT_ID === 'idogs-app-staging' ? [STAGING_GST_TAX_RATE_ID] : [LIVE_GST_TAX_RATE_ID]
+}
+
 const INTERVAL_BY_PLAN_KEY = Object.freeze({
   plus_monthly: 'monthly',
   plus_annual: 'annual',
