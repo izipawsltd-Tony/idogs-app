@@ -5,7 +5,7 @@ import { compilePaymentHistory, summarizeCustomerPayments } from '../api/_lib/co
 const now = new Date('2026-11-13T00:00:00Z')
 const sec = iso => Math.floor(Date.parse(iso) / 1000)
 const charge = (iso, extra = {}) => ({ status: 'succeeded', paid: true, refunded: false, amount_captured: 700, created: sec(iso), livemode: true, ...extra })
-const invoice = (iso, periodEndIso, extra = {}) => ({ status: 'paid', amount_paid: 700, billing_reason: 'subscription_cycle', created: sec(iso), livemode: true, parent: { subscription_details: { subscription: 'sub_1' } }, lines: { data: [{ period: { end: sec(periodEndIso) } }] }, ...extra })
+const invoice = (iso, periodEndIso, extra = {}) => ({ status: 'paid', amount_paid: 700, billing_reason: 'subscription_cycle', created: sec(iso), livemode: true, parent: { subscription_details: { subscription: 'sub_1' } }, lines: { data: [{ period: { start: sec(iso), end: sec(periodEndIso) } }] }, ...extra })
 const summarize = (charges, invoices = []) => summarizeCustomerPayments({ charges, invoices, now, windowDays: 30, renewalGraceDays: 3 })
 
 test('first verified payment counts once, only when successful, captured and not refunded', () => {
@@ -60,6 +60,28 @@ test('renewal due date uses the subscription service period, not a proration lin
   assert.equal(summarize(pays, [invoice('2026-10-20', '2026-11-20', { billing_reason: 'subscription_create', lines })]).live.renewal, 'NOT_DUE')
   const onlyProration = { data: [lines.data[0]] }
   assert.equal(summarize(pays, [invoice('2026-10-20', '2026-11-20', { billing_reason: 'subscription_create', lines: onlyProration })]).live.renewal, 'UNKNOWN_PERIOD')
+})
+
+test('a paid invoice for a later period does not count as renewing the first paid period', () => {
+  const pays = [charge('2026-07-01')]
+  const first = invoice('2026-07-01', '2026-08-01', { billing_reason: 'subscription_create' })
+  const second = invoice('2026-08-01', '2026-09-01')
+  const third = invoice('2026-09-01', '2026-10-01')
+  // Period two was not paid (failed, voided or A$0); period three was paid.
+  assert.equal(summarize(pays, [first, third]).live.renewal, 'DUE_NOT_RENEWED')
+  assert.equal(summarize(pays, [first, { ...second, amount_paid: 0 }, third]).live.renewal, 'DUE_NOT_RENEWED')
+  assert.equal(summarize(pays, [first, second, third]).live.renewal, 'RENEWED')
+  // Paid late (after dunning) still renews period two: the period, not the payment date, decides.
+  assert.equal(summarize(pays, [first, { ...second, created: sec('2026-08-20') }]).live.renewal, 'RENEWED')
+  // Rounding of up to one day on the period boundary is tolerated; a missing start is not a renewal.
+  const shifted = { ...second, lines: { data: [{ period: { start: sec('2026-08-01T20:00:00Z'), end: sec('2026-09-01') } }] } }
+  assert.equal(summarize(pays, [first, shifted]).live.renewal, 'RENEWED')
+  const noStart = { ...second, lines: { data: [{ period: { end: sec('2026-09-01') } }] } }
+  assert.equal(summarize(pays, [first, noStart]).live.renewal, 'DUE_NOT_RENEWED')
+  // Annual plan: the next period starts a year later, at the first period end.
+  const annual = invoice('2025-09-01', '2026-09-01', { billing_reason: 'subscription_create' })
+  assert.equal(summarize([charge('2025-09-01')], [annual, invoice('2026-09-01', '2027-09-01')]).live.renewal, 'RENEWED')
+  assert.equal(summarize([charge('2025-09-01')], [annual]).live.renewal, 'DUE_NOT_RENEWED')
 })
 
 function fakeStripe(perCustomer) {

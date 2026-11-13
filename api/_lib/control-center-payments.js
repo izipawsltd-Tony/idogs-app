@@ -43,17 +43,21 @@ function subscriptionOf(invoice) {
   return typeof id === 'string' && id ? id : null
 }
 
-// Service period end of the subscription being billed: the latest period end
-// among non-proration lines. Proration lines describe mid-period changes and
-// must not decide when a renewal falls due.
-function servicePeriodEnd(invoice) {
-  const lines = Array.isArray(invoice?.lines?.data) ? invoice.lines.data : []
-  const ends = lines
+// Service period of the subscription being billed: from the earliest start to
+// the latest end among non-proration lines. Proration lines describe
+// mid-period changes and must not decide when a period starts or ends.
+function servicePeriod(invoice) {
+  const lines = (Array.isArray(invoice?.lines?.data) ? invoice.lines.data : [])
     .filter(line => line?.proration !== true && line?.parent?.subscription_item_details?.proration !== true)
-    .map(line => line?.period?.end)
-    .filter(Number.isSafeInteger)
-  return ends.length ? Math.max(...ends) : null
+  const starts = lines.map(line => line?.period?.start).filter(Number.isSafeInteger)
+  const ends = lines.map(line => line?.period?.end).filter(Number.isSafeInteger)
+  return { start: starts.length ? Math.min(...starts) : null, end: ends.length ? Math.max(...ends) : null }
 }
+
+// Stripe starts the next cycle exactly at the previous period end. One day of
+// tolerance absorbs clock/anchor rounding while still rejecting a skipped
+// period (which starts a whole billing interval later).
+const NEXT_PERIOD_TOLERANCE_SECONDS = 86400
 
 function paidSubscriptionInvoices(invoices) {
   return invoices
@@ -72,13 +76,17 @@ export function summarizeCustomerPayments({ charges, invoices, now, windowDays, 
     const first = paid[0]
     let renewal = 'NONE'
     if (first) {
-      const periodEnd = servicePeriodEnd(first)
+      const periodEnd = servicePeriod(first).end
       const subscription = subscriptionOf(first)
-      // A renewal is a later paid cycle invoice of the SAME subscription. A new
-      // subscription after cancelling (subscription_create) or another
-      // subscription of the same customer is not a renewal.
-      const renewed = paid.some(invoice => invoice !== first && invoice.created > first.created
-        && invoice.billing_reason === 'subscription_cycle' && subscriptionOf(invoice) === subscription)
+      // A renewal is the paid cycle invoice of the SAME subscription for the
+      // service period that starts where the first paid period ended. A new
+      // subscription after cancelling, another subscription of the customer,
+      // or a paid invoice for a later period (the next period was skipped,
+      // unpaid or A$0) is not a renewal of the first paid period.
+      const renewed = periodEnd !== null && paid.some(invoice => invoice !== first && invoice.created > first.created
+        && invoice.billing_reason === 'subscription_cycle' && subscriptionOf(invoice) === subscription
+        && Number.isSafeInteger(servicePeriod(invoice).start)
+        && Math.abs(servicePeriod(invoice).start - periodEnd) <= NEXT_PERIOD_TOLERANCE_SECONDS)
       if (periodEnd === null || subscription === null) renewal = 'UNKNOWN_PERIOD'
       else if (periodEnd * 1000 + renewalGraceDays * DAY <= now.getTime()) renewal = renewed ? 'RENEWED' : 'DUE_NOT_RENEWED'
       else renewal = 'NOT_DUE'

@@ -32,7 +32,7 @@ Quy tắc chung: tài khoản INTERNAL và TEST_QA bị loại. LIKELY_REAL khô
 Hai chỉ số tách riêng. **Ưu tiên chỉ số trả phí** cho mục tiêu tăng khách trả tiền.
 
 - **Giữ chân trả phí (đã làm):** trong nhóm tài khoản đã đến kỳ gia hạn (kỳ trả phí đầu tiên đã kết thúc ít nhất 3 ngày), tỷ lệ có gia hạn thành công. Dùng cùng điều kiện LIVE/đầy đủ như mục 3.
-  - "Gia hạn thành công" = một hoá đơn **kỳ tiếp theo** (`subscription_cycle`) đã trả, lớn hơn A$0, của **cùng thuê bao** với hoá đơn trả phí đầu tiên. Đăng ký lại thuê bao mới sau khi huỷ, thuê bao khác của cùng khách, và hoá đơn nâng/hạ gói giữa kỳ **không** tính là gia hạn.
+  - "Gia hạn thành công" = hoá đơn `subscription_cycle` đã trả, lớn hơn A$0, của **cùng thuê bao** với hoá đơn trả phí đầu tiên, cho **đúng kỳ dịch vụ liền sau** kỳ trả phí đầu tiên (kỳ đó bắt đầu tại ngày hết kỳ đầu tiên, sai lệch tối đa 1 ngày). Đăng ký lại thuê bao mới sau khi huỷ, thuê bao khác của cùng khách, hoá đơn nâng/hạ gói giữa kỳ, và hoá đơn đã trả cho một kỳ **sau đó** khi kỳ liền sau bị bỏ qua, không trả hoặc A$0 đều **không** tính là gia hạn. Trả muộn (sau khi nhắc nợ) cho đúng kỳ liền sau vẫn tính.
   - "Đến kỳ" tính theo ngày hết kỳ dịch vụ của thuê bao trên hoá đơn đầu tiên. Dòng điều chỉnh giá giữa kỳ (proration) không dùng để tính ngày.
   - Hoá đơn A$0 (khuyến mãi, voucher) không phải kỳ trả phí: nếu khách được miễn phí rồi mới trả, kỳ trả phí đầu tiên là hoá đơn có tiền đầu tiên.
   - Không xác định được thuê bao hoặc ngày hết kỳ thì không đưa vào mẫu số (ghi là `unknownPeriod`).
