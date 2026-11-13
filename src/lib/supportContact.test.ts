@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { SUPPORT_WHATSAPP_NUMBER, whatsappSupportUrl } from './supportContact'
+import { SUPPORT_WHATSAPP_NUMBER, whatsappSupportMessage, whatsappSupportUrl } from './supportContact'
+
+const textOf = (url: string) => new URL(url).searchParams.get('text')
 
 describe('WhatsApp support link', () => {
   it('opens the Owner WhatsApp number with a default greeting', () => {
@@ -9,14 +11,24 @@ describe('WhatsApp support link', () => {
     expect(url.searchParams.get('text')).toBe('Hi iDogs Support, I need help with iDogs.')
   })
 
-  it('pre-fills the customer question, tidied and safely encoded', () => {
-    const url = new URL(whatsappSupportUrl('  How do I   transfer my puppy?\n& keep records #1 '))
-    expect(url.searchParams.get('text')).toBe('Hi iDogs Support, How do I transfer my puppy? & keep records #1')
-    expect(whatsappSupportUrl('a&b')).toContain('text=Hi%20iDogs%20Support%2C%20a%26b')
+  it('uses the Owner wording for FREE GIFT questions (English or Vietnamese)', () => {
+    const want = "Hi iDogs Support, I'd like to ask about the FREE Gift Voucher."
+    expect(textOf(whatsappSupportUrl('toi muon hoi ve chuong trinh FREE GIFT'))).toBe(want)
+    expect(whatsappSupportMessage('How do I claim my voucher?')).toBe(want)
+    expect(whatsappSupportMessage('is the free year really free')).toBe(want)
   })
 
-  it('caps very long questions', () => {
-    const text = new URL(whatsappSupportUrl('x'.repeat(2000))).searchParams.get('text') || ''
-    expect(text.length).toBe('Hi iDogs Support, '.length + 500)
+  it('pre-fills a short topic message for other common topics', () => {
+    expect(whatsappSupportMessage('Why was my card charged?')).toBe("Hi iDogs Support, I'd like to ask about my plan or billing.")
+    expect(whatsappSupportMessage('My QR code does not open')).toBe("Hi iDogs Support, I'd like to ask about the QR Passport.")
+    expect(whatsappSupportMessage('how to transfer puppy to buyer')).toBe("Hi iDogs Support, I'd like to ask about transferring a dog.")
+    expect(whatsappSupportMessage('Scanning failed')).toBe("Hi iDogs Support, I'd like to ask about iDogs Scan.")
+  })
+
+  it('falls back to the question itself, then the chosen topic', () => {
+    expect(whatsappSupportMessage('  My  dog\n photo is wrong ')).toBe('Hi iDogs Support, My dog photo is wrong')
+    expect(whatsappSupportMessage('', 'complaint')).toBe("Hi iDogs Support, I'd like to ask about complaint.")
+    expect(whatsappSupportUrl('a&b #1')).toContain('text=Hi%20iDogs%20Support%2C%20a%26b%20%231')
+    expect((textOf(whatsappSupportUrl('x'.repeat(2000))) || '').length).toBe('Hi iDogs Support, '.length + 500)
   })
 })

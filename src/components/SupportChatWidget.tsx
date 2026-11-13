@@ -3,8 +3,8 @@ import { useAuth } from '../hooks/useAuth'
 import { SUPPORT_WHATSAPP_DISPLAY, whatsappSupportUrl } from '../lib/supportContact'
 import './supportChat.css'
 
-function WhatsAppLink({ question, label, compact = false }: { question?: string; label: string; compact?: boolean }) {
-  return <a className={`support-whatsapp${compact ? ' compact' : ''}`} href={whatsappSupportUrl(question)} target="_blank" rel="noopener noreferrer" data-testid="support-whatsapp-link" aria-label={`${label} (opens WhatsApp, ${SUPPORT_WHATSAPP_DISPLAY})`}>
+function WhatsAppLink({ question, category, label, compact = false }: { question?: string; category?: string; label: string; compact?: boolean }) {
+  return <a className={`support-whatsapp${compact ? ' compact' : ''}`} href={whatsappSupportUrl(question, category)} target="_blank" rel="noopener noreferrer" data-testid="support-whatsapp-link" aria-label={`${label} (opens WhatsApp, ${SUPPORT_WHATSAPP_DISPLAY})`}>
     <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>
     <span>{label}</span>
   </a>
@@ -247,7 +247,7 @@ export default function SupportChatWidget() {
       <header><div><strong>iDogs Support</strong><small>We usually reply within 1 business day.</small></div><button type="button" aria-label="Close support" onClick={() => setOpen(false)}>×</button></header>
       <p className="support-privacy">Do not share passwords, card details or sensitive medical information.</p>
       <div className="support-whatsapp-row">
-        <WhatsAppLink question={chatInput || [...chatLog].reverse().find(turn => turn.role === 'user')?.text} label="Chat with us on WhatsApp" />
+        <WhatsAppLink question={chatInput || [...chatLog].reverse().find(turn => turn.role === 'user')?.text} category={category} label="Chat with us on WhatsApp" />
         <small>Talk to a real person · {SUPPORT_WHATSAPP_DISPLAY}</small>
       </div>
       {error && <p role="alert" className="support-error">{error}</p>}
@@ -270,7 +270,7 @@ export default function SupportChatWidget() {
               </div>
             )}
             {chatLog.map(turn => (
-              <div key={turn.id} className={`support-message ${turn.role === 'user' ? 'user' : 'assistant'}`}><p>{turn.text}</p>{turn.whatsapp !== undefined && <WhatsAppLink question={turn.whatsapp} label="Message us on WhatsApp" compact />}</div>
+              <div key={turn.id} className={`support-message ${turn.role === 'user' ? 'user' : 'assistant'}`}><p>{turn.text}</p>{turn.whatsapp !== undefined && <WhatsAppLink question={turn.whatsapp} category={category} label="Message us on WhatsApp" compact />}</div>
             ))}
           </div>
           <form className="support-composer" onSubmit={event => { event.preventDefault(); askAssistant(chatInput) }}>
