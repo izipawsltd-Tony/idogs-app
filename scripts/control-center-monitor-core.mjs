@@ -58,20 +58,44 @@ export async function runMonitorOnce({ directory, probe, now = () => new Date(),
   await writeFile(next, JSON.stringify({ ...result.state, observation, events }, null, 2))
   await rename(next, path)
   return {
-    report: { status: observation.status, checkedAt: observation.checkedAt, incident: result.state.incident, events },
+    report: { status: observation.status, outcome: classifyObservation(observation.status), checkedAt: observation.checkedAt, checks: observation.checks, incident: result.state.incident, events },
     exitCode: result.state.incident ? EXIT.INCIDENT : EXIT.HEALTHY,
   }
 }
 
-// Plain-text Markdown for a CI job summary. Aggregate status only: no
+// The Owner asked for two cases to be reported separately: the website
+// answered with an error, versus the monitor could not observe the website.
+export const OUTCOME = Object.freeze({
+  WEBSITE_OK: 'WEBSITE_OK',
+  WEBSITE_ERROR: 'WEBSITE_ERROR',
+  MONITOR_COULD_NOT_CHECK: 'MONITOR_COULD_NOT_CHECK',
+})
+export function classifyObservation(status) {
+  return status === 'PASS' ? OUTCOME.WEBSITE_OK : status === 'FAIL' ? OUTCOME.WEBSITE_ERROR : OUTCOME.MONITOR_COULD_NOT_CHECK
+}
+const OUTCOME_TEXT = {
+  WEBSITE_OK: 'Website OK: both public pages returned HTML with HTTP 200.',
+  WEBSITE_ERROR: 'WEBSITE ERROR: the website answered, but a page returned an unexpected HTTP status or content type.',
+  MONITOR_COULD_NOT_CHECK: 'MONITOR COULD NOT CHECK: the website was not observed (timeout, network error, bot challenge or access block). This is not proof the website is down.',
+}
+const INCIDENT_TEXT = {
+  HTTP_FAILURE: 'Confirmed website error (2 or more consecutive failed observations)',
+  OBSERVATION_GAP: 'Monitoring gap (2 or more consecutive observations could not check the website)',
+}
+
+// Plain-text Markdown for a CI job summary/log. Aggregate status only: no
 // response bodies, headers, cookies or credentials are ever included.
 export function formatMonitorSummary(report) {
+  const outcome = classifyObservation(report.status)
+  const checks = Array.isArray(report.checks) ? report.checks : []
   const lines = [
     '## iDogs public website monitor',
     '',
-    `- Observation: **${report.status}** at ${report.checkedAt}`,
-    `- Open incident: ${report.incident ? `${report.incident.kind} since ${report.incident.openedAt}` : 'none'}`,
-    `- Events this run: ${report.events.length ? report.events.map(event => event.type + (event.kind ? ` ${event.kind}` : '')).join(', ') : 'none'}`,
+    `- Outcome this run: **${outcome}** at ${report.checkedAt}`,
+    `- ${OUTCOME_TEXT[outcome]}`,
+    ...checks.map(check => `  - ${check.id}: ${check.status}, HTTP ${check.httpStatus ?? 'none'}, ${check.latencyMs} ms, ${check.reason}`),
+    `- Open incident: ${report.incident ? `${INCIDENT_TEXT[report.incident.kind] || report.incident.kind}, since ${report.incident.openedAt}` : 'none'}`,
+    `- Events this run: ${report.events.length ? report.events.map(event => event.type + (event.kind ? ` ${event.kind}` : '') + (event.reason ? ` ${event.reason}` : '')).join(', ') : 'none'}`,
     '',
     'Scope: public HTML reachability of the homepage and signup page only. Login, checkout and data access are not verified.',
   ]

@@ -21,7 +21,14 @@ try {
       quarantineInvalidState: process.argv.includes('--quarantine-invalid-state'),
     })
     console.log(JSON.stringify(report, null, 2))
-    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, formatMonitorSummary(report))
+    const summary = formatMonitorSummary(report)
+    console.log(summary)
+    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary)
+    // Runner-provided output file only (no user-supplied path): lets the
+    // workflow log the two failure cases separately without parsing JSON.
+    if (process.env.GITHUB_OUTPUT) {
+      await appendFile(process.env.GITHUB_OUTPUT, `outcome=${report.outcome}\nincident=${report.incident?.kind ?? 'NONE'}\n`)
+    }
     // No emails, messages or production writes. The scheduler owns
     // notification routing; an active incident is a distinct nonzero result.
     process.exitCode = exitCode

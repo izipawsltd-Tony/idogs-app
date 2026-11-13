@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, readdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { EXIT, formatMonitorSummary, readMonitorStatus, runMonitorOnce } from './control-center-monitor-core.mjs'
+import { EXIT, OUTCOME, classifyObservation, formatMonitorSummary, readMonitorStatus, runMonitorOnce } from './control-center-monitor-core.mjs'
 
 const at = minute => new Date(Date.UTC(2026, 10, 13, 12, 0) + minute * 60000)
 const observation = (status, minute) => ({ status, checkedAt: at(minute).toISOString(), checks: [] })
@@ -92,10 +92,38 @@ test('structurally invalid and oversized state are quarantined, not trusted', ()
   assert.equal(large.report.events[0].reason, 'TOO_LARGE')
 }))
 
+test('website errors and monitor-could-not-check are classified and logged separately', async () => {
+  assert.equal(classifyObservation('PASS'), OUTCOME.WEBSITE_OK)
+  assert.equal(classifyObservation('FAIL'), OUTCOME.WEBSITE_ERROR)
+  assert.equal(classifyObservation('UNKNOWN'), OUTCOME.MONITOR_COULD_NOT_CHECK)
+  await withDir(async directory => {
+    const probe = (status, minute, checks) => runMonitorOnce({ directory, probe: async () => ({ ...observation(status, minute), checks }), now: () => at(minute) })
+    const failCheck = [{ id: 'website', status: 'FAIL', httpStatus: 500, latencyMs: 80, reason: 'UNEXPECTED_HTTP_STATUS' }]
+    await probe('FAIL', 0, failCheck)
+    const error = await probe('FAIL', 10, failCheck)
+    const errorText = formatMonitorSummary(error.report)
+    assert.equal(error.report.outcome, 'WEBSITE_ERROR')
+    assert.match(errorText, /WEBSITE ERROR/)
+    assert.match(errorText, /website: FAIL, HTTP 500/)
+    assert.match(errorText, /Confirmed website error/)
+    assert.doesNotMatch(errorText, /MONITOR COULD NOT CHECK/)
+    const gapCheck = [{ id: 'website', status: 'UNKNOWN', httpStatus: null, latencyMs: 5000, reason: 'TIMEOUT' }]
+    await probe('UNKNOWN', 20, gapCheck)
+    const gap = await probe('UNKNOWN', 30, gapCheck)
+    const gapText = formatMonitorSummary(gap.report)
+    assert.equal(gap.report.outcome, 'MONITOR_COULD_NOT_CHECK')
+    assert.match(gapText, /MONITOR COULD NOT CHECK/)
+    assert.match(gapText, /HTTP none, 5000 ms, TIMEOUT/)
+    assert.match(gapText, /Monitoring gap/)
+    assert.match(gapText, /SUPERSEDED HTTP_FAILURE, OPENED OBSERVATION_GAP/)
+    assert.doesNotMatch(gapText, /WEBSITE ERROR/)
+  })
+})
+
 test('job summary contains aggregate status only', () => {
   const text = formatMonitorSummary({ status: 'FAIL', checkedAt: at(0).toISOString(), incident: { kind: 'HTTP_FAILURE', openedAt: at(0).toISOString() }, events: [{ type: 'OPENED', kind: 'HTTP_FAILURE' }] })
-  assert.match(text, /\*\*FAIL\*\*/)
-  assert.match(text, /HTTP_FAILURE since/)
+  assert.match(text, /\*\*WEBSITE_ERROR\*\*/)
+  assert.match(text, /Confirmed website error.*, since/)
   assert.match(text, /OPENED HTTP_FAILURE/)
   assert.match(text, /Login, checkout and data access are not verified/)
 })
