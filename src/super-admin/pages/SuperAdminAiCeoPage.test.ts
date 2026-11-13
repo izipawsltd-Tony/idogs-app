@@ -73,6 +73,27 @@ describe('Control Center evidence and health UI', () => {
     expect(rendered()).toContain('Refresh operating evidence to see current signup and activation counts.')
     expect(rendered()).not.toContain('Current active live subscriptions')
   })
+  it('shows funnel history with explicit no-data states and test-mode diagnostics kept apart', async () => {
+    const funnel = (status: string) => ({
+      windowDays: 30,
+      visits: { status: 'NO_VERIFIED_SOURCE', signupPageSessions: null, visitToSignupRate: null, note: 'No verified analytics source.' },
+      activation: { firstDog: 2, firstLitter: 0, note: 'Activation note.' },
+      payingCustomers: { status, newInWindow: status === 'VERIFIED' ? 1 : null, total: status === 'VERIFIED' ? 1 : null, scope: 'Stripe only.', testModeDiagnostics: { newInWindow: 4, total: 5 }, note: '' },
+      paidRetention: { status, dueForRenewal: status === 'VERIFIED' ? 2 : null, renewed: status === 'VERIFIED' ? 1 : null, rate: status === 'VERIFIED' ? 0.5 : null, testModeDiagnostics: { dueForRenewal: 3, renewed: 2 }, note: '' },
+      usageRetention: { status: 'NOT_MEASURED', rate: null, note: 'Usage retention not measured.' },
+    })
+    const snapshot = { windowDays: 30, eligibleSignups: 2, confirmedCustomers: 0, likelyReal: 2, excludedInternalQa: 0, unclassified: 0, invalidCreatedAt: 0, channels: { direct: 2 }, basis: '', limitations: [] }
+    await mount({ ...fixture(), growthSnapshot: { ...snapshot, funnel: funnel('TEST_MODE_ONLY') } } as any)
+    expect(rendered()).toContain('Funnel · last ')
+    expect(rendered()).toContain('No data yet')
+    expect(rendered()).toContain('Not measured: this environment uses Stripe test mode')
+    expect(rendered()).toContain('Test-mode diagnostics (never customer results)')
+    expect(rendered()).toContain('Usage retention not measured.')
+    renderer?.unmount()
+    await mount({ ...fixture(), growthSnapshot: { ...snapshot, funnel: funnel('VERIFIED') } } as any)
+    expect(rendered()).toContain('1/2 renewed')
+    expect(rendered()).not.toContain('Test-mode diagnostics')
+  })
   it('checks health only on demand using the authenticated endpoint', async () => {
     const request = await mount()
     expect(request).toHaveBeenCalledTimes(2)

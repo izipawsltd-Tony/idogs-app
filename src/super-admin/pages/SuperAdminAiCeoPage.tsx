@@ -75,6 +75,52 @@ type Decision = {
   }
 }
 
+type FunnelPaymentStatus = 'VERIFIED' | 'TEST_MODE_ONLY' | 'UNKNOWN_MODE' | 'PARTIAL' | 'UNAVAILABLE'
+type GrowthFunnel = {
+  windowDays: number
+  visits: { status: string; signupPageSessions: number | null; visitToSignupRate: number | null; note: string }
+  activation: { firstDog: number | null; firstLitter: number | null; note: string }
+  payingCustomers: { status: FunnelPaymentStatus; newInWindow: number | null; total: number | null; scope: string; testModeDiagnostics: { newInWindow: number | null; total: number | null } | null; note: string }
+  paidRetention: { status: FunnelPaymentStatus; dueForRenewal: number | null; renewed: number | null; rate: number | null; testModeDiagnostics: { dueForRenewal: number | null; renewed: number | null } | null; note: string }
+  usageRetention: { status: string; rate: number | null; note: string }
+}
+
+const PAYMENT_STATUS_LABEL: Record<FunnelPaymentStatus, string> = {
+  VERIFIED: 'Verified (Stripe LIVE)',
+  TEST_MODE_ONLY: 'Not measured: this environment uses Stripe test mode',
+  UNKNOWN_MODE: 'Not measured: Stripe mode could not be confirmed',
+  PARTIAL: 'Not measured: some Stripe reads failed or a customer is linked to several accounts',
+  UNAVAILABLE: 'Not measured: Stripe is unavailable',
+}
+const noData = (value: number | null | undefined) => value ?? 'No data yet'
+
+function FunnelHistory({ funnel }: { funnel: GrowthFunnel }) {
+  const paid = funnel.payingCustomers
+  const retention = funnel.paidRetention
+  return <div aria-label="Funnel history" style={{ marginTop: 16 }}>
+    <h4 style={{ margin: '0 0 8px' }}>Funnel · last {funnel.windowDays} days</h4>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+      <MetricCard label="Signup-page sessions" value={noData(funnel.visits.signupPageSessions)} />
+      <MetricCard label="Visit → signup rate" value={funnel.visits.visitToSignupRate == null ? '—' : `${Math.round(funnel.visits.visitToSignupRate * 100)}%`} />
+      <MetricCard label="First dog (activation)" value={noData(funnel.activation.firstDog)} />
+      <MetricCard label="First litter" value={noData(funnel.activation.firstLitter)} />
+      <MetricCard label="New paying customers" value={noData(paid.newInWindow)} />
+      <MetricCard label="Paid renewal" value={retention.rate == null ? 'No data yet' : `${retention.renewed}/${retention.dueForRenewal} renewed`} />
+      <MetricCard label="Usage retention" value="Not measured" />
+    </div>
+    <ul style={{ fontSize: 12, lineHeight: 1.6 }}>
+      <li>{funnel.visits.note}</li>
+      <li>{funnel.activation.note}</li>
+      <li>Paying customers: {PAYMENT_STATUS_LABEL[paid.status] ?? 'Not measured'}. {paid.scope} {paid.note}</li>
+      {paid.testModeDiagnostics && paid.status !== 'VERIFIED' && <li>
+        Test-mode diagnostics (never customer results): {paid.testModeDiagnostics.total ?? 0} account(s) with a successful test payment, {paid.testModeDiagnostics.newInWindow ?? 0} first paid in this window; {retention.testModeDiagnostics?.renewed ?? 0}/{retention.testModeDiagnostics?.dueForRenewal ?? 0} due test subscriptions renewed.
+      </li>}
+      <li>Paid retention: {PAYMENT_STATUS_LABEL[retention.status] ?? 'Not measured'}. {retention.note}</li>
+      <li>{funnel.usageRetention.note}</li>
+    </ul>
+  </div>
+}
+
 type AiCeoPayload = {
   growthSnapshot?: {
     windowDays: number
@@ -88,6 +134,7 @@ type AiCeoPayload = {
     accountsWithActiveLitterAfterSignup?: number | null
     accountsWithDogBeforeActiveLitter?: number | null
     accountsWithVerifiedActiveSubscription?: number | null
+    funnel?: GrowthFunnel
     channels: Record<string, number>
     basis: string
     limitations: string[]
@@ -486,6 +533,7 @@ export default function SuperAdminAiCeoPage() {
           Current active live subscriptions for confirmed customers in this signup cohort{' '}
           <strong>{data.growthSnapshot.accountsWithVerifiedActiveSubscription ?? 'Unverified'}</strong>
         </p>
+        {data.growthSnapshot.funnel && <FunnelHistory funnel={data.growthSnapshot.funnel} />}
         <ul style={{ fontSize: 12 }}>{data.growthSnapshot.limitations.map(item => <li key={item}>{item}</li>)}</ul>
         {data.growthSnapshot.invalidCreatedAt > 0 && <p role="status">{data.growthSnapshot.invalidCreatedAt} profile(s) have missing, invalid or future signup dates and were excluded.</p>}
       </section>}

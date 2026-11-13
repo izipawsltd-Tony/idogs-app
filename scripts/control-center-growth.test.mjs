@@ -87,3 +87,38 @@ test('ordered milestone requires a dog before the earliest active litter', () =>
   assert.equal(result.accountsWithDogBeforeActiveLitter, 1)
   assert.equal(buildGrowthSnapshot({ users, accounts, dogs, now }).accountsWithDogBeforeActiveLitter, null)
 })
+
+test('funnel: first dog and first litter (archived included) are separate milestones; visits have no source', () => {
+  const users = ['a', 'b', 'qa'].map(id => profile(id, 'direct', '2026-11-01'))
+  const accounts = users.map(user => ({ uid: user.id, classification: user.id === 'qa' ? 'TEST_QA' : 'REAL_CUSTOMER' }))
+  const dogs = [{ tenantId: 'a', createdAt: '2026-11-02' }, { tenantId: 'b', createdAt: '2026-11-02' }, { tenantId: 'qa', createdAt: '2026-11-02' }]
+  const litters = [{ tenantId: 'a', createdAt: '2026-11-03', archived: true }, { tenantId: 'qa', createdAt: '2026-11-03' }]
+  const { funnel, accountsWithFirstLitterAfterSignup } = buildGrowthSnapshot({ users, accounts, dogs, litters, now })
+  assert.equal(funnel.activation.firstDog, 2)
+  assert.equal(funnel.activation.firstLitter, 1)
+  assert.equal(accountsWithFirstLitterAfterSignup, 1)
+  assert.equal(funnel.visits.status, 'NO_VERIFIED_SOURCE')
+  assert.equal(funnel.visits.visitToSignupRate, null)
+  assert.equal(funnel.usageRetention.status, 'NOT_MEASURED')
+  assert.equal(buildGrowthSnapshot({ users, accounts, now }).funnel.activation.firstLitter, null)
+})
+
+test('funnel: paid counts appear only for VERIFIED payment history; test mode stays diagnostic', () => {
+  const live = { payingAccounts: 3, newPayingAccounts: 2, dueForRenewal: 2, renewed: 1, unknownPeriod: 0 }
+  const base = { users: [], accounts: [], now }
+  const verified = buildGrowthSnapshot({ ...base, paymentHistory: { status: 'VERIFIED', live, test: null } }).funnel
+  assert.equal(verified.payingCustomers.newInWindow, 2)
+  assert.equal(verified.payingCustomers.total, 3)
+  assert.equal(verified.paidRetention.rate, 0.5)
+  for (const status of ['TEST_MODE_ONLY', 'PARTIAL', 'UNAVAILABLE', 'UNKNOWN_MODE']) {
+    const funnel = buildGrowthSnapshot({ ...base, paymentHistory: { status, live, test: live } }).funnel
+    assert.equal(funnel.payingCustomers.newInWindow, null)
+    assert.equal(funnel.paidRetention.rate, null)
+    assert.equal(funnel.payingCustomers.status, status)
+  }
+  const test = buildGrowthSnapshot({ ...base, paymentHistory: { status: 'TEST_MODE_ONLY', live: null, test: live } }).funnel
+  assert.equal(test.payingCustomers.testModeDiagnostics.total, 3)
+  assert.equal(buildGrowthSnapshot({ ...base, paymentHistory: { status: 'FORGED' } }).funnel.payingCustomers.status, 'UNAVAILABLE')
+  const noneDue = buildGrowthSnapshot({ ...base, paymentHistory: { status: 'VERIFIED', live: { ...live, dueForRenewal: 0, renewed: 0 } } }).funnel
+  assert.equal(noneDue.paidRetention.rate, null)
+})

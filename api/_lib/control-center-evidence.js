@@ -4,6 +4,37 @@ const METRICS = ['totalUsers', 'newUsers7d', 'newUsers30d', 'totalDogs', 'totalL
 const amount = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 export const hasVerifiedLiveBilling = revenueTruth => revenueTruth?.status === 'VERIFIED' && revenueTruth?.stripeMode === 'LIVE'
 
+const enumValue = (value, allowed) => allowed.includes(value) ? value : 'UNKNOWN'
+const PAYMENT_STATUSES = ['VERIFIED', 'TEST_MODE_ONLY', 'UNKNOWN_MODE', 'PARTIAL', 'UNAVAILABLE']
+const share = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null
+
+// Aggregate funnel only. Test-mode diagnostics are deliberately not forwarded
+// to the model so it cannot present them as customer results.
+function projectFunnel(funnel, freshness) {
+  if (freshness !== 'FRESH' || !funnel || typeof funnel !== 'object') return null
+  const paid = funnel.payingCustomers || {}
+  const retention = funnel.paidRetention || {}
+  const verified = paid.status === 'VERIFIED'
+  return {
+    visits: { status: 'NO_VERIFIED_SOURCE', signupPageSessions: null, visitToSignupRate: null },
+    activation: { firstDog: amount(funnel.activation?.firstDog), firstLitter: amount(funnel.activation?.firstLitter) },
+    payingCustomers: {
+      status: enumValue(paid.status, PAYMENT_STATUSES),
+      appleIncluded: false,
+      newInWindow: verified ? amount(paid.newInWindow) : null,
+      total: verified ? amount(paid.total) : null,
+    },
+    paidRetention: {
+      status: enumValue(retention.status, PAYMENT_STATUSES),
+      dueForRenewal: verified ? amount(retention.dueForRenewal) : null,
+      renewed: verified ? amount(retention.renewed) : null,
+      rate: verified ? share(retention.rate) : null,
+    },
+    usageRetention: { status: 'NOT_MEASURED', rate: null },
+    basis: 'Activation is the first dog after signup; first litter is separate. Paying customers are Stripe-only (Apple not integrated), once per account on the first verified successful payment, excluding test mode. Paid retention is successful renewal among accounts due for renewal. Counts are null when not verified; null is unknown, not zero.',
+  }
+}
+
 export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs = 300000 } = {}) {
   if (!Number.isFinite(now.getTime()) || !Number.isFinite(maxAgeMs) || maxAgeMs <= 0) throw new Error('Invalid evidence clock')
   const source = payload && typeof payload === 'object' ? payload : {}
@@ -56,6 +87,7 @@ export function buildControlCenterEvidence(payload, { now = new Date(), maxAgeMs
       channels: Object.fromEntries(['meta', 'google', 'bing', 'direct', 'other', 'unknown'].map(key => [key, amount(source.growthSnapshot?.channels?.[key])])),
       visitorToSignupRate: null,
       retentionRate: null,
+      funnel: projectFunnel(growth.funnel, freshness),
       basis: 'Counts use surviving records in the signup cohort. The ordered milestone counts accounts with a dog record dated after or at signup and strictly before their earliest currently active litter. Historical first creation, paid conversion and retention are unknown.',
     },
     limitations: [

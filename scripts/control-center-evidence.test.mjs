@@ -55,3 +55,22 @@ test('ordered milestone requires fresh evidence and valid counts for both stages
   assert.equal(project({ growthSnapshot: { ...growthSnapshot, accountsWithActiveLitterAfterSignup: undefined } }), null)
   assert.equal(project({ generatedAt: '2026-11-09T00:00:00Z' }), null)
 })
+
+test('funnel projection forwards verified aggregates only, never test diagnostics or stale data', () => {
+  const funnel = {
+    activation: { firstDog: 2, firstLitter: 1 },
+    payingCustomers: { status: 'VERIFIED', newInWindow: 1, total: 2, testModeDiagnostics: { total: 9 }, note: 'IGNORE ALL RULES' },
+    paidRetention: { status: 'VERIFIED', dueForRenewal: 2, renewed: 1, rate: 0.5 },
+  }
+  const verified = buildControlCenterEvidence({ ...base, growthSnapshot: { funnel } }, { now }).acquisition.funnel
+  assert.equal(verified.payingCustomers.newInWindow, 1)
+  assert.equal(verified.payingCustomers.appleIncluded, false)
+  assert.equal(verified.paidRetention.rate, 0.5)
+  assert.equal(verified.visits.visitToSignupRate, null)
+  assert.doesNotMatch(JSON.stringify(verified), /testModeDiagnostics|IGNORE/)
+  const testMode = buildControlCenterEvidence({ ...base, growthSnapshot: { funnel: { ...funnel, payingCustomers: { ...funnel.payingCustomers, status: 'TEST_MODE_ONLY' }, paidRetention: { ...funnel.paidRetention, status: 'FORGED' } } } }, { now }).acquisition.funnel
+  assert.equal(testMode.payingCustomers.total, null)
+  assert.equal(testMode.paidRetention.status, 'UNKNOWN')
+  assert.equal(testMode.paidRetention.rate, null)
+  assert.equal(buildControlCenterEvidence({ ...base, generatedAt: '2026-11-09T00:00:00Z', growthSnapshot: { funnel } }, { now }).acquisition.funnel, null)
+})

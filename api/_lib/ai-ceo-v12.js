@@ -6,6 +6,7 @@ import { PLUS_MONTHLY_PRICE_AUD, PLUS_ANNUAL_PRICE_AUD } from './pricing-policy.
 import { computeEffectivePlan, hasValidInternalEntitlement } from './entitlements.js'
 import { ALLOWED_ADMINS } from '../super-admin/_auth.js'
 import { buildGrowthSnapshot } from './control-center-growth.js'
+import { compilePaymentHistory } from './control-center-payments.js'
 import { hasVerifiedLiveBilling } from './control-center-evidence.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -564,6 +565,12 @@ export async function buildAiCeoV12() {
   const revenueTruth = await compileRevenueTruth(users)
   const accountClassification = await compileAccountClassification({ users, dogs, activeLitters, revenueTruth, now })
   const customerRevenueTruth = compileCustomerRevenueTruth(revenueTruth, accountClassification)
+  // Read-only Stripe charge/invoice history for the paid funnel. A failure
+  // here never blocks the dashboard; it reports the funnel as unavailable.
+  const paymentHistory = await compilePaymentHistory({
+    stripe: process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null,
+    users, accounts: accountClassification.accounts, stripeMode: revenueTruth.stripeMode, now,
+  }).catch(() => ({ status: 'UNAVAILABLE' }))
 
   const breederIds = new Set(users.filter(user => user.role !== 'owner').map(user => user.id))
   const dogTenantIds = new Set(dogs.map(dog => dog.tenantId).filter(Boolean))
@@ -779,7 +786,7 @@ export async function buildAiCeoV12() {
     customerRevenueTruth,
     accountClassification,
     growthSnapshot: buildGrowthSnapshot({
-      users, accounts: accountClassification.accounts, dogs, activeLitters, now,
+      users, accounts: accountClassification.accounts, dogs, activeLitters, litters, paymentHistory, now,
       verifiedLiveBilling: hasVerifiedLiveBilling(revenueTruth) && revenueTruth.failedSubscriptionReads === 0,
     }),
     facts: {
