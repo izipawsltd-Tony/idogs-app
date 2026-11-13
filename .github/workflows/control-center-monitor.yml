@@ -1,0 +1,87 @@
+name: Control Center public website monitor
+
+# Independent of the owner's Windows computer. Probes only the fixed public
+# homepage and signup URLs (GET, no cookies, no credentials) and keeps the
+# incident state between runs in the Actions cache.
+#
+# ACTIVATION: GitHub runs `schedule` only from the default branch (master).
+# The schedule therefore starts only after this file is merged to master,
+# which is an Owner decision. The `push` trigger below exists solely to verify
+# the runner on the feature branch and is inert once merged.
+#
+# ALERTS: an open incident does NOT fail the job unless the repository
+# variable CONTROL_CENTER_MONITOR_ALERTS is set to "on". A failed scheduled
+# job makes GitHub email the person who last edited this schedule, so turning
+# that variable on is the alert channel and needs the Owner's agreement.
+# Runner errors (invalid state, crashes) always fail the job.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [feature/control-center-v1-20261110]
+    paths:
+      - .github/workflows/control-center-monitor.yml
+      - scripts/control-center-monitor.mjs
+      - scripts/control-center-monitor-core.mjs
+      - api/_lib/control-center-health.js
+      - api/_lib/control-center-incidents.js
+
+permissions:
+  contents: read
+  actions: write # save/restore the monitor state cache only
+
+concurrency:
+  group: control-center-monitor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+            api/_lib
+          sparse-checkout-cone-mode: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Restore monitor state
+        uses: actions/cache/restore@v4
+        with:
+          path: .control-center-monitor
+          key: control-center-monitor-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            control-center-monitor-${{ github.ref_name }}-
+
+      - name: Previous state
+        run: node scripts/control-center-monitor.mjs --status || true
+
+      - name: Probe public website
+        id: probe
+        run: |
+          set +e
+          node scripts/control-center-monitor.mjs --quarantine-invalid-state
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "1" ]; then exit 1; fi
+          exit 0
+
+      - name: Save monitor state
+        if: always() && hashFiles('.control-center-monitor/state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .control-center-monitor
+          key: control-center-monitor-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Alert on open incident
+        if: steps.probe.outputs.code == '3' && vars.CONTROL_CENTER_MONITOR_ALERTS == 'on'
+        run: |
+          echo "::error::iDogs public website incident is open. See the job summary."
+          exit 1
