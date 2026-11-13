@@ -5,7 +5,7 @@ import { compilePaymentHistory, summarizeCustomerPayments } from '../api/_lib/co
 const now = new Date('2026-11-13T00:00:00Z')
 const sec = iso => Math.floor(Date.parse(iso) / 1000)
 const charge = (iso, extra = {}) => ({ status: 'succeeded', paid: true, refunded: false, amount_captured: 700, created: sec(iso), livemode: true, ...extra })
-const invoice = (iso, periodEndIso, extra = {}) => ({ status: 'paid', amount_paid: 700, billing_reason: 'subscription_cycle', created: sec(iso), livemode: true, lines: { data: [{ period: { end: sec(periodEndIso) } }] }, ...extra })
+const invoice = (iso, periodEndIso, extra = {}) => ({ status: 'paid', amount_paid: 700, billing_reason: 'subscription_cycle', created: sec(iso), livemode: true, parent: { subscription_details: { subscription: 'sub_1' } }, lines: { data: [{ period: { end: sec(periodEndIso) } }] }, ...extra })
 const summarize = (charges, invoices = []) => summarizeCustomerPayments({ charges, invoices, now, windowDays: 30, renewalGraceDays: 3 })
 
 test('first verified payment counts once, only when successful, captured and not refunded', () => {
@@ -32,6 +32,34 @@ test('paid renewal requires the first paid period to have ended plus grace; A$0 
   assert.equal(summarize(pays, [invoice('2026-10-20', '2026-11-11', { billing_reason: 'subscription_create' })]).live.renewal, 'NOT_DUE')
   assert.equal(summarize(pays, [invoice('2026-09-01', '2026-10-01', { lines: { data: [] } })]).live.renewal, 'UNKNOWN_PERIOD')
   assert.equal(summarize(pays, [invoice('2026-09-01', '2026-10-01', { billing_reason: 'manual' })]).live.renewal, 'NONE')
+})
+
+test('renewal must be a later paid cycle invoice of the same subscription', () => {
+  const pays = [charge('2026-09-01')]
+  const first = invoice('2026-09-01', '2026-10-01', { billing_reason: 'subscription_create' })
+  const resubscribe = invoice('2026-10-15', '2026-11-15', { billing_reason: 'subscription_create', parent: { subscription_details: { subscription: 'sub_2' } } })
+  assert.equal(summarize(pays, [first, resubscribe]).live.renewal, 'DUE_NOT_RENEWED')
+  const otherCycle = invoice('2026-10-01', '2026-11-01', { parent: { subscription_details: { subscription: 'sub_2' } } })
+  assert.equal(summarize(pays, [first, otherCycle]).live.renewal, 'DUE_NOT_RENEWED')
+  const upgrade = invoice('2026-09-15', '2026-10-01', { billing_reason: 'subscription_update' })
+  assert.equal(summarize(pays, [first, upgrade]).live.renewal, 'DUE_NOT_RENEWED')
+  // Older API payloads keep invoice.subscription (string or expanded object).
+  const legacyFirst = { ...first, parent: undefined, subscription: 'sub_9' }
+  const legacyCycle = { ...invoice('2026-10-01', '2026-11-01'), parent: undefined, subscription: { id: 'sub_9' } }
+  assert.equal(summarize(pays, [legacyFirst, legacyCycle]).live.renewal, 'RENEWED')
+  assert.equal(summarize(pays, [{ ...first, parent: undefined }]).live.renewal, 'UNKNOWN_PERIOD')
+})
+
+test('renewal due date uses the subscription service period, not a proration line', () => {
+  const pays = [charge('2026-10-20')]
+  const lines = { data: [
+    { period: { end: sec('2026-10-25') }, parent: { subscription_item_details: { proration: true } } },
+    { period: { end: sec('2026-10-26') }, proration: true },
+    { period: { end: sec('2026-11-20') } },
+  ] }
+  assert.equal(summarize(pays, [invoice('2026-10-20', '2026-11-20', { billing_reason: 'subscription_create', lines })]).live.renewal, 'NOT_DUE')
+  const onlyProration = { data: [lines.data[0]] }
+  assert.equal(summarize(pays, [invoice('2026-10-20', '2026-11-20', { billing_reason: 'subscription_create', lines: onlyProration })]).live.renewal, 'UNKNOWN_PERIOD')
 })
 
 function fakeStripe(perCustomer) {

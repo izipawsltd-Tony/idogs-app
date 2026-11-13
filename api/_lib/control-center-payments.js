@@ -35,6 +35,26 @@ function successfulCharge(charge) {
     && Number.isSafeInteger(charge.created)
 }
 
+// Stripe API versions used by stripe-node 22 move the subscription reference
+// under invoice.parent; older payloads keep invoice.subscription.
+function subscriptionOf(invoice) {
+  const ref = invoice?.subscription || invoice?.parent?.subscription_details?.subscription
+  const id = typeof ref === 'string' ? ref : ref?.id
+  return typeof id === 'string' && id ? id : null
+}
+
+// Service period end of the subscription being billed: the latest period end
+// among non-proration lines. Proration lines describe mid-period changes and
+// must not decide when a renewal falls due.
+function servicePeriodEnd(invoice) {
+  const lines = Array.isArray(invoice?.lines?.data) ? invoice.lines.data : []
+  const ends = lines
+    .filter(line => line?.proration !== true && line?.parent?.subscription_item_details?.proration !== true)
+    .map(line => line?.period?.end)
+    .filter(Number.isSafeInteger)
+  return ends.length ? Math.max(...ends) : null
+}
+
 function paidSubscriptionInvoices(invoices) {
   return invoices
     .filter(invoice => invoice?.status === 'paid' && Number.isSafeInteger(invoice.amount_paid) && invoice.amount_paid > 0
@@ -49,11 +69,18 @@ export function summarizeCustomerPayments({ charges, invoices, now, windowDays, 
       .reduce((min, charge) => Math.min(min, charge.created), Infinity)
     if (firstCharge === Infinity) continue
     const paid = paidSubscriptionInvoices(invoices.filter(invoice => Boolean(invoice.livemode) === live))
-    const periodEnd = paid[0]?.lines?.data?.[0]?.period?.end
+    const first = paid[0]
     let renewal = 'NONE'
-    if (paid.length) {
-      if (!Number.isSafeInteger(periodEnd)) renewal = 'UNKNOWN_PERIOD'
-      else if (periodEnd * 1000 + renewalGraceDays * DAY <= now.getTime()) renewal = paid.length >= 2 ? 'RENEWED' : 'DUE_NOT_RENEWED'
+    if (first) {
+      const periodEnd = servicePeriodEnd(first)
+      const subscription = subscriptionOf(first)
+      // A renewal is a later paid cycle invoice of the SAME subscription. A new
+      // subscription after cancelling (subscription_create) or another
+      // subscription of the same customer is not a renewal.
+      const renewed = paid.some(invoice => invoice !== first && invoice.created > first.created
+        && invoice.billing_reason === 'subscription_cycle' && subscriptionOf(invoice) === subscription)
+      if (periodEnd === null || subscription === null) renewal = 'UNKNOWN_PERIOD'
+      else if (periodEnd * 1000 + renewalGraceDays * DAY <= now.getTime()) renewal = renewed ? 'RENEWED' : 'DUE_NOT_RENEWED'
       else renewal = 'NOT_DUE'
     }
     result[live ? 'live' : 'test'] = {

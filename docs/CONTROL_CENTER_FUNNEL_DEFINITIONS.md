@@ -31,7 +31,11 @@ Quy tắc chung: tài khoản INTERNAL và TEST_QA bị loại. LIKELY_REAL khô
 
 Hai chỉ số tách riêng. **Ưu tiên chỉ số trả phí** cho mục tiêu tăng khách trả tiền.
 
-- **Giữ chân trả phí (đã làm):** trong nhóm tài khoản đã đến kỳ gia hạn (kỳ trả phí đầu tiên đã kết thúc ít nhất 3 ngày), tỷ lệ có thêm một hoá đơn thuê bao trả phí sau đó (gia hạn thành công). Hoá đơn A$0 không tính là kỳ trả phí. Dùng cùng điều kiện LIVE/đầy đủ như mục 3.
+- **Giữ chân trả phí (đã làm):** trong nhóm tài khoản đã đến kỳ gia hạn (kỳ trả phí đầu tiên đã kết thúc ít nhất 3 ngày), tỷ lệ có gia hạn thành công. Dùng cùng điều kiện LIVE/đầy đủ như mục 3.
+  - "Gia hạn thành công" = một hoá đơn **kỳ tiếp theo** (`subscription_cycle`) đã trả, lớn hơn A$0, của **cùng thuê bao** với hoá đơn trả phí đầu tiên. Đăng ký lại thuê bao mới sau khi huỷ, thuê bao khác của cùng khách, và hoá đơn nâng/hạ gói giữa kỳ **không** tính là gia hạn.
+  - "Đến kỳ" tính theo ngày hết kỳ dịch vụ của thuê bao trên hoá đơn đầu tiên. Dòng điều chỉnh giá giữa kỳ (proration) không dùng để tính ngày.
+  - Hoá đơn A$0 (khuyến mãi, voucher) không phải kỳ trả phí: nếu khách được miễn phí rồi mới trả, kỳ trả phí đầu tiên là hoá đơn có tiền đầu tiên.
+  - Không xác định được thuê bao hoặc ngày hết kỳ thì không đưa vào mẫu số (ghi là `unknownPeriod`).
 - **Giữ chân sử dụng (chưa đo):** tài khoản quay lại thực hiện thao tác có ý nghĩa trong app (thêm/sửa chó, hồ sơ sức khoẻ, nhắc lịch, tài liệu, lứa). Dashboard hiện "Not measured". Cần chốt cửa sổ thời gian và nguồn dữ liệu hoạt động trước khi đo.
 
 ## Đo được / còn thiếu (13/11/2026)
