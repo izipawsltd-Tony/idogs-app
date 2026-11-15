@@ -1,0 +1,113 @@
+name: Control Center public website monitor
+
+# Independent of the owner's Windows computer. Probes only the fixed public
+# homepage and signup URLs (GET, no cookies, no credentials) and keeps the
+# incident state between runs in the Actions cache.
+#
+# ACTIVATION: GitHub runs `schedule` only from the default branch (master).
+# The schedule therefore starts only after this file is merged to master,
+# which needs the Owner's approval. The `push` trigger exists only to test the
+# runner on the feature branch; it is inert once merged.
+#
+# ALERTS ARE OFF (Owner decision 13 Nov 2026): results are written to the job
+# log and job summary only. The job does not fail on a website error, a
+# monitoring gap or a runner error, because a failed run makes GitHub email
+# people. Alerts start only if the repository variable
+# CONTROL_CENTER_MONITOR_ALERTS is set to "on", which needs Owner approval.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [feature/control-center-v1-20261110]
+    paths:
+      - .github/workflows/control-center-monitor.yml
+      - scripts/control-center-monitor.mjs
+      - scripts/control-center-monitor-core.mjs
+      - scripts/control-center-monitor-rehearsal.mjs
+      - api/_lib/control-center-health.js
+      - api/_lib/control-center-incidents.js
+
+permissions:
+  contents: read
+  actions: write # save/restore the monitor state cache only
+
+concurrency:
+  group: control-center-monitor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+            api/_lib
+          sparse-checkout-cone-mode: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Restore monitor state
+        uses: actions/cache/restore@v4
+        with:
+          path: .control-center-monitor
+          key: control-center-monitor-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            control-center-monitor-${{ github.ref_name }}-
+
+      - name: Previous state
+        run: node scripts/control-center-monitor.mjs --status || true
+
+      - name: Probe public website
+        id: probe
+        run: |
+          set +e
+          node scripts/control-center-monitor.mjs --quarantine-invalid-state
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Save monitor state
+        if: always() && hashFiles('.control-center-monitor/state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .control-center-monitor
+          key: control-center-monitor-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Record outcome
+        env:
+          CODE: ${{ steps.probe.outputs.code }}
+          OUTCOME: ${{ steps.probe.outputs.outcome }}
+          INCIDENT: ${{ steps.probe.outputs.incident }}
+        run: |
+          if [ "$CODE" = "1" ] || [ -z "$OUTCOME" ]; then
+            echo "::warning title=Monitor runner error::The monitor itself failed, so the website was not checked this run. See the Probe step log."
+          elif [ "$OUTCOME" = "WEBSITE_ERROR" ]; then
+            echo "::warning title=Website error::A public page answered with an unexpected HTTP status or content type."
+          elif [ "$OUTCOME" = "MONITOR_COULD_NOT_CHECK" ]; then
+            echo "::warning title=Monitor could not check::The website was not observed this run (timeout, network, challenge or access block). Not proof of an outage."
+          else
+            echo "::notice title=Website OK::Both public pages returned HTML with HTTP 200."
+          fi
+          if [ "$INCIDENT" = "HTTP_FAILURE" ]; then
+            echo "::warning title=Open incident: website error::Two or more consecutive failed observations."
+          elif [ "$INCIDENT" = "OBSERVATION_GAP" ]; then
+            echo "::warning title=Open incident: monitoring gap::Two or more consecutive runs could not check the website."
+          fi
+          echo "outcome=${OUTCOME:-RUNNER_ERROR} incident=${INCIDENT:-UNKNOWN} exit=${CODE}"
+
+      - name: Rehearsal of failure reporting (simulated, does not contact the website)
+        if: github.event_name != 'schedule'
+        run: node scripts/control-center-monitor-rehearsal.mjs
+
+      - name: Alert (only when CONTROL_CENTER_MONITOR_ALERTS is "on")
+        if: vars.CONTROL_CENTER_MONITOR_ALERTS == 'on' && (steps.probe.outputs.code == '1' || steps.probe.outputs.code == '3')
+        run: |
+          echo "::error::iDogs website monitor alert. See the job summary."
+          exit 1
