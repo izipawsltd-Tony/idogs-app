@@ -49,6 +49,7 @@ import { newMediaId, MAX_MEDIA_ITEMS_PER_KIND } from './_lib/showcase-media-acce
 import { UPLOAD_URL_TTL_MS, MEDIA_UPLOAD_GRANTS_COLLECTION, extensionForUpload, NO_OVERWRITE_HEADER, MAX_DIRECT_VIDEO_UPLOAD_BYTES, UPLOAD_REQUEST_RATE_WINDOW_MS, MAX_UPLOAD_REQUESTS_PER_WINDOW } from './_lib/direct-upload.js'
 import { checkDurableRateLimit } from './_lib/durable-rate-limit.js'
 import { createPendingGrant, closePendingGrant } from './_lib/direct-upload-grants.js'
+import { canPublish } from './_lib/puppy-updates-policy.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -81,7 +82,8 @@ async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
 
-  const { dogId, kind, contentType, sizeBytes } = req.body || {}
+  const { dogId, kind, contentType, sizeBytes, purpose = 'gallery' } = req.body || {}
+  if (!['gallery', 'puppy-update'].includes(purpose)) return res.status(400).json({ error: 'Invalid upload purpose' })
   if (!dogId || typeof dogId !== 'string') return res.status(400).json({ error: 'dogId is required' })
   if (kind !== 'photo' && kind !== 'video') return res.status(400).json({ error: "kind must be 'photo' or 'video'" })
   if (!contentType || typeof contentType !== 'string') return res.status(400).json({ error: 'contentType is required' })
@@ -126,6 +128,7 @@ async function handler(req, res) {
     const dogSnap = await db.collection('dogs').doc(dogId).get()
     if (!dogSnap.exists) return res.status(404).json({ error: 'Dog not found' })
     const dog = dogSnap.data()
+    if (purpose === 'puppy-update' && !canPublish(dog, uid)) return res.status(403).json({ error: 'Only the current owner can add story media' })
 
     if (!canAddDogRecord(dog, uid)) {
       // Same distinguishable-reason behavior as upload-showcase-media.js
@@ -139,7 +142,7 @@ async function handler(req, res) {
     // common case. Re-checked authoritatively in confirm (this dog's
     // gallery could change during the up-to-10-minute upload window).
     const existingCount = (kind === 'photo' ? dog.photos : dog.videos)?.length || 0
-    if (existingCount >= MAX_MEDIA_ITEMS_PER_KIND) {
+    if (purpose !== 'puppy-update' && existingCount >= MAX_MEDIA_ITEMS_PER_KIND) {
       return res.status(409).json({ error: `This puppy already has the maximum of ${MAX_MEDIA_ITEMS_PER_KIND} ${kind}s`, reason: 'MEDIA_LIMIT_REACHED' })
     }
 
@@ -155,6 +158,7 @@ async function handler(req, res) {
       uid,
       dogId,
       kind,
+      purpose,
       path: filePath,
       contentType,
       expectedSizeBytes: sizeBytes,

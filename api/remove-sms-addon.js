@@ -24,4 +24,5 @@ export default createSmsAddonRemoveHandler({
   },
   retrieveSubscription: id => stripe.subscriptions.retrieve(id, { expand: ['items.data.price'] }),
   updateSubscription: (id, params) => stripe.subscriptions.update(id, params),
+  cancelSubscription: (id, params) => stripe.subscriptions.cancel(id, params),
 })

@@ -5,6 +5,11 @@ interface PlanRow {
   id: string
   name: string
   estimatedMonthlyPrice: number
+  annualPrice: number
+  dogCap: number
+  scanQuota: string
+  litterQuota: string | null
+  extraLitterPrice: number | null
   description: string
   accountsCount: number
   activePaidAccountsCount: number
@@ -23,6 +28,7 @@ interface ApiResponse {
   plans: PlanRow[]
   summary: Summary
   dataModelNotice: string
+  pricingPolicyVersion: string
 }
 
 export default function SuperAdminPlansPricingPage() {
@@ -30,6 +36,7 @@ export default function SuperAdminPlansPricingPage() {
   const [plans, setPlans] = useState<PlanRow[]>([])
   const [summary, setSummary] = useState<Summary | null>(null)
   const [dataModelNotice, setDataModelNotice] = useState<string>('')
+  const [pricingPolicyVersion, setPricingPolicyVersion] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [unauthorized, setUnauthorized] = useState(false)
@@ -64,6 +71,7 @@ export default function SuperAdminPlansPricingPage() {
       setPlans(Array.isArray(json.plans) ? json.plans : [])
       setSummary(json.summary || null)
       setDataModelNotice(json.dataModelNotice || '')
+      setPricingPolicyVersion(json.pricingPolicyVersion || '')
     } catch (err: any) {
       console.error('Error fetching plans & pricing data:', err)
       setError(err.message || 'Failed to connect to the plans & pricing API.')
@@ -77,7 +85,7 @@ export default function SuperAdminPlansPricingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
-  const formatCurrency = (value: number) => `$${value.toLocaleString('en-AU')}`
+  const formatCurrency = (value: number) => `A$${value.toLocaleString('en-AU', { maximumFractionDigits: 2 })}`
 
   const disabledButtonStyle: CSSProperties = {
     padding: '6px 12px',
@@ -155,7 +163,7 @@ export default function SuperAdminPlansPricingPage() {
         🔒 Pricing management is read-only in V1. Billing changes require a future approval workflow.
       </div>
 
-      {/* V1 data model notice */}
+      {/* Pricing truth / source notice */}
       {dataModelNotice && (
         <div style={{
           padding: '12px 16px',
@@ -166,8 +174,14 @@ export default function SuperAdminPlansPricingPage() {
           fontSize: 12,
           lineHeight: 1.5,
           marginBottom: 24,
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 16,
+          flexWrap: 'wrap',
+          alignItems: 'center',
         }}>
-          ℹ️ <strong>Data model note:</strong> {dataModelNotice} This catalogue is a Super Admin-only display mirror of BillingPage.tsx pricing — not a shared runtime pricing source.
+          <span>✅ <strong>Pricing sync:</strong> {dataModelNotice}</span>
+          <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Policy {pricingPolicyVersion || 'unknown'}</span>
         </div>
       )}
 
@@ -197,12 +211,24 @@ export default function SuperAdminPlansPricingPage() {
           <div key={plan.id} className="super-admin-module-card">
             <span>{plan.status.toUpperCase()}</span>
             <h3>{plan.name}</h3>
-            <p style={{ fontSize: 22, fontWeight: 700, color: '#085041', margin: '2px 0 8px' }}>
-              {plan.estimatedMonthlyPrice === 0 ? 'Free' : `${formatCurrency(plan.estimatedMonthlyPrice)}/mo`}
+            <p style={{ fontSize: 22, fontWeight: 700, color: '#085041', margin: '2px 0 4px' }}>
+              {plan.estimatedMonthlyPrice === 0 ? 'Free' : formatCurrency(plan.estimatedMonthlyPrice) + '/mo'}
             </p>
+            {plan.annualPrice > 0 && (
+              <p style={{ margin: '0 0 8px', fontSize: 12, color: '#53635a', fontWeight: 600 }}>
+                {formatCurrency(plan.annualPrice) + '/year'}
+              </p>
+            )}
             <p>{plan.description}</p>
+            <div style={{ marginTop: 10, fontSize: 12, color: '#53635a', display: 'grid', gap: 3 }}>
+              <span>Dog cap: <strong>{plan.dogCap}</strong></span>
+              <span>iDogs Scan: <strong>{plan.scanQuota}</strong></span>
+              {plan.litterQuota && <span>Litters: <strong>{plan.litterQuota}</strong></span>}
+              {plan.extraLitterPrice !== null && <span>Extra litter: <strong>{formatCurrency(plan.extraLitterPrice)}</strong></span>}
+            </div>
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e6ece7', fontSize: 12, color: '#53635a', display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span>Accounts on plan: <strong style={{ color: '#10291d' }}>{plan.accountsCount}</strong></span>
+              <span>Active paid: <strong style={{ color: '#10291d' }}>{plan.activePaidAccountsCount}</strong></span>
               <span>Estimated MRR contribution: <strong style={{ color: '#10291d' }}>{formatCurrency(plan.estimatedMrrContribution)}</strong></span>
             </div>
           </div>

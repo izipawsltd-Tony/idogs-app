@@ -1,11 +1,18 @@
-import { useEffect, useState } from 'react'
+import ReminderForm from '../components/ui/ReminderForm'
+import { UploadModal } from './DocumentsPage'
+import { documentDisplayName, documentEditableName } from '../lib/documentName'
+import { QrDocumentManager, QrDocumentSharingSummary, QrDocumentShareCheckbox, QrDocumentSharingFooter } from '../components/ui/QrDocuments'
+import PuppyUpdatesManager from '../components/ui/PuppyUpdatesManager'
+import PuppyUpdateFeed from '../components/ui/PuppyUpdateFeed'
+import { puppyUpdates, type PuppyUpdate, puppyShareUrl } from '../lib/puppyUpdates'
+import { useEffect, useRef, useCallback, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../hooks/useAuth'
 import {
   getDog, getDogs, getVaccineRecords, getWormingRecords, getHealthTests,
-  getReminders, getActivityNotes, addActivityNote, updateActivityNote, deleteActivityNote,
-  addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder,
+  addWormingReminder, getReminders, getActivityNotes, addActivityNote, updateActivityNote, deleteActivityNote,
+  addVaccineRecord, deleteVaccineRecord, updateVaccineRecord, addHealthTest, updateHealthTest, deleteHealthTest, completeReminder, addReminder, updateReminder,
   addWormingRecord, deleteWormingRecord,
   getScanCount, deleteDog, updateDog, transferDogOwnership, getDogDocuments, deleteDocument, updateDocument, logAudit, syncLifeStage,
   getAuditLogs, type AuditEntry, isCurrentOwner, safeReadFirestoreErrorCode
@@ -14,19 +21,24 @@ import { useRequestGuard } from '../hooks/useRequestGuard'
 import {
   formatDate, getDogAge, LIFE_STAGE_EMOJI, LIFE_STAGE_LABELS,
   getVaccineStatus, isOverdue, isDueSoon, getTodaysMilestone, ordinal, BREEDER_ID_CONFIG, type Milestone,
-  isEligibleSireDog, isDogTransferred, isDogHistoryBearing, isDogDeletableByUser
+  isEligibleSireDog, isDogTransferred, isDogHistoryBearing, isDogDeletableByUser,
+  calculateLifeStage, parseDobStrict
 } from '../lib/utils'
 import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityNote, ToastMessage } from '../types'
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
-import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, nextBreedingRightsUpdate, initialTransferPedigreeRegister, initialBreedingRightsValue, pedigreeRegisterLabel, breedingRightsLabel, STATE_RULES, NO_JURISDICTION_RULES, resolveComplianceJurisdiction, type AustralianJurisdiction, type BreedingRightsValue } from '../lib/breedingCompliance'
+import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
-import { isHeicFile } from '../lib/heic'
+import { prepareImageForUpload } from '../lib/imageCompression'
+import { saveNoteWithPhoto, TimelinePhotoError } from '../lib/timelineNoteSave'
 import PhotoUpload from '../components/ui/PhotoUpload'
+import RecoveredDogHistory from '../components/ui/RecoveredDogHistory'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
 import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
 import { db, auth } from '../lib/firebase'
 import { emitDogUsageChanged } from '../lib/dogUsageEvents'
+import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { restrictedBreederIdMessage, restrictedSaleAvailabilityMessage } from '../lib/nativeUpgradeCopy'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -120,7 +132,7 @@ export default function DogDetailPage({ toast }: Props) {
   const { dogId } = useParams<{ dogId: string }>()
   const navigate = useNavigate()
   const { user, profile } = useAuth()
-  const userState = resolveComplianceJurisdiction((profile as any)?.state)
+  const userState: string = (profile as any)?.state || 'SA'
   const isOwner = profile?.role === 'owner'
   const [tab, setTab] = useState<Tab>('overview')
   const [dog, setDog] = useState<Dog | null>(null)
@@ -155,8 +167,22 @@ export default function DogDetailPage({ toast }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [statusActionLoading, setStatusActionLoading] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
+  const [showDocumentUpload, setShowDocumentUpload] = useState(false)
+  const [showEditProfile, setShowEditProfile] = useState(false)
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [profileDraft, setProfileDraft] = useState({
+    name: '',
+    breed: '',
+    sex: 'female' as Dog['sex'],
+    dateOfBirth: '',
+    colour: '',
+    microchip: '',
+    ankc: '',
+    notes: '',
+  })
   const [documents, setDocuments] = useState<any[]>([])
   const [documentsError, setDocumentsError] = useState(false)
+  const [historicalSnapshot, setHistoricalSnapshot] = useState<any | null>(null)
 
   // Codex round 15: keyed on both dogId AND user?.uid — the same
   // combined-key pattern as BreedingTab above. Without this, a slow
@@ -186,13 +212,39 @@ export default function DogDetailPage({ toast }: Props) {
   const remindersGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
   const timelineGuard = useRequestGuard(`${user?.uid || ''}:${dogId || ''}`)
 
+  function visibleToFormerOwner(createdAt: unknown): boolean {
+    if (!dog || !user?.uid) return true
+    const isFormerOwner = dog.tenantId === user.uid
+      && !!dog.currentOwnerId
+      && dog.currentOwnerId !== user.uid
+    if (!isFormerOwner) return true
+
+    // Privacy boundary is WHEN the record was actually created, not the
+    // clinical "date given". A new owner can legitimately backdate a
+    // vaccine/worming entry, so comparing dateGiven to transferredAt
+    // leaked post-transfer records to the former breeder.
+    const transferTime = Date.parse(dog.transferredAt || '')
+    if (!Number.isFinite(transferTime) || !createdAt) return false
+
+    let createdTime = Number.NaN
+    if (typeof createdAt === 'string') {
+      createdTime = Date.parse(createdAt)
+    } else if (typeof (createdAt as any)?.toDate === 'function') {
+      createdTime = (createdAt as any).toDate().getTime()
+    } else if (typeof (createdAt as any)?.seconds === 'number') {
+      createdTime = (createdAt as any).seconds * 1000
+    }
+
+    return Number.isFinite(createdTime) && createdTime <= transferTime
+  }
+
   function retryVaccines() {
     if (!dogId) return
     const req = vaccinesGuard.beginRequest()
     setVaccinesError(false)
     getVaccineRecords(dogId).then(data => {
       if (!req.isCurrent()) return
-      setVaccines(data); setVaccinesError(false)
+      setVaccines(data.filter(v => visibleToFormerOwner(v.createdAt))); setVaccinesError(false)
     }).catch(err => {
       if (!req.isCurrent()) return
       console.error('DogDetailPage: vaccines retry failed', { code: safeReadFirestoreErrorCode(err) })
@@ -205,7 +257,7 @@ export default function DogDetailPage({ toast }: Props) {
     setWormingError(false)
     getWormingRecords(dogId).then(data => {
       if (!req.isCurrent()) return
-      setWormings(data); setWormingError(false)
+      setWormings(data.filter(w => visibleToFormerOwner(w.createdAt))); setWormingError(false)
     }).catch(err => {
       if (!req.isCurrent()) return
       console.error('DogDetailPage: worming retry failed', { code: safeReadFirestoreErrorCode(err) })
@@ -275,7 +327,7 @@ export default function DogDetailPage({ toast }: Props) {
     setNotesError(false)
     setAuditError(false)
     Promise.all([
-      getActivityNotes(dogId)
+      getActivityNotes(dogId, user?.uid || '', dog)
         .then(data => ({ ok: true as const, data }))
         .catch((err: unknown) => {
           console.error('DogDetailPage: timeline (notes) retry failed', { code: safeReadFirestoreErrorCode(err) })
@@ -308,6 +360,7 @@ export default function DogDetailPage({ toast }: Props) {
     setQrUrl('')
     setScanCount(null); setScanCountError(false)
     setDocuments([]); setDocumentsError(false)
+    setHistoricalSnapshot(null)
     if (!dogId) return
     const req = beginRequest()
     setLoading(true)
@@ -333,6 +386,34 @@ export default function DogDetailPage({ toast }: Props) {
         if (!req.isCurrent()) return
         if (!d) { navigate('/app/dogs'); return }
         setDog(d)
+        const history = (d as any)._historySnapshot || null
+        setHistoricalSnapshot(history)
+
+        // Former-owner view is served exclusively from the immutable
+        // transfer snapshot. Never query the live dog child collections:
+        // those now belong only to the current owner.
+        if (history) {
+          // An old transfer can have an audit trail without a frozen
+          // clinical record. Do not label missing records as zero or query
+          // live data to fill the gap.
+          if (['audit_only', 'recovered_partial'].includes(history.historyAvailability)) return
+          setVaccines(history.vaccineRecords || []); setVaccinesError(false)
+          setWormings(history.wormingRecords || []); setWormingError(false)
+          setHealthTests(history.healthTests || []); setHealthTestsError(false)
+          setNotes(history.activityNotes || []); setNotesError(false)
+          setDocuments(history.documents || []); setDocumentsError(false)
+          setReminders(history.reminders || []); setRemindersError(false)
+          setLifeStageEvents([]); setAuditError(false)
+          setScanCount(typeof history.scanCount === 'number' ? history.scanCount : 0); setScanCountError(false)
+          const publicUrl = puppyShareUrl(d.passportId)
+          const url = await QRCode.toDataURL(publicUrl, {
+            width: 200, margin: 2, errorCorrectionLevel: 'H',
+            color: { dark: '#1A3A2A', light: '#FFFFFF' }
+          })
+          if (req.isCurrent()) setQrUrl(url)
+          return
+        }
+
         // Re-sync lifeStage in case it's drifted out of date (dogs were
         // previously assigned a fixed lifeStage at creation time with
         // nothing updating it afterwards as they aged).
@@ -349,7 +430,7 @@ export default function DogDetailPage({ toast }: Props) {
           safeLoad(getVaccineRecords(dogId!), [] as VaccineRecord[]),
           safeLoad(getWormingRecords(dogId!), [] as WormingRecord[]),
           safeLoad(getHealthTests(dogId!), [] as HealthTest[]),
-          safeLoad(getActivityNotes(dogId!), [] as ActivityNote[]),
+          safeLoad(getActivityNotes(dogId!, user?.uid || '', d), [] as ActivityNote[]),
           safeLoad(getScanCount(dogId!), null as number | null),
           safeLoad(getDogDocuments(dogId!), [] as any[]),
           // Query with the VIEWER's own uid, not d.tenantId (the dog's
@@ -375,8 +456,8 @@ export default function DogDetailPage({ toast }: Props) {
             }),
         ])
         if (!req.isCurrent()) return
-        setVaccines(vRes.data); setVaccinesError(!vRes.ok)
-        setWormings(wRes.data); setWormingError(!wRes.ok)
+        setVaccines(vRes.data.filter(v => visibleToFormerOwner(v.createdAt))); setVaccinesError(!vRes.ok)
+        setWormings(wRes.data.filter(w => visibleToFormerOwner(w.createdAt))); setWormingError(!wRes.ok)
         setHealthTests(hRes.data); setHealthTestsError(!hRes.ok)
         // A user who's no longer the current owner (e.g. the original
         // breeder after a buyer claims the dog) must not see this dog's
@@ -393,7 +474,7 @@ export default function DogDetailPage({ toast }: Props) {
         setDocuments(docsRes.data); setDocumentsError(!docsRes.ok)
         setLifeStageEvents(auditRes.data.filter(e => e.action === 'life_stage_changed'))
         setAuditError(!auditRes.ok)
-        const publicUrl = `${window.location.origin}/p/${d.passportId}`
+        const publicUrl = puppyShareUrl(d.passportId)
         const url = await QRCode.toDataURL(publicUrl, {
           width: 200, margin: 2, errorCorrectionLevel: 'H',
           color: { dark: '#1A3A2A', light: '#FFFFFF' }
@@ -416,12 +497,12 @@ export default function DogDetailPage({ toast }: Props) {
     if (!newNote.trim() || !dogId) return
     setSavingNote(true)
     try {
-      let photoUrl: string | undefined
-      if (notePhoto && user?.uid) {
-        setUploadingNotePhoto(true)
-        try {
+      if (notePhoto && !user?.uid) throw new TimelinePhotoError()
+      await saveNoteWithPhoto(notePhoto ? async () => {
+          setUploadingNotePhoto(true)
+          if (!user) throw new TimelinePhotoError()
           const idToken = await user.getIdToken()
-          const res = await fetch('/api/upload?type=note', {
+          return fetch('/api/upload?type=note', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
             body: JSON.stringify({
@@ -430,28 +511,17 @@ export default function DogDetailPage({ toast }: Props) {
               dogId,
             }),
           })
-          if (res.ok) {
-            const data = await res.json()
-            photoUrl = data.fileUrl
-          } else {
-            toast('Photo upload failed — note saved without photo', 'info')
-          }
-        } catch {
-          toast('Photo upload failed — note saved without photo', 'info')
-        } finally {
-          setUploadingNotePhoto(false)
-        }
-      }
-      await addActivityNote(dogId, newNote.trim(), photoUrl, newNoteDate)
+      } : null, photoUrl => addActivityNote(dogId, newNote.trim(), photoUrl, newNoteDate))
       const n = await getActivityNotes(dogId)
       setNotes(n)
       setNewNote('')
       setNewNoteDate(new Date().toISOString().split('T')[0])
       setNotePhoto(null)
       toast('Note added')
-    } catch {
-      toast('Failed to add note', 'error')
+    } catch (err) {
+      toast(err instanceof TimelinePhotoError ? err.message : 'Failed to add note', 'error')
     } finally {
+      setUploadingNotePhoto(false)
       setSavingNote(false)
     }
   }
@@ -612,7 +682,12 @@ export default function DogDetailPage({ toast }: Props) {
   }
 
   async function handleScanResult(result: any, filePath?: string) {
-    if (!dogId || !dog) return
+    if (!dogId || !dog || historicalSnapshot || !isCurrentOwner(dog, user?.uid || '')) return
+
+    // The upload endpoint commits the private object and its Firestore
+    // document before AIScan calls this handler. Refresh immediately so
+    // later extraction work cannot delay or prevent Documents visibility.
+    if (filePath) retryDocuments()
 
     let vaccineCount = 0
     let healthCount = 0
@@ -767,26 +842,6 @@ export default function DogDetailPage({ toast }: Props) {
       setHealthTests(updatedHealth)
     }
 
-    // Refresh the Documents tab immediately — AIScan uploads the document
-    // via /api/upload-document (Admin SDK) before calling onResult, so by
-    // this point the Firestore doc already exists if filePath is set. A
-    // failed upload leaves filePath undefined, so no refetch (and no false
-    // record) happens for it.
-    if (filePath) {
-      const updatedDocs = await getDogDocuments(dogId).catch(() => documents)
-      setDocuments(updatedDocs)
-    }
-
-    // Refresh the Documents tab immediately — AIScan uploads the document
-    // via /api/upload-document (Admin SDK) before calling onResult, so by
-    // this point the Firestore doc already exists if filePath is set. A
-    // failed upload leaves filePath undefined, so no refetch (and no false
-    // record) happens for it.
-    if (filePath) {
-      const updatedDocs = await getDogDocuments(dogId).catch(() => documents)
-      setDocuments(updatedDocs)
-    }
-
     // Update dog fields from scan
     const updates: Partial<Dog> = {}
     if (result.microchip && !dog.microchip) updates.microchip = result.microchip
@@ -820,14 +875,12 @@ export default function DogDetailPage({ toast }: Props) {
   const viewDoc = (path?: string | null, legacyUrl?: string | null) =>
     viewDocument(user, toast, path, legacyUrl)
 
-  async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone: string | undefined, pedigreeRegister: string, breedingRights: BreedingRightsValue) {
+  async function handleTransfer(buyerName: string, buyerEmail: string, buyerPhone: string | undefined, pedigreeRegister: string) {
     if (!dogId || !dog) return
-    const passportUrl = `${window.location.origin}/p/${dog.passportId}`
     // Same canonical rule as the Overview edit control and LittersPage's
     // transfer modal — never a second, parallel implementation of "what
     // does selecting Limited/Main/Not recorded actually persist".
     const pedigreeUpdate = nextPedigreeRegisterUpdate((dog as any).pedigreeRegister, pedigreeRegister)
-    const rightsUpdate = nextBreedingRightsUpdate(pedigreeRegister, breedingRights)
     // The Firestore write below is the actual transfer — once it succeeds,
     // the dog is transferred. Email + audit log are best-effort follow-ups;
     // previously a transient failure in either (network blip, Resend
@@ -843,15 +896,19 @@ export default function DogDetailPage({ toast }: Props) {
       transferredAt: new Date().toISOString(),
       microchipCertUrl: (dog as any).microchipCertUrl || null,
       pedigreeRegister: pedigreeUpdate.pedigreeRegister,
-      breedingEligibility: rightsUpdate.breedingEligibility,
+      breedingEligibility: pedigreeUpdate.breedingEligibility,
     })
+    // Transfer committed: remove every editing surface immediately. The
+    // historical view must be loaded from the saved snapshot, not the
+    // current-owner object that was mounted before the transfer.
+    setLoading(true)
+    setShowTransfer(false)
     await sendTransferEmail({
       buyerEmail,
       buyerName,
       dogName: dog.name,
       breed: dog.breed,
       breederName: user?.displayName || 'Your breeder',
-      passportUrl,
     }).catch(err => console.error('Transfer email failed (transfer itself already succeeded):', err))
     await logAudit({
       tenantId: user?.uid || '',
@@ -862,15 +919,80 @@ export default function DogDetailPage({ toast }: Props) {
       performedBy: user?.uid || '',
       performedByEmail: user?.email || '',
     }).catch(err => console.error('Transfer audit log failed (transfer itself already succeeded):', err))
-    setDog(prev => prev ? { ...prev, status: 'transferred', transferStatus: 'pendingClaim', buyerName, buyerEmail, buyerPhone, ...pedigreeUpdate, ...rightsUpdate } as any : prev)
-    setShowTransfer(false)
     toast(`${dog.name} transferred to ${buyerName} ✓`, 'success')
+    window.location.reload()
+  }
+
+  function openEditProfile() {
+    if (!dog) return
+    setProfileDraft({
+      name: dog.name || '', breed: dog.breed || '', sex: dog.sex || 'female',
+      dateOfBirth: dog.dateOfBirth || '', colour: dog.colour || '',
+      microchip: dog.microchip || '', ankc: dog.ankc || '', notes: dog.notes || '',
+    })
+    setShowEditProfile(true)
+  }
+
+  async function handleSaveProfile() {
+    if (!dog || !dogId || !user?.uid) return
+    const midTransfer = isDogTransferred(dog)
+    const restricted = (dog as any).status === 'restricted'
+    const archived = (dog as any).status === 'archived'
+    if (dog.currentOwnerId !== user.uid || midTransfer || restricted || archived) {
+      toast('This dog is currently read-only. Only the current owner can edit its profile.', 'error')
+      setShowEditProfile(false)
+      return
+    }
+    const name = profileDraft.name.trim()
+    const breed = profileDraft.breed.trim()
+    if (!name || !breed) { toast('Dog name and breed are required.', 'error'); return }
+    if (!parseDobStrict(profileDraft.dateOfBirth)) { toast('Please enter a valid date of birth.', 'error'); return }
+    const updates: Partial<Dog> = {
+      name, breed, sex: profileDraft.sex, dateOfBirth: profileDraft.dateOfBirth,
+      colour: profileDraft.colour.trim(), microchip: profileDraft.microchip.trim(),
+      ankc: profileDraft.ankc.trim(), notes: profileDraft.notes.trim(),
+      lifeStage: calculateLifeStage(profileDraft.dateOfBirth, breed),
+    }
+    setSavingProfile(true)
+    try {
+      await updateDog(dogId, updates)
+      setDog(prev => prev ? { ...prev, ...updates } : prev)
+      setShowEditProfile(false)
+      toast('Dog profile updated', 'success')
+    } catch (err) {
+      const code = safeReadFirestoreErrorCode(err)
+      if (code === 'permission-denied') {
+        try { const fresh = await getDog(dogId); if (fresh) setDog(fresh) } catch {}
+        toast('You no longer have permission to edit this dog. Ownership may have changed.', 'error')
+      } else {
+        toast('Failed to update dog profile. Please try again.', 'error')
+      }
+    } finally { setSavingProfile(false) }
   }
 
   if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
   if (!dog) return null
 
-  const publicUrl = `${window.location.origin}/p/${dog.passportId}`
+  if (historicalSnapshot?.historyAvailability === 'recovered_partial') return <RecoveredDogHistory key={`${user?.uid}:${dogId}`} history={historicalSnapshot} />
+
+  if (historicalSnapshot?.historyAvailability === 'audit_only') {
+    return <div style={{ padding: 32 }}>
+      <Link to="/app/dogs">← My dogs</Link>
+      <h1 style={{ marginTop: 20 }}>{dog.name}</h1>
+      <p>Transferred · Read-only history</p>
+      <div role="status" style={{ padding: 16, margin: '16px 0', background: 'var(--sand)', borderRadius: 12 }}>
+        A full historical record was not saved for this transfer. Only activity recorded by your account is available here.
+        Health records, documents, photos and breeding records from before the transfer cannot be verified from this activity alone.
+        Updates made by the new owner remain private.
+      </div>
+      <h2>Your activity up to transfer</h2>
+      <ul>{(historicalSnapshot.auditEntries || []).map((entry: any) => <li key={entry.id} style={{ margin: '12px 0' }}>
+        <time>{formatDate(entry.createdAt)}</time>{' — '}{entry.details || entry.action}
+      </li>)}</ul>
+    </div>
+  }
+
+  const publicUrl = puppyShareUrl(dog.passportId)
 
   // Only consider the latest record per vaccine group for the header status.
   // A record is "superseded" if a newer dose of the same type was given —
@@ -921,6 +1043,7 @@ export default function DogDetailPage({ toast }: Props) {
   const isCurrentEffectiveOwner = dog.currentOwnerId === user?.uid
   const dogIsMidTransfer = isDogTransferred(dog)
   const dogHasPermanentHistory = isDogHistoryBearing(dog as unknown as Record<string, unknown>)
+  const canEditProfile = isCurrentEffectiveOwner && !dogIsMidTransfer && !isRestricted && !isArchived
   const canDeleteDog = isCurrentEffectiveOwner && !dogIsMidTransfer && !dogHasPermanentHistory
   const deleteBlockedReason = !isCurrentEffectiveOwner
     ? undefined
@@ -929,15 +1052,6 @@ export default function DogDetailPage({ toast }: Props) {
       : dogHasPermanentHistory
         ? "This dog has permanent ownership/transfer history and can't be deleted — that record is part of its compliance audit trail. Archive it instead to shelve it (reversible anytime)."
         : undefined
-  // Archiving is a real, already-working alternative here (api/set-dog-
-  // status.js's archive action accepts status 'active'/'restricted' —
-  // unlike delete, it does NOT check the history fields at all, since
-  // archiving never erases anything) — but only when it would actually
-  // succeed: not mid-transfer (the endpoint explicitly 409s on that) and
-  // not already archived (that state already has its own Restore banner
-  // below).
-  const canOfferArchiveInsteadOfDelete = isCurrentEffectiveOwner && dogHasPermanentHistory && !dogIsMidTransfer && !isArchived
-
   // Codex fix-round (Finding 2/3) — litter puppy retention (promote/
   // unpromote) and legacy-restriction reconciliation. Gated identically:
   // breeder-only (Pet Owner accounts don't have litters), the CURRENT
@@ -973,7 +1087,7 @@ export default function DogDetailPage({ toast }: Props) {
   // itself, so it needs the same error-vs-genuinely-empty distinction.
   const TABS: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
-    { id: 'scan', label: '📸 iDogs Scan' },
+    ...(!historicalSnapshot ? [{ id: 'scan' as Tab, label: '📸 iDogs Scan' }] : []),
     { id: 'vaccines', label: `Vaccines (${vaccinesError ? '?' : vaccines.length})` },
     { id: 'worming', label: `Worming (${wormingError ? '?' : wormings.length})` },
     { id: 'health', label: 'Health tests' },
@@ -1003,12 +1117,21 @@ export default function DogDetailPage({ toast }: Props) {
 
       {/* Dog header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, marginTop: 16, marginBottom: 28 }}>
-        <PhotoUpload
-          dogId={dog.id}
-          currentPhoto={dog.profilePhoto}
-          onUpload={url => setDog(prev => prev ? { ...prev, profilePhoto: url } : prev)}
-          toast={toast}
-        />
+        {historicalSnapshot ? (
+          <div style={{
+            width: 72, height: 72, borderRadius: '50%',
+            background: dog.profilePhoto ? `url(${dog.profilePhoto}) center/cover` : 'var(--green-light)',
+            border: '2px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 28, flexShrink: 0,
+          }}>{!dog.profilePhoto && '🐕'}</div>
+        ) : (
+          <PhotoUpload
+            dogId={dog.id}
+            currentPhoto={dog.profilePhoto}
+            onUpload={url => setDog(prev => prev ? { ...prev, profilePhoto: url } : prev)}
+            toast={toast}
+          />
+        )}
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, color: 'var(--dark)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dog.name}</h1>
@@ -1040,11 +1163,18 @@ export default function DogDetailPage({ toast }: Props) {
               Transferred to <strong>{(dog as any).buyerName}</strong> · {(dog as any).buyerEmail}
             </div>
           )}
+          {historicalSnapshot && (
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--mid)', background: '#F7F4EC', border: '1px solid var(--border)', padding: '8px 10px', borderRadius: 8 }}>
+              🔒 Historical snapshot — frozen at transfer. Updates made by the new owner are private and are not shown here.
+            </div>
+          )}
           {isRestricted && !isRestrictedLitterPuppyCandidate && (
             <div style={{ marginTop: 10, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span>
                 🔒 This dog is over your plan's limit and is read-only — the record, Dog ID, and QR Passport all still work, and it can still be transferred.
-                {' '}<Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>Upgrade to Plus</Link> or activate it in place of another dog.
+                {isAndroidNativeApp()
+                  ? ' Activate it in place of another dog to edit it.'
+                  : (<>{' '}<Link to="/app/billing" style={{ color: 'var(--gold)', fontWeight: 600 }}>Upgrade to Plus</Link> or activate it in place of another dog.</>)}
               </span>
               <button className="btn btn-sm" disabled={statusActionLoading} onClick={() => handleSetDogStatus('activate')} style={{ background: '#fff', border: '1px solid rgba(200,151,31,0.4)', color: 'var(--gold)', flexShrink: 0 }}>
                 {statusActionLoading ? <span className="spinner" /> : 'Activate this dog'}
@@ -1087,17 +1217,13 @@ export default function DogDetailPage({ toast }: Props) {
               </button>
             </div>
           )}
-          {canOfferArchiveInsteadOfDelete && (
-            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--mid)', background: 'var(--sand)', border: '1px solid var(--border)', padding: '10px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span>🔒 This dog has permanent ownership/transfer history, so it can't be deleted — that record is part of its compliance audit trail. You can archive it instead to shelve it (reversible anytime).</span>
-              <button className="btn btn-sm btn-secondary" disabled={statusActionLoading} onClick={() => handleSetDogStatus('archive')}>
-                {statusActionLoading ? <span className="spinner" /> : '📦 Archive this dog'}
-              </button>
-            </div>
-          )}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">View passport ↗</a>
+          {!historicalSnapshot && <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">View passport ↗</a>}
+          {canEditProfile && (
+            <button onClick={openEditProfile} className="btn btn-secondary btn-sm">✎ Edit profile</button>
+          )}
+          {canEditProfile && !historicalSnapshot && <button onClick={() => setShowDocumentUpload(true)} className="btn btn-primary btn-sm">+ Upload Documents</button>}
           {!isTransferred && (
             <button
               onClick={() => setShowTransfer(true)}
@@ -1149,10 +1275,10 @@ export default function DogDetailPage({ toast }: Props) {
         <div style={{ position: 'absolute', top: 0, bottom: 1, right: 0, width: 16, background: 'linear-gradient(to left, var(--white), transparent)', pointerEvents: 'none' }} />
       </div>
 
-      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} isCurrentEffectiveOwner={isCurrentEffectiveOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdateDogFields={async (updates) => {
+      {tab === 'overview' && <OverviewTab dog={dog} vaccines={vaccines} wormings={wormings} healthTests={healthTests} scanCount={scanCount} toast={toast} isOwner={isOwner} isCurrentEffectiveOwner={isCurrentEffectiveOwner} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onUpdatePedigree={async updates => {
         await updateDog(dogId!, updates)
         setDog(prev => prev ? { ...prev, ...updates } : prev)
-      }} onOpenBreeding={dog.sex === 'female' && !isOwner ? () => setTab('breeding') : undefined} onUpdateBreederId={async (breederIdType, breederIdValue) => {
+      }} onUpdateBreederId={async (breederIdType, breederIdValue) => {
         await updateDog(dogId!, { breederIdType: breederIdType as NonNullable<Dog['breederIdType']>, breederIdValue })
         setDog(prev => prev ? { ...prev, breederIdType, breederIdValue } : prev)
       }} onUpdateSale={async (firestoreUpdates, localUpdates) => {
@@ -1185,32 +1311,78 @@ export default function DogDetailPage({ toast }: Props) {
           throw err
         }
       }} />}
-      {tab === 'scan' && (
+      {tab === 'scan' && !historicalSnapshot && !isCurrentOwner(dog, user?.uid || '') && (
+        <div className="card" role="note" style={{ maxWidth: 480, padding: 20 }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>iDogs Scan is for the current owner</h2>
+          <p style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.6, marginBottom: 16 }}>Only {dog.name}&apos;s current owner can scan and save documents to this profile. You can still view the records shared with you.</p>
+          <button type="button" className="btn btn-secondary" onClick={() => setTab('overview')}>Back to overview</button>
+        </div>
+      )}
+      {tab === 'scan' && !historicalSnapshot && isCurrentOwner(dog, user?.uid || '') && (
         <div style={{ maxWidth: 480 }}>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>iDogs Document Scan</h2>
           <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 20 }}>Photograph a Pedigree Certificate, Health Certificate, Hip and Elbow Dysplasia Report, or Vaccination Record. AI reads it and adds the records automatically.</p>
           <AIScan onResult={handleScanResult} toast={toast} dogId={dog.id} tenantId={user?.uid} />
         </div>
       )}
-      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} onRetry={retryVaccines} />}
-      {tab === 'worming' && <WormingTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} />}
-      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} onRetry={retryHealthTests} />}
-      {tab === 'reminders' && <RemindersTab reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} onRetry={retryReminders} />}
+      {tab === 'vaccines' && <VaccinesTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} vaccines={vaccines} setVaccines={setVaccines} toast={toast} documents={documents} onViewDoc={viewDoc} onReminderSaved={refreshReminders} error={vaccinesError} onRetry={retryVaccines} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'worming' && <WormingTab onReminderSaved={refreshReminders} dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} wormings={wormings} setWormings={setWormings} toast={toast} error={wormingError} onRetry={retryWorming} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'health' && <HealthTab dogId={dog.id} dogName={dog.name} tenantId={user?.uid || ''} userEmail={user?.email || ''} healthTests={healthTests} setHealthTests={setHealthTests} toast={toast} error={healthTestsError} onRetry={retryHealthTests} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'reminders' && <RemindersTab dog={dog} tenantId={user?.uid || ''} onSaved={refreshReminders} reminders={reminders} setReminders={setReminders} toast={toast} error={remindersError} onRetry={retryReminders} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
       {/* scanCount === null unambiguously means "failed to load" (never
           "still loading", since the page-level loading gate has already
           cleared by the time any tab renders) — PassportTab's own
           "Unavailable" copy covers that (round 13); round 17 adds an
           explicit Retry action alongside it. */}
-      {tab === 'passport' && <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />}
-      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} toast={toast} error={documentsError} onRetry={retryDocuments} />}
-      {tab === 'timeline' && <TimelineTab dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} />}
+      {tab === 'passport' && (historicalSnapshot
+        ? <div className="card" style={{ padding: 20 }}><h2>Passport at transfer</h2><p>{dog.passportId || 'Not recorded'}</p><p>This history does not open the current owner's live passport.</p></div>
+        : <PassportTab dog={dog} qrUrl={qrUrl} publicUrl={publicUrl} scanCount={scanCount} scanCountError={scanCountError} onRetryScanCount={retryScanCount} toast={toast} />)}
+      {tab === 'documents' && <DocumentsTab documents={documents} setDocuments={setDocuments} dogName={dog.name} dogId={dog.id} toast={toast} error={documentsError} onRetry={retryDocuments} canEdit={!historicalSnapshot && isCurrentOwner(dog, user?.uid || '')} />}
+      {tab === 'timeline' && <TimelineTab key={dog.id + (user?.uid || "")} dog={dog} notes={notes} newNote={newNote} setNewNote={setNewNote} newNoteDate={newNoteDate} setNewNoteDate={setNewNoteDate} onAddNote={handleAddNote} saving={savingNote} vaccines={vaccines} wormings={wormings} healthTests={healthTests} lifeStageEvents={lifeStageEvents} notePhoto={notePhoto} setNotePhoto={setNotePhoto} uploadingNotePhoto={uploadingNotePhoto} toast={toast} notesError={notesError} auditError={auditError} vaccinesError={vaccinesError} wormingError={wormingError} healthTestsError={healthTestsError} onRetry={retryTimeline} dogId={dogId} onNoteChanged={handleNoteChanged} canEdit={isCurrentOwner(dog, user?.uid || '')} />}
 
-      {tab === 'breeding' && !isOwner && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
+      {tab === 'breeding' && !isOwner && historicalSnapshot && <HistoricalBreedingTab heatCycles={historicalSnapshot.heatCycles || []} />}
+      {tab === 'breeding' && !isOwner && !historicalSnapshot && <BreedingTab dog={dog} dogId={dogId!} userState={userState} onUpdate={async (updates) => {
         await updateDog(dogId!, updates)
         setDog(prev => prev ? { ...prev, ...updates } : prev)
         toast('Breeding record updated')
       }} toast={toast} />}
 
+      {showEditProfile && dog && (
+        <div onClick={() => !savingProfile && setShowEditProfile(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(26,25,23,0.55)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 1000 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 20, width: 'min(680px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,0.18)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 20 }}>Edit dog profile</h2>
+                <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--mid)' }}>The current owner can update everyday profile details after ownership is claimed.</p>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowEditProfile(false)} disabled={savingProfile}>✕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '20px 24px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group"><label className="form-label">Dog's name *</label><input className="form-input" value={profileDraft.name} onChange={e => setProfileDraft(v => ({ ...v, name: e.target.value }))} autoFocus /></div>
+                <div className="form-group"><label className="form-label">Sex *</label><select className="form-select" value={profileDraft.sex} onChange={e => setProfileDraft(v => ({ ...v, sex: e.target.value as Dog['sex'] }))}><option value="female">Female</option><option value="male">Male</option></select></div>
+              </div>
+              <div className="form-group"><label className="form-label">Breed *</label><input className="form-input" value={profileDraft.breed} onChange={e => setProfileDraft(v => ({ ...v, breed: e.target.value }))} /></div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group"><label className="form-label">Date of birth *</label><input className="form-input" type="date" max={new Date().toISOString().split('T')[0]} value={profileDraft.dateOfBirth} onChange={e => setProfileDraft(v => ({ ...v, dateOfBirth: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Colour / markings</label><input className="form-input" value={profileDraft.colour} onChange={e => setProfileDraft(v => ({ ...v, colour: e.target.value }))} /></div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group"><label className="form-label">Microchip number</label><input className="form-input" value={profileDraft.microchip} onChange={e => setProfileDraft(v => ({ ...v, microchip: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Dogs Australia Registration</label><input className="form-input" value={profileDraft.ankc} onChange={e => setProfileDraft(v => ({ ...v, ankc: e.target.value }))} /></div>
+              </div>
+              <div className="form-group"><label className="form-label">Notes</label><textarea className="form-textarea" style={{ minHeight: 90 }} value={profileDraft.notes} onChange={e => setProfileDraft(v => ({ ...v, notes: e.target.value }))} /></div>
+              <div style={{ fontSize: 12, color: 'var(--mid)', background: 'var(--sand)', borderRadius: 8, padding: '9px 11px' }}>Ownership history, Dog ID / QR Passport and transfer provenance stay protected and cannot be changed here.</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--gray-100)' }}>
+              <button className="btn btn-secondary" onClick={() => setShowEditProfile(false)} disabled={savingProfile}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSaveProfile} disabled={savingProfile}>{savingProfile ? <><span className="spinner" /> Saving…</> : 'Save changes'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDocumentUpload && canEditProfile && !historicalSnapshot && user && <UploadModal key={dog.id} dogs={[dog]} fixedDogId={dog.id} user={user} toast={toast} onClose={() => setShowDocumentUpload(false)} onSuccess={document => { setDocuments(previous => [document, ...previous]); setShowDocumentUpload(false); setTab('documents'); retryDocuments(); toast('Document uploaded. Files stay private until you choose Share on QR.', 'success') }} />}
       {/* Transfer Ownership Modal */}
       {showTransfer && dog && (
         <TransferModal
@@ -1222,8 +1394,6 @@ export default function DogDetailPage({ toast }: Props) {
           initialBuyerEmail={dog.reservedForEmail || ''}
           initialBuyerPhone={dog.reservedForPhone || ''}
           initialPedigreeRegister={initialTransferPedigreeRegister((dog as any).pedigreeRegister)}
-          initialBreedingRights={initialBreedingRightsValue(dog as any)}
-          canConfirmBreedingRights={profile?.role === 'breeder' && isCurrentEffectiveOwner}
           onClose={() => setShowTransfer(false)}
           onTransfer={handleTransfer}
         />
@@ -1243,8 +1413,6 @@ function TransferModal({
   initialBuyerEmail,
   initialBuyerPhone,
   initialPedigreeRegister,
-  initialBreedingRights,
-  canConfirmBreedingRights,
   onClose,
   onTransfer,
 }: {
@@ -1259,16 +1427,13 @@ function TransferModal({
   // existing value round-trips as itself; never 'main' by silent default
   // for a dog whose pedigreeRegister was never set.
   initialPedigreeRegister: string
-  initialBreedingRights: BreedingRightsValue
-  canConfirmBreedingRights: boolean
   onClose: () => void
-  onTransfer: (name: string, email: string, phone: string | undefined, pedigreeRegister: string, breedingRights: BreedingRightsValue) => Promise<void>
+  onTransfer: (name: string, email: string, phone: string | undefined, pedigreeRegister: string) => Promise<void>
 }) {
   const [buyerName, setBuyerName] = useState(initialBuyerName || '')
   const [buyerEmail, setBuyerEmail] = useState(initialBuyerEmail || '')
   const [buyerPhone, setBuyerPhone] = useState(initialBuyerPhone || '')
   const [pedigreeRegister, setPedigreeRegister] = useState(initialPedigreeRegister)
-  const [breedingRights, setBreedingRights] = useState<BreedingRightsValue>(initialBreedingRights)
   const [confirm, setConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -1279,7 +1444,7 @@ function TransferModal({
     setLoading(true)
     setError('')
     try {
-      await onTransfer(buyerName.trim(), buyerEmail.trim().toLowerCase(), buyerPhone.trim() || undefined, pedigreeRegister, breedingRights)
+      await onTransfer(buyerName.trim(), buyerEmail.trim().toLowerCase(), buyerPhone.trim() || undefined, pedigreeRegister)
     } catch (err) {
       // Round 20: never log/surface the raw error here — it can carry a
       // Firestore document path, this caller's UID, or the buyer name/
@@ -1294,31 +1459,16 @@ function TransferModal({
   }
 
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0,
-        background: 'rgba(26, 25, 23, 0.55)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '1rem', zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      <div
-        style={{
-          background: '#fff', borderRadius: 20, width: '100%', maxWidth: 460,
-          boxShadow: '0 24px 64px rgba(0,0,0,0.18)', overflow: 'hidden',
-        }}
-        onClick={e => e.stopPropagation()}
-      >
+    <div className="transfer-modal-overlay" onClick={onClose}>
+      <div className="transfer-modal-shell" onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+        <div className="transfer-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', fontWeight: 600, color: 'var(--dark)' }}>Transfer Ownership</div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1rem', color: 'var(--mid)', cursor: 'pointer', padding: '4px 8px', borderRadius: 6 }}>✕</button>
         </div>
 
         {/* Body */}
-        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="transfer-modal-body">
           {/* Dog info */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--brand-50)', borderRadius: 10, padding: '0.875rem 1rem' }}>
             <span style={{ fontSize: '1.5rem' }}>🐾</span>
@@ -1348,13 +1498,7 @@ function TransferModal({
             <select
               className="form-select"
               value={pedigreeRegister}
-              onChange={e => {
-                const nextRegister = e.target.value
-                const patch = nextPedigreeRegisterUpdate(pedigreeRegister, nextRegister)
-                setPedigreeRegister(nextRegister)
-                if (patch.breedingEligibility) setBreedingRights(patch.breedingEligibility)
-                else if (resolvePedigreeRegister(nextRegister) !== 'MAIN') setBreedingRights('unknown')
-              }}
+              onChange={e => setPedigreeRegister(e.target.value)}
             >
               <option value="main">🔵 Main Register</option>
               <option value="limited">🟠 Limited Register — family/pet, not for breeding</option>
@@ -1372,35 +1516,6 @@ function TransferModal({
                 ? "The buyer will see this dog's registration as not recorded — this can be corrected later from the dog's Overview page."
                 : "This classification is preserved as-is for the buyer — it can be corrected later from the dog's Overview page."}
             </p>
-          </div>
-
-          {/* Breeding rights — separate from pedigree registration and from
-              the final compliance engine. Only Main Register can carry an
-              explicit breeder-confirmed permitted/not-permitted decision. */}
-          <div className="form-group">
-            <label className="form-label">Breeding rights</label>
-            {resolvePedigreeRegister(pedigreeRegister) === 'MAIN' && canConfirmBreedingRights ? (
-              <select
-                className="form-select"
-                value={breedingRights}
-                onChange={e => setBreedingRights(e.target.value as BreedingRightsValue)}
-              >
-                <option value="unknown">⚪ Not confirmed</option>
-                <option value="eligible">🟢 Breeding permitted</option>
-                <option value="not_eligible">🔴 Not permitted</option>
-              </select>
-            ) : resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? (
-              <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>
-                {breedingRights === 'eligible' ? '🟢 Confirmed — breeding permitted' : breedingRights === 'not_eligible' ? '🔴 Not permitted' : '⚪ Not confirmed'}
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, color: 'var(--mid)', padding: '8px 10px', background: 'var(--sand)', borderRadius: 8 }}>
-                {resolvePedigreeRegister(pedigreeRegister) === 'LIMITED'
-                  ? '🔴 Not permitted — Limited Register'
-                  : '⚪ Not confirmed — registration does not establish breeding rights'}
-              </div>
-            )}
-            <p className="form-hint">Breeding rights are the breeder's recorded permission. Actual breeding compliance is checked separately against age, health and state/Dogs Australia rules.{!canConfirmBreedingRights && resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? ' Only a breeder account can confirm Breeding permitted.' : ''}</p>
           </div>
 
           {/* Warning */}
@@ -1430,7 +1545,7 @@ function TransferModal({
               value={buyerEmail}
               onChange={e => setBuyerEmail(e.target.value)}
             />
-            <p className="form-hint">They'll receive an email with the passport link and signup instructions.</p>
+            <p className="form-hint">They'll receive an email with secure iDogs access and sign-in instructions.</p>
           </div>
 
           {/* Buyer phone */}
@@ -1453,14 +1568,14 @@ function TransferModal({
               onChange={e => setConfirm(e.target.checked)}
               style={{ marginTop: 2, accentColor: 'var(--brand-600)', width: 16, height: 16, flexShrink: 0 }}
             />
-            <span>I confirm I want to transfer <strong>{dogName}</strong> to this buyer as <strong>{pedigreeRegisterLabel(pedigreeRegister)}</strong>{resolvePedigreeRegister(pedigreeRegister) === 'MAIN' ? <> with breeding rights <strong>{breedingRightsLabel(breedingRights)}</strong></> : null}. This action cannot be undone.</span>
+            <span>I confirm I want to transfer <strong>{dogName}</strong> to this buyer as <strong>{pedigreeRegisterLabel(pedigreeRegister)}</strong>. This action cannot be undone.</span>
           </label>
 
           {error && <p className="form-error">{error}</p>}
         </div>
 
         {/* Footer */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--gray-100)' }}>
+        <div className="transfer-modal-footer">
           <button className="btn btn-secondary btn-sm" onClick={onClose} disabled={loading}>Cancel</button>
           <button
             className="btn btn-sm"
@@ -1478,7 +1593,7 @@ function TransferModal({
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────
 
-function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, isCurrentEffectiveOwner, onUpdateDogFields, onOpenBreeding, onUpdateBreederId, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
+function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, isOwner, isCurrentEffectiveOwner, onUpdateBreederId, onUpdatePedigree, onUpdateSale, vaccinesError, wormingError, healthTestsError }: {
   dog: Dog; vaccines: VaccineRecord[]; wormings: WormingRecord[]; healthTests: HealthTest[]; scanCount: number | null
   toast: (msg: string, type?: ToastMessage['type']) => void
   isOwner: boolean
@@ -1498,9 +1613,8 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
   // "you don't have permission to update this dog anymore", which is
   // CORRECT Rules behavior surfaced as a confusing, avoidable UI dead end.
   isCurrentEffectiveOwner: boolean
-  onUpdateDogFields: (updates: Partial<Dog>) => Promise<void>
-  onOpenBreeding?: () => void
   onUpdateBreederId: (breederIdType: Dog['breederIdType'], breederIdValue: string) => Promise<void>
+  onUpdatePedigree: (updates: Partial<Dog>) => Promise<void>
   onUpdateSale: (firestoreUpdates: any, localUpdates: Partial<Dog>) => Promise<void>
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
 }) {
@@ -1519,15 +1633,11 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
   // threaded as a new prop from the parent, since it's the exact same
   // `dog.status` value the parent's own `isRestricted` is computed from.
   const isRestricted = (dog as any).status === 'restricted'
+  const isReadOnly = isRestricted || !isCurrentEffectiveOwner || isDogTransferred(dog) || (dog as any).status === 'archived'
   const [editingBreederId, setEditingBreederId] = useState(false)
   const [breederIdType, setBreederIdType] = useState<NonNullable<Dog['breederIdType']>>(dog.breederIdType || 'NONE')
   const [breederIdValue, setBreederIdValue] = useState(dog.breederIdValue || '')
   const [savingBreederId, setSavingBreederId] = useState(false)
-  const [pendingBreedingRights, setPendingBreedingRights] = useState<BreedingRightsValue | null>(null)
-  const [savingBreedingRights, setSavingBreedingRights] = useState(false)
-  const pedigreeRegisterStatus = resolvePedigreeRegister((dog as any).pedigreeRegister)
-  const breedingRightsStatus = resolveBreedingEligibility(dog as any)
-  const canEditBreedingRights = profile?.role === 'breeder' && isCurrentEffectiveOwner && !isRestricted && pedigreeRegisterStatus === 'MAIN'
 
   // ADR-001 §Decision 6 — provenance display, never a real person/
   // organisation name beyond the caller's own kennelName when they are
@@ -1549,8 +1659,8 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
     // status blocks it identically. Defense in depth alongside disabling
     // the ✎/+ Add trigger below, which already prevents reaching this
     // form at all for a restricted dog.
-    if (isRestricted) {
-      toast("This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Breeder ID.", 'error')
+    if (isReadOnly) {
+      toast(isRestricted ? restrictedBreederIdMessage(isAndroidNativeApp()) : 'This dog is read-only for this account. Only the current owner can edit Breeder ID.', 'error')
       return
     }
     setSavingBreederId(true)
@@ -1586,28 +1696,73 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
           </div>
         )}
         <InfoRow label="Dogs Australia Registration" value={dog.ankc || '—'} />
-        {/* Layer 1 — Pedigree registration. Registration is descriptive only;
-            it never silently decides breeding rights or actual compliance. */}
+        {/* Pedigree Register — resolvePedigreeRegister/resolveBreedingEligibility are the
+            single source of truth here; a missing/undefined pedigreeRegister (every
+            litter-born puppy, until edited) must read as "not recorded", never "Main". */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', gap: 8 }}>
-          <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Pedigree registration</span>
+          <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Pedigree / Registration</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: pedigreeRegisterStatus === 'MAIN' ? 'var(--brand-50)' : pedigreeRegisterStatus === 'LIMITED' ? '#FFF3E0' : 'var(--sand)', color: pedigreeRegisterStatus === 'MAIN' ? 'var(--brand-600)' : pedigreeRegisterStatus === 'LIMITED' ? '#E65100' : 'var(--mid)', border: pedigreeRegisterStatus === 'MAIN' ? '1px solid rgba(8,80,65,0.15)' : pedigreeRegisterStatus === 'LIMITED' ? '1px solid #FFCC80' : '1px solid transparent' }}>
-              {pedigreeRegisterStatus === 'MAIN' ? '🔵 Main Register'
-                : pedigreeRegisterStatus === 'LIMITED' ? '🟠 Limited Register'
-                : pedigreeRegisterStatus === 'NO_PEDIGREE' ? 'No pedigree (purebred)'
-                : pedigreeRegisterStatus === 'MIXED' ? 'Mixed breed'
-                : pedigreeRegisterStatus === 'RESCUE' ? 'Rescue / unknown'
-                : '⚪ Registration not recorded'}
-            </span>
+            {(() => {
+              const register = resolvePedigreeRegister((dog as any).pedigreeRegister)
+              const eligibility = resolveBreedingEligibility(dog as any)
+              if (register === 'LIMITED') {
+                return (
+                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: '#FFF3E0', color: '#E65100', border: '1px solid #FFCC80' }}>
+                    🟠 Limited Register — not eligible to breed
+                  </span>
+                )
+              }
+              if (register === 'NO_PEDIGREE') {
+                return <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>No pedigree (purebred)</span>
+              }
+              if (register === 'MIXED') {
+                return <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>Mixed breed</span>
+              }
+              if (register === 'RESCUE') {
+                return <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>Rescue / unknown</span>
+              }
+              if (register === 'NOT_RECORDED') {
+                return (
+                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
+                    ⚪ Registration not recorded — breeding eligibility unknown
+                  </span>
+                )
+              }
+              // MAIN
+              if (eligibility === 'ELIGIBLE') {
+                return (
+                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid rgba(8,80,65,0.15)' }}>
+                    🔵 Main Register — eligible to breed
+                  </span>
+                )
+              }
+              if (eligibility === 'NOT_ELIGIBLE') {
+                return (
+                  <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: '#FFF3E0', color: '#E65100', border: '1px solid #FFCC80' }}>
+                    🔵 Main Register — not eligible to breed
+                  </span>
+                )
+              }
+              return (
+                <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)' }}>
+                  🔵 Main Register — breeding eligibility not confirmed
+                </span>
+              )
+            })()}
             <select
               className="form-select"
               value={(dog as any).pedigreeRegister || 'not_recorded'}
-              disabled={isRestricted || !isCurrentEffectiveOwner}
+              disabled={isReadOnly}
               onChange={async e => {
-                if (isRestricted || !isCurrentEffectiveOwner) return
+                // Same missed-gating class as Sale & Availability (Red Boy
+                // follow-up audit, item 6): auto-saves on change with no
+                // separate Save button, so the guard here IS the whole
+                // defense-in-depth story for this control — `disabled`
+                // above already stops it firing from the UI.
+                if (isReadOnly) return
                 const updates = nextPedigreeRegisterUpdate((dog as any).pedigreeRegister, e.target.value)
-                await onUpdateDogFields(updates as Partial<Dog>)
-                toast('Pedigree registration updated')
+                await onUpdatePedigree(updates as Partial<Dog>)
+                toast('Pedigree status updated')
               }}
               style={{ height: 28, fontSize: 12, padding: '0 28px 0 8px', minWidth: 100 }}
             >
@@ -1618,64 +1773,23 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
               <option value="mixed">Mixed breed</option>
               <option value="rescue">Rescue</option>
             </select>
-          </div>
-        </div>
-
-        {/* Layer 2 — Breeding rights. This is an explicit breeder decision,
-            not a conclusion from Main Register and not the compliance result. */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--border)', gap: 8 }}>
-          <span style={{ fontSize: 13, color: 'var(--light)', flexShrink: 0 }}>Breeding rights</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 20, background: pedigreeRegisterStatus === 'LIMITED' || breedingRightsStatus === 'NOT_ELIGIBLE' ? '#FDEDED' : breedingRightsStatus === 'ELIGIBLE' ? 'var(--brand-50)' : 'var(--sand)', color: pedigreeRegisterStatus === 'LIMITED' || breedingRightsStatus === 'NOT_ELIGIBLE' ? 'var(--error)' : breedingRightsStatus === 'ELIGIBLE' ? 'var(--brand-600)' : 'var(--mid)' }}>
-              {pedigreeRegisterStatus === 'LIMITED' ? '🔴 Not permitted — Limited Register'
-                : pedigreeRegisterStatus !== 'MAIN' ? '⚪ Not confirmed'
-                : breedingRightsStatus === 'ELIGIBLE' ? '🟢 Confirmed — breeding permitted'
-                : breedingRightsStatus === 'NOT_ELIGIBLE' ? '🔴 Not permitted'
-                : '⚪ Not confirmed'}
-            </span>
-            {canEditBreedingRights && (
+            {resolvePedigreeRegister((dog as any).pedigreeRegister) === 'MAIN' && (
               <select
                 className="form-select"
-                value={initialBreedingRightsValue(dog as any)}
+                aria-label="Breeding eligibility"
+                value={(dog as any).breedingEligibility || 'unknown'}
+                disabled={isReadOnly}
                 onChange={async e => {
-                  const next = e.target.value as BreedingRightsValue
-                  if (next === 'eligible') {
-                    setPendingBreedingRights('eligible')
-                    return
-                  }
-                  await onUpdateDogFields(nextBreedingRightsUpdate((dog as any).pedigreeRegister, next) as Partial<Dog>)
-                  toast('Breeding rights updated')
+                  if (isReadOnly) return
+                  await onUpdatePedigree({ breedingEligibility: e.target.value as NonNullable<Dog['breedingEligibility']> })
+                  toast('Breeding eligibility updated')
                 }}
-                style={{ height: 28, fontSize: 12, padding: '0 28px 0 8px', minWidth: 132 }}
+                style={{ height: 28, fontSize: 12, padding: '0 28px 0 8px', minWidth: 150 }}
               >
-                <option value="unknown">Not confirmed</option>
-                <option value="eligible">Breeding permitted</option>
-                <option value="not_eligible">Not permitted</option>
+                <option value="unknown">Eligibility: Not confirmed</option>
+                <option value="eligible">✓ Eligible to breed</option>
+                <option value="not_eligible">Not eligible to breed</option>
               </select>
-            )}
-          </div>
-        </div>
-
-        {/* Layer 3 — Actual breeding compliance. This is intentionally
-            more prominent than a tertiary link because it is the action that
-            turns registration + rights into a real breeding-readiness check. */}
-        <div style={{ padding: '12px 16px 14px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ background: '#FFF9EC', border: '1.5px solid #EBD9A8', borderRadius: 12, padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ minWidth: 0, flex: '1 1 220px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--dark)' }}>Actual breeding compliance</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--warning)', background: '#FBF3E4', border: '1px solid #EBD9A8', borderRadius: 20, padding: '2px 7px' }}>IMPORTANT</span>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--mid)', lineHeight: 1.45 }}>
-                Check age, health, breeding history and state / Dogs Australia rules before breeding.
-              </div>
-            </div>
-            {onOpenBreeding ? (
-              <button type="button" className="btn btn-primary btn-sm" onClick={onOpenBreeding} style={{ fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', flex: '0 0 auto' }}>
-                Review Breeding Compliance →
-              </button>
-            ) : (
-              <span style={{ fontSize: 12, color: 'var(--mid)', textAlign: 'right' }}>Checked separately when this dog is used for breeding</span>
             )}
           </div>
         </div>
@@ -1705,7 +1819,7 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
               </>
             )}
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary btn-sm" onClick={handleSaveBreederId} disabled={savingBreederId || isRestricted}>{savingBreederId ? <span className="spinner" /> : 'Save'}</button>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveBreederId} disabled={savingBreederId || isReadOnly}>{savingBreederId ? <span className="spinner" /> : 'Save'}</button>
               <button className="btn btn-secondary btn-sm" onClick={() => { setEditingBreederId(false); setBreederIdType(dog.breederIdType || 'NONE'); setBreederIdValue(dog.breederIdValue || '') }}>Cancel</button>
             </div>
           </div>
@@ -1724,13 +1838,13 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
                   Verify ↗
                 </a>
               )}
-              <button onClick={() => setEditingBreederId(true)} disabled={isRestricted} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px', fontSize: 12 }}>✎</button>
+              <button onClick={() => setEditingBreederId(true)} disabled={isReadOnly} className="btn btn-ghost btn-sm" style={{ padding: '2px 6px', fontSize: 12 }}>✎</button>
             </span>
           </div>
         ) : (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
             <span style={{ color: 'var(--light)' }}>Breeder ID</span>
-            <button onClick={() => setEditingBreederId(true)} disabled={isRestricted} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--brand-600)' }}>+ Add</button>
+            <button onClick={() => setEditingBreederId(true)} disabled={isReadOnly} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px', fontSize: 12, color: 'var(--brand-600)' }}>+ Add</button>
           </div>
         )}
         <InfoRow label="Passport ID" value={dog.passportId} mono />
@@ -1762,57 +1876,6 @@ function OverviewTab({ dog, vaccines, wormings, healthTests, scanCount, toast, i
           beyond the existing 'Transferred to X' banner above" reasoning
           already used for the Delete button (see isCurrentEffectiveOwner's
           own comment near canDeleteDog). */}
-      {pendingBreedingRights === 'eligible' && (
-        <div
-          role="presentation"
-          onMouseDown={e => { if (e.target === e.currentTarget && !savingBreedingRights) setPendingBreedingRights(null) }}
-          style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(20, 33, 29, 0.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="confirm-breeding-rights-title"
-            style={{ width: 'min(100%, 460px)', background: '#fff', borderRadius: 16, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(20,33,29,0.22)', overflow: 'hidden' }}
-          >
-            <div style={{ padding: '20px 22px 12px' }}>
-              <div id="confirm-breeding-rights-title" style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--dark)', marginBottom: 10 }}>
-                Confirm breeding rights
-              </div>
-              <p style={{ margin: '0 0 10px', fontSize: 13, lineHeight: 1.55, color: 'var(--mid)' }}>
-                I confirm this dog is on <strong>Main Register</strong> and I am recording that its breeding rights are not restricted.
-              </p>
-              <div style={{ padding: '10px 12px', borderRadius: 10, background: '#FFF9EC', border: '1px solid #EBD9A8', fontSize: 12, lineHeight: 1.5, color: 'var(--mid)' }}>
-                <strong style={{ color: 'var(--dark)' }}>Important:</strong> This does not mean the dog automatically passes age, health or legal breeding compliance checks. Review Actual Breeding Compliance separately before breeding.
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 22px 18px' }}>
-              <button type="button" className="btn btn-secondary btn-sm" disabled={savingBreedingRights} onClick={() => setPendingBreedingRights(null)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                disabled={savingBreedingRights}
-                onClick={async () => {
-                  setSavingBreedingRights(true)
-                  try {
-                    await onUpdateDogFields(nextBreedingRightsUpdate((dog as any).pedigreeRegister, 'eligible') as Partial<Dog>)
-                    toast('Breeding rights confirmed')
-                    setPendingBreedingRights(null)
-                  } catch {
-                    toast('Failed to update breeding rights', 'error')
-                  } finally {
-                    setSavingBreedingRights(false)
-                  }
-                }}
-              >
-                {savingBreedingRights ? 'Saving…' : 'Confirm breeding rights'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {!isOwner && isCurrentEffectiveOwner && <SaleAvailabilityPanel dog={dog} onSave={onUpdateSale} toast={toast} isRestricted={isRestricted} />}
     </div>
   )
@@ -1871,7 +1934,7 @@ function SaleAvailabilityPanel({ dog, onSave, toast, isRestricted }: {
     // isn't a denied write at all, since no write is attempted; the
     // plan-limit explanation is what's true here.
     if (isRestricted) {
-      toast("This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Sale & availability.", 'error')
+      toast(restrictedSaleAvailabilityMessage(isAndroidNativeApp()), 'error')
       return
     }
     setSaving(true)
@@ -1965,7 +2028,7 @@ function SaleAvailabilityPanel({ dog, onSave, toast, isRestricted }: {
 
       {isRestricted && (
         <div style={{ marginBottom: 14, fontSize: 13, color: 'var(--gold)', background: 'var(--gold-light)', border: '1px solid rgba(200,151,31,0.3)', padding: '10px 14px', borderRadius: 10 }}>
-          🔒 This dog is over your plan's limit and is read-only — upgrade to Plus or activate it in place of another dog to edit Sale & availability.
+          {'🔒 '}{restrictedSaleAvailabilityMessage(isAndroidNativeApp())}
         </div>
       )}
 
@@ -2055,7 +2118,7 @@ function InfoRow({ label, value, mono }: { label: string; value: React.ReactNode
 
 // ── VACCINES TAB ──────────────────────────────────────────────
 
-function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc, onReminderSaved, error, onRetry }: {
+function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccines, toast, documents, onViewDoc, onReminderSaved, error, onRetry, canEdit }: {
   dogId: string; dogName: string; tenantId: string; userEmail: string;
   vaccines: VaccineRecord[];
   setVaccines: (v: VaccineRecord[]) => void;
@@ -2065,6 +2128,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
   onReminderSaved: () => void | Promise<void>
   error?: boolean
   onRetry?: () => void
+  canEdit: boolean
 }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', dateGiven: '', nextDue: '', vetClinic: '' })
@@ -2167,9 +2231,9 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Vaccination records</h2>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>+ Add vaccine</button>
+        {canEdit && <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>+ Add vaccine</button>}
       </div>
-      {!error && showForm && (
+      {!error && canEdit && showForm && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div className="form-group">
@@ -2181,7 +2245,7 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
               <input className="form-input" type="date" value={form.dateGiven} onChange={e => setForm(p => ({ ...p, dateGiven: e.target.value }))} />
             </div>
             <div className="form-group">
-              <label className="form-label">Next due date</label>
+              <label className="form-label">Add reminder for next dose (optional date)</label>
               <input className="form-input" type="date" value={form.nextDue} onChange={e => setForm(p => ({ ...p, nextDue: e.target.value }))} />
             </div>
             <div className="form-group">
@@ -2304,8 +2368,10 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
                       📄 View
                     </button>
                   )}
-                  <button onClick={() => startEdit(v)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
-                  <button onClick={() => handleDelete(v.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+                  {canEdit && <>
+                    <button onClick={() => startEdit(v)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
+                    <button onClick={() => handleDelete(v.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+                  </>}
                 </div>
               )
             })
@@ -2318,7 +2384,8 @@ function VaccinesTab({ dogId, dogName, tenantId, userEmail, vaccines, setVaccine
 
 // ── WORMING TAB ───────────────────────────────────────────────
 
-function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error, onRetry }: {
+function WormingTab({ onReminderSaved, dogId, dogName, tenantId, userEmail, wormings, setWormings, toast, error, onRetry, canEdit }: {
+  onReminderSaved: () => Promise<void>;
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -2328,12 +2395,26 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
   toast: (msg: string, type?: ToastMessage['type']) => void
   error?: boolean
   onRetry?: () => void
+  canEdit: boolean
 }) {
   const latestGivenDate = wormings.reduce((max, w) => (w.dateGiven > max ? w.dateGiven : max), '')
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
   const [saving, setSaving] = useState(false)
 
+  const [reminderRecord, setReminderRecord] = useState<WormingRecord | null>(null)
+  const [reminderDate, setReminderDate] = useState('')
+  async function saveReminder() {
+    if (!reminderRecord || !reminderDate || saving) return
+    setSaving(true)
+    try {
+      await addWormingReminder(dogId, reminderRecord.id, reminderDate)
+      await onReminderSaved()
+      setReminderRecord(null)
+      toast('Reminder saved ✓')
+    } catch { toast('Could not save reminder', 'error') }
+    finally { setSaving(false) }
+  }
   async function handleAdd() {
     if (!form.product || !form.dateGiven) {
       toast('Please fill in product and date given', 'error')
@@ -2357,6 +2438,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
         performedBy: tenantId,
         performedByEmail: userEmail,
       })
+      await onReminderSaved()
       const updated = await getWormingRecords(dogId)
       setWormings(updated)
       setForm({ product: '', dateGiven: '', nextDue: '', weightKg: '' })
@@ -2389,12 +2471,19 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Worming</h2>
-        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
+        {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
           {showForm ? 'Cancel' : '+ Add manually'}
-        </button>
+        </button>}
       </div>
 
-      {!error && showForm && (
+      {canEdit && reminderRecord && <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+        <label className="form-label" htmlFor="worm-reminder-date">Next worming reminder — {reminderRecord.product}</label>
+        <input id="worm-reminder-date" className="form-input" type="date" value={reminderDate} onChange={e => setReminderDate(e.target.value)} disabled={saving} />
+        <p>Choose the date using product instructions or veterinary advice.</p>
+        <button className="btn btn-primary btn-sm" disabled={saving || !reminderDate} onClick={saveReminder}>Save reminder</button>
+        <button className="btn btn-ghost btn-sm" disabled={saving} onClick={() => setReminderRecord(null)}>Cancel</button>
+      </div>}
+      {!error && canEdit && showForm && (
         <div className="card" style={{ marginBottom: 16, padding: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}>
@@ -2406,7 +2495,7 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
               <input className="form-input" type="date" value={form.dateGiven} onChange={e => setForm(p => ({ ...p, dateGiven: e.target.value }))} max={new Date().toISOString().split('T')[0]} />
             </div>
             <div className="form-group">
-              <label className="form-label">Next due date</label>
+              <label className="form-label">Add reminder for next dose (optional date)</label>
               <input className="form-input" type="date" value={form.nextDue} onChange={e => setForm(p => ({ ...p, nextDue: e.target.value }))} />
             </div>
             <div className="form-group">
@@ -2448,7 +2537,8 @@ function WormingTab({ dogId, dogName, tenantId, userEmail, wormings, setWormings
               ) : w.nextDue ? (
                 <span className={`badge ${isOverdue(w.nextDue) ? 'badge-red' : 'badge-green'}`}>{isOverdue(w.nextDue) ? 'Overdue' : 'Current'}</span>
               ) : null}
-              <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+              {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => { setReminderRecord(w); setReminderDate(w.nextDue || '') }}>Add reminder</button>}
+              {canEdit && <button onClick={() => handleDelete(w.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>}
             </div>
           ))}
         </div>
@@ -2472,7 +2562,7 @@ function formatHealthResult(result: unknown): string {
   return ''
 }
 
-function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast, error, onRetry }: {
+function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealthTests, toast, error, onRetry, canEdit }: {
   dogId: string;
   dogName: string;
   tenantId: string;
@@ -2482,6 +2572,7 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
   toast: (msg: string, type?: ToastMessage['type']) => void
   error?: boolean
   onRetry?: () => void
+  canEdit: boolean
 }) {
   const { user } = useAuth()
   const [showForm, setShowForm] = useState(false)
@@ -2593,12 +2684,12 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Health testing</h2>
-        <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
+        {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(!showForm)} disabled={error} title={error ? "Can't add until existing records finish loading" : undefined}>
           {showForm ? 'Cancel' : '+ Add manually'}
-        </button>
+        </button>}
       </div>
 
-      {!error && showForm && (
+      {!error && canEdit && showForm && (
         <div className="card" style={{ marginBottom: 16, padding: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <div className="form-group">
@@ -2709,8 +2800,10 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
                     📄 View
                   </button>
                 )}
-                <button onClick={() => startEdit(h)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
-                <button onClick={() => handleDelete(h.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+                {canEdit && <>
+                  <button onClick={() => startEdit(h)} className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>✎ Edit</button>
+                  <button onClick={() => handleDelete(h.id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>✕</button>
+                </>}
               </div>
             </div>
             )
@@ -2723,13 +2816,16 @@ function HealthTab({ dogId, dogName, tenantId, userEmail, healthTests, setHealth
 
 // ── REMINDERS TAB ─────────────────────────────────────────────
 
-function RemindersTab({ reminders, setReminders, toast, error, onRetry }: {
+function RemindersTab({ dog, tenantId, onSaved, reminders, setReminders, toast, error, onRetry, canEdit }: {
+  dog: Dog; tenantId: string; onSaved: () => Promise<void>;
   reminders: Reminder[];
   setReminders: (r: Reminder[]) => void;
   toast: (msg: string, type?: ToastMessage['type']) => void
   error?: boolean
   onRetry?: () => void
+  canEdit: boolean
 }) {
+  const [showAdd, setShowAdd] = useState(false)
   async function handleComplete(id: string) {
     try {
       await completeReminder(id)
@@ -2746,6 +2842,8 @@ function RemindersTab({ reminders, setReminders, toast, error, onRetry }: {
   return (
     <div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Reminders</h2>
+      {canEdit && !error && <button className="btn btn-secondary btn-sm" style={{ marginBottom: 16 }} onClick={() => setShowAdd(true)}>+ Add reminder</button>}
+      {canEdit && !error && showAdd && <ReminderForm key={`${tenantId}:${dog.id}`} dogs={[dog]} tenantId={tenantId} onCancel={() => setShowAdd(false)} onSaved={async () => { setShowAdd(false); await onSaved(); toast('Reminder added ✓') }} />}
       {error ? (
         <div className="card"><div className="empty-state"><div className="empty-state-icon">⚠️</div><div className="empty-state-title">Couldn't load reminders</div><div className="empty-state-desc">This is a loading error, not an empty list.</div>{onRetry && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={onRetry}>Retry</button>}</div></div>
       ) : active.length === 0 ? (
@@ -2761,7 +2859,7 @@ function RemindersTab({ reminders, setReminders, toast, error, onRetry }: {
                   <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)' }}>{r.title}</div>
                   <div style={{ fontSize: 12, color: overdue ? 'var(--error)' : 'var(--light)' }}>{overdue ? 'Overdue · ' : 'Due · '}{formatDate(r.dueDate)}</div>
                 </div>
-                <button className="btn btn-secondary btn-sm" onClick={() => handleComplete(r.id)}>Done ✓</button>
+                {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => handleComplete(r.id)}>Done ✓</button>}
               </div>
             )
           })}
@@ -2814,8 +2912,8 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetry
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button className="btn btn-primary btn-sm" onClick={downloadQR} style={{ width: '100%' }}>⬇ Download QR PNG</button>
-          <button className="btn btn-secondary btn-sm" onClick={copyUrl} style={{ width: '100%' }}>Copy passport link</button>
-          <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ textAlign: 'center', width: '100%' }}>Preview passport ↗</a>
+          <button className="btn btn-secondary btn-sm" onClick={copyUrl} style={{ width: '100%' }}>Copy puppy / passport link</button>
+          <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ textAlign: 'center', width: '100%' }}>Preview profile &amp; updates ↗</a>
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -2843,7 +2941,7 @@ function PassportTab({ dog, qrUrl, publicUrl, scanCount, scanCountError, onRetry
 
 // ── DOCUMENTS TAB ────────────────────────────────────────────
 
-function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void }) {
+function DocumentsTab({ documents, setDocuments, dogName, dogId, toast, error, onRetry, canEdit }: { documents: any[]; setDocuments: React.Dispatch<React.SetStateAction<any[]>>; dogName: string; dogId: string; toast: (msg: string, type?: ToastMessage['type']) => void; error?: boolean; onRetry?: () => void; canEdit: boolean }) {
   const [editingDocId, setEditingDocId] = useState<string | null>(null)
   const [editDocName, setEditDocName] = useState('')
   const { user } = useAuth()
@@ -2866,8 +2964,9 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
   }
 
   return (
-    <div>
+    <QrDocumentManager key={dogId} dogId={dogId} documents={documents} enabled={canEdit && !error}><div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 16 }}>Documents</h2>
+      {canEdit && !error && <QrDocumentSharingSummary />}
       {error ? (
         <div className="empty-state">
           <div className="empty-state-icon">⚠️</div>
@@ -2883,11 +2982,11 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {documents.map((doc, i) => (
-            <div key={i} style={{
+          {documents.map(doc => (
+            <div key={doc.id} style={{
               background: 'var(--white)', border: '1px solid var(--border)',
               borderRadius: 'var(--radius-md)', padding: '12px 16px',
-              display: 'flex', alignItems: 'center', gap: 14,
+              display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
             }}>
               <div style={{
                 width: 44, height: 44, borderRadius: 10,
@@ -2897,7 +2996,7 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
               }}>
                 {getDocIcon(doc.documentType)}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: '1 1 150px', minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)', marginBottom: 2 }}>
                   {editingDocId === doc.id ? (
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -2914,8 +3013,8 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
                     </div>
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      {doc.name || getDocLabel(doc.documentType)}
-                      <button type="button" onClick={() => { setEditingDocId(doc.id); setEditDocName(doc.name || '') }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>
+                      {documentDisplayName(doc, getDocLabel)}
+
                     </span>
                   )}
                 </div>
@@ -2933,14 +3032,17 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexShrink: 1, flexWrap: 'wrap', maxWidth: '100%', marginLeft: 'auto' }}>
+                {canEdit && <QrDocumentShareCheckbox document={doc} />}
                 <button
                   onClick={() => viewDocument(user, toast, (doc as any).filePath || (doc as any).storagePath, doc.fileUrl)}
                   className="btn btn-secondary btn-sm"
                 >
                   View ↗
                 </button>
-                <button
+                {canEdit && <button type="button" className="btn btn-secondary btn-sm"
+                  onClick={() => { setEditingDocId(doc.id); setEditDocName(documentEditableName(doc)) }}>Edit</button>}
+                {canEdit && <button
                   onClick={async () => {
                     if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
                       try {
@@ -2956,13 +3058,14 @@ function DocumentsTab({ documents, setDocuments, dogName, toast, error, onRetry 
                   style={{ color: 'var(--error)' }}
                 >
                   Delete
-                </button>
+                </button>}
               </div>
             </div>
           ))}
         </div>
       )}
-    </div>
+      {canEdit && !error && <QrDocumentSharingFooter />}
+    </div></QrDocumentManager>
   )
 }
 
@@ -3080,7 +3183,7 @@ const STORY_EVENT_COLOR: Record<StoryEvent['kind'], string> = {
   note: 'var(--brand-600)',
 }
 
-function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast, notesError, auditError, vaccinesError, wormingError, healthTestsError, onRetry, dogId, onNoteChanged }: {
+function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteDate, onAddNote, saving, vaccines, wormings, healthTests, lifeStageEvents, notePhoto, setNotePhoto, uploadingNotePhoto, toast, notesError, auditError, vaccinesError, wormingError, healthTestsError, onRetry, dogId, onNoteChanged, canEdit }: {
   dog: Dog; notes: ActivityNote[]; newNote: string; setNewNote: (v: string) => void;
   newNoteDate: string; setNewNoteDate: (v: string) => void;
   onAddNote: () => void; saving: boolean;
@@ -3093,8 +3196,19 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   vaccinesError?: boolean; wormingError?: boolean; healthTestsError?: boolean
   onRetry?: () => void
   dogId: string | undefined; onNoteChanged: () => Promise<void>
+  canEdit: boolean
 }) {
-  const events = buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes)
+  const [updates, setUpdates] = useState<PuppyUpdate[]>([])
+  const editUpdate = useRef<(update: PuppyUpdate) => void>(() => {})
+  const bindEdit = useCallback((edit: (update: PuppyUpdate) => void) => { editUpdate.current = edit }, [])
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const events: (StoryEvent & { update?: PuppyUpdate })[] = [...buildStoryEvents(dog, vaccines, wormings, healthTests, lifeStageEvents, notes), ...updates.map(update => ({ date: update.date, id: 'update-' + update.id, icon: '📷', title: update.text, kind: 'note' as const, update }))].sort((a, b) => String(b.date).localeCompare(String(a.date)))
+  async function manageUpdate(id: string, action: 'delete' | 'visibility', audience?: import('../lib/puppyUpdates').UpdateAudience) {
+    setUpdateBusy(true)
+    try { await puppyUpdates({ action, dogId: dog.id, updateId: id, audience }); setUpdates(items => action === 'delete' ? items.filter(item => item.id !== id) : items.map(item => item.id === id ? { ...item, audience: audience! } : item)) }
+    catch (error) { toast(error instanceof Error ? error.message : 'Could not update story', 'error') }
+    finally { setUpdateBusy(false) }
+  }
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [editDate, setEditDate] = useState('')
@@ -3108,129 +3222,11 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
   // individual event types.
   const hasIncompleteData = !!(notesError || auditError || vaccinesError || wormingError || healthTestsError)
 
-  // FIX (bug: iPhone photos ~3MB fail to upload): there was no
-  // resize/compression step before base64-encoding. Base64 inflates size
-  // by ~33%, so a 3MB photo becomes ~4MB as base64 — right at the edge of
-  // Vercel's default ~4.5MB serverless function body limit once JSON
-  // overhead (dogId, userId, mediaType) is added, and easily over it for
-  // anything slightly larger. Resizing down to a max dimension and
-  // re-encoding as JPEG at a reasonable quality keeps note photos small
-  // without a visible quality loss at the sizes they're displayed.
-
-  function resizeImage(file: File | Blob, maxDimension = 1600, quality = 0.82): Promise<{ base64: string; mediaType: string; preview: string }> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const img = new Image()
-        img.onload = () => {
-          let { width, height } = img
-          if (width > maxDimension || height > maxDimension) {
-            if (width > height) {
-              height = Math.round((height * maxDimension) / width)
-              width = maxDimension
-            } else {
-              width = Math.round((width * maxDimension) / height)
-              height = maxDimension
-            }
-          }
-          const canvas = document.createElement('canvas')
-          canvas.width = width
-          canvas.height = height
-          const ctx = canvas.getContext('2d')
-          if (!ctx) { reject(new Error('Canvas not supported')); return }
-          ctx.drawImage(img, 0, 0, width, height)
-          const dataUrl = canvas.toDataURL('image/jpeg', quality)
-          resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg', preview: dataUrl })
-        }
-        img.onerror = () => reject(new Error('Failed to load image'))
-        img.src = reader.result as string
-      }
-      reader.onerror = () => reject(new Error('Failed to read file'))
-      reader.readAsDataURL(file)
-    })
-  }
-
-  async function handlePhotoSelect(e: { target: { files: FileList | null } }) {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    if (isHeicFile(file)) {
-      // Send raw HEIC to server \u2014 sharp handles conversion server-side
-      const reader = new FileReader()
-      reader.onload = () => {
-        const result = reader.result as string
-        setNotePhoto({ base64: result.split(',')[1], mediaType: file.type || 'image/heic', preview: result })
-      }
-      reader.readAsDataURL(file)
-      return
-    }
-
-    try {
-      const resized = await resizeImage(file)
-      setNotePhoto(resized)
-    } catch {
-      // Fall back to the original unresized file rather than silently
-      // failing — better to attempt the original upload than block the
-      // user entirely if canvas resizing fails for some reason. (HEIC is
-      // already handled above by this point, so this fallback is only
-      // for non-HEIC formats the canvas couldn't process.)
-      const reader = new FileReader()
-      reader.onload = () => {
-        const result = reader.result as string
-        const base64 = result.split(',')[1]
-        setNotePhoto({ base64, mediaType: file.type, preview: result })
-      }
-      reader.readAsDataURL(file)
-    }
-  }
-
   return (
     <div>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 4 }}>{dog.name}'s story</h2>
       <p style={{ fontSize: 13, color: 'var(--light)', marginBottom: 16 }}>Every milestone, automatically gathered in one place.</p>
-
-      <div className="card" style={{ marginBottom: 20 }}>
-        <label style={{ fontSize: 12, color: 'var(--light)', display: 'block', marginBottom: 4 }}>When did this happen?</label>
-        <input
-          className="form-input"
-          type="date"
-          value={newNoteDate}
-          onChange={e => setNewNoteDate(e.target.value)}
-          max={new Date().toISOString().split('T')[0]}
-          style={{ marginBottom: 10, maxWidth: 200 }}
-        />
-        <textarea className="form-textarea" placeholder="Add a note about today…" value={newNote} onChange={e => setNewNote(e.target.value)} style={{ minHeight: 72, marginBottom: 10 }} />
-
-        {notePhoto ? (
-          <div style={{ position: 'relative', display: 'inline-block', marginBottom: 10 }}>
-            <img src={notePhoto.preview} alt="Selected" style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)' }} />
-            <button
-              type="button"
-              onClick={() => setNotePhoto(null)}
-              style={{
-                position: 'absolute', top: -8, right: -8,
-                width: 22, height: 22, borderRadius: '50%',
-                background: 'var(--dark)', color: '#fff', border: 'none',
-                fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}
-            >✕</button>
-          </div>
-        ) : (
-          <label className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', marginBottom: 10, cursor: 'pointer' }}>
-            📷 Add a photo
-            <input type="file" accept="image/*" onChange={handlePhotoSelect} style={{ display: 'none' }} />
-          </label>
-        )}
-
-        <div>
-          <button className="btn btn-primary btn-sm" onClick={onAddNote} disabled={saving || !newNote.trim() || hasIncompleteData} title={hasIncompleteData ? "Some of the dog's story failed to load — retry before adding a note" : undefined}>
-            {saving ? <span className="spinner" /> : uploadingNotePhoto ? 'Uploading photo…' : 'Add note'}
-          </button>
-          {hasIncompleteData && !saving && (
-            <span style={{ fontSize: 12, color: 'var(--light)', marginLeft: 8 }}>Retry the failed sections above before adding a note.</span>
-          )}
-        </div>
-      </div>
+      {canEdit ? <PuppyUpdatesManager key={dog.id} dog={dog} onUpdates={setUpdates} onEditReady={bindEdit} /> : <div style={{ marginBottom: 20, padding: 12, color: 'var(--mid)', fontSize: 12 }}>This dog has been transferred. New owner's private notes and photos are hidden from the previous owner.</div>}
 
       {hasIncompleteData && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#FFF8E8', border: '1px solid #F0D590', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 13, color: '#8A6D1F' }}>
@@ -3254,7 +3250,9 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
           {/* Vertical timeline line */}
           <div style={{ position: 'absolute', left: 15, top: 6, bottom: 6, width: 2, background: 'var(--border)' }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {events.map((e, i) => (
+            {events.map((e, i) => e.update ? (
+              <div key={e.id} style={{ position: 'relative' }}><div style={{ position: 'absolute', left: -36, top: 0, width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-600)', display: 'grid', placeItems: 'center' }}>📷</div><PuppyUpdateFeed updates={[e.update]} galleryUpdates={updates} busy={updateBusy} edit={canEdit ? update => editUpdate.current(update) : undefined} manage={canEdit ? manageUpdate : undefined} /></div>
+            ) : (
               <div key={e.id ?? i} style={{ position: 'relative' }}>
                 {/* Dot on the timeline */}
                 <div style={{
@@ -3294,7 +3292,7 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
                   ) : (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div style={{ fontSize: 12, color: 'var(--light)' }}>{formatDate(e.date)}</div>
-                      {e.kind === 'note' && e.id && (
+                      {canEdit && e.kind === 'note' && e.id && (
                         <div style={{ display: 'flex', gap: 10 }}>
                           <button type="button" onClick={() => { setEditingId(e.id!); setEditText(e.title); setEditDate((e.date || '').slice(0, 10)) }} style={{ background: 'none', border: 'none', color: 'var(--mid)', fontSize: 12, cursor: 'pointer', padding: 0 }}>Edit</button>
                           <button type="button" onClick={async () => {
@@ -3310,6 +3308,35 @@ function TimelineTab({ dog, notes, newNote, setNewNote, newNoteDate, setNewNoteD
               </div>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HistoricalBreedingTab({ heatCycles }: { heatCycles: any[] }) {
+  const cycles = (heatCycles || []).slice().sort((a, b) => String(a.heatStartDate || '').localeCompare(String(b.heatStartDate || '')))
+  return (
+    <div style={{ maxWidth: 800 }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)', marginBottom: 8 }}>Breeding history</h2>
+      <div style={{ fontSize: 12, color: 'var(--mid)', background: 'var(--sand)', padding: '8px 12px', borderRadius: 8, marginBottom: 16 }}>
+        🔒 Historical snapshot frozen at ownership transfer.
+      </div>
+      {cycles.length === 0 ? (
+        <div className="empty-state"><div className="empty-state-title">No breeding records before transfer</div></div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {cycles.map((cycle, i) => (
+            <div key={cycle.id || i} className="card" style={{ padding: 14 }}>
+              <div style={{ fontWeight: 600 }}>Heat cycle {cycle.heatNumber || i + 1}</div>
+              <div style={{ fontSize: 12, color: 'var(--mid)', marginTop: 4 }}>
+                Heat: {cycle.heatStartDate ? formatDate(cycle.heatStartDate) : '—'}
+                {cycle.matingDate ? ` · Mating: ${formatDate(cycle.matingDate)}` : ''}
+                {cycle.whelpingActual ? ` · Whelped: ${formatDate(cycle.whelpingActual)}` : ''}
+              </div>
+              {cycle.notes && <div style={{ fontSize: 13, color: 'var(--mid)', marginTop: 6 }}>{cycle.notes}</div>}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -3379,7 +3406,33 @@ function ageAtDate(dob: string, date: Date): string {
 }
 
 
-// Breeding compliance jurisdiction rules are canonical in ../lib/breedingCompliance.
+// ── BREEDING COMPLIANCE RULES BY STATE ───────────────────────
+interface StateRules {
+  stateName: string
+  minBreedingMonths: number
+  minBreedingMonthsLarge: number
+  maxLifetimeLitters: number
+  maxLittersIn18Months: number
+  maxCsections: number | null
+  csectionVetRequired: number | null
+  maxAgeYears: number
+  vetCertAfterAge: number
+  requiresBIN: boolean
+  notes: string
+  sourceUrl: string
+  sourceName: string
+}
+
+const STATE_RULES: Record<string, StateRules> = {
+  SA:  { stateName: 'South Australia',          minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs SA membership (DACO) required. No specific C-section limit under SA law.', sourceUrl: 'https://www.dogssa.com.au/about/policies/dogs-sa-code-of-ethics-for-members-part-xv-codes/', sourceName: 'Dogs SA Code of Ethics' },
+  NSW: { stateName: 'New South Wales',           minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 999, maxCsections: 3,    csectionVetRequired: 2,    maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: true,  notes: 'BIN mandatory from 1 Dec 2025. Max 5 litters OR 3 C-sections lifetime, whichever first. Vet cert required before 3rd C-section pregnancy.', sourceUrl: 'https://www.olg.nsw.gov.au/pets/nsw-pet-registry/breeders/changes-dog-breeding-laws', sourceName: 'NSW Prevention of Cruelty to Animals Act 1979 (amended 2024)' },
+  VIC: { stateName: 'Victoria',                  minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Victoria AO status: up to 10 fertile females. PER source number required for all ads.', sourceUrl: 'https://dogsvictoria.org.au/media/6000/dv-code-of-practice-effective-150224.pdf', sourceName: 'Dogs Victoria Code of Practice' },
+  QLD: { stateName: 'Queensland',                minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Register as breeder within 28 days of litter. Supply number required for all ads.', sourceUrl: 'https://www.business.qld.gov.au/industries/farms-fishing-forestry/agriculture/animal/industries/dogs', sourceName: 'Animal Care and Protection Act 2001 (QLD)' },
+  WA:  { stateName: 'Western Australia',         minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 999, maxCsections: null, csectionVetRequired: null, maxAgeYears: 7, vetCertAfterAge: 7, requiresBIN: false, notes: 'WA: max breeding age 7 years (stricter than other states). Dogs West (CAWA) membership required.', sourceUrl: 'https://www.dogswest.com', sourceName: 'CAWA H Regulations + Animal Welfare Act 2002 (WA)' },
+  ACT: { stateName: 'Australian Capital Territory', minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2, maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Australia rules apply via Dogs ACT.', sourceUrl: 'https://www.dogsact.org.au', sourceName: 'Dogs Australia + Animal Welfare Act 1992 (ACT)' },
+  NT:  { stateName: 'Northern Territory',        minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Australia rules apply via Dogs NT.', sourceUrl: 'https://www.dogsnt.com.au', sourceName: 'Dogs Australia + Animal Welfare Act 1999 (NT)' },
+  TAS: { stateName: 'Tasmania',                  minBreedingMonths: 12, minBreedingMonthsLarge: 18, maxLifetimeLitters: 5, maxLittersIn18Months: 2,   maxCsections: null, csectionVetRequired: null, maxAgeYears: 8, vetCertAfterAge: 8, requiresBIN: false, notes: 'Dogs Australia rules apply via Dogs Tasmania.', sourceUrl: 'https://www.dogstasmania.com.au', sourceName: 'Dogs Australia + Animal Welfare Act 1993 (TAS)' },
+}
 
 // Mating methods taxonomy
 const MATING_METHODS = [
@@ -3464,11 +3517,34 @@ function toWritableHeatCycleFields(cycle: HeatCycle): WritableHeatCycleFields {
   return clean
 }
 
+function addDaysIso(dateIso: string, days: number): string {
+  const [y, m, d] = dateIso.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dt.toISOString().slice(0, 10)
+}
+
 function calcWhelpingEstimate(matingDate: string): string {
-  if (!matingDate) return ''
-  const d = new Date(matingDate)
-  d.setDate(d.getDate() + 63)
-  return d.toISOString().split('T')[0]
+  return matingDate ? addDaysIso(matingDate, 63) : ''
+}
+
+type PregnancyMilestoneKey = 'ultrasound_day28' | 'xray_day45' | 'whelp_prep_day58' | 'due_day63'
+
+const PREGNANCY_MILESTONES: Array<{
+  key: PregnancyMilestoneKey
+  day: number
+  title: string
+  reminderType: Reminder['type']
+  icon: string
+}> = [
+  { key: 'ultrasound_day28', day: 28, title: 'Pregnancy ultrasound / confirmation', reminderType: 'pregnancy', icon: '🩺' },
+  { key: 'xray_day45', day: 45, title: 'Pregnancy X-ray / puppy count', reminderType: 'pregnancy', icon: '🩻' },
+  { key: 'whelp_prep_day58', day: 58, title: 'Prepare whelping box & start temperature checks', reminderType: 'whelping', icon: '🧺' },
+  { key: 'due_day63', day: 63, title: 'Estimated whelping due date', reminderType: 'whelping', icon: '🐾' },
+]
+
+function pregnancyMilestonesFor(matingDate: string) {
+  return PREGNANCY_MILESTONES.map(m => ({ ...m, dueDate: addDaysIso(matingDate, m.day) }))
 }
 
 // api/_lib/parent-eligibility.js's validateBreedingParent() returns a
@@ -3503,17 +3579,19 @@ function describeParentEligibilityFailure(err: { error?: string; reason?: string
 function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   dog: Dog
   dogId: string
-  userState: AustralianJurisdiction | null
+  userState: string
   onUpdate: (updates: Partial<Dog>) => Promise<void>
   toast: (msg: string, type?: ToastMessage['type']) => void
 }) {
-  const [selectedState, setSelectedState] = useState<AustralianJurisdiction | ''>(userState || '')
+  const [selectedState, setSelectedState] = useState(userState)
   const [heatCycles, setHeatCycles] = useState<HeatCycle[]>([])
   const [loadingCycles, setLoadingCycles] = useState(true)
   const [showAddHeat, setShowAddHeat] = useState(false)
   const [editingCycle, setEditingCycle] = useState<HeatCycle | null>(null)
   const [saving, setSaving] = useState(false)
   const [allDogs, setAllDogs] = useState<Dog[]>([])
+  const [breedingReminders, setBreedingReminders] = useState<Reminder[]>([])
+  const [reminderSavingKey, setReminderSavingKey] = useState('')
   // Codex round 13: distinct from allDogs being genuinely empty of
   // eligible Sires — a failed load must never render through the same
   // "No male dogs currently eligible" copy the dropdown shows for a
@@ -3542,8 +3620,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const [firstHeatDate, setFirstHeatDate] = useState((dog as any).firstHeatDate || '')
   const [editingHeat, setEditingHeat] = useState(false)
 
-  const hasJurisdiction = !!selectedState
-  const rules = selectedState ? STATE_RULES[selectedState] : NO_JURISDICTION_RULES
+  const rules = STATE_RULES[selectedState] || STATE_RULES['SA']
   const breedSize = getBreedSize(dog.breed)
   const heatInterval = getHeatIntervalMonths(dog.breed)
   const firstHeatMo = getFirstHeatMonths(dog.breed)
@@ -3575,14 +3652,16 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     // WRONG dog's heat cycles or the wrong account's Sire options.
     setHeatCycles([])
     setAllDogs([])
+    setBreedingReminders([])
     setSireLoadError(false)
     if (!dogId) return
     const req = beginRequest()
     setLoadingCycles(true)
     async function load() {
-      const [cyclesResult, dogsResult] = await Promise.allSettled([
+      const [cyclesResult, dogsResult, remindersResult] = await Promise.allSettled([
         getDocs(query(collection(db, 'heatCycles'), where('dogId', '==', dogId))),
         getDogs(),
+        getReminders(dogId, user?.uid || '', dog),
       ])
       if (!req.isCurrent()) return
       if (cyclesResult.status === 'fulfilled') {
@@ -3600,6 +3679,11 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         console.error('BreedingTab: failed to load dogs for sire selector', { code: safeReadFirestoreErrorCode(dogsResult.reason) })
         setSireLoadError(true)
         toast('Failed to load your dogs for the Sire selector', 'error')
+      }
+      if (remindersResult.status === 'fulfilled') {
+        setBreedingReminders(remindersResult.value.filter(r => r.source === 'breeding_timeline'))
+      } else {
+        console.error('BreedingTab: failed to load breeding reminders', { code: safeReadFirestoreErrorCode(remindersResult.reason) })
       }
       setLoadingCycles(false)
     }
@@ -3661,7 +3745,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     const minAge = (breedSize === 'large' || breedSize === 'giant') ? rules.minBreedingMonthsLarge : rules.minBreedingMonths
     if (ageAtHeatMo < rules.minBreedingMonths) return { status: 'blocked', msg: `❌ Under ${rules.minBreedingMonths}mo`, color: 'var(--error)' }
     if (ageAtHeatMo < minAge) return { status: 'caution', msg: `⚠️ Under ${minAge}mo (${breedSize})`, color: 'var(--warning)' }
-    if (ageAtHeatMo >= rules.vetCertAfterAgeYears * 12) return { status: 'warn', msg: `⚠️ Vet cert required`, color: 'var(--warning)' }
+    if (ageAtHeatMo >= rules.vetCertAfterAge * 12) return { status: 'warn', msg: `⚠️ Vet cert required`, color: 'var(--warning)' }
     return { status: 'ok', msg: '✓ Eligible', color: 'var(--brand-600)' }
   }
 
@@ -3670,9 +3754,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const isUnder12 = !isPuppyOrWhelp && ageMo < rules.minBreedingMonths
   const minForBreed = (breedSize === 'large' || breedSize === 'giant') ? rules.minBreedingMonthsLarge : rules.minBreedingMonths
   const isOver = ageYrs >= rules.maxAgeYears
-  const littersOk = rules.maxLifetimeLitters === 999 || litterCount < rules.maxLifetimeLitters
-  const memberFrequencyRuleApplies = rules.maxLittersIn18Months !== 999 && rules.littersIn18mSource !== 'KENNEL_CLUB_STATE'
-  const last18Ok = !memberFrequencyRuleApplies || last18mLitters < rules.maxLittersIn18Months
+  const littersOk = litterCount < rules.maxLifetimeLitters
+  const last18Ok = rules.maxLittersIn18Months === 999 || last18mLitters < rules.maxLittersIn18Months
   const csectionOk = rules.maxCsections === null || cSectionCount < rules.maxCsections
   const csectionVetNeeded = rules.csectionVetRequired !== null && cSectionCount >= rules.csectionVetRequired
   // resolvePedigreeRegister/resolveBreedingEligibility are the single source
@@ -3686,13 +3769,12 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const isNotRecorded = pedigreeRegisterStatus === 'NOT_RECORDED'
   const isMarkedNotEligible = pedigreeRegisterStatus === 'MAIN' && breedingEligibilityStatus === 'NOT_ELIGIBLE'
   const isEligibilityUnconfirmed = pedigreeRegisterStatus === 'MAIN' && breedingEligibilityStatus === 'UNKNOWN'
-  const overallOk = hasJurisdiction && !isPuppyOrWhelp && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk
+  const overallOk = !isPuppyOrWhelp && !isUnder12 && !isOver && littersOk && last18Ok && csectionOk
     && !isLimitedRegister && !isNoPedigree && !isNotRecorded && !isMarkedNotEligible && !isEligibilityUnconfirmed
-  const overallMsg = !hasJurisdiction ? '⚠️ Compliance jurisdiction not set — select breeder state / territory'
-    : isPuppyOrWhelp ? `Not yet of breeding age (${dog.lifeStage === 'whelp' ? 'Whelp' : 'Puppy'})`
+  const overallMsg = isPuppyOrWhelp ? `Not yet of breeding age (${dog.lifeStage === 'whelp' ? 'Whelp' : 'Puppy'})`
     : isNoPedigree ? `ℹ️ No Dogs Australia pedigree — cannot register litters with Dogs Australia`
-    : isLimitedRegister ? '❌ Limited Register — breeding rights do not permit breeding'
-    : isMarkedNotEligible ? '❌ Breeding rights marked not permitted'
+    : isLimitedRegister ? '❌ Limited Register — not eligible to breed under Dogs Australia rules'
+    : isMarkedNotEligible ? '❌ Marked not eligible for breeding'
     : isUnder12 ? `❌ Not eligible — under ${rules.minBreedingMonths} months`
     : isOver ? `⚠️ Over ${rules.maxAgeYears} years — vet certificate required`
     : !littersOk ? `❌ Lifetime litter limit reached (${rules.maxLifetimeLitters} max)`
@@ -3700,9 +3782,9 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     : !last18Ok ? `❌ ${rules.maxLittersIn18Months} litters already in last 18 months`
     : csectionVetNeeded ? `⚠️ Vet certificate required before next C-section pregnancy`
     : ageMo < minForBreed ? `⚠️ Eligible but ${breedSize} breed — recommended wait until ${minForBreed} months`
-    : isNotRecorded ? 'ℹ️ Registration not recorded — breeding rights not confirmed'
-    : isEligibilityUnconfirmed ? 'ℹ️ Main Register — breeding rights not confirmed'
-    : '✓ Actual breeding compliance checks passed'
+    : isNotRecorded ? 'ℹ️ Registration not recorded — breeding eligibility unknown'
+    : isEligibilityUnconfirmed ? 'ℹ️ Main Register — breeding eligibility not confirmed'
+    : '✓ Currently eligible to breed'
 
   async function saveLitters() {
     setSaving(true)
@@ -3718,6 +3800,63 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     finally { setSaving(false) }
   }
 
+  function linkedReminder(cycleId: string, milestoneKey: PregnancyMilestoneKey) {
+    return breedingReminders.find(r =>
+      r.source === 'breeding_timeline'
+      && r.sourceRef === cycleId
+      && r.milestoneKey === milestoneKey
+    )
+  }
+
+  async function addPregnancyReminders(
+    cycle: HeatCycle,
+    milestones: ReturnType<typeof pregnancyMilestonesFor>,
+  ) {
+    if (!user?.uid || !cycle.id || !cycle.matingDate) return
+    const missing = milestones.filter(m => !linkedReminder(cycle.id!, m.key))
+    const stale = milestones.filter(m => {
+      const linked = linkedReminder(cycle.id!, m.key)
+      return !!linked && linked.status !== 'completed' && linked.dueDate !== m.dueDate
+    })
+    if (missing.length === 0 && stale.length === 0) {
+      toast('These pregnancy reminders are already up to date.', 'info')
+      return
+    }
+
+    const savingKey = milestones.length === 1
+      ? `${cycle.id}:${milestones[0].key}`
+      : `${cycle.id}:all`
+    setReminderSavingKey(savingKey)
+    try {
+      await Promise.all([
+        ...missing.map(m => addReminder({
+          dogId,
+          tenantId: user.uid,
+          source: 'breeding_timeline',
+          sourceRef: cycle.id,
+          milestoneKey: m.key,
+          type: m.reminderType,
+          title: `${m.title} (Day ${m.day})`,
+          dueDate: m.dueDate,
+          notifyDaysBefore: 3,
+          status: 'pending',
+        })),
+        ...stale.map(m => {
+          const linked = linkedReminder(cycle.id!, m.key)!
+          return updateReminder(linked.id, { dueDate: m.dueDate })
+        }),
+      ])
+      const refreshed = await getReminders(dogId, user.uid, dog)
+      setBreedingReminders(refreshed.filter(r => r.source === 'breeding_timeline'))
+      const changed = missing.length + stale.length
+      toast(changed === 1 ? 'Pregnancy reminder saved ✓' : `${changed} pregnancy reminders saved ✓`, 'success')
+    } catch {
+      toast('Failed to add pregnancy reminder. Please try again.', 'error')
+    } finally {
+      setReminderSavingKey('')
+    }
+  }
+
   // Codex round 3, Blocker 1 — saving a heat cycle must verify the Dam
   // (on create) and any Sire reference "meets actual minimum breeding
   // maturity", which needs real date arithmetic Firestore Rules has no
@@ -3725,12 +3864,13 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   // full validation via api/_lib/parent-eligibility.js) instead of
   // writing to Firestore directly — firestore.rules denies a direct
   // client create/update outright, so this is the only path.
-  async function saveHeatCycle(cycle: HeatCycle) {
+  async function saveHeatCycle(cycle: HeatCycle, reminderKeys: PregnancyMilestoneKey[] = []) {
     setSaving(true)
     try {
       if (!auth.currentUser) throw new Error('Not signed in')
       const idToken = await auth.currentUser.getIdToken()
       const cycleId = cycle.id
+      const previousCycle = cycleId ? heatCycles.find(c => c.id === cycleId) : undefined
       // Explicit writable DTO, not a spread of the fetched record: when
       // editing an existing heat cycle, `cycle` originates from
       // heatCycles state ({ id: d.id, ...d.data() } — see the load effect
@@ -3766,6 +3906,43 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         // zero-actual-records fallback view, set only via "+ Add first
         // heat date" below.
       }
+      // If a breeder changes the mating date after adding pregnancy
+      // reminders, offer to keep those linked dates in sync. Completed
+      // reminders are historical records and are never moved.
+      if (
+        cycleId
+        && previousCycle?.matingDate
+        && cycleFields.matingDate
+        && previousCycle.matingDate !== cycleFields.matingDate
+      ) {
+        const linked = breedingReminders.filter(r =>
+          r.source === 'breeding_timeline'
+          && r.sourceRef === cycleId
+          && r.status !== 'completed'
+        )
+        if (linked.length > 0 && confirm('Mating date changed. Update the linked pregnancy reminders too?')) {
+          const nextMilestones = new Map(
+            pregnancyMilestonesFor(cycleFields.matingDate).map(m => [m.key, m])
+          )
+          await Promise.all(linked.map(r => {
+            const milestone = nextMilestones.get(r.milestoneKey as PregnancyMilestoneKey)
+            return milestone ? updateReminder(r.id, { dueDate: milestone.dueDate }) : Promise.resolve()
+          }))
+          setBreedingReminders(prev => prev.map(r => {
+            if (r.sourceRef !== cycleId || r.status === 'completed') return r
+            const milestone = nextMilestones.get(r.milestoneKey as PregnancyMilestoneKey)
+            return milestone ? { ...r, dueDate: milestone.dueDate } : r
+          }))
+          toast('Linked pregnancy reminders updated ✓', 'success')
+        }
+      }
+
+      if (cycleFields.matingDate && reminderKeys.length > 0) {
+        const selectedMilestones = pregnancyMilestonesFor(cycleFields.matingDate)
+          .filter(m => reminderKeys.includes(m.key))
+        await addPregnancyReminders(savedData, selectedMilestones)
+      }
+
       // Auto-update litter count if whelping recorded
       if (cycle.whelpingActual && cycle.whelpingMethod) {
         const isCS = cycle.whelpingMethod?.startsWith('csection')
@@ -3797,35 +3974,29 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   }
 
   const rulesTable = [
-    { rule: 'Pedigree registration',
-      value: pedigreeRegisterStatus === 'MAIN' ? '🔵 Main Register'
-        : pedigreeRegisterStatus === 'LIMITED' ? '🟠 Limited Register'
-        : isNotRecorded ? '⚪ Registration not recorded'
+    { rule: 'Pedigree / Registration',
+      value: isLimitedRegister ? '🟠 Limited Register — not eligible to breed'
         : pedigreeRegisterStatus === 'NO_PEDIGREE' ? 'No pedigree (purebred without papers)'
         : pedigreeRegisterStatus === 'MIXED' ? 'Mixed breed'
-        : 'Rescue / unknown',
+        : pedigreeRegisterStatus === 'RESCUE' ? 'Rescue / unknown'
+        : isNotRecorded ? '⚪ Registration not recorded — breeding eligibility unknown'
+        : isMarkedNotEligible ? '🔵 Main Register — not eligible to breed'
+        : isEligibilityUnconfirmed ? '🔵 Main Register — breeding eligibility not confirmed'
+        : '🔵 Main Register — eligible to breed',
       source: 'Dogs Australia Regulations Part 6',
-      st: isNotRecorded ? 'info' : 'ok' },
-    { rule: 'Breeding rights',
-      value: isLimitedRegister ? '🔴 Not permitted — Limited Register'
-        : pedigreeRegisterStatus !== 'MAIN' ? '⚪ Not confirmed'
-        : isMarkedNotEligible ? '🔴 Not permitted'
-        : isEligibilityUnconfirmed ? '⚪ Not confirmed'
-        : '🟢 Confirmed — breeding permitted',
-      source: 'Breeder-recorded rights',
-      st: isLimitedRegister || isMarkedNotEligible ? 'fail' : pedigreeRegisterStatus !== 'MAIN' || isEligibilityUnconfirmed ? 'info' : 'ok' },
+      st: isLimitedRegister || isMarkedNotEligible ? 'fail' : isNoPedigree || isNotRecorded || isEligibilityUnconfirmed ? 'info' : 'ok' },
     { rule: 'Minimum breeding age',              value: `${rules.minBreedingMonths} months`,      st: isPuppyOrWhelp ? 'info' : (!isUnder12 ? 'ok' : 'fail') },
     { rule: `Recommended min age (${breedSize})`,value: `${minForBreed} months`,                 st: isPuppyOrWhelp ? 'info' : (ageMo >= minForBreed ? 'ok' : 'warn') },
-    { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No verified universal state rule' : rules.littersIn18mSource === 'KENNEL_CLUB_STATE' ? `${rules.memberBodyName} member rule — membership not confirmed` : `${rules.maxLittersIn18Months} litters`, st: isPuppyOrWhelp || rules.littersIn18mSource === 'KENNEL_CLUB_STATE' ? 'info' : (last18Ok ? 'ok' : 'fail') },
-    { rule: 'Max litters in lifetime',           value: rules.maxLifetimeLitters === 999 ? 'No verified universal state cap' : `${rules.maxLifetimeLitters} litters`, st: isPuppyOrWhelp ? 'info' : (littersOk ? 'ok' : 'fail') },
+    { rule: 'Max litters in 18-month period',    value: rules.maxLittersIn18Months === 999 ? 'No specific rule' : `${rules.maxLittersIn18Months} litters`, st: isPuppyOrWhelp ? 'info' : (last18Ok ? 'ok' : 'fail') },
+    { rule: 'Max litters in lifetime',           value: `${rules.maxLifetimeLitters} litters`,    st: isPuppyOrWhelp ? 'info' : (littersOk ? 'ok' : 'fail') },
     ...(rules.maxCsections !== null ? [
       { rule: 'Max C-section litters',           value: `${rules.maxCsections} C-sections`,       st: isPuppyOrWhelp ? 'info' : (csectionOk ? 'ok' : 'fail') },
       { rule: 'Vet cert before C-section',       value: `After ${rules.csectionVetRequired} C-sections`, st: isPuppyOrWhelp ? 'info' : (!csectionVetNeeded ? 'ok' : 'warn') },
     ] : [{ rule: 'C-section limit', value: 'No specific state rule', st: 'info' }]),
-    { rule: 'Breeding age review threshold',     value: `${rules.maxAgeYears} years`,              st: isPuppyOrWhelp ? 'info' : (!isOver ? 'ok' : 'warn') },
+    { rule: 'Maximum breeding age',              value: `${rules.maxAgeYears} years`,              st: isPuppyOrWhelp ? 'info' : (!isOver ? 'ok' : 'warn') },
     { rule: 'Minimum puppy sale age',            value: '8 weeks',                                st: 'info' },
     { rule: 'Skip first heat',                   value: 'Do not breed on first heat',             st: 'info' },
-    ...(rules.breederIdLabel ? [{ rule: 'Breeder identifier', value: rules.breederIdLabel, st: 'info' }] : []),
+    ...(rules.requiresBIN ? [{ rule: 'Breeder ID Number (BIN)', value: 'Mandatory (NSW)', st: 'info' }] : []),
   ]
 
   return (
@@ -3838,25 +4009,16 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 12, color: 'var(--light)' }}>Rules for:</span>
-          <select className="form-select" value={selectedState} onChange={e => setSelectedState(e.target.value as AustralianJurisdiction | '')} style={{ height: 34, fontSize: 13, paddingRight: 32, minWidth: 180 }}>
-            <option value="">Select state / territory</option>
+          <select className="form-select" value={selectedState} onChange={e => setSelectedState(e.target.value)} style={{ height: 34, fontSize: 13, paddingRight: 32, minWidth: 180 }}>
             {Object.entries(STATE_RULES).map(([code, r]) => <option key={code} value={code}>{r.stateName}</option>)}
           </select>
         </div>
       </div>
 
       {/* Source note */}
-      <div style={{ fontSize: 12, color: 'var(--mid)', marginBottom: 16, padding: '10px 12px', background: 'var(--sand)', borderRadius: 8, lineHeight: 1.55 }}>
-        {hasJurisdiction ? (
-          <>
-            <div>📍 <strong>Jurisdiction:</strong> {rules.stateName}</div>
-            <div>📋 <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-600)' }}>{rules.sourceName}</a></div>
-            <div>🏛️ <strong>Member body:</strong> <a href={rules.memberBodyUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-600)' }}>{rules.memberBodyName}</a> — member rules are conditional and are not treated as state law unless membership is known.</div>
-            {userState && selectedState !== userState && <div style={{ color: 'var(--warning)', fontWeight: 500 }}>⚠️ Profile state: {STATE_RULES[userState].stateName}</div>}
-          </>
-        ) : (
-          <div style={{ color: 'var(--warning)', fontWeight: 600 }}>⚠️ Compliance jurisdiction not set. Select a state / territory before relying on state-law results.</div>
-        )}
+      <div style={{ fontSize: 12, color: 'var(--mid)', marginBottom: 16, padding: '8px 12px', background: 'var(--sand)', borderRadius: 8 }}>
+        📋 <a href={rules.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-600)' }}>{rules.sourceName}</a>
+        {selectedState !== userState && <span style={{ marginLeft: 8, color: 'var(--warning)', fontWeight: 500 }}>⚠️ Profile state: {STATE_RULES[userState]?.stateName}</span>}
       </div>
 
       {/* Overall status */}
@@ -3891,16 +4053,12 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
               // This tile only renders in the !isNoPedigree branch (see the
               // surrounding conditional below), so NO_PEDIGREE/MIXED/RESCUE
               // can't reach here — only LIMITED, NOT_RECORDED, or MAIN.
-              l: 'Registration',
+              l: 'Register',
               v: isLimitedRegister ? '🟠 Limited' : isNotRecorded ? '⚪ Not recorded' : '🔵 Main',
-              ok: !isNotRecorded },
-            {
-              l: 'Breeding rights',
-              v: isLimitedRegister || isMarkedNotEligible ? '🔴 Not permitted' : isNotRecorded || isEligibilityUnconfirmed ? '⚪ Not confirmed' : '🟢 Confirmed',
-              ok: !isLimitedRegister && !isMarkedNotEligible && !isNotRecorded && !isEligibilityUnconfirmed },
+              ok: !isLimitedRegister && !isNotRecorded && !isMarkedNotEligible && !isEligibilityUnconfirmed },
             { l: 'Age', v: `${Math.floor(ageMo / 12)}yr ${ageMo % 12}mo`, ok: isPuppyOrWhelp ? true : (!isUnder12 && !isOver) },
             { l: 'Breed size', v: breedSize.charAt(0).toUpperCase() + breedSize.slice(1), ok: true },
-            { l: 'Total litters', v: rules.maxLifetimeLitters === 999 ? `${litterCount}` : `${litterCount} / ${rules.maxLifetimeLitters}`, ok: isPuppyOrWhelp ? true : littersOk },
+            { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: isPuppyOrWhelp ? true : littersOk },
             ...(rules.maxLittersIn18Months !== 999 ? [{ l: 'Last 18 months', v: `${last18mLitters} / ${rules.maxLittersIn18Months}`, ok: isPuppyOrWhelp ? true : last18Ok }] : []),
             ...(rules.maxCsections !== null ? [{ l: 'C-sections', v: `${cSectionCount} / ${rules.maxCsections}`, ok: isPuppyOrWhelp ? true : csectionOk }] : []),
           ].map(x => (
@@ -3947,7 +4105,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
               <div className="form-group">
                 <label className="form-label">Total litters (lifetime)</label>
                 <input className="form-input" type="number" min={0} max={10} value={litterCount} onChange={e => setLitterCount(parseInt(e.target.value) || 0)} />
-                <span className="form-hint">{rules.maxLifetimeLitters === 999 ? 'No verified universal state lifetime cap encoded' : `Max ${rules.maxLifetimeLitters} under ${selectedState}`}</span>
+                <span className="form-hint">Max {rules.maxLifetimeLitters} under {selectedState}</span>
               </div>
               {rules.maxLittersIn18Months !== 999 && (
                 <div className="form-group">
@@ -3971,7 +4129,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
         ) : (
           <div>
             {[
-              { l: 'Total litters', v: rules.maxLifetimeLitters === 999 ? `${litterCount}` : `${litterCount} / ${rules.maxLifetimeLitters}`, ok: littersOk },
+              { l: 'Total litters', v: `${litterCount} / ${rules.maxLifetimeLitters}`, ok: littersOk },
               ...(rules.maxLittersIn18Months !== 999 ? [{ l: 'Last 18 months', v: `${last18mLitters} / ${rules.maxLittersIn18Months}`, ok: last18Ok }] : []),
               { l: 'C-section litters', v: rules.maxCsections !== null ? `${cSectionCount} / ${rules.maxCsections}` : `${cSectionCount} (no state limit)`, ok: csectionOk },
               { l: 'Last litter date', v: lastLitterDate ? fmtDate(new Date(lastLitterDate)) : '—', ok: true },
@@ -4039,6 +4197,74 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
                     ))}
                   </div>
                   {cycle.notes && <div style={{ padding: '0 14px 10px', fontSize: 12, color: 'var(--mid)', fontStyle: 'italic' }}>📝 {cycle.notes}</div>}
+
+                  {cycle.id && cycle.matingDate && (() => {
+                    const milestones = pregnancyMilestonesFor(cycle.matingDate)
+                    const addedCount = milestones.filter(m => !!linkedReminder(cycle.id!, m.key)).length
+                    const allSynced = milestones.every(m => {
+                      const linked = linkedReminder(cycle.id!, m.key)
+                      return !!linked && (linked.status === 'completed' || linked.dueDate === m.dueDate)
+                    })
+                    const cycleSaving = reminderSavingKey.startsWith(`${cycle.id}:`)
+                    return (
+                      <div style={{ margin: '4px 14px 14px', border: '1px solid #cfe4dd', borderRadius: 12, overflow: 'hidden', background: '#fbfdfc' }}>
+                        <div style={{ padding: '12px 14px', background: '#eef7f4', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--dark)' }}>Pregnancy timeline</div>
+                            <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>
+                              Based on mating date {formatDate(cycle.matingDate)} · typical whelping window Day 58–68
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className={allSynced ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
+                            disabled={allSynced || cycleSaving}
+                            onClick={() => addPregnancyReminders(cycle, milestones)}
+                            style={{ fontSize: 11 }}
+                          >
+                            {allSynced ? 'Added all ✓' : reminderSavingKey === `${cycle.id}:all` ? 'Saving…' : addedCount > 0 ? 'Update reminders' : 'Add all to reminders'}
+                          </button>
+                        </div>
+                        <div>
+                          {milestones.map((m, idx) => {
+                            const linked = linkedReminder(cycle.id!, m.key)
+                            const savingKey = `${cycle.id}:${m.key}`
+                            const completed = linked?.status === 'completed'
+                            const needsSync = !!linked && !completed && linked.dueDate !== m.dueDate
+                            return (
+                              <div
+                                key={m.key}
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'minmax(0, 1fr) auto',
+                                  gap: 12,
+                                  alignItems: 'center',
+                                  padding: '11px 14px',
+                                  borderTop: idx === 0 ? 'none' : '1px solid var(--border)',
+                                }}
+                              >
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--dark)' }}>
+                                    {m.icon} Day {m.day} · {m.title}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>{formatDate(m.dueDate)}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-sm"
+                                  disabled={(!!linked && !needsSync) || cycleSaving}
+                                  onClick={() => addPregnancyReminders(cycle, [m])}
+                                  style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                                >
+                                  {completed ? 'Completed ✓' : reminderSavingKey === savingKey ? 'Saving…' : needsSync ? 'Update reminder' : linked ? 'Added ✓' : 'Remind me'}
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })}
@@ -4118,6 +4344,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
           onClose={() => { setShowAddHeat(false); setEditingCycle(null) }}
           onSave={saveHeatCycle}
           saving={saving}
+          breedingReminders={breedingReminders}
         />
       )}
     </div>
@@ -4126,16 +4353,34 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
 
 // ── HEAT CYCLE MODAL ─────────────────────────────────────────
 
-function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving }: {
+function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving, breedingReminders }: {
   cycle: HeatCycle
   allDogs: Dog[]
   sireLoadError: boolean
   onClose: () => void
-  onSave: (c: HeatCycle) => Promise<void>
+  onSave: (c: HeatCycle, reminderKeys?: PregnancyMilestoneKey[]) => Promise<void>
   saving: boolean
+  breedingReminders: Reminder[]
 }) {
   const [form, setForm] = useState<HeatCycle>({ ...cycle })
   const [sireMode, setSireMode] = useState<'list' | 'manual'>(cycle.sireName ? 'manual' : 'list')
+  const existingReminderKeys = new Set<PregnancyMilestoneKey>(
+    breedingReminders
+      .filter(r => cycle.id && r.source === 'breeding_timeline' && r.sourceRef === cycle.id)
+      .map(r => r.milestoneKey as PregnancyMilestoneKey)
+      .filter(Boolean)
+  )
+  const [reminderKeys, setReminderKeys] = useState<PregnancyMilestoneKey[]>(Array.from(existingReminderKeys))
+  const pregnancyMilestones = form.matingDate ? pregnancyMilestonesFor(form.matingDate) : []
+
+  function toggleReminderKey(key: PregnancyMilestoneKey) {
+    if (existingReminderKeys.has(key)) return
+    setReminderKeys(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+  }
+
+  function selectAllPregnancyReminders() {
+    setReminderKeys(pregnancyMilestones.map(m => m.key))
+  }
 
   // Eligible Sire candidates — living, currently-owned, non-puppy males
   // (same predicate LittersPage uses for its own Sire dropdown)
@@ -4311,16 +4556,77 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
                 <label htmlFor="pregnant" style={{ fontSize: 13, color: 'var(--dark)', cursor: 'pointer' }}>Pregnancy confirmed (ultrasound)</label>
               </div>
               <div className="form-group">
-                <label className="form-label">Ultrasound date</label>
+                <label className="form-label">Ultrasound date (actual)</label>
                 <input className="form-input" type="date" value={form.ultrasoundDate || ''} onChange={e => set('ultrasoundDate', e.target.value)} />
+                {form.matingDate && (
+                  <span className="form-hint">Suggested ultrasound: {formatDate(addDaysIso(form.matingDate, 28))} (Day 28)</span>
+                )}
+              </div>
+              <div className="form-group">
+                <label className="form-label">Estimated ultrasound (auto)</label>
+                <input className="form-input" type="date" value={form.matingDate ? addDaysIso(form.matingDate, 28) : ''} readOnly style={{ background: 'var(--sand)' }} />
+                <span className="form-hint">Auto-calculated: mating date + 28 days</span>
               </div>
               <div className="form-group">
                 <label className="form-label">Whelping estimate (auto)</label>
-                <input className="form-input" type="date" value={form.whelpingEstimate || ''} onChange={e => set('whelpingEstimate', e.target.value)} style={{ background: 'var(--sand)' }} />
+                <input className="form-input" type="date" value={form.whelpingEstimate || ''} readOnly style={{ background: 'var(--sand)' }} />
                 <span className="form-hint">Auto-calculated: mating date + 63 days</span>
               </div>
-              <div />
             </div>
+
+            {form.matingDate && (
+              <div style={{ marginTop: 14, border: '1px solid #cfe4dd', borderRadius: 12, overflow: 'hidden', background: '#fbfdfc' }}>
+                <div style={{ padding: '11px 12px', background: '#eef7f4', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--dark)' }}>Pregnancy timeline</div>
+                    <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>Based on mating date {formatDate(form.matingDate)} · typical whelping window Day 58–68</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={selectAllPregnancyReminders}
+                    disabled={pregnancyMilestones.length > 0 && pregnancyMilestones.every(m => reminderKeys.includes(m.key))}
+                    style={{ fontSize: 11 }}
+                  >
+                    {pregnancyMilestones.length > 0 && pregnancyMilestones.every(m => reminderKeys.includes(m.key)) ? 'Added all ✓' : 'Add all to reminders'}
+                  </button>
+                </div>
+                {pregnancyMilestones.map((m, idx) => {
+                  const alreadySaved = existingReminderKeys.has(m.key)
+                  const selected = reminderKeys.includes(m.key)
+                  return (
+                    <div
+                      key={m.key}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(0,1fr) auto',
+                        gap: 10,
+                        alignItems: 'center',
+                        padding: '10px 12px',
+                        borderTop: idx === 0 ? 'none' : '1px solid var(--border)',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--dark)' }}>{m.icon} Day {m.day} · {m.title}</div>
+                        <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>{formatDate(m.dueDate)}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => toggleReminderKey(m.key)}
+                        disabled={alreadySaved}
+                        style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                      >
+                        {alreadySaved ? 'Added ✓' : selected ? 'Selected ✓' : 'Remind me'}
+                      </button>
+                    </div>
+                  )
+                })}
+                <div style={{ padding: '9px 12px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--mid)', background: '#fff' }}>
+                  Selected reminders are created when you save this heat cycle. Default alert: 3 days before.
+                </div>
+              </div>
+            )}
           </section>
 
           {/* WHELPING */}
@@ -4357,8 +4663,8 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 4 }}>
             <button onClick={onClose} className="btn btn-secondary" disabled={saving}>Cancel</button>
-            <button onClick={() => onSave(form)} className="btn btn-primary" disabled={!form.heatStartDate || saving}>
-              {saving ? <span className="spinner" /> : cycle.id ? 'Save changes' : 'Add heat cycle'}
+            <button onClick={() => onSave(form, reminderKeys)} className="btn btn-primary" disabled={!form.heatStartDate || saving}>
+              {saving ? <span className="spinner" /> : cycle.id ? 'Save changes' : reminderKeys.length > 0 ? 'Add heat cycle + reminders' : 'Add heat cycle'}
             </button>
           </div>
         </div>
@@ -4366,3 +4672,4 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
     </div>
   )
 }
+

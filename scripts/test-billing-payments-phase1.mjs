@@ -47,6 +47,11 @@ assert.deepEqual(res.body, {
     periodStart: null,
     periodEnd: null,
   },
+  entitlement: {
+    plan: 'free',
+    billingInterval: null,
+    subscriptionStatus: null,
+  },
 }, 'free account has an empty safe billing summary plus inactive SMS status')
 
 summary = createBillingSummaryHandler({
@@ -73,6 +78,15 @@ summary = createBillingSummaryHandler({
       hosted_invoice_url: 'https://invoice.example/view', invoice_pdf: 'https://invoice.example/file.pdf',
     }] }
   },
+  reconcileVerifiedPlus: async ({ subscription, userId }) => {
+    assert.equal(userId, 'user-1')
+    assert.equal(subscription.id, 'sub_1')
+    return {
+      plan: 'plus',
+      billingInterval: 'monthly',
+      subscriptionStatus: 'active',
+    }
+  },
 })
 res = await run(summary, { method: 'GET', headers: { authorization: 'Bearer valid' } })
 assert.equal(res.statusCode, 200)
@@ -87,6 +101,11 @@ assert.deepEqual(res.body.sms, {
   periodStart: null,
   periodEnd: null,
 }, 'linked billing account still receives a safe inactive SMS summary when SMS price is not configured')
+assert.deepEqual(res.body.entitlement, {
+  plan: 'plus',
+  billingInterval: 'monthly',
+  subscriptionStatus: 'active',
+}, 'verified paid subscription repairs the response entitlement immediately')
 
 summary = createBillingSummaryHandler({
   verifyIdToken: auth,

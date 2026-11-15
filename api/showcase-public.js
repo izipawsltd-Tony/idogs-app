@@ -139,6 +139,7 @@ function publicPuppyProjection(token, litterId, dogId, dog, entry) {
   const safeText = (value, max) => typeof value === 'string' ? value.replace(/<[^>]*>/g, '').replace(/[<>]/g, '').trim().slice(0, max) || null : null
   return {
     id: puppyRef,
+    passportId: typeof dog.passportId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(dog.passportId) ? dog.passportId : null,
     name: dog.name,
     sex: dog.sex,
     breed: dog.breed,

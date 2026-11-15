@@ -1,5 +1,12 @@
 import { requireAppUrl } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
+import { hasActiveAccessGrant } from './entitlements.js'
+
+// Founding Member / kennel gift pass, shown read-only on Billing.
+function accessGrantSummary(profile) {
+  if (!hasActiveAccessGrant(profile)) return null
+  return { kind: profile.accessGrant.kind, expiresAt: profile.accessGrant.expiresAt }
+}
 
 function bearerToken(req) {
   const value = req.headers?.authorization || ''
@@ -51,12 +58,36 @@ function mapInvoice(invoice) {
   }
 }
 
+function profileEntitlement(profile) {
+  return {
+    plan: profile?.plan === 'plus' ? 'plus' : 'free',
+    billingInterval: profile?.billingInterval === 'annual'
+      ? 'annual'
+      : profile?.billingInterval === 'monthly' ? 'monthly' : null,
+    subscriptionStatus: typeof profile?.subscriptionStatus === 'string'
+      ? profile.subscriptionStatus
+      : null,
+  }
+}
+
+const ENDED_SUBSCRIPTION_STATUSES = ['canceled', 'incomplete_expired', 'unpaid']
+
+function isMissingStripeResource(error) {
+  return error?.code === 'resource_missing' && (error?.statusCode === 404 || error?.raw?.statusCode === 404 || error?.type === 'StripeInvalidRequestError')
+}
+
 export function createBillingSummaryHandler({
   verifyIdToken,
   getProfile,
   retrieveSubscription,
   listInvoices,
   isSmsConfigured = () => false,
+  reconcileVerifiedPlus = async () => false,
+  // Newest active/trialing Plus subscription for this Stripe customer that was
+  // created for this account (metadata.userId). Used only when the stored one
+  // has ended or is missing, so a delayed or undelivered webhook cannot leave a
+  // paying account showing Free.
+  findReplacementSubscription = async () => null,
 } = {}) {
   return async function billingSummaryHandler(req, res) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
@@ -76,30 +107,82 @@ export function createBillingSummaryHandler({
         periodStart: typeof profile.smsPeriodStart === 'string' ? profile.smsPeriodStart : null,
         periodEnd: typeof profile.smsPeriodEnd === 'string' ? profile.smsPeriodEnd : null,
       }
+      let entitlement = profileEntitlement(profile)
       const customerId = typeof profile.stripeCustomerId === 'string' ? profile.stripeCustomerId : null
       const subscriptionId = typeof profile.stripeSubscriptionId === 'string' ? profile.stripeSubscriptionId : null
       if (!customerId) {
-        return res.status(200).json({ subscription: null, invoices: [], canManageBilling: false, sms })
+        return res.status(200).json({ accessGrant: accessGrantSummary(profile), subscription: null, invoices: [], canManageBilling: false, sms, entitlement })
       }
 
       let subscription = null
+      let stripeSubscription = null
+      let storedSubscriptionMissing = false
       if (subscriptionId) {
-        const stripeSubscription = await retrieveSubscription(subscriptionId)
-        if (customerIdOf(stripeSubscription?.customer) !== customerId) {
-          logSanitizedError('billing-summary', 'SUBSCRIPTION_CUSTOMER_MISMATCH')
-          return res.status(409).json({ error: 'Billing account mismatch' })
+        try {
+          stripeSubscription = await retrieveSubscription(subscriptionId)
+        } catch (error) {
+          // Only a stored id that Stripe no longer has falls through to the
+          // guarded replacement lookup; every other failure stays a 500.
+          if (!isMissingStripeResource(error)) throw error
+          storedSubscriptionMissing = true
+          logSanitizedError('billing-summary', 'STORED_SUBSCRIPTION_MISSING')
         }
+      }
+      if (stripeSubscription && customerIdOf(stripeSubscription.customer) !== customerId) {
+        logSanitizedError('billing-summary', 'SUBSCRIPTION_CUSTOMER_MISMATCH')
+        return res.status(409).json({ error: 'Billing account mismatch' })
+      }
+      if (!stripeSubscription || ENDED_SUBSCRIPTION_STATUSES.includes(stripeSubscription.status)) {
+        const replacement = await findReplacementSubscription({ customerId, userId: auth.uid, excludeId: stripeSubscription?.id || null })
+        if (replacement && replacement.id !== stripeSubscription?.id
+          && customerIdOf(replacement.customer) === customerId
+          && replacement.metadata?.userId === auth.uid
+          && ['active', 'trialing'].includes(replacement.status)) {
+          stripeSubscription = replacement
+        }
+      }
+      if (storedSubscriptionMissing && !stripeSubscription) {
+        // The stored subscription no longer exists in Stripe and no verified
+        // replacement was found, so nothing backs a Plus plan from the stale
+        // profile. Response only: the profile is not rewritten here
+        // (Codex P2 6762625363).
+        entitlement = { plan: 'free', billingInterval: null, subscriptionStatus: null }
+      }
+      if (stripeSubscription) {
+
+        const reconciled = await reconcileVerifiedPlus({
+          subscription: stripeSubscription,
+          userId: auth.uid,
+        })
+        if (reconciled && typeof reconciled === 'object') {
+          entitlement = {
+            plan: reconciled.plan === 'plus' ? 'plus' : 'free',
+            billingInterval: reconciled.billingInterval === 'annual'
+              ? 'annual'
+              : reconciled.billingInterval === 'monthly' ? 'monthly' : null,
+            subscriptionStatus: typeof reconciled.subscriptionStatus === 'string'
+              ? reconciled.subscriptionStatus
+              : null,
+          }
+        }
+
         subscription = {
           id: stripeSubscription.id,
           status: stripeSubscription.status || profile.subscriptionStatus || 'unknown',
           cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end === true,
           currentPeriodEnd: isoFromSeconds(subscriptionPeriodEnd(stripeSubscription)),
         }
+        // A canceled Stripe subscription cannot be shown as active from a stale
+        // Firestore profile. This response does not rewrite customer records.
+        if (ENDED_SUBSCRIPTION_STATUSES.includes(stripeSubscription.status)) {
+          entitlement = { plan: 'free', billingInterval: null, subscriptionStatus: stripeSubscription.status }
+          sms.status = 'cancelled'
+        }
       }
 
       const result = await listInvoices({ customer: customerId, limit: 12 })
       const invoices = (result?.data || []).map(mapInvoice).filter(invoice => invoice.id)
-      return res.status(200).json({ subscription, invoices, canManageBilling: true, sms })
+      return res.status(200).json({ accessGrant: accessGrantSummary(profile), subscription, invoices, canManageBilling: true, sms, entitlement })
     } catch {
       logSanitizedError('billing-summary', 'BILLING_SUMMARY_FAILED')
       return res.status(500).json({ error: 'Failed to load billing details' })

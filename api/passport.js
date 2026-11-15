@@ -26,6 +26,7 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app'
 import { getFirestore } from 'firebase-admin/firestore'
 import { checkRateLimit, getClientIp, hashClientKey } from './_lib/rate-limit.js'
+import { logSanitizedError } from './_lib/http-helpers.js'
 
 if (!getApps().length) {
   initializeApp({
@@ -38,8 +39,13 @@ if (!getApps().length) {
 }
 
 const db = getFirestore()
+// Serverless: Firestore's REST transport avoids the per-instance gRPC channel
+// setup that dominated public QR passport latency (measured on staging).
+try { db.settings({ preferRest: true }) } catch { /* already initialised elsewhere */ }
 
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'private, no-store')
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive')
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
@@ -54,16 +60,20 @@ export default async function handler(req, res) {
   }
 
   const { passportId } = req.query
-  if (!passportId) {
+  if (typeof passportId !== 'string' || !passportId || passportId.length > 128) {
     return res.status(400).json({ error: 'passportId required' })
   }
 
+  const t0 = Date.now()
+  const timing = []
+  const mark = name => timing.push(`${name};dur=${Date.now() - t0}`)
   try {
     const dogsSnap = await db.collection('dogs')
       .where('passportId', '==', passportId)
       .limit(1)
       .get()
 
+    mark('dog')
     if (dogsSnap.empty) {
       return res.status(404).json({ error: 'Passport not found' })
     }
@@ -100,6 +110,7 @@ export default async function handler(req, res) {
       db.collection('healthTests').where('dogId', '==', dogDoc.id).get(),
     ])
 
+    mark('records')
     const vaccines = vaccinesSnap.docs.map(v => {
       const d = v.data()
       return {
@@ -133,13 +144,15 @@ export default async function handler(req, res) {
         scannedAt: new Date().toISOString(),
         result: 'public_view',
       })
-    } catch (e) {
-      console.error('scanLog write failed:', e)
+    } catch {
+      logSanitizedError('passport-scan', 'SCAN_LOG_FAILED')
     }
 
+    mark('log')
+    res.setHeader('Server-Timing', timing.join(', '))
     return res.status(200).json({ dog, vaccines, healthTests })
-  } catch (err) {
-    console.error('Passport lookup error:', err)
-    return res.status(500).json({ error: 'Internal error', message: String(err) })
+  } catch {
+    logSanitizedError('passport', 'LOOKUP_FAILED')
+    return res.status(500).json({ error: 'Could not load this profile. Please try again.' })
   }
 }

@@ -76,15 +76,28 @@ async function handler(req, res) {
     const dogSnap = await db.collection('dogs').doc(dogId).get()
     if (!dogSnap.exists) return res.status(404).json({ error: 'Dog not found' })
     const dog = dogSnap.data()
+    const isCurrentOwner = (Object.prototype.hasOwnProperty.call(dog, 'currentOwnerId')
+      ? dog.currentOwnerId === uid
+      : dog.tenantId === uid)
 
-    const isAuthorized = dog.tenantId === uid || dog.currentOwnerId === uid
-    if (!isAuthorized) {
-      return res.status(403).json({ error: 'Not authorized to view media for this dog' })
+    let mediaDog = dog
+    if (!isCurrentOwner) {
+      const historySnap = await db.collection('ownershipHistorySnapshots')
+        .where('dogId', '==', dogId)
+        .where('fromOwnerId', '==', uid)
+        .get()
+      if (historySnap.empty) {
+        return res.status(403).json({ error: 'Not authorized to view media for this dog' })
+      }
+      const latest = historySnap.docs.slice().sort((a, b) =>
+        String(b.data().transferredAt || '').localeCompare(String(a.data().transferredAt || ''))
+      )[0]
+      mediaDog = latest.data().dog || {}
     }
 
     const [photos, videos] = await Promise.all([
-      signMediaItems(bucket, dog.photos || []),
-      signMediaItems(bucket, dog.videos || []),
+      signMediaItems(bucket, mediaDog.photos || []),
+      signMediaItems(bucket, mediaDog.videos || []),
     ])
     return res.status(200).json({ photos, videos })
   } catch (err) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useState, useRef } from 'react'
+import React, { Suspense, useEffect, useLayoutEffect, useState, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useRequestGuard } from '../../hooks/useRequestGuard'
@@ -6,6 +6,8 @@ import { getDogs, getLitters, updateUserProfile, claimTransferredDogs } from '..
 import { getInitials, AU_STATES, isDogEligibleForCap, getEffectivePlanClient, hasValidInternalEntitlementClient } from '../../lib/utils'
 import { subscribeToDogUsageChanged } from '../../lib/dogUsageEvents'
 import { SUPER_ADMIN_EMAILS } from '../../lib/superAdmin'
+import { isAndroidNativeApp } from '../../lib/nativePlatform'
+import { sidebarPurchasesUnavailableNotice } from '../../lib/nativeUpgradeCopy'
 import { Link } from 'react-router-dom'
 import type { ToastMessage, UserProfile } from '../../types'
 import SupportChatWidget from '../SupportChatWidget'
@@ -71,6 +73,7 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
       { path: '/app/dashboard', label: 'Dashboard', icon: '⊞' },
       { path: '/app/dogs',      label: 'My Dogs',   icon: '🐕' },
       { path: '/app/litters',   label: 'Litters',   icon: '🐣', littersItem: true },
+      { path: '/app/following-puppies', label: 'Following puppies', icon: '🐾' },
     ],
   },
   {
@@ -78,6 +81,7 @@ const NAV_SECTIONS: { label: string; items: NavItemDef[] }[] = [
     items: [
       { path: '/app/dogs?stage=puppies', label: 'Puppies', icon: '🐾', breederOnly: true },
       { path: '/app/buyers',  label: 'Buyers',  icon: '👥', breederOnly: true },
+      { path: '/app/finance', label: 'Invoices & Payments', icon: '🧾', breederOnly: true },
     ],
   },
   {
@@ -104,7 +108,11 @@ const BOTTOM_NAV_ITEMS = [
   { path: '/app/dogs',      icon: '🐕', label: 'Dogs' },
   { path: '/app/litters',   icon: '🐣', label: 'Litters', littersItem: true },
   { path: '/app/reminders', icon: '🔔', label: 'Reminders', remindersItem: true },
-  { path: '/app/audit',     icon: '📋', label: 'Activity' },
+  // Documents is a primary record, so it takes the fifth slot on mobile.
+  // Activity stays one tap away from Home ("Full history"); it returns to
+  // this bar only for users who hid Documents in Settings.
+  { path: '/app/documents', icon: '📄', label: 'Documents', documentsItem: true },
+  { path: '/app/audit',     icon: '📋', label: 'Activity', activityItem: true },
 ]
 
 export default function AppLayout({ toast }: Props) {
@@ -193,7 +201,7 @@ export default function AppLayout({ toast }: Props) {
         setDogCount(dogs.filter(isDogEligibleForCap).length)
       })
       .catch(() => { if (req.isCurrent()) { setDogCount(null); setDogCountError(true) } })
-    if (user.email) {
+    if (user.email && user.emailVerified) {
       setPendingClaimError(false)
       claimTransferredDogs(user.uid, user.email, 'check')
         .then(dogs => { if (req.isCurrent()) setPendingClaimCount(dogs.length) })
@@ -238,7 +246,7 @@ export default function AppLayout({ toast }: Props) {
   }, [user?.uid])
 
   useEffect(() => {
-    if (profile && !profile.state) setShowStateModal(true)
+    if (profile?.role === 'breeder' && !profile.state) setShowStateModal(true)
   }, [profile])
 
   useEffect(() => {
@@ -540,13 +548,19 @@ export default function AppLayout({ toast }: Props) {
               </div>
             )}
             {planCfg.upgrade && (
-              <button
-                className="btn btn-primary btn-sm"
-                style={{ width: '100%', marginTop: 10, background: 'var(--gold-500)', borderColor: 'var(--gold-500)' }}
-                onClick={() => navigate('/app/billing')}
-              >
-                Upgrade plan
-              </button>
+              isAndroidNativeApp() ? (
+                <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mid)', textAlign: 'center' }}>
+                  {sidebarPurchasesUnavailableNotice()}
+                </div>
+              ) : (
+                <button
+                  className="btn btn-primary btn-sm"
+                  style={{ width: '100%', marginTop: 10, background: 'var(--gold-500)', borderColor: 'var(--gold-500)' }}
+                  onClick={() => navigate('/app/billing')}
+                >
+                  Upgrade plan
+                </button>
+              )
             )}
           </div>
         </div>
@@ -569,12 +583,21 @@ export default function AppLayout({ toast }: Props) {
         flexDirection: 'column',
       }}>
         {pendingClaimCount !== null && pendingClaimCount > 0 && (
-          <div style={{ background: 'var(--brand-600)', color: '#fff', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 45 }}>
-            <div style={{ fontSize: 14, fontWeight: 500 }}>
-              🐾 You have {pendingClaimCount} dog{pendingClaimCount !== 1 ? 's' : ''} waiting to be claimed!
+          <div style={{
+            background: 'var(--brand-600)', color: '#fff', padding: '14px 24px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: 16, flexWrap: 'wrap', zIndex: 45, boxShadow: '0 2px 10px rgba(0,0,0,0.12)'
+          }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>
+                🐾 Ownership transfer waiting for you
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.9, marginTop: 2 }}>
+                {pendingClaimCount} dog{pendingClaimCount !== 1 ? 's have' : ' has'} been transferred to this iDogs account. Accept to add {pendingClaimCount !== 1 ? 'them' : 'it'} to My Dogs.
+              </div>
             </div>
-            <Link to="/app/claim-dogs" className="btn btn-sm" style={{ background: '#fff', color: 'var(--brand-600)', border: 'none' }}>
-              Review transfer
+            <Link to="/app/claim-dogs" className="btn btn-sm" style={{ background: '#fff', color: 'var(--brand-600)', border: 'none', fontWeight: 700, padding: '8px 14px' }}>
+              Accept transfer
             </Link>
           </div>
         )}
@@ -798,7 +821,9 @@ export default function AppLayout({ toast }: Props) {
               must persist as the sidebar shell across navigation) — its
               own uid-dependent counts below use useRequestGuard +
               useLayoutEffect-based clearing directly instead. */}
-          <Outlet key={user?.uid} />
+          <Suspense fallback={<div role="status" aria-label="Loading" style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><div className="spinner" /></div>}>
+            <Outlet key={user?.uid} />
+          </Suspense>
           <SupportChatWidget />
         </main>
       </div>
@@ -811,6 +836,8 @@ export default function AppLayout({ toast }: Props) {
             if (hideLitters) return false
           }
           if ((item as any).remindersItem && hideReminders) return false
+          if ((item as any).documentsItem && hideDocuments) return false
+          if ((item as any).activityItem && !hideDocuments) return false
           return true
         }).map(item => (
           <NavLink

@@ -72,10 +72,11 @@ export default async function handler(req, res) {
     }
     const dog = dogSnap.data()
 
-    // Ownership check: current owner, or the original/issuing breeder —
-    // historical breeder access is intentional (same rule as
-    // get-signed-url.js/upload.js), never anyone else.
-    const isAuthorized = dog.tenantId === uid || dog.currentOwnerId === uid
+    // Live scan activity belongs only to the current owner. A former
+    // owner sees the frozen scanCount captured in their transfer snapshot.
+    const isAuthorized = Object.prototype.hasOwnProperty.call(dog, 'currentOwnerId')
+      ? dog.currentOwnerId === uid
+      : dog.tenantId === uid
     if (!isAuthorized) {
       return res.status(403).json({ error: 'Not authorized' })
     }

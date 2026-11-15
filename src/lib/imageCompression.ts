@@ -269,3 +269,37 @@ export async function prepareImageForUpload(file: File): Promise<{ base64: strin
   }
   return compressImageFile(file)
 }
+
+// ── Documents (P0 upload speed, 2 Nov 2026) ─────────────────────────────
+// Manual document uploads used to send the phone photo byte-for-byte as
+// base64: a 3–6 MB iPhone photo became 4–8 MB of JSON (≈45–85 s on a 4G
+// uplink, and often over Vercel's ~4.5 MB body limit), and HEIC files were
+// stored as HEIC, which Chrome/Android cannot display. Documents are read,
+// not admired, but text must stay legible: 2400 px on the long edge at
+// JPEG 0.88 keeps certificate/vaccine-card text sharp. PDFs and already
+// small images are never touched.
+export const DOCUMENT_MAX_DIMENSION = 2400
+export const DOCUMENT_JPEG_QUALITY = 0.88
+export const DOCUMENT_KEEP_ORIGINAL_BYTES = 1.5 * 1024 * 1024
+const RASTER_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+export type PreparedDocument = { base64: string; mediaType: string; compressed: boolean; originalBytes: number; uploadBytes: number }
+
+export async function prepareDocumentFileForUpload(file: File): Promise<PreparedDocument> {
+  const raw = async (): Promise<PreparedDocument> => {
+    const base64 = await readFileAsBase64(file)
+    return { base64, mediaType: file.type || 'application/octet-stream', compressed: false, originalBytes: file.size, uploadBytes: Math.ceil(base64.length * 3 / 4) }
+  }
+  const done = (r: { base64: string; mediaType: string }): PreparedDocument => ({ ...r, compressed: true, originalBytes: file.size, uploadBytes: Math.ceil(r.base64.length * 3 / 4) })
+  if (isHeicFile(file)) {
+    try {
+      const { canvas, width, height } = await decodeHeicToCanvas(file)
+      return done(resizeAndEncodeJpeg(canvas, width, height, DOCUMENT_MAX_DIMENSION, DOCUMENT_JPEG_QUALITY))
+    } catch { return raw() }
+  }
+  if (!RASTER_TYPES.has(file.type) || file.size <= DOCUMENT_KEEP_ORIGINAL_BYTES) return raw()
+  try {
+    const r = done(await compressImageFile(file, DOCUMENT_MAX_DIMENSION, DOCUMENT_JPEG_QUALITY))
+    return r.uploadBytes < file.size ? r : raw()
+  } catch { return raw() }
+}

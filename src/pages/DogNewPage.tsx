@@ -6,6 +6,9 @@ import type { DogFormData, ToastMessage } from '../types'
 import AIScan from '../components/ui/AIScan'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
+import { isAndroidNativeApp } from '../lib/nativePlatform'
+import { dogLimitReachedBody } from '../lib/nativeUpgradeCopy'
+import { PLUS_MONTHLY_PRICE_AUD } from '../lib/pricingCopy'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -393,14 +396,15 @@ export default function DogNewPage({ toast }: Props) {
         for (const f of pendingFilesSnapshot) {
           if (!req.isCurrent()) return
           try {
+            const idToken = await user.getIdToken()
+            if (!req.isCurrent()) return
             const uploadRes = await fetch('/api/upload-document', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
               body: JSON.stringify({
                 base64: f.base64,
                 mediaType: f.mediaType,
                 dogId,
-                tenantId: user.uid,
                 documentType: f.documentType,
                 extractedData: { dogName: formSnapshot.name },
               }),
@@ -548,12 +552,14 @@ export default function DogNewPage({ toast }: Props) {
             The free plan supports up to {FREE_DOG_LIMIT} dogs.
           </p>
           <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 28, lineHeight: 1.6 }}>
-            Upgrade to add more dogs, unlock iDogs Scan, documents, and ownership transfer.
+            {dogLimitReachedBody(isAndroidNativeApp())}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link to="/app/billing" className="btn btn-primary">
-              Upgrade — from $5/mo
-            </Link>
+            {!isAndroidNativeApp() && (
+              <Link to="/app/billing" className="btn btn-primary">
+                {`Upgrade — from A$${PLUS_MONTHLY_PRICE_AUD}/mo`}
+              </Link>
+            )}
             <Link to="/app/dogs" className="btn btn-secondary">
               Back to my dogs
             </Link>
@@ -567,7 +573,7 @@ export default function DogNewPage({ toast }: Props) {
     <div style={{ padding: 32, maxWidth: 640 }}>
       <div style={{ marginBottom: 24 }}>
         <Link to="/app/dogs" style={{ fontSize: 13, color: 'var(--light)', textDecoration: 'none' }}>← My dogs</Link>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginTop: 8, marginBottom: 4 }}>{isOwner ? 'Create Dog ID' : 'Add a dog'}</h1>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--dark)', marginTop: 8, marginBottom: 4 }}>Add Dog</h1>
         <p style={{ fontSize: 14, color: 'var(--light)' }}>Scan documents first to auto-fill the form, or fill in manually.</p>
       </div>
 
@@ -744,7 +750,7 @@ export default function DogNewPage({ toast }: Props) {
               <button type="submit" className="btn btn-primary" style={{ flex: 1, height: 46 }} disabled={loading || submitting || dogCreated}>
                 {(loading || submitting) ? <span className="spinner" /> : (() => {
                   const recordCount = scannedDocs.reduce((s, d) => s + (d.vaccines?.length || 0), 0)
-                  const base = isOwner ? 'Create Dog ID & passport' : 'Add dog & create passport'
+                  const base = 'Add Dog'
                   return `${base}${recordCount > 0 ? ` (${recordCount} records)` : ''}`
                 })()}
               </button>

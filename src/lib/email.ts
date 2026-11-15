@@ -2,6 +2,7 @@
 // Sends email via Vercel serverless /api/send-email (Resend backend)
 
 import { getAuth } from 'firebase/auth'
+import { buildTransferEmailMessage, TRANSFER_EMAIL_ACTION_LABEL, TRANSFER_EMAIL_ACTION_URL } from './transferEmailCopy'
 
 async function sendEmail(params: {
   to_email: string
@@ -9,6 +10,7 @@ async function sendEmail(params: {
   subject: string
   message: string
   action_url?: string
+  action_label?: string
 }) {
   const currentUser = getAuth().currentUser
   if (!currentUser) {
@@ -34,14 +36,14 @@ export async function sendTransferEmail(params: {
   dogName: string
   breed: string
   breederName: string
-  passportUrl: string
 }) {
   return sendEmail({
     to_email: params.buyerEmail,
     to_name: params.buyerName,
     subject: `${params.breederName} has transferred ${params.dogName} to you on iDogs`,
-    message: `${params.breederName} has transferred ownership of ${params.dogName} (${params.breed}) to you.\n\nView ${params.dogName}'s passport here:\n${params.passportUrl}\n\nTo claim full ownership and manage ${params.dogName}'s profile, create your free iDogs account — the dog will appear automatically in your dashboard.`,
-    action_url: 'https://idogs.com.au/signup',
+    message: buildTransferEmailMessage(params),
+    action_url: TRANSFER_EMAIL_ACTION_URL,
+    action_label: TRANSFER_EMAIL_ACTION_LABEL,
   })
 }
 

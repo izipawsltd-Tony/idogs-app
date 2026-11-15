@@ -9,3 +9,8 @@ WORKFLOW.md
 fix-script/
 node_modules/
 dist/
+
+# Playwright
+playwright-report/
+test-results/
+playwright-report-local/

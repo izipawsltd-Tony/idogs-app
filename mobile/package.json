@@ -1,0 +1,30 @@
+{
+  "name": "idogs-mobile-shell",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "branding": "node ./scripts/prepare-branding.mjs",
+    "patch:android:launcher": "node ./scripts/patch-android-launcher.mjs",
+    "assets:android": "npx @capacitor/assets generate --android --assetPath resources",
+    "assets:ios": "npx @capacitor/assets generate --ios --assetPath resources",
+    "add:android": "cap add android",
+    "add:ios": "cap add ios",
+    "sync": "cap sync",
+    "sync:android": "cap sync android",
+    "sync:ios": "cap sync ios",
+    "open:android": "cap open android",
+    "open:ios": "cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2",
+    "@capacitor/ios": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "3.0.5",
+    "@capacitor/cli": "8.5.2",
+    "sharp": "^0.33.0",
+    "typescript": "5.5.3"
+  }
+}

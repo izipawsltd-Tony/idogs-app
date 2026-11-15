@@ -4,6 +4,9 @@ import { useAuth } from '../hooks/useAuth'
 import LoadingScreen from '../components/ui/LoadingScreen'
 import type { ToastMessage } from '../types'
 import { safeAppReturnTo } from '../lib/returnTo'
+import { verifyBeforeUpdateEmail } from 'firebase/auth'
+import { verificationDelivery } from '../lib/signupVerification'
+import { emailPasswordLinkEnabled, emailPasswordLinkErrorMessage, sendAddEmailLink } from '../lib/emailPasswordLink'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -17,6 +20,8 @@ export default function VerifyEmailPage({ toast }: Props) {
   const [checking, setChecking] = useState(false)
   const [resending, setResending] = useState(false)
   const [cooldown, setCooldown] = useState(0)
+  const [contactEmail, setContactEmail] = useState('')
+  const initialDelivery = verificationDelivery(user?.uid)
 
   // If not logged in at all, send to login
   useEffect(() => {
@@ -55,11 +60,26 @@ export default function VerifyEmailPage({ toast }: Props) {
   async function handleResend() {
     setResending(true)
     try {
-      await resendVerificationEmail()
+      if (user && !user.email) {
+        if (!contactEmail.trim()) { toast('Enter your email address.', 'error'); return }
+        // verifyBeforeUpdateEmail needs an EXISTING email (auth/missing-email
+        // for SMS-only accounts), so a first email is proved with a one-time
+        // link instead and linked to this same account (see emailPasswordLink).
+        // Kill switch VITE_IDOGS_EMAIL_PASSWORD_LINK=0 restores the old call.
+        if (emailPasswordLinkEnabled()) {
+          try { await sendAddEmailLink(user, contactEmail, location.origin, returnTo) } catch (err) { toast(emailPasswordLinkErrorMessage(err), 'error'); return }
+          toast('Check your inbox and open the link on this device to add your email.')
+          setCooldown(60)
+          return
+        }
+        await verifyBeforeUpdateEmail(user, contactEmail.trim(), { url: `${location.origin}/verify-email?next=${encodeURIComponent(returnTo)}` })
+      } else await resendVerificationEmail()
       toast('Verification email sent!')
       setCooldown(60)
-    } catch {
-      toast('Failed to resend. Please try again shortly.', 'error')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : ''
+      const code = (err as { code?: string })?.code || message
+      toast(code.includes('too-many-requests') ? 'Too many emails were sent to this account. Please wait a few minutes, then try once more.' : message.includes('email-already-in-use') ? 'This email belongs to an existing account. Sign in to that account; your accounts have not been merged.' : message.includes('requires-recent-login') ? 'Please sign in again before adding your email.' : 'Could not send the verification email. Check the address and try again shortly.', 'error')
     } finally {
       setResending(false)
     }
@@ -94,16 +114,16 @@ export default function VerifyEmailPage({ toast }: Props) {
         <div className="card" style={{ padding: '36px 28px', textAlign: 'center' }}>
           <div style={{ fontSize: 44, marginBottom: 16 }}>📬</div>
           <h1 style={{ fontSize: 20, fontFamily: 'var(--font-display)', marginBottom: 8, color: 'var(--dark)' }}>
-            Verify your email
+            {user?.email ? 'Verify your email' : 'Add your email address'}
           </h1>
           <p style={{ fontSize: 14, color: 'var(--mid)', lineHeight: 1.6, marginBottom: 4 }}>
-            We sent a verification link to
+            {user?.email ? 'Verify this email to continue securely:' : 'Use an email you can access to help keep your dog’s profile and records secure.'}
           </p>
           <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)', marginBottom: 20 }}>
             {user?.email}
           </p>
           <p style={{ fontSize: 13, color: 'var(--light)', lineHeight: 1.6, marginBottom: 8 }}>
-            Click the link in that email, then come back here and press the button below.
+            {initialDelivery?.status === 'sent' ? 'A verification email has already been sent. Open the link in your inbox, then return here to continue. You can request another email below.' : initialDelivery?.status === 'failed' ? 'Your account is ready, but the first verification email could not be sent. Choose Send verification email to try again.' : 'Choose Send verification email, open the link in your inbox, then return here to continue.'}
           </p>
           <p style={{ fontSize: 12, color: 'var(--gold)', lineHeight: 1.6, marginBottom: 24, background: 'var(--gold-light)', padding: '8px 12px', borderRadius: 8 }}>
             💡 Can't find it? Check your <strong>Spam</strong> or <strong>Junk</strong> folder — verification emails sometimes end up there.
@@ -113,15 +133,18 @@ export default function VerifyEmailPage({ toast }: Props) {
             {checking ? <span className="spinner" /> : "I've verified — continue"}
           </button>
 
+          {!user?.email && <label>Your email address<input className="form-input" type="email" autoComplete="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="The email you use for your dog’s profile" /></label>}
+          {!user?.email && (returnTo.startsWith('/app/shared-dogs/') || returnTo.startsWith('/app/claim-dogs')) && <p style={{ fontSize: 12, color: 'var(--mid)' }}>For a breeder’s private records or ownership invitation, use the email the invitation was sent to.</p>}
           <button
             onClick={handleResend}
             className="btn btn-secondary"
             style={{ width: '100%', height: 44, marginTop: 10 }}
             disabled={resending || cooldown > 0}
           >
-            {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend verification email'}
+            {resending ? <span className="spinner" /> : cooldown > 0 ? `Resend in ${cooldown}s` : initialDelivery?.status === 'sent' ? 'Resend verification email' : 'Send verification email'}
           </button>
 
+          <p><Link to="/app/start">Keep exploring for now</Link></p>
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
             <button onClick={handleLogout} style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--light)', cursor: 'pointer', textDecoration: 'underline' }}>
               Sign out and use a different account

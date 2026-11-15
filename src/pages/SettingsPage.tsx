@@ -1,8 +1,13 @@
 import { useState } from 'react'
+import { doc, getDocFromServer } from 'firebase/firestore'
+import { db } from '../lib/firebase'
 import { useAuth } from '../hooks/useAuth'
+import EmailPasswordSettings from '../components/ui/EmailPasswordSettings'
+import AccountDeletion from '../components/ui/AccountDeletion'
 import { updateUserProfile } from '../lib/db'
 import { BREEDER_ID_CONFIG, suggestBreederIdType } from '../lib/utils'
-import type { ToastMessage } from '../types'
+import { REMINDER_TYPES } from '../components/ui/ReminderForm'
+import type { Reminder, ToastMessage } from '../types'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -11,7 +16,8 @@ interface Props {
 const REMINDER_OPTIONS = [3, 7, 14, 30]
 
 export default function SettingsPage({ toast }: Props) {
-  const { user, profile, refreshProfile } = useAuth()
+  const { user, profile, refreshProfile, checkEmailVerified } = useAuth()
+  const [showReminderTypes, setShowReminderTypes] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
   const [editingProfile, setEditingProfile] = useState(false)
   const [profileForm, setProfileForm] = useState({
@@ -26,6 +32,8 @@ export default function SettingsPage({ toast }: Props) {
   const [savingProfile, setSavingProfile] = useState(false)
   const [changingRole, setChangingRole] = useState(false)
 
+  const marketingEnabled = Boolean(user?.email && profile?.marketingConsent?.channel === 'email_marketing' && profile.marketingConsent.choice === 'opt_in' && !profile.marketingConsent.revokedAt && profile.marketingConsent.email?.toLowerCase() === user.email.toLowerCase())
+  const smsMarketingEnabled = Boolean(user?.phoneNumber && profile?.smsMarketingConsent?.choice === 'opt_in' && !profile.smsMarketingConsent.revokedAt && profile.smsMarketingConsent.phone === user.phoneNumber)
   const isOwner = profile?.role === 'owner'
   const hideLitters = (profile as any)?.hideLitters === true
   const hideDocuments = (profile as any)?.hideDocuments === true
@@ -47,6 +55,81 @@ export default function SettingsPage({ toast }: Props) {
     } finally {
       setSaving(null)
     }
+  }
+
+  async function setMarketingConsent(enabled: boolean) {
+    if (!user || saving) return
+    setSaving('marketingConsent')
+    try {
+      const existing = profile?.marketingConsent
+      const now = new Date().toISOString()
+      await updateUserProfile(user.uid, {
+        marketingConsent: {
+          channel: 'email_marketing',
+          choice: enabled ? 'opt_in' : 'opt_out',
+          source: 'account_settings',
+          checkboxDefault: false,
+          policyVersion: 'marketing-v1-2026-10',
+          optedInAt: enabled ? now : existing?.optedInAt || null,
+          revokedAt: enabled ? null : now,
+          email: user.email || '',
+          evidenceRef: enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1',
+        },
+      })
+      // Do not trust a local-cache echo as evidence of remote persistence.
+      // Read back from Firestore server before reporting success.
+      const stored = await getDocFromServer(doc(db, 'users', user.uid))
+      const actual = stored.data()?.marketingConsent
+      if (!stored.exists() || actual?.choice !== (enabled ? 'opt_in' : 'opt_out') ||
+          actual?.source !== 'account_settings' || actual?.channel !== 'email_marketing' ||
+          actual?.email?.toLowerCase() !== user.email?.toLowerCase() ||
+          actual?.evidenceRef !== (enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1') ||
+          (enabled ? actual?.revokedAt != null : !actual?.revokedAt)) {
+        throw new Error('MARKETING_CONSENT_NOT_PERSISTED')
+      }
+      await refreshProfile(true)
+      toast(enabled ? 'Marketing email preference saved' : 'Marketing emails disabled', 'success')
+    } catch {
+      toast('Could not save marketing preference. Please try again.', 'error')
+    } finally { setSaving(null) }
+  }
+
+  async function setEmailSetting(field: 'emailReminders' | 'manualReminderEmails', enabled: boolean) {
+    if (!user || saving) return
+    setSaving(field)
+    try {
+      await updateUserProfile(user.uid, { [field]: enabled })
+      await refreshProfile()
+      toast(enabled ? 'Email reminders enabled' : 'Email reminders disabled')
+    } catch { toast('Failed to save setting', 'error') }
+    finally { setSaving(null) }
+  }
+
+  async function setSmsMarketingConsent(enabled: boolean) {
+    if (!user?.phoneNumber || saving) return
+    setSaving('smsMarketingConsent')
+    try {
+      const now = new Date().toISOString()
+      await updateUserProfile(user.uid, { smsMarketingConsent: { channel: 'sms_marketing', choice: enabled ? 'opt_in' : 'opt_out', source: 'account_settings', policyVersion: 'marketing-v1-2026-10', optedInAt: enabled ? now : profile?.smsMarketingConsent?.optedInAt || null, revokedAt: enabled ? null : now, phone: user.phoneNumber, evidenceRef: enabled ? 'settings-opt-in-v1' : 'settings-opt-out-v1' } })
+      const stored = await getDocFromServer(doc(db, 'users', user.uid))
+      const actual = stored.data()?.smsMarketingConsent
+      if (actual?.choice !== (enabled ? 'opt_in' : 'opt_out') || actual?.phone !== user.phoneNumber || actual?.channel !== 'sms_marketing' || actual?.source !== 'account_settings' || (enabled ? actual?.revokedAt != null : !actual?.revokedAt)) throw new Error('SMS_MARKETING_CONSENT_NOT_PERSISTED')
+      await refreshProfile(true)
+      toast(enabled ? 'Promotional SMS preference saved' : 'Promotional SMS disabled')
+    } catch { toast('Could not save SMS preference. Please try again.', 'error') }
+    finally { setSaving(null) }
+  }
+
+  async function setCareEmailType(type: Reminder['type'], enabled: boolean) {
+    if (!user || saving) return
+    setSaving(`careEmailTypes.${type}`)
+    try {
+      // Merge one nested key so concurrent edits to another category survive.
+      await updateUserProfile(user.uid, { careEmailTypes: { [type]: enabled } })
+      await refreshProfile()
+      toast('Email preference saved')
+    } catch { toast('Failed to save setting', 'error') }
+    finally { setSaving(null) }
   }
 
   async function setReminderDays(days: number) {
@@ -283,6 +366,10 @@ export default function SettingsPage({ toast }: Props) {
         )}
       </div>
 
+      {/* After an email is linked/verified: refresh the ID token's email_verified
+          claim and sync profile.email (reminder emails read the profile), exactly
+          as the /verify-email flow does — then reload the profile. */}
+      <EmailPasswordSettings key={`pw-${user?.uid}`} user={user} profileReady={!!profile} onLinked={async () => { await checkEmailVerified(); await refreshProfile(true) }} />
       {/* ── NAVIGATION ── */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Navigation</div>
@@ -329,17 +416,41 @@ export default function SettingsPage({ toast }: Props) {
           {/* Email reminders toggle */}
           <ToggleRow
             icon="✉️" label="Email Reminders"
-            description="Receive email notifications for upcoming vaccine and worming due dates."
+            description="Receive scheduled emails. Turning this off does not disable SMS or in-app reminders."
             enabled={emailReminders}
-            saving={saving === 'emailReminders'}
-            onToggle={() => toggle('emailReminders', !emailReminders, 'Email reminders enabled', 'Email reminders disabled')}
+            saving={saving !== null}
+            onToggle={() => setEmailSetting('emailReminders', !emailReminders)}
           />
 
+          <ToggleRow
+            icon="📋" label="Manual reminder emails"
+            description="Email reminders you add yourself. Off by default. Uses each reminder’s lead time; checked once daily, not at a chosen hour."
+            enabled={profile?.manualReminderEmails === true}
+            saving={saving !== null || !emailReminders}
+            onToggle={() => setEmailSetting('manualReminderEmails', profile?.manualReminderEmails !== true)}
+          />
+          <div style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <button type="button" aria-expanded={showReminderTypes} aria-controls="manual-reminder-types" onClick={() => setShowReminderTypes(value => !value)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, width: '100%', padding: '8px 0', border: 0, background: 'transparent', color: 'var(--dark)', cursor: 'pointer', textAlign: 'left' }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>Manual reminder email types</span>
+              <span style={{ fontSize: 13, color: 'var(--green)', whiteSpace: 'nowrap' }}>{showReminderTypes ? 'Hide ▴' : 'Show ▾'}</span>
+            </button>
+            {showReminderTypes && <div id="manual-reminder-types" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {REMINDER_TYPES.map(({ value, label }) => <ToggleRow key={value}
+                icon="" label={label}
+                description="Emails for manually added reminders."
+                enabled={profile?.careEmailTypes?.[value] !== false}
+                saving={saving !== null || !emailReminders}
+                onToggle={() => setCareEmailType(value, profile?.careEmailTypes?.[value] === false)}
+              />)}
+            </div>}
+            {showReminderTypes && <p style={{ fontSize: 12, color: 'var(--mid)', marginTop: 12 }}>These type choices apply to manually added reminder emails. Recorded next-dose reminders use the main Email Reminders setting. In-app reminders stay visible. iPhone push notifications are not enabled by these settings. Once-only manual emails can catch up up to 14 days after the due date; daily manual emails stop after it.</p>}
+          </div>
+
           {/* Reminder lead time */}
-          {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>⏰ Reminder lead time</div>
-              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How many days before due date to send reminders.</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>Default lead time for recorded health reminders. Manual reminders use their own lead time.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 {REMINDER_OPTIONS.map(days => (
                   <button
@@ -359,13 +470,11 @@ export default function SettingsPage({ toast }: Props) {
                 ))}
               </div>
             </div>
-          )}
 
           {/* Reminder frequency */}
-          {emailReminders && (
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 6 }}>🔁 Reminder frequency</div>
-              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How often to remind you once a due date is approaching.</div>
+              <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>How often to email you once a due date is approaching. SMS is sent once per due date, subject to your add-on and credits.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 {([
                   { id: 'once', label: 'Once' },
@@ -388,11 +497,10 @@ export default function SettingsPage({ toast }: Props) {
                 ))}
               </div>
             </div>
-          )}
 
           {/* Heat cycle reminder lead time — breeding-specific, not
               relevant to a Pet Owner account (see Litters above). */}
-          {emailReminders && !isOwner && (
+          {!isOwner && (
             <div style={{ paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--dark)', marginBottom: 4 }}>🌸 Heat cycle reminder lead time</div>
               <div style={{ fontSize: 13, color: 'var(--light)', marginBottom: 10 }}>
@@ -439,7 +547,25 @@ export default function SettingsPage({ toast }: Props) {
         </div>
       </div>
 
+      {/* Marketing emails are separate from transactional and care reminders. */}
+      <div className="card" style={{ marginBottom: 16, padding: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', marginBottom: 14 }}>News &amp; promotions</div>
+        {user?.email && <>
+        <ToggleRow
+          icon="✉️"
+          label="iDogs news and promotional offers"
+          description="Optional product news and offers. You can turn this off at any time. Dog-care and account emails are separate."
+          enabled={Boolean(marketingEnabled)}
+          saving={saving === 'marketingConsent'}
+          onToggle={() => setMarketingConsent(!marketingEnabled)}
+        />
+        </>}
+        {user?.phoneNumber && <ToggleRow icon="💬" label="iDogs promotional SMS" description="Optional news and offers sent to your sign-in mobile number. Sign-in codes and dog-care reminders are separate." enabled={smsMarketingEnabled} saving={saving === 'smsMarketingConsent'} onToggle={() => setSmsMarketingConsent(!smsMarketingEnabled)} />}
+        <p style={{ fontSize: 12, color: 'var(--light)', marginTop: 10 }}>Existing accounts are off unless they explicitly opt in.</p>
+       </div>
+
       {/* ── DATA & PRIVACY ── */}
+      <AccountDeletion />
       <div className="card">
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--mid)', marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Data & Privacy</div>
         <div style={{ fontSize: 13, color: 'var(--green)', background: 'var(--green-light)', padding: '10px 14px', borderRadius: 8, marginBottom: 12 }}>
@@ -480,6 +606,9 @@ function ToggleRow({ icon, label, description, enabled, saving, onToggle }: {
       </div>
       <button
         onClick={onToggle}
+        role="switch"
+        aria-checked={enabled}
+        aria-label={label}
         disabled={saving}
         style={{
           width: 48, height: 26, borderRadius: 13, flexShrink: 0,

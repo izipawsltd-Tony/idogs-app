@@ -1,0 +1,168 @@
+name: iDogs Mobile Foundation
+
+on:
+  push:
+    branches:
+      - feat/mobile-app-foundation
+    paths:
+      - 'mobile/**'
+      - 'src/mobile.css'
+      - 'src/main.tsx'
+      - 'index.html'
+      - 'public/01_idogs_primary_horizontal_transparent.png'
+      - 'public/02_idogs_icon_transparent.png'
+      - '.github/workflows/mobile-foundation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-mobile-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-shell:
+    name: Generate Android shell
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build iDogs web app
+        run: npm run build
+
+      - name: Install Capacitor mobile dependencies
+        run: npm --prefix mobile install --no-audit --no-fund
+
+      - name: Prepare approved iDogs branding
+        run: npm --prefix mobile run branding
+
+      - name: Verify branding source masters
+        shell: bash
+        run: |
+          test -f mobile/resources/icon-only.png
+          test -f mobile/resources/icon-foreground.png
+          test -f mobile/resources/icon-background.png
+          test -f mobile/resources/splash.png
+          test -f mobile/resources/branding-manifest.json
+          node --input-type=module <<'NODE'
+          import sharp from 'sharp'
+          for (const [file, expected] of [
+            ['mobile/resources/icon-only.png', [1024, 1024]],
+            ['mobile/resources/splash.png', [2732, 2732]],
+          ]) {
+            const meta = await sharp(file).metadata()
+            if (meta.width !== expected[0] || meta.height !== expected[1]) {
+              throw new Error(`${file} is ${meta.width}x${meta.height}, expected ${expected[0]}x${expected[1]}`)
+            }
+          }
+          NODE
+
+      - name: Generate Android native project
+        run: npm --prefix mobile run add:android
+
+      - name: Sync web build into Android
+        run: npm --prefix mobile run sync:android
+
+      - name: Generate Android launcher and splash assets
+        run: npm --prefix mobile run assets:android
+
+      - name: Verify Android identity and native branding
+        shell: bash
+        run: |
+          test -f mobile/android/app/src/main/AndroidManifest.xml
+          grep -q "au.com.idogs.app" mobile/android/app/build.gradle || grep -q "au.com.idogs.app" mobile/android/app/build.gradle.kts
+          find mobile/android/app/src/main/res -type f -iname '*launcher*' | grep -q .
+          find mobile/android/app/src/main/res -type f -iname '*splash*' | grep -q .
+          echo "iDogs Android shell + native branding generated successfully."
+
+      - name: Upload generated Android shell
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-android-shell-${{ github.sha }}
+          path: mobile/android
+          if-no-files-found: error
+          retention-days: 7
+
+  ios-shell:
+    name: Generate iOS shell
+    runs-on: macos-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build iDogs web app
+        run: npm run build
+
+      - name: Install Capacitor mobile dependencies
+        run: npm --prefix mobile install --no-audit --no-fund
+
+      - name: Prepare approved iDogs branding
+        run: npm --prefix mobile run branding
+
+      - name: Verify branding source masters
+        shell: bash
+        run: |
+          test -f mobile/resources/icon-only.png
+          test -f mobile/resources/splash.png
+          node --input-type=module <<'NODE'
+          import sharp from 'sharp'
+          for (const [file, expected] of [
+            ['mobile/resources/icon-only.png', [1024, 1024]],
+            ['mobile/resources/splash.png', [2732, 2732]],
+          ]) {
+            const meta = await sharp(file).metadata()
+            if (meta.width !== expected[0] || meta.height !== expected[1]) {
+              throw new Error(`${file} is ${meta.width}x${meta.height}, expected ${expected[0]}x${expected[1]}`)
+            }
+          }
+          NODE
+
+      - name: Generate iOS native project
+        run: npm --prefix mobile run add:ios
+
+      - name: Sync web build into iOS
+        run: npm --prefix mobile run sync:ios
+
+      - name: Generate iOS app icon and splash assets
+        run: npm --prefix mobile run assets:ios
+
+      - name: Verify iOS identity and native branding
+        shell: bash
+        run: |
+          test -f mobile/ios/App/App.xcodeproj/project.pbxproj
+          grep -q "au.com.idogs.app" mobile/ios/App/App.xcodeproj/project.pbxproj
+          test -d mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset
+          find mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset -type f -name '*.png' | grep -q .
+          echo "iDogs iOS shell + native branding generated successfully."
+
+      - name: Upload generated iOS shell
+        uses: actions/upload-artifact@v4
+        with:
+          name: idogs-ios-shell-${{ github.sha }}
+          path: mobile/ios
+          if-no-files-found: error
+          retention-days: 7

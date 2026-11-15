@@ -58,8 +58,8 @@ check('Showcase UI supports revoke and copy-link actions', /revokePrivateAccess\
 check('public Showcase still selects only entry.visible === true puppies', /filter\(\(\[, entry\]\) => entry\?\.visible === true\)/.test(publicSrc))
 check('public Showcase litter projection does not return total puppyIds', !/const litter = \{[\s\S]*?puppyIds[\s\S]*?\n\s*\}/.test(publicSrc))
 check('ProtectedRoute preserves the requested private dog path through sign-in', /next=\$\{encodeURIComponent\(returnTo\)\}/.test(protectedSrc))
-check('login returns the buyer to the validated requested app path', /safeAppReturnTo/.test(loginSrc) && /navigate\(returnTo/.test(loginSrc))
-check('signup carries the requested app path into email verification', /verify-email\?next=\$\{encodeURIComponent\(returnTo\)\}/.test(signupSrc))
+check('login preserves a validated destination and lets protected routes enforce deeper verification', /signupDestination\(params.get\('next'\)\)/.test(loginSrc) && /navigate\(returnTo, \{ replace: true \}\)/.test(loginSrc) && /!discoveryRoute\(location.pathname\)/.test(appSrc))
+check('signup preserves the requested path and delegates deeper verification to the guarded route', /signupDestination/.test(signupSrc) && /navigate\(returnTo/.test(signupSrc) && /!discoveryRoute\(location.pathname\)/.test(appSrc))
 check('email verification returns the buyer to the requested private dog path', /safeAppReturnTo/.test(verifySrc) && /navigate\(returnTo/.test(verifySrc))
 check('post-auth redirect is constrained to internal /app routes', /startsWith\('\/app\/'\)/.test(returnToSrc) && /includes\('\:\/\/'\)/.test(returnToSrc))
 
@@ -92,7 +92,11 @@ check('post-auth redirect is constrained to internal /app routes', /startsWith\(
   const reloadIdx = authSrc.indexOf('await reload(auth.currentUser)', fnStart)
   const verifiedIdx = authSrc.indexOf('const verified = auth.currentUser.emailVerified', fnStart)
   const refreshIdx = authSrc.indexOf('await auth.currentUser.getIdToken(true)', fnStart)
-  const setUserIdx = authSrc.indexOf('setUser(auth.currentUser)', fnStart)
+  // checkEmailVerified may retain the verified user in a stable local reference
+  // after refreshing the token. Both forms preserve the auth-state ordering.
+  const setUserIdx = authSrc.indexOf('setUser(verifiedUser)', fnStart) >= 0
+    ? authSrc.indexOf('setUser(verifiedUser)', fnStart)
+    : authSrc.indexOf('setUser(auth.currentUser)', fnStart)
 
   check('checkEmailVerified: all four key statements (reload, verified check, forced token refresh, setUser) were located in source',
     fnStart > -1 && reloadIdx > -1 && verifiedIdx > -1 && refreshIdx > -1 && setUserIdx > -1)

@@ -149,7 +149,7 @@ await check('provider failure refunds reserved credits', async () => {
     idempotencyKey:'provider-fail',now:NOW,sendProvider:async()=>{throw new Error('provider')},
   })
   assert.equal(r.sent,false)
-  assert.equal(r.reason,'PROVIDER_FAILED')
+  assert.equal(r.reason,'PROVIDER_REJECTED')
   assert.equal(db.store.users.u1.smsCreditsUsed,0)
 })
 await check('accepted provider send is charged once and marked sent', async () => {
@@ -255,7 +255,7 @@ await check('client cannot inject Stripe price or subscription id', async () => 
   assert.equal(res.statusCode,400)
   assert.equal(updated,false)
 })
-await check('SMS add-on mutates only verified existing Plus subscription', async () => {
+await check('SMS add-on creates independent checkout without mutating Plus', async () => {
   let called=null
   const handler=createSmsAddonCheckoutHandler({
     verifyIdToken:async()=>({uid:'u1'}),
@@ -265,23 +265,26 @@ await check('SMS add-on mutates only verified existing Plus subscription', async
     retrieveSubscription:async()=>({
       id:'sub_1',
       customer:'cus_1',
+      status:'active',
       items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]},
     }),
-    updateSubscription:async(id,params)=>{
-      called={id,params}
-      return {id:'sub_1',pending_update:null,latest_invoice:null}
-    },
+    createSession:async(params)=>{called=params;return {id:'cs_sms',url:'https://checkout.stripe.com/qa'}},
+    listSubscriptions:async()=>({data:[],has_more:false}),
+    getSmsAttempt:async()=>({id:'attempt',expiresAt:Date.now()+3600000}),
+    saveSmsSession:async()=>{},
+    verifyCheckout:async()=>true,
+    getAppUrl:()=> 'https://qa.example',
     getPriceId:()=> 'price_sms',
   })
   const res=fakeRes()
   await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
   assert.equal(res.statusCode,200)
-  assert.equal(called.id,'sub_1')
-  assert.deepEqual(called.params.items,[{price:'price_sms',quantity:1}])
-  assert.equal(called.params.proration_behavior,'always_invoice')
-  assert.equal(called.params.payment_behavior,'pending_if_incomplete')
+  assert.deepEqual(called.line_items,[{price:'price_sms',quantity:1}])
+  assert.equal(called.mode,'subscription')
+  assert.equal(called.subscription_data.trial_end,undefined)
+  assert.equal(res.body.url,'https://checkout.stripe.com/qa')
 })
-await check('pending SMS payment returns hosted invoice when Stripe provides one', async () => {
+await check('SMS checkout fails closed when independent checkout dependencies are unavailable', async () => {
   const handler=createSmsAddonCheckoutHandler({
     verifyIdToken:async()=>({uid:'u1'}),
     getProfile:async()=>({
@@ -290,6 +293,7 @@ await check('pending SMS payment returns hosted invoice when Stripe provides one
     retrieveSubscription:async()=>({
       id:'sub_1',
       customer:'cus_1',
+      status:'trialing',
       items:{data:[{id:'si_plus',price:{id:'price_1TxaNJGHgBd6ZgJEpAhrWark'}}]},
     }),
     updateSubscription:async()=>({
@@ -301,9 +305,8 @@ await check('pending SMS payment returns hosted invoice when Stripe provides one
   })
   const res=fakeRes()
   await handler({method:'POST',headers:{authorization:'Bearer ok'},body:{}},res)
-  assert.equal(res.statusCode,202)
-  assert.equal(res.body.status,'pending_payment')
-  assert.equal(res.body.hostedInvoiceUrl,'https://invoice.test/pay')
+  assert.equal(res.statusCode,500)
+  assert.equal(res.body.hostedInvoiceUrl,undefined)
 })
 
 

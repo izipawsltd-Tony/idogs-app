@@ -200,7 +200,11 @@ export interface HealthTest {
 export interface Reminder {
   id: string
   dogId: string
-  type: 'vaccination' | 'worming' | 'vet_appointment' | 'heat_cycle' | 'mating' | 'pregnancy' | 'whelping' | 'custom' | 'vaccine' | 'heat'
+  tenantId?: string
+  source?: 'breeding_timeline' | string
+  sourceRef?: string
+  milestoneKey?: 'ultrasound_day28' | 'xray_day45' | 'whelp_prep_day58' | 'due_day63' | string
+  type: 'flea_tick' | 'medication' | 'grooming' | 'weight_check' | 'dental_care' | 'nail_trim' | 'vaccination' | 'worming' | 'vet_appointment' | 'heat_cycle' | 'mating' | 'pregnancy' | 'whelping' | 'custom' | 'vaccine' | 'heat'
   title: string
   dueDate: string
   notifyDaysBefore: number
@@ -466,6 +470,32 @@ export interface ActivityNote {
 }
 
 export interface UserProfile {
+  termsAcceptance?: { version: string; acceptedAt: string; source: 'signup' }
+  smsMarketingConsent?: {
+    channel: 'sms_marketing'
+    choice: 'opt_in' | 'opt_out'
+    source: 'signup' | 'account_settings'
+    policyVersion: string
+    optedInAt: string | null
+    revokedAt: string | null
+    phone: string
+    evidenceRef: string
+  }
+  acquisition?: import('../lib/acquisition').Acquisition | { source: 'direct'; version: 1 }
+  marketingConsent?: {
+    channel: 'email_marketing'
+    choice: 'opt_in' | 'opt_out'
+    source: 'explicit_checkbox' | 'explicit_choice' | 'account_settings'
+    checkboxDefault: false
+    policyVersion: string
+    optedInAt: string | null
+    revokedAt: string | null
+    email: string
+    evidenceRef: string
+  }
+  emailReminders?: boolean
+  manualReminderEmails?: boolean
+  careEmailTypes?: Partial<Record<Reminder['type'], boolean>>
   uid: string
   email: string
   firstName: string
@@ -533,6 +563,16 @@ export interface UserProfile {
     revokedAt?: string
     revokedBy?: string
   } | null
+  // Founding Member / kennel gift Plus pass — server-owned (see
+  // shared/access-grants.js); never renews and never charges.
+  accessGrant?: {
+    granted: boolean
+    kind: 'founding' | 'gift' | 'launch'
+    offerId: string
+    grantedAt: string
+    expiresAt: string
+    lastSourceId?: string
+  } | null
   // Account-level Breeder ID (e.g. DACO number for SA breeders). Mandatory
   // for active breeders in most states, but some breeders genuinely don't
   // have one yet (e.g. dogs too young to be bred from yet) — so this is
@@ -581,6 +621,8 @@ export interface AuthFormData {
 }
 
 export interface SignupFormData extends AuthFormData {
+  termsAccepted?: boolean
+  marketingOptIn?: boolean
   firstName: string
   lastName: string
   kennelName: string

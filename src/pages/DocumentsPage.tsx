@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import { documentDisplayName, documentEditableName } from '../lib/documentName'
+import { auth } from '../lib/firebase'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useRequestGuard } from '../hooks/useRequestGuard'
-import { getAllDocumentsForUser, getDogs, deleteDocument } from '../lib/db'
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
-import { db, storage } from '../lib/firebase'
+import { getAllDocumentsForUser, getDogs, deleteDocument, updateDocument } from '../lib/db'
 import type { Dog, ToastMessage } from '../types'
+import { prepareDocumentFileForUpload } from '../lib/imageCompression'
+import { postJsonWithProgress } from '../lib/uploadWithProgress'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -96,6 +97,9 @@ export default function DocumentsPage({ toast }: Props) {
   const [loadError, setLoadError] = useState(false)
   const [filter, setFilter] = useState<string>('all')
   const [showUpload, setShowUpload] = useState(false)
+  const [editingDocId, setEditingDocId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
 
   const { beginRequest } = useRequestGuard(user?.uid)
 
@@ -127,7 +131,7 @@ export default function DocumentsPage({ toast }: Props) {
     // Clear the previous account's documents/dog map immediately on an
     // account switch — a stale document list from a former account must
     // never linger into the new one's view.
-    setDocuments([]); setDogs({}); setLoadError(false); setFilter('all')
+    setDocuments([]); setDogs({}); setLoadError(false); setFilter('all'); setEditingDocId(null); setEditingName('')
     loadDocuments()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
@@ -239,7 +243,7 @@ export default function DocumentsPage({ toast }: Props) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
                     <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)' }}>
-                      {doc.title || getDocLabel(doc.documentType)}
+                      {documentDisplayName(doc, getDocLabel)}
                     </span>
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)', fontWeight: 500 }}>
                       {(doc.fileType || 'FILE').toUpperCase()}
@@ -270,6 +274,8 @@ export default function DocumentsPage({ toast }: Props) {
                   >
                     View ↗
                   </button>
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={savingEdit}
+                    onClick={() => { setEditingDocId(doc.id); setEditingName(documentEditableName(doc) || getDocLabel(doc.documentType)) }}>Edit</button>
                   <button
                     onClick={async () => {
                       if (window.confirm('Remove this document from the list? (This will not delete the underlying health/vaccine record if one was created)')) {
@@ -285,7 +291,7 @@ export default function DocumentsPage({ toast }: Props) {
                     className="btn btn-ghost btn-sm"
                     style={{ color: 'var(--error)' }}
                   >
-                    🗑️ Remove from list
+                    🗑️ Delete
                   </button>
                 </div>
               </div>
@@ -294,11 +300,44 @@ export default function DocumentsPage({ toast }: Props) {
         </div>
       )}
 
+      {/* Edit document title without changing the underlying file */}
+      {editingDocId && (
+        <div role="dialog" aria-modal="true" aria-label="Edit document"
+          style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <form className="card" style={{ width: '100%', maxWidth: 440, padding: 24, background: 'var(--white)' }}
+            onSubmit={async e => {
+              e.preventDefault()
+              if (!user || savingEdit || !editingName.trim()) return
+              const oldUid = user.uid
+              const docId = editingDocId
+              const name = editingName.trim()
+              setSavingEdit(true)
+              try {
+                await updateDocument(docId, name)
+                if (auth.currentUser?.uid !== oldUid) return
+                setDocuments(prev => prev.map(d => d.id === docId ? { ...d, name } : d))
+                setEditingDocId(null)
+                toast('Document updated', 'success')
+              } catch { toast('Failed to update document', 'error') }
+              finally { setSavingEdit(false) }
+            }}>
+            <h2 style={{ fontSize: 20, marginBottom: 12 }}>Edit document</h2>
+            <label htmlFor="document-edit-name">Document name</label>
+            <input id="document-edit-name" className="form-input" value={editingName} required maxLength={150}
+              disabled={savingEdit} onChange={e => setEditingName(e.target.value)} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button type="button" className="btn btn-secondary" disabled={savingEdit} onClick={() => setEditingDocId(null)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={savingEdit || !editingName.trim()}>{savingEdit ? 'Saving…' : 'Save'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Upload Modal */}
       {showUpload && (
         <UploadModal
           dogs={Object.values(dogs)}
-          userId={user!.uid}
+          user={user!}
           onClose={() => setShowUpload(false)}
           onSuccess={handleUpload}
           toast={toast}
@@ -310,9 +349,10 @@ export default function DocumentsPage({ toast }: Props) {
 
 // ── UPLOAD MODAL ─────────────────────────────────────────────
 
-function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
+export function UploadModal({ dogs, user, onClose, onSuccess, toast, fixedDogId }: {
   dogs: Dog[]
-  userId: string
+  fixedDogId?: string
+  user: { getIdToken: () => Promise<string> }
   onClose: () => void
   onSuccess: (doc: any) => void
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -320,7 +360,8 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [docType, setDocType] = useState('other')
-  const [dogId, setDogId] = useState(dogs[0]?.id || '')
+  const [selectedDogId, setDogId] = useState(dogs[0]?.id || '')
+  const dogId = fixedDogId || selectedDogId
   const [title, setTitle] = useState('')
   const [notes, setNotes] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -343,43 +384,27 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!file || !dogId) return
+    // The user's own name is kept exactly (trimmed). Never persist the type
+    // label as a name — the type is stored separately as documentType.
+    const customTitle = title.trim()
     setUploading(true)
-    setProgress(0)
+    setProgress(10)
     try {
-      // Upload to Firebase Storage
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'pdf'
-      const storagePath = `documents/${userId}/${dogId}/${Date.now()}.${ext}`
-      const storageRef = ref(storage, storagePath)
-      const uploadTask = uploadBytesResumable(storageRef, file)
-
-      await new Promise<void>((resolve, reject) => {
-        uploadTask.on(
-          'state_changed',
-          snap => setProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
-          reject,
-          resolve,
-        )
-      })
-
-      const fileUrl = await getDownloadURL(uploadTask.snapshot.ref)
-
-      // Save to Firestore
-      const docData = {
-        tenantId: userId,
-        dogId,
-        documentType: docType,
-        title: title || getDocLabel(docType),
-        notes: notes || null,
-        fileUrl,
-        fileType: ext,
-        storagePath,
-        source: 'manual',
-        uploadedAt: serverTimestamp(),
-      }
-      const ref2 = await addDoc(collection(db, 'documents'), docData)
-      onSuccess({ id: ref2.id, ...docData, uploadedAt: { toDate: () => new Date() } })
-    } catch (err) {
-      console.error(err)
+      // Phone photos are resized/converted before upload (HEIC → JPEG);
+      // PDFs and small images are sent unchanged. Progress is real.
+      const prepared = await prepareDocumentFileForUpload(file)
+      setProgress(15)
+      const idToken = await user.getIdToken()
+      const uploaded = await postJsonWithProgress<{ documentId: string; filePath: string; fileType?: string }>(
+        '/api/upload-document',
+        { base64: prepared.base64, mediaType: prepared.mediaType, dogId, documentType: docType, ...(customTitle ? { title: customTitle } : {}), notes: notes || null, source: 'manual', originalFileName: file.name },
+        { Authorization: `Bearer ${idToken}` },
+        f => setProgress(15 + Math.round(f * 80)),
+      )
+      setProgress(100)
+      onSuccess({ id: uploaded.documentId, dogId, documentType: docType, ...(customTitle ? { title: customTitle } : {}), notes: notes || null, filePath: uploaded.filePath, fileType: uploaded.fileType || 'file', source: 'manual', uploadedAt: { toDate: () => new Date() } })
+    } catch {
+      console.error('Manual document upload failed')
       toast('Upload failed — please try again', 'error')
     } finally {
       setUploading(false)
@@ -387,18 +412,18 @@ function UploadModal({ dogs, userId, onClose, onSuccess, toast }: {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+    <div className="modal-overlay" onClick={() => { if (!uploading) onClose() }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="document-upload-title" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Upload Document</h2>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--light)', lineHeight: 1 }}>×</button>
+          <h2 id="document-upload-title" style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--dark)' }}>Upload Document</h2>
+          <button aria-label="Close upload" disabled={uploading} onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--light)', lineHeight: 1 }}>×</button>
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Dog selector */}
           <div className="form-group">
             <label className="form-label">Dog *</label>
-            <select className="form-select" value={dogId} onChange={e => setDogId(e.target.value)} required>
+            <select aria-label="Dog" className="form-select" value={dogId} disabled={!!fixedDogId || uploading} onChange={e => setDogId(e.target.value)} required>
               {dogs.filter(d => (d as any).status !== 'transferred').map(d => (
                 <option key={d.id} value={d.id}>{d.name} — {d.breed}</option>
               ))}

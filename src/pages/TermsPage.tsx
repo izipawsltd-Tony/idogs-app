@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import LegalNav from '../components/legal/LegalNav'
 import {
   PLUS_MONTHLY_PRICE_AUD,
   PLUS_ANNUAL_PRICE_AUD,
@@ -9,16 +10,10 @@ import {
 } from '../lib/pricingCopy'
 
 export default function TermsPage() {
-  const lastUpdated = '1 September 2026'
+  const lastUpdated = '29 October 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
-      {/* Nav */}
-      <nav style={{ position: 'sticky', top: 0, zIndex: 100, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
-          <img src="/01_idogs_primary_horizontal_transparent.png" alt="iDogs" style={{ height: 34 }} />
-        </Link>
-        <Link to="/signup" className="btn btn-primary btn-sm">Start free</Link>
-      </nav>
+      <LegalNav />
 
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '48px 24px 80px' }}>
         <div style={{ marginBottom: 40 }}>
@@ -30,6 +25,7 @@ export default function TermsPage() {
           <LegalSection title="1. Acceptance of Terms">
             <p>By accessing or using iDogs ("the Service"), operated by iziPaws Pty Ltd ABN 42 693 563 745 ("we", "us", "our"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Service.</p>
             <p>These Terms apply to all users including breeders, pet owners, and visitors.</p>
+            <p>Accepting these Terms does not require you to receive promotions. You can choose “No, thanks” during registration and still create and use your account.</p>
           </LegalSection>
 
           <LegalSection title="2. Description of Service">
@@ -53,7 +49,7 @@ export default function TermsPage() {
             <p>iDogs offers the following plans and add-ons in Australian dollars. Displayed prices include GST where applicable:</p>
             <ul>
               <li><strong>Free:</strong> Up to {DOG_CAP_FREE} dogs, QR passport, health records, email reminders — free forever</li>
-              <li><strong>Plus Monthly — A${PLUS_MONTHLY_PRICE_AUD}/month:</strong> Up to {DOG_CAP_PLUS} dogs, AI Document Scans, document storage, PDF/CSV export, and up to {LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} included litters per rolling 365-day period</li>
+              <li><strong>Plus Monthly — A${PLUS_MONTHLY_PRICE_AUD}/month:</strong> Up to {DOG_CAP_PLUS} dogs, iDogs Scans, document storage, PDF/CSV export, and up to {LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} included litters per rolling 365-day period</li>
               <li><strong>Plus Annual — A${PLUS_ANNUAL_PRICE_AUD}/year:</strong> Same Plus features as Plus Monthly, billed annually</li>
               <li><strong>Extra Litter Credit — A${EXTRA_LITTER_PRICE_AUD} each:</strong> A one-time add-on that permits one additional litter after the included litter allowance has been used</li>
             </ul>
@@ -76,6 +72,7 @@ export default function TermsPage() {
           </LegalSection>
 
           <LegalSection title="6. Data and Privacy">
+            <p>If you choose to receive iDogs news and promotions, we may send promotional messages to the email address or mobile number you provided, using only the channels you have agreed to. This choice is optional. You can decline during registration, change your choice in Settings, or use the unsubscribe instructions in a promotional message. Account, security and dog-care service messages are separate from promotions.</p>
             <p>Your use of the Service is also governed by our <Link to="/privacy" style={{ color: 'var(--green)' }}>Privacy Policy</Link>, which is incorporated into these Terms by reference.</p>
             <p>All data is stored securely in Asia-Pacific in compliance with the Australian Privacy Act 1988 (Cth).</p>
             <p>You retain ownership of all data you upload to the Service. By uploading data, you grant us a limited licence to store, process, and display it solely for the purpose of providing the Service to you.</p>
@@ -94,7 +91,7 @@ export default function TermsPage() {
 
           <LegalSection title="9. Termination">
             <p>We may terminate or suspend your account at any time for violation of these Terms, with or without notice.</p>
-            <p>Upon termination, your access to the Service ceases. Your data is retained for 30 days after termination, during which you may export it. After 30 days, data may be permanently deleted.</p>
+            <p>Upon termination, your access to the Service ceases. Your data is retained for 30 days after termination, during which you may export it. After 30 days, data may be permanently deleted. If you ask us to delete your account, we complete it within 7 days as described in our <Link to="/privacy">Privacy Policy</Link> (section 7).</p>
           </LegalSection>
 
           <LegalSection title="10. Changes to Terms">

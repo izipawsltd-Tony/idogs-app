@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import type { ToastMessage } from '../types'
+import { isAndroidNativeApp } from '../lib/nativePlatform'
 
 interface Props {
   toast: (msg: string, type?: ToastMessage['type']) => void
@@ -103,6 +104,19 @@ export default function ExtraLitterButton({ toast }: Props) {
             ? `${summary.extraCreditsAvailable} extra litter credit${summary.extraCreditsAvailable === 1 ? '' : 's'} available`
             : breederHistoryLabel}
         </span>
+      </div>
+    )
+  }
+
+  // Google Play does not allow purchase UI for digital services inside the
+  // Android app; the matching /api/create-extra-litter-checkout call is
+  // already blocked server-side in nativeApiRouting.ts. Read-only litter
+  // quota status above this point is unaffected.
+  if (isAndroidNativeApp()) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--light)' }}>Purchases are unavailable in this Android app.</span>
+        <span style={{ fontSize: 11, color: 'var(--light)' }}>{remainingLabel}</span>
       </div>
     )
   }

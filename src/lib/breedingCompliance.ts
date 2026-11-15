@@ -91,21 +91,6 @@ export interface ComplianceDog {
 
 export type PedigreeRegisterStatus = 'MAIN' | 'LIMITED' | 'NOT_RECORDED' | 'NO_PEDIGREE' | 'MIXED' | 'RESCUE'
 export type BreedingEligibilityStatus = 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'UNKNOWN'
-export type BreedingRightsValue = 'eligible' | 'not_eligible' | 'unknown'
-
-export type AustralianJurisdiction = 'SA' | 'NSW' | 'VIC' | 'QLD' | 'WA' | 'TAS' | 'ACT' | 'NT'
-
-const AUSTRALIAN_JURISDICTIONS = new Set<AustralianJurisdiction>(['SA', 'NSW', 'VIC', 'QLD', 'WA', 'TAS', 'ACT', 'NT'])
-
-/**
- * Fail-closed jurisdiction resolver. Missing/invalid profile state is NEVER
- * coerced to South Australia. Callers must surface that the jurisdiction
- * is not set instead of applying the wrong state's law.
- */
-export function resolveComplianceJurisdiction(raw?: string | null): AustralianJurisdiction | null {
-  const normalized = String(raw || '').trim().toUpperCase() as AustralianJurisdiction
-  return AUSTRALIAN_JURISDICTIONS.has(normalized) ? normalized : null
-}
 
 export function resolvePedigreeRegister(raw?: string): PedigreeRegisterStatus {
   switch (raw) {
@@ -135,53 +120,6 @@ export function resolveBreedingEligibility(dog: { pedigreeRegister?: string; bre
   if (dog.breedingEligibility === 'eligible') return 'ELIGIBLE'
   if (dog.breedingEligibility === 'not_eligible') return 'NOT_ELIGIBLE'
   return 'UNKNOWN'
-}
-
-
-/**
- * UI/storage adapter for the explicit breeder-controlled layer between
- * pedigree registration and actual compliance. We keep the existing
- * Firestore field name `breedingEligibility` for backwards compatibility,
- * but user-facing copy calls it "Breeding rights" so it cannot be confused
- * with the final compliance result.
- */
-export function initialBreedingRightsValue(
-  dog: { pedigreeRegister?: string; breedingEligibility?: string },
-): BreedingRightsValue {
-  const status = resolveBreedingEligibility(dog)
-  if (status === 'ELIGIBLE') return 'eligible'
-  if (status === 'NOT_ELIGIBLE') return 'not_eligible'
-  return 'unknown'
-}
-
-export function breedingRightsLabel(value: BreedingRightsValue | BreedingEligibilityStatus): string {
-  switch (value) {
-    case 'eligible':
-    case 'ELIGIBLE':
-      return 'Breeding permitted'
-    case 'not_eligible':
-    case 'NOT_ELIGIBLE':
-      return 'Not permitted'
-    default:
-      return 'Not confirmed'
-  }
-}
-
-/**
- * Canonical write rule for the Breeding rights control.
- * - LIMITED always forces not_eligible.
- * - MAIN may be explicitly confirmed as permitted, not permitted, or unknown.
- * - Any other registration state cannot be promoted to permitted through the
- *   rights control; it resolves to unknown until registration is authoritative.
- */
-export function nextBreedingRightsUpdate(
-  pedigreeRegisterRaw: string | undefined,
-  nextRightsRaw: BreedingRightsValue,
-): { breedingEligibility: BreedingRightsValue } {
-  const register = resolvePedigreeRegister(pedigreeRegisterRaw)
-  if (register === 'LIMITED') return { breedingEligibility: 'not_eligible' }
-  if (register !== 'MAIN') return { breedingEligibility: 'unknown' }
-  return { breedingEligibility: nextRightsRaw }
 }
 
 /**
@@ -276,10 +214,8 @@ export interface ComplianceInput {
   damHealthTests?: ComplianceHealthTest[]
   sire?: ComplianceDog
   sireHealthTests?: ComplianceHealthTest[]
-  /** State/territory code. Missing/invalid values fail closed; there is no SA fallback. */
+  /** State code, e.g. 'SA'. Falls back to 'SA'. */
   state?: string
-  /** Apply state kennel-club/member-body ethics rules only when membership is actually known. */
-  applyMemberBodyRules?: boolean
   /** Proposed mating date (ISO). Defaults to today. Whelping estimated +63 days. */
   matingDate?: string
 }
@@ -289,179 +225,214 @@ export interface ComplianceInput {
 export interface StateRules {
   stateName: string
   minBreedingMonths: number
-  minBreedingMonthsLarge: number
-  minBreedingSource: RuleSource
-  minBreedingRule: string
-  minBreedingVerified: boolean
-  /** 999 = no verified universal state/territory cap encoded. */
   maxLifetimeLitters: number
+  /** true → the lifetime-litter cap has a written-vet-certificate exemption */
   lifetimeLittersVetExemption: boolean
   lifetimeLittersSource: RuleSource
   lifetimeLittersRule: string
   lifetimeLittersVerified: boolean
-  /** 999 = no verified universal rule encoded. */
+  /** 999 = no rule */
   maxLittersIn18Months: number
   littersIn18mSource: RuleSource
   littersIn18mVerified: boolean
   maxCsections: number | null
   csectionVetRequired: number | null
-  csectionRule: string
-  csectionVerified: boolean
-  /** Review/vet-certificate threshold, from local law or Dogs Australia rules. */
-  maxAgeYears: number
+  /** Age (years) at/after which a current vet certificate is required at mating */
   vetCertAfterAgeYears: number
   vetCertAfterAgeSource: RuleSource
   vetCertAfterAgeRule: string
   vetCertAfterAgeVerified: boolean
   requiresBIN: boolean
-  breederIdLabel: string | null
-  breederIdVerified: boolean
-  memberBodyName: string
-  memberBodyUrl: string
-  memberRulesVerified: boolean
   notes: string
   sourceName: string
   sourceUrl: string
 }
 
-export const STATE_RULES: Record<AustralianJurisdiction, StateRules> = {
+export const STATE_RULES: Record<string, StateRules> = {
   SA: {
     stateName: 'South Australia',
-    minBreedingMonths: 12, minBreedingMonthsLarge: 18,
-    minBreedingSource: 'ANKC_NATIONAL', minBreedingRule: 'Dogs Australia Regulations Part 6', minBreedingVerified: true,
-    maxLifetimeLitters: 5, lifetimeLittersVetExemption: true,
-    lifetimeLittersSource: 'STATE_LAW', lifetimeLittersRule: 'SA Standards & Guidelines 2017, Std 10.1.1.1', lifetimeLittersVerified: true,
-    maxLittersIn18Months: 2, littersIn18mSource: 'KENNEL_CLUB_STATE', littersIn18mVerified: false,
-    maxCsections: null, csectionVetRequired: null, csectionRule: 'No verified universal SA C-section cap encoded', csectionVerified: false,
-    maxAgeYears: 8, vetCertAfterAgeYears: 8, vetCertAfterAgeSource: 'ANKC_NATIONAL', vetCertAfterAgeRule: 'Dogs Australia Part 6, 8.3', vetCertAfterAgeVerified: true,
-    requiresBIN: false, breederIdLabel: 'DACO breeder registration; new breeder licensing scheme expected in 2027', breederIdVerified: true,
-    memberBodyName: 'Dogs SA', memberBodyUrl: 'https://www.dogssa.com.au/', memberRulesVerified: false,
-    notes: 'Current SA welfare standards apply now. The newer breeder licensing scheme is expected in 2027 and is not treated as current law.',
-    sourceName: 'SA Department for Environment and Water — current animal-welfare framework',
-    sourceUrl: 'https://www.environment.sa.gov.au/topics/animals-and-plants/animal-welfare',
+    minBreedingMonths: 12,
+    // SA S&G 2017 Std 10.1.1.1 — max 5 litters UNLESS vet has certified in writing
+    // that she is fit. This is a vet-cert gate, NOT a hard block.
+    maxLifetimeLitters: 5,
+    lifetimeLittersVetExemption: true,
+    lifetimeLittersSource: 'STATE_LAW',
+    lifetimeLittersRule: 'SA S&G 2017, Std 10.1.1.1 (Animal Welfare Act 1985)',
+    lifetimeLittersVerified: true,
+    // NOTE: SA S&G 2017 has NO litter-frequency rule for DOGS (10.1.1.2 is queens/cats
+    // only). "2 in 18 months" can only come from Dogs SA Code of Ethics — UNVERIFIED
+    // until we hold the CoE document.
+    maxLittersIn18Months: 2,
+    littersIn18mSource: 'KENNEL_CLUB_STATE',
+    littersIn18mVerified: false,
+    maxCsections: null,
+    csectionVetRequired: null,
+    // ANKC Part 6, 8.3 — bitch ≥8y at mating needs vet cert issued within 3 months
+    // prior to mating. Dogs SA email claimed max age 7 — NOT found in any document
+    // we hold. Do not change to 7 until Dogs SA CoE is verified.
+    vetCertAfterAgeYears: 8,
+    vetCertAfterAgeSource: 'ANKC_NATIONAL',
+    vetCertAfterAgeRule: 'ANKC Part 6, 8.3',
+    vetCertAfterAgeVerified: true,
+    requiresBIN: false,
+    notes: 'Dogs SA membership (DACO) required. Vet cert for ≥8y must be dated within 3 months prior to mating.',
+    sourceName: 'SA Standards & Guidelines 2017 + ANKC Part 6 + Dogs SA CoE (pending)',
+    sourceUrl: 'https://www.dogssa.com.au/about/policies/dogs-sa-code-of-ethics-for-members-part-xv-codes/',
   },
   NSW: {
     stateName: 'New South Wales',
-    minBreedingMonths: 12, minBreedingMonthsLarge: 18,
-    minBreedingSource: 'ANKC_NATIONAL', minBreedingRule: 'Dogs Australia Regulations Part 6', minBreedingVerified: true,
-    maxLifetimeLitters: 5, lifetimeLittersVetExemption: false,
-    lifetimeLittersSource: 'STATE_LAW', lifetimeLittersRule: 'NSW dog breeding reforms effective 1 Dec 2025', lifetimeLittersVerified: true,
-    maxLittersIn18Months: 999, littersIn18mSource: 'STATE_LAW', littersIn18mVerified: true,
-    maxCsections: 3, csectionVetRequired: 2, csectionRule: 'NSW dog breeding reforms effective 1 Dec 2025', csectionVerified: true,
-    maxAgeYears: 8, vetCertAfterAgeYears: 8, vetCertAfterAgeSource: 'ANKC_NATIONAL', vetCertAfterAgeRule: 'Dogs Australia Part 6, 8.3', vetCertAfterAgeVerified: true,
-    requiresBIN: true, breederIdLabel: 'NSW Breeder Identification Number (BIN)', breederIdVerified: true,
-    memberBodyName: 'DOGS NSW', memberBodyUrl: 'https://www.dogsnsw.org.au/', memberRulesVerified: false,
-    notes: 'BIN is mandatory from 1 Dec 2025. Female dogs are limited to 5 lifetime litters or up to 3 caesarean litters with veterinarian approval, whichever occurs first.',
-    sourceName: 'NSW Office of Local Government — Changes to dog breeding laws',
+    minBreedingMonths: 12,
+    maxLifetimeLitters: 5,
+    lifetimeLittersVetExemption: false,
+    lifetimeLittersSource: 'STATE_LAW',
+    lifetimeLittersRule: 'NSW POCTA 1979 (amended 2024)',
+    lifetimeLittersVerified: false,
+    maxLittersIn18Months: 999,
+    littersIn18mSource: 'STATE_LAW',
+    littersIn18mVerified: false,
+    maxCsections: 3,
+    csectionVetRequired: 2,
+    vetCertAfterAgeYears: 8,
+    vetCertAfterAgeSource: 'ANKC_NATIONAL',
+    vetCertAfterAgeRule: 'ANKC Part 6, 8.3',
+    vetCertAfterAgeVerified: true,
+    requiresBIN: true,
+    notes: 'BIN mandatory from 1 Dec 2025. Max 5 litters OR 3 C-sections lifetime, whichever first. Vet cert before 3rd C-section pregnancy.',
+    sourceName: 'NSW Prevention of Cruelty to Animals Act 1979 (amended 2024)',
     sourceUrl: 'https://www.olg.nsw.gov.au/pets/nsw-pet-registry/breeders/changes-dog-breeding-laws',
   },
   VIC: {
     stateName: 'Victoria',
-    minBreedingMonths: 12, minBreedingMonthsLarge: 18,
-    minBreedingSource: 'STATE_LAW', minBreedingRule: 'Victorian Code of Practice for the Private Keeping of Dogs — breeding and reproduction', minBreedingVerified: true,
-    maxLifetimeLitters: 999, lifetimeLittersVetExemption: false,
-    lifetimeLittersSource: 'STATE_LAW', lifetimeLittersRule: 'No verified universal lifetime cap encoded for all Victorian breeders', lifetimeLittersVerified: true,
-    maxLittersIn18Months: 999, littersIn18mSource: 'STATE_LAW', littersIn18mVerified: true,
-    maxCsections: null, csectionVetRequired: null, csectionRule: 'No verified universal Victorian C-section cap encoded', csectionVerified: false,
-    maxAgeYears: 8, vetCertAfterAgeYears: 8, vetCertAfterAgeSource: 'ANKC_NATIONAL', vetCertAfterAgeRule: 'Dogs Australia Part 6, 8.3', vetCertAfterAgeVerified: true,
-    requiresBIN: false, breederIdLabel: 'Pet Exchange Register source number (where required)', breederIdVerified: true,
-    memberBodyName: 'Dogs Victoria', memberBodyUrl: 'https://dogsvictoria.org.au/', memberRulesVerified: false,
-    notes: 'Victorian law sets a 12-month minimum for breeding females. Business/recreational-breeder obligations vary by breeder category; Dogs Victoria member rules are not treated as state law.',
-    sourceName: 'Animal Welfare Victoria — Code of Practice for the Private Keeping of Dogs',
-    sourceUrl: 'https://agriculture.vic.gov.au/livestock-and-animals/animal-welfare-victoria/pocta-act-1986/victorian-codes-of-practice-for-animal-welfare/code-of-practice-for-the-private-keeping-of-dogs',
+    minBreedingMonths: 12,
+    maxLifetimeLitters: 5,
+    lifetimeLittersVetExemption: false,
+    lifetimeLittersSource: 'KENNEL_CLUB_STATE',
+    lifetimeLittersRule: 'Dogs Victoria Code of Practice',
+    lifetimeLittersVerified: false,
+    maxLittersIn18Months: 2,
+    littersIn18mSource: 'KENNEL_CLUB_STATE',
+    littersIn18mVerified: false,
+    maxCsections: null,
+    csectionVetRequired: null,
+    vetCertAfterAgeYears: 8,
+    vetCertAfterAgeSource: 'ANKC_NATIONAL',
+    vetCertAfterAgeRule: 'ANKC Part 6, 8.3',
+    vetCertAfterAgeVerified: true,
+    requiresBIN: false,
+    notes: 'Dogs Victoria AO status: up to 10 fertile females. PER source number required for all ads.',
+    sourceName: 'Dogs Victoria Code of Practice',
+    sourceUrl: 'https://dogsvictoria.org.au/media/6000/dv-code-of-practice-effective-150224.pdf',
   },
   QLD: {
     stateName: 'Queensland',
-    minBreedingMonths: 12, minBreedingMonthsLarge: 18,
-    minBreedingSource: 'ANKC_NATIONAL', minBreedingRule: 'Dogs Australia Regulations Part 6; Queensland law separately requires physical maturity and fitness', minBreedingVerified: true,
-    maxLifetimeLitters: 999, lifetimeLittersVetExemption: false,
-    lifetimeLittersSource: 'STATE_LAW', lifetimeLittersRule: 'No verified universal lifetime cap encoded in Queensland Schedule 7', lifetimeLittersVerified: true,
-    maxLittersIn18Months: 999, littersIn18mSource: 'STATE_LAW', littersIn18mVerified: true,
-    maxCsections: null, csectionVetRequired: null, csectionRule: 'No verified universal Queensland C-section cap encoded', csectionVerified: false,
-    maxAgeYears: 8, vetCertAfterAgeYears: 8, vetCertAfterAgeSource: 'ANKC_NATIONAL', vetCertAfterAgeRule: 'Dogs Australia Part 6, 8.3', vetCertAfterAgeVerified: true,
-    requiresBIN: false, breederIdLabel: 'Queensland dog breeder supply number', breederIdVerified: true,
-    memberBodyName: 'Dogs Queensland', memberBodyUrl: 'https://dogsqueensland.org.au/', memberRulesVerified: false,
-    notes: 'Queensland Schedule 7 requires a breeding female to be physically mature, fit and healthy, prohibits close-relative mating, and restricts breeding dogs with deleterious heritable conditions without written professional approval.',
-    sourceName: 'Queensland Animal Care and Protection Regulation 2023 — Schedule 7',
-    sourceUrl: 'https://www.legislation.qld.gov.au/view/whole/html/inforce/current/sl-2023-0117',
+    minBreedingMonths: 12,
+    maxLifetimeLitters: 5,
+    lifetimeLittersVetExemption: false,
+    lifetimeLittersSource: 'KENNEL_CLUB_STATE',
+    lifetimeLittersRule: 'Dogs Queensland rules',
+    lifetimeLittersVerified: false,
+    maxLittersIn18Months: 2,
+    littersIn18mSource: 'KENNEL_CLUB_STATE',
+    littersIn18mVerified: false,
+    maxCsections: null,
+    csectionVetRequired: null,
+    vetCertAfterAgeYears: 8,
+    vetCertAfterAgeSource: 'ANKC_NATIONAL',
+    vetCertAfterAgeRule: 'ANKC Part 6, 8.3',
+    vetCertAfterAgeVerified: true,
+    requiresBIN: false,
+    notes: 'Register as breeder within 28 days of litter. Supply number required for all ads.',
+    sourceName: 'Animal Care and Protection Act 2001 (QLD)',
+    sourceUrl: 'https://www.business.qld.gov.au/industries/farms-fishing-forestry/agriculture/animal/industries/dogs',
   },
   WA: {
     stateName: 'Western Australia',
-    minBreedingMonths: 12, minBreedingMonthsLarge: 18,
-    minBreedingSource: 'ANKC_NATIONAL', minBreedingRule: 'Dogs Australia Regulations Part 6', minBreedingVerified: true,
-    maxLifetimeLitters: 999, lifetimeLittersVetExemption: false,
-    lifetimeLittersSource: 'STATE_LAW', lifetimeLittersRule: 'No verified universal current lifetime cap encoded', lifetimeLittersVerified: true,
-    maxLittersIn18Months: 999, littersIn18mSource: 'STATE_LAW', littersIn18mVerified: true,
-    maxCsections: null, csectionVetRequired: null, csectionRule: 'No verified universal WA C-section cap encoded', csectionVerified: false,
-    maxAgeYears: 8, vetCertAfterAgeYears: 8, vetCertAfterAgeSource: 'ANKC_NATIONAL', vetCertAfterAgeRule: 'Dogs Australia Part 6, 8.3', vetCertAfterAgeVerified: true,
-    requiresBIN: false, breederIdLabel: null, breederIdVerified: true,
-    memberBodyName: 'Dogs West', memberBodyUrl: 'https://www.dogswest.com/', memberRulesVerified: false,
-    notes: 'WA approval-to-breed / stop-puppy-farming provisions are legislated but government guidance still states they apply when the laws commence. iDogs does not treat those future provisions as current hard blocks.',
-    sourceName: 'WA Government — Stop puppy farming',
-    sourceUrl: 'https://www.wa.gov.au/organisation/local-government/stop-puppy-farming',
-  },
-  TAS: {
-    stateName: 'Tasmania',
-    minBreedingMonths: 12, minBreedingMonthsLarge: 18,
-    minBreedingSource: 'ANKC_NATIONAL', minBreedingRule: 'Dogs Australia Regulations Part 6; Tasmanian law additionally prohibits mating before first oestrus', minBreedingVerified: true,
-    maxLifetimeLitters: 5, lifetimeLittersVetExemption: true,
-    lifetimeLittersSource: 'STATE_LAW', lifetimeLittersRule: 'Animal Welfare (Dogs) Regulations 2026, reg 23(3)', lifetimeLittersVerified: true,
-    maxLittersIn18Months: 999, littersIn18mSource: 'STATE_LAW', littersIn18mVerified: true,
-    maxCsections: null, csectionVetRequired: null, csectionRule: 'No specific universal C-section cap encoded in reg 23', csectionVerified: true,
-    maxAgeYears: 7, vetCertAfterAgeYears: 7, vetCertAfterAgeSource: 'STATE_LAW', vetCertAfterAgeRule: 'Animal Welfare (Dogs) Regulations 2026, reg 23(4)', vetCertAfterAgeVerified: true,
-    requiresBIN: false, breederIdLabel: null, breederIdVerified: true,
-    memberBodyName: 'Dogs Tasmania', memberBodyUrl: 'https://www.dogstasmania.com.au/', memberRulesVerified: false,
-    notes: 'Tasmania prohibits mating before first oestrus, caps a bitch at 5 lifetime litters unless a vet makes a written determination, and requires a written vet determination to breed after age 7.',
-    sourceName: 'Tasmanian Legislation — Animal Welfare (Dogs) Regulations 2026',
-    sourceUrl: 'https://www.legislation.tas.gov.au/view/whole/html/inforce/current/sr-2026-061',
+    minBreedingMonths: 12,
+    maxLifetimeLitters: 5,
+    lifetimeLittersVetExemption: false,
+    lifetimeLittersSource: 'KENNEL_CLUB_STATE',
+    lifetimeLittersRule: 'CAWA H Regulations',
+    lifetimeLittersVerified: false,
+    maxLittersIn18Months: 999,
+    littersIn18mSource: 'KENNEL_CLUB_STATE',
+    littersIn18mVerified: false,
+    maxCsections: null,
+    csectionVetRequired: null,
+    vetCertAfterAgeYears: 7,
+    vetCertAfterAgeSource: 'KENNEL_CLUB_STATE',
+    vetCertAfterAgeRule: 'CAWA H Regulations (max breeding age 7)',
+    vetCertAfterAgeVerified: false,
+    requiresBIN: false,
+    notes: 'WA: max breeding age 7 years (stricter than other states). Dogs West (CAWA) membership required.',
+    sourceName: 'CAWA H Regulations + Animal Welfare Act 2002 (WA)',
+    sourceUrl: 'https://www.dogswest.com',
   },
   ACT: {
     stateName: 'Australian Capital Territory',
-    minBreedingMonths: 18, minBreedingMonthsLarge: 18,
-    minBreedingSource: 'STATE_LAW', minBreedingRule: 'ACT Breeding Standard, cl 2', minBreedingVerified: true,
-    maxLifetimeLitters: 4, lifetimeLittersVetExemption: true,
-    lifetimeLittersSource: 'STATE_LAW', lifetimeLittersRule: 'ACT Breeding Standard — no more than 4 lifetime litters unless written vet approval applies', lifetimeLittersVerified: true,
-    maxLittersIn18Months: 1, littersIn18mSource: 'STATE_LAW', littersIn18mVerified: true,
-    maxCsections: null, csectionVetRequired: 1, csectionRule: 'ACT Breeding Standard — previous caesarean birth requires review; written-vet-approval exception applies', csectionVerified: true,
-    maxAgeYears: 6, vetCertAfterAgeYears: 6, vetCertAfterAgeSource: 'STATE_LAW', vetCertAfterAgeRule: 'ACT Breeding Standard, cl 2 (18 months to 6 years; written vet approval exception)', vetCertAfterAgeVerified: true,
-    requiresBIN: false, breederIdLabel: 'ACT breeder licence / breeding-standard obligations', breederIdVerified: true,
-    memberBodyName: 'Dogs ACT', memberBodyUrl: 'https://www.dogsact.org.au/', memberRulesVerified: false,
-    notes: 'ACT breeding standard: ordinarily 18 months to 6 years, no more than once in 18 months, no more than 4 lifetime litters; written veterinary approval can provide an exception.',
-    sourceName: 'ACT Legislation Register — Breeding Standard (DI2015-257)',
-    sourceUrl: 'https://www.legislation.act.gov.au/di/2015-257/',
+    minBreedingMonths: 12,
+    maxLifetimeLitters: 5,
+    lifetimeLittersVetExemption: false,
+    lifetimeLittersSource: 'KENNEL_CLUB_STATE',
+    lifetimeLittersRule: 'Dogs ACT via ANKC',
+    lifetimeLittersVerified: false,
+    maxLittersIn18Months: 2,
+    littersIn18mSource: 'KENNEL_CLUB_STATE',
+    littersIn18mVerified: false,
+    maxCsections: null,
+    csectionVetRequired: null,
+    vetCertAfterAgeYears: 8,
+    vetCertAfterAgeSource: 'ANKC_NATIONAL',
+    vetCertAfterAgeRule: 'ANKC Part 6, 8.3',
+    vetCertAfterAgeVerified: true,
+    requiresBIN: false,
+    notes: 'Dogs Australia rules apply via Dogs ACT.',
+    sourceName: 'Dogs Australia + Animal Welfare Act 1992 (ACT)',
+    sourceUrl: 'https://www.dogsact.org.au',
   },
   NT: {
     stateName: 'Northern Territory',
-    minBreedingMonths: 12, minBreedingMonthsLarge: 18,
-    minBreedingSource: 'ANKC_NATIONAL', minBreedingRule: 'Dogs Australia Regulations Part 6', minBreedingVerified: true,
-    maxLifetimeLitters: 999, lifetimeLittersVetExemption: false,
-    lifetimeLittersSource: 'STATE_LAW', lifetimeLittersRule: 'No breeder-specific universal lifetime cap verified in current NT animal-protection sources', lifetimeLittersVerified: true,
-    maxLittersIn18Months: 999, littersIn18mSource: 'STATE_LAW', littersIn18mVerified: true,
-    maxCsections: null, csectionVetRequired: null, csectionRule: 'No breeder-specific universal NT C-section cap verified', csectionVerified: true,
-    maxAgeYears: 8, vetCertAfterAgeYears: 8, vetCertAfterAgeSource: 'ANKC_NATIONAL', vetCertAfterAgeRule: 'Dogs Australia Part 6, 8.3', vetCertAfterAgeVerified: true,
-    requiresBIN: false, breederIdLabel: null, breederIdVerified: true,
-    memberBodyName: 'Dogs NT', memberBodyUrl: 'https://www.dogsnt.com.au/', memberRulesVerified: false,
-    notes: 'Current NT sources establish general animal-protection duties but iDogs has not verified a breeder-specific universal numeric litter or C-section cap. No such cap is invented.',
-    sourceName: 'Northern Territory Government — Animal protection laws',
-    sourceUrl: 'https://nt.gov.au/environment/animals/animal-welfare',
+    minBreedingMonths: 12,
+    maxLifetimeLitters: 5,
+    lifetimeLittersVetExemption: false,
+    lifetimeLittersSource: 'KENNEL_CLUB_STATE',
+    lifetimeLittersRule: 'Dogs NT via ANKC',
+    lifetimeLittersVerified: false,
+    maxLittersIn18Months: 2,
+    littersIn18mSource: 'KENNEL_CLUB_STATE',
+    littersIn18mVerified: false,
+    maxCsections: null,
+    csectionVetRequired: null,
+    vetCertAfterAgeYears: 8,
+    vetCertAfterAgeSource: 'ANKC_NATIONAL',
+    vetCertAfterAgeRule: 'ANKC Part 6, 8.3',
+    vetCertAfterAgeVerified: true,
+    requiresBIN: false,
+    notes: 'Dogs Australia rules apply via Dogs NT.',
+    sourceName: 'Dogs Australia + Animal Welfare Act 1999 (NT)',
+    sourceUrl: 'https://www.dogsnt.com.au',
   },
-}
-
-/** Neutral ruleset used when profile jurisdiction is missing. It keeps Dogs
- * Australia national guidance available but applies no local numeric cap. */
-export const NO_JURISDICTION_RULES: StateRules = {
-  stateName: 'Jurisdiction not set',
-  minBreedingMonths: 12, minBreedingMonthsLarge: 18,
-  minBreedingSource: 'ANKC_NATIONAL', minBreedingRule: 'Dogs Australia Regulations Part 6', minBreedingVerified: true,
-  maxLifetimeLitters: 999, lifetimeLittersVetExemption: false,
-  lifetimeLittersSource: 'STATE_LAW', lifetimeLittersRule: 'Set breeder state/territory to evaluate local law', lifetimeLittersVerified: false,
-  maxLittersIn18Months: 999, littersIn18mSource: 'STATE_LAW', littersIn18mVerified: false,
-  maxCsections: null, csectionVetRequired: null, csectionRule: 'Set breeder state/territory to evaluate local law', csectionVerified: false,
-  maxAgeYears: 8, vetCertAfterAgeYears: 8, vetCertAfterAgeSource: 'ANKC_NATIONAL', vetCertAfterAgeRule: 'Dogs Australia Part 6, 8.3', vetCertAfterAgeVerified: true,
-  requiresBIN: false, breederIdLabel: null, breederIdVerified: false,
-  memberBodyName: 'State member body not determined', memberBodyUrl: '', memberRulesVerified: false,
-  notes: 'Set the breeder profile state/territory before relying on state-law compliance results.',
-  sourceName: 'Jurisdiction required', sourceUrl: '',
+  TAS: {
+    stateName: 'Tasmania',
+    minBreedingMonths: 12,
+    maxLifetimeLitters: 5,
+    lifetimeLittersVetExemption: false,
+    lifetimeLittersSource: 'KENNEL_CLUB_STATE',
+    lifetimeLittersRule: 'Dogs Tasmania via ANKC',
+    lifetimeLittersVerified: false,
+    maxLittersIn18Months: 2,
+    littersIn18mSource: 'KENNEL_CLUB_STATE',
+    littersIn18mVerified: false,
+    maxCsections: null,
+    csectionVetRequired: null,
+    vetCertAfterAgeYears: 8,
+    vetCertAfterAgeSource: 'ANKC_NATIONAL',
+    vetCertAfterAgeRule: 'ANKC Part 6, 8.3',
+    vetCertAfterAgeVerified: true,
+    requiresBIN: false,
+    notes: 'Dogs Australia rules apply via Dogs Tasmania.',
+    sourceName: 'Dogs Australia + Animal Welfare Act 1993 (TAS)',
+    sourceUrl: 'https://www.dogstasmania.com.au',
+  },
 }
 
 // ── Breed rules (Layer 1 — ANKC Part 6 breed-specific) ──────────────────────
@@ -672,11 +643,7 @@ const LEVEL_RANK: Record<FindingLevel, number> = { ok: 0, info: 1, warn: 2, bloc
 
 export function checkBreedingCompliance(input: ComplianceInput): ComplianceResult {
   const findings: Finding[] = []
-  const jurisdiction = resolveComplianceJurisdiction(input.state)
-  const state = jurisdiction ? STATE_RULES[jurisdiction] : NO_JURISDICTION_RULES
-  if (!jurisdiction) {
-    findings.push({ level: 'warn', source: 'STATE_LAW', consequence: 'INFO', message: 'Compliance jurisdiction not set — set breeder state/territory before relying on state-law checks', rule: 'Jurisdiction required', verified: true })
-  }
+  const state = STATE_RULES[input.state || 'SA'] || STATE_RULES['SA']
   const matingDate = input.matingDate ? new Date(input.matingDate) : new Date()
   const litterBirthEstimate = addDays(matingDate, 63)
   const dam = input.dam
@@ -700,25 +667,25 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
   } else if (damRegister === 'LIMITED') {
     findings.push({
       level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
-      message: 'Limited Register — breeding rights do not permit breeding',
+      message: 'Limited Register — not eligible to breed under Dogs Australia rules',
       rule: 'ANKC Part 6, 6.6.2(ii)', verified: true,
     })
   } else if (damRegister === 'NOT_RECORDED') {
     findings.push({
       level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
-      message: 'Registration not recorded — breeding rights not confirmed',
+      message: 'Registration not recorded — breeding eligibility unknown',
       rule: 'ANKC Part 6, 6.6.2', verified: true,
     })
   } else if (damRegister === 'MAIN' && resolveBreedingEligibility(dam) === 'UNKNOWN') {
     findings.push({
       level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
-      message: 'Main Register — breeding rights not confirmed',
+      message: 'Main Register — breeding eligibility not confirmed',
       rule: 'ANKC Part 6, 6.6.2', verified: true,
     })
   } else if (damRegister === 'MAIN' && resolveBreedingEligibility(dam) === 'NOT_ELIGIBLE') {
     findings.push({
       level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
-      message: 'Breeding rights marked not permitted',
+      message: 'Marked not eligible for breeding',
       rule: 'ANKC Part 6, 6.6.2', verified: true,
     })
   }
@@ -727,25 +694,25 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
     if (sireRegister === 'LIMITED') {
       findings.push({
         level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
-        message: `Sire${sire.name ? ` (${sire.name})` : ''} is on the Limited Register — breeding rights do not permit breeding`,
+        message: `Sire${sire.name ? ` (${sire.name})` : ''} is on the Limited Register — not eligible for breeding`,
         rule: 'ANKC Part 6, 6.6.2(ii)', verified: true,
       })
     } else if (sireRegister === 'NOT_RECORDED') {
       findings.push({
         level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
-        message: `Sire${sire.name ? ` (${sire.name})` : ''}: registration not recorded — breeding rights not confirmed`,
+        message: `Sire${sire.name ? ` (${sire.name})` : ''}: registration not recorded — breeding eligibility unknown`,
         rule: 'ANKC Part 6, 6.6.2', verified: true,
       })
     } else if (sireRegister === 'MAIN' && resolveBreedingEligibility(sire) === 'UNKNOWN') {
       findings.push({
         level: 'warn', source: 'ANKC_NATIONAL', consequence: 'INFO',
-        message: `Sire${sire.name ? ` (${sire.name})` : ''}: Main Register — breeding rights not confirmed`,
+        message: `Sire${sire.name ? ` (${sire.name})` : ''}: Main Register — breeding eligibility not confirmed`,
         rule: 'ANKC Part 6, 6.6.2', verified: true,
       })
     } else if (sireRegister === 'MAIN' && resolveBreedingEligibility(sire) === 'NOT_ELIGIBLE') {
       findings.push({
         level: 'block', source: 'ANKC_NATIONAL', consequence: 'LITTER_NOT_REGISTRABLE',
-        message: `Sire${sire.name ? ` (${sire.name})` : ''} has breeding rights marked not permitted`,
+        message: `Sire${sire.name ? ` (${sire.name})` : ''} is marked not eligible for breeding`,
         rule: 'ANKC Part 6, 6.6.2', verified: true,
       })
     }
@@ -755,10 +722,9 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
   if (damAgeMo !== null) {
     if (damAgeMo < state.minBreedingMonths) {
       findings.push({
-        level: 'block', source: state.minBreedingSource,
-        consequence: state.minBreedingSource === 'STATE_LAW' ? 'LEGAL_OFFENCE' : 'LIMITED_REGISTER',
-        message: `Dam is ${damAgeMo} months — minimum encoded for ${jurisdiction ? state.stateName : 'Dogs Australia national rules'} is ${state.minBreedingMonths} months`,
-        rule: state.minBreedingRule, verified: state.minBreedingVerified,
+        level: 'block', source: 'ANKC_NATIONAL', consequence: 'LIMITED_REGISTER',
+        message: `Dam is ${damAgeMo} months — under national minimum of ${state.minBreedingMonths} months`,
+        rule: 'ANKC Part 6, 8.2', verified: true,
       })
     } else if (breedRules?.minDamMonths && damAgeMo < breedRules.minDamMonths) {
       const exemption = breedRules.minDamMonthsVetExemption
@@ -797,52 +763,46 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
     })
   }
 
-  // ── Lifetime litters (only when a universal cap is encoded) ──
+  // ── Lifetime litters (vet-cert exemption where the law provides one) ──
   const litters = dam.litterCount ?? 0
-  if (state.maxLifetimeLitters !== 999 && litters >= state.maxLifetimeLitters) {
+  if (litters >= state.maxLifetimeLitters) {
     if (state.lifetimeLittersVetExemption) {
       findings.push({
         level: 'warn', source: state.lifetimeLittersSource, consequence: 'VET_CERT_REQUIRED',
-        message: `Dam has had ${litters} litters (threshold ${state.maxLifetimeLitters}) — further breeding requires the applicable written veterinary approval/determination`,
+        message: `Dam has had ${litters} litters (limit ${state.maxLifetimeLitters}) — further litters require a written veterinary certificate that she is fit to breed`,
         rule: state.lifetimeLittersRule, verified: state.lifetimeLittersVerified,
       })
     } else {
       findings.push({
-        level: state.lifetimeLittersVerified ? 'block' : 'warn', source: state.lifetimeLittersSource,
-        consequence: state.lifetimeLittersVerified ? 'LEGAL_OFFENCE' : 'INFO',
-        message: `Lifetime litter threshold reached (${state.maxLifetimeLitters} in ${state.stateName})${state.lifetimeLittersVerified ? '' : ' — source pending verification'}`,
+        level: 'block', source: state.lifetimeLittersSource, consequence: 'LEGAL_OFFENCE',
+        message: `Lifetime litter limit reached (${state.maxLifetimeLitters} max in ${state.stateName})`,
         rule: state.lifetimeLittersRule, verified: state.lifetimeLittersVerified,
       })
     }
   }
 
   // ── Litter frequency ──
-  const applyFrequencyRule = state.maxLittersIn18Months !== 999
-    && (state.littersIn18mSource !== 'KENNEL_CLUB_STATE' || input.applyMemberBodyRules === true)
-  if (applyFrequencyRule && (dam.last18mLitters ?? 0) >= state.maxLittersIn18Months) {
+  if (state.maxLittersIn18Months !== 999 && (dam.last18mLitters ?? 0) >= state.maxLittersIn18Months) {
     findings.push({
-      level: state.littersIn18mSource === 'STATE_LAW' && state.littersIn18mVerified ? 'block' : 'warn',
-      source: state.littersIn18mSource,
-      consequence: state.littersIn18mSource === 'STATE_LAW' ? 'LEGAL_OFFENCE' : 'ETHICS_BREACH',
-      message: `${dam.last18mLitters} litters in the last 18 months (threshold ${state.maxLittersIn18Months})${state.littersIn18mVerified ? '' : ' — source pending verification'}`,
-      rule: state.sourceName, verified: state.littersIn18mVerified,
+      level: 'warn', source: state.littersIn18mSource, consequence: 'ETHICS_BREACH',
+      message: `${dam.last18mLitters} litters in the last 18 months (limit ${state.maxLittersIn18Months})${state.littersIn18mVerified ? '' : ' — source pending verification (Dogs SA Code of Ethics)'}`,
+      rule: `${state.sourceName}`, verified: state.littersIn18mVerified,
     })
   }
 
-  // ── C-sections ──
+  // ── C-sections (NSW) ──
   const cs = dam.cSectionCount ?? 0
   if (state.maxCsections !== null && cs >= state.maxCsections) {
     findings.push({
-      level: state.csectionVerified ? 'block' : 'warn', source: 'STATE_LAW',
-      consequence: state.csectionVerified ? 'LEGAL_OFFENCE' : 'INFO',
-      message: `C-section threshold reached (${state.maxCsections} in ${state.stateName})`,
-      rule: state.csectionRule, verified: state.csectionVerified,
+      level: 'block', source: 'STATE_LAW', consequence: 'LEGAL_OFFENCE',
+      message: `C-section limit reached (${state.maxCsections} max in ${state.stateName})`,
+      rule: state.sourceName, verified: false,
     })
   } else if (state.csectionVetRequired !== null && cs >= state.csectionVetRequired) {
     findings.push({
       level: 'warn', source: 'STATE_LAW', consequence: 'VET_CERT_REQUIRED',
-      message: 'Veterinary review / written approval is required before further breeding under the selected jurisdiction rule',
-      rule: state.csectionRule, verified: state.csectionVerified,
+      message: 'Veterinary certificate required before next C-section pregnancy',
+      rule: state.sourceName, verified: false,
     })
   }
 
@@ -924,7 +884,7 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
   }
 
   // ── SA legal reminders (informational, not computable from data) ──
-  if (jurisdiction === 'SA' && findings.every(f => f.level !== 'block')) {
+  if ((input.state || 'SA') === 'SA' && findings.every(f => f.level !== 'block')) {
     findings.push({
       level: 'info', source: 'STATE_LAW', consequence: 'INFO',
       message: 'SA law: dogs must be physically/mentally fit and disease-free at mating; matings with high probability of serious hereditary defect are prohibited without ethics committee approval',
@@ -941,7 +901,7 @@ export function checkBreedingCompliance(input: ComplianceInput): ComplianceResul
   const headline =
     overall === 'block' ? `❌ ${firstBlock!.message}`
     : overall === 'warn' ? `⚠️ ${firstWarn!.message}`
-    : '✓ Actual breeding compliance checks passed'
+    : '✓ Currently eligible to breed'
 
   return { overall, headline, findings }
 }

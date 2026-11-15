@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
+import { PLUS_MONTHLY_PRICE_AUD, LITTER_QUOTA_PLUS_ROLLING_12_MONTHS, EXTRA_LITTER_PRICE_AUD } from '../lib/pricingCopy'
+import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
+import { LaunchCountdownLine, useOfferStatus } from '../components/billing/LaunchOfferCard'
 
 // ── iDogs Landing Page V2 (STAGING ONLY) ─────────────────────────
 // Ported from the approved design-review package:
@@ -23,7 +26,28 @@ import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMe
 // rest of the app's existing global stylesheet (index.css already
 // defines its own unrelated .btn/.btn-primary/etc. — confirmed by
 // direct inspection before writing this file).
+const FAST_LANDING_MEDIA: Partial<Record<LandingSlotId, { localSrc: string; publishedUrl: string }>> = {
+  'dog-profile': {
+    localSrc: '/landing-media-fast/dog-profile.webp',
+    publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/dog-profile/published/8eab97d1-5e79-4852-ab53-5c508e11a868.jpg',
+  },
+  'puppy-showcase': {
+    localSrc: '/landing-media-fast/puppy-showcase.webp',
+    publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/puppy-showcase/published/2a6c4588-21bd-4ee3-87e6-e4346a579353.png',
+  },
+  'digital-passport': {
+    localSrc: '/landing-media-fast/digital-passport.webp',
+    publishedUrl: 'https://storage.googleapis.com/idogs-app.firebasestorage.app/landing-media/digital-passport/published/bc56f60a-f899-46c8-82c6-415c2c12dd37.jpg',
+  },
+}
+
 export default function LandingPage() {
+  const promotionDateActive = usePlusPromotion()
+  // Launch campaign (1 year of Plus free, 100 places): the single headline offer while
+  // it runs; the A$0 subscription promotion stays available in Pricing.
+  const offerStatus = useOfferStatus()
+  const launchActive = Boolean(offerStatus?.launch.active)
+  const promotionActive = promotionDateActive && !offerStatus?.promotionSuperseded
   const { user, loading } = useAuth()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -93,7 +117,14 @@ export default function LandingPage() {
                 <Link className="btn btn-primary" to="/signup">Start Free</Link>
                 <a className="btn btn-ghost" href="#howitworks">See How It Works</a>
               </div>
-              <p className="price-note">Plans from A$7/month · No complicated pricing.</p>
+              {launchActive && offerStatus ? (
+                <p className="price-note" data-testid="hero-launch-offer">
+                  🎁 <strong>FREE Gift Voucher</strong> - 1 year of iDogs Plus for 100 dog owners &amp; dog breeders, no card needed. <LaunchCountdownLine status={offerStatus} />{' '}
+                  <Link to="/signup?next=%2Fapp%2Fbilling" style={{ fontWeight: 700, textDecoration: 'underline', color: 'inherit' }}>Claim your Gift Voucher</Link>
+                </p>
+              ) : (
+                <p className="price-note">{promotionActive ? 'iDogs Plus A$0/month through 31 January 2027 · Then A$7/month.' : 'Plans from A$7/month · No complicated pricing.'}</p>
+              )}
             </div>
             {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
             <div className="hero-visual" aria-label="iDogs product preview">
@@ -131,31 +162,37 @@ export default function LandingPage() {
             <div className="shots">
               <div>
                 <div className="frame-desktop"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="dog-profile"
+                  <img
+                    src="/landing-media-fast/dog-profile.webp"
                     className="ph ph-desktop"
-                    ariaLabel="Dog records in one organised profile"
-                    fallback={<div className="ph ph-desktop" role="img" aria-label="Dog records in one organised profile (product screenshot to follow)">Dog Profile &amp; records</div>}
+                    alt="Dog records in one organised profile"
+                    loading="lazy"
+                    decoding="async"
+                    fetchPriority="low"
                   /></div>
                 <div className="shot-cap">Dog records in one organised profile</div>
               </div>
               <div>
                 <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="puppy-showcase"
+                  <img
+                    src="/landing-media-fast/puppy-showcase.webp"
                     className="ph ph-mobile"
-                    ariaLabel="A mobile-friendly Puppy Showcase"
-                    fallback={<div className="ph ph-mobile" role="img" aria-label="A mobile-friendly Puppy Showcase (product screenshot to follow)">Puppy Showcase</div>}
+                    alt="A mobile-friendly Puppy Showcase"
+                    loading="lazy"
+                    decoding="async"
+                    fetchPriority="low"
                   /></div>
                 <div className="shot-cap">A mobile-friendly Puppy Showcase</div>
               </div>
               <div>
                 <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <LandingMediaSlot
-                    slotId="digital-passport"
+                  <img
+                    src="/landing-media-fast/digital-passport.webp"
                     className="ph ph-mobile"
-                    ariaLabel="A limited public Passport view"
-                    fallback={<div className="ph ph-mobile" role="img" aria-label="A limited public Passport view (product screenshot to follow)">Digital Passport / QR</div>}
+                    alt="A limited public Passport view"
+                    loading="lazy"
+                    decoding="async"
+                    fetchPriority="low"
                   /></div>
                 <div className="shot-cap">A limited public Passport view</div>
               </div>
@@ -176,7 +213,7 @@ export default function LandingPage() {
                   <li>Health and vaccination records</li>
                   <li>QR sharing</li>
                 </ul>
-                <Link className="btn btn-path" to="/signup">Start Free as a Dog Owner</Link>
+                <Link className="btn btn-path" to="/signup?role=owner">Start Free as a Dog Owner</Link>
               </div>
               <div className="path" id="for-breeders">
                 <h3>For Breeders</h3>
@@ -186,7 +223,7 @@ export default function LandingPage() {
                   <li>Create a Puppy Showcase</li>
                   <li>Add puppy photos</li>
                 </ul>
-                <Link className="btn btn-path" to="/signup">Start Free as a Breeder</Link>
+                <Link className="btn btn-path" to="/signup?role=breeder">Start Free as a Breeder</Link>
               </div>
             </div>
           </div>
@@ -238,11 +275,11 @@ export default function LandingPage() {
           <div className="wrap">
             <div className="ai-card">
               <div>
-                <h3>AI Document Scan</h3>
+                <h3>iDogs Document Scan</h3>
                 <p>Turn dog documents into organised records faster. Upload a supported document and iDogs will extract key details for you to review before saving.</p>
                 <span className="ai-note">Review extracted information before saving.</span>
               </div>
-              <ol className="ai-flow" aria-label="AI Document Scan steps">
+              <ol className="ai-flow" aria-label="iDogs Document Scan steps">
                 <li><span className="n">1</span> Upload a supported document</li>
                 <li><span className="n">2</span> iDogs extracts key details</li>
                 <li><span className="n">3</span> You review and edit</li>
@@ -269,19 +306,45 @@ export default function LandingPage() {
                 <div className="pricing-card-head">
                   <div>
                     <p className="pricing-label">iDogs Plus</p>
-                    <p className="pricing-price"><span>A$7</span><small>/month</small></p>
+                    {launchActive ? (
+                      // A$7 is the real regular price (genuine reference price); the voucher makes the first year free.
+                      <p className="pricing-price" data-testid="pricing-voucher-price"><del style={{ fontFamily: "'Fraunces','Georgia',serif", fontSize: 30, fontWeight: 600, lineHeight: 1, color: 'var(--ink-soft)', opacity: 0.75, marginRight: 6, textDecorationThickness: 2 }}>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</del><span>A$0</span><small>/month for 12 months with the Gift Voucher</small></p>
+                    ) : !promotionActive && <p className="pricing-price"><span>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</span><small>/month</small></p>}
                   </div>
                   <span className="pricing-badge">Most popular</span>
                 </div>
+                {launchActive && offerStatus && (
+                  <div data-testid="pricing-launch-offer" style={{ border: '2px solid var(--green-mid, #1D9E75)', borderRadius: 12, padding: '12px 14px', margin: '8px 0 12px', background: 'var(--green-light, #E1F5EE)' }}>
+                    <p style={{ fontWeight: 700, margin: 0 }}>🎁 FREE Gift Voucher - 1 year of iDogs Plus for 100 dog owners &amp; dog breeders, no card needed.</p>
+                    <p style={{ fontSize: 13, margin: '4px 0 0' }}><LaunchCountdownLine status={offerStatus} /> · add your first dog, then claim. Nothing renews.</p>
+                  </div>
+                )}
+                {promotionActive && !launchActive && <PlusPromotion />}
                 <p className="pricing-copy">Organise your dogs and breeding records in one connected workspace.</p>
                 <ul className="pricing-list">
                   <li>Dog profiles, health records and documents</li>
                   <li>Breeder tools for dogs, litters and puppies</li>
-                  <li>2 litters per rolling 12 months included</li>
-                  <li>Extra litters A$39 each</li>
+                  <li>{LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} litters per rolling 12 months included</li>
+                  <li>{`Extra litters A$${EXTRA_LITTER_PRICE_AUD} each`}</li>
                   <li>Digital Passport and QR sharing</li>
                 </ul>
-                <Link className="btn btn-primary pricing-cta" to="/signup">Start Free</Link>
+                {launchActive ? (
+                  <>
+                    <Link className="btn btn-primary pricing-cta" to="/signup?next=%2Fapp%2Fbilling">Claim your Gift Voucher — no card needed</Link>
+                    {promotionActive && (
+                      // The A$0 subscription offer stays available with its full
+                      // terms, shown as the secondary choice under the voucher CTA.
+                      <div style={{ marginTop: 16 }}>
+                        <p style={{ fontSize: 13, margin: '0 0 8px' }}>
+                          Prefer a monthly subscription? <Link to="/signup?next=%2Fapp%2Fbilling" style={{ textDecoration: 'underline', color: 'inherit' }}>Get Plus for A$0/month until 31 January 2027</Link>, then A$7/month.
+                        </p>
+                        <div style={{ fontSize: 12, opacity: 0.9 }}><PlusPromotion /></div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <Link className="btn btn-primary pricing-cta" to={promotionActive ? '/signup?next=%2Fapp%2Fbilling' : '/signup'}>{promotionActive ? 'Get Plus for A$0' : 'Start Free'}</Link>
+                )}
               </article>
               <article className="pricing-card pricing-card-addon">
                 <p className="pricing-label">Optional add-on</p>
@@ -448,11 +511,12 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
     return () => { cancelled = true }
   }, [slotId])
 
-  if (!media || failed) return <>{fallback}</>
+  const fastMedia = FAST_LANDING_MEDIA[slotId]
+  if (failed && !fastMedia) return <>{fallback}</>
 
   const fillStyle: CSSProperties = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
 
-  if (media.kind === 'video') {
+  if (media?.kind === 'video' && !failed) {
     return (
       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
         <video
@@ -484,12 +548,21 @@ function LandingMediaSlot({ slotId, className, ariaLabel, fallback }: {
     )
   }
 
+  const imageSrc = media?.kind === 'image' && !failed
+    ? (fastMedia && media.url === fastMedia.publishedUrl ? fastMedia.localSrc : media.url)
+    : fastMedia?.localSrc
+
+  if (!imageSrc) return <>{fallback}</>
+
   return (
     <img
       className={className}
       style={fillStyle}
-      src={media.url}
+      src={imageSrc}
       alt={ariaLabel}
+      loading="eager"
+      decoding="async"
+      fetchPriority="high"
       onError={() => setFailed(true)}
     />
   )

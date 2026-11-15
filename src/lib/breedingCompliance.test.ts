@@ -3,14 +3,9 @@ import {
   resolvePedigreeRegister,
   resolveBreedingEligibility,
   nextPedigreeRegisterUpdate,
-  nextBreedingRightsUpdate,
   initialTransferPedigreeRegister,
-  initialBreedingRightsValue,
   pedigreeRegisterLabel,
-  breedingRightsLabel,
   checkBreedingCompliance,
-  resolveComplianceJurisdiction,
-  STATE_RULES,
 } from './breedingCompliance'
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -186,13 +181,13 @@ describe('checkBreedingCompliance — register/eligibility headline', () => {
     const result = checkBreedingCompliance({ dam: { ...baseDam, pedigreeRegister: 'limited' }, state: 'SA' })
     expect(result.overall).toBe('block')
     expect(result.headline).toContain('Limited Register')
-    expect(result.headline).toContain('breeding rights do not permit')
+    expect(result.headline).toContain('not eligible')
   })
 
   it('CASE B: MAIN + no explicit eligibility renders as unconfirmed, not a green "eligible" pass', () => {
     const result = checkBreedingCompliance({ dam: { ...baseDam, pedigreeRegister: 'main' }, state: 'SA' })
     expect(result.overall).not.toBe('ok')
-    expect(result.headline).toContain('breeding rights not confirmed')
+    expect(result.headline).toContain('breeding eligibility not confirmed')
   })
 
   it('CASE C: MAIN + explicit eligible renders as eligible (subject to other findings)', () => {
@@ -204,7 +199,7 @@ describe('checkBreedingCompliance — register/eligibility headline', () => {
     // so `overall` can be 'info' here — the headline is what the badge shows.
     expect(result.overall).not.toBe('block')
     expect(result.overall).not.toBe('warn')
-    expect(result.headline).toBe('✓ Actual breeding compliance checks passed')
+    expect(result.headline).toBe('✓ Currently eligible to breed')
   })
 
   // Scenario 7: Not Recorded renders correctly
@@ -434,126 +429,5 @@ describe('checkBreedingCompliance — sire register/eligibility (mirrors dam han
     })
     expect(result.overall).not.toBe('ok')
     expect(result.findings.some(f => f.message.includes('registration not recorded'))).toBe(true)
-  })
-})
-
-describe('three-layer model — Pedigree registration → Breeding rights → Actual compliance', () => {
-  it('maps stored eligibility into the breeder-facing Breeding rights layer', () => {
-    expect(initialBreedingRightsValue({ pedigreeRegister: 'main' })).toBe('unknown')
-    expect(initialBreedingRightsValue({ pedigreeRegister: 'main', breedingEligibility: 'eligible' })).toBe('eligible')
-    expect(initialBreedingRightsValue({ pedigreeRegister: 'main', breedingEligibility: 'not_eligible' })).toBe('not_eligible')
-  })
-
-  it('labels rights without claiming actual compliance', () => {
-    expect(breedingRightsLabel('eligible')).toBe('Breeding permitted')
-    expect(breedingRightsLabel('not_eligible')).toBe('Not permitted')
-    expect(breedingRightsLabel('unknown')).toBe('Not confirmed')
-  })
-
-  it('allows an explicit breeder decision only on Main Register', () => {
-    expect(nextBreedingRightsUpdate('main', 'eligible')).toEqual({ breedingEligibility: 'eligible' })
-    expect(nextBreedingRightsUpdate('main', 'not_eligible')).toEqual({ breedingEligibility: 'not_eligible' })
-    expect(nextBreedingRightsUpdate('main', 'unknown')).toEqual({ breedingEligibility: 'unknown' })
-  })
-
-  it('Limited Register always forces Not permitted', () => {
-    expect(nextBreedingRightsUpdate('limited', 'eligible')).toEqual({ breedingEligibility: 'not_eligible' })
-  })
-
-  it('non-authoritative registration states can never be promoted to permitted by the rights control', () => {
-    expect(nextBreedingRightsUpdate(undefined, 'eligible')).toEqual({ breedingEligibility: 'unknown' })
-    expect(nextBreedingRightsUpdate('not_recorded', 'eligible')).toEqual({ breedingEligibility: 'unknown' })
-    expect(nextBreedingRightsUpdate('no_pedigree', 'eligible')).toEqual({ breedingEligibility: 'unknown' })
-    expect(nextBreedingRightsUpdate('mixed', 'eligible')).toEqual({ breedingEligibility: 'unknown' })
-    expect(nextBreedingRightsUpdate('rescue', 'eligible')).toEqual({ breedingEligibility: 'unknown' })
-  })
-
-  it('breeding rights confirmed still requires the separate compliance engine to pass', () => {
-    const result = checkBreedingCompliance({
-      dam: { name: 'Young Main Dog', breed: 'Labrador', dateOfBirth: new Date().toISOString().slice(0, 10), pedigreeRegister: 'main', breedingEligibility: 'eligible' },
-      state: 'SA',
-    })
-    expect(result.overall).toBe('block')
-    expect(result.headline).not.toContain('Actual breeding compliance checks passed')
-  })
-
-  it('an adult Main dog with confirmed rights can reach the distinct actual-compliance pass headline', () => {
-    const result = checkBreedingCompliance({
-      dam: { name: 'Adult Main Dog', breed: 'Poodle', dateOfBirth: '2020-01-01', pedigreeRegister: 'main', breedingEligibility: 'eligible' },
-      state: 'SA',
-    })
-    expect(result.overall).not.toBe('block')
-    expect(result.overall).not.toBe('warn')
-    expect(result.headline).toBe('✓ Actual breeding compliance checks passed')
-  })
-})
-
-
-describe('jurisdiction-aware compliance', () => {
-  const mainDam = {
-    name: 'Jurisdiction Dam',
-    breed: 'Poodle',
-    dateOfBirth: '2020-01-01',
-    pedigreeRegister: 'main',
-    breedingEligibility: 'eligible',
-  }
-
-  it('recognises all eight Australian jurisdictions and fails closed for missing/invalid values', () => {
-    for (const code of ['SA', 'NSW', 'VIC', 'QLD', 'WA', 'TAS', 'ACT', 'NT']) {
-      expect(resolveComplianceJurisdiction(code)).toBe(code)
-      expect(resolveComplianceJurisdiction(code.toLowerCase())).toBe(code)
-    }
-    expect(resolveComplianceJurisdiction(undefined)).toBeNull()
-    expect(resolveComplianceJurisdiction('')).toBeNull()
-    expect(resolveComplianceJurisdiction('XX')).toBeNull()
-  })
-
-  it('never falls back missing jurisdiction to South Australia', () => {
-    const result = checkBreedingCompliance({ dam: mainDam })
-    expect(result.overall).toBe('warn')
-    expect(result.headline).toContain('jurisdiction not set')
-    expect(result.findings.some(f => f.rule.includes('SA S&G'))).toBe(false)
-  })
-
-  it('encodes ACT verified limits as ACT rules, not generic SA defaults', () => {
-    expect(STATE_RULES.ACT.minBreedingMonths).toBe(18)
-    expect(STATE_RULES.ACT.maxLifetimeLitters).toBe(4)
-    expect(STATE_RULES.ACT.maxLittersIn18Months).toBe(1)
-    expect(STATE_RULES.ACT.maxAgeYears).toBe(6)
-    const result = checkBreedingCompliance({ dam: { ...mainDam, litterCount: 4 }, state: 'ACT' })
-    expect(result.findings.some(f => f.level === 'warn' && f.source === 'STATE_LAW' && f.message.includes('4 litters'))).toBe(true)
-  })
-
-  it('encodes Tasmania 5-litter and age-7 vet-determination thresholds', () => {
-    expect(STATE_RULES.TAS.maxLifetimeLitters).toBe(5)
-    expect(STATE_RULES.TAS.lifetimeLittersVetExemption).toBe(true)
-    expect(STATE_RULES.TAS.vetCertAfterAgeYears).toBe(7)
-    const result = checkBreedingCompliance({ dam: { ...mainDam, litterCount: 5 }, state: 'TAS' })
-    expect(result.findings.some(f => f.consequence === 'VET_CERT_REQUIRED' && f.verified)).toBe(true)
-  })
-
-  it('encodes NSW BIN, lifetime litter and C-section rules as verified', () => {
-    expect(STATE_RULES.NSW.requiresBIN).toBe(true)
-    expect(STATE_RULES.NSW.maxLifetimeLitters).toBe(5)
-    expect(STATE_RULES.NSW.maxCsections).toBe(3)
-    expect(STATE_RULES.NSW.csectionVerified).toBe(true)
-    const result = checkBreedingCompliance({ dam: { ...mainDam, cSectionCount: 3 }, state: 'NSW' })
-    expect(result.findings.some(f => f.level === 'block' && f.message.includes('C-section'))).toBe(true)
-  })
-
-  it('does not invent a universal 5-litter state cap for VIC, QLD, WA or NT', () => {
-    for (const code of ['VIC', 'QLD', 'WA', 'NT'] as const) {
-      expect(STATE_RULES[code].maxLifetimeLitters).toBe(999)
-      const result = checkBreedingCompliance({ dam: { ...mainDam, litterCount: 6 }, state: code })
-      expect(result.findings.some(f => f.message.includes('Lifetime litter'))).toBe(false)
-    }
-  })
-
-  it('keeps conditional member-body frequency rules off unless membership is explicitly applied', () => {
-    const dam = { ...mainDam, last18mLitters: 2 }
-    const withoutMembership = checkBreedingCompliance({ dam, state: 'SA' })
-    expect(withoutMembership.findings.some(f => f.source === 'KENNEL_CLUB_STATE' && f.message.includes('18 months'))).toBe(false)
-    const withMembership = checkBreedingCompliance({ dam, state: 'SA', applyMemberBodyRules: true })
-    expect(withMembership.findings.some(f => f.source === 'KENNEL_CLUB_STATE' && f.message.includes('18 months'))).toBe(true)
   })
 })

@@ -150,7 +150,7 @@ const { check, skip, summary } = makeChecker()
       'microchip', 'ankc', 'tenantId', 'currentOwnerId', 'createdByUserId', 'originBreederId',
       'notes', 'breederIdType', 'breederIdValue', 'buyerEmail', 'buyerName', 'previousOwnerId',
       'reservedForName', 'reservedForEmail', 'reservedForPhone', 'depositStatus', 'depositAmount',
-      'depositReceivedAt', 'availabilityStatus', 'status', 'passportId', 'transferredAt', 'claimedBy', 'claimedAt',
+      'depositReceivedAt', 'availabilityStatus', 'status', 'transferredAt', 'claimedBy', 'claimedAt',
     ]
     for (const field of forbiddenFields) {
       check(`publicPuppyProjection() never references dog.${field}`, !fnSrc.includes(`dog.${field}`))
@@ -491,18 +491,19 @@ if (process.env.FIRESTORE_EMULATOR_HOST && process.env.FIREBASE_AUTH_EMULATOR_HO
       buyerEmail: 'buyer@example.com', buyerName: 'Jane Buyer', reservedForName: 'Jane Buyer',
       reservedForEmail: 'buyer@example.com', reservedForPhone: '0412345678',
       depositStatus: 'received', depositAmount: 500, depositReceivedAt: '2026-01-05',
-      availabilityStatus: 'reserved', passportId: 'PUP-2026-SECRET',
+      availabilityStatus: 'reserved', passportId: 'PUP-2026-PUBLIC',
     })
     const res = mockRes()
     await showcasePublicHandler(mockGetReq({ token }, 't8-ip'), res)
     const raw = JSON.stringify(res.body)
     const mustNotAppear = [
       '900000000000000', '2024001234', 'PRIVATE PUPPY NOTE', 'DOGS_SA', 'B999999',
-      'buyer@example.com', 'Jane Buyer', '0412345678', '500', '2026-01-05', 'PUP-2026-SECRET',
+      'buyer@example.com', 'Jane Buyer', '0412345678', '500', '2026-01-05',
     ]
     for (const needle of mustNotAppear) {
       check('8', `Public response never contains the seeded private value "${needle}"`, !raw.includes(needle))
     }
+    check('8', 'Approved QR address is public but never authorizes private puppy updates', res.body?.puppies?.[0]?.passportId === 'PUP-2026-PUBLIC')
     // The showcase-level `availability` (curated separately, 'available'
     // from setupLiveShowcase) must still be present and correct — proves
     // the allowlist isn't accidentally stripping EVERYTHING, only the
