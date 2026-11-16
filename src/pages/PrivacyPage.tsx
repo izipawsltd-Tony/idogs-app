@@ -4,7 +4,7 @@ import { DELETION_POLICY } from '../../shared/account-deletion-copy.js'
 import AIProviderRetention from '../components/legal/AIProviderRetention'
 
 export default function PrivacyPage() {
-  const lastUpdated = '6 November 2026'
+  const lastUpdated = '17 November 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
       <LegalNav />
@@ -91,7 +91,7 @@ export default function PrivacyPage() {
           </LegalSection>
 
           <LegalSection title="9. Children's Privacy">
-            <p>iDogs is not directed at children under 18. We do not knowingly collect personal information from anyone under 18. If you believe a child has provided us with personal information, contact us immediately.</p>
+            <p>iDogs is not directed at children. You must be at least 16 to create an account, and users aged 16 or 17 may only use iDogs with the permission of a parent or guardian. We do not knowingly collect personal information from anyone under 16. If you believe a child under 16 has provided us with personal information, contact us and we will delete it.</p>
           </LegalSection>
 
           <LegalSection title="10. Changes to This Policy">
