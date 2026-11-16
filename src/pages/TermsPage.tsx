@@ -10,7 +10,7 @@ import {
 } from '../lib/pricingCopy'
 
 export default function TermsPage() {
-  const lastUpdated = '29 October 2026'
+  const lastUpdated = '17 November 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
       <LegalNav />
@@ -41,7 +41,7 @@ export default function TermsPage() {
 
           <LegalSection title="3. Accounts and Registration">
             <p>You must provide accurate, current, and complete information when creating an account. You are responsible for maintaining the confidentiality of your login credentials and for all activities under your account.</p>
-            <p>You must be at least 18 years of age to create an account. By registering, you represent that you are 18 or older.</p>
+            <p>You must be at least 16 years of age to create an account. By registering, you represent that you are 16 or older. If you are under 18, you may only use iDogs with the permission of a parent or guardian.</p>
             <p>We reserve the right to suspend or terminate accounts that violate these Terms.</p>
           </LegalSection>
 
@@ -56,6 +56,7 @@ export default function TermsPage() {
             <p>The included litter allowance is linked to your breeder profile rather than to a particular login or subscription period. Cancelling, downgrading, or resubscribing does not reset litter usage within the rolling 365-day period. Changing your login email or using another login linked to the same breeder profile also does not create a new allowance.</p>
             <p>An Extra Litter Credit is linked to the breeder profile that purchased it and is consumed when it is used to activate one additional litter. An unused Extra Litter Credit does not reset the included litter allowance.</p>
             <p>Payments are processed by Stripe. We do not store your payment card details. Subscriptions renew automatically at the end of each billing period unless cancelled.</p>
+            <p>You must be 18 or older to purchase a paid plan or add-on. If you are under 18, a parent or guardian must make the purchase.</p>
             <p>You may cancel at any time. Cancellation takes effect at the end of the current billing period. No refunds are provided for partial months.</p>
           </LegalSection>
 
