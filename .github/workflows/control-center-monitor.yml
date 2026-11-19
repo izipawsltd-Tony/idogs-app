@@ -105,6 +105,7 @@ jobs:
           OUTCOME: ${{ steps.probe.outputs.outcome }}
           INCIDENT: ${{ steps.probe.outputs.incident }}
           TRIGGER: ${{ inputs.trigger || github.event_name }}
+          COUNTED: ${{ steps.probe.outputs.counted }}
         run: |
           if [ "$CODE" = "1" ] || [ -z "$OUTCOME" ]; then
             echo "::warning title=Monitor runner error::The monitor itself failed, so the website was not checked this run. See the Probe step log."
@@ -120,7 +121,7 @@ jobs:
           elif [ "$INCIDENT" = "OBSERVATION_GAP" ]; then
             echo "::warning title=Open incident: monitoring gap::Two or more consecutive runs could not check the website."
           fi
-          echo "outcome=${OUTCOME:-RUNNER_ERROR} incident=${INCIDENT:-UNKNOWN} exit=${CODE} trigger=${TRIGGER}"
+          echo "outcome=${OUTCOME:-RUNNER_ERROR} incident=${INCIDENT:-UNKNOWN} exit=${CODE} trigger=${TRIGGER} counted=${COUNTED:-false}"
 
       - name: Self-test and rehearsal (simulated, does not contact the website)
         if: github.event_name != 'schedule' && inputs.trigger != 'external-cron'

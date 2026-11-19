@@ -27,7 +27,7 @@ try {
     // Runner-provided output file only (no user-supplied path): lets the
     // workflow log the two failure cases separately without parsing JSON.
     if (process.env.GITHUB_OUTPUT) {
-      await appendFile(process.env.GITHUB_OUTPUT, `outcome=${report.outcome}\nincident=${report.incident?.kind ?? 'NONE'}\n`)
+      await appendFile(process.env.GITHUB_OUTPUT, `outcome=${report.outcome}\nincident=${report.incident?.kind ?? 'NONE'}\ncounted=${report.counted === false ? 'false' : 'true'}\n`)
     }
     // No emails, messages or production writes. The scheduler owns
     // notification routing; an active incident is a distinct nonzero result.

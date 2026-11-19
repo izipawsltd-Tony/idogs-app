@@ -23,8 +23,8 @@ Hoặc trên dashboard Cloudflare: Workers & Pages → Create → dán `worker.m
 - Thu hồi quyền: GitHub → Settings → Developer settings → Fine-grained tokens → Revoke.
 
 ## Nghiệm thu
-Sau ít nhất 24 giờ, lấy lịch sử lượt chạy và kết quả từng lượt rồi chạy:
+Sau ít nhất 24 giờ, lấy từ log từng lượt dòng `outcome=... trigger=... counted=...` thành JSON `[{id, trigger, startedAt, outcome, counted}]` rồi chạy:
 ```
 node scripts/control-center-monitor-history.mjs <from-ISO> <to-ISO> < runs.json
 ```
-Đạt khi cửa sổ ≥ 24 giờ và khoảng cách lớn nhất giữa hai quan sát hợp lệ (WEBSITE_OK hoặc WEBSITE_ERROR) ≤ 30 phút.
+Quan sát hợp lệ = lượt **tự động** (`schedule` hoặc `external-cron`), **được tính** (không phải lượt trùng) và đã quan sát được website (WEBSITE_OK hoặc WEBSITE_ERROR). Lượt thủ công, lượt push và lượt trùng không bao giờ làm cửa sổ đạt. Đạt khi cửa sổ ≥ 24 giờ và khoảng cách lớn nhất giữa hai quan sát hợp lệ ≤ 30 phút.
