@@ -8,6 +8,26 @@ const enumValue = (value, allowed) => allowed.includes(value) ? value : 'UNKNOWN
 const PAYMENT_STATUSES = ['VERIFIED', 'TEST_MODE_ONLY', 'UNKNOWN_MODE', 'PARTIAL', 'UNAVAILABLE']
 const share = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null
 
+const VISIT_STATUSES = ['NO_VERIFIED_SOURCE', 'UNVERIFIED', 'VERIFIED']
+const VISIT_REASONS = ['NO_VERIFIED_SOURCE', 'SOURCE_NOT_APPROVED', 'ENVIRONMENT_MISMATCH', 'UNIT_MISMATCH', 'FILTERING_NOT_CONFIRMED', 'INVALID_COUNT', 'CONFLICTING_DUPLICATE', 'MISSING_DAYS', 'NOT_FINALIZED', 'SIGNUP_PLATFORM_UNKNOWN', 'NUMERATOR_EXCEEDS_DENOMINATOR', 'ZERO_VISITS']
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/
+// Same object the dashboard renders, narrowed to an allowlist. Counts and the
+// rate pass through only when the dashboard would show them as VERIFIED.
+function projectVisits(visits) {
+  const source = visits && typeof visits === 'object' ? visits : {}
+  const status = VISIT_STATUSES.includes(source.status) ? source.status : 'NO_VERIFIED_SOURCE'
+  const verified = status === 'VERIFIED'
+  const window = source.window || {}
+  return {
+    status,
+    reasons: Array.isArray(source.reasons) ? source.reasons.filter(reason => VISIT_REASONS.includes(reason)) : [],
+    window: DAY_KEY.test(window.fromDay ?? '') && DAY_KEY.test(window.toDay ?? '') ? { fromDay: window.fromDay, toDay: window.toDay, days: amount(window.days) } : null,
+    webSignups: amount(source.webSignups),
+    signupPageSessions: verified ? amount(source.signupPageSessions) : null,
+    visitToSignupRate: verified ? share(source.visitToSignupRate) : null,
+  }
+}
+
 // Aggregate funnel only. Test-mode diagnostics are deliberately not forwarded
 // to the model so it cannot present them as customer results.
 function projectFunnel(funnel, freshness) {
@@ -16,7 +36,7 @@ function projectFunnel(funnel, freshness) {
   const retention = funnel.paidRetention || {}
   const verified = paid.status === 'VERIFIED'
   return {
-    visits: { status: 'NO_VERIFIED_SOURCE', signupPageSessions: null, visitToSignupRate: null },
+    visits: projectVisits(funnel.visits),
     activation: { firstDog: amount(funnel.activation?.firstDog), firstLitter: amount(funnel.activation?.firstLitter) },
     payingCustomers: {
       status: enumValue(paid.status, PAYMENT_STATUSES),
@@ -31,7 +51,7 @@ function projectFunnel(funnel, freshness) {
       rate: verified ? share(retention.rate) : null,
     },
     usageRetention: { status: 'NOT_MEASURED', rate: null },
-    basis: 'Activation is the first dog after signup; first litter is separate. Paying customers are Stripe-only (Apple not integrated), once per account on the first verified successful payment, excluding test mode. Paid retention is successful renewal among accounts due for renewal. Counts are null when not verified; null is unknown, not zero.',
+    basis: 'Visit-to-signup rate is web signups divided by sessions that include the signup page, over the same whole UTC days, from an Owner-approved source; any other status means Unverified and the rate is null. Activation is the first dog after signup; first litter is separate. Paying customers are Stripe-only (Apple not integrated), once per account on the first verified successful payment, excluding test mode. Paid retention is successful renewal among accounts due for renewal. Counts are null when not verified; null is unknown, not zero.',
   }
 }
 

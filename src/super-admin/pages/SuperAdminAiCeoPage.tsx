@@ -78,7 +78,15 @@ type Decision = {
 type FunnelPaymentStatus = 'VERIFIED' | 'TEST_MODE_ONLY' | 'UNKNOWN_MODE' | 'PARTIAL' | 'UNAVAILABLE'
 type GrowthFunnel = {
   windowDays: number
-  visits: { status: string; signupPageSessions: number | null; visitToSignupRate: number | null; note: string }
+  visits: {
+    status: 'NO_VERIFIED_SOURCE' | 'UNVERIFIED' | 'VERIFIED'
+    reasons?: string[]
+    window?: { fromDay: string; toDay: string; days: number }
+    webSignups?: number | null
+    signupPageSessions: number | null
+    visitToSignupRate: number | null
+    note: string
+  }
   activation: { firstDog: number | null; firstLitter: number | null; note: string }
   payingCustomers: { status: FunnelPaymentStatus; newInWindow: number | null; total: number | null; scope: string; testModeDiagnostics: { newInWindow: number | null; total: number | null } | null; note: string }
   paidRetention: { status: FunnelPaymentStatus; dueForRenewal: number | null; renewed: number | null; rate: number | null; testModeDiagnostics: { dueForRenewal: number | null; renewed: number | null } | null; note: string }
@@ -93,6 +101,8 @@ const PAYMENT_STATUS_LABEL: Record<FunnelPaymentStatus, string> = {
   UNAVAILABLE: 'Not measured: Stripe is unavailable',
 }
 const noData = (value: number | null | undefined) => value ?? 'No data yet'
+// Anything short of VERIFIED is shown as Unverified, with no visit count or rate.
+const visitBadge = (status: GrowthFunnel['visits']['status']) => status === 'VERIFIED' ? 'Verified' : 'Unverified'
 
 function FunnelHistory({ funnel }: { funnel: GrowthFunnel }) {
   const paid = funnel.payingCustomers
@@ -100,8 +110,8 @@ function FunnelHistory({ funnel }: { funnel: GrowthFunnel }) {
   return <div aria-label="Funnel history" style={{ marginTop: 16 }}>
     <h4 style={{ margin: '0 0 8px' }}>Funnel · last {funnel.windowDays} days</h4>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
-      <MetricCard label="Signup-page sessions" value={noData(funnel.visits.signupPageSessions)} />
-      <MetricCard label="Visit → signup rate" value={funnel.visits.visitToSignupRate == null ? '—' : `${Math.round(funnel.visits.visitToSignupRate * 100)}%`} />
+      <MetricCard label={`Signup-page sessions · ${visitBadge(funnel.visits.status)}`} value={funnel.visits.status === 'VERIFIED' ? noData(funnel.visits.signupPageSessions) : 'Unverified'} />
+      <MetricCard label={`Visit → signup rate · ${visitBadge(funnel.visits.status)}`} value={funnel.visits.status !== 'VERIFIED' ? 'Unverified' : funnel.visits.visitToSignupRate == null ? '—' : `${(funnel.visits.visitToSignupRate * 100).toFixed(1)}%`} />
       <MetricCard label="First dog (activation)" value={noData(funnel.activation.firstDog)} />
       <MetricCard label="First litter" value={noData(funnel.activation.firstLitter)} />
       <MetricCard label="New paying customers" value={noData(paid.newInWindow)} />
@@ -109,7 +119,7 @@ function FunnelHistory({ funnel }: { funnel: GrowthFunnel }) {
       <MetricCard label="Usage retention" value="Not measured" />
     </div>
     <ul style={{ fontSize: 12, lineHeight: 1.6 }}>
-      <li>{funnel.visits.note}</li>
+      <li>Visits ({visitBadge(funnel.visits.status)}{funnel.visits.window ? `, ${funnel.visits.window.fromDay} to ${funnel.visits.window.toDay} UTC` : ''}): {funnel.visits.note}</li>
       <li>{funnel.activation.note}</li>
       <li>Paying customers: {PAYMENT_STATUS_LABEL[paid.status] ?? 'Not measured'}. {paid.scope} {paid.note}</li>
       {paid.testModeDiagnostics && paid.status !== 'VERIFIED' && <li>

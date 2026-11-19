@@ -1,3 +1,5 @@
+import { evaluateVisitToSignup } from './control-center-traffic.js'
+
 const DAY = 86400000
 const ELIGIBLE = new Set(['REAL_CUSTOMER', 'LIKELY_REAL'])
 const EXCLUDED = new Set(['INTERNAL', 'TEST_QA'])
@@ -29,16 +31,22 @@ function earliestRecordDates(records, signupDates, nowMs) {
 }
 
 // Aggregate current records without retaining campaign text or identities.
-export function buildGrowthSnapshot({ users, accounts, dogs, activeLitters, litters, paymentHistory, verifiedLiveBilling = false, now = new Date(), days = 30 }) {
+export function buildGrowthSnapshot({ users, accounts, dogs, activeLitters, litters, paymentHistory, visitSource = null, environment = 'unknown', verifiedLiveBilling = false, now = new Date(), days = 30 }) {
   if (!Number.isFinite(now.getTime()) || !Number.isInteger(days) || days < 1 || days > 365) throw new Error('Invalid growth window')
   const classified = new Map(accounts.map(account => [account.uid, account]))
   const channels = { meta: 0, google: 0, bing: 0, direct: 0, other: 0, unknown: 0 }
   let eligibleSignups = 0, confirmedCustomers = 0, likelyReal = 0, excludedInternalQa = 0, unclassified = 0, invalidCreatedAt = 0
   const seen = new Set()
   const signupDates = new Map()
+  const visitSignups = []
   for (const user of users) {
     if (typeof user.id !== 'string' || !user.id || seen.has(user.id)) continue
     seen.add(user.id)
+    // The visit rate uses whole settled UTC days, so it gets its own list of
+    // eligible signups (same exclusions) and applies its own window.
+    if (ELIGIBLE.has(classified.get(user.id)?.classification)) {
+      visitSignups.push({ id: user.id, createdAt: user.createdAt, platform: typeof user.signupPlatform === 'string' ? user.signupPlatform : null })
+    }
     const created = timestamp(user.createdAt)
     if (created === null || created > now.getTime()) { invalidCreatedAt++; continue }
     if (created < now.getTime() - days * DAY) continue
@@ -68,7 +76,8 @@ export function buildGrowthSnapshot({ users, accounts, dogs, activeLitters, litt
   // First litter is a separate milestone from activation (first dog). It
   // includes archived litters; deleted litters no longer exist and are missed.
   const firstLitterDates = earliestRecordDates(litters, signupDates, now.getTime())
-  const funnel = buildFunnel({ eligibleSignups, dogDates, firstLitterDates, paymentHistory, days })
+  const visits = evaluateVisitToSignup({ visitSource, signups: visitSignups, environment, now, days })
+  const funnel = buildFunnel({ eligibleSignups, dogDates, firstLitterDates, paymentHistory, visits, days })
   return {
     windowDays: days, observedAt: now.toISOString(),
     eligibleSignups, confirmedCustomers, likelyReal, excludedInternalQa, unclassified, invalidCreatedAt,
@@ -96,18 +105,13 @@ const ratio = (numerator, denominator) => count(numerator) !== null && count(den
 
 // Funnel definitions agreed by the Owner on 13 Nov 2026. Missing sources stay
 // null with an explicit status; null never means zero.
-function buildFunnel({ eligibleSignups, dogDates, firstLitterDates, paymentHistory, days }) {
+function buildFunnel({ eligibleSignups, dogDates, firstLitterDates, paymentHistory, visits, days }) {
   const payments = paymentHistory && PAYMENT_STATUSES.has(paymentHistory.status) ? paymentHistory : { status: 'UNAVAILABLE' }
   const live = payments.status === 'VERIFIED' ? payments.live : null
   const test = payments.test || null
   return {
     windowDays: days,
-    visits: {
-      status: 'NO_VERIFIED_SOURCE',
-      signupPageSessions: null,
-      visitToSignupRate: null,
-      note: 'No verified analytics source for sessions that include the signup page is connected. The visit-to-signup rate stays empty.',
-    },
+    visits,
     signups: { eligible: eligibleSignups },
     activation: {
       firstDog: dogDates?.size ?? null,

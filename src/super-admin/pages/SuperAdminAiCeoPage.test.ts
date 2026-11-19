@@ -74,9 +74,9 @@ describe('Control Center evidence and health UI', () => {
     expect(rendered()).not.toContain('Current active live subscriptions')
   })
   it('shows funnel history with explicit no-data states and test-mode diagnostics kept apart', async () => {
-    const funnel = (status: string) => ({
+    const funnel = (status: string, visits: Record<string, unknown> = { status: 'NO_VERIFIED_SOURCE', signupPageSessions: null, visitToSignupRate: null, note: 'No verified analytics source.' }) => ({
       windowDays: 30,
-      visits: { status: 'NO_VERIFIED_SOURCE', signupPageSessions: null, visitToSignupRate: null, note: 'No verified analytics source.' },
+      visits,
       activation: { firstDog: 2, firstLitter: 0, note: 'Activation note.' },
       payingCustomers: { status, newInWindow: status === 'VERIFIED' ? 1 : null, total: status === 'VERIFIED' ? 1 : null, scope: 'Stripe only.', testModeDiagnostics: { newInWindow: 4, total: 5 }, note: '' },
       paidRetention: { status, dueForRenewal: status === 'VERIFIED' ? 2 : null, renewed: status === 'VERIFIED' ? 1 : null, rate: status === 'VERIFIED' ? 0.5 : null, testModeDiagnostics: { dueForRenewal: 3, renewed: 2 }, note: '' },
@@ -93,6 +93,28 @@ describe('Control Center evidence and health UI', () => {
     await mount({ ...fixture(), growthSnapshot: { ...snapshot, funnel: funnel('VERIFIED') } } as any)
     expect(rendered()).toContain('1/2 renewed')
     expect(rendered()).not.toContain('Test-mode diagnostics')
+  })
+  it('shows visits as Unverified unless the source is verified, and then the exact count and rate', async () => {
+    const base = { windowDays: 30, eligibleSignups: 2, confirmedCustomers: 0, likelyReal: 2, excludedInternalQa: 0, unclassified: 0, invalidCreatedAt: 0, channels: { direct: 2 }, basis: '', limitations: [] }
+    const funnel = (visits: Record<string, unknown>) => ({
+      windowDays: 30, visits,
+      activation: { firstDog: 0, firstLitter: 0, note: '' },
+      payingCustomers: { status: 'TEST_MODE_ONLY', newInWindow: null, total: null, scope: '', testModeDiagnostics: null, note: '' },
+      paidRetention: { status: 'TEST_MODE_ONLY', dueForRenewal: null, renewed: null, rate: null, testModeDiagnostics: null, note: '' },
+      usageRetention: { status: 'NOT_MEASURED', rate: null, note: '' },
+    })
+    const window = { fromDay: '2026-11-12', toDay: '2026-11-18', days: 7 }
+    // A forged count on an unverified source must not be displayed.
+    await mount({ ...fixture(), growthSnapshot: { ...base, funnel: funnel({ status: 'UNVERIFIED', window, signupPageSessions: 100, visitToSignupRate: 0.09, note: 'The visit source has not been approved by the Owner.' }) } } as any)
+    expect(rendered()).toContain('Signup-page sessions · Unverified')
+    expect(rendered()).toContain('Visit → signup rate · Unverified')
+    expect(rendered()).toContain('2026-11-12 to 2026-11-18 UTC')
+    expect(rendered()).not.toContain('9.0%')
+    renderer?.unmount()
+    await mount({ ...fixture(), growthSnapshot: { ...base, funnel: funnel({ status: 'VERIFIED', window, signupPageSessions: 100, visitToSignupRate: 0.09, note: 'ok' }) } } as any)
+    expect(rendered()).toContain('Visit → signup rate · Verified')
+    expect(rendered()).toContain('9.0%')
+    expect(rendered()).toContain('100')
   })
   it('checks health only on demand using the authenticated endpoint', async () => {
     const request = await mount()

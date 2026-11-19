@@ -787,6 +787,9 @@ export async function buildAiCeoV12() {
     accountClassification,
     growthSnapshot: buildGrowthSnapshot({
       users, accounts: accountClassification.accounts, dogs, activeLitters, litters, paymentHistory, now,
+      // No visit source is approved yet (control-center-traffic.js), so the
+      // visit rate reports NO_VERIFIED_SOURCE. Connecting one needs approval.
+      visitSource: null, environment: process.env.VERCEL_ENV || 'unknown',
       verifiedLiveBilling: hasVerifiedLiveBilling(revenueTruth) && revenueTruth.failedSubscriptionReads === 0,
     }),
     facts: {

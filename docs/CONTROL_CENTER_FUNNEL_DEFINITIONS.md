@@ -6,11 +6,37 @@ Mã: `api/_lib/control-center-growth.js` (khối `funnel`), `api/_lib/control-ce
 
 Quy tắc chung: tài khoản INTERNAL và TEST_QA bị loại. LIKELY_REAL không phải khách đã xác nhận. Thiếu dữ liệu thì hiện "No data yet" (chưa có dữ liệu), không bao giờ hiện 0.
 
-## 1. Lượt ghé trang
+## 1. Lượt ghé trang (cập nhật 19/11/2026)
 
-- **Định nghĩa:** số phiên truy cập có trang đăng ký, lấy từ một nguồn analytics đã xác minh. Tỷ lệ truy cập → đăng ký = số đăng ký đủ điều kiện / số phiên đó.
-- **Hiện tại:** chưa có nguồn analytics đủ tin cậy, nên hiện "No data yet" và **để trống tỷ lệ** (`status: NO_VERIFIED_SOURCE`). Không dùng Meta Pixel hay số liệu tự ghi nhận nguồn để thay thế.
-- **Còn thiếu:** chọn và xác minh một nguồn analytics (việc riêng, cần Owner duyệt, có thể ảnh hưởng Chính sách quyền riêng tư).
+- **Định nghĩa:** số phiên truy cập có trang đăng ký, lấy từ một nguồn analytics **đã được Owner duyệt**. Tỷ lệ truy cập → đăng ký = số đăng ký web đủ điều kiện / số phiên đó.
+- **Mã:** `api/_lib/control-center-traffic.js`. Dashboard và Claude dùng chung kết quả này (Claude nhận qua danh sách trường cho phép trong `control-center-evidence.js`).
+
+### Kiểm kê nguồn hiện có
+
+| Nguồn | Đơn vị đếm | Phạm vi | Loại bot/test | Chống trùng | Dùng được? |
+| --- | --- | --- | --- | --- | --- |
+| `landingStats` (Firestore, `/api/landing-beacon`) | Lượt tải trang `/` hoặc `/signup`, theo ngày UTC | Chỉ lượt đến từ quảng cáo (có `fbclid` hoặc `utm_source`) | Không | Không (tải lại trang đếm 2 lần) | **Không**: không phải phiên, thiếu khách tự tìm đến, không lọc bot |
+| Meta Pixel `PageView` | Sự kiện bên thứ ba | Chỉ sau khi khách bấm "Allow" | Do Meta | Do Meta | **Không**: thiếu người từ chối cookie, không có quyền đọc dữ liệu |
+| `users.acquisition` | Tài khoản | Nguồn khách tự mang theo lúc đăng ký | Có (loại INTERNAL/TEST_QA) | Theo tài khoản | Chỉ cho tử số, không có mẫu số |
+| Vercel Web Analytics | Lượt xem trang / khách | Toàn site | Có lọc bot | Theo khách | **Chưa bật** (thu thập mới, cần Owner duyệt và cập nhật Chính sách quyền riêng tư) |
+
+Kết luận: **chưa có nguồn đạt yêu cầu**. Dashboard và Claude hiển thị **Unverified**, để trống số phiên và tỷ lệ.
+
+### Quy tắc khi có nguồn
+
+- **Cửa sổ:** đúng N ngày UTC trọn vẹn gần nhất đã qua 24 giờ chờ dữ liệu đến muộn (ví dụ lúc 10:00Z ngày 20/11, cửa sổ 7 ngày là 12–18/11). Dữ liệu ngày chưa qua 24 giờ không tính.
+- **Môi trường:** nguồn và tài khoản phải cùng môi trường (preview với preview, production với production).
+- **Đơn vị:** nguồn phải đếm `SESSION_WITH_SIGNUP_PAGE` và xác nhận đã loại bot và lưu lượng thử nghiệm.
+- **Chống trùng:** một ngày báo hai lần cùng số thì gộp; khác số thì Unverified. Tài khoản trùng chỉ đếm một lần.
+- **Đầy đủ:** thiếu ngày, số âm hoặc ngày chưa được nguồn chốt → Unverified.
+- **Ghép:** ghép tổng theo cùng ngày và cùng môi trường, **không** ghép từng phiên. Tử số chỉ gồm đăng ký **web** (đăng ký trên app iOS không đi qua trang `/signup`). Tử số lớn hơn mẫu số → Unverified (lệch phạm vi).
+- **Mẫu số 0:** báo 0 phiên, tỷ lệ để trống.
+- Chỉ trạng thái **VERIFIED** mới hiện số phiên và tỷ lệ. Mọi trạng thái khác hiện "Unverified" kèm lý do.
+
+### Còn thiếu để đo thật
+
+1. Owner chọn và duyệt một nguồn phiên (ví dụ bật Vercel Web Analytics), rồi thêm mã nguồn vào `APPROVED_VISIT_SOURCES` trong một thay đổi có review.
+2. Hồ sơ tài khoản hiện **không ghi nền tảng đăng ký** (web/iOS). Khi có nguồn, kết quả vẫn Unverified (`SIGNUP_PLATFORM_UNKNOWN`) cho tới khi tài khoản mới được ghi `signupPlatform`. Việc này cần Owner duyệt vì là trường dữ liệu mới.
 
 ## 2. Kích hoạt
 
@@ -42,7 +68,7 @@ Hai chỉ số tách riêng. **Ưu tiên chỉ số trả phí** cho mục tiêu
 
 | Chỉ số | Production (khi lên) | Staging hiện tại |
 | --- | --- | --- |
-| Lượt ghé trang, tỷ lệ → đăng ký | Chưa có dữ liệu (chưa có nguồn) | Chưa có dữ liệu |
+| Lượt ghé trang, tỷ lệ → đăng ký | Unverified (chưa có nguồn được duyệt) | Unverified; logic đã kiểm thử bằng dữ liệu tổng hợp |
 | Kích hoạt (chó đầu tiên) | Đo được, chỉ hồ sơ còn tồn tại | Đo được |
 | Lứa đầu tiên | Đo được, chỉ hồ sơ còn tồn tại | Đo được |
 | Khách trả phí mới / tổng | Đo được từ Stripe LIVE; Apple không có | Không đo được (test mode); có dòng chẩn đoán test |
@@ -51,4 +77,4 @@ Hai chỉ số tách riêng. **Ưu tiên chỉ số trả phí** cho mục tiêu
 
 ## Kiểm thử
 
-`scripts/control-center-payments.test.mjs` (thanh toán thành công/thất bại/hoàn tiền/A$0, test mode, loại INTERNAL/QA, đọc lỗi, danh sách bị cắt, customer dùng chung, giới hạn số customer, gia hạn), `scripts/control-center-growth.test.mjs` (chó đầu tiên, lứa đầu tiên gồm cả lứa lưu trữ, không có nguồn lượt ghé, chỉ hiện số trả phí khi VERIFIED), `scripts/control-center-evidence.test.mjs` (Claude chỉ nhận số đã xác minh, không nhận dòng chẩn đoán test), `SuperAdminAiCeoPage.test.ts` (hiển thị "No data yet", nhãn test mode, số gia hạn).
+`scripts/control-center-traffic.test.mjs` (bộ dữ liệu tổng hợp có kết quả định trước 100 phiên / 9 đăng ký web = 9,0%; trùng, đến muộn, mẫu số 0, thiếu dữ liệu, lệch phạm vi; dashboard và Claude cùng trạng thái, cửa sổ và số liệu), `scripts/control-center-payments.test.mjs` (thanh toán thành công/thất bại/hoàn tiền/A$0, test mode, loại INTERNAL/QA, đọc lỗi, danh sách bị cắt, customer dùng chung, giới hạn số customer, gia hạn), `scripts/control-center-growth.test.mjs` (chó đầu tiên, lứa đầu tiên gồm cả lứa lưu trữ, không có nguồn lượt ghé, chỉ hiện số trả phí khi VERIFIED), `scripts/control-center-evidence.test.mjs` (Claude chỉ nhận số đã xác minh, không nhận dòng chẩn đoán test), `SuperAdminAiCeoPage.test.ts` (hiển thị "No data yet", nhãn test mode, số gia hạn).
