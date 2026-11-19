@@ -127,3 +127,17 @@ test('job summary contains aggregate status only', () => {
   assert.match(text, /OPENED HTTP_FAILURE/)
   assert.match(text, /Login, checkout and data access are not verified/)
 })
+
+test('a duplicate run within 5 minutes is reported, not counted, and leaves state unchanged', () => withDir(async directory => {
+  await run(directory, 'FAIL', 0)
+  const before = await readFile(join(directory, 'state.json'), 'utf8')
+  const duplicate = await run(directory, 'FAIL', 4)
+  assert.equal(duplicate.report.counted, false)
+  assert.equal(duplicate.report.incident, null)
+  assert.deepEqual(duplicate.report.events.map(event => event.type), ['DUPLICATE_IGNORED'])
+  assert.match(formatMonitorSummary(duplicate.report), /duplicate/)
+  assert.equal(await readFile(join(directory, 'state.json'), 'utf8'), before)
+  const opened = await run(directory, 'FAIL', 10)
+  assert.equal(opened.report.counted, true)
+  assert.equal(opened.report.incident.kind, 'HTTP_FAILURE')
+}))

@@ -1,7 +1,13 @@
 // Deterministic incident lifecycle for an independent scheduler. An HTTP
 // failure and a probe's inability to observe the site are different incidents.
 // Replayed, invalid and future observations cannot open or resolve incidents.
-const MAX_CONSECUTIVE_GAP_MS = 30 * 60 * 1000
+export const MAX_CONSECUTIVE_GAP_MS = 30 * 60 * 1000
+// Two runners (or a schedule and an external trigger) can fire within minutes
+// of each other. An observation closer than this to the last counted one is a
+// duplicate: it is reported but never advances a streak, so two back-to-back
+// duplicate failures cannot open an incident and two duplicate passes cannot
+// resolve one. Incidents therefore need failures at least 5 minutes apart.
+export const MIN_OBSERVATION_SPACING_MS = 5 * 60 * 1000
 
 export function summarizeMonitor(state, now = new Date()) {
   if (!state) return { status: 'NO_OBSERVATION', checkedAt: null, incident: null }
@@ -25,6 +31,9 @@ export function advanceMonitor(previous, observation, { now = new Date(), thresh
   if (previous && (previous.version !== 1 || !Number.isFinite(priorAt) || !['HEALTHY', 'HTTP_FAILURE', 'OBSERVATION_GAP'].includes(previous.condition)
     || !Number.isSafeInteger(previous.streak) || previous.streak < 1
     || (previous.incident !== null && (!previous.incident || typeof previous.incident.id !== 'string' || !['HTTP_FAILURE', 'OBSERVATION_GAP'].includes(previous.incident.kind))))) throw new Error('Invalid monitor state')
+  if (previous && at - priorAt < MIN_OBSERVATION_SPACING_MS) {
+    return { state: previous, events: [{ type: 'DUPLICATE_IGNORED', at: observation.checkedAt }], duplicate: true }
+  }
   const condition = observation.status === 'PASS' ? 'HEALTHY' : observation.status === 'FAIL' ? 'HTTP_FAILURE' : 'OBSERVATION_GAP'
   const continuesStreak = previous?.condition === condition && at - priorAt <= MAX_CONSECUTIVE_GAP_MS
   const streak = continuesStreak ? Math.min(previous.streak + 1, threshold) : 1
