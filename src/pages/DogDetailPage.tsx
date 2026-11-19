@@ -28,13 +28,19 @@ import type { Dog, VaccineRecord, WormingRecord, HealthTest, Reminder, ActivityN
 import { describeSaleAvailabilitySaveFailure, normalizeSaleAvailabilityErrorCode } from '../lib/saleAvailabilityError'
 import { resolvePedigreeRegister, resolveBreedingEligibility, nextPedigreeRegisterUpdate, initialTransferPedigreeRegister, pedigreeRegisterLabel } from '../lib/breedingCompliance'
 import { describeTransferFailure } from '../lib/transferError'
+import {
+  matingEstimateFor, shiftedMatingReminderDate, isIsoDate,
+  MATING_WINDOW_START_DAY, MATING_WINDOW_END_DAY, MATING_REMINDER_DEFAULT_DAY,
+  MATING_DUE_MILESTONE_KEY, MATING_DUE_REMINDER_TITLE,
+} from '../lib/matingEstimate'
+import { remindersLinkedToHeatCycle } from '../lib/heatCycleReminders'
 import { prepareImageForUpload } from '../lib/imageCompression'
 import { saveNoteWithPhoto, TimelinePhotoError } from '../lib/timelineNoteSave'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import RecoveredDogHistory from '../components/ui/RecoveredDogHistory'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
-import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
+import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField, writeBatch } from 'firebase/firestore'
 import { db, auth } from '../lib/firebase'
 import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 import { isAndroidNativeApp } from '../lib/nativePlatform'
@@ -3524,6 +3530,11 @@ function addDaysIso(dateIso: string, days: number): string {
   return dt.toISOString().slice(0, 10)
 }
 
+function todayLocalIso(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
 function calcWhelpingEstimate(matingDate: string): string {
   return matingDate ? addDaysIso(matingDate, 63) : ''
 }
@@ -3592,6 +3603,8 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   const [allDogs, setAllDogs] = useState<Dog[]>([])
   const [breedingReminders, setBreedingReminders] = useState<Reminder[]>([])
   const [reminderSavingKey, setReminderSavingKey] = useState('')
+  // Per-cycle reminder date the breeder picked on the card (cycleId → yyyy-mm-dd)
+  const [matingReminderDrafts, setMatingReminderDrafts] = useState<Record<string, string>>({})
   // Codex round 13: distinct from allDogs being genuinely empty of
   // eligible Sires — a failed load must never render through the same
   // "No male dogs currently eligible" copy the dropdown shows for a
@@ -3808,6 +3821,67 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     )
   }
 
+  // "Mating due" reminder (Issue #69, Owner-approved Day 10–14 window,
+  // default reminder Day 9). One per heat cycle, linked the same way as
+  // the pregnancy reminders (source/sourceRef/milestoneKey), so pressing
+  // the button again updates the existing reminder instead of creating a
+  // duplicate.
+  function linkedMatingReminder(cycleId: string, reminders: Reminder[] = breedingReminders) {
+    return reminders.find(r =>
+      r.source === 'breeding_timeline'
+      && r.sourceRef === cycleId
+      && r.milestoneKey === MATING_DUE_MILESTONE_KEY
+    )
+  }
+
+  // The card keeps a typed-in date only until it is saved; after any save
+  // (or a heat-cycle edit that moves/completes the reminder) the card must
+  // show the stored reminder date again, not the old draft.
+  function clearMatingReminderDraft(cycleId: string) {
+    setMatingReminderDrafts(prev => {
+      if (!(cycleId in prev)) return prev
+      const next = { ...prev }
+      delete next[cycleId]
+      return next
+    })
+  }
+
+  async function saveMatingDueReminder(cycle: HeatCycle, dueDate: string, reminders: Reminder[] = breedingReminders) {
+    if (!user?.uid || !cycle.id || !isIsoDate(dueDate)) return
+    const linked = linkedMatingReminder(cycle.id, reminders)
+    if (linked && (linked.status === 'completed' || linked.dueDate === dueDate)) {
+      toast(linked.status === 'completed' ? 'Mating due reminder is already completed.' : 'Mating due reminder is already added ✓', 'info')
+      return
+    }
+    setReminderSavingKey(`${cycle.id}:${MATING_DUE_MILESTONE_KEY}`)
+    try {
+      if (linked) {
+        await updateReminder(linked.id, { dueDate })
+      } else {
+        await addReminder({
+          dogId,
+          tenantId: user.uid,
+          source: 'breeding_timeline',
+          sourceRef: cycle.id,
+          milestoneKey: MATING_DUE_MILESTONE_KEY,
+          type: 'mating',
+          title: MATING_DUE_REMINDER_TITLE,
+          dueDate,
+          notifyDaysBefore: 1,
+          status: 'pending',
+        })
+      }
+      const refreshed = await getReminders(dogId, user.uid, dog)
+      setBreedingReminders(refreshed.filter(r => r.source === 'breeding_timeline'))
+      clearMatingReminderDraft(cycle.id)
+      toast(linked ? `Mating due reminder moved to ${formatDate(dueDate)} ✓` : `Mating due reminder added for ${formatDate(dueDate)} ✓`, 'success')
+    } catch {
+      toast('Failed to save the mating due reminder. Please try again.', 'error')
+    } finally {
+      setReminderSavingKey('')
+    }
+  }
+
   async function addPregnancyReminders(
     cycle: HeatCycle,
     milestones: ReturnType<typeof pregnancyMilestonesFor>,
@@ -3864,7 +3938,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
   // full validation via api/_lib/parent-eligibility.js) instead of
   // writing to Firestore directly — firestore.rules denies a direct
   // client create/update outright, so this is the only path.
-  async function saveHeatCycle(cycle: HeatCycle, reminderKeys: PregnancyMilestoneKey[] = []) {
+  async function saveHeatCycle(cycle: HeatCycle, reminderKeys: PregnancyMilestoneKey[] = [], matingReminderDate = '') {
     setSaving(true)
     try {
       if (!auth.currentUser) throw new Error('Not signed in')
@@ -3919,6 +3993,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
           r.source === 'breeding_timeline'
           && r.sourceRef === cycleId
           && r.status !== 'completed'
+          && r.milestoneKey !== MATING_DUE_MILESTONE_KEY
         )
         if (linked.length > 0 && confirm('Mating date changed. Update the linked pregnancy reminders too?')) {
           const nextMilestones = new Map(
@@ -3935,6 +4010,35 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
           }))
           toast('Linked pregnancy reminders updated ✓', 'success')
         }
+      }
+
+      // Mating due reminder upkeep, so a stale reminder date is never left
+      // behind silently:
+      // - actual mating date recorded for the first time → offer to mark
+      //   the pending Mating due reminder as done;
+      // - heat start date edited (still no mating date) → offer to move
+      //   the pending reminder by the same number of days, unless the
+      //   breeder already picked a new reminder date in the form.
+      if (cycleId) clearMatingReminderDraft(cycleId)
+      const pendingMatingReminder = cycleId ? linkedMatingReminder(cycleId) : undefined
+      if (cycleId && pendingMatingReminder && pendingMatingReminder.status !== 'completed') {
+        if (cycleFields.matingDate && !previousCycle?.matingDate) {
+          if (confirm('Mating date recorded. Mark the "Mating due" reminder as done?')) {
+            await completeReminder(pendingMatingReminder.id)
+            setBreedingReminders(prev => prev.map(r => r.id === pendingMatingReminder.id ? { ...r, status: 'completed' } : r))
+            toast('Mating due reminder marked as done ✓', 'success')
+          }
+        } else if (!cycleFields.matingDate && !matingReminderDate) {
+          const moved = shiftedMatingReminderDate(pendingMatingReminder.dueDate, previousCycle?.heatStartDate, cycleFields.heatStartDate)
+          if (moved && confirm(`Heat start date changed. Move the "Mating due" reminder from ${formatDate(pendingMatingReminder.dueDate)} to ${formatDate(moved)}?`)) {
+            await updateReminder(pendingMatingReminder.id, { dueDate: moved })
+            setBreedingReminders(prev => prev.map(r => r.id === pendingMatingReminder.id ? { ...r, dueDate: moved } : r))
+            toast(`Mating due reminder moved to ${formatDate(moved)} ✓`, 'success')
+          }
+        }
+      }
+      if (!cycleFields.matingDate && matingReminderDate) {
+        await saveMatingDueReminder(savedData, matingReminderDate)
       }
 
       if (cycleFields.matingDate && reminderKeys.length > 0) {
@@ -3964,12 +4068,33 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     } finally { setSaving(false) }
   }
 
+  // Owner 19/11/2026 (Issue #69): deleting a heat cycle also deletes every
+  // reminder linked to it (Mating due, pregnancy timeline, and those the
+  // daily reminders job created), in one atomic batch — either the cycle
+  // and all its reminders go, or nothing changes.
   async function deleteHeatCycle(id: string) {
-    if (!confirm('Delete this heat cycle record?')) return
+    let linked: Reminder[] = []
     try {
-      await deleteDoc(doc(db, 'heatCycles', id))
+      if (!user?.uid) throw new Error('Not signed in')
+      linked = remindersLinkedToHeatCycle(await getReminders(dogId, user.uid, dog), id, dogId)
+    } catch {
+      toast('Could not load the reminders for this heat cycle. Nothing was deleted — please try again.', 'error')
+      return
+    }
+    const message = linked.length > 0
+      ? `Delete this heat cycle record and its ${linked.length} linked reminder${linked.length === 1 ? '' : 's'}?`
+      : 'Delete this heat cycle record?'
+    if (!confirm(message)) return
+    try {
+      const batch = writeBatch(db)
+      batch.delete(doc(db, 'heatCycles', id))
+      linked.forEach(r => batch.delete(doc(db, 'reminders', r.id)))
+      await batch.commit()
+      const removed = new Set(linked.map(r => r.id))
       setHeatCycles(prev => prev.filter(c => c.id !== id))
-      toast('Deleted', 'success')
+      setBreedingReminders(prev => prev.filter(r => !removed.has(r.id)))
+      clearMatingReminderDraft(id)
+      toast(linked.length > 0 ? `Heat cycle and ${linked.length} reminder${linked.length === 1 ? '' : 's'} deleted` : 'Deleted', 'success')
     } catch { toast('Failed to delete', 'error') }
   }
 
@@ -4198,6 +4323,58 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
                   </div>
                   {cycle.notes && <div style={{ padding: '0 14px 10px', fontSize: 12, color: 'var(--mid)', fontStyle: 'italic' }}>📝 {cycle.notes}</div>}
 
+                  {cycle.id && !cycle.matingDate && (() => {
+                    const estimate = matingEstimateFor(cycle.heatStartDate)
+                    if (!estimate) return null
+                    const linked = linkedMatingReminder(cycle.id)
+                    const completed = linked?.status === 'completed'
+                    const draft = matingReminderDrafts[cycle.id] || linked?.dueDate || estimate.defaultReminderDate
+                    const isSaving = reminderSavingKey === `${cycle.id}:${MATING_DUE_MILESTONE_KEY}`
+                    const upToDate = !!linked && linked.dueDate === draft
+                    const inPast = draft < todayLocalIso()
+                    return (
+                      <div data-testid="mating-estimate-card" style={{ margin: '4px 14px 14px', border: '1px solid #f0dfb4', borderRadius: 12, overflow: 'hidden', background: '#fffdf7' }}>
+                        <div style={{ padding: '12px 14px', background: 'var(--gold-light, #FDF3DC)' }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--dark)' }}>💞 Mating estimate</div>
+                          <div style={{ fontSize: 12, color: 'var(--dark)', marginTop: 4 }}>
+                            Estimated mating window: <strong>{formatDate(estimate.windowStart)} – {formatDate(estimate.windowEnd)}</strong> (Day {MATING_WINDOW_START_DAY}–{MATING_WINDOW_END_DAY} from heat start)
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 4 }}>
+                            Reference only — every bitch is different. Confirm the best mating days with progesterone testing or your vet.
+                          </div>
+                        </div>
+                        <div style={{ padding: '11px 14px', display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+                          <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+                            <label className="form-label" htmlFor={`mating-reminder-${cycle.id}`} style={{ fontSize: 11 }}>⏰ Mating due reminder date</label>
+                            <input
+                              id={`mating-reminder-${cycle.id}`}
+                              className="form-input"
+                              type="date"
+                              value={draft}
+                              disabled={completed || isSaving}
+                              onChange={e => setMatingReminderDrafts(prev => ({ ...prev, [cycle.id!]: e.target.value }))}
+                            />
+                            <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 3 }}>
+                              {completed ? `Completed ✓ (was due ${formatDate(linked!.dueDate)})`
+                                : linked ? `Reminder added for ${formatDate(linked.dueDate)}`
+                                : `Suggested: Day ${MATING_REMINDER_DEFAULT_DAY} (${formatDate(estimate.defaultReminderDate)}) — time to book a progesterone test`}
+                              {!completed && inPast ? ' · This date has already passed' : ''}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className={upToDate || completed ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
+                            disabled={completed || upToDate || isSaving || !isIsoDate(draft)}
+                            onClick={() => saveMatingDueReminder(cycle, draft)}
+                            style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                          >
+                            {completed ? 'Completed ✓' : isSaving ? 'Saving…' : upToDate ? 'Added ✓' : linked ? 'Update reminder' : 'Add reminder'}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })()}
+
                   {cycle.id && cycle.matingDate && (() => {
                     const milestones = pregnancyMilestonesFor(cycle.matingDate)
                     const addedCount = milestones.filter(m => !!linkedReminder(cycle.id!, m.key)).length
@@ -4358,7 +4535,7 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
   allDogs: Dog[]
   sireLoadError: boolean
   onClose: () => void
-  onSave: (c: HeatCycle, reminderKeys?: PregnancyMilestoneKey[]) => Promise<void>
+  onSave: (c: HeatCycle, reminderKeys?: PregnancyMilestoneKey[], matingReminderDate?: string) => Promise<void>
   saving: boolean
   breedingReminders: Reminder[]
 }) {
@@ -4366,12 +4543,32 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
   const [sireMode, setSireMode] = useState<'list' | 'manual'>(cycle.sireName ? 'manual' : 'list')
   const existingReminderKeys = new Set<PregnancyMilestoneKey>(
     breedingReminders
-      .filter(r => cycle.id && r.source === 'breeding_timeline' && r.sourceRef === cycle.id)
+      .filter(r => cycle.id && r.source === 'breeding_timeline' && r.sourceRef === cycle.id && r.milestoneKey !== MATING_DUE_MILESTONE_KEY)
       .map(r => r.milestoneKey as PregnancyMilestoneKey)
       .filter(Boolean)
   )
   const [reminderKeys, setReminderKeys] = useState<PregnancyMilestoneKey[]>(Array.from(existingReminderKeys))
   const pregnancyMilestones = form.matingDate ? pregnancyMilestonesFor(form.matingDate) : []
+
+  // Mating estimate + optional "Mating due" reminder (Issue #69)
+  const existingMatingReminder = cycle.id
+    ? breedingReminders.find(r => r.source === 'breeding_timeline' && r.sourceRef === cycle.id && r.milestoneKey === MATING_DUE_MILESTONE_KEY)
+    : undefined
+  const matingEstimate = matingEstimateFor(form.heatStartDate)
+  const [wantMatingReminder, setWantMatingReminder] = useState(false)
+  const [customMatingReminderDate, setCustomMatingReminderDate] = useState('')
+  const matingReminderDate = customMatingReminderDate
+    || existingMatingReminder?.dueDate
+    || matingEstimate?.defaultReminderDate
+    || ''
+  // What to hand to onSave: a date only when something should be created
+  // or changed — otherwise '' so the save flow can offer to move an
+  // existing reminder when the heat start date changes.
+  const matingReminderToSave = form.matingDate || !matingEstimate || !isIsoDate(matingReminderDate)
+    ? ''
+    : existingMatingReminder
+      ? (existingMatingReminder.status !== 'completed' && customMatingReminderDate && customMatingReminderDate !== existingMatingReminder.dueDate ? customMatingReminderDate : '')
+      : (wantMatingReminder ? matingReminderDate : '')
 
   function toggleReminderKey(key: PregnancyMilestoneKey) {
     if (existingReminderKeys.has(key)) return
@@ -4451,6 +4648,56 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
           {/* MATING */}
           <section>
             <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--brand-600)', marginBottom: 10 }}>🐕 Mating</div>
+            {!form.matingDate && matingEstimate && (
+              <div data-testid="mating-estimate-form" style={{ marginBottom: 14, border: '1px solid #f0dfb4', borderRadius: 12, overflow: 'hidden', background: '#fffdf7' }}>
+                <div style={{ padding: '11px 12px', background: 'var(--gold-light, #FDF3DC)' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--dark)' }}>💞 Mating estimate</div>
+                  <div style={{ fontSize: 12, color: 'var(--dark)', marginTop: 3 }}>
+                    Estimated mating window: <strong>{formatDate(matingEstimate.windowStart)} – {formatDate(matingEstimate.windowEnd)}</strong> (Day {MATING_WINDOW_START_DAY}–{MATING_WINDOW_END_DAY} from heat start)
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 3 }}>
+                    Reference only — confirm the best mating days with progesterone testing or your vet. Enter the actual mating date below once it happens.
+                  </div>
+                </div>
+                <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+                    <label className="form-label" htmlFor="mating-reminder-form-date" style={{ fontSize: 11 }}>⏰ Mating due reminder date</label>
+                    <input
+                      id="mating-reminder-form-date"
+                      className="form-input"
+                      type="date"
+                      value={matingReminderDate}
+                      disabled={existingMatingReminder?.status === 'completed'}
+                      onChange={e => { setCustomMatingReminderDate(e.target.value); if (!existingMatingReminder) setWantMatingReminder(true) }}
+                    />
+                    <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 3 }}>
+                      {existingMatingReminder?.status === 'completed' ? 'Mating due reminder completed ✓'
+                        : existingMatingReminder ? `Reminder added for ${formatDate(existingMatingReminder.dueDate)}${matingReminderToSave ? ` — will move to ${formatDate(matingReminderToSave)} when you save` : ''}`
+                        : `Suggested: Day ${MATING_REMINDER_DEFAULT_DAY} (${formatDate(matingEstimate.defaultReminderDate)}) — time to book a progesterone test`}
+                    </div>
+                  </div>
+                  {!existingMatingReminder && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setWantMatingReminder(v => !v)}
+                      disabled={!isIsoDate(matingReminderDate)}
+                      style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                    >
+                      {wantMatingReminder ? 'Selected ✓' : 'Add reminder'}
+                    </button>
+                  )}
+                  {existingMatingReminder && existingMatingReminder.status !== 'completed' && (
+                    <span className="badge badge-green" style={{ fontSize: 10 }}>Added ✓</span>
+                  )}
+                </div>
+                {wantMatingReminder && !existingMatingReminder && (
+                  <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--mid)', background: '#fff' }}>
+                    The Mating due reminder is created when you save this heat cycle. Alert: 1 day before.
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="form-group">
                 <label className="form-label">Mating date</label>
@@ -4663,7 +4910,7 @@ function HeatCycleModal({ cycle, allDogs, sireLoadError, onClose, onSave, saving
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 4 }}>
             <button onClick={onClose} className="btn btn-secondary" disabled={saving}>Cancel</button>
-            <button onClick={() => onSave(form, reminderKeys)} className="btn btn-primary" disabled={!form.heatStartDate || saving}>
+            <button onClick={() => onSave(form, reminderKeys, matingReminderToSave)} className="btn btn-primary" disabled={!form.heatStartDate || saving}>
               {saving ? <span className="spinner" /> : cycle.id ? 'Save changes' : reminderKeys.length > 0 ? 'Add heat cycle + reminders' : 'Add heat cycle'}
             </button>
           </div>
