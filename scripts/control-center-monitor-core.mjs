@@ -54,11 +54,16 @@ export async function runMonitorOnce({ directory, probe, now = () => new Date(),
   events.push(...result.events)
   // Commit the observation and incident transition together. A crash before
   // the rename leaves the previous observation and incident state readable.
-  const next = resolve(directory, 'state.next.json')
-  await writeFile(next, JSON.stringify({ ...result.state, observation, events }, null, 2))
-  await rename(next, path)
+  // A duplicate leaves the counted state untouched (byte for byte) unless a
+  // corrupt file was just quarantined, so later gaps are measured from the
+  // last counted observation.
+  if (!result.duplicate || loaded.invalid) {
+    const next = resolve(directory, 'state.next.json')
+    await writeFile(next, JSON.stringify({ ...result.state, observation, events }, null, 2))
+    await rename(next, path)
+  }
   return {
-    report: { status: observation.status, outcome: classifyObservation(observation.status), checkedAt: observation.checkedAt, checks: observation.checks, incident: result.state.incident, events },
+    report: { status: observation.status, outcome: classifyObservation(observation.status), checkedAt: observation.checkedAt, checks: observation.checks, incident: result.state.incident, events, counted: !result.duplicate },
     exitCode: result.state.incident ? EXIT.INCIDENT : EXIT.HEALTHY,
   }
 }
@@ -95,6 +100,7 @@ export function formatMonitorSummary(report) {
     `- ${OUTCOME_TEXT[outcome]}`,
     ...checks.map(check => `  - ${check.id}: ${check.status}, HTTP ${check.httpStatus ?? 'none'}, ${check.latencyMs} ms, ${check.reason}`),
     `- Open incident: ${report.incident ? `${INCIDENT_TEXT[report.incident.kind] || report.incident.kind}, since ${report.incident.openedAt}` : 'none'}`,
+    ...(report.counted === false ? ['- This run was a duplicate (less than 5 minutes after the last counted observation): reported, not counted toward an incident.'] : []),
     `- Events this run: ${report.events.length ? report.events.map(event => event.type + (event.kind ? ` ${event.kind}` : '') + (event.reason ? ` ${event.reason}` : '')).join(', ') : 'none'}`,
     '',
     'Scope: public HTML reachability of the homepage and signup page only. Login, checkout and data access are not verified.',

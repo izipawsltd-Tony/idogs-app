@@ -1,4 +1,5 @@
 name: Control Center public website monitor
+run-name: Monitor (${{ inputs.trigger || github.event_name }})
 
 # Independent of the owner's Windows computer. Probes only the fixed public
 # homepage and signup URLs (GET, no cookies, no credentials) and keeps the
@@ -8,6 +9,14 @@ name: Control Center public website monitor
 # The schedule therefore starts only after this file is merged to master,
 # which needs the Owner's approval. The `push` trigger exists only to test the
 # runner on the feature branch; it is inert once merged.
+#
+# EXTERNAL CLOCK: GitHub `schedule` arrives hours late for this repository,
+# so an external clock (ops/control-center-monitor-trigger, a Cloudflare
+# Worker cron) starts this workflow every 10 minutes via workflow_dispatch
+# with input trigger=external-cron. `schedule` stays as a backup. Runs that
+# land within 5 minutes of the last counted observation are reported as
+# duplicates and not counted. The concurrency group below serialises runs so
+# the state cache is never written by two runs at once.
 #
 # ALERTS ARE OFF (Owner decision 13 Nov 2026): results are written to the job
 # log and job summary only. The job does not fail on a website error, a
@@ -19,10 +28,19 @@ on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
+    inputs:
+      trigger:
+        description: Who started this run (external-cron for the external clock, manual otherwise)
+        required: false
+        default: manual
+        type: choice
+        options: [manual, external-cron]
   push:
-    branches: [feature/control-center-v1-20261110]
+    branches: [claude/control-center-monitor-runner-20261119]
     paths:
       - .github/workflows/control-center-monitor.yml
+      - scripts/control-center-monitor-history.mjs
+      - ops/control-center-monitor-trigger/**
       - scripts/control-center-monitor.mjs
       - scripts/control-center-monitor-core.mjs
       - scripts/control-center-monitor-rehearsal.mjs
@@ -47,6 +65,7 @@ jobs:
           sparse-checkout: |
             scripts
             api/_lib
+            ops/control-center-monitor-trigger
           sparse-checkout-cone-mode: true
 
       - uses: actions/setup-node@v4
@@ -85,6 +104,7 @@ jobs:
           CODE: ${{ steps.probe.outputs.code }}
           OUTCOME: ${{ steps.probe.outputs.outcome }}
           INCIDENT: ${{ steps.probe.outputs.incident }}
+          TRIGGER: ${{ inputs.trigger || github.event_name }}
         run: |
           if [ "$CODE" = "1" ] || [ -z "$OUTCOME" ]; then
             echo "::warning title=Monitor runner error::The monitor itself failed, so the website was not checked this run. See the Probe step log."
@@ -100,11 +120,13 @@ jobs:
           elif [ "$INCIDENT" = "OBSERVATION_GAP" ]; then
             echo "::warning title=Open incident: monitoring gap::Two or more consecutive runs could not check the website."
           fi
-          echo "outcome=${OUTCOME:-RUNNER_ERROR} incident=${INCIDENT:-UNKNOWN} exit=${CODE}"
+          echo "outcome=${OUTCOME:-RUNNER_ERROR} incident=${INCIDENT:-UNKNOWN} exit=${CODE} trigger=${TRIGGER}"
 
-      - name: Rehearsal of failure reporting (simulated, does not contact the website)
-        if: github.event_name != 'schedule'
-        run: node scripts/control-center-monitor-rehearsal.mjs
+      - name: Self-test and rehearsal (simulated, does not contact the website)
+        if: github.event_name != 'schedule' && inputs.trigger != 'external-cron'
+        run: |
+          node --test scripts/control-center-monitor.test.mjs scripts/control-center-monitor-history.test.mjs ops/control-center-monitor-trigger/worker.test.mjs
+          node scripts/control-center-monitor-rehearsal.mjs
 
       - name: Alert (only when CONTROL_CENTER_MONITOR_ALERTS is "on")
         if: vars.CONTROL_CENTER_MONITOR_ALERTS == 'on' && (steps.probe.outputs.code == '1' || steps.probe.outputs.code == '3')
