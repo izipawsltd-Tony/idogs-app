@@ -3833,6 +3833,18 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     )
   }
 
+  // The card keeps a typed-in date only until it is saved; after any save
+  // (or a heat-cycle edit that moves/completes the reminder) the card must
+  // show the stored reminder date again, not the old draft.
+  function clearMatingReminderDraft(cycleId: string) {
+    setMatingReminderDrafts(prev => {
+      if (!(cycleId in prev)) return prev
+      const next = { ...prev }
+      delete next[cycleId]
+      return next
+    })
+  }
+
   async function saveMatingDueReminder(cycle: HeatCycle, dueDate: string, reminders: Reminder[] = breedingReminders) {
     if (!user?.uid || !cycle.id || !isIsoDate(dueDate)) return
     const linked = linkedMatingReminder(cycle.id, reminders)
@@ -3860,6 +3872,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       }
       const refreshed = await getReminders(dogId, user.uid, dog)
       setBreedingReminders(refreshed.filter(r => r.source === 'breeding_timeline'))
+      clearMatingReminderDraft(cycle.id)
       toast(linked ? `Mating due reminder moved to ${formatDate(dueDate)} ✓` : `Mating due reminder added for ${formatDate(dueDate)} ✓`, 'success')
     } catch {
       toast('Failed to save the mating due reminder. Please try again.', 'error')
@@ -4005,6 +4018,7 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
       // - heat start date edited (still no mating date) → offer to move
       //   the pending reminder by the same number of days, unless the
       //   breeder already picked a new reminder date in the form.
+      if (cycleId) clearMatingReminderDraft(cycleId)
       const pendingMatingReminder = cycleId ? linkedMatingReminder(cycleId) : undefined
       if (cycleId && pendingMatingReminder && pendingMatingReminder.status !== 'completed') {
         if (cycleFields.matingDate && !previousCycle?.matingDate) {
