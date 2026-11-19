@@ -33,13 +33,14 @@ import {
   MATING_WINDOW_START_DAY, MATING_WINDOW_END_DAY, MATING_REMINDER_DEFAULT_DAY,
   MATING_DUE_MILESTONE_KEY, MATING_DUE_REMINDER_TITLE,
 } from '../lib/matingEstimate'
+import { remindersLinkedToHeatCycle } from '../lib/heatCycleReminders'
 import { prepareImageForUpload } from '../lib/imageCompression'
 import { saveNoteWithPhoto, TimelinePhotoError } from '../lib/timelineNoteSave'
 import PhotoUpload from '../components/ui/PhotoUpload'
 import RecoveredDogHistory from '../components/ui/RecoveredDogHistory'
 import AIScan from '../components/ui/AIScan'
 import { sendTransferEmail } from '../lib/email'
-import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField } from 'firebase/firestore'
+import { doc, updateDoc, addDoc, collection, getDocs, query, where, orderBy, deleteDoc, deleteField, writeBatch } from 'firebase/firestore'
 import { db, auth } from '../lib/firebase'
 import { emitDogUsageChanged } from '../lib/dogUsageEvents'
 import { isAndroidNativeApp } from '../lib/nativePlatform'
@@ -4067,12 +4068,33 @@ function BreedingTab({ dog, dogId, userState, onUpdate, toast }: {
     } finally { setSaving(false) }
   }
 
+  // Owner 19/11/2026 (Issue #69): deleting a heat cycle also deletes every
+  // reminder linked to it (Mating due, pregnancy timeline, and those the
+  // daily reminders job created), in one atomic batch — either the cycle
+  // and all its reminders go, or nothing changes.
   async function deleteHeatCycle(id: string) {
-    if (!confirm('Delete this heat cycle record?')) return
+    let linked: Reminder[] = []
     try {
-      await deleteDoc(doc(db, 'heatCycles', id))
+      if (!user?.uid) throw new Error('Not signed in')
+      linked = remindersLinkedToHeatCycle(await getReminders(dogId, user.uid, dog), id, dogId)
+    } catch {
+      toast('Could not load the reminders for this heat cycle. Nothing was deleted — please try again.', 'error')
+      return
+    }
+    const message = linked.length > 0
+      ? `Delete this heat cycle record and its ${linked.length} linked reminder${linked.length === 1 ? '' : 's'}?`
+      : 'Delete this heat cycle record?'
+    if (!confirm(message)) return
+    try {
+      const batch = writeBatch(db)
+      batch.delete(doc(db, 'heatCycles', id))
+      linked.forEach(r => batch.delete(doc(db, 'reminders', r.id)))
+      await batch.commit()
+      const removed = new Set(linked.map(r => r.id))
       setHeatCycles(prev => prev.filter(c => c.id !== id))
-      toast('Deleted', 'success')
+      setBreedingReminders(prev => prev.filter(r => !removed.has(r.id)))
+      clearMatingReminderDraft(id)
+      toast(linked.length > 0 ? `Heat cycle and ${linked.length} reminder${linked.length === 1 ? '' : 's'} deleted` : 'Deleted', 'success')
     } catch { toast('Failed to delete', 'error') }
   }
 
