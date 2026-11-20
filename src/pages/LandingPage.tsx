@@ -320,7 +320,7 @@ export default function LandingPage() {
               <div className="pillar"><h4>Private by default</h4><p>Your records and documents are visible only to you.</p></div>
               <div className="pillar"><h4>A limited QR view</h4><p>The QR Passport shows a limited public view, never your private documents.</p></div>
               <div className="pillar"><h4>Ads only with consent</h4><p>Ad measurement runs only if you opt in. Data is stored securely in the Asia-Pacific region.</p></div>
-              <div className="pillar"><h4>Australian-owned</h4><p>Built in Adelaide for Australian dog owners and breeders. Delete your account at any time.</p></div>
+              <div className="pillar"><h4>Australian-owned</h4><p>Built for Australian dog owners and breeders. Delete your account at any time.</p></div>
             </div>
             <p className="mini-note"><Link to="/privacy">Read the Privacy Policy</Link> · <Link to="/terms">Read the Terms of Use</Link></p>
           </div>
