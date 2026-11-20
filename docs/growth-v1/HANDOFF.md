@@ -17,7 +17,7 @@ Control Center: Issue #69. Growth tracker: Issue #103.
 |---|---|---|
 | LP-01 audit | DONE | see Issue #103 |
 | LP-02 design/copy | DONE (G1 conditional) | `docs/growth/GROWTH_V1_LP02_DESIGN.md` — needs a deviations update |
-| LP-03 homepage | IMPLEMENTED, local QA PASS | Preview URL pending push |
+| LP-03 homepage | IMPLEMENTED, local QA + CI PASS | commit `c7ae808`; Preview below (not browsable from the build sandbox — Owner/independent QA to open) |
 | LP-04 owner journey | IN PROGRESS | CTA `/signup?role=owner` verified in browser |
 | LP-05 breeder journey | IN PROGRESS | `#for-breeders` anchor + `/signup?role=breeder` verified |
 | LP-06 App Store | PARTIAL / BLOCKER | link + click tracking done; official Apple badge artwork must be supplied by Owner (placeholder text button until then) |
@@ -28,7 +28,12 @@ Control Center: Issue #69. Growth tracker: Issue #103.
 | LP-11 E2E/independent QA | NOT STARTED | CI to run on push |
 | LP-12 release candidate | NOT STARTED | Opus final review per routing policy |
 
-## Evidence (local, uncommitted state at time of writing)
+## Release-candidate-in-progress (NOT final; LP-12 not run)
+- Branch HEAD: `c7ae808` (pushed). Production base: `04f0f60`.
+- Vercel Preview (idogs-app, Preview env): https://idogs-bpe0d2mza-izipawsltd-tonys-projects.vercel.app — status success; deployed page NOT yet opened by me (egress blocked). Staging-project Vercel status was still pending at time of writing.
+- GitHub CI on `c7ae808`: Typecheck/tests/build, Consent UI real-browser, Journey E2E, Firestore rules emulator, Email/password sign-in E2E — all success. Preview E2E (staging): skipped.
+
+## Evidence (local)
 - `tsc --noEmit`: clean
 - vitest: 706/706 pass
 - `vite build`: success
