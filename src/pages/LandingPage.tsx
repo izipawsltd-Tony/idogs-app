@@ -389,7 +389,7 @@ export default function LandingPage() {
             </div>
             {/* Legal wording mirrors Terms of Use s.1 and s.7 (operator and trademark owner). Not yet reviewed by a solicitor: see docs/growth-v1/HANDOFF.md. */}
             <p className="foot-legal">iDogs provides record-management tools and does not constitute legal or regulatory advice. Breeders remain responsible for meeting applicable state, local council and registry requirements. <em>(Disclaimer pending legal review.)</em></p>
-            <p className="foot-copy">iDogs is operated by iziPaws Pty Ltd (ABN 42 693 563 745), Adelaide, South Australia. The iDogs trademark is owned by NN Global Pty Ltd as trustee for NN Investment Trust.</p>
+            <p className="foot-copy">iDogs is operated by iziPaws Pty Ltd (ABN 42 693 563 745), Australia. The iDogs trademark is owned by NN Global Pty Ltd as trustee for NN Investment Trust.</p>
           </div>
         </footer>
 
