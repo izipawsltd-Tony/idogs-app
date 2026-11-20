@@ -7,6 +7,9 @@ Purpose: an independent check that does not rely on Claude's own tests. Do NOT m
 - Exact SHA under test and Preview URL: see the latest comment on Issue #103 (the SHA tested must equal the deployed Preview SHA — verify in Vercel).
 - Diff scope: `git diff 04f0f60...HEAD --stat`. Expected: `src/pages/LandingPage.tsx`, `src/main.tsx`, `src/lib/landingEvents.ts(+test)`, `src/components/MarketingMeasurement.tsx`, `src/pages/PrivacyPage.tsx`, `api/_lib/landing-beacon.js`, `scripts/landing-beacon.test.js`, `index.html`, `public/{og-idogs.jpg,robots.txt,sitemap.xml}`, `e2e/local/landing-clicks-consent.spec.ts`, `docs/**`. Anything else is out of scope — flag it.
 
+## Retest round 2 (after P1 fixes)
+New regression spec `e2e/local/landing-p1-regressions.spec.ts` (mocks `/api/offer-status`): P1-01 pricing overflow (voucher + promotion-only), P1-02 breeder link destination below header, P1-03 no promotion before status resolves / on failure. It fails on `3586569` for P1-01 and P1-03 and passes on the replacement SHA. P1-02 could not be reproduced in desktop Chromium emulation (touch tap worked), so its fix is hardening (explicit scroll handler + 44px target) plus removal of the pricing overflow that widened the mobile layout — please re-verify on a real mobile viewport.
+
 ## How to run locally
 ```
 npm ci

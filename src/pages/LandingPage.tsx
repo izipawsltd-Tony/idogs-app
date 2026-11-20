@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
@@ -48,7 +48,11 @@ export default function LandingPage() {
   // it runs; the A$0 subscription promotion stays available in Pricing.
   const offerStatus = useOfferStatus()
   const launchActive = Boolean(offerStatus?.launch.active)
-  const promotionActive = promotionDateActive && !offerStatus?.promotionSuperseded
+  // Presentation only (no billing/eligibility logic touched): the A$0 promotion is shown
+  // ONLY once the offer status has resolved and says it is not superseded. While the
+  // status loads, or if it fails, the page stays neutral (no promotional claim) so a
+  // superseded offer is never advertised before the voucher state is known.
+  const promotionActive = promotionDateActive && offerStatus !== null && !offerStatus.promotionSuperseded
   const { user, loading } = useAuth()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -127,7 +131,7 @@ export default function LandingPage() {
               ) : promotionActive ? (
                 <p className="price-note">iDogs Plus A$0/month through 31 January 2027 · Then A$7/month.</p>
               ) : null}
-              <p className="breeder-link"><a href="#for-breeders">Breeding dogs? Explore iDogs for Breeders →</a></p>
+              <p className="breeder-link"><a href="#for-breeders" onClick={goToBreeders}>Breeding dogs? Explore iDogs for Breeders →</a></p>
             </div>
             <div className="hero-visual" aria-label="iDogs product preview">
               <div className="hv-poster">
@@ -409,6 +413,18 @@ export default function LandingPage() {
 const APP_STORE_URL = 'https://apps.apple.com/au/app/idogs/id6823094602'
 const APP_STORE_BADGE_SRC: string | null = null
 
+// Explicit in-page jump for the breeder section: guarantees the scroll, the URL hash and
+// the post-click position (the section's scroll-margin keeps it below the sticky header)
+// even if a browser ignores the default fragment navigation on small viewports.
+function goToBreeders(e: MouseEvent<HTMLAnchorElement>) {
+  const el = document.getElementById('for-breeders')
+  if (!el) return
+  e.preventDefault()
+  const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+  try { window.history.replaceState(null, '', '#for-breeders') } catch { /* hash is cosmetic */ }
+}
+
 function AppStoreLink({ className, children, large = false, iconOnly = false }: { className: string; children: ReactNode; large?: boolean; iconOnly?: boolean }) {
   const onClick = () => trackLandingEvent('app_store')
   if (APP_STORE_BADGE_SRC && large) {
@@ -597,11 +613,11 @@ const LV2_CSS = `
   .lv2-page .price-note { margin:14px 0 0; color:var(--on-forest-soft); font-size:13px; font-weight:650; }
   .lv2-page .pricing-block { scroll-margin-top:76px; }
   .lv2-page .pricing-grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:22px; margin-top:34px; align-items:stretch; }
-  .lv2-page .pricing-card { border:1px solid var(--line); border-radius:var(--radius); padding:30px; background:#fffdf8; box-shadow:0 16px 38px rgba(20,35,31,.07); }
+  .lv2-page .pricing-card { min-width:0; border:1px solid var(--line); border-radius:var(--radius); padding:30px; background:#fffdf8; box-shadow:0 16px 38px rgba(20,35,31,.07); }
   .lv2-page .pricing-card-main { border-color:rgba(192,138,45,.6); }
   .lv2-page .pricing-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
   .lv2-page .pricing-label { margin:0 0 6px; color:var(--ink-soft); font-size:13px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; }
-  .lv2-page .pricing-price { display:flex; align-items:baseline; gap:6px; margin:0 0 16px; }
+  .lv2-page .pricing-price { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; margin:0 0 16px; }
   .lv2-page .pricing-price span { font-family:'Fraunces','Georgia',serif; font-size:46px; font-weight:650; line-height:1; color:var(--forest); }
   .lv2-page .pricing-price small { color:var(--ink-soft); font-size:14px; font-weight:650; }
   .lv2-page .pricing-badge { flex:0 0 auto; border-radius:999px; background:rgba(192,138,45,.14); color:#7a5210; padding:7px 10px; font-size:12px; font-weight:800; }
@@ -616,7 +632,7 @@ const LV2_CSS = `
   .lv2-page .sms-credit span { color:var(--ink-soft); font-size:13px; }
   .lv2-page .pricing-footnote { margin:18px 0 0; text-align:center; color:var(--ink-soft); font-size:13px; }
   @media (max-width: 760px) {
-    .lv2-page .pricing-grid { grid-template-columns:1fr; }
+    .lv2-page .pricing-grid { grid-template-columns:minmax(0,1fr); }
     .lv2-page .pricing-card { padding:24px; }
     .lv2-page .pricing-card-head { flex-direction:column; gap:8px; }
     .lv2-page .pricing-price span { font-size:42px; }
@@ -810,7 +826,7 @@ const LV2_CSS = `
   .lv2-page .hero-note { margin:14px 0 0; font-size:14px; color:var(--on-forest-soft); }
   .lv2-page .voucher-note { margin-top:20px; padding:14px 16px; border:1px solid rgba(217,165,69,.55); background:rgba(192,138,45,.14); border-radius:12px; color:var(--on-forest); font-size:14px; font-weight:500; max-width:560px; }
   .lv2-page .breeder-link { margin:20px 0 0; font-size:15px; }
-  .lv2-page .breeder-link a { color:var(--on-forest); font-weight:700; text-underline-offset:3px; }
+  .lv2-page .breeder-link a { display:inline-block; min-height:44px; padding:10px 0; color:var(--on-forest); font-weight:700; text-underline-offset:3px; }
   .lv2-page .cta-center { justify-content:center; }
   .lv2-page .cards4 { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; margin-top:20px; }
   .lv2-page .step p { margin:6px 0 0; font-size:14px; color:var(--ink-soft); }
@@ -839,6 +855,7 @@ const LV2_CSS = `
   .lv2-page .store-alt { margin:0; font-size:14px; color:var(--on-forest-soft); }
   .lv2-page .store-alt a { color:var(--on-forest); font-weight:700; }
   .lv2-page .pricing-grid-2 { grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr); }
+  .lv2-page .pricing-cta { white-space:normal; max-width:100%; text-align:center; line-height:1.3; }
   .lv2-page .offer-box { border:2px solid var(--brass); border-radius:12px; padding:12px 14px; margin:8px 0 14px; background:#fbf3df; }
   .lv2-page .faq-wrap { max-width:860px; }
   .lv2-page .faq { display:grid; gap:10px; margin-top:20px; }
@@ -860,7 +877,7 @@ const LV2_CSS = `
     .lv2-page .pillars.pillars-3 { grid-template-columns:1fr; }
   }
   @media (max-width:760px){
-    .lv2-page .pricing-grid-2 { grid-template-columns:1fr; }
+    .lv2-page .pricing-grid-2 { grid-template-columns:minmax(0,1fr); }
   }
   @media (max-width:620px){
     .lv2-page .cards4 { grid-template-columns:1fr; }

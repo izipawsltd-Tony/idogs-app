@@ -16,10 +16,10 @@ Status: DRAFT for Owner G2 decision. Does not block unrelated Growth work. Sourc
 2. **Annual A$70 is unverified against the live Stripe product.** Kept hidden (per Owner). Needs a read-only check of the live price object for `plus_annual` (amount, interval, GST/tax behaviour, active).
 3. **Owner brief vs code on promotion wording.** The Owner message describes the promotional terms; the code's promotion ends 31 Jan 2027 and is superseded for new customers while the voucher runs. Owner to confirm which is the intended policy after 31 Dec 2026 (when voucher claims close, the promotion becomes visible again until 31 Jan 2027).
 4. **"Most popular" badge** appeared in the design; removed because it is an unverified claim. Replaced by "For more dogs and breeding".
-5. **Hero fallback.** If the offer-status API is unreachable, the hero shows "iDogs Plus A$0/month through 31 January 2027" (the promotion) because the voucher state is unknown. This is production's logic. Option: show nothing in that case.
+5. **Hero/pricing while offer status is unknown (CHANGED, presentation only — QA P1-03).** The A$0 promotion is now shown only after `/api/offer-status` resolves and reports it is not superseded. While loading, or if the request fails, the page is neutral: no promotion claim, standard Plus price A$7/month incl. GST. Previously it failed open and advertised the promotion. Consequence: if the status API is down during the promotion window, visitors do not see the promotion (checkout/eligibility logic is untouched). Owner to confirm this fail-closed behaviour under G2.
 6. **Stale legacy price IDs** (`basic`/`pro`/`kennel` in `LEGACY_PAID_PRICE_IDS`) are not shown on the landing page; no action.
 
 ## Owner decisions needed (G2)
 - Confirm post-voucher promotion policy (item 3) and whether to delete the secondary block (item 1).
 - Authorise a read-only check of live Stripe for annual price (item 2), or confirm it stays hidden.
-- Choose hero fallback behaviour (item 5).
+- Confirm the neutral fail-closed behaviour (item 5).

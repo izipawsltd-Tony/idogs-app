@@ -41,5 +41,11 @@ G1 conditional (not final visual). G2 report drafted (no billing change). G3/G4 
 ## Release candidate in progress (NOT final)
 Code commits: `c7ae808` (homepage), `ae79a0c` (Australian-owned copy), `b9a88d9` (reports/flag), `c14fd7c` (LP-09 consent gating + LP-10 + LP-11 package). Latest SHA is in the newest Issue #103 comment.
 
+## QA round 1 (Codex, SHA 3586569): FAIL — 3 P1, 0 P0
+- P1-01 pricing overflow at 320–430: root cause pricing-card min-content 439px (grid `1fr` + nowrap voucher CTA). Fixed attempt 1 (`minmax(0,1fr)`, wrapping CTA/price). Verified with voucher/promo/neutral mocks.
+- P1-02 hero breeder link at 320×568: not reproducible in Chromium touch emulation; likely side-effect of P1-01 widening the layout. Hardened attempt 1 (explicit scroll+hash handler, 44px target). Needs real-device retest.
+- P1-03 superseded A$0 promo flashed while status unknown: guard now requires resolved status. Fixed attempt 1. Fail-closed on API error (G2 to confirm).
+- Retry counters: P1-01 1/3, P1-02 1/3, P1-03 1/3.
+
 ## Exact next action
-Post CI + Preview for the latest SHA to Issue #103, then hand `LP11_INDEPENDENT_QA_PACKAGE.md` to Codex. Claude next: act on QA findings (max 3 attempts each), update `GROWTH_V1_LP02_DESIGN.md` deviations, then LP-12 with Opus. Stop at final G1/G3/G4.
+Codex retests the replacement SHA (see newest Issue #103 comment) incl. consent request counts, full a11y/perf and authenticated regression (needs disposable staging credentials + valid QR fixture from Owner). Then LP-12 with Opus. Stop at final G1/G3/G4.
