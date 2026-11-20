@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { fetchPublishedLandingMedia, type LandingSlotId, type PublishedLandingMedia } from '../lib/landingMedia'
-import { PLUS_MONTHLY_PRICE_AUD, LITTER_QUOTA_PLUS_ROLLING_12_MONTHS, EXTRA_LITTER_PRICE_AUD } from '../lib/pricingCopy'
+import { PLUS_MONTHLY_PRICE_AUD, LITTER_QUOTA_PLUS_ROLLING_12_MONTHS, EXTRA_LITTER_PRICE_AUD, DOG_CAP_FREE, DOG_CAP_PLUS, SCAN_QUOTA_FREE_LIFETIME, SCAN_QUOTA_PLUS_MONTHLY } from '../lib/pricingCopy'
+import { trackLandingEvent } from '../lib/landingEvents'
 import PlusPromotion, { usePlusPromotion } from '../components/ui/PlusPromotion'
 import { LaunchCountdownLine, useOfferStatus } from '../components/billing/LaunchOfferCard'
 
@@ -85,14 +86,16 @@ export default function LandingPage() {
               <img src="/03_idogs_reversed_white_transparent.png" alt="iDogs" style={{ width: 125, height: 'auto' }} />
             </a>
             <nav className="nav-links" aria-label="Primary">
-              <a href="#features">Features</a>
-              <a href="#for-owners">For Owners</a>
-              <a href="#for-breeders">For Breeders</a>
+              <a href="#howitworks">How it works</a>
+              <a href="#for-owners">Dog Owners</a>
+              <a href="#for-breeders">Breeders</a>
+              <a href="#iphone">iPhone app</a>
               <a href="#pricing">Pricing</a>
+              <a href="#faq">FAQ</a>
             </nav>
             <div className="nav-right">
               <Link className="nav-login" to="/login">Log In</Link>
-              <Link className="btn nav-cta" to="/signup">Start Free</Link>
+              <Link className="btn nav-cta" to="/signup" onClick={() => trackLandingEvent('cta_get_started')}>Get Started Free</Link>
               <button
                 className="hamburger"
                 aria-label="Open menu"
@@ -108,28 +111,27 @@ export default function LandingPage() {
         <section className="hero" id="top">
           <div className="wrap hero-grid">
             <div>
-              <p className="eyebrow">Australian dog record-keeping</p>
-              <h1>Every dog's story, connected for life.</h1>
-              <p className="sub">An organised digital record for every dog — identity, health records and documents in one place.</p>
-              <p className="aud">For Australian dog owners and breeders.</p>
-              <p className="incl">Whether you care for dogs or manage a breeding program.</p>
+              <p className="eyebrow">For Australian dog owners and breeders</p>
+              <h1>Everything your dog needs, all in one place.</h1>
+              <p className="sub">Less paperwork. Less time searching. More time enjoying life with your dog.</p>
               <div className="cta-row">
-                <Link className="btn btn-primary" to="/signup">Start Free</Link>
-                <a className="btn btn-ghost" href="#howitworks">See How It Works</a>
+                <Link className="btn btn-primary" to="/signup" onClick={() => trackLandingEvent('cta_get_started')}>Get Started Free</Link>
+                <AppStoreLink className="btn btn-ghost">Download for iPhone</AppStoreLink>
               </div>
+              <p className="hero-note">Free for up to {DOG_CAP_FREE} dogs · No card needed · On iPhone and the web</p>
               {launchActive && offerStatus ? (
-                <p className="price-note" data-testid="hero-launch-offer">
-                  🎁 <strong>FREE Gift Voucher</strong> - 1 year of iDogs Plus for 100 dog owners &amp; dog breeders, no card needed. <LaunchCountdownLine status={offerStatus} />{' '}
-                  <Link to="/signup?next=%2Fapp%2Fbilling" style={{ fontWeight: 700, textDecoration: 'underline', color: 'inherit' }}>Claim your Gift Voucher</Link>
+                <p className="price-note voucher-note" data-testid="hero-launch-offer">
+                  <strong>Free Gift Voucher:</strong> 1 year of iDogs Plus for 100 dog owners &amp; dog breeders, no card needed. <LaunchCountdownLine status={offerStatus} />{' '}
+                  <Link to="/signup?next=%2Fapp%2Fbilling" onClick={() => trackLandingEvent('cta_voucher')} style={{ fontWeight: 700, textDecoration: 'underline', color: 'inherit' }}>Claim your Gift Voucher</Link>
                 </p>
-              ) : (
-                <p className="price-note">{promotionActive ? 'iDogs Plus A$0/month through 31 January 2027 · Then A$7/month.' : 'Plans from A$7/month · No complicated pricing.'}</p>
-              )}
+              ) : promotionActive ? (
+                <p className="price-note">iDogs Plus A$0/month through 31 January 2027 · Then A$7/month.</p>
+              ) : null}
+              <p className="breeder-link"><a href="#for-breeders">Breeding dogs? Explore iDogs for Breeders →</a></p>
             </div>
-            {/* Hero product composition — placeholder, pending real product screenshots (brief §9/§10) */}
             <div className="hero-visual" aria-label="iDogs product preview">
               <div className="hv-poster">
-                                <img
+                <img
                   className="hv-shot"
                   src="/hero-idogs-cooper-1094.avif"
                   alt="iDogs Digital Passport and dog record preview"
@@ -145,153 +147,98 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <div className="trust">
-          <div className="trust-inner">
-            <span className="trust-item"><span className="tick">✓</span> Australian-owned</span>
-            <span className="trust-item"><span className="tick">✓</span> Built for dog owners</span>
-            <span className="trust-item"><span className="tick">✓</span> Designed for breeders</span>
-            <span className="trust-item"><span className="tick">✓</span> Start free</span>
-          </div>
-        </div>
-
         <section className="block" id="features">
           <div className="wrap">
-            <p className="kicker">A quick look</p>
-            <h2>An organised digital record for every dog.</h2>
-            <p className="lead">A connected record from a dog's first day onward — profile, documents and a Digital Passport in one place.</p>
-            <div className="shots">
-              <div>
-                <div className="frame-desktop"><div className="bar"><i></i><i></i><i></i></div>
-                  <img
-                    src="/landing-media-fast/dog-profile.webp"
-                    className="ph ph-desktop"
-                    alt="Dog records in one organised profile"
-                    loading="lazy"
-                    decoding="async"
-                    fetchPriority="low"
-                  /></div>
-                <div className="shot-cap">Dog records in one organised profile</div>
-              </div>
-              <div>
-                <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <img
-                    src="/landing-media-fast/puppy-showcase.webp"
-                    className="ph ph-mobile"
-                    alt="A mobile-friendly Puppy Showcase"
-                    loading="lazy"
-                    decoding="async"
-                    fetchPriority="low"
-                  /></div>
-                <div className="shot-cap">A mobile-friendly Puppy Showcase</div>
-              </div>
-              <div>
-                <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
-                  <img
-                    src="/landing-media-fast/digital-passport.webp"
-                    className="ph ph-mobile"
-                    alt="A limited public Passport view"
-                    loading="lazy"
-                    decoding="async"
-                    fetchPriority="low"
-                  /></div>
-                <div className="shot-cap">A limited public Passport view</div>
-              </div>
+            <p className="kicker">Why iDogs</p>
+            <h2>Less admin for you. A complete record for your dog.</h2>
+            <div className="pillars pillars-3">
+              <div className="pillar"><h4>Save time</h4><p>Photograph a vaccination certificate and iDogs Scan reads the key details for you to check and save. No retyping.</p></div>
+              <div className="pillar"><h4>Stay organised</h4><p>Vaccinations, worming, health tests, documents and photos in one record for each dog, with email reminders before care is due.</p></div>
+              <div className="pillar"><h4>Share easily</h4><p>Show a vet, groomer or boarding kennel what they need with your dog&apos;s QR Passport. Private documents stay private.</p></div>
             </div>
           </div>
         </section>
 
-        <section className="block alt" id="paths">
+        <section className="block alt" id="howitworks">
           <div className="wrap">
-            <p className="kicker">Who it's for</p>
-            <h2>Find the part of iDogs that fits you.</h2>
-            <div className="paths">
-              <div className="path" id="for-owners">
-                <h3>For Dog Owners</h3>
-                <p className="plead">Keep your dog's records organised in one place.</p>
-                <ul>
-                  <li>Digital dog profile</li>
-                  <li>Health and vaccination records</li>
-                  <li>QR sharing</li>
-                </ul>
-                <Link className="btn btn-path" to="/signup?role=owner">Start Free as a Dog Owner</Link>
-              </div>
-              <div className="path" id="for-breeders">
-                <h3>For Breeders</h3>
-                <p className="plead">A simpler way to manage each litter.</p>
-                <ul>
-                  <li>Manage dogs and litters</li>
-                  <li>Create a Puppy Showcase</li>
-                  <li>Add puppy photos</li>
-                </ul>
-                <Link className="btn btn-path" to="/signup?role=breeder">Start Free as a Breeder</Link>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="block" id="passport">
-          <div className="wrap">
-            <p className="kicker">The record</p>
-            <h2>One Digital Passport for Life</h2>
-            <p className="lead">An organised record that stays connected through every stage of a dog's life.</p>
-            <div className="pillars">
-              <div className="pillar"><h4>Identity &amp; microchip</h4><p>A connected identity record through every life stage.</p></div>
-              <div className="pillar"><h4>Health &amp; vaccination</h4><p>Health records kept in one place.</p></div>
-              <div className="pillar"><h4>Documents</h4><p>Keep important document copies together.</p></div>
-              <div className="pillar"><h4>QR sharing</h4><p>A limited public view for selected information.</p></div>
-            </div>
-            <div className="life">
-              <p className="kicker">Through every stage</p>
-              <ol className="life-row">
-                <li className="life-stage"><div className="life-connector"></div><div className="dot"></div><h4>Birth</h4></li>
-                <li className="life-stage"><div className="life-connector"></div><div className="dot"></div><h4>Puppy</h4></li>
-                <li className="life-stage"><div className="life-connector"></div><div className="dot"></div><h4>Adult</h4></li>
-                <li className="life-stage"><div className="life-connector"></div><div className="dot"></div><h4>Senior</h4></li>
-                <li className="life-stage forever"><div className="dot"></div><h4>Later Life</h4></li>
-              </ol>
-            </div>
-          </div>
-        </section>
-
-        <section className="block alt">
-          <div className="wrap">
-            <p className="kicker">For breeders</p>
-            <h2>Four simple steps to keep each dog's records connected.</h2>
-            <ol className="flow" aria-label="Puppy Showcase workflow">
-              <li className="flow-step"><span className="n">1</span> Create litter</li>
-              <li className="flow-step"><span className="n">2</span> Add puppies</li>
-              <li className="flow-step"><span className="n">3</span> Add photos</li>
-              <li className="flow-step"><span className="n">4</span> Publish Showcase</li>
-            </ol>
-            <p className="lead"><strong>Show every puppy beautifully.</strong></p>
-            <div className="showcase-feats">
-              <span>Shareable public link</span><span>Photos</span>
-              <span>Mobile-friendly viewing</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="block" id="howitworks">
-          <div className="wrap">
-            <div className="ai-card">
-              <div>
-                <h3>iDogs Document Scan</h3>
-                <p>Turn dog documents into organised records faster. Upload a supported document and iDogs will extract key details for you to review before saving.</p>
-                <span className="ai-note">Review extracted information before saving.</span>
-              </div>
-              <ol className="ai-flow" aria-label="iDogs Document Scan steps">
-                <li><span className="n">1</span> Upload a supported document</li>
-                <li><span className="n">2</span> iDogs extracts key details</li>
-                <li><span className="n">3</span> You review and edit</li>
-                <li><span className="n">4</span> Save to the dog's record</li>
-              </ol>
-            </div>
-            <p className="kicker">How it works</p>
-            <h2>Three simple steps to keep each dog's records connected.</h2>
+            <p className="kicker">How iDogs works</p>
+            <h2>Three simple steps.</h2>
             <div className="steps steps-3">
-              <div className="step"><div className="n">1</div><h4>Create the dog's profile</h4></div>
-              <div className="step ai-here"><div className="n">2</div><h4>Add records and documents</h4><span className="tag">iDogs SCAN LIVES HERE</span></div>
-              <div className="step"><div className="n">3</div><h4>Share selected information when needed</h4></div>
+              <div className="step"><div className="n">1</div><h4>Create your free account</h4><p>Add your dog&apos;s name, breed, birthday and microchip number.</p></div>
+              <div className="step"><div className="n">2</div><h4>Add records your way</h4><p>Scan a document with iDogs Scan or type the details in. Upload certificates and photos.</p></div>
+              <div className="step"><div className="n">3</div><h4>Get reminders and share</h4><p>Get an email before care is due, and share the QR Passport when someone needs it.</p></div>
+            </div>
+          </div>
+        </section>
+
+        <section className="block" id="for-owners">
+          <div className="wrap split">
+            <div className="split-body">
+              <p className="kicker">For dog owners</p>
+              <h2>Stop searching for paperwork.</h2>
+              <p className="lead">Keep your dog&apos;s whole history together, on your phone and on the web, so it&apos;s ready when you need it.</p>
+              <ul className="checks">
+                <li>Vaccination, worming and health test history</li>
+                <li>Microchip papers, vet certificates and other documents</li>
+                <li>Email reminders before vaccinations and worming are due</li>
+                <li>A QR Passport that shows only a limited public view</li>
+                <li>Your puppy&apos;s record, sent to you by your breeder at handover</li>
+              </ul>
+              <Link className="btn btn-path" onClick={() => trackLandingEvent('cta_owner')} to="/signup?role=owner">Start Free as a Dog Owner</Link>
+            </div>
+            <div className="split-media">
+              <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
+                <img src="/landing-media-fast/digital-passport.webp" className="ph ph-mobile" alt="The limited public QR Passport view on a phone" loading="lazy" decoding="async" fetchPriority="low" />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="block alt" id="for-breeders">
+          <div className="wrap split split-reverse">
+            <div className="split-body">
+              <p className="kicker">For breeders</p>
+              <h2>From puppy to forever.</h2>
+              <p className="lead">A simpler way to organise and share every puppy&apos;s story, from the first litter record to the new owner&apos;s handover.</p>
+              <ul className="checks">
+                <li>Your dogs, litters and puppies in one workspace</li>
+                <li>Heat cycles, mating estimates and mating-due reminders</li>
+                <li>A Puppy Showcase: one mobile-friendly link with photos of each puppy</li>
+                <li>Send each puppy&apos;s record to its new owner</li>
+                <li>iDogs Scan for vaccination and health test documents</li>
+              </ul>
+              <p className="mini-note">Litters and the Puppy Showcase are part of iDogs Plus: {LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} litters per rolling 12 months included, extra litters A${EXTRA_LITTER_PRICE_AUD} each.</p>
+              <Link className="btn btn-path" onClick={() => trackLandingEvent('cta_breeder')} to="/signup?role=breeder">Start Free as a Breeder</Link>
+            </div>
+            <div className="split-media">
+              <div className="frame-mobile"><div className="bar"><i></i><i></i><i></i></div>
+                <img src="/landing-media-fast/puppy-showcase.webp" className="ph ph-mobile" alt="A mobile-friendly Puppy Showcase" loading="lazy" decoding="async" fetchPriority="low" />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="block" id="inside">
+          <div className="wrap">
+            <p className="kicker">A look inside</p>
+            <h2>One organised profile for every dog.</h2>
+            <div className="frame-desktop frame-wide"><div className="bar"><i></i><i></i><i></i></div>
+              <img src="/landing-media-fast/dog-profile.webp" className="ph ph-desktop" alt="A dog profile in iDogs with its records and documents" loading="lazy" decoding="async" fetchPriority="low" />
+            </div>
+            <div className="shot-cap">A real iDogs screen: a dog&apos;s profile with its health records and documents.</div>
+          </div>
+        </section>
+
+        <section className="iphone-band" id="iphone">
+          <div className="wrap iphone-grid">
+            <div>
+              <p className="kicker kicker-light">iDogs for iPhone</p>
+              <h2>Your dog&apos;s records, in your pocket.</h2>
+              <p className="lead lead-light">Download the free iDogs app and sign in with the same account you use on the web. Requires iOS 15 or later.</p>
+              <div className="store-row">
+                <AppStoreLink className="btn btn-store" large>Download for iPhone</AppStoreLink>
+                <p className="store-alt">Not on iPhone? iDogs works in any web browser. <Link to="/signup" onClick={() => trackLandingEvent('cta_get_started')}>Get Started Free</Link></p>
+              </div>
             </div>
           </div>
         </section>
@@ -299,9 +246,21 @@ export default function LandingPage() {
         <section className="block pricing-block" id="pricing">
           <div className="wrap">
             <p className="kicker">Simple pricing</p>
-            <h2>Everything you need, without complicated plans.</h2>
-            <p className="lead">Start free. Upgrade to iDogs Plus when you need more.</p>
-            <div className="pricing-grid">
+            <h2>Start free. Upgrade when you need more.</h2>
+            <p className="lead">Free covers the essentials. iDogs Plus adds more dogs, more iDogs Scans and the breeder tools.</p>
+            <div className="pricing-grid pricing-grid-2">
+              <article className="pricing-card" data-testid="pricing-free">
+                <p className="pricing-label">Free</p>
+                <p className="pricing-price"><span>A$0</span><small>no card needed</small></p>
+                <ul className="pricing-list">
+                  <li>Up to {DOG_CAP_FREE} dogs</li>
+                  <li>Health, vaccination and worming records</li>
+                  <li>Documents and photos</li>
+                  <li>QR Passport and email reminders</li>
+                  <li>{SCAN_QUOTA_FREE_LIFETIME} iDogs Scans to try</li>
+                </ul>
+                <Link className="btn btn-path pricing-cta" to="/signup" onClick={() => trackLandingEvent('cta_get_started')}>Get Started Free</Link>
+              </article>
               <article className="pricing-card pricing-card-main">
                 <div className="pricing-card-head">
                   <div>
@@ -309,28 +268,30 @@ export default function LandingPage() {
                     {launchActive ? (
                       // A$7 is the real regular price (genuine reference price); the voucher makes the first year free.
                       <p className="pricing-price" data-testid="pricing-voucher-price"><del style={{ fontFamily: "'Fraunces','Georgia',serif", fontSize: 30, fontWeight: 600, lineHeight: 1, color: 'var(--ink-soft)', opacity: 0.75, marginRight: 6, textDecorationThickness: 2 }}>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</del><span>A$0</span><small>/month for 12 months with the Gift Voucher</small></p>
-                    ) : !promotionActive && <p className="pricing-price"><span>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</span><small>/month</small></p>}
+                    ) : !promotionActive && <p className="pricing-price"><span>{`A$${PLUS_MONTHLY_PRICE_AUD}`}</span><small>/month including GST</small></p>}
                   </div>
-                  <span className="pricing-badge">Most popular</span>
+                  <span className="pricing-badge">For more dogs and breeding</span>
                 </div>
                 {launchActive && offerStatus && (
-                  <div data-testid="pricing-launch-offer" style={{ border: '2px solid var(--green-mid, #1D9E75)', borderRadius: 12, padding: '12px 14px', margin: '8px 0 12px', background: 'var(--green-light, #E1F5EE)' }}>
-                    <p style={{ fontWeight: 700, margin: 0 }}>🎁 FREE Gift Voucher - 1 year of iDogs Plus for 100 dog owners &amp; dog breeders, no card needed.</p>
+                  <div data-testid="pricing-launch-offer" className="offer-box">
+                    <p style={{ fontWeight: 700, margin: 0 }}>Free Gift Voucher: 1 year of iDogs Plus for 100 dog owners &amp; dog breeders, no card needed.</p>
                     <p style={{ fontSize: 13, margin: '4px 0 0' }}><LaunchCountdownLine status={offerStatus} /> · add your first dog, then claim. Nothing renews.</p>
+                    <p style={{ fontSize: 13, margin: '4px 0 0' }}>For accounts that have added a dog and don&apos;t have a paid Plus plan. Limited to 100 places; claim by 31 December 2026 (Adelaide time). After the voucher year, Plus is A${PLUS_MONTHLY_PRICE_AUD}/month including GST.</p>
                   </div>
                 )}
                 {promotionActive && !launchActive && <PlusPromotion />}
                 <p className="pricing-copy">Organise your dogs and breeding records in one connected workspace.</p>
                 <ul className="pricing-list">
-                  <li>Dog profiles, health records and documents</li>
-                  <li>Breeder tools for dogs, litters and puppies</li>
-                  <li>{LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} litters per rolling 12 months included</li>
-                  <li>{`Extra litters A$${EXTRA_LITTER_PRICE_AUD} each`}</li>
-                  <li>Digital Passport and QR sharing</li>
+                  <li>Everything in Free</li>
+                  <li>Up to {DOG_CAP_PLUS} dogs</li>
+                  <li>{SCAN_QUOTA_PLUS_MONTHLY} iDogs Scans every month</li>
+                  <li>Breeder tools: litters, puppies and Puppy Showcase</li>
+                  <li>{LITTER_QUOTA_PLUS_ROLLING_12_MONTHS} litters per rolling 12 months included · {`extra litters A$${EXTRA_LITTER_PRICE_AUD} each`}</li>
+                  <li>Optional SMS reminders: +A$3/month for 20 SMS credits, reset each billing month</li>
                 </ul>
                 {launchActive ? (
                   <>
-                    <Link className="btn btn-primary pricing-cta" to="/signup?next=%2Fapp%2Fbilling">Claim your Gift Voucher — no card needed</Link>
+                    <Link className="btn btn-primary pricing-cta" to="/signup?next=%2Fapp%2Fbilling" onClick={() => trackLandingEvent('cta_voucher')}>Claim your Gift Voucher — no card needed</Link>
                     {promotionActive && (
                       // The A$0 subscription offer stays available with its full
                       // terms, shown as the secondary choice under the voucher CTA.
@@ -343,28 +304,52 @@ export default function LandingPage() {
                     )}
                   </>
                 ) : (
-                  <Link className="btn btn-primary pricing-cta" to={promotionActive ? '/signup?next=%2Fapp%2Fbilling' : '/signup'}>{promotionActive ? 'Get Plus for A$0' : 'Start Free'}</Link>
+                  <Link className="btn btn-primary pricing-cta" to={promotionActive ? '/signup?next=%2Fapp%2Fbilling' : '/signup'} onClick={() => trackLandingEvent('cta_get_started')}>{promotionActive ? 'Get Plus for A$0' : 'Get Started Free'}</Link>
                 )}
               </article>
-              <article className="pricing-card pricing-card-addon">
-                <p className="pricing-label">Optional add-on</p>
-                <h3>SMS Reminders</h3>
-                <p className="pricing-price"><span>+A$3</span><small>/month</small></p>
-                <p className="pricing-copy">Add SMS reminders to Plus when you need them.</p>
-                <div className="sms-credit"><strong>20 SMS credits / month</strong><span>Resets each billing month.</span></div>
-              </article>
             </div>
-            <p className="pricing-footnote">All paid prices are in AUD and include GST. Less than the cost of a coffee each month.</p>
+            <p className="pricing-footnote">All paid prices are in AUD and include GST. Plus is managed on idogs.com.au.</p>
           </div>
         </section>
 
-        {/* FAQ section intentionally absent — no answer verified against the real product yet (brief §13) */}
+        <section className="block alt" id="privacy">
+          <div className="wrap">
+            <p className="kicker">Privacy and trust</p>
+            <h2>Your dog&apos;s records stay yours.</h2>
+            <div className="cards4">
+              <div className="pillar"><h4>Private by default</h4><p>Your records and documents are visible only to you.</p></div>
+              <div className="pillar"><h4>A limited QR view</h4><p>The QR Passport shows a limited public view, never your private documents.</p></div>
+              <div className="pillar"><h4>Ads only with consent</h4><p>Ad measurement runs only if you opt in. Data is stored securely in the Asia-Pacific region.</p></div>
+              <div className="pillar"><h4>Australian-owned</h4><p>Built in Adelaide for Australian dog owners and breeders. Delete your account at any time.</p></div>
+            </div>
+            <p className="mini-note"><Link to="/privacy">Read the Privacy Policy</Link> · <Link to="/terms">Read the Terms of Use</Link></p>
+          </div>
+        </section>
+
+        <section className="block" id="faq">
+          <div className="wrap faq-wrap">
+            <p className="kicker">FAQ</p>
+            <h2>Questions, answered.</h2>
+            <div className="faq">
+              <details open><summary>Is iDogs really free?</summary><p>Yes. The Free plan covers up to {DOG_CAP_FREE} dogs with health records, documents, the QR Passport and email reminders. No card needed.</p></details>
+              <details><summary>What does iDogs Plus add?</summary><p>Up to {DOG_CAP_PLUS} dogs, {SCAN_QUOTA_PLUS_MONTHLY} iDogs Scans every month, and the breeder tools: litters, puppies and the Puppy Showcase.</p></details>
+              <details><summary>Is there an app?</summary><p>Yes. iDogs is free on the App Store for iPhone (iOS 15 or later). On Android or a computer, use iDogs in your web browser with the same account.</p></details>
+              <details><summary>Who can see my dog&apos;s QR Passport?</summary><p>Anyone with the QR code or link sees a limited public view. Your documents and private records stay private.</p></details>
+              <details><summary>I&apos;m a breeder. Can I pass records to a puppy&apos;s new owner?</summary><p>Yes. Send the puppy to the new owner&apos;s email from iDogs and they can claim its record in their own account.</p></details>
+              <details><summary>Who can use iDogs?</summary><p>You must be at least 16 to create an account. If you are under 18, you need permission from a parent or guardian, and paid plans are for adults aged 18 and over. See the <Link to="/terms">Terms of Use</Link>.</p></details>
+              <details><summary>Where is my data stored?</summary><p>Securely in the Asia-Pacific region. See the <Link to="/privacy">Privacy Policy</Link> for details.</p></details>
+            </div>
+          </div>
+        </section>
 
         <section className="final">
           <div className="wrap">
-            <h2>Give every dog a connected record for life.</h2>
-            <p>Built for Australian dog owners and breeders. Start free.</p>
-            <Link className="btn btn-primary" to="/signup">Start Free</Link>
+            <h2>Get your dog&apos;s records sorted today.</h2>
+            <p>Free for up to {DOG_CAP_FREE} dogs. No card needed.</p>
+            <div className="cta-row cta-center">
+              <Link className="btn btn-primary" to="/signup" onClick={() => trackLandingEvent('cta_get_started')}>Get Started Free</Link>
+              <AppStoreLink className="btn btn-ghost">Download for iPhone</AppStoreLink>
+            </div>
           </div>
         </section>
         </main>
@@ -374,20 +359,21 @@ export default function LandingPage() {
             <div className="foot-top">
               <div className="foot-brand">
                 <img src="/03_idogs_reversed_white_transparent.png" alt="iDogs" style={{ width: 125, height: 'auto' }} />
-                <div style={{ maxWidth: '34ch', marginTop: 12, color: 'var(--on-forest-soft)' }}>An organised digital record for every dog.</div>
+                <div style={{ maxWidth: '34ch', marginTop: 12, color: 'var(--on-forest-soft)' }}>Everything your dog needs, all in one place.</div>
               </div>
               <div className="foot-cols">
                 <div className="foot-col">
                   <h5>Product</h5>
-                  <a href="#features">Features</a>
-                  <a href="#for-owners">For Owners</a>
-                  <a href="#for-breeders">For Breeders</a>
+                  <a href="#howitworks">How it works</a>
+                  <a href="#for-owners">Dog Owners</a>
+                  <a href="#for-breeders">Breeders</a>
+                  <a href="#iphone">iPhone app</a>
                   <a href="#pricing">Pricing</a>
                 </div>
                 <div className="foot-col">
                   <h5>Account</h5>
                   <Link to="/login">Log In</Link>
-                  <Link to="/signup">Start Free</Link>
+                  <Link to="/signup">Get Started Free</Link>
                 </div>
                 <div className="foot-col">
                   <h5>Legal</h5>
@@ -397,18 +383,46 @@ export default function LandingPage() {
                 </div>
               </div>
             </div>
+            {/* Legal wording mirrors Terms of Use s.1 and s.7 (operator and trademark owner). Not yet reviewed by a solicitor: see docs/growth-v1/HANDOFF.md. */}
             <p className="foot-legal">iDogs provides record-management tools and does not constitute legal or regulatory advice. Breeders remain responsible for meeting applicable state, local council and registry requirements. <em>(Disclaimer pending legal review.)</em></p>
-            <p className="foot-copy">© 2026 iDogs. All rights reserved.</p>
+            <p className="foot-copy">iDogs is operated by iziPaws Pty Ltd (ABN 42 693 563 745), Adelaide, South Australia. The iDogs trademark is owned by NN Global Pty Ltd as trustee for NN Investment Trust.</p>
           </div>
         </footer>
 
         <div className="sticky-cta">
-          <Link className="btn btn-primary" to="/signup">Start Free</Link>
+          <Link className="btn btn-primary" to="/signup" onClick={() => trackLandingEvent('cta_get_started')}>Get Started Free</Link>
+          <AppStoreLink className="btn btn-store-icon" iconOnly>Download for iPhone</AppStoreLink>
         </div>
       </div>
 
       {menuOpen && <MobileMenu onClose={() => setMenuOpen(false)} />}
     </div>
+  )
+}
+
+// ── APP STORE LINK ───────────────────────────────────────────────
+// The only place the iDogs App Store URL lives. Counted anonymously on click.
+// Apple's marketing rules require its own badge artwork (never recreated), at
+// least 40px high with clear space of a quarter of its height. Until the
+// official artwork is supplied (APP_STORE_BADGE_SRC), this renders a plain
+// "Download for iPhone" button that is not an Apple mark.
+const APP_STORE_URL = 'https://apps.apple.com/au/app/idogs/id6823094602'
+const APP_STORE_BADGE_SRC: string | null = null
+
+function AppStoreLink({ className, children, large = false, iconOnly = false }: { className: string; children: ReactNode; large?: boolean; iconOnly?: boolean }) {
+  const onClick = () => trackLandingEvent('app_store')
+  if (APP_STORE_BADGE_SRC && large) {
+    return (
+      <a className="store-badge-link" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" onClick={onClick}>
+        <img src={APP_STORE_BADGE_SRC} alt="Download on the App Store" style={{ height: 48, width: 'auto', display: 'block' }} />
+      </a>
+    )
+  }
+  return (
+    <a className={className} href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" onClick={onClick} aria-label={iconOnly ? 'Download iDogs for iPhone on the App Store' : undefined}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ marginRight: iconOnly ? 0 : 10, flex: 'none' }}><rect x="6" y="2" width="12" height="20" rx="2.5"></rect><path d="M11 18h2"></path></svg>
+      {iconOnly ? null : large ? <span className="store-text"><small>Free on the App Store</small><strong>{children}</strong></span> : children}
+    </a>
   )
 }
 
@@ -458,12 +472,14 @@ function MobileMenu({ onClose }: { onClose: () => void }) {
           <img src="/03_idogs_reversed_white_transparent.png" alt="iDogs" style={{ width: 104.2, height: 'auto' }} />
           <button ref={closeRef} className="m-close" aria-label="Close menu" onClick={onClose}>✕</button>
         </div>
-        <a href="#features" onClick={onClose}>Features</a>
-        <a href="#for-owners" onClick={onClose}>For Owners</a>
-        <a href="#for-breeders" onClick={onClose}>For Breeders</a>
+        <a href="#howitworks" onClick={onClose}>How it works</a>
+        <a href="#for-owners" onClick={onClose}>Dog Owners</a>
+        <a href="#for-breeders" onClick={onClose}>Breeders</a>
+        <a href="#iphone" onClick={onClose}>iPhone app</a>
         <a href="#pricing" onClick={onClose}>Pricing</a>
+        <a href="#faq" onClick={onClose}>FAQ</a>
         <Link to="/login" style={{ border: 'none' }} onClick={onClose}>Log In</Link>
-        <Link className="btn btn-primary" to="/signup" onClick={onClose}>Start Free</Link>
+        <Link className="btn btn-primary" to="/signup" onClick={() => { trackLandingEvent('cta_get_started'); onClose() }}>Get Started Free</Link>
       </div>
     </div>
   )
@@ -787,4 +803,71 @@ const LV2_CSS = `
     .lv2-page .final, .lv2-page footer{padding-bottom:90px;}
   }
   @media (max-width:390px){ .lv2-page .wrap{padding:0 18px;} .lv2-page .hero h1{font-size:33px;} }
+  @media (max-height:480px) and (orientation:landscape){ .lv2-page .hero{padding:24px 0 32px;} .lv2-page .hero h1{font-size:30px;margin-bottom:10px;} .lv2-page .hero .sub{font-size:16px;margin-bottom:6px;} .lv2-page .eyebrow{margin-bottom:8px;} }
+  @media (max-width:340px){ .lv2-page .hero{padding:32px 0 36px;} .lv2-page .hero h1{font-size:29px;margin-bottom:12px;} .lv2-page .hero .sub{font-size:16px;} .lv2-page .eyebrow{margin-bottom:10px;} .lv2-page .hero .incl{margin-bottom:18px;} }
+
+  /* ── Growth V1 homepage (LP-03) ── */
+  .lv2-page .hero-note { margin:14px 0 0; font-size:14px; color:var(--on-forest-soft); }
+  .lv2-page .voucher-note { margin-top:20px; padding:14px 16px; border:1px solid rgba(217,165,69,.55); background:rgba(192,138,45,.14); border-radius:12px; color:var(--on-forest); font-size:14px; font-weight:500; max-width:560px; }
+  .lv2-page .breeder-link { margin:20px 0 0; font-size:15px; }
+  .lv2-page .breeder-link a { color:var(--on-forest); font-weight:700; text-underline-offset:3px; }
+  .lv2-page .cta-center { justify-content:center; }
+  .lv2-page .cards4 { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; margin-top:20px; }
+  .lv2-page .step p { margin:6px 0 0; font-size:14px; color:var(--ink-soft); }
+  .lv2-page .split { display:flex; gap:48px; align-items:center; }
+  .lv2-page .split-reverse { flex-direction:row-reverse; }
+  .lv2-page .split-body { flex:1 1 0; min-width:0; }
+  .lv2-page .split-media { flex:0 0 300px; }
+  .lv2-page .split-media .frame-mobile { max-width:300px; }
+  .lv2-page .checks { list-style:none; margin:22px 0; padding:0; display:grid; gap:12px; font-size:16px; }
+  .lv2-page .checks li { position:relative; padding-left:28px; }
+  .lv2-page .checks li::before { content:'✓'; position:absolute; left:0; color:var(--brass-lo); font-weight:900; }
+  .lv2-page .mini-note { margin:0 0 22px; font-size:14px; color:var(--ink-soft); }
+  .lv2-page .mini-note a { color:var(--forest); font-weight:600; }
+  .lv2-page .frame-wide { max-width:980px; margin-top:24px; }
+  .lv2-page .iphone-band { background:var(--forest-2); color:var(--on-forest); padding:72px 0; scroll-margin-top:80px; }
+  .lv2-page .iphone-band h2 { font-size:clamp(28px,3.4vw,40px); margin:0 0 14px; max-width:24ch; }
+  .lv2-page .kicker-light { color:var(--brass); }
+  .lv2-page .lead-light { color:var(--on-forest-soft); }
+  .lv2-page .store-row { display:flex; gap:18px 24px; align-items:center; flex-wrap:wrap; margin-top:24px; }
+  .lv2-page .btn-store { background:#000; color:#fff; border:1px solid var(--on-forest-soft); border-radius:12px; padding:0 22px; min-height:56px; }
+  .lv2-page .btn-store:hover { background:#111; }
+  .lv2-page .store-text { display:flex; flex-direction:column; align-items:flex-start; line-height:1.15; text-align:left; }
+  .lv2-page .store-text small { font-size:12px; font-weight:500; }
+  .lv2-page .store-text strong { font-size:18px; font-weight:700; }
+  .lv2-page .store-badge-link { display:inline-block; padding:12px; }
+  .lv2-page .store-alt { margin:0; font-size:14px; color:var(--on-forest-soft); }
+  .lv2-page .store-alt a { color:var(--on-forest); font-weight:700; }
+  .lv2-page .pricing-grid-2 { grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr); }
+  .lv2-page .offer-box { border:2px solid var(--brass); border-radius:12px; padding:12px 14px; margin:8px 0 14px; background:#fbf3df; }
+  .lv2-page .faq-wrap { max-width:860px; }
+  .lv2-page .faq { display:grid; gap:10px; margin-top:20px; }
+  .lv2-page .faq details { background:#fffdf8; border:1px solid var(--line); border-radius:12px; padding:2px 20px; }
+  .lv2-page .faq summary { cursor:pointer; list-style:none; font-weight:700; padding:12px 0; min-height:44px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .lv2-page .faq summary::-webkit-details-marker { display:none; }
+  .lv2-page .faq summary::after { content:'+'; font-size:22px; line-height:1; color:var(--brass-lo); }
+  .lv2-page .faq details[open] summary::after { content:'–'; }
+  .lv2-page .faq p { margin:0 0 16px; color:var(--ink-soft); }
+  .lv2-page .faq a { color:var(--forest); font-weight:600; }
+  @media (max-width:1100px){
+    .lv2-page .nav-links{display:none;}
+    .lv2-page .hamburger{display:inline-flex;}
+  }
+  @media (max-width:900px){
+    .lv2-page .split, .lv2-page .split-reverse { flex-direction:column; align-items:stretch; gap:32px; }
+    .lv2-page .split-media { flex:none; width:100%; max-width:300px; align-self:center; }
+    .lv2-page .cards4 { grid-template-columns:1fr 1fr; }
+    .lv2-page .pillars.pillars-3 { grid-template-columns:1fr; }
+  }
+  @media (max-width:760px){
+    .lv2-page .pricing-grid-2 { grid-template-columns:1fr; }
+  }
+  @media (max-width:620px){
+    .lv2-page .cards4 { grid-template-columns:1fr; }
+    .lv2-page .cta-row .btn { flex:1 1 100%; }
+    .lv2-page .iphone-band { padding:52px 0 52px; }
+    .lv2-page .sticky-cta { display:flex; gap:10px; }
+    .lv2-page .sticky-cta .btn-primary { flex:1 1 auto; width:auto; }
+    .lv2-page .sticky-cta .btn-store-icon { flex:none; width:50px; padding:0; background:transparent; color:var(--on-forest); border:1.5px solid var(--on-forest-soft); }
+  }
 `
