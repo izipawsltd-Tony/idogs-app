@@ -15,21 +15,23 @@ G1 conditional (not final visual). G2 report drafted (no billing change). G3/G4 
 |---|---|---|
 | LP-01 audit | DONE | Issue #103 |
 | LP-02 design/copy | DONE (G1 conditional) | `docs/growth/GROWTH_V1_LP02_DESIGN.md` (needs deviations update) |
-| LP-03 homepage + Australian-owned card copy | CODE PASS / PREVIEW UNVERIFIED | local 78/78 e2e, 706+ unit; copy check done locally; deployed Preview not opened (sandbox egress) — independent QA to confirm |
+| LP-03 homepage + Australian-owned copy | CODE PASS / PREVIEW UNVERIFIED | Owner kept copy as `ae79a0c`; local + CI evidence; deployed Preview not opened by Claude (sandbox egress) |
 | LP-04 owner journey | PARTIAL | `/signup?role=owner` verified locally |
 | LP-05 breeder journey | PARTIAL | `#for-breeders` anchor + `/signup?role=breeder` verified locally |
 | LP-06 App Store | BLOCKED (Owner) | link works; badge needs Apple licence acceptance (see blockers) |
 | LP-07 landing→signup | PARTIAL | signup-funnel specs pass on 6 viewports |
 | LP-08 pricing consistency | PARTIAL | distinct offers kept; see `G2_PRICING_DISCREPANCY_REPORT.md` |
-| LP-09 analytics | HELD OFF | click counters disabled by flag pending privacy sign-off (`PRIVACY_ASSESSMENT_CLICK_COUNTERS.md`) |
-| LP-10 perf/a11y/SEO | NOT STARTED | index.html title/meta/og:image outdated |
-| LP-11 E2E / independent QA | NOT STARTED | needs Codex or equivalent (not Claude-only) |
+| LP-09 analytics | CODE PASS (Option C, consent-gated) | unit + real-browser specs prove 0 requests before choice/after Decline, 1 after Allow; Privacy Policy + dialog updated (not legally reviewed) |
+| LP-10 perf/a11y/SEO | CODE PASS / PREVIEW UNVERIFIED | axe 0 violations on `/` at 320/390/1440; contrast, heading order, landmark fixed; title/meta/OG + `og-idogs.jpg`, `robots.txt`, `sitemap.xml` added; CLS 0.006–0.011; Lighthouse on Preview still to run by QA |
+| LP-11 E2E / independent QA | PACKAGE READY | `LP11_INDEPENDENT_QA_PACKAGE.md` for Codex; Claude-only tests are not sufficient for PASS |
 | LP-12 release candidate | NOT STARTED | Opus final review |
 
 ## Blockers (retry counters)
 - Apple badge: BLOCKED, 0 retries. Apple's official artwork URL is `https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg` but its use requires the Apple Developer Program member (IZIPAWS) to accept Apple's App Marketing Artwork licence, and the sandbox cannot download from Apple. No third-party copies used. Owner action: accept the licence and drop the SVG at `public/app-store-badge.svg` (then set `APP_STORE_BADGE_SRC` in `LandingPage.tsx`).
 - Footer legal: unresolved, not claimed complete — `LEGAL_FOOTER_VERIFICATION.md`.
-- Click counters: OFF pending decision (A keep off / B enable for all after policy line / C consent-gated).
+- Click counters: RESOLVED — Owner chose Option C (consent-gated), implemented and tested.
+- Stripe read-only verification: BLOCKED — no Stripe credentials/connector here; annual A$70 stays hidden.
+- `/signup` has 2 pre-existing contrast findings (auth divider, footer) — outside homepage scope, reported not fixed.
 - G2: report drafted — Owner decisions listed in it.
 
 ## Defects fixed
@@ -37,7 +39,7 @@ G1 conditional (not final visual). G2 report drafted (no billing change). G3/G4 
 - Hero CTA under consent pill at 320px and landscape — attempt 1 each.
 
 ## Release candidate in progress (NOT final)
-Code commits on branch: `c7ae808` (homepage), `ae79a0c` (Australian-owned copy). Later SHA recorded in Issue #103. Preview: https://idogs-bpe0d2mza-izipawsltd-tonys-projects.vercel.app (for c7ae808; later commits create new Previews).
+Code commits: `c7ae808` (homepage), `ae79a0c` (Australian-owned copy), `b9a88d9` (reports/flag), `c14fd7c` (LP-09 consent gating + LP-10 + LP-11 package). Latest SHA is in the newest Issue #103 comment.
 
 ## Exact next action
-After CI is green on the latest SHA: update Issue #103 table; then LP-10 (index.html meta/title/og, a11y), request independent QA on the Preview, then LP-12 with Opus. Stop at final G1/G3/G4.
+Post CI + Preview for the latest SHA to Issue #103, then hand `LP11_INDEPENDENT_QA_PACKAGE.md` to Codex. Claude next: act on QA findings (max 3 attempts each), update `GROWTH_V1_LP02_DESIGN.md` deviations, then LP-12 with Opus. Stop at final G1/G3/G4.
