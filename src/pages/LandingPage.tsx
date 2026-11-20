@@ -413,16 +413,33 @@ export default function LandingPage() {
 const APP_STORE_URL = 'https://apps.apple.com/au/app/idogs/id6823094602'
 const APP_STORE_BADGE_SRC: string | null = null
 
-// Explicit in-page jump for the breeder section: guarantees the scroll, the URL hash and
-// the post-click position (the section's scroll-margin keeps it below the sticky header)
-// even if a browser ignores the default fragment navigation on small viewports.
+// Explicit in-page jump for the breeder section. It guarantees the scroll, the URL hash and
+// the final position (the section's scroll-margin keeps it below the sticky header) even
+// if a browser ignores the default fragment navigation on small viewports, and it
+// re-aligns for ~1.5s while content above changes height (published images swapping in,
+// fonts loading) so the section does not end up off target. Any wheel/touch/key input
+// from the visitor cancels the re-alignment immediately.
 function goToBreeders(e: MouseEvent<HTMLAnchorElement>) {
   const el = document.getElementById('for-breeders')
   if (!el) return
   e.preventDefault()
-  const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+  const margin = parseFloat(getComputedStyle(el).scrollMarginTop) || 0
+  const align = () => {
+    const delta = el.getBoundingClientRect().top - margin
+    if (Math.abs(delta) > 2) window.scrollBy(0, delta)
+  }
+  el.scrollIntoView({ behavior: 'auto', block: 'start' })
   try { window.history.replaceState(null, '', '#for-breeders') } catch { /* hash is cosmetic */ }
+  if (typeof ResizeObserver === 'undefined') { window.setTimeout(align, 400); return }
+  const stop = () => {
+    observer.disconnect()
+    window.clearTimeout(timer)
+    for (const type of ['wheel', 'touchstart', 'keydown'] as const) window.removeEventListener(type, stop)
+  }
+  const observer = new ResizeObserver(align)
+  observer.observe(document.body)
+  const timer = window.setTimeout(stop, 1500)
+  for (const type of ['wheel', 'touchstart', 'keydown'] as const) window.addEventListener(type, stop, { passive: true })
 }
 
 function AppStoreLink({ className, children, large = false, iconOnly = false }: { className: string; children: ReactNode; large?: boolean; iconOnly?: boolean }) {
