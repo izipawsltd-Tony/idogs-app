@@ -152,9 +152,9 @@ export default function LandingPage() {
             <p className="kicker">Why iDogs</p>
             <h2>Less admin for you. A complete record for your dog.</h2>
             <div className="pillars pillars-3">
-              <div className="pillar"><h4>Save time</h4><p>Photograph a vaccination certificate and iDogs Scan reads the key details for you to check and save. No retyping.</p></div>
-              <div className="pillar"><h4>Stay organised</h4><p>Vaccinations, worming, health tests, documents and photos in one record for each dog, with email reminders before care is due.</p></div>
-              <div className="pillar"><h4>Share easily</h4><p>Show a vet, groomer or boarding kennel what they need with your dog&apos;s QR Passport. Private documents stay private.</p></div>
+              <div className="pillar"><h3>Save time</h3><p>Photograph a vaccination certificate and iDogs Scan reads the key details for you to check and save. No retyping.</p></div>
+              <div className="pillar"><h3>Stay organised</h3><p>Vaccinations, worming, health tests, documents and photos in one record for each dog, with email reminders before care is due.</p></div>
+              <div className="pillar"><h3>Share easily</h3><p>Show a vet, groomer or boarding kennel what they need with your dog&apos;s QR Passport. Private documents stay private.</p></div>
             </div>
           </div>
         </section>
@@ -164,9 +164,9 @@ export default function LandingPage() {
             <p className="kicker">How iDogs works</p>
             <h2>Three simple steps.</h2>
             <div className="steps steps-3">
-              <div className="step"><div className="n">1</div><h4>Create your free account</h4><p>Add your dog&apos;s name, breed, birthday and microchip number.</p></div>
-              <div className="step"><div className="n">2</div><h4>Add records your way</h4><p>Scan a document with iDogs Scan or type the details in. Upload certificates and photos.</p></div>
-              <div className="step"><div className="n">3</div><h4>Get reminders and share</h4><p>Get an email before care is due, and share the QR Passport when someone needs it.</p></div>
+              <div className="step"><div className="n">1</div><h3>Create your free account</h3><p>Add your dog&apos;s name, breed, birthday and microchip number.</p></div>
+              <div className="step"><div className="n">2</div><h3>Add records your way</h3><p>Scan a document with iDogs Scan or type the details in. Upload certificates and photos.</p></div>
+              <div className="step"><div className="n">3</div><h3>Get reminders and share</h3><p>Get an email before care is due, and share the QR Passport when someone needs it.</p></div>
             </div>
           </div>
         </section>
@@ -317,10 +317,10 @@ export default function LandingPage() {
             <p className="kicker">Privacy and trust</p>
             <h2>Your dog&apos;s records stay yours.</h2>
             <div className="cards4">
-              <div className="pillar"><h4>Private by default</h4><p>Your records and documents are visible only to you.</p></div>
-              <div className="pillar"><h4>A limited QR view</h4><p>The QR Passport shows a limited public view, never your private documents.</p></div>
-              <div className="pillar"><h4>Ads only with consent</h4><p>Ad measurement runs only if you opt in. Data is stored securely in the Asia-Pacific region.</p></div>
-              <div className="pillar"><h4>Australian-owned</h4><p>Built for Australian dog owners and breeders. Delete your account at any time.</p></div>
+              <div className="pillar"><h3>Private by default</h3><p>Your records and documents are visible only to you.</p></div>
+              <div className="pillar"><h3>A limited QR view</h3><p>The QR Passport shows a limited public view, never your private documents.</p></div>
+              <div className="pillar"><h3>Ads only with consent</h3><p>Ad measurement runs only if you opt in. Data is stored securely in the Asia-Pacific region.</p></div>
+              <div className="pillar"><h3>Australian-owned</h3><p>Built for Australian dog owners and breeders. Delete your account at any time.</p></div>
             </div>
             <p className="mini-note"><Link to="/privacy">Read the Privacy Policy</Link> · <Link to="/terms">Read the Terms of Use</Link></p>
           </div>
@@ -363,7 +363,7 @@ export default function LandingPage() {
               </div>
               <div className="foot-cols">
                 <div className="foot-col">
-                  <h5>Product</h5>
+                  <h3>Product</h3>
                   <a href="#howitworks">How it works</a>
                   <a href="#for-owners">Dog Owners</a>
                   <a href="#for-breeders">Breeders</a>
@@ -371,12 +371,12 @@ export default function LandingPage() {
                   <a href="#pricing">Pricing</a>
                 </div>
                 <div className="foot-col">
-                  <h5>Account</h5>
+                  <h3>Account</h3>
                   <Link to="/login">Log In</Link>
                   <Link to="/signup">Get Started Free</Link>
                 </div>
                 <div className="foot-col">
-                  <h5>Legal</h5>
+                  <h3>Legal</h3>
                   <Link to="/privacy">Privacy Policy</Link>
                   <Link to="/terms">Terms of Use</Link>
                   <a href="mailto:hello@idogs.com.au">Contact: hello@idogs.com.au</a>
@@ -389,7 +389,7 @@ export default function LandingPage() {
           </div>
         </footer>
 
-        <div className="sticky-cta">
+        <div className="sticky-cta" role="region" aria-label="Get started with iDogs">
           <Link className="btn btn-primary" to="/signup" onClick={() => trackLandingEvent('cta_get_started')}>Get Started Free</Link>
           <AppStoreLink className="btn btn-store-icon" iconOnly>Download for iPhone</AppStoreLink>
         </div>
@@ -604,7 +604,7 @@ const LV2_CSS = `
   .lv2-page .pricing-price { display:flex; align-items:baseline; gap:6px; margin:0 0 16px; }
   .lv2-page .pricing-price span { font-family:'Fraunces','Georgia',serif; font-size:46px; font-weight:650; line-height:1; color:var(--forest); }
   .lv2-page .pricing-price small { color:var(--ink-soft); font-size:14px; font-weight:650; }
-  .lv2-page .pricing-badge { flex:0 0 auto; border-radius:999px; background:rgba(192,138,45,.14); color:var(--brass-lo); padding:7px 10px; font-size:12px; font-weight:800; }
+  .lv2-page .pricing-badge { flex:0 0 auto; border-radius:999px; background:rgba(192,138,45,.14); color:#7a5210; padding:7px 10px; font-size:12px; font-weight:800; }
   .lv2-page .pricing-copy { margin:0 0 18px; color:var(--ink-soft); max-width:56ch; }
   .lv2-page .pricing-list { list-style:none; padding:0; margin:0 0 24px; display:grid; gap:10px; }
   .lv2-page .pricing-list li { position:relative; padding-left:25px; }
@@ -690,7 +690,7 @@ const LV2_CSS = `
   .lv2-page section.block { padding:72px 0; scroll-margin-top:80px; }
   .lv2-page section.block.alt { background:var(--bone-2); }
   .lv2-page .path { scroll-margin-top:80px; }
-  .lv2-page .kicker { font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--brass-lo); font-weight:700; margin-bottom:12px; }
+  .lv2-page .kicker { font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:#85590f; font-weight:700; margin-bottom:12px; }
   .lv2-page .block h2 { font-size:clamp(28px,3.4vw,40px); margin:0 0 14px; max-width:24ch; }
   .lv2-page .lead { font-size:17px; color:var(--ink-soft); max-width:62ch; margin:0; }
 
@@ -719,7 +719,7 @@ const LV2_CSS = `
   .lv2-page .pillars { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-top:20px; }
   .lv2-page .pillar { background:var(--bone); border:1px solid var(--line); border-radius:var(--radius); padding:22px; }
   .lv2-page section.block.alt .pillar { background:#fff; }
-  .lv2-page .pillar h4 { font-family:'Fraunces',serif; font-size:17px; margin:0 0 6px; }
+  .lv2-page .pillar h3 { font-family:'Fraunces',serif; font-size:17px; margin:0 0 6px; font-weight:700; line-height:1.55; letter-spacing:normal; }
   .lv2-page .pillar p { margin:0; font-size:14px; color:var(--ink-soft); }
 
   .lv2-page .life { margin-top:40px; }
@@ -751,7 +751,7 @@ const LV2_CSS = `
   .lv2-page .step { background:var(--bone); border:1px solid var(--line); border-radius:var(--radius); padding:20px; }
   .lv2-page section.block.alt .step { background:#fff; }
   .lv2-page .step .n { font-family:'Fraunces',serif; color:var(--brass-lo); font-size:26px; }
-  .lv2-page .step h4 { font-size:15px; margin:6px 0 0; }
+  .lv2-page .step h3 { font-family:inherit; font-size:15px; margin:6px 0 0; font-weight:700; line-height:1.55; letter-spacing:normal; }
   .lv2-page .step.ai-here { border-color:var(--brass); box-shadow:0 0 0 1px var(--brass); }
   .lv2-page .step .tag { display:inline-block; margin-top:8px; font-size:11px; font-weight:700; color:var(--brass-lo); text-transform:uppercase; letter-spacing:.05em; }
 
@@ -761,13 +761,13 @@ const LV2_CSS = `
 
   .lv2-page footer { background:#0f221e; color:var(--on-forest-soft); padding:44px 0 40px; font-size:14px; }
   .lv2-page .foot-top { display:flex; justify-content:space-between; flex-wrap:wrap; gap:30px; }
-  .lv2-page .foot-col h5 { color:var(--on-forest); font-size:13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 12px; }
+  .lv2-page .foot-col h3 { font-family:inherit; font-weight:700; line-height:1.55; color:var(--on-forest); font-size:13px; letter-spacing:.05em; text-transform:uppercase; margin:0 0 12px; }
   .lv2-page .foot-col a, .lv2-page .foot-col span { display:block; color:var(--on-forest-soft); text-decoration:none; padding:7px 0; min-height:auto; font-size:14px; }
   .lv2-page .foot-col a:hover { color:var(--on-forest); }
   .lv2-page .foot-col .pending { color:#6f847c; font-size:12.5px; }
   .lv2-page .foot-cols { display:flex; gap:56px; flex-wrap:wrap; }
-  .lv2-page .foot-legal { max-width:64ch; margin-top:26px; padding-top:18px; border-top:1px solid rgba(255,255,255,.08); font-size:12.5px; color:#6f847c; }
-  .lv2-page .foot-copy { margin-top:10px; font-size:12.5px; color:#6f847c; }
+  .lv2-page .foot-legal { max-width:64ch; margin-top:26px; padding-top:18px; border-top:1px solid rgba(255,255,255,.08); font-size:12.5px; color:#8aa097; }
+  .lv2-page .foot-copy { margin-top:10px; font-size:12.5px; color:#8aa097; }
 
   .lv2-page .sticky-cta { display:none; position:fixed; bottom:0; left:0; right:0; z-index:50; background:rgba(22,48,43,.97); padding:12px 16px; padding-bottom:calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--brass-lo); }
   .lv2-page .sticky-cta .btn { width:100%; }
@@ -827,7 +827,7 @@ const LV2_CSS = `
   .lv2-page .frame-wide { max-width:980px; margin-top:24px; }
   .lv2-page .iphone-band { background:var(--forest-2); color:var(--on-forest); padding:72px 0; scroll-margin-top:80px; }
   .lv2-page .iphone-band h2 { font-size:clamp(28px,3.4vw,40px); margin:0 0 14px; max-width:24ch; }
-  .lv2-page .kicker-light { color:var(--brass); }
+  .lv2-page .kicker-light { color:#dba74e; }
   .lv2-page .lead-light { color:var(--on-forest-soft); }
   .lv2-page .store-row { display:flex; gap:18px 24px; align-items:center; flex-wrap:wrap; margin-top:24px; }
   .lv2-page .btn-store { background:#000; color:#fff; border:1px solid var(--on-forest-soft); border-radius:12px; padding:0 22px; min-height:56px; }

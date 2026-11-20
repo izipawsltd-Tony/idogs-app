@@ -1,21 +1,23 @@
 # Privacy assessment — homepage click counters (LP-09). Not legal advice.
 
-## Decision taken
-Click sending is **OFF** (`LANDING_CLICK_COUNTERS_ENABLED = false` in `src/lib/landingEvents.ts`) until the Owner confirms. Per Owner instruction, non-consented tracking is not expanded until compliance is verified. The existing page-load counter (production, unchanged) keeps running.
+## Owner decision (20 Nov 2026): Option C — consent-gated
+A click is counted ONLY when the visitor has chosen "Allow ad measurement" (same "Ad privacy choices" control as Meta Pixel), on the website, on `/`. No choice, Decline, native app, or any other page → nothing is sent. No non-consented marketing tracking was added.
 
-## What the counters do (when enabled)
-- Browser sends `{path:"/", event}` where event is one of 5 fixed names (`app_store`, `cta_get_started`, `cta_owner`, `cta_breeder`, `cta_voucher`).
-- Server increments one number in a per-UTC-day aggregate document `landingStats/<day>.byEvent.<event>`. Closed allow-list; unknown events and other paths are ignored.
-- No cookies, local storage, user ID, IP, user agent or any per-person record is stored. Nothing is sent to third parties. Meta Pixel remains consent-only and is not involved.
+## Implementation (`src/lib/landingEvents.ts`)
+- Gate: `isMarketingWebsitePage() && readMetaConsent() === 'granted' && pathname === '/'`.
+- Payload: `{path:"/", event}`, event from a closed list of 5 names; server increments `landingStats/<UTC day>.byEvent.<event>`. No cookies, local-storage writes, user ID, IP, user agent, or third party. Unknown events/paths are ignored server-side.
+- The server cannot verify consent (the data is anonymous by design); the gate is client-side.
 
-## Assessment
-- Data stored is aggregate and non-identifying, so the stored result is unlikely to be personal information. Open points that need Owner/legal confirmation:
-  1. Each click is still an HTTPS request, so the hosting provider's ordinary request logs can see network details. This is the same for the existing load counter and for any page view.
-  2. The Privacy Policy section 3 mentions usage data and pages visited, and optional ad measurement, but does not specifically describe anonymous button-click counts. If enabled, add one sentence.
-  3. The Australian Privacy Act 1988 and any applicable ePrivacy-style expectations of visitors from other regions were not assessed by a lawyer.
-- Compared with consented ad measurement, this is first-party and needs no cookie. It is still not tied to the "Ad privacy choices" control.
+## Verification evidence
+- Unit (`src/lib/landingEvents.test.ts`): undecided → nothing; Decline → nothing; Allow → one beacon on `/`; Allow on `/signup` → nothing.
+- Real browser (`e2e/local/landing-clicks-consent.spec.ts`, iPhone 390): before choice → 0 requests; after Decline → 0 requests; after Allow → exactly 1 request, event `app_store`.
+- Existing consent suite (pill never covers CTAs, dialog on-screen at 320×568, Pixel never loads before Allow, Decline persists): pass on all 6 projects.
 
-## Options for Owner
-A. Keep OFF (current). Use Vercel/App Store Connect analytics for outbound click and download numbers.
-B. Enable for all visitors after a one-line Privacy Policy addition and legal sign-off.
-C. Enable only when the visitor has chosen "Allow ad measurement" (smaller, consent-gated sample).
+## Policy and UI disclosure (wording NOT legally reviewed)
+- `src/pages/PrivacyPage.tsx`: new paragraph "Home page button counts (first-party, only if you allow ad measurement)" and "Last updated" changed to 20 November 2026. The paragraph also discloses the pre-existing anonymous home/signup page-load count.
+- Consent dialog: one short sentence added ("We also count home page button taps in anonymous daily totals (not shared with Meta)"). Kept short so the Allow/Decline buttons stay on-screen at 320×568.
+
+## Discrepancies to report
+1. The pre-existing page-load counter (`/api/landing-beacon`, production) is NOT consent-gated. It was not changed or expanded; it is now disclosed in the policy. Owner/legal to confirm that is acceptable or gate it too.
+2. The Terms/Privacy "© 2026" lines remain (see `LEGAL_FOOTER_VERIFICATION.md`).
+3. The dialog's primary heading/label is still "Allow ad measurement"; a visitor allowing it also enables first-party counts. Disclosed in both places.

@@ -1,6 +1,6 @@
 # G2 — Pricing discrepancy report (read-only; no billing, Stripe, voucher or entitlement change made)
 
-Status: DRAFT for Owner G2 decision. Does not block unrelated Growth work. Source: repo at `ae79a0c`+ (production base `04f0f60`). Live Stripe was NOT inspected (no access from the build sandbox).
+Status: DRAFT for Owner G2 decision. Does not block unrelated Growth work. Source: repo at `ae79a0c`+ (production base `04f0f60`). Live Stripe was NOT inspected: no Stripe credentials or connector exist in the build environment, and read-only verification was authorised only "where authorised" — so item 2 below remains BLOCKED until the Owner provides a read-only (restricted) key or confirms the live price in the Stripe dashboard.
 
 ## What the code does today (preserved unchanged)
 | Offer | Terms in code | Where |

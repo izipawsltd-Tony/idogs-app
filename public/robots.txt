@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /app/
+Disallow: /p/
+Disallow: /api/
+
+Sitemap: https://idogs.com.au/sitemap.xml
