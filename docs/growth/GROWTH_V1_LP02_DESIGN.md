@@ -46,3 +46,18 @@ No testimonials, stats or quantified time savings.
 - Removed: "AI"/Document Scan dark card, life-stage strip, "Less than the cost of a coffee", 🎁 emoji.
 - Footer: adds the NN Global trademark line per CLAUDE.md and drops "© 2026" and "(Disclaimer pending legal review.)". **Owner to confirm.**
 - Pricing render logic (`useOfferStatus`, `usePlusPromotion`, `promotionSuperseded`) reused unchanged.
+
+## As-built deviations from the G1 design (21 Nov 2026)
+| Area | Design | As built | Why |
+|---|---|---|---|
+| Owner CTA label | "Get Started Free" | "Start Free as a Dog Owner" (`/signup?role=owner`) | existing signup-funnel test contract + Owner breeder/owner CTA wording |
+| App Store badge | official Apple badge | text button "Download for iPhone" (links to `id6823094602`) | official artwork requires Apple licence acceptance; no unofficial badge (BLOCKED, Owner) |
+| "Most popular" badge | on Plus | removed → "For more dogs and breeding" | unverified claim |
+| Pricing states | static | Free / Gift Voucher / Plus promotion / standard Plus kept distinct; annual price hidden; A$0 promotion only after offer status resolves (neutral + fail-closed while unknown) | G2 restriction; QA P1-03 |
+| Click tracking | always on | consent-gated (Option C), only on `/` after "Allow ad measurement"; Privacy Policy + dialog disclose | Owner decision 20 Nov |
+| Footer | © line, legal copy | no copyright year; operator + NN Global trademark line + disclaimer incl. "(Disclaimer pending legal review.)" unchanged; location says "Australia" | repo rule; Owner location directive 21 Nov |
+| Australian-owned card | "Built in Adelaide…" | "Built for Australian dog owners and breeders. Delete your account at any time." | Owner copy decision |
+| Contrast / headings | — | section labels, pricing badge, footer text darkened/lightened to ≥4.5:1; h4/h5 → h3; sticky bar is a labelled region | axe findings |
+| Consent spacer | — | `MarketingMeasurement` mounted after the app (removes blank 56px band above header, a pre-existing production defect) | LP-03 QA |
+| SEO | old title/meta, no OG image | new title/meta/OG/Twitter, `og-idogs.jpg`, `robots.txt`, `sitemap.xml` | LP-10 |
+| LP-06B Safari Smart App Banner | optional | DEFERRED to a later release (Owner, 21 Nov) | schedule / QA scope |
