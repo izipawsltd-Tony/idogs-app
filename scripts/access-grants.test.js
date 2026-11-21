@@ -94,6 +94,7 @@ describe('founding checkout', () => {
     createSession: vi.fn(async () => ({ url: 'https://checkout.stripe.com/x' })),
     getAppUrl: () => 'https://idogs.com.au',
     isEnabled: () => true,
+    grantsEnabled: () => true,
     now: () => NOW,
     ...over,
   })
@@ -103,6 +104,14 @@ describe('founding checkout', () => {
     const res = mockRes()
     await createFoundingCheckoutHandler(deps({ isEnabled: undefined }))(authed(body), res)
     expect(res.statusCode).toBe(503)
+  })
+  it('takes no payment while access grants are not honoured', async () => {
+    const d = deps({ grantsEnabled: () => false })
+    const res = mockRes()
+    await createFoundingCheckoutHandler(d)(authed(body), res)
+    expect(res.statusCode).toBe(503)
+    expect(res.body.code).toBe('FOUNDING_GRANTS_DISABLED')
+    expect(d.createSession).not.toHaveBeenCalled()
   })
   it('requires accepted terms and a valid request id', async () => {
     const d = deps()

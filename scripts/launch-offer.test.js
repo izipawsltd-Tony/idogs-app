@@ -36,7 +36,7 @@ describe('launch status', () => {
     expect(daysLeft(LAUNCH_OFFER.claimEnd, NOW)).toBe(42)
   })
   it('shows the number only at or below 50, and offers the pass only when free places are gone', async () => {
-    const run = async claimed => { const res = mockRes(); await createOfferStatusHandler({ getLaunchClaimed: async () => claimed, launchEnabled: () => true, passEnabled: () => true, now: () => NOW })({ method: 'GET' }, res); return res.body }
+    const run = async claimed => { const res = mockRes(); await createOfferStatusHandler({ getLaunchClaimed: async () => claimed, launchEnabled: () => true, grantsEnabled: () => true, passEnabled: () => true, now: () => NOW })({ method: 'GET' }, res); return res.body }
     expect(await run(10)).toMatchObject({ launch: { active: true, showRemaining: false }, pass: { active: false } })
     expect(await run(60)).toMatchObject({ launch: { active: true, remaining: 40, showRemaining: true }, pass: { active: false } })
     expect(await run(100)).toMatchObject({ launch: { active: false }, pass: { active: true } })
@@ -55,7 +55,7 @@ describe('launch status', () => {
 
 describe('launch claim', () => {
   const handler = (db, over = {}) => createLaunchClaimHandler({
-    verifyIdToken: async () => ({ uid: 'u1', email_verified: true }), db, isEnabled: () => true,
+    verifyIdToken: async () => ({ uid: 'u1', email_verified: true }), db, isEnabled: () => true, grantsEnabled: () => true,
     countOwnedActiveDogs: async () => 1, now: () => NOW, ...over,
   })
 
@@ -107,5 +107,42 @@ describe('launch claim', () => {
     expect(res.statusCode).toBe(200)
     expect(res.body.hasSubscription).toBeUndefined()
     expect(db.store.get(counterPath).count).toBe(1)
+  })
+})
+
+describe('launch offer requires access grants to be honoured', () => {
+  it('status reports the offer closed when IDOGS_ACCESS_GRANTS_ENABLED is off', async () => {
+    const res = mockRes()
+    await createOfferStatusHandler({ getLaunchClaimed: async () => 1, launchEnabled: () => true, grantsEnabled: () => false, passEnabled: () => false, now: () => NOW })({ method: 'GET' }, res)
+    expect(res.body.launch.active).toBe(false)
+  })
+  it('status does not offer the 15-month pass while grants are off', async () => {
+    const res = mockRes()
+    await createOfferStatusHandler({ getLaunchClaimed: async () => 100, launchEnabled: () => true, grantsEnabled: () => false, passEnabled: () => true, now: () => NOW })({ method: 'GET' }, res)
+    expect(res.body.pass.active).toBe(false)
+  })
+  it('claim refuses without using a place or writing a grant when grants are off', async () => {
+    const db = fakeDb({ 'users/u1': { plan: 'free' } })
+    const res = mockRes()
+    await createLaunchClaimHandler({
+      verifyIdToken: async () => ({ uid: 'u1', email_verified: true }), db, isEnabled: () => true, grantsEnabled: () => false,
+      countOwnedActiveDogs: async () => 1, now: () => NOW,
+    })(post, res)
+    expect(res.statusCode).toBe(503)
+    expect(res.body.code).toBe('LAUNCH_GRANTS_DISABLED')
+    expect(db.store.get(counterPath)).toBeUndefined()
+    expect(db.store.get('users/u1').accessGrant).toBeUndefined()
+  })
+  it('defaults to the real env flag', async () => {
+    vi.stubEnv('IDOGS_ACCESS_GRANTS_ENABLED', '')
+    const db = fakeDb({ 'users/u1': { plan: 'free' } })
+    let res = mockRes()
+    const make = () => createLaunchClaimHandler({ verifyIdToken: async () => ({ uid: 'u1', email_verified: true }), db, isEnabled: () => true, countOwnedActiveDogs: async () => 1, now: () => NOW })
+    await make()(post, res)
+    expect(res.body.code).toBe('LAUNCH_GRANTS_DISABLED')
+    vi.stubEnv('IDOGS_ACCESS_GRANTS_ENABLED', 'true')
+    res = mockRes(); await make()(post, res)
+    expect(res.statusCode).toBe(200)
+    vi.unstubAllEnvs()
   })
 })
