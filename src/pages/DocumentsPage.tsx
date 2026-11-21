@@ -227,12 +227,14 @@ export default function DocumentsPage({ toast }: Props) {
             const dog = dogs[doc.dogId]
             const uploadDate = doc.uploadedAt?.toDate?.()?.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
             return (
-              <div key={i} style={{
+              // DOC-MOBILE-01: layout lives in index.css (.doc-card*) so the
+              // card can wrap on narrow phones — inline flex styles can't be
+              // overridden by a media query.
+              <div key={i} className="doc-card" data-testid="doc-card" style={{
                 background: 'var(--white)', border: '1px solid var(--border)',
                 borderRadius: 'var(--radius-md)', padding: '14px 16px',
-                display: 'flex', alignItems: 'center', gap: 14,
               }}>
-                <div style={{
+                <div className="doc-card-icon" style={{
                   width: 48, height: 48, borderRadius: 12,
                   background: 'var(--brand-50)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -240,9 +242,9 @@ export default function DocumentsPage({ toast }: Props) {
                 }}>
                   {getDocIcon(doc.documentType)}
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="doc-card-body" data-testid="doc-card-body">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)' }}>
+                    <span className="doc-card-title" style={{ fontWeight: 600, fontSize: 14, color: 'var(--dark)' }}>
                       {documentDisplayName(doc, getDocLabel)}
                     </span>
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--sand)', color: 'var(--mid)', fontWeight: 500 }}>
@@ -267,7 +269,7 @@ export default function DocumentsPage({ toast }: Props) {
                     </div>
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+                <div className="doc-card-actions" data-testid="doc-card-actions">
                   <button
                     onClick={() => viewDocument(user, toast, doc.filePath || doc.storagePath, doc.fileUrl)}
                     className="btn btn-secondary btn-sm"

@@ -22,12 +22,30 @@ export function beaconFields(body) {
   return { path, campaign, ad, bucket, source }
 }
 
+// Anonymous click counters for the homepage calls to action (Growth V1, LP-09).
+// A closed allow-list: the caller can only increment one of these named
+// counters, never choose a field path. No identifiers are stored.
+export const LANDING_EVENTS = ['app_store', 'cta_get_started', 'cta_owner', 'cta_breeder', 'cta_voucher']
+export function eventField(body) {
+  if (!body || typeof body !== 'object' || !('event' in body)) return undefined
+  return body.path === '/' && LANDING_EVENTS.includes(body.event) ? body.event : null
+}
+
 export function landingBeaconHandler({ db, increment, now = () => new Date() }) {
   return async (req, res) => {
     res.setHeader('Cache-Control', 'no-store')
     if (req.method !== 'POST') return res.status(405).end()
     let body = req.body
     if (typeof body === 'string') { try { body = JSON.parse(body) } catch { return res.status(204).end() } }
+    const ev = eventField(body)
+    if (ev !== undefined) {
+      // A click event: counted separately from page loads; unknown events are ignored.
+      if (ev) {
+        const day = now().toISOString().slice(0, 10)
+        try { await db.collection('landingStats').doc(day).set({ day, byEvent: { [ev]: increment(1) } }, { merge: true }) } catch { /* best-effort */ }
+      }
+      return res.status(204).end()
+    }
     const f = beaconFields(body)
     if (!f) return res.status(204).end()
     const day = now().toISOString().slice(0, 10)
