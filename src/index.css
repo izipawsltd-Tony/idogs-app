@@ -340,6 +340,21 @@ h1, h2, h3, h4, h5, h6 {
 .bottom-nav-item.active { color: var(--green); }
 .bottom-nav-icon { font-size: 20px; line-height: 1; }
 
+/* ── DOCUMENT CARDS (DOC-MOBILE-01) ──
+   Desktop: one row (icon · details · View/Edit/Delete), same as before.
+   The card may wrap: when the details column can't keep ~180px, the
+   actions drop to their own line instead of crushing the text. */
+.doc-card { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; min-width: 0; }
+.doc-card-body { flex: 1 1 180px; min-width: 0; }
+.doc-card-title { overflow-wrap: anywhere; }
+.doc-card-actions { display: flex; gap: 8px; flex-wrap: wrap; flex: 0 0 auto; }
+
+@media (max-width: 600px) {
+  .doc-card { align-items: flex-start; gap: 12px; }
+  .doc-card-actions { flex: 1 1 100%; flex-wrap: nowrap; }
+  .doc-card-actions > .btn { flex: 1 1 0; min-width: 0; min-height: 44px; padding-inline: 8px; }
+}
+
 /* ── LITTER CARDS ── */
 .litters-page,
 .litter-card { width: 100%; max-width: 100%; min-width: 0; }
