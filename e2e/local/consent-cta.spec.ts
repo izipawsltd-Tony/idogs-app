@@ -12,7 +12,10 @@ async function ctaReport(page: Page) {
       const r = e.getBoundingClientRect()
       const overlap = pr ? Math.max(0, Math.min(r.right, pr.right) - Math.max(r.left, pr.left)) * Math.max(0, Math.min(r.bottom, pr.bottom) - Math.max(r.top, pr.top)) : 0
       const top = document.elementFromPoint(r.left + r.width / 2, Math.min(r.top + r.height / 2, innerHeight - 1))
-      const coveredByOwnStickyBar = !!top?.closest('.sticky-cta') && !e.closest('.sticky-cta')
+      // The page's own sticky chrome (bottom CTA bar or top header) may momentarily cover a CTA
+      // while scrolling; that is landing layout, not consent UI (see note in the test below).
+      const chrome = top?.closest('.sticky-cta, header')
+      const coveredByOwnStickyBar = !!chrome && !chrome.contains(e)
       return { text: (e.textContent || '').trim().slice(0, 30), overlapsPill: overlap > 0, clickable: !!top && (top === e || e.contains(top)), coveredByOwnStickyBar }
     })
   }, CTA)
@@ -34,8 +37,10 @@ for (const path of ['/', '/signup']) {
     test('no signup CTA is overlapped by the pill and every visible CTA is actually clickable', async ({ page }) => {
       for (const cta of await ctaReport(page)) {
         expect(cta.overlapsPill, `${cta.text} overlaps the pill`).toBe(false)
-        // A hero CTA momentarily under the page's own sticky "Start Free" bar is a
+        // A CTA momentarily under the page's own sticky "Start Free" bar or sticky header is a
         // pre-existing landing layout (same action stays one tap away); not consent UI.
+        // (Header added 21 Nov: on phones the pill now docks in the bar or sits in-flow at
+        // the page end, so opening it can scroll a footer CTA under the header.)
         if (!cta.coveredByOwnStickyBar) expect(cta.clickable, `${cta.text} is not clickable`).toBe(true)
       }
       if (path === '/signup') {

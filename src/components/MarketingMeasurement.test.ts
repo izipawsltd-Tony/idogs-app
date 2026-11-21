@@ -11,7 +11,7 @@ vi.mock('../lib/metaPixel', () => ({
   trackMarketingPage: s.track,
   suspendMetaTracking: s.suspend,
 }))
-import MarketingMeasurement, { pillBottomOffset } from './MarketingMeasurement'
+import MarketingMeasurement, { findConsentDock, pillBottomOffset } from './MarketingMeasurement'
 
 let tree: ReactTestRenderer
 const listeners: Record<string, ((e: any) => void)[]> = {}
@@ -92,5 +92,22 @@ describe('pillBottomOffset', () => {
   it('ignores hidden or off-screen bars (desktop)', () => {
     expect(pillBottomOffset(doc([{ getBoundingClientRect: () => ({ top: 728, height: 72 }) }]), win(800, 'none'))).toBe(0)
     expect(pillBottomOffset(doc([{ getBoundingClientRect: () => ({ top: 900, height: 72 }) }]), win(800))).toBe(0)
+  })
+})
+
+describe('findConsentDock', () => {
+  const slot = { id: 'slot' }
+  const bar = (display: string) => ({ display, querySelector: (sel: string) => (sel === '[data-consent-dock]' ? slot : null) })
+  const make = (bars: Array<ReturnType<typeof bar>>) => ({
+    doc: { querySelectorAll: () => bars } as unknown as Document,
+    win: { getComputedStyle: (b: { display: string }) => ({ display: b.display, visibility: 'visible' }) } as unknown as Window,
+  })
+  it('returns the dock slot of a visible sticky bar (phones)', () => {
+    const { doc, win } = make([bar('block')])
+    expect(findConsentDock(doc, win)).toBe(slot)
+  })
+  it('returns null when the sticky bar is hidden (desktop) or absent (signup)', () => {
+    expect(findConsentDock(make([bar('none')]).doc, make([bar('none')]).win)).toBeNull()
+    expect(findConsentDock(make([]).doc, make([]).win)).toBeNull()
   })
 })

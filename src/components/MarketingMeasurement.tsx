@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import { scheduleLandingBeacon } from '../lib/landingBeacon'
 import { captureAcquisition } from '../lib/acquisition'
@@ -19,6 +20,9 @@ import { isMarketingWebsitePage, readMetaConsent, setMetaConsent, suspendMetaTra
 // profile) and lib/landingBeacon (anonymous load counts) send nothing to Meta.
 
 const GAP = 8 // px between the pill and the sticky CTA bar / screen edge
+// Phones (portrait or landscape): the pill must never float over content. It docks in the
+// landing sticky bar when that bar is visible, otherwise it sits in-flow at the page end.
+const SMALL_SCREEN = '(max-width: 620px), (max-height: 500px)'
 
 /** Distance from the bottom of the viewport the pill must sit above, so it never covers a visible fixed/sticky CTA. */
 export function pillBottomOffset(doc: Document = document, win: Window = window): number {
@@ -33,11 +37,25 @@ export function pillBottomOffset(doc: Document = document, win: Window = window)
   return Math.ceil(offset)
 }
 
+/** The in-bar consent slot of a VISIBLE sticky CTA bar (phones), or null. Docking the pill there
+ *  means it can never float over page content such as the hero Breeders link. */
+export function findConsentDock(doc: Document = document, win: Window = window): HTMLElement | null {
+  for (const bar of Array.from(doc.querySelectorAll<HTMLElement>('.sticky-cta'))) {
+    const style = win.getComputedStyle(bar)
+    if (style.display === 'none' || style.visibility === 'hidden') continue
+    const slot = bar.querySelector<HTMLElement>('[data-consent-dock]')
+    if (slot) return slot
+  }
+  return null
+}
+
 export default function MarketingMeasurement() {
   const { pathname, search } = useLocation()
   const [consent, setConsent] = useState(readMetaConsent)
   const [open, setOpen] = useState(false)
   const [bottom, setBottom] = useState(0)
+  const [dock, setDock] = useState<HTMLElement | null>(null)
+  const [inflow, setInflow] = useState(false)
   const pillRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
 
@@ -52,7 +70,11 @@ export default function MarketingMeasurement() {
   const marketing = isMarketingWebsitePage()
 
   // Keep the pill above the sticky CTA bar as the layout / Safari toolbar changes.
-  const measure = useCallback(() => setBottom(pillBottomOffset()), [])
+  const measure = useCallback(() => {
+    setBottom(pillBottomOffset())
+    setDock(findConsentDock())
+    setInflow(!!window.matchMedia?.(SMALL_SCREEN).matches)
+  }, [])
   useLayoutEffect(() => {
     if (!marketing) return
     measure()
@@ -60,7 +82,15 @@ export default function MarketingMeasurement() {
     window.addEventListener('resize', measure)
     window.visualViewport?.addEventListener('resize', measure)
     window.addEventListener('orientationchange', measure)
+    // The landing page is code-split, so its sticky bar can mount after this component.
+    let frame = 0
+    const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => {
+      if (!frame) frame = window.requestAnimationFrame(() => { frame = 0; measure() })
+    })
+    observer?.observe(document.body, { childList: true, subtree: true })
     return () => {
+      observer?.disconnect()
+      if (frame) window.cancelAnimationFrame(frame)
       window.clearTimeout(timer)
       window.removeEventListener('resize', measure)
       window.visualViewport?.removeEventListener('resize', measure)
@@ -94,15 +124,30 @@ export default function MarketingMeasurement() {
 
   return <>
     {/* In-flow spacer: the last content on the page can always scroll clear of the pill. */}
-    <div aria-hidden="true" data-testid="ad-privacy-spacer" style={{ height: 56 }} />
-    {!open && <button
+    <div aria-hidden="true" data-testid="ad-privacy-spacer" style={{ height: dock || !inflow ? 56 : 0 }} />
+    {!open && (pill => dock ? createPortal(pill, dock)
+      : inflow ? <div data-testid="ad-privacy-inflow" style={{ padding: '4px calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px))' }}>{pill}</div>
+      : pill)(<button
       ref={pillRef}
       type="button"
       className="idogs-ad-privacy-pill"
       aria-haspopup="dialog"
       onClick={() => setOpen(true)}
-      style={{
-        position: 'fixed',
+      style={dock ? {
+        // Docked inside the phone sticky bar: a quiet text link above the CTAs.
+        minHeight: 28,
+        padding: '4px 2px',
+        fontSize: 12,
+        lineHeight: 1.2,
+        whiteSpace: 'nowrap',
+        background: 'transparent',
+        color: '#efe9da',
+        border: 0,
+        textDecoration: 'underline',
+        textUnderlineOffset: 2,
+        cursor: 'pointer',
+      } : {
+        position: inflow ? 'static' : 'fixed',
         left: 'calc(12px + env(safe-area-inset-left, 0px))',
         bottom: bottom > 0 ? bottom + GAP : 'calc(12px + env(safe-area-inset-bottom, 0px))',
         zIndex: 60,
@@ -119,7 +164,7 @@ export default function MarketingMeasurement() {
         boxShadow: '0 1px 6px #0001',
         cursor: 'pointer',
       }}
-    >Ad privacy choices</button>}
+    >Ad privacy choices</button>)}
     {open && <div
       data-testid="ad-privacy-backdrop"
       onClick={close}
