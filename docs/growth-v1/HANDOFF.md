@@ -16,7 +16,7 @@ GitHub is the shared channel. Issue #103 = Growth control (tracker table + comme
 | LP-03 homepage (+ Australian-owned copy, location copy "Australia") | CODE + CI PASS; Codex independent browser PASS on `ddb2763` and `b066842` in sampled states |
 | LP-04 / LP-05 journeys | PASS in sampled independent smoke (role signup URLs 200, breeder anchor) |
 | LP-06 App Store CTA | link PASS; official badge BLOCKED (Apple licence, Owner) |
-| LP-06B Safari Smart App Banner | **OWNER APPROVED native-only (21 Nov, reverses earlier deferral)** — implemented on `feat/lp-06b-safari-smart-app-banner` (based on Growth `5f021db`, separate PR, not in #104). App id 6823094602 verified (seller IZIPAWS PTY LTD, AU store, iPhone). Needs real iPhone Safari Owner QA. |
+| LP-06B Safari Smart App Banner | **OWNER APPROVED native-only (21 Nov, reverses earlier deferral)** — implemented on `feat/lp-06b-safari-smart-app-banner` (based on Growth `5f021db`, separate PR, not in #104). App id 6823094602 verified (seller IZIPAWS PTY LTD, AU store, iPhone). Owner confirmed native banner visible (21 Nov). Banner readability is Apple-rendered (not styleable; only `app-id`/`app-argument`); not shown in in-app browsers/Chrome iOS. Clarity fallback: in-page iPhone CTAs; mobile sticky icon now labelled "Get app". Needs Owner iPhone retest. |
 | LP-07 landing → signup | PASS entry smoke; `/signup` has 2 pre-existing contrast findings (out of scope) |
 | LP-08 pricing consistency | G2 report; no billing change; live Stripe check BLOCKED (no credentials) |
 | LP-09 consent-gated analytics | PASS (unit + browser; independent 0/0/1/0 beacon attempts) |

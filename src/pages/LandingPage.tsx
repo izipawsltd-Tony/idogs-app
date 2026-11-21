@@ -395,7 +395,8 @@ export default function LandingPage() {
 
         <div className="sticky-cta" role="region" aria-label="Get started with iDogs">
           <Link className="btn btn-primary" to="/signup" onClick={() => trackLandingEvent('cta_get_started')}>Get Started Free</Link>
-          <AppStoreLink className="btn btn-store-icon" iconOnly>Download for iPhone</AppStoreLink>
+          {/* LP-06B clarity: a visible label, not an unlabelled phone icon (Owner, 21 Nov). */}
+          <AppStoreLink className="btn btn-store-icon" compact>Get app</AppStoreLink>
         </div>
       </div>
 
@@ -442,7 +443,7 @@ function goToBreeders(e: MouseEvent<HTMLAnchorElement>) {
   for (const type of ['wheel', 'touchstart', 'keydown'] as const) window.addEventListener(type, stop, { passive: true })
 }
 
-function AppStoreLink({ className, children, large = false, iconOnly = false }: { className: string; children: ReactNode; large?: boolean; iconOnly?: boolean }) {
+function AppStoreLink({ className, children, large = false, compact = false }: { className: string; children: ReactNode; large?: boolean; compact?: boolean }) {
   const onClick = () => trackLandingEvent('app_store')
   if (APP_STORE_BADGE_SRC && large) {
     return (
@@ -452,9 +453,9 @@ function AppStoreLink({ className, children, large = false, iconOnly = false }: 
     )
   }
   return (
-    <a className={className} href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" onClick={onClick} aria-label={iconOnly ? 'Download iDogs for iPhone on the App Store' : undefined}>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ marginRight: iconOnly ? 0 : 10, flex: 'none' }}><rect x="6" y="2" width="12" height="20" rx="2.5"></rect><path d="M11 18h2"></path></svg>
-      {iconOnly ? null : large ? <span className="store-text"><small>Free on the App Store</small><strong>{children}</strong></span> : children}
+    <a className={className} href={APP_STORE_URL} target="_blank" rel="noopener noreferrer" onClick={onClick} aria-label={compact ? 'Get the free iDogs iPhone app on the App Store' : undefined}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ marginRight: compact ? 6 : 10, flex: 'none' }}><rect x="6" y="2" width="12" height="20" rx="2.5"></rect><path d="M11 18h2"></path></svg>
+      {large ? <span className="store-text"><small>Free on the App Store</small><strong>{children}</strong></span> : children}
     </a>
   )
 }
@@ -901,7 +902,7 @@ const LV2_CSS = `
     .lv2-page .cta-row .btn { flex:1 1 100%; }
     .lv2-page .iphone-band { padding:52px 0 52px; }
     .lv2-page .sticky-cta { display:flex; gap:10px; }
-    .lv2-page .sticky-cta .btn-primary { flex:1 1 auto; width:auto; }
-    .lv2-page .sticky-cta .btn-store-icon { flex:none; width:50px; padding:0; background:transparent; color:var(--on-forest); border:1.5px solid var(--on-forest-soft); }
+    .lv2-page .sticky-cta .btn-primary { flex:1 1 auto; width:auto; min-width:0; padding-inline:16px; white-space:nowrap; }
+    .lv2-page .sticky-cta .btn-store-icon { flex:none; width:auto; padding:0 12px; font-size:15px; white-space:nowrap; background:transparent; color:var(--on-forest); border:1.5px solid var(--on-forest-soft); }
   }
 `
