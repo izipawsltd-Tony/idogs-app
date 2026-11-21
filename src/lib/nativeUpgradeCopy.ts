@@ -10,11 +10,11 @@
 
 export function aiScanQuotaExhaustedMessage(isAndroid: boolean, isPlus: boolean): string {
   if (isPlus) {
-    return "You've used all 10 AI scans for this billing period — resets next period."
+    return "You've used all 10 iDogs Scans for this billing period — resets next period."
   }
   return isAndroid
-    ? 'Free AI scans used up for this account.'
-    : 'Free AI scans used up — upgrade to Plus for 10/month.'
+    ? 'Free iDogs Scans used up for this account.'
+    : 'Free iDogs Scans used up — upgrade to Plus for 10/month.'
 }
 
 export function restrictedBreederIdMessage(isAndroid: boolean): string {
