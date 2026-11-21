@@ -1,4 +1,4 @@
-# iDogs Growth V1 — HANDOFF (checkpoint, 21 Nov 2026)
+# iDogs Growth V1 — HANDOFF (checkpoint, 21 Nov 2026, 18:45 ACDT)
 
 Objective: conversion-focused redesign of idogs.com.au. Deadline 19:03 ACDT, 23 Nov 2026. 98% AUTO / OWNER-GATED.
 GitHub is the shared channel. Issue #103 = Growth control (tracker table + comments carry the exact SHAs/CI/Preview of every checkpoint). Issue #69 = main release control.
@@ -16,13 +16,15 @@ GitHub is the shared channel. Issue #103 = Growth control (tracker table + comme
 | LP-03 homepage (+ Australian-owned copy, location copy "Australia") | CODE + CI PASS; Codex independent browser PASS on `ddb2763` and `b066842` in sampled states |
 | LP-04 / LP-05 journeys | PASS in sampled independent smoke (role signup URLs 200, breeder anchor) |
 | LP-06 App Store CTA | link PASS; official badge BLOCKED (Apple licence, Owner) |
-| LP-06B Safari Smart App Banner | **DEFERRED to a later release** (Owner, 21 Nov) |
+| LP-06B Safari Smart App Banner | **OWNER APPROVED native-only (21 Nov, reverses earlier deferral)** — implemented on `feat/lp-06b-safari-smart-app-banner` (based on Growth `5f021db`, separate PR, not in #104). App id 6823094602 verified (seller IZIPAWS PTY LTD, AU store, iPhone). Owner confirmed native banner visible (21 Nov). Banner readability is Apple-rendered (not styleable; only `app-id`/`app-argument`); not shown in in-app browsers/Chrome iOS. Clarity fallback: in-page iPhone CTAs; mobile sticky icon now labelled "Get app". Needs Owner iPhone retest. |
 | LP-07 landing → signup | PASS entry smoke; `/signup` has 2 pre-existing contrast findings (out of scope) |
 | LP-08 pricing consistency | G2 report; no billing change; live Stripe check BLOCKED (no credentials) |
 | LP-09 consent-gated analytics | PASS (unit + browser; independent 0/0/1/0 beacon attempts) |
 | LP-10 perf/a11y/SEO | axe 0 violations; Lighthouse on Preview and manual a11y still open |
 | LP-11 independent QA | **PARTIAL PASS / BLOCKED** — authenticated owner/breeder/Documents/QR need disposable staging fixtures; full a11y, throttled Lighthouse, third-party/Meta audit open |
-| LP-12 release candidate | NOT STARTED (Opus; after QA readiness) |
+| LP-12 release candidate | **DRAFT — NOT RELEASE READY** posted (Issue #103 comment 7059005596, corrected for LP-06B) |
+| DOC-MOBILE-01 (Documents iPhone card layout, pre-existing in prod) | Fix on separate PR #105 @ `b535d94` (base `04f0f60`), CI + staging Preview PASS, attempt 1/3 — **awaiting Owner iPhone QA** |
+| DOC-VIEW-01 | Owner retest PASS — MONITOR |
 
 ## P1 history (retry counters unchanged)
 P1-01 pricing overflow 1/3 · P1-02 breeder anchor 2/3 · P1-03 A$0 promotion flash 1/3. All independently PASS on `ddb2763` and again on `b066842` (sampled states).
@@ -35,4 +37,6 @@ P1-01 pricing overflow 1/3 · P1-02 breeder anchor 2/3 · P1-03 A$0 promotion fl
 Codex must independently QA ANY new release SHA before an Owner gate; QA on an older SHA is never carried forward. The SHA tested = SHA deployed to the matched Preview.
 
 ## Exact next action
-Await Codex targeted regression on the newest exact SHA (see the latest Issue #103 comment) and the QA fixtures; Owner decisions above; then LP-12 release evidence package (scope vs `04f0f60`, exact SHA, CI/Preview, rollback, sequence). Stop at G3/G4.
+1. Owner: iPhone QA of DOC-MOBILE-01 (PR #105 Preview) and LP-06B (its PR Preview, real Safari).
+2. Staging QA fixtures/secrets (`E2E_STAGING_EMAIL/PASSWORD`) or an Owner decision on independent authenticated QA (Codex paused).
+3. Owner G1/G2 decisions; then decide release composition — Growth alone (`5f021db`) or a new combined SHA (Growth + #105 and/or LP-06B) with full re-verification; final Opus LP-12 review. Stop at G3/G4.
