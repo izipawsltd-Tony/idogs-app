@@ -904,6 +904,7 @@ export default function DogDetailPage({ toast }: Props) {
     setLoading(true)
     setShowTransfer(false)
     await sendTransferEmail({
+      dogId: dogId!,
       buyerEmail,
       buyerName,
       dogName: dog.name,
