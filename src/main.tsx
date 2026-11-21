@@ -59,10 +59,11 @@ function renderApp() {
     <React.StrictMode>
       <BrowserRouter>
         <RouteMarker />
-        <MarketingMeasurement />
         <AuthProvider>
           <App />
         </AuthProvider>
+        {/* After the app so its in-flow spacer sits at the END of the page (not as a blank band above the header). */}
+        <MarketingMeasurement />
       </BrowserRouter>
     </React.StrictMode>
   )

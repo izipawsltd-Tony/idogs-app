@@ -4,7 +4,7 @@ import { DELETION_POLICY } from '../../shared/account-deletion-copy.js'
 import AIProviderRetention from '../components/legal/AIProviderRetention'
 
 export default function PrivacyPage() {
-  const lastUpdated = '19 November 2026'
+  const lastUpdated = '20 November 2026'
   return (
     <div style={{ minHeight: '100vh', background: 'var(--sand)', fontFamily: 'var(--font-body)' }}>
       <LegalNav />
@@ -20,7 +20,7 @@ export default function PrivacyPage() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
           <LegalSection title="1. Who We Are">
-            <p>iziPaws Pty Ltd (ABN 42 693 563 745), trading as iDogs, is the operator of idogs.com.au ("the Service"). We are based in Adelaide, South Australia.</p>
+            <p>iziPaws Pty Ltd (ABN 42 693 563 745), trading as iDogs, is the operator of idogs.com.au ("the Service"). We operate in Australia.</p>
             <p>Contact: hello@idogs.com.au</p>
           </LegalSection>
 
@@ -46,6 +46,7 @@ export default function PrivacyPage() {
             <p><strong>iDogs Scan (optional):</strong> If you choose to scan a document and allow it, iDogs sends that photo or PDF to Anthropic to read the dog and health record details. Documents can contain names, addresses and vet contact details. You can enter records manually instead.</p>
             <AIProviderRetention />
             <p><strong>Optional advertising measurement:</strong> If you choose “Allow ad measurement”, Meta Pixel shares visits to our home and signup pages and successful registrations with Meta (Facebook) to measure and improve our advertising. Meta may receive page URLs, IP address, browser information and advertising cookies. We do not send form entries, account contact details, dog records or documents through this integration. It does not run in the native app or on private account pages. You can decline or withdraw permission using “Ad privacy choices” on our home or signup page. Declining does not affect your ability to use iDogs. See <a href="https://www.facebook.com/privacy/policy/" target="_blank" rel="noopener noreferrer">Meta’s privacy policy</a> for how Meta handles this information.</p>
+            <p><strong>Home page button counts (first-party, only if you allow ad measurement):</strong> If you choose “Allow ad measurement”, we also add one to an anonymous daily total each time you tap a main button on our home page (for example Get Started Free, Download for iPhone, or the breeder sign-up button). The count records only which button and the date. It does not record who you are, your IP address or your device, uses no advertising cookies, and is not shared with Meta or anyone else. If you decline, or do not choose, these button counts are not recorded. Separately, we keep an anonymous count of home and signup page loads that does not identify you.</p>
             <p><strong>Campaign source (first-party):</strong> If you arrive from one of our advertisements or links, your browser keeps the campaign labels from that link (for example utm_source, utm_campaign and the ad, ad set and campaign IDs) for up to 30 days. If you then create an account, we save these labels and the first page you landed on with your account so we can see which campaigns bring in real members. We only record whether a Facebook click ID was present, never its value. This information stays with iDogs and is not shared with Meta or anyone else, and it is saved whether or not you allow ad measurement. If you did not arrive from a campaign link, we record your source as “direct”.</p>
           </LegalSection>
 
@@ -101,7 +102,7 @@ export default function PrivacyPage() {
 
           <LegalSection title="11. Contact and Complaints">
             <p>For privacy questions or complaints:</p>
-            <p><strong>iziPaws Pty Ltd</strong><br />ABN: 42 693 563 745<br />Adelaide, South Australia<br />Email: hello@idogs.com.au</p>
+            <p><strong>iziPaws Pty Ltd</strong><br />ABN: 42 693 563 745<br />Australia<br />Email: hello@idogs.com.au</p>
             <p>If you are not satisfied with our response, you may lodge a complaint with the <strong>Office of the Australian Information Commissioner (OAIC)</strong> at oaic.gov.au or call 1300 363 992.</p>
           </LegalSection>
         </div>
