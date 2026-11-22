@@ -7,23 +7,28 @@ Owner gate 22 Nov 2026: "GO cho Authenticated E2E; NO-GO production". Staging-on
 - Staging holds a **copy of production records with real users**. QA uses only the two new accounts below; never sign in as, read, list, or modify any copied account.
 - No service account, Admin SDK script, rules change, bulk read or cleanup sweep. Fixtures are created through the normal staging app UI, exactly like a real user.
 
-## Owner setup (one-off, about 10 minutes) — staging Preview only
-Use the current RC staging Preview (for example the `ad6f962` Preview). Never use idogs.com.au.
+## Accounts (done 22 Nov)
+A (Pet owner) and B (Breeder) were registered through the staging Preview UI with Owner-authorised `+qa2211` plus-addresses and verified. Their credentials live only in the four encrypted repo Actions secrets `E2E_STAGING_EMAIL`/`_PASSWORD` (A) and `E2E_STAGING_EMAIL_2`/`_PASSWORD_2` (B). Never paste credentials in issues, PRs, chat or commit messages.
 
-| Step | Account A — Pet owner | Account B — Breeder |
-|---|---|---|
-| 1. Sign up at `<Preview>/signup` | Role **Pet owner**. Email: an inbox you control with plus-addressing, e.g. `<you>+idogs-qa-a@<domain>` | Role **Breeder**. `<you>+idogs-qa-b@<domain>` |
-| | First/last name `QA-SYNTH` / `Owner`, state SA, no real phone/address | `QA-SYNTH` / `Breeder`, state SA, no breeder number |
-| | Password: long random, from a password manager | different long random password |
-| 2. Verify email | Click the link in the inbox (signed-URL tests require a verified email) | same |
-| 3. Add one dog | Name **`QA-SYNTH A Dog`**, any breed, microchip `900000000000001` | Name **`QA-SYNTH B Dog`**, any breed, microchip **`900000000000002`**, notes **`QA-SYNTH-PRIVATE-NOTE-B`** |
-| 4. Optional | — | Add one vaccine record to the B dog (so the QR Vaccines tab has data) |
+## Fixture dogs: automatic, UI-only, opt-in (Release Control #7078332561)
+`e2e/support/qaFixtures.ts` provisions each account's single fixture dog **through the normal Add Dog form, signed in as that QA user**. No Firebase Admin, service account, rules change or collection scan.
 
-Then in GitHub → repo **Settings → Secrets and variables → Actions → New repository secret** (Owner/admin only):
-`E2E_STAGING_EMAIL`, `E2E_STAGING_PASSWORD` (account A) and `E2E_STAGING_EMAIL_2`, `E2E_STAGING_PASSWORD_2` (account B).
-Never paste credentials in issues, PRs, chat or commit messages. If Codex runs these tests outside GitHub Actions, give it the credentials only through its own secret store.
+| Account | Dog name | Microchip | Notes | Pedigree |
+|---|---|---|---|---|
+| A | `QA-SYNTH A Dog` | `900000000000001` | `QA-SYNTH-PRIVATE-NOTE-A` | mixed |
+| B | `QA-SYNTH B Dog` | `900000000000002` | `QA-SYNTH-PRIVATE-NOTE-B` | no pedigree |
 
-Cost: none (staging free tier; one small PNG per account per run, deleted at the end of the run).
+Both use breed Labrador Retriever and date of birth 2024-01-15.
+
+**Guards before any write:** BASE_URL is an `idogs-app-staging-*.vercel.app` Preview; the bundle's Firebase projectId is `idogs-app-staging`; the account email is an authorised `+qa…@` alias; the sign-in did not land on `/verify-email`; the dog list really loaded (not the loading-error state); and **every existing dog in the account is `QA-SYNTH`**, otherwise it refuses.
+
+**Idempotent:** creates the dog only if that exact name is missing. Never edits or deletes a dog.
+
+**Opt-in:** the Preview workflow runs automatically on every staging deployment, so provisioning only writes when the repo **Actions variable** `E2E_PROVISION_QA_FIXTURES=1` is set (Settings → Secrets and variables → Actions → Variables). Unset: read-only; if a fixture dog is missing, the dependent tests SKIP with that reason. Intended order: Codex reviews → set the variable → rerun the Preview E2E job → unset it.
+
+**Local proof:** `e2e/local/dog-new-fixture-form.spec.ts` runs the exact `createFixtureDogViaForm` helper against the REAL `DogNewPage` with stubbed Firebase modules, across the 6 local viewports. It checks the `createDog()` payload (name, microchip, notes, DOB, pedigree, breed set), that nothing else is written, and the post-create navigation.
+
+Each run's documents are created and deleted by the specs themselves.
 
 ## What the spec checks (`e2e/auth-isolation-staging.spec.ts`)
 1. A (pet owner) and B (breeder) both sign in.
@@ -50,5 +55,5 @@ After setup, post in #103 only: the account roles, the dog names above, the dog 
 
 ## Cleanup / rollback
 - Per run: the spec deletes the documents it created. If a run is interrupted, delete any `QA-SYNTH … doc …` document from the account's Documents page.
-- To retire the fixtures: sign in to each account on the staging Preview, delete the `QA-SYNTH` dog, then delete the two users in Firebase console → **`idogs-app-staging`** → Authentication (check the project name first). Remove the four GitHub secrets.
+- To retire the fixtures: unset `E2E_PROVISION_QA_FIXTURES`, sign in to each account on the staging Preview, delete the `QA-SYNTH` dog, then delete the two users in Firebase console → **`idogs-app-staging`** → Authentication (check the project name first). Remove the four GitHub secrets.
 - Nothing here touches production `idogs-app`.

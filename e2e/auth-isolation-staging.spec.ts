@@ -1,5 +1,6 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
-import { assertStagingPreview, createPreviewContext, enterSecretly } from './support/previewContext'
+import { assertStagingPreview, createPreviewContext } from './support/previewContext'
+import { MISSING_REASON, QA_A, QA_B, loadDogCards, provisionQaFixture, signInQa, type QaAccount } from './support/qaFixtures'
 
 // LP-11 authenticated isolation QA on a Vercel STAGING Preview (Owner gate 22 Nov 2026:
 // staging-only synthetic QA). Two dedicated synthetic QA accounts, never customers:
@@ -19,10 +20,9 @@ import { assertStagingPreview, createPreviewContext, enterSecretly } from './sup
 //   prints them. Nothing is logged.
 // Writes: one uniquely-stamped document per account per run (renamed, then deleted in `finally`).
 
-const STAGING_PROJECT = 'idogs-app-staging'
-const A = { name: 'A', email: process.env.E2E_STAGING_EMAIL, password: process.env.E2E_STAGING_PASSWORD, dog: 'QA-SYNTH A' }
-const B = { name: 'B', email: process.env.E2E_STAGING_EMAIL_2, password: process.env.E2E_STAGING_PASSWORD_2, dog: 'QA-SYNTH B' }
-type Account = typeof A
+const A = QA_A
+const B = QA_B
+type Account = QaAccount
 // Synthetic private values set on B's dog at fixture creation (see the fixture doc).
 const B_PRIVATE = ['900000000000002', 'QA-SYNTH-PRIVATE-NOTE-B']
 const PUBLIC_KEYS = ['id', 'name', 'breed', 'sex', 'dateOfBirth', 'colour', 'lifeStage', 'profilePhoto', 'passportId', 'status', 'sourceType', 'isDeceased']
@@ -36,38 +36,16 @@ type Target = { baseURL: string }
 const target = (baseURL: string | undefined): Target => ({ baseURL: assertStagingPreview(baseURL) })
 const newContext = (browser: Browser, t: Target) => createPreviewContext(browser, t.baseURL, BYPASS)
 
-async function firebaseProjectOf(page: Page): Promise<string | null> {
-  for (const src of await page.$$eval('script[src]', els => els.map(e => (e as HTMLScriptElement).src))) {
-    if (!src.startsWith(new URL(page.url()).origin)) continue
-    const m = /projectId:"([a-z0-9-]+)"/.exec(await (await page.request.get(src)).text())
-    if (m) return m[1]
-  }
-  return null
-}
-
-async function signIn(browser: Browser, t: Target, who: Account) {
-  const context = await newContext(browser, t)
-  const page = await context.newPage()
-  await page.goto('/login')
-  expect(new URL(page.url()).origin, 'navigation stayed on the Preview').toBe(new URL(t.baseURL).origin)
-  expect(await firebaseProjectOf(page), 'refuse to sign in unless the bundle targets staging').toBe(STAGING_PROJECT)
-  await enterSecretly(page, 'input[type="email"]', who.email!)
-  await enterSecretly(page, 'input[type="password"]', who.password!)
-  await page.getByRole('button', { name: /^sign in$/i }).click()
-  await expect(page, `account ${who.name} signs in`).toHaveURL(/\/app\//, { timeout: 25_000 })
-  return page
-}
+const signIn = (browser: Browser, t: Target, who: Account) => signInQa(browser, t.baseURL, who)
 
 async function dogList(page: Page) {
-  await page.goto('/app/dogs')
-  await expect(page.locator('a[href^="/app/dogs/"]').first()).toBeVisible({ timeout: 20_000 })
-  return page.locator('main').innerText()
+  return (await loadDogCards(page)).join('\n')
 }
 
 /** Open the account's own fixture dog: returns its id and Passport ID. */
 async function ownDog(page: Page, who: Account) {
   await page.goto('/app/dogs')
-  await page.locator('a[href^="/app/dogs/"]').filter({ hasText: who.dog }).first().click()
+  await page.locator('a[href^="/app/dogs/"]:not([href="/app/dogs/new"])').filter({ hasText: who.dog }).first().click()
   await expect(page).toHaveURL(/\/app\/dogs\/[^/]+$/)
   const id = new URL(page.url()).pathname.split('/').pop()!
   const passport = (await page.locator('div').filter({ has: page.getByText('Passport ID', { exact: true }) }).last().locator('span').last().innerText()).trim()
@@ -144,6 +122,15 @@ async function assertIsolated(viewer: Page, viewerAuth: string, owner: Account, 
 test.describe('LP-11 two-account isolation + QR privacy (staging synthetic fixtures)', () => {
   test.skip(!A.email || !A.password || !B.email || !B.password, 'Two staging QA accounts not configured (see docs/growth-v1/QA_SYNTH_FIXTURES.md)')
   test.describe.configure({ mode: 'serial' })
+
+  // Fixture setup through the normal UI as each QA user (idempotent; see support/qaFixtures.ts).
+  test.beforeAll(async ({ browser, baseURL }) => {
+    test.setTimeout(180_000)
+    const base = assertStagingPreview(baseURL)
+    const a = await provisionQaFixture(browser, base, A)
+    const b = await provisionQaFixture(browser, base, B)
+    test.skip(a === 'missing' || b === 'missing', MISSING_REASON)
+  })
 
   test('owner/breeder login, owned CRUD, mutual isolation, signed URL denial, QR public fields only', async ({ browser, baseURL }, info) => {
     const t = target(baseURL)

@@ -10,6 +10,7 @@ name: Preview E2E (staging)
 #   E2E_STAGING_EMAIL / E2E_STAGING_PASSWORD  optional — synthetic staging QA account A, pet owner (never a customer)
 #   E2E_STAGING_EMAIL_2 / E2E_STAGING_PASSWORD_2  optional — synthetic staging QA account B, breeder (two-account isolation)
 #   Fixture contract: docs/growth-v1/QA_SYNTH_FIXTURES.md
+#   vars.E2E_PROVISION_QA_FIXTURES = 1  optional — allow UI-based creation of the two QA-SYNTH fixture dogs (after review)
 
 on:
   deployment_status:
@@ -74,6 +75,8 @@ jobs:
           E2E_STAGING_PASSWORD: ${{ secrets.E2E_STAGING_PASSWORD }}
           E2E_STAGING_EMAIL_2: ${{ secrets.E2E_STAGING_EMAIL_2 }}
           E2E_STAGING_PASSWORD_2: ${{ secrets.E2E_STAGING_PASSWORD_2 }}
+          # Opt-in for UI-based QA-SYNTH fixture creation (repo variable, not a secret). Unset = read-only.
+          E2E_PROVISION_QA_FIXTURES: ${{ vars.E2E_PROVISION_QA_FIXTURES }}
         run: npx playwright test
       - name: Upload report
         if: always()
