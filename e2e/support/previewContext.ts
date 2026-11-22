@@ -26,13 +26,18 @@ export async function bootstrapPreviewCookie(request: APIRequestContext, origin:
   })
   expect(res.status() < 500, 'Preview bypass bootstrap reached the Preview').toBe(true)
   const host = new URL(origin).hostname
-  const cookies = (await request.storageState()).cookies
-  expect(cookies.length > 0, 'Preview bypass cookie was set').toBe(true)
-  expect(cookies.every(c => c.domain === host), 'bypass cookie is host-only on the Preview host').toBe(true)
+  // Cookies the browser would send to this host: exact host, or a parent domain (e.g. .vercel.app).
+  const applicable = (await request.storageState()).cookies.filter(c => {
+    const d = c.domain.replace(/^\./, '')
+    return host === d || host.endsWith(`.${d}`)
+  })
+  expect(applicable.length > 0, 'Preview bypass cookie was set').toBe(true)
+  expect(applicable.every(c => c.domain === host), 'no parent-domain cookie: bypass cookie is host-only on the Preview host').toBe(true)
 }
 
 export async function createPreviewContext(browser: Browser, base: string, bypassSecret: string | undefined): Promise<BrowserContext> {
-  const context = await browser.newContext({ baseURL: base })
+  // Explicit empty jar: no cookie inherited from config storageState or elsewhere.
+  const context = await browser.newContext({ baseURL: base, storageState: { cookies: [], origins: [] } })
   if (bypassSecret) await bootstrapPreviewCookie(context.request, new URL(base).origin, bypassSecret)
   return context
 }

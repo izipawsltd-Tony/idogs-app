@@ -82,7 +82,7 @@ test('createPreviewContext (LP-11 spec): bypass secret reaches only the exact Pr
 })
 
 test('global setup storageState (page/context fixtures): bypass secret reaches only the Preview origin', async ({ browser }) => {
-  const rc = await request.newContext()
+  const rc = await request.newContext({ storageState: { cookies: [], origins: [] } })
   await bootstrapPreviewCookie(rc, new URL(preview).origin, SENTINEL)
   const storageState = await rc.storageState()
   await rc.dispose()
