@@ -26,12 +26,16 @@ Never paste credentials in issues, PRs, chat or commit messages. If Codex runs t
 Cost: none (staging free tier; one small PNG per account per run, deleted at the end of the run).
 
 ## What the spec checks (`e2e/auth-isolation-staging.spec.ts`)
-1. A and B both sign in (owner and breeder roles).
+1. A (pet owner) and B (breeder) both sign in.
 2. Each dog list shows only its own `QA-SYNTH` dog.
-3. Each account uploads one stamped document, views it (signed URL 200), and deletes it in `finally`.
-4. A's Documents page does not show B's document; A opening B's dog URL does not show B's dog.
-5. A's valid token requesting a signed URL for B's file → **403**, with no signed URL in the body; no token → **401**.
-6. Anonymous QR passport for B's dog: API response has only `dog`, `vaccines` and `healthTests`, and the `dog` fields are within the public allowlist; the API and the rendered `/p/<id>` page never contain B's private values.
+3. Owned Documents per account: upload a stamped PNG, View (signed URL 200), Edit (rename persists after reload), Delete in `finally`.
+4. **Mutual** isolation, A→B and B→A: the other account's document is not listed; opening the other account's dog URL does not show that dog; a signed-URL request for the other account's file with a valid token of the wrong account → **403** (no signed URL in the body), with no token → **401**, with a malformed token → **401**.
+5. Anonymous QR passport for B's dog: API response has only `dog`, `vaccines` and `healthTests`, and the `dog` fields are within the public allowlist; the API and the rendered `/p/<id>` page never contain B's private values.
+
+### Harness safety (Codex preflight #7075190263)
+- Every browser context and request client is created with the exact configured Preview `baseURL` and the Vercel protection headers. The base URL must match `https://idogs-app-staging-*.vercel.app` (a `127.0.0.1` URL is accepted only with `E2E_HARNESS_DRYRUN=1`, for a local harness dry run). Sign-in also refuses unless the bundle's Firebase projectId is `idogs-app-staging`.
+- Tracing, screenshots and video are off for this file. Credentials are entered via `evaluate()`, so their values are not recorded in step titles. Assertions on tokens, signed URLs and file paths are boolean, so failure messages never print them. Nothing is logged.
+- Remaining artifact content: on failure, Playwright's error context may include an accessibility snapshot of the synthetic page (synthetic names and, if shown on screen, the synthetic account email). Report artifacts are repo-private with 14-day retention.
 
 ### QR public / private field matrix (from `api/passport.js`, ADR-002 Phase A)
 | Public (allowlist) | Private (must never appear) |
