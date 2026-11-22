@@ -1,10 +1,12 @@
 import { defineConfig, devices } from '@playwright/test'
+import { PREVIEW_STATE } from './e2e/support/state-path'
 
 // Preview E2E against a Vercel STAGING Preview. BASE_URL is validated by the
-// workflow (idogs-app-staging-*.vercel.app only). The Vercel protection bypass
-// secret is sent only as a header to that host and is never logged.
+// workflow and by global setup (idogs-app-staging-*.vercel.app only). The Vercel
+// protection bypass secret is sent once, origin-bound, by global setup to obtain a
+// host-only cookie; it is never a context-wide header (Codex #7077157877), never
+// logged, and traces are off so no request headers or typed values reach the report.
 const baseURL = process.env.BASE_URL
-const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
 
 export default defineConfig({
   testDir: './e2e',
@@ -13,11 +15,12 @@ export default defineConfig({
   retries: 1,
   workers: 1,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
+  globalSetup: './e2e/support/global-setup.ts',
   use: {
     baseURL,
-    trace: 'retain-on-failure',
+    storageState: PREVIEW_STATE,
+    trace: 'off',
     screenshot: 'only-on-failure',
-    extraHTTPHeaders: bypass ? { 'x-vercel-protection-bypass': bypass, 'x-vercel-set-bypass-cookie': 'true' } : {},
   },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },

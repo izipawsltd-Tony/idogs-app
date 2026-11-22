@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { enterSecretly } from './support/previewContext'
 
 // Staging Preview smoke. Read-only except the optional signed-in block, which
 // only runs when (a) the bundle is proven to target Firebase idogs-app-staging
@@ -62,8 +63,8 @@ test.describe('Signed-in staging QA account (read-only)', () => {
   test('documents and settings render for the QA account', async ({ page }) => {
     await page.goto('/login')
     expect(await firebaseProjectOf(page), 'refuse to sign in unless the bundle targets staging').toBe(STAGING_PROJECT)
-    await page.locator('input[type="email"]').first().fill(email!)
-    await page.locator('input[type="password"]').first().fill(password!)
+    await enterSecretly(page, 'input[type="email"]', email!)
+    await enterSecretly(page, 'input[type="password"]', password!)
     await page.getByRole('button', { name: /sign in/i }).click()
     await expect(page).toHaveURL(/\/app\//, { timeout: 20_000 })
     await page.goto('/app/documents')
