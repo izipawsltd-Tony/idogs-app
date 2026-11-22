@@ -3,6 +3,7 @@
 // Owner sends by SMS. No payment details, no renewal, no charge.
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { GIFT_OFFER } from '../../shared/access-grants.js'
+import { accessGrantsEnabled } from './entitlements.js'
 import { ACCESS_GRANT_COUNTERS, GIFT_REDEMPTIONS, buildAccessGrant, counterCount } from './access-grant-store.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
@@ -32,6 +33,9 @@ export function createGiftRedeemHandler({
   checkRateLimit = async () => ({ allowed: true }),
   getConfiguredCode = () => process.env.IDOGS_GIFT_CODE,
   isEnabled = () => process.env.GIFT_REDEMPTION_ENABLED === 'true',
+  // Same fail-closed rule as the launch offer (#109): entitlements honour accessGrant only when
+  // IDOGS_ACCESS_GRANTS_ENABLED=true, so never tell a user a gift is claimed while it can't work.
+  grantsEnabled = () => accessGrantsEnabled(),
   now = Date.now,
   offer = GIFT_OFFER,
 } = {}) {
@@ -54,6 +58,10 @@ export function createGiftRedeemHandler({
 
     if (!isEnabled()) {
       logConfigError('redeem-gift', 'GIFT_REDEMPTION_DISABLED')
+      return res.status(503).json({ error: 'Gift claims are not open yet.', code: 'GIFT_REDEMPTION_DISABLED' })
+    }
+    if (!grantsEnabled()) {
+      logConfigError('redeem-gift', 'GIFT_GRANTS_DISABLED')
       return res.status(503).json({ error: 'Gift claims are not open yet.', code: 'GIFT_REDEMPTION_DISABLED' })
     }
     const configured = getConfiguredCode()

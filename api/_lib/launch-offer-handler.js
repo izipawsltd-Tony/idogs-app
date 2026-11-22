@@ -7,6 +7,7 @@ import { ACCESS_GRANT_COUNTERS, GIFT_REDEMPTIONS, buildAccessGrant, counterCount
 import { getOwnedActiveDogsSorted } from './dog-cap.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
+import { accessGrantsEnabled } from './entitlements.js'
 
 const LIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'])
 
@@ -22,9 +23,17 @@ export function launchOfferState({ claimed, nowMs, offer = LAUNCH_OFFER }) {
   return { active: open && remaining > 0, remaining, endsAt: new Date(offer.claimEnd).toISOString() }
 }
 
+// A claim writes users/{uid}.accessGrant, but entitlements only honour that
+// grant when IDOGS_ACCESS_GRANTS_ENABLED=true (api/_lib/entitlements.js). If
+// the campaign flag is on while grants are off, a claim would use up one of
+// the 100 places and tell the user "Your free year of iDogs Plus is active!"
+// while they stay on Free. So the offer is only open when BOTH are on.
+const defaultGrantsEnabled = () => accessGrantsEnabled()
+
 export function createOfferStatusHandler({
   getLaunchClaimed,
   launchEnabled = () => process.env.LAUNCH_OFFER_ENABLED === 'true',
+  grantsEnabled = defaultGrantsEnabled,
   passEnabled = () => process.env.FOUNDING_CHECKOUT_ENABLED === 'true',
   now = Date.now,
 } = {}) {
@@ -32,12 +41,13 @@ export function createOfferStatusHandler({
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
     const t = now()
     try {
-      const launch = launchEnabled()
+      const launch = launchEnabled() && grantsEnabled()
         ? launchOfferState({ claimed: await getLaunchClaimed(), nowMs: t })
         : { active: false, remaining: 0, endsAt: new Date(LAUNCH_OFFER.claimEnd).toISOString() }
       // The 15-month pass is offered once the free places are gone (or the
       // campaign is off), within its own sales window.
-      const passOpen = passEnabled() && t >= FOUNDING_OFFER.salesStart && t < FOUNDING_OFFER.salesEnd && !launch.active
+      // The pass is also an access grant, so never advertise it while grants are off.
+      const passOpen = passEnabled() && grantsEnabled() && t >= FOUNDING_OFFER.salesStart && t < FOUNDING_OFFER.salesEnd && !launch.active
       res.setHeader?.('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=60')
       return res.status(200).json({
         // Owner decision 12 Nov 2026: while the voucher campaign is switched on
@@ -58,6 +68,7 @@ export function createLaunchClaimHandler({
   verifyIdToken,
   db,
   isEnabled = () => process.env.LAUNCH_OFFER_ENABLED === 'true',
+  grantsEnabled = defaultGrantsEnabled,
   countOwnedActiveDogs = async (tx, uid) => (await getOwnedActiveDogsSorted(tx, db, uid)).length,
   now = Date.now,
   offer = LAUNCH_OFFER,
@@ -80,6 +91,11 @@ export function createLaunchClaimHandler({
     if (!isEnabled()) {
       logConfigError('claim-launch-offer', 'LAUNCH_OFFER_DISABLED')
       return res.status(503).json({ error: 'This offer is not open.', code: 'LAUNCH_OFFER_DISABLED' })
+    }
+    if (!grantsEnabled()) {
+      // Never consume a place for a grant the plan check would ignore.
+      logConfigError('claim-launch-offer', 'ACCESS_GRANTS_DISABLED')
+      return res.status(503).json({ error: 'This offer is temporarily unavailable. Please try again later.', code: 'LAUNCH_GRANTS_DISABLED' })
     }
     const t = now()
     if (!(t >= offer.claimStart && t < offer.claimEnd)) {
