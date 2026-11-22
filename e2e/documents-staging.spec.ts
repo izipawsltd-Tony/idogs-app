@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
+import { assertStagingPreview, enterSecretly } from './support/previewContext'
+import { MISSING_REASON, QA_A, provisionQaFixture } from './support/qaFixtures'
 
 // Authenticated functional QA on a Vercel STAGING Preview with a dedicated
 // staging QA account (never a customer). Self-contained: uploads its own
@@ -11,6 +13,14 @@ const email = process.env.E2E_STAGING_EMAIL
 const password = process.env.E2E_STAGING_PASSWORD
 // 1×1 transparent PNG
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64')
+
+// The QA account's single QA-SYNTH fixture dog, created through the normal UI if missing
+// (idempotent; never touches non-QA-SYNTH data). See support/qaFixtures.ts.
+test.beforeAll(async ({ browser, baseURL }) => {
+  if (!email || !password) return
+  test.setTimeout(120_000)
+  test.skip((await provisionQaFixture(browser, assertStagingPreview(baseURL), QA_A)) === 'missing', MISSING_REASON)
+})
 
 async function firebaseProjectOf(page: Page): Promise<string | null> {
   const srcs = await page.$$eval('script[src]', els => els.map(e => (e as HTMLScriptElement).src))
@@ -25,8 +35,8 @@ async function firebaseProjectOf(page: Page): Promise<string | null> {
 async function signIn(page: Page) {
   await page.goto('/login')
   expect(await firebaseProjectOf(page), 'refuse to sign in unless the bundle targets staging').toBe(STAGING_PROJECT)
-  await page.locator('input[type="email"]').first().fill(email!)
-  await page.locator('input[type="password"]').first().fill(password!)
+  await enterSecretly(page, 'input[type="email"]', email!)
+  await enterSecretly(page, 'input[type="password"]', password!)
   await page.getByRole('button', { name: /^sign in$/i }).click()
   await expect(page).toHaveURL(/\/app\//, { timeout: 25_000 })
 }

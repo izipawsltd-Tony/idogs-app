@@ -970,6 +970,7 @@ export default function LittersPage({ toast, dismissAll }: Props) {
         breedingEligibility: pedigreeUpdate.breedingEligibility,
       })
       await sendTransferEmail({
+        dogId: transferPuppy.id,
         buyerEmail: transferEmail.trim(),
         buyerName: transferName.trim(),
         dogName: transferPuppy.name,

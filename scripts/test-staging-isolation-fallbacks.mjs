@@ -483,8 +483,8 @@ await checkAsync('api/upload.js: config-mismatch server log contains no bucket n
 // untouched.
 // =========================================================================
 {
-  const sendEmailSrc = readFileSync(new URL('../api/send-email.js', import.meta.url), 'utf8')
-  check('api/send-email.js still sends from the verified noreply@idogs.com.au address (unrelated to server routing — must NOT be touched by this patch)',
+  const sendEmailSrc = readFileSync(new URL('../api/_lib/send-email-handler.js', import.meta.url), 'utf8')
+  check('api/send-email.js (via api/_lib/send-email-handler.js) still sends from the verified noreply@idogs.com.au address (unrelated to server routing — must NOT be touched by this patch)',
     /from: 'iDogs <noreply@idogs\.com\.au>'/.test(sendEmailSrc))
 
   const surveySrc = readFileSync(new URL('../api/survey.js', import.meta.url), 'utf8')
