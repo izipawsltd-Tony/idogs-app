@@ -21,7 +21,7 @@ import { isMarketingWebsitePage, readMetaConsent, setMetaConsent, suspendMetaTra
 
 const GAP = 8 // px between the pill and the sticky CTA bar / screen edge
 // Phones (portrait or landscape): the pill must never float over content. It docks in the
-// landing sticky bar when that bar is visible, otherwise it sits in-flow at the page end.
+// page's consent slot (landing footer) when there is one, otherwise it sits in-flow at the page end.
 const SMALL_SCREEN = '(max-width: 620px), (max-height: 500px)'
 
 /** Distance from the bottom of the viewport the pill must sit above, so it never covers a visible fixed/sticky CTA. */
@@ -37,14 +37,14 @@ export function pillBottomOffset(doc: Document = document, win: Window = window)
   return Math.ceil(offset)
 }
 
-/** The in-bar consent slot of a VISIBLE sticky CTA bar (phones), or null. Docking the pill there
- *  means it can never float over page content such as the hero Breeders link. */
+/** The page's in-flow consent slot (landing footer), or null. Used on phones only. It must not be
+ *  inside a fixed/sticky bar: a docked bar row made the bar taller and intercepted taps on page
+ *  content scrolling behind it (hero Breeders link, Codex 22 Nov). */
 export function findConsentDock(doc: Document = document, win: Window = window): HTMLElement | null {
-  for (const bar of Array.from(doc.querySelectorAll<HTMLElement>('.sticky-cta'))) {
-    const style = win.getComputedStyle(bar)
-    if (style.display === 'none' || style.visibility === 'hidden') continue
-    const slot = bar.querySelector<HTMLElement>('[data-consent-dock]')
-    if (slot) return slot
+  for (const slot of Array.from(doc.querySelectorAll<HTMLElement>('[data-consent-dock]'))) {
+    if (slot.closest('.sticky-cta')) continue
+    if (win.getComputedStyle(slot).display === 'none') continue
+    return slot
   }
   return null
 }
@@ -72,8 +72,9 @@ export default function MarketingMeasurement() {
   // Keep the pill above the sticky CTA bar as the layout / Safari toolbar changes.
   const measure = useCallback(() => {
     setBottom(pillBottomOffset())
-    setDock(findConsentDock())
-    setInflow(!!window.matchMedia?.(SMALL_SCREEN).matches)
+    const small = !!window.matchMedia?.(SMALL_SCREEN).matches
+    setInflow(small)
+    setDock(small ? findConsentDock() : null)
   }, [])
   useLayoutEffect(() => {
     if (!marketing) return
@@ -124,7 +125,7 @@ export default function MarketingMeasurement() {
 
   return <>
     {/* In-flow spacer: the last content on the page can always scroll clear of the pill. */}
-    <div aria-hidden="true" data-testid="ad-privacy-spacer" style={{ height: dock || !inflow ? 56 : 0 }} />
+    <div aria-hidden="true" data-testid="ad-privacy-spacer" style={{ height: inflow ? 0 : 56 }} />
     {!open && (pill => dock ? createPortal(pill, dock)
       : inflow ? <div data-testid="ad-privacy-inflow" style={{ padding: '4px calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px))' }}>{pill}</div>
       : pill)(<button
@@ -134,14 +135,17 @@ export default function MarketingMeasurement() {
       aria-haspopup="dialog"
       onClick={() => setOpen(true)}
       style={dock ? {
-        // Docked inside the phone sticky bar: a quiet text link above the CTAs.
-        minHeight: 28,
-        padding: '4px 2px',
-        fontSize: 12,
+        // Docked in the landing footer (phones): styled like the neighbouring footer links.
+        display: 'block',
+        minHeight: 44,
+        padding: 0,
+        fontFamily: 'inherit',
+        fontSize: 14,
         lineHeight: 1.2,
+        textAlign: 'left',
         whiteSpace: 'nowrap',
         background: 'transparent',
-        color: '#efe9da',
+        color: 'var(--on-forest-soft, #c9d3cc)',
         border: 0,
         textDecoration: 'underline',
         textUnderlineOffset: 2,

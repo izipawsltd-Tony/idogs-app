@@ -384,6 +384,10 @@ export default function LandingPage() {
                   <Link to="/privacy">Privacy Policy</Link>
                   <Link to="/terms">Terms of Use</Link>
                   <a href="mailto:hello@idogs.com.au">Contact: hello@idogs.com.au</a>
+                  {/* Consent dock: on phones MarketingMeasurement renders "Ad privacy choices" here, in the
+                      footer, so it never floats over content and never makes the sticky bar taller
+                      (a docked bar row intercepted taps on the hero Breeders link, Codex 22 Nov). */}
+                  <div className="foot-consent" data-consent-dock="" />
                 </div>
               </div>
             </div>
@@ -394,9 +398,6 @@ export default function LandingPage() {
         </footer>
 
         <div className="sticky-cta" role="region" aria-label="Get started with iDogs">
-          {/* Consent dock: on phones MarketingMeasurement renders "Ad privacy choices" here, inside the
-              bar, so it never floats over page content (it covered the hero Breeders link, 21 Nov). */}
-          <div className="sticky-cta-consent" data-consent-dock="" />
           <div className="sticky-cta-row">
             <Link className="btn btn-primary" to="/signup" onClick={() => trackLandingEvent('cta_get_started')}>Get Started Free</Link>
             {/* LP-06B clarity: a visible label, not an unlabelled phone icon (Owner, 21 Nov). */}
@@ -907,8 +908,6 @@ const LV2_CSS = `
     .lv2-page .cta-row .btn { flex:1 1 100%; }
     .lv2-page .iphone-band { padding:52px 0 52px; }
     .lv2-page .sticky-cta-row { display:flex; gap:10px; }
-    .lv2-page .sticky-cta-consent { display:flex; margin:-4px 0 8px; }
-    .lv2-page .sticky-cta-consent:empty { display:none; }
     .lv2-page .sticky-cta .btn-primary { flex:1 1 auto; width:auto; min-width:0; padding-inline:16px; white-space:nowrap; }
     .lv2-page .sticky-cta .btn-store-icon { flex:none; width:auto; padding:0 12px; font-size:15px; white-space:nowrap; background:transparent; color:var(--on-forest); border:1.5px solid var(--on-forest-soft); }
   }

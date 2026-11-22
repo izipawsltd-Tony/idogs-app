@@ -39,8 +39,8 @@ for (const path of ['/', '/signup']) {
         expect(cta.overlapsPill, `${cta.text} overlaps the pill`).toBe(false)
         // A CTA momentarily under the page's own sticky "Start Free" bar or sticky header is a
         // pre-existing landing layout (same action stays one tap away); not consent UI.
-        // (Header added 21 Nov: on phones the pill now docks in the bar or sits in-flow at
-        // the page end, so opening it can scroll a footer CTA under the header.)
+        // (Header added 21 Nov: on phones the pill sits in the footer or in-flow at the page
+        // end, so opening it can scroll a footer CTA under the header.)
         if (!cta.coveredByOwnStickyBar) expect(cta.clickable, `${cta.text} is not clickable`).toBe(true)
       }
       if (path === '/signup') {

@@ -96,18 +96,22 @@ describe('pillBottomOffset', () => {
 })
 
 describe('findConsentDock', () => {
-  const slot = { id: 'slot' }
-  const bar = (display: string) => ({ display, querySelector: (sel: string) => (sel === '[data-consent-dock]' ? slot : null) })
-  const make = (bars: Array<ReturnType<typeof bar>>) => ({
-    doc: { querySelectorAll: () => bars } as unknown as Document,
-    win: { getComputedStyle: (b: { display: string }) => ({ display: b.display, visibility: 'visible' }) } as unknown as Window,
+  const slot = (display: string, inBar = false) => ({ display, closest: (sel: string) => (sel === '.sticky-cta' && inBar ? {} : null) })
+  const make = (slots: Array<ReturnType<typeof slot>>) => ({
+    doc: { querySelectorAll: () => slots } as unknown as Document,
+    win: { getComputedStyle: (s: { display: string }) => ({ display: s.display }) } as unknown as Window,
   })
-  it('returns the dock slot of a visible sticky bar (phones)', () => {
-    const { doc, win } = make([bar('block')])
-    expect(findConsentDock(doc, win)).toBe(slot)
+  it('returns the in-flow footer slot', () => {
+    const footer = slot('block')
+    const { doc, win } = make([footer])
+    expect(findConsentDock(doc, win)).toBe(footer)
   })
-  it('returns null when the sticky bar is hidden (desktop) or absent (signup)', () => {
-    expect(findConsentDock(make([bar('none')]).doc, make([bar('none')]).win)).toBeNull()
+  it('never docks inside a fixed/sticky CTA bar (it made the bar taller and intercepted taps)', () => {
+    const { doc, win } = make([slot('block', true)])
+    expect(findConsentDock(doc, win)).toBeNull()
+  })
+  it('returns null when the slot is hidden or absent (signup)', () => {
+    expect(findConsentDock(make([slot('none')]).doc, make([slot('none')]).win)).toBeNull()
     expect(findConsentDock(make([]).doc, make([]).win)).toBeNull()
   })
 })
