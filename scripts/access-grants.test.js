@@ -193,8 +193,18 @@ describe('gift redemption', () => {
     db,
     getConfiguredCode: () => CODE,
     isEnabled: () => true,
+    grantsEnabled: () => true,
     now: () => NOW,
     ...over,
+  })
+
+  it('refuses claims without writing while access grants are not honoured', async () => {
+    const db = fakeDb({ 'users/u1': { plan: 'free' } })
+    const res = mockRes(); await handler(db, { grantsEnabled: () => false })(authed({ code: CODE }), res)
+    expect(res.statusCode).toBe(503)
+    expect(res.body.code).toBe('GIFT_REDEMPTION_DISABLED')
+    expect(db.store.get('users/u1').accessGrant).toBeUndefined()
+    expect(db.store.get(`accessGrantCounters/${GIFT_OFFER.id}`)).toBeUndefined()
   })
 
   it('matches codes ignoring case, spaces and dashes, and rejects short configs', () => {
