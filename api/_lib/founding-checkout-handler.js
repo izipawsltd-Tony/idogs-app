@@ -4,6 +4,7 @@
 import { FOUNDING_OFFER } from '../../shared/access-grants.js'
 import { logConfigError } from './require-config.js'
 import { logSanitizedError } from './http-helpers.js'
+import { accessGrantsEnabled } from './entitlements.js'
 
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{16,100}$/
 const LIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'])
@@ -25,6 +26,10 @@ export function createFoundingCheckoutHandler({
   // Gift Vouchers are gone (or the voucher campaign is off). Same rule as
   // /api/offer-status, enforced here so a direct API call cannot bypass it.
   isLaunchActive = async () => false,
+  // The pass is delivered as an access grant, which entitlements ignore
+  // unless IDOGS_ACCESS_GRANTS_ENABLED=true. Never take A$49 for a pass that
+  // would not unlock Plus.
+  grantsEnabled = () => accessGrantsEnabled(),
   now = Date.now,
   offer = FOUNDING_OFFER,
 } = {}) {
@@ -48,6 +53,10 @@ export function createFoundingCheckoutHandler({
     if (!isEnabled()) {
       logConfigError('create-founding-checkout', 'FOUNDING_CHECKOUT_DISABLED')
       return res.status(503).json({ error: 'The Founding Member offer is not open yet. No payment has been taken.', code: 'FOUNDING_CHECKOUT_DISABLED' })
+    }
+    if (!grantsEnabled()) {
+      logConfigError('create-founding-checkout', 'ACCESS_GRANTS_DISABLED')
+      return res.status(503).json({ error: 'The Founding Member offer is not open yet. No payment has been taken.', code: 'FOUNDING_GRANTS_DISABLED' })
     }
 
     const appUrl = getAppUrl(req)
