@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { beaconFields, landingBeaconHandler, lcpBucket } from '../api/_lib/landing-beacon.js'
+import { beaconFields, eventField, landingBeaconHandler, lcpBucket } from '../api/_lib/landing-beacon.js'
 
 function run(body, method = 'POST') {
   const writes = []
@@ -27,5 +27,21 @@ describe('anonymous landing beacon', () => {
   })
   it('sanitises keys so a caller cannot write arbitrary field paths', () => {
     expect(beaconFields({ path: '/', campaignId: 'a.b.c', adId: '$$<script>' })).toMatchObject({ campaign: 'a_b_c', ad: 'none' })
+  })
+  it('counts homepage CTA clicks in a separate counter, without touching load totals', async () => {
+    const { res, writes } = await run({ path: '/', event: 'app_store', email: 'x@y.z' })
+    expect(res.code).toBe(204)
+    expect(writes).toHaveLength(1)
+    expect(writes[0].data).toEqual({ day: '2026-11-02', byEvent: { app_store: { inc: 1 } } })
+    expect(writes[0].data.total).toBeUndefined()
+    expect(JSON.stringify(writes[0].data)).not.toContain('x@y.z')
+  })
+  it('ignores unknown events, other paths and field-path tricks', async () => {
+    for (const body of [{ path: '/', event: 'a.b' }, { path: '/', event: '$bad' }, { path: '/signup', event: 'app_store' }, { path: '/', event: 'constructor' }]) {
+      const out = await run(body)
+      expect(out.res.code).toBe(204); expect(out.writes).toHaveLength(0)
+    }
+    expect(eventField({ path: '/' })).toBeUndefined()
+    expect(eventField({ path: '/', event: 'cta_breeder' })).toBe('cta_breeder')
   })
 })

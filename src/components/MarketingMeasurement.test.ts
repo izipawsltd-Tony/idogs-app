@@ -11,7 +11,7 @@ vi.mock('../lib/metaPixel', () => ({
   trackMarketingPage: s.track,
   suspendMetaTracking: s.suspend,
 }))
-import MarketingMeasurement, { pillBottomOffset } from './MarketingMeasurement'
+import MarketingMeasurement, { findConsentDock, pillBottomOffset } from './MarketingMeasurement'
 
 let tree: ReactTestRenderer
 const listeners: Record<string, ((e: any) => void)[]> = {}
@@ -92,5 +92,26 @@ describe('pillBottomOffset', () => {
   it('ignores hidden or off-screen bars (desktop)', () => {
     expect(pillBottomOffset(doc([{ getBoundingClientRect: () => ({ top: 728, height: 72 }) }]), win(800, 'none'))).toBe(0)
     expect(pillBottomOffset(doc([{ getBoundingClientRect: () => ({ top: 900, height: 72 }) }]), win(800))).toBe(0)
+  })
+})
+
+describe('findConsentDock', () => {
+  const slot = (display: string, inBar = false) => ({ display, closest: (sel: string) => (sel === '.sticky-cta' && inBar ? {} : null) })
+  const make = (slots: Array<ReturnType<typeof slot>>) => ({
+    doc: { querySelectorAll: () => slots } as unknown as Document,
+    win: { getComputedStyle: (s: { display: string }) => ({ display: s.display }) } as unknown as Window,
+  })
+  it('returns the in-flow footer slot', () => {
+    const footer = slot('block')
+    const { doc, win } = make([footer])
+    expect(findConsentDock(doc, win)).toBe(footer)
+  })
+  it('never docks inside a fixed/sticky CTA bar (it made the bar taller and intercepted taps)', () => {
+    const { doc, win } = make([slot('block', true)])
+    expect(findConsentDock(doc, win)).toBeNull()
+  })
+  it('returns null when the slot is hidden or absent (signup)', () => {
+    expect(findConsentDock(make([slot('none')]).doc, make([slot('none')]).win)).toBeNull()
+    expect(findConsentDock(make([]).doc, make([]).win)).toBeNull()
   })
 })
