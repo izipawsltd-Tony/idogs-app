@@ -1,4 +1,5 @@
-import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test'
+import { expect, test, type Browser, type Page } from '@playwright/test'
+import { assertStagingPreview, createPreviewContext, enterSecretly } from './support/previewContext'
 
 // LP-11 authenticated isolation QA on a Vercel STAGING Preview (Owner gate 22 Nov 2026:
 // staging-only synthetic QA). Two dedicated synthetic QA accounts, never customers:
@@ -7,9 +8,11 @@ import { expect, test, type Browser, type BrowserContext, type Page } from '@pla
 // Fixture contract and setup: docs/growth-v1/QA_SYNTH_FIXTURES.md.
 //
 // Harness rules (Codex preflight #7075190263):
-// - Every context is created explicitly with the configured baseURL and the Vercel Preview
-//   protection headers; the base URL must be an idogs-app-staging Preview (or 127.0.0.1 in
-//   an explicit harness dry run), and sign-in refuses unless the bundle targets staging.
+// - Every context is created via createPreviewContext: exact Preview baseURL; the Vercel bypass
+//   secret is sent once to the exact Preview origin to obtain a host-only cookie, never as a
+//   context-wide header (Codex #7077157877; proven by preview-context-sentinel.spec.ts). The
+//   base URL must be an idogs-app-staging Preview and sign-in refuses unless the bundle
+//   targets staging.
 // - No secret ever reaches the report: tracing, screenshots and video are off for this file;
 //   credentials are entered via evaluate() (argument values are not recorded in step titles);
 //   assertions on tokens, signed URLs and file paths are boolean, so a failure message never
@@ -17,8 +20,6 @@ import { expect, test, type Browser, type BrowserContext, type Page } from '@pla
 // Writes: one uniquely-stamped document per account per run (renamed, then deleted in `finally`).
 
 const STAGING_PROJECT = 'idogs-app-staging'
-const STAGING_PREVIEW = /^https:\/\/idogs-app-staging-[a-z0-9-]+\.vercel\.app\/?$/
-const DRY_RUN_LOCAL = /^http:\/\/127\.0\.0\.1:\d+\/?$/
 const A = { name: 'A', email: process.env.E2E_STAGING_EMAIL, password: process.env.E2E_STAGING_PASSWORD, dog: 'QA-SYNTH A' }
 const B = { name: 'B', email: process.env.E2E_STAGING_EMAIL_2, password: process.env.E2E_STAGING_PASSWORD_2, dog: 'QA-SYNTH B' }
 type Account = typeof A
@@ -28,20 +29,12 @@ const PUBLIC_KEYS = ['id', 'name', 'breed', 'sex', 'dateOfBirth', 'colour', 'lif
 const NEVER_PUBLIC = ['microchip', 'ankc', 'notes', 'tenantId', 'currentOwnerId', 'createdByUserId', 'originBreederId', 'buyerEmail', 'buyerName', 'breederId', 'photos', 'videos']
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64')
 
-test.use({ trace: 'off', screenshot: 'off', video: 'off' })
+test.use({ trace: 'off', screenshot: 'off', video: 'off', extraHTTPHeaders: {} })
+const BYPASS = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
 
-type Target = { baseURL: string; extraHTTPHeaders: Record<string, string> }
-
-function target(baseURL: string | undefined, extraHTTPHeaders: Record<string, string> | undefined): Target {
-  const base = baseURL || ''
-  const ok = STAGING_PREVIEW.test(base) || (process.env.E2E_HARNESS_DRYRUN === '1' && DRY_RUN_LOCAL.test(base))
-  expect(ok, 'BASE_URL must be an idogs-app-staging Preview').toBe(true)
-  return { baseURL: base.replace(/\/$/, ''), extraHTTPHeaders: extraHTTPHeaders || {} }
-}
-
-/** Every context gets the exact Preview baseURL and protection headers (raw newContext() inherits neither). */
-const newContext = (browser: Browser, t: Target): Promise<BrowserContext> =>
-  browser.newContext({ baseURL: t.baseURL, extraHTTPHeaders: t.extraHTTPHeaders })
+type Target = { baseURL: string }
+const target = (baseURL: string | undefined): Target => ({ baseURL: assertStagingPreview(baseURL) })
+const newContext = (browser: Browser, t: Target) => createPreviewContext(browser, t.baseURL, BYPASS)
 
 async function firebaseProjectOf(page: Page): Promise<string | null> {
   for (const src of await page.$$eval('script[src]', els => els.map(e => (e as HTMLScriptElement).src))) {
@@ -50,16 +43,6 @@ async function firebaseProjectOf(page: Page): Promise<string | null> {
     if (m) return m[1]
   }
   return null
-}
-
-/** Set a React-controlled input without the value appearing in the report's step titles. */
-async function enterSecretly(page: Page, selector: string, value: string) {
-  await page.locator(selector).first().evaluate((el, v) => {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-    setter.call(el, v)
-    el.dispatchEvent(new Event('input', { bubbles: true }))
-    el.dispatchEvent(new Event('change', { bubbles: true }))
-  }, value)
 }
 
 async function signIn(browser: Browser, t: Target, who: Account) {
@@ -162,8 +145,8 @@ test.describe('LP-11 two-account isolation + QR privacy (staging synthetic fixtu
   test.skip(!A.email || !A.password || !B.email || !B.password, 'Two staging QA accounts not configured (see docs/growth-v1/QA_SYNTH_FIXTURES.md)')
   test.describe.configure({ mode: 'serial' })
 
-  test('owner/breeder login, owned CRUD, mutual isolation, signed URL denial, QR public fields only', async ({ browser, baseURL, extraHTTPHeaders }, info) => {
-    const t = target(baseURL, extraHTTPHeaders)
+  test('owner/breeder login, owned CRUD, mutual isolation, signed URL denial, QR public fields only', async ({ browser, baseURL }, info) => {
+    const t = target(baseURL)
     const run = `${info.project.name} ${Date.now()}`
     const docA = { stamp: `QA-SYNTH A doc ${run}`, renamed: `QA-SYNTH A doc ${run} renamed` }
     const docB = { stamp: `QA-SYNTH B doc ${run}`, renamed: `QA-SYNTH B doc ${run} renamed` }

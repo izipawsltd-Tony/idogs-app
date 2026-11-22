@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { enterSecretly } from './support/previewContext'
 
 // Authenticated functional QA on a Vercel STAGING Preview with a dedicated
 // staging QA account (never a customer). Self-contained: uploads its own
@@ -25,8 +26,8 @@ async function firebaseProjectOf(page: Page): Promise<string | null> {
 async function signIn(page: Page) {
   await page.goto('/login')
   expect(await firebaseProjectOf(page), 'refuse to sign in unless the bundle targets staging').toBe(STAGING_PROJECT)
-  await page.locator('input[type="email"]').first().fill(email!)
-  await page.locator('input[type="password"]').first().fill(password!)
+  await enterSecretly(page, 'input[type="email"]', email!)
+  await enterSecretly(page, 'input[type="password"]', password!)
   await page.getByRole('button', { name: /^sign in$/i }).click()
   await expect(page).toHaveURL(/\/app\//, { timeout: 25_000 })
 }
