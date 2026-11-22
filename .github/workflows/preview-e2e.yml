@@ -7,7 +7,9 @@ name: Preview E2E (staging)
 #
 # Secrets (Settings → Secrets and variables → Actions):
 #   VERCEL_AUTOMATION_BYPASS_SECRET  required — Vercel "Protection Bypass for Automation" of the idogs-app-staging project
-#   E2E_STAGING_EMAIL / E2E_STAGING_PASSWORD  optional — dedicated staging QA test account (never a customer)
+#   E2E_STAGING_EMAIL / E2E_STAGING_PASSWORD  optional — synthetic staging QA account A, pet owner (never a customer)
+#   E2E_STAGING_EMAIL_2 / E2E_STAGING_PASSWORD_2  optional — synthetic staging QA account B, breeder (two-account isolation)
+#   Fixture contract: docs/growth-v1/QA_SYNTH_FIXTURES.md
 
 on:
   deployment_status:
@@ -70,6 +72,8 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           E2E_STAGING_EMAIL: ${{ secrets.E2E_STAGING_EMAIL }}
           E2E_STAGING_PASSWORD: ${{ secrets.E2E_STAGING_PASSWORD }}
+          E2E_STAGING_EMAIL_2: ${{ secrets.E2E_STAGING_EMAIL_2 }}
+          E2E_STAGING_PASSWORD_2: ${{ secrets.E2E_STAGING_PASSWORD_2 }}
         run: npx playwright test
       - name: Upload report
         if: always()
