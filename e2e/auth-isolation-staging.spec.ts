@@ -82,24 +82,55 @@ async function ownDocumentLifecycle(page: Page, who: Account, stamp: string, ren
   expect(filePath.startsWith('documents/'), 'own document has a private storage path').toBe(true)
   expect(auth.startsWith('Bearer '), 'own View request carries an ID token').toBe(true)
 
-  // Edit: rename persists across reload.
+  // Edit: wait for verifiable Save completion before reloading. DocumentsPage closes the dialog
+  // and shows the new name only after updateDoc() resolves (server acknowledgement); reloading
+  // earlier can abort the write (Codex #7078976320). Then assert persistence after reload.
   await row(page, stamp).getByRole('button', { name: 'Edit' }).click()
+  const editDialog = page.getByRole('dialog', { name: 'Edit document' })
   await page.locator('#document-edit-name').fill(renamed)
-  await page.getByRole('dialog', { name: 'Edit document' }).getByRole('button', { name: 'Save' }).click()
+  await editDialog.getByRole('button', { name: 'Save' }).click()
+  await expect(editDialog, `account ${who.name} edit saved (dialog closed)`).toBeHidden({ timeout: 20_000 })
+  await expect(page.getByText(renamed, { exact: true }), `account ${who.name} renamed document shown after save`).toBeVisible({ timeout: 10_000 })
+  expect(await page.getByText('Failed to update document').count(), 'no update failure toast').toBe(0)
   await page.reload()
   await expect(page.getByText(renamed, { exact: true }), `account ${who.name} edit persists`).toBeVisible({ timeout: 20_000 })
   return { filePath, auth }
 }
 
+/** Teardown: delete this run's own documents. Waits for the list to render (counting right after
+ *  navigation could skip silently). Returns how many were deleted. */
 async function deleteDoc(page: Page, names: string[]) {
   await page.goto('/app/documents')
+  await expect(page.getByRole('button', { name: '+ Upload Document' }).first()).toBeVisible({ timeout: 20_000 })
+  let deleted = 0
   for (const name of names) {
-    const r = row(page, name)
-    if (!(await r.count())) continue
+    const present = await page.getByText(name, { exact: true }).first().waitFor({ timeout: 8_000 }).then(() => true, () => false)
+    if (!present) continue
     page.once('dialog', d => d.accept())
-    await r.getByRole('button', { name: /Delete/ }).click()
-    await expect(page.getByText(name, { exact: true })).toHaveCount(0)
+    await row(page, name).getByRole('button', { name: /Delete/ }).click()
+    await expect(page.getByText(name, { exact: true })).toHaveCount(0, { timeout: 15_000 })
+    deleted++
   }
+  return deleted
+}
+
+/** Delete this account's OWN leftover temporary LP-11 documents ("QA-SYNTH <A|B> doc …") from
+ *  earlier interrupted runs. Exact own-prefix only; never touches any other document. */
+async function sweepStaleQaDocs(page: Page, who: Account) {
+  const prefix = new RegExp(`^QA-SYNTH ${who.name} doc `)
+  await page.goto('/app/documents')
+  await expect(page.getByRole('button', { name: '+ Upload Document' }).first()).toBeVisible({ timeout: 20_000 })
+  await page.waitForTimeout(1500) // let the list render
+  for (let i = 0; i < 20; i++) {
+    const stale = page.getByText(prefix).first()
+    if (!(await stale.count())) return i
+    const name = (await stale.innerText()).trim()
+    expect(prefix.test(name), 'sweep only own QA-SYNTH temporary documents').toBe(true)
+    page.once('dialog', d => d.accept())
+    await row(page, name).getByRole('button', { name: /Delete/ }).click()
+    await expect(page.getByText(name, { exact: true })).toHaveCount(0, { timeout: 15_000 })
+  }
+  return 20
 }
 
 /** viewer must not see owner's document or dog, and viewer's token must not get owner's file. */
@@ -133,6 +164,9 @@ test.describe('LP-11 two-account isolation + QR privacy (staging synthetic fixtu
   })
 
   test('owner/breeder login, owned CRUD, mutual isolation, signed URL denial, QR public fields only', async ({ browser, baseURL }, info) => {
+    // Two accounts, two document lifecycles, reciprocal checks, QR and teardown: the 45 s
+    // default left no teardown budget (Codex #7078976320).
+    test.setTimeout(300_000)
     const t = target(baseURL)
     const run = `${info.project.name} ${Date.now()}`
     const docA = { stamp: `QA-SYNTH A doc ${run}`, renamed: `QA-SYNTH A doc ${run} renamed` }
@@ -140,6 +174,9 @@ test.describe('LP-11 two-account isolation + QR privacy (staging synthetic fixtu
     const pageA = await signIn(browser, t, A)
     const pageB = await signIn(browser, t, B)
     try {
+      await sweepStaleQaDocs(pageA, A)
+      await sweepStaleQaDocs(pageB, B)
+
       // 1. Each account sees only its own synthetic dog.
       const listA = await dogList(pageA)
       expect(listA.includes(A.dog) && !listA.includes(B.dog), 'A lists only its own dog').toBe(true)
@@ -179,8 +216,12 @@ test.describe('LP-11 two-account isolation + QR privacy (staging synthetic fixtu
         await anon.close()
       }
     } finally {
-      await deleteDoc(pageA, [docA.renamed, docA.stamp]).catch(() => {})
-      await deleteDoc(pageB, [docB.renamed, docB.stamp]).catch(() => {})
+      // Teardown outcome is recorded (not thrown, so the original failure stays visible);
+      // anything left behind is removed by the next run's sweepStaleQaDocs().
+      for (const [pg, d, who] of [[pageA, docA, A], [pageB, docB, B]] as const) {
+        const outcome = await deleteDoc(pg, [d.renamed, d.stamp]).then(n => `deleted ${n}`, () => 'INCOMPLETE')
+        info.annotations.push({ type: 'teardown', description: `account ${who.name}: ${outcome}` })
+      }
       await pageA.context().close()
       await pageB.context().close()
     }
