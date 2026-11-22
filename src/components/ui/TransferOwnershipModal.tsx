@@ -49,6 +49,7 @@ export default function TransferOwnershipModal({
 
       // 2. Send email to buyer
       await sendTransferEmail({
+        dogId: dog.id,
         buyerEmail: buyerEmail.trim(),
         buyerName: buyerName.trim(),
         dogName: dog.name,

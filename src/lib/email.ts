@@ -1,17 +1,17 @@
 // src/lib/email.ts
-// Sends email via Vercel serverless /api/send-email (Resend backend)
+// Sends email via Vercel serverless /api/send-email (Resend backend).
+//
+// SECURITY: the endpoint no longer accepts a caller-chosen recipient,
+// subject, body or link from signed-in users. The browser only names
+// WHICH email it wants (`kind`) plus the minimum context; the server
+// builds the recipient and content itself:
+//   - 'transfer'        → recipient = the dog's pending buyerEmail, only for
+//                          a dog the caller has just transferred
+//   - 'reminder_digest' → recipient = the caller's own verified email
 
 import { getAuth } from 'firebase/auth'
-import { buildTransferEmailMessage, TRANSFER_EMAIL_ACTION_LABEL, TRANSFER_EMAIL_ACTION_URL } from './transferEmailCopy'
 
-async function sendEmail(params: {
-  to_email: string
-  to_name: string
-  subject: string
-  message: string
-  action_url?: string
-  action_label?: string
-}) {
+async function postEmail(params: Record<string, unknown>) {
   const currentUser = getAuth().currentUser
   if (!currentUser) {
     throw new Error('Must be signed in to send email')
@@ -31,19 +31,20 @@ async function sendEmail(params: {
 }
 
 export async function sendTransferEmail(params: {
+  dogId: string
   buyerEmail: string
   buyerName: string
   dogName: string
   breed: string
   breederName: string
 }) {
-  return sendEmail({
-    to_email: params.buyerEmail,
+  // buyerEmail/dogName/breed are kept in the signature for callers, but the
+  // server reads them from the dog's pending-transfer record, never from here.
+  return postEmail({
+    kind: 'transfer',
+    dogId: params.dogId,
     to_name: params.buyerName,
-    subject: `${params.breederName} has transferred ${params.dogName} to you on iDogs`,
-    message: buildTransferEmailMessage(params),
-    action_url: TRANSFER_EMAIL_ACTION_URL,
-    action_label: TRANSFER_EMAIL_ACTION_LABEL,
+    breederName: params.breederName,
   })
 }
 
@@ -53,11 +54,11 @@ export async function sendReminderEmail(params: {
   date: string
   reminders: string
 }) {
-  return sendEmail({
-    to_email: params.ownerEmail,
+  // Always delivered to the signed-in user's own verified email (server-side).
+  return postEmail({
+    kind: 'reminder_digest',
     to_name: params.ownerName,
-    subject: `iDogs — Upcoming reminders for ${params.date}`,
-    message: `You have upcoming reminders:\n\n${params.reminders}`,
-    action_url: 'https://idogs.com.au/app/reminders',
+    date: params.date,
+    reminders: params.reminders,
   })
 }
