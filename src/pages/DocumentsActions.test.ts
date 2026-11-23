@@ -126,3 +126,50 @@ it('shows the upload title, and the edited name replaces it after rename', async
   await act(async () => { await tree.root.findByProps({ 'aria-label': 'Edit document' }).findByType('form').props.onSubmit({ preventDefault() {} }) })
   expect(text()).toContain('Desexing letter'); expect(text()).not.toContain('Vet letter')
 })
+
+// Regression: with several look-alike documents, Delete acts on exactly the card clicked.
+const cardTitled = (title: string): ReactTestInstance => {
+  const cards = tree.root.findAll(n => n.type === 'div' && n.props['data-testid'] === 'doc-card')
+  const hit = cards.filter(c => c.findAll(n => n.type === 'span' && n.props.className === 'doc-card-title' && textOf(n).trim() === title).length > 0)
+  if (hit.length !== 1) throw new Error(`Expected exactly one card titled "${title}", found ${hit.length}`)
+  return hit[0]
+}
+const deleteIn = (card: ReactTestInstance) => card.findAll(n => n.type === 'button' && textOf(n).includes('Delete'))[0]
+
+const lookAlikes = () => [
+  { id: 'd-base', dogId: 'dog-1', documentType: 'vet_record', title: 'QA doc 1', filePath: 'documents/owner-1/dog-1/a.pdf' },
+  { id: 'd-renamed', dogId: 'dog-1', documentType: 'vet_record', title: 'QA doc 1 renamed', filePath: 'documents/owner-1/dog-1/b.pdf' },
+  { id: 'd-other', dogId: 'dog-1', documentType: 'vet_record', title: 'Vet letter', notes: 'see QA doc 1', filePath: 'documents/owner-1/dog-1/c.pdf' },
+]
+
+it('Delete on a look-alike title removes only that document id', async () => {
+  s.docs = lookAlikes()
+  await render()
+  await act(async () => { await deleteIn(cardTitled('QA doc 1')).props.onClick() })
+  expect(s.remove).toHaveBeenCalledTimes(1)
+  expect(s.remove).toHaveBeenCalledWith('d-base')
+  expect(text()).toContain('QA doc 1 renamed')
+  expect(text()).toContain('Vet letter')
+})
+
+it('Delete in the middle of the list keeps the neighbours and their ids', async () => {
+  s.docs = lookAlikes()
+  await render()
+  await act(async () => { await deleteIn(cardTitled('QA doc 1 renamed')).props.onClick() })
+  expect(s.remove).toHaveBeenCalledWith('d-renamed')
+  // The remaining cards still delete their own ids (index keys must not cross-wire handlers).
+  await act(async () => { await deleteIn(cardTitled('Vet letter')).props.onClick() })
+  expect(s.remove.mock.calls.map(c => c[0])).toEqual(['d-renamed', 'd-other'])
+  await act(async () => { await deleteIn(cardTitled('QA doc 1')).props.onClick() })
+  expect(s.remove.mock.calls.map(c => c[0])).toEqual(['d-renamed', 'd-other', 'd-base'])
+})
+
+it('a failed Delete keeps the document in the list and reports the error', async () => {
+  s.docs = lookAlikes()
+  s.remove.mockRejectedValue(new Error('permission-denied'))
+  await render()
+  await act(async () => { await deleteIn(cardTitled('QA doc 1')).props.onClick() })
+  expect(s.toast).toHaveBeenCalledWith('Failed to remove document', 'error')
+  expect(text()).toContain('QA doc 1')
+  expect(() => cardTitled('QA doc 1')).not.toThrow()
+})

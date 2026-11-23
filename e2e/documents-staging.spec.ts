@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { assertStagingPreview, enterSecretly } from './support/previewContext'
 import { MISSING_REASON, QA_A, provisionQaFixture } from './support/qaFixtures'
+import { docCard, docRowByExactTitle } from './support/documentRow'
 
 // Authenticated functional QA on a Vercel STAGING Preview with a dedicated
 // staging QA account (never a customer). Self-contained: uploads its own
@@ -41,8 +42,7 @@ async function signIn(page: Page) {
   await expect(page).toHaveURL(/\/app\//, { timeout: 25_000 })
 }
 
-const row = (page: Page, text: string) =>
-  page.locator('div').filter({ hasText: text }).filter({ has: page.getByRole('button', { name: /Delete/ }) }).last()
+const row = docCard
 
 test.describe('Documents View → Edit → Delete on staging (QA account)', () => {
   test.skip(!email || !password, 'Staging QA account secrets not configured')
@@ -94,7 +94,7 @@ test.describe('Documents View → Edit → Delete on staging (QA account)', () =
     // Dog Detail → Documents tab shows the same document with View → Edit → Delete.
     await page.goto(`/app/dogs/${dogId}`)
     await page.getByRole('button', { name: /Documents \(/ }).first().click()
-    const dlabels = await row(page, renamed).getByRole('button').allInnerTexts()
+    const dlabels = await docRowByExactTitle(page, renamed).getByRole('button').allInnerTexts()
     const dorder = ['View', 'Edit', 'Delete'].map(l => dlabels.findIndex(t => t.includes(l)))
     expect(dorder.every(i => i >= 0) && dorder[0] < dorder[1] && dorder[1] < dorder[2], `dog detail buttons: ${dlabels.join(' | ')}`).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
@@ -146,7 +146,7 @@ test.describe('Owner QA P0 — custom name from Dog Detail upload', () => {
     await page.getByRole('button', { name: /Documents \(/ }).first().click()
     await expect(page.getByText(name, { exact: true })).toBeVisible({ timeout: 20_000 })
     // Edit pre-fills with the user's name, not blank / not the type label.
-    await row(page, name).getByRole('button', { name: 'Edit' }).click()
+    await docRowByExactTitle(page, name).getByRole('button', { name: 'Edit' }).click()
     await expect(page.locator(`input[value="${name.replace(/"/g, '\\"')}"]`)).toHaveCount(1)
     await page.getByRole('button', { name: 'Cancel' }).first().click()
     // Same name on the Documents page.

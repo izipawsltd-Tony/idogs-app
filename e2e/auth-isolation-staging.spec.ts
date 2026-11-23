@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import { assertStagingPreview, createPreviewContext } from './support/previewContext'
 import { MISSING_REASON, QA_A, QA_B, loadDogCards, provisionQaFixture, signInQa, type QaAccount } from './support/qaFixtures'
+import { docCard } from './support/documentRow'
 
 // LP-11 authenticated isolation QA on a Vercel STAGING Preview (Owner gate 22 Nov 2026:
 // staging-only synthetic QA). Two dedicated synthetic QA accounts, never customers:
@@ -53,8 +54,7 @@ async function ownDog(page: Page, who: Account) {
   return { id, passport }
 }
 
-const row = (page: Page, text: string) =>
-  page.locator('div').filter({ hasText: text }).filter({ has: page.getByRole('button', { name: /Delete/ }) }).last()
+const row = docCard
 
 /** Upload a stamped document for the account's fixture dog, View it (capturing the request), then Edit (rename) it. */
 async function ownDocumentLifecycle(page: Page, who: Account, stamp: string, renamed: string) {
