@@ -1,20 +1,34 @@
 #!/usr/bin/env node
 // Turns a raw Playwright JSON report into an ALLOWLISTED summary: fixed enums and numbers only. No title,
 // message, stack, URL, attachment, annotation or any other string from the report is ever copied out.
-// STRICT: every field that decides PASS must be present with the exact expected type. A missing, mistyped or
-// malformed field never counts as zero or empty: it yields a fixed BLOCKED summary (reason malformed_report).
-// "pass" requires ALL of: exit code 0; stats.{expected,unexpected,flaky,skipped} non-negative integers;
-// errors an array and empty; every suite/spec/test/result well formed; stats equal the tests actually found;
-// no failed/flaky test; every mandatory (spec, project) pair present with >=1 passed test and none otherwise.
-// Nothing is ever written to stdout/stderr by this script; any internal failure produces the fixed BLOCKED
-// summary (and the wrapper also captures its streams privately).
+//
+// FAIL-CLOSED VERDICT CONTRACT v1 (Owner Gate R-1, Issue #103). "pass" ONLY if ALL hold:
+//  A. Shape: object; stats.{expected,unexpected,flaky,skipped} non-negative integers; errors an array;
+//     suites/specs/tests/results well formed.                                          else blocked/malformed_report
+//  B. Closed vocabularies: test.status in {expected,unexpected,flaky,skipped};
+//     result.status in {passed,failed,timedOut,skipped,interrupted}.                   else blocked/malformed_report
+//  C. Each test's outcome is derived from ITS OWN results and must agree with its status:
+//       expected   = >=1 result, every result passed
+//       unexpected = >=1 result, last result not passed
+//       flaky      = >=2 results, last passed, at least one earlier not passed
+//       skipped    = no results, or every result skipped                              else blocked/inconsistent_report
+//  D. Every aggregate bucket equals the count of detailed tests in that bucket; >=1 test. else blocked/inconsistent_report
+//  E. Whole report (not only mandatory tests): no top-level error, no unexpected, no flaky, NO SKIPS.
+//  F. Every mandatory (spec, project) has >=1 test and all its tests are expected.     else fail/coverage_incomplete
+//  G. Process agreement: a report with an error or unexpected test requires a non-zero exit; a report with no
+//     error and no unexpected test requires exit 0. Disagreement                       => blocked/inconsistent_report
+// Details decide; the aggregate is only a consistency check. Nothing is written to stdout/stderr; any internal
+// failure yields the fixed blocked/internal_error summary (the wrapper also captures this script's streams).
 //
 // usage: summarize-e2e-report.mjs --raw <file> --exit <code> --out <file> [--specs a,b] [--projects x,y]
 import { readFileSync, writeFileSync } from 'node:fs'
 
 const DEFAULT_SPECS = ['auth-isolation-staging.spec.ts', 'documents-staging.spec.ts', 'preview-smoke.spec.ts', 'preview-context-sentinel.spec.ts']
 const DEFAULT_PROJECTS = ['desktop', 'iphone']
-const REASONS = new Set(['ok', 'invalid_exit_code', 'no_report', 'unparseable_report', 'malformed_report', 'top_level_errors', 'test_failures', 'flaky_tests', 'coverage_incomplete', 'nonzero_exit', 'internal_error'])
+const BUCKETS = ['expected', 'unexpected', 'flaky', 'skipped']
+const TEST_STATUS = new Set(BUCKETS)
+const RESULT_STATUS = new Set(['passed', 'failed', 'timedOut', 'skipped', 'interrupted'])
+const REASONS = new Set(['ok', 'invalid_exit_code', 'no_report', 'unparseable_report', 'malformed_report', 'inconsistent_report', 'top_level_errors', 'test_failures', 'flaky_tests', 'skipped_tests', 'coverage_incomplete', 'internal_error'])
 
 const argv = process.argv.slice(2)
 const args = {}
@@ -27,16 +41,31 @@ function emit(result, reason, extra = {}) {
   try { writeFileSync(outFile, JSON.stringify(summary, null, 2) + '\n') } catch { process.exit(2) }
   process.exit(result === 'pass' ? 0 : 1)
 }
-class Malformed extends Error {}
-const bad = () => { throw new Malformed() }
+class Reject extends Error { constructor(reason) { super(reason); this.reason = reason } }
+const malformed = () => { throw new Reject('malformed_report') }
+const inconsistent = () => { throw new Reject('inconsistent_report') }
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const isCount = (v) => Number.isInteger(v) && v >= 0
+
+// C. outcome from the test's own results; must equal its declared status.
+function classify(t) {
+  const rs = t.results.map((r) => r.status)
+  const last = rs[rs.length - 1]
+  let derived
+  if (rs.length === 0 || rs.every((s) => s === 'skipped')) derived = 'skipped'
+  else if (rs.every((s) => s === 'passed')) derived = 'expected'
+  else if (last !== 'passed') derived = 'unexpected'
+  else derived = 'flaky' // >=2 results, last passed, some earlier not passed
+  if (derived !== t.status) inconsistent()
+  return derived
+}
 
 function main() {
   if (!outFile) process.exit(2)
   const specs = (args.specs ? args.specs.split(',') : DEFAULT_SPECS).filter(Boolean)
   const projects = (args.projects ? args.projects.split(',') : DEFAULT_PROJECTS).filter(Boolean)
   if (!/^-?\d+$/.test(String(args.exit ?? ''))) return emit('blocked', 'invalid_exit_code')
+  const exitCode = Number(args.exit)
 
   let raw = ''
   try { raw = readFileSync(args.raw, 'utf8') } catch { raw = '' }
@@ -44,38 +73,42 @@ function main() {
   let report
   try { report = JSON.parse(raw) } catch { return emit('blocked', 'unparseable_report') }
 
-  // ---- strict schema ----
+  // A. shape
   if (!isObj(report) || !isObj(report.stats) || !Array.isArray(report.errors) || !Array.isArray(report.suites)) return emit('blocked', 'malformed_report')
-  const st = report.stats
-  for (const k of ['expected', 'unexpected', 'flaky', 'skipped']) if (!isCount(st[k])) return emit('blocked', 'malformed_report')
-  const stats = { expected: st.expected, unexpected: st.unexpected, flaky: st.flaky, skipped: st.skipped }
+  for (const k of BUCKETS) if (!isCount(report.stats[k])) return emit('blocked', 'malformed_report')
+  const stats = { expected: report.stats.expected, unexpected: report.stats.unexpected, flaky: report.stats.flaky, skipped: report.stats.skipped }
 
+  const detail = { expected: 0, unexpected: 0, flaky: 0, skipped: 0 }
   const tally = new Map() // `${file}|${project}` -> { passed, other }
-  let totalTests = 0
   const walk = (suite, depth) => {
-    if (!isObj(suite) || depth > 20) bad()
-    if (suite.specs !== undefined && !Array.isArray(suite.specs)) bad()
-    if (suite.suites !== undefined && !Array.isArray(suite.suites)) bad()
+    if (!isObj(suite) || depth > 20) malformed()
+    if (suite.specs !== undefined && !Array.isArray(suite.specs)) malformed()
+    if (suite.suites !== undefined && !Array.isArray(suite.suites)) malformed()
     for (const sp of suite.specs || []) {
-      if (!isObj(sp) || !Array.isArray(sp.tests)) bad()
-      const fileRaw = typeof sp.file === 'string' ? sp.file : typeof suite.file === 'string' ? suite.file : bad()
+      if (!isObj(sp) || !Array.isArray(sp.tests)) malformed()
+      const fileRaw = typeof sp.file === 'string' ? sp.file : typeof suite.file === 'string' ? suite.file : malformed()
       const file = fileRaw.split(/[\\/]/).pop()
       for (const t of sp.tests) {
-        if (!isObj(t) || typeof t.projectName !== 'string' || typeof t.status !== 'string' || !Array.isArray(t.results)) bad()
-        for (const r of t.results) if (!isObj(r) || typeof r.status !== 'string') bad()
+        // A + B. shape and closed vocabularies
+        if (!isObj(t) || typeof t.projectName !== 'string' || !TEST_STATUS.has(t.status) || !Array.isArray(t.results)) malformed()
+        for (const r of t.results) if (!isObj(r) || !RESULT_STATUS.has(r.status)) malformed()
+        const outcome = classify(t) // C
+        detail[outcome]++
         const key = `${file}|${t.projectName}`
         const cur = tally.get(key) || { passed: 0, other: 0 }
-        const last = t.results[t.results.length - 1]
-        if (t.status === 'expected' && last && last.status === 'passed') cur.passed++; else cur.other++
-        tally.set(key, cur); totalTests++
+        if (outcome === 'expected') cur.passed++; else cur.other++
+        tally.set(key, cur)
       }
     }
     for (const s of suite.suites || []) walk(s, depth + 1)
   }
-  try { for (const s of report.suites) walk(s, 0) } catch (e) { if (e instanceof Malformed) return emit('blocked', 'malformed_report'); throw e }
-  if (totalTests !== stats.expected + stats.unexpected + stats.flaky + stats.skipped) return emit('blocked', 'malformed_report')
+  try { for (const s of report.suites) walk(s, 0) } catch (e) { if (e instanceof Reject) return emit('blocked', e.reason); throw e }
 
-  // ---- verdict ----
+  // D. every bucket reconciles; at least one test
+  for (const k of BUCKETS) if (stats[k] !== detail[k]) return emit('blocked', 'inconsistent_report')
+  const total = BUCKETS.reduce((n, k) => n + detail[k], 0)
+  if (total < 1) return emit('blocked', 'inconsistent_report')
+
   const coverage = []
   let covered = true
   for (const sp of specs) for (const pr of projects) {
@@ -83,12 +116,20 @@ function main() {
     coverage.push({ spec: sp, project: pr, passed: c.passed, not_passed: c.other })
     if (c.passed < 1 || c.other > 0) covered = false
   }
-  const out = (result, reason) => emit(result, reason, { stats, coverage })
+  const out = (result, reason) => emit(result, reason, { stats: detail, coverage })
+
+  // G. process agreement
+  const hardFailure = report.errors.length > 0 || detail.unexpected > 0
+  if (hardFailure && exitCode === 0) return out('blocked', 'inconsistent_report')
+  if (!hardFailure && exitCode !== 0) return out('blocked', 'inconsistent_report')
+
+  // E. whole-report outcome (no skips)
   if (report.errors.length > 0) return out('fail', 'top_level_errors')
-  if (stats.unexpected > 0) return out('fail', 'test_failures')
-  if (stats.flaky > 0) return out('fail', 'flaky_tests')
+  if (detail.unexpected > 0) return out('fail', 'test_failures')
+  if (detail.flaky > 0) return out('fail', 'flaky_tests')
+  if (detail.skipped > 0) return out('fail', 'skipped_tests')
+  // F. mandatory coverage
   if (!covered) return out('fail', 'coverage_incomplete')
-  if (Number(args.exit) !== 0) return out('fail', 'nonzero_exit')
   return out('pass', 'ok')
 }
 
