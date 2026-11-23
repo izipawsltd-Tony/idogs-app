@@ -1,0 +1,110 @@
+name: Preview E2E authenticated (reviewer-gated)
+
+# TRUSTED, MANUAL-ONLY authenticated E2E against ONE exact staging Preview.
+# - Never automatic: workflow_dispatch only. The automatic deployment_status workflow stays secret-free.
+# - Must run from `master` (guard below); the Environment `qa-staging-e2e` must additionally restrict
+#   deployment branches to `master` and require an independent reviewer. All credentials live ONLY in that
+#   Environment (no repository-level secrets) and are referenced only by the `e2e` job.
+# - The reviewer approves a specific (sha, preview_url) pair shown in the run title and the job summary.
+# - Synthetic QA accounts only (docs/growth-v1/QA_SYNTH_FIXTURES.md).
+# Environment secrets: VERCEL_AUTOMATION_BYPASS_SECRET (staging project only), E2E_STAGING_EMAIL,
+# E2E_STAGING_PASSWORD, E2E_STAGING_EMAIL_2, E2E_STAGING_PASSWORD_2.
+
+run-name: "Authenticated E2E ${{ inputs.sha }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact 40-character commit SHA of the staging Preview to test
+        required: true
+        type: string
+      preview_url:
+        description: https://idogs-app-staging-<id>.vercel.app URL of that SHA's Preview
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idogs-authenticated-e2e
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify provenance (no secrets)
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ inputs.sha }}
+      PREVIEW_URL: ${{ inputs.preview_url }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Validate inputs and deployment provenance
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40-char lowercase SHA"; exit 1; }
+          url="${PREVIEW_URL%/}"
+          [[ "$url" =~ ^https://idogs-app-staging-[a-z0-9-]+\.vercel\.app$ ]] || { echo "::error::preview_url is not an idogs-app-staging Preview"; exit 1; }
+          # The latest staging Preview deployment recorded for exactly this SHA must be successful and carry this URL.
+          dep=$(gh api "repos/$REPO/deployments?sha=$SHA&per_page=100" --jq '[.[] | select(.environment == "Preview – idogs-app-staging")] | sort_by(.created_at) | last | .id // empty')
+          [ -n "$dep" ] || { echo "::error::no staging Preview deployment recorded for this SHA"; exit 1; }
+          read -r state env_url < <(gh api "repos/$REPO/deployments/$dep/statuses" --jq '.[0] | "\(.state) \(.environment_url)"')
+          [ "$state" = "success" ] || { echo "::error::latest Preview deployment state is $state"; exit 1; }
+          [ "${env_url%/}" = "$url" ] || { echo "::error::preview_url does not match the deployment recorded for this SHA"; exit 1; }
+          # The commit must have a successful iDogs CI run.
+          ok=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" --jq '[.workflow_runs[] | select(.name == "iDogs CI" and .conclusion == "success")] | length')
+          [ "$ok" -ge 1 ] || { echo "::error::no successful iDogs CI run for this SHA"; exit 1; }
+          {
+            echo "### Authenticated E2E target"
+            echo "- SHA: \`$SHA\`"
+            echo "- Preview: $url"
+            echo "- Deployment id: $dep (state: $state)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    name: Authenticated E2E (Environment qa-staging-e2e)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: qa-staging-e2e
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the verified SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies and Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run Playwright
+        env:
+          BASE_URL: ${{ inputs.preview_url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          E2E_STAGING_EMAIL: ${{ secrets.E2E_STAGING_EMAIL }}
+          E2E_STAGING_PASSWORD: ${{ secrets.E2E_STAGING_PASSWORD }}
+          E2E_STAGING_EMAIL_2: ${{ secrets.E2E_STAGING_EMAIL_2 }}
+          E2E_STAGING_PASSWORD_2: ${{ secrets.E2E_STAGING_PASSWORD_2 }}
+        run: npx playwright test
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ inputs.sha }}
+          path: playwright-report
+          retention-days: 3
