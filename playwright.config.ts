@@ -7,6 +7,9 @@ import { PREVIEW_STATE } from './e2e/support/state-path'
 // host-only cookie; it is never a context-wide header (Codex #7077157877), never
 // logged, and traces are off so no request headers or typed values reach the report.
 const baseURL = process.env.BASE_URL
+// The reviewer-gated credentialed workflow sets E2E_CREDENTIALED=1: no screenshot, video or trace is
+// ever produced, so nothing from a signed-in page can reach an artifact.
+const credentialed = process.env.E2E_CREDENTIALED === '1'
 
 export default defineConfig({
   testDir: './e2e',
@@ -20,7 +23,8 @@ export default defineConfig({
     baseURL,
     storageState: PREVIEW_STATE,
     trace: 'off',
-    screenshot: 'only-on-failure',
+    video: 'off',
+    screenshot: credentialed ? 'off' : 'only-on-failure',
   },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },

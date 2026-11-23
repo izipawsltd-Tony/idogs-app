@@ -3,6 +3,8 @@ import { expect, test, type Browser, type Page } from '@playwright/test'
 import { assertStagingPreview, createPreviewContext } from './support/previewContext'
 import { MISSING_REASON, QA_A, QA_B, loadDogCards, provisionQaFixture, signInQa, type QaAccount } from './support/qaFixtures'
 import { docCard } from './support/documentRow'
+import { teardownDocs } from './support/docTeardown'
+import { runWithTeardown } from './support/runWithTeardown'
 
 // LP-11 authenticated isolation QA on a Vercel STAGING Preview (Owner gate 22 Nov 2026:
 // staging-only synthetic QA). Two dedicated synthetic QA accounts, never customers:
@@ -98,23 +100,6 @@ async function ownDocumentLifecycle(page: Page, who: Account, stamp: string, ren
   return { filePath, auth }
 }
 
-/** Teardown: delete this run's own documents. Waits for the list to render (counting right after
- *  navigation could skip silently). Returns how many were deleted. */
-async function deleteDoc(page: Page, names: string[]) {
-  await page.goto('/app/documents')
-  await expect(page.getByRole('button', { name: '+ Upload Document' }).first()).toBeVisible({ timeout: 20_000 })
-  let deleted = 0
-  for (const name of names) {
-    const present = await page.getByText(name, { exact: true }).first().waitFor({ timeout: 8_000 }).then(() => true, () => false)
-    if (!present) continue
-    page.once('dialog', d => d.accept())
-    await row(page, name).getByRole('button', { name: /Delete/ }).click()
-    await expect(page.getByText(name, { exact: true })).toHaveCount(0, { timeout: 15_000 })
-    deleted++
-  }
-  return deleted
-}
-
 /** viewer must not see owner's document or dog, and viewer's token must not get owner's file. */
 async function assertIsolated(viewer: Page, viewerAuth: string, owner: Account, ownerDocName: string, ownerDogId: string, ownerFilePath: string) {
   await viewer.goto('/app/documents')
@@ -156,7 +141,7 @@ test.describe('LP-11 two-account isolation + QR privacy (staging synthetic fixtu
     const docB = { stamp: `QA-SYNTH B doc ${run}`, renamed: `QA-SYNTH B doc ${run} renamed` }
     const pageA = await signIn(browser, t, A)
     const pageB = await signIn(browser, t, B)
-    try {
+    await runWithTeardown(async () => {
       // 1. Each account sees only its own synthetic dog.
       const listA = await dogList(pageA)
       expect(listA.includes(A.dog) && !listA.includes(B.dog), 'A lists only its own dog').toBe(true)
@@ -195,16 +180,22 @@ test.describe('LP-11 two-account isolation + QR privacy (staging synthetic fixtu
       } finally {
         await anon.close()
       }
-    } finally {
-      // Teardown deletes ONLY the exact documents this run created (its unique names); the outcome
-      // is recorded, not thrown, so the original failure stays visible. Nothing else is deleted:
-      // another run's documents are never touched, so a leftover from an interrupted run needs manual review.
+    }, async () => {
+      // Teardown deletes ONLY the exact documents this run created (unique names). A confirmed-absent
+      // document is fine; a lookup/delete error or an ambiguous title fails the run (the test's own
+      // failure, if any, stays the reported error). Another run's documents are never touched.
+      const failed: string[] = []
       for (const [pg, d, who] of [[pageA, docA, A], [pageB, docB, B]] as const) {
-        const outcome = await deleteDoc(pg, [d.renamed, d.stamp]).then(n => `deleted ${n}`, () => 'INCOMPLETE')
-        info.annotations.push({ type: 'teardown', description: `account ${who.name}: ${outcome}` })
+        try {
+          const r = await teardownDocs(pg, [d.renamed, d.stamp])
+          info.annotations.push({ type: 'teardown', description: `account ${who.name}: deleted ${r.deleted.length}, confirmed absent ${r.absent.length}` })
+        } catch {
+          info.annotations.push({ type: 'teardown', description: `account ${who.name}: INCOMPLETE` })
+          failed.push(who.name)
+        }
       }
-      await pageA.context().close()
-      await pageB.context().close()
-    }
+      await Promise.allSettled([pageA.context().close(), pageB.context().close()])
+      if (failed.length) throw new Error(`QA document teardown incomplete for account(s): ${failed.join(', ')}`)
+    })
   })
 })

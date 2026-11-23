@@ -5,7 +5,8 @@ name: Preview E2E authenticated (reviewer-gated)
 # - Must run from `master` (guard below); the Environment `qa-staging-e2e` must additionally restrict
 #   deployment branches to `master` and require an independent reviewer. All credentials live ONLY in that
 #   Environment (no repository-level secrets) and are referenced only by the `e2e` job.
-# - The reviewer approves a specific (sha, preview_url) pair shown in the run title and the job summary.
+# - Approval is scoped to ONE reviewed SHA: the repository variable E2E_APPROVED_SHA (set by the Owner after
+#   Codex's review of that exact commit and its dependency diff) must equal the dispatched SHA.
 # - Synthetic QA accounts only (docs/growth-v1/QA_SYNTH_FIXTURES.md).
 # Environment secrets: VERCEL_AUTOMATION_BYPASS_SECRET (staging project only), E2E_STAGING_EMAIL,
 # E2E_STAGING_PASSWORD, E2E_STAGING_EMAIL_2, E2E_STAGING_PASSWORD_2.
@@ -16,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: Exact 40-character commit SHA of the staging Preview to test
+        description: Exact 40-character commit SHA of the staging Preview to test (must equal vars.E2E_APPROVED_SHA)
         required: true
         type: string
       preview_url:
@@ -41,32 +42,72 @@ jobs:
       contents: read
       deployments: read
       actions: read
+      statuses: read
+    outputs:
+      sha: ${{ steps.v.outputs.sha }}
+      url: ${{ steps.v.outputs.url }}
+      deployment_id: ${{ steps.v.outputs.deployment_id }}
+      vercel_deployment: ${{ steps.v.outputs.vercel_deployment }}
     env:
       GH_TOKEN: ${{ github.token }}
       SHA: ${{ inputs.sha }}
       PREVIEW_URL: ${{ inputs.preview_url }}
+      APPROVED_SHA: ${{ vars.E2E_APPROVED_SHA }}
       REPO: ${{ github.repository }}
+      PROD_BASELINE: 04f0f60eedb9e6fb07273d89c190c9d770ff3e9b
     steps:
-      - name: Validate inputs and deployment provenance
+      - name: Validate inputs, approval scope and deployment provenance
+        id: v
         run: |
           set -euo pipefail
-          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40-char lowercase SHA"; exit 1; }
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || fail "sha must be a full 40-char lowercase SHA"
           url="${PREVIEW_URL%/}"
-          [[ "$url" =~ ^https://idogs-app-staging-[a-z0-9-]+\.vercel\.app$ ]] || { echo "::error::preview_url is not an idogs-app-staging Preview"; exit 1; }
-          # The latest staging Preview deployment recorded for exactly this SHA must be successful and carry this URL.
-          dep=$(gh api "repos/$REPO/deployments?sha=$SHA&per_page=100" --jq '[.[] | select(.environment == "Preview – idogs-app-staging")] | sort_by(.created_at) | last | .id // empty')
-          [ -n "$dep" ] || { echo "::error::no staging Preview deployment recorded for this SHA"; exit 1; }
-          read -r state env_url < <(gh api "repos/$REPO/deployments/$dep/statuses" --jq '.[0] | "\(.state) \(.environment_url)"')
-          [ "$state" = "success" ] || { echo "::error::latest Preview deployment state is $state"; exit 1; }
-          [ "${env_url%/}" = "$url" ] || { echo "::error::preview_url does not match the deployment recorded for this SHA"; exit 1; }
-          # The commit must have a successful iDogs CI run.
+          [[ "$url" =~ ^https://idogs-app-staging-[a-z0-9-]+\.vercel\.app$ ]] || fail "preview_url is not an idogs-app-staging Preview"
+          host="${url#https://}"
+
+          # 1. Approval is scoped to one reviewed SHA.
+          [ -n "$APPROVED_SHA" ] || fail "repository variable E2E_APPROVED_SHA is not set (no reviewed SHA)"
+          [ "$SHA" = "$APPROVED_SHA" ] || fail "sha is not the reviewed SHA in E2E_APPROVED_SHA"
+
+          # 2. Dependency diff: package manifests must be identical to the production baseline.
+          files=$(gh api "repos/$REPO/compare/$PROD_BASELINE...$SHA" --jq '[.files[].filename] | length')
+          [ "$files" -lt 300 ] || fail "diff too large to audit dependency files"
+          deps=$(gh api "repos/$REPO/compare/$PROD_BASELINE...$SHA" --jq '[.files[].filename | select(. == "package.json" or . == "package-lock.json")] | join(",")')
+          [ -z "$deps" ] || fail "dependency files differ from production baseline ($deps); needs a separate dependency review"
+
+          # 3. Deployment provenance: created by the Vercel integration, staging Preview environment,
+          #    exact SHA, latest status success with exactly this URL.
+          dep=$(gh api "repos/$REPO/deployments?sha=$SHA&per_page=100" --jq '[.[] | select(.environment == "Preview – idogs-app-staging" and .creator.login == "vercel[bot]")] | sort_by(.created_at) | last | .id // empty')
+          [ -n "$dep" ] || fail "no staging Preview deployment by the Vercel integration is recorded for this SHA"
+          [ "$(gh api "repos/$REPO/deployments/$dep" --jq '.sha')" = "$SHA" ] || fail "deployment SHA mismatch"
+          read -r state env_url creator < <(gh api "repos/$REPO/deployments/$dep/statuses" --jq '.[0] | "\(.state) \(.environment_url) \(.creator.login)"')
+          [ "$state" = "success" ] || fail "latest Preview deployment state is $state"
+          [ "$creator" = "vercel[bot]" ] || fail "latest deployment status was not posted by the Vercel integration"
+          [ "${env_url%/}" = "$url" ] || fail "preview_url does not match the deployment recorded for this SHA"
+          # The staging project's own commit status must be success and its target must be the Vercel
+          # dashboard page of THIS project (team slug + project slug fixed); the last segment is the
+          # Vercel deployment id. (The production project, `idogs-app`, is a different slug.)
+          cs=$(gh api "repos/$REPO/commits/$SHA/status" --jq '[.statuses[] | select(.context == "Vercel – idogs-app-staging")] | first | "\(.state) \(.target_url)"')
+          [ "${cs%% *}" = "success" ] || fail "Vercel – idogs-app-staging commit status is not success"
+          target="${cs#* }"
+          [[ "$target" =~ ^https://vercel\.com/izipawsltd-tonys-projects/idogs-app-staging/([A-Za-z0-9]+)$ ]] || fail "staging commit status does not point at the idogs-app-staging project"
+          vdep="${BASH_REMATCH[1]}"
+
+          # 4. The commit must have a successful iDogs CI run.
           ok=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" --jq '[.workflow_runs[] | select(.name == "iDogs CI" and .conclusion == "success")] | length')
-          [ "$ok" -ge 1 ] || { echo "::error::no successful iDogs CI run for this SHA"; exit 1; }
+          [ "$ok" -ge 1 ] || fail "no successful iDogs CI run for this SHA"
+
+          # Canonical, verified target for the gated job (it must not re-read the raw inputs).
+          { echo "sha=$SHA"; echo "url=$url"; echo "deployment_id=$dep"; echo "vercel_deployment=$vdep"; } >> "$GITHUB_OUTPUT"
           {
-            echo "### Authenticated E2E target"
-            echo "- SHA: \`$SHA\`"
+            echo "### Authenticated E2E target (verified)"
+            echo "- SHA: \`$SHA\` (equals reviewed SHA)"
             echo "- Preview: $url"
-            echo "- Deployment id: $dep (state: $state)"
+            echo "- GitHub deployment id: $dep, created by vercel[bot], state $state"
+            echo "- Dependency files vs \`$PROD_BASELINE\`: unchanged"
+            echo "- Vercel project: idogs-app-staging (from the integration's commit status), Vercel deployment id: $vdep"
+            echo "- Limit: both come from GitHub's record of the Vercel integration, not from the Vercel API."
           } >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
@@ -77,11 +118,14 @@ jobs:
     environment: qa-staging-e2e
     permissions:
       contents: read
+    env:
+      VERIFIED_SHA: ${{ needs.verify.outputs.sha }}
+      VERIFIED_URL: ${{ needs.verify.outputs.url }}
     steps:
       - name: Checkout the verified SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ needs.verify.outputs.sha }}
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -92,19 +136,40 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Run Playwright
+      - name: Run Playwright (no screenshots, traces or video; raw output stays on the runner)
         env:
-          BASE_URL: ${{ inputs.preview_url }}
+          BASE_URL: ${{ needs.verify.outputs.url }}
+          E2E_CREDENTIALED: '1'
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/pw-raw.json
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           E2E_STAGING_EMAIL: ${{ secrets.E2E_STAGING_EMAIL }}
           E2E_STAGING_PASSWORD: ${{ secrets.E2E_STAGING_PASSWORD }}
           E2E_STAGING_EMAIL_2: ${{ secrets.E2E_STAGING_EMAIL_2 }}
           E2E_STAGING_PASSWORD_2: ${{ secrets.E2E_STAGING_PASSWORD_2 }}
-        run: npx playwright test
-      - name: Upload report
+        # The JSON reporter writes to a file. The silent reporter stops Playwright adding a terminal reporter,
+        # so no failure text reaches the log. No HTML report is produced or uploaded.
+        run: npx playwright test --reporter=json,./e2e/support/silent-reporter.ts
+      - name: Sanitized summary (allowlist only)
+        if: always()
+        run: |
+          set -euo pipefail
+          raw="$RUNNER_TEMP/pw-raw.json"
+          if [ ! -s "$raw" ]; then echo '{"result":"no-report"}' > "$RUNNER_TEMP/summary.json"; else
+            # Allowlist: counts, spec title, project, status, duration. No errors, messages, stacks,
+            # attachments, annotations, account identifiers, URLs or request data.
+            jq '{result: (if .stats.unexpected == 0 then "pass" else "fail" end),
+                 stats: (.stats | {expected, unexpected, flaky, skipped}),
+                 tests: [.. | objects | select(has("specs")) | .specs[] | {spec: .title, results: [.tests[] | {project: .projectName, status: .status}]}]}' "$raw" > "$RUNNER_TEMP/summary.json"
+          fi
+          rm -f "$raw"
+          {
+            echo "### Authenticated E2E summary for \`$VERIFIED_SHA\`"
+            echo '```json'; cat "$RUNNER_TEMP/summary.json"; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload sanitized summary only
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ inputs.sha }}
-          path: playwright-report
+          name: e2e-summary-${{ needs.verify.outputs.sha }}
+          path: ${{ runner.temp }}/summary.json
           retention-days: 3
