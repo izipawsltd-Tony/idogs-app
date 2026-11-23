@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import { assertStagingPreview, createPreviewContext } from './support/previewContext'
 import { MISSING_REASON, QA_A, QA_B, loadDogCards, provisionQaFixture, signInQa, type QaAccount } from './support/qaFixtures'
@@ -114,25 +115,6 @@ async function deleteDoc(page: Page, names: string[]) {
   return deleted
 }
 
-/** Delete this account's OWN leftover temporary LP-11 documents ("QA-SYNTH <A|B> doc …") from
- *  earlier interrupted runs. Exact own-prefix only; never touches any other document. */
-async function sweepStaleQaDocs(page: Page, who: Account) {
-  const prefix = new RegExp(`^QA-SYNTH ${who.name} doc `)
-  await page.goto('/app/documents')
-  await expect(page.getByRole('button', { name: '+ Upload Document' }).first()).toBeVisible({ timeout: 20_000 })
-  await page.waitForTimeout(1500) // let the list render
-  for (let i = 0; i < 20; i++) {
-    const stale = page.getByText(prefix).first()
-    if (!(await stale.count())) return i
-    const name = (await stale.innerText()).trim()
-    expect(prefix.test(name), 'sweep only own QA-SYNTH temporary documents').toBe(true)
-    page.once('dialog', d => d.accept())
-    await row(page, name).getByRole('button', { name: /Delete/ }).click()
-    await expect(page.getByText(name, { exact: true })).toHaveCount(0, { timeout: 15_000 })
-  }
-  return 20
-}
-
 /** viewer must not see owner's document or dog, and viewer's token must not get owner's file. */
 async function assertIsolated(viewer: Page, viewerAuth: string, owner: Account, ownerDocName: string, ownerDogId: string, ownerFilePath: string) {
   await viewer.goto('/app/documents')
@@ -168,15 +150,13 @@ test.describe('LP-11 two-account isolation + QR privacy (staging synthetic fixtu
     // default left no teardown budget (Codex #7078976320).
     test.setTimeout(300_000)
     const t = target(baseURL)
-    const run = `${info.project.name} ${Date.now()}`
+    // Unique per run AND per project: timestamp plus random suffix, so concurrent or repeated runs never share a name.
+    const run = `${info.project.name} ${Date.now()}-${randomBytes(4).toString('hex')}`
     const docA = { stamp: `QA-SYNTH A doc ${run}`, renamed: `QA-SYNTH A doc ${run} renamed` }
     const docB = { stamp: `QA-SYNTH B doc ${run}`, renamed: `QA-SYNTH B doc ${run} renamed` }
     const pageA = await signIn(browser, t, A)
     const pageB = await signIn(browser, t, B)
     try {
-      await sweepStaleQaDocs(pageA, A)
-      await sweepStaleQaDocs(pageB, B)
-
       // 1. Each account sees only its own synthetic dog.
       const listA = await dogList(pageA)
       expect(listA.includes(A.dog) && !listA.includes(B.dog), 'A lists only its own dog').toBe(true)
@@ -216,8 +196,9 @@ test.describe('LP-11 two-account isolation + QR privacy (staging synthetic fixtu
         await anon.close()
       }
     } finally {
-      // Teardown outcome is recorded (not thrown, so the original failure stays visible);
-      // anything left behind is removed by the next run's sweepStaleQaDocs().
+      // Teardown deletes ONLY the exact documents this run created (its unique names); the outcome
+      // is recorded, not thrown, so the original failure stays visible. Nothing else is deleted:
+      // another run's documents are never touched, so a leftover from an interrupted run needs manual review.
       for (const [pg, d, who] of [[pageA, docA, A], [pageB, docB, B]] as const) {
         const outcome = await deleteDoc(pg, [d.renamed, d.stamp]).then(n => `deleted ${n}`, () => 'INCOMPLETE')
         info.annotations.push({ type: 'teardown', description: `account ${who.name}: ${outcome}` })
