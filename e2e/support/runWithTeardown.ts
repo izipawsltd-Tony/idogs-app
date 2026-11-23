@@ -1,6 +1,7 @@
 /**
  * Run `body`, then ALWAYS run `teardown`. The test's own failure is never replaced by a teardown
- * failure (it is reported on stderr instead), but a teardown failure after a passing body fails the run.
+ * failure, but a teardown failure after a passing body fails the run. When both fail, only a FIXED
+ * notice is written to stderr: the raw teardown error is never printed (it could carry page text).
  */
 export async function runWithTeardown<T>(body: () => Promise<T>, teardown: () => Promise<void>): Promise<T> {
   let bodyFailed = false
@@ -14,7 +15,7 @@ export async function runWithTeardown<T>(body: () => Promise<T>, teardown: () =>
       await teardown()
     } catch (te) {
       if (!bodyFailed) throw te
-      process.stderr.write(`teardown also failed after the test failure: ${te instanceof Error ? te.message : 'unknown error'}\n`)
+      process.stderr.write('teardown also failed after the test failure (details withheld)\n')
     }
   }
 }
