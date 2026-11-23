@@ -20,20 +20,43 @@
 // Details decide; the aggregate is only a consistency check. Nothing is written to stdout/stderr; any internal
 // failure yields the fixed blocked/internal_error summary (the wrapper also captures this script's streams).
 //
-// usage: summarize-e2e-report.mjs --raw <file> --exit <code> --out <file> [--specs a,b] [--projects x,y]
+//  H. Coverage is FIXED: the mandatory matrix is the constants below (4 specs x desktop, iphone) and cannot be
+//     replaced or narrowed by any argument. Only --raw, --exit and --out are accepted; any other argument, a
+//     repeated option, a missing value or a stray token => blocked/invalid_arguments. No caller-supplied string
+//     (spec, project or argument value) is ever copied into the summary; coverage uses only the fixed constants.
+//
+// usage: summarize-e2e-report.mjs --raw <file> --exit <code> --out <file>
 import { readFileSync, writeFileSync } from 'node:fs'
 
-const DEFAULT_SPECS = ['auth-isolation-staging.spec.ts', 'documents-staging.spec.ts', 'preview-smoke.spec.ts', 'preview-context-sentinel.spec.ts']
-const DEFAULT_PROJECTS = ['desktop', 'iphone']
+const MANDATORY_SPECS = Object.freeze(['auth-isolation-staging.spec.ts', 'documents-staging.spec.ts', 'preview-smoke.spec.ts', 'preview-context-sentinel.spec.ts'])
+const MANDATORY_PROJECTS = Object.freeze(['desktop', 'iphone'])
+const ALLOWED_ARGS = new Set(['raw', 'exit', 'out'])
 const BUCKETS = ['expected', 'unexpected', 'flaky', 'skipped']
 const TEST_STATUS = new Set(BUCKETS)
 const RESULT_STATUS = new Set(['passed', 'failed', 'timedOut', 'skipped', 'interrupted'])
-const REASONS = new Set(['ok', 'invalid_exit_code', 'no_report', 'unparseable_report', 'malformed_report', 'inconsistent_report', 'top_level_errors', 'test_failures', 'flaky_tests', 'skipped_tests', 'coverage_incomplete', 'internal_error'])
+const REASONS = new Set(['ok', 'invalid_arguments', 'invalid_exit_code', 'no_report', 'unparseable_report', 'malformed_report', 'inconsistent_report', 'top_level_errors', 'test_failures', 'flaky_tests', 'skipped_tests', 'coverage_incomplete', 'internal_error'])
+
+// Strict parser: exactly --name value pairs from the allowlist, each option at most once.
+// Returns null when the argument vector is not exactly that shape.
+function parseArgs(argv) {
+  const parsed = {}
+  for (let i = 0; i < argv.length; i += 2) {
+    const flag = argv[i]
+    const value = argv[i + 1]
+    if (typeof flag !== 'string' || !flag.startsWith('--')) return null
+    const name = flag.slice(2)
+    if (!ALLOWED_ARGS.has(name) || Object.prototype.hasOwnProperty.call(parsed, name)) return null
+    if (value === undefined || value.startsWith('--')) return null
+    parsed[name] = value
+  }
+  return parsed
+}
 
 const argv = process.argv.slice(2)
-const args = {}
-for (let i = 0; i < argv.length; i++) if (argv[i].startsWith('--')) args[argv[i].slice(2)] = argv[i + 1]
-const outFile = args.out
+const parsedArgs = parseArgs(argv)
+const args = parsedArgs ?? {}
+// When the argument vector is rejected we still publish a BLOCKED summary to the --out path, if one was given.
+const outFile = parsedArgs ? parsedArgs.out : (argv.indexOf('--out') >= 0 ? argv[argv.indexOf('--out') + 1] : undefined)
 
 function emit(result, reason, extra = {}) {
   const exitCode = /^-?\d+$/.test(String(args.exit ?? '')) ? Number(args.exit) : null
@@ -62,8 +85,10 @@ function classify(t) {
 
 function main() {
   if (!outFile) process.exit(2)
-  const specs = (args.specs ? args.specs.split(',') : DEFAULT_SPECS).filter(Boolean)
-  const projects = (args.projects ? args.projects.split(',') : DEFAULT_PROJECTS).filter(Boolean)
+  if (parsedArgs === null) return emit('blocked', 'invalid_arguments')
+  // H. the mandatory matrix is fixed; it is never taken from the command line.
+  const specs = MANDATORY_SPECS
+  const projects = MANDATORY_PROJECTS
   if (!/^-?\d+$/.test(String(args.exit ?? ''))) return emit('blocked', 'invalid_exit_code')
   const exitCode = Number(args.exit)
 

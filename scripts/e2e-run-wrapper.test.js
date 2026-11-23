@@ -183,6 +183,78 @@ describe('verdict contract v1 (R-1 adversarial regressions)', () => {
   })
 })
 
+// ---- R-1 follow-up (Codex FAIL P1 #7101156086): fixed 4x2 coverage, strict arguments, no caller strings ----
+const OVERRIDE_PROJECT = 'evil-project-CANARY'
+const OVERRIDE_SPEC = 'attacker.spec.ts'
+const MATRIX = ['auth-isolation-staging.spec.ts', 'documents-staging.spec.ts', 'preview-smoke.spec.ts', 'preview-context-sentinel.spec.ts']
+const oneTest = (project, spec) => ({
+  stats: { expected: 1, unexpected: 0, flaky: 0, skipped: 0 },
+  errors: [],
+  suites: [{ file: spec, specs: [{ file: spec, tests: [{ projectName: project, status: 'expected', results: [{ status: 'passed' }] }] }] }],
+})
+// Runs the summarizer directly with the fixed flags plus any extra argv. Returns parsed summary and streams.
+function runSummarizer(rep, extra = []) {
+  const dir = mkdtempSync(join(tmpdir(), 'sum-'))
+  try {
+    const raw = join(dir, 'r.json'), out = join(dir, 's.json')
+    writeFileSync(raw, JSON.stringify(rep))
+    const s = spawnSync('node', ['scripts/summarize-e2e-report.mjs', '--raw', raw, '--exit', '0', '--out', out, ...extra], { encoding: 'utf8' })
+    const summary = existsSync(out) ? readFileSync(out, 'utf8') : ''
+    return { status: s.status, stdio: s.stdout + s.stderr, summary, json: summary ? JSON.parse(summary) : null }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}
+
+describe('fixed mandatory coverage and strict arguments (R-1 follow-up)', () => {
+  it('CANARY override: one-test report with --specs/--projects canary => never pass, canary absent from output', () => {
+    const r = runSummarizer(oneTest(OVERRIDE_PROJECT, OVERRIDE_SPEC), ['--specs', OVERRIDE_SPEC, '--projects', OVERRIDE_PROJECT])
+    expect(r.status).toBe(1)
+    expect(r.json).toMatchObject({ result: 'blocked', reason: 'invalid_arguments' })
+    expect(r.summary).not.toContain(OVERRIDE_PROJECT)
+    expect(r.summary).not.toContain(OVERRIDE_SPEC)
+    expect(r.stdio).toBe('')
+  })
+  it('CANARY override through the wrapper SUMMARY_ARGS path => never pass, canary absent from parent and summary', () => {
+    const r = spawnSync('bash', ['scripts/run-credentialed-e2e.sh'], {
+      env: { PATH: process.env.PATH, TRUSTED_DIR: ROOT, WORKDIR: ROOT, OUT_DIR: out, RUNNER_TEMP: runnerTmp, E2E_CMD: emit(oneTest(OVERRIDE_PROJECT, OVERRIDE_SPEC)), SUMMARY_ARGS: `--specs ${OVERRIDE_SPEC} --projects ${OVERRIDE_PROJECT}` },
+      encoding: 'utf8',
+    })
+    const summary = readFileSync(join(out, 'summary.json'), 'utf8')
+    expect(r.status).not.toBe(0)
+    expect(JSON.parse(summary).result).toBe('blocked')
+    expect(summary).not.toContain(OVERRIDE_PROJECT)
+    expect(summary).not.toContain(CANARY)
+    expect(r.stdout + r.stderr).not.toContain(CANARY)
+    expect(readdirSync(runnerTmp)).toEqual([])
+  })
+  it('without any override, a one-test report is coverage_incomplete (fail), never pass; caller strings absent', () => {
+    const r = runSummarizer(oneTest(OVERRIDE_PROJECT, OVERRIDE_SPEC))
+    expect(r.status).toBe(1)
+    expect(r.json).toMatchObject({ result: 'fail', reason: 'coverage_incomplete' })
+    expect(r.summary).not.toContain(OVERRIDE_PROJECT)
+    expect(r.summary).not.toContain(OVERRIDE_SPEC)
+  })
+  it('coverage is exactly the fixed 4 specs x desktop/iphone, in fixed order', () => {
+    const full = report()
+    const r = runSummarizer(full)
+    expect(r.status).toBe(0)
+    expect(r.json.result).toBe('pass')
+    expect(r.json.coverage.map((c) => `${c.spec}|${c.project}`)).toEqual(MATRIX.flatMap((s) => ['desktop', 'iphone'].map((p) => `${s}|${p}`)))
+  })
+  it.each([
+    ['unknown flag', ['--bogus', 'x']],
+    ['--specs', ['--specs', MATRIX[0]]],
+    ['--projects', ['--projects', 'desktop']],
+    ['repeated --out', ['--out', '/tmp/elsewhere.json']],
+    ['stray positional', ['stray']],
+    ['flag with no value', ['--specs']],
+  ])('argument rejected (%s) => blocked/invalid_arguments, exit 1', (_name, extra) => {
+    const r = runSummarizer(report(), extra)
+    expect(r.status).toBe(1)
+    expect(r.json).toMatchObject({ result: 'blocked', reason: 'invalid_arguments' })
+    expect(r.summary).not.toContain(CANARY)
+  })
+})
+
 describe('runWithTeardown', () => {
   it('never prints the raw teardown error', async () => {
     const { runWithTeardown } = await import('../e2e/support/runWithTeardown.ts')
