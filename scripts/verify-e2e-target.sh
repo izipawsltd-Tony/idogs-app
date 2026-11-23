@@ -4,13 +4,21 @@
 # the gated job (TOCTOU). Both runs must print the same TUPLE_ID. Fails closed on anything missing or ambiguous.
 #
 # Inputs (env): GH_TOKEN SHA PREVIEW_URL APPROVED_SHA REPO PROD_BASELINE; optional GITHUB_OUTPUT GITHUB_STEP_SUMMARY.
-# Limit: GitHub exposes no Vercel project id or deployment-id <-> hostname mapping. The tuple is bound by the
-# commit SHA, one bot-created deployment, one bot-created commit-status series sharing ONE dashboard id, and
-# completion times within 120 s. The Vercel API is not consulted (it would need a new credential).
+#   MODE=preflight  GitHub-only early rejection (no Vercel credential). Its output is NOT a binding.
+#   MODE=bind       (default) preflight PLUS the authoritative binding below; requires VERCEL_READONLY_TOKEN.
+# AUTHORITY: GitHub exposes no host <-> Vercel deployment id <-> project id mapping, so records read from GitHub
+# are never trusted to bind each other. The binding is ONE Vercel API record fetched BY HOSTNAME
+# (GET /v13/deployments/<host>) that must itself state: deployment id, project id == the pinned staging
+# project, host, target != production, readyState READY and githubCommitSha == SHA. The GitHub dashboard id
+# must additionally equal that record's id (dpl_<id>). Requires a read-only Vercel token (Environment secret
+# VERCEL_READONLY_TOKEN, created by the Owner); missing/invalid token or any mismatch fails closed.
 set -euo pipefail
 fail() { echo "::error::$1"; exit 1; }
 for v in GH_TOKEN SHA PREVIEW_URL APPROVED_SHA REPO PROD_BASELINE; do [ -n "${!v-}" ] || fail "missing required input: $v"; done
 api() { gh api "$1"; }
+MODE="${MODE:-bind}"
+[ "$MODE" = "bind" ] || [ "$MODE" = "preflight" ] || { echo "::error::invalid MODE"; exit 1; }
+STAGING_PROJECT_ID='prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o'
 BOT='vercel[bot]'
 ENV_NAME='Preview – idogs-app-staging'
 CTX='Vercel – idogs-app-staging'
@@ -40,7 +48,6 @@ latest=$(jq -c 'sort_by(.created_at) | last' <<<"$st")
 [ "$(jq -r '.state' <<<"$latest")" = "success" ] || fail "latest Preview deployment state is not success"
 [ "$(jq -r '.creator.login' <<<"$latest")" = "$BOT" ] || fail "deployment status was not posted by the Vercel integration"
 [ "$(jq -r '.environment_url | rtrimstr("/")' <<<"$latest")" = "$url" ] || fail "preview_url does not match the deployment recorded for this SHA"
-dep_done=$(jq -r '.created_at' <<<"$latest")
 
 # 3c. The staging project's commit-status series: all by the bot, ONE dashboard id throughout, latest = success,
 #     completed within 120 s of the deployment status.
@@ -54,21 +61,38 @@ ids=$(jq -r '.[].target_url' <<<"$series" | while read -r t; do [[ "$t" =~ $re ]
 vdep="$ids"
 last_cs=$(jq -c 'last' <<<"$series")
 [ "$(jq -r '.state' <<<"$last_cs")" = "success" ] || fail "latest staging commit status is not success"
-d1=$(jq -n --arg a "$dep_done" '$a | fromdateiso8601'); d2=$(jq -r '.created_at | fromdateiso8601' <<<"$last_cs")
-diff=$(( d1 > d2 ? d1 - d2 : d2 - d1 ))
-[ "$diff" -le 120 ] || fail "commit status and deployment status completed ${diff}s apart; records are not bound to each other"
 
 # 4. CI by workflow identity (path + event + SHA), not by display name.
 runs=$(api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100") || fail "cannot read workflow runs"
 ok=$(jq --arg s "$SHA" '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml" and .event == "push" and .head_sha == $s and .conclusion == "success")] | length' <<<"$runs")
 [ "$ok" -ge 1 ] || fail "no successful push run of .github/workflows/ci.yml for this SHA"
 
-tuple="$SHA|$url|$dep|$vdep"
+# 5. Authoritative binding: ONE Vercel record, fetched by hostname.
+vproj="unbound"
+if [ "$MODE" = "bind" ]; then
+  [ -n "${VERCEL_READONLY_TOKEN-}" ] || fail "VERCEL_READONLY_TOKEN is not available: cannot bind host, deployment id and project (fail closed)"
+  host="${url#https://}"
+  body=$(mktemp); trap 'rm -f "$body"' EXIT
+  code=$(curl -sS -o "$body" -w '%{http_code}' --max-time 20 -H "Authorization: Bearer $VERCEL_READONLY_TOKEN" "https://api.vercel.com/v13/deployments/$host" 2>/dev/null) || fail "Vercel API unreachable"
+  [ "$code" = "200" ] || fail "Vercel API returned HTTP $code for the preview host"
+  jq -e 'type == "object"' "$body" >/dev/null 2>&1 || fail "Vercel API response is not a JSON object"
+  vid=$(jq -r '.id // ""' "$body"); vproj=$(jq -r '.projectId // ""' "$body"); vurl=$(jq -r '.url // ""' "$body")
+  vtarget=$(jq -r '.target // "preview"' "$body"); vstate=$(jq -r '.readyState // ""' "$body"); vsha=$(jq -r '.meta.githubCommitSha // ""' "$body")
+  [ "$vproj" = "$STAGING_PROJECT_ID" ] || fail "Vercel record belongs to a different project"
+  [ "$vurl" = "$host" ] || fail "Vercel record host does not match the preview host"
+  [ "$vtarget" = "preview" ] || fail "Vercel record target is not Preview"
+  [ "$vstate" = "READY" ] || fail "Vercel deployment is not READY"
+  [ "$vsha" = "$SHA" ] || fail "Vercel record commit SHA does not match"
+  [ "$vid" = "dpl_$vdep" ] || fail "GitHub dashboard id does not equal the Vercel deployment id"
+  vdep="$vid"
+fi
+
+tuple="$SHA|$url|$dep|$vdep|$vproj"
 tuple_id=$(printf '%s' "$tuple" | sha256sum | cut -c1-16)
-echo "TUPLE_ID=$tuple_id"
+echo "MODE=$MODE"; echo "TUPLE_ID=$tuple_id"
 if [ -n "${GITHUB_OUTPUT-}" ]; then
-  { echo "sha=$SHA"; echo "url=$url"; echo "deployment_id=$dep"; echo "vercel_deployment=$vdep"; echo "tuple_id=$tuple_id"; } >> "$GITHUB_OUTPUT"
+  { echo "sha=$SHA"; echo "url=$url"; echo "deployment_id=$dep"; echo "vercel_deployment=$vdep"; echo "project_id=$vproj"; echo "mode=$MODE"; echo "tuple_id=$tuple_id"; } >> "$GITHUB_OUTPUT"
 fi
 if [ -n "${GITHUB_STEP_SUMMARY-}" ]; then
-  { echo "### Authenticated E2E target (verified)"; echo "- SHA \`$SHA\` = reviewed SHA; Preview $url"; echo "- GitHub deployment $dep (vercel[bot]); Vercel deployment id $vdep; tuple \`$tuple_id\`"; echo "- Dependency manifests equal \`$PROD_BASELINE\`; CI = push run of ci.yml"; echo "- Limit: no Vercel API call; project id/host mapping not exposed by GitHub."; } >> "$GITHUB_STEP_SUMMARY"
+  { echo "### Authenticated E2E target (verified)"; echo "- SHA \`$SHA\` = reviewed SHA; Preview $url"; echo "- GitHub deployment $dep (vercel[bot]); Vercel deployment id $vdep; tuple \`$tuple_id\`"; echo "- Dependency manifests equal \`$PROD_BASELINE\`; CI = push run of ci.yml"; echo "- Mode: $MODE (preflight = GitHub-only, no binding; bind = single Vercel record: project, id, host, READY, SHA)"; } >> "$GITHUB_STEP_SUMMARY"
 fi

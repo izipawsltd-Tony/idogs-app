@@ -18,7 +18,11 @@ function report({ omit = [], failed = false, errors = [], skippedOne = false } =
     if (skippedOne && s === 'preview-smoke.spec.ts' && p === 'iphone') x.specs[0].tests[0] = { projectName: p, status: 'skipped', results: [{ status: 'skipped' }] }
     suites.push(x)
   }
-  return { stats: { expected: 8, unexpected: failed ? 1 : 0, flaky: 0, skipped: 0 }, errors, suites }
+  const tests = suites.flatMap((x) => x.specs.flatMap((sp) => sp.tests))
+  const count = (f) => tests.filter(f).length
+  const stats = { expected: count((x) => x.status === 'expected'), unexpected: failed ? 1 : 0, flaky: 0, skipped: count((x) => x.status === 'skipped') }
+  if (failed) { suites[0].specs[0].tests[0] = { projectName: 'desktop', status: 'unexpected', results: [{ status: 'failed' }] }; stats.expected--; }
+  return { stats, errors, suites }
 }
 function run(cmd) {
   const r = spawnSync('bash', ['scripts/run-credentialed-e2e.sh'], {
@@ -72,6 +76,31 @@ describe('run-credentialed-e2e.sh + summarize-e2e-report.mjs', () => {
   it('summarizer crash path still yields a fail-closed summary and cleans scratch', () => {
     const r = spawnSync('bash', ['scripts/run-credentialed-e2e.sh'], { env: { PATH: process.env.PATH, TRUSTED_DIR: '/nonexistent', WORKDIR: ROOT, OUT_DIR: out, RUNNER_TEMP: runnerTmp, E2E_CMD: `echo ${CANARY}; exit 0` }, encoding: 'utf8' })
     expect(r.status).not.toBe(0); expect(JSON.parse(readFileSync(join(out, 'summary.json'), 'utf8')).result).toBe('blocked'); expect(r.stdout + r.stderr).not.toContain(CANARY); expect(readdirSync(runnerTmp)).toEqual([])
+  })
+})
+const reportWith = (mut) => { const r = report(); mut(r); return r }
+describe('strict schema (Codex round 2 regressions)', () => {
+  const blocked = (rep, why = 'malformed_report') => { const r = run(emit(rep)); expect(r.code).toBe(1); expect(JSON.parse(r.summary)).toEqual({ result: 'blocked', reason: why, exit_code: 0 }); noLeak(r); expect(r.parent).toBe('') }
+  it('stats:{} with errors:{message} is BLOCKED (never pass)', () => blocked(reportWith((r) => { r.stats = {}; r.errors = { message: CANARY } })))
+  it('null nested suite is BLOCKED with a fixed summary and NO raw stderr from the summarizer', () => blocked(reportWith((r) => { r.suites[0].suites = [null] })))
+  it('errors must be an array', () => { blocked(reportWith((r) => { r.errors = {} })); blocked(reportWith((r) => { delete r.errors })) })
+  it('stats counts must be non-negative integers', () => { blocked(reportWith((r) => { r.stats.expected = '8' })); blocked(reportWith((r) => { r.stats.unexpected = -1 })); blocked(reportWith((r) => { r.stats.flaky = 1.5 })); blocked(reportWith((r) => { r.stats.skipped = null })) })
+  it('stats must equal the tests actually present (no inflated/deflated counts)', () => blocked(reportWith((r) => { r.stats.expected += 5 })))
+  it('malformed spec/test/result shapes are BLOCKED', () => {
+    blocked(reportWith((r) => { r.suites[0].specs[0].tests = {} }))
+    blocked(reportWith((r) => { r.suites[0].specs[0].tests[0].results = null }))
+    blocked(reportWith((r) => { r.suites[0].specs[0].tests[0].projectName = 5 }))
+    blocked(reportWith((r) => { r.suites[0].specs[0].tests[0].results = [null] }))
+    blocked(reportWith((r) => { r.suites[0].specs = 'x' }))
+    blocked(reportWith((r) => { r.suites = {} }))
+    blocked(reportWith((r) => { r.suites[0].specs[0] = null }))
+  })
+  it('a non-JSON-object report (array, string, number, null) is BLOCKED', () => {
+    for (const v of ['[]', '"x"', '5', 'null']) { const r = run(`echo '${v}' > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; exit 0`); expect(JSON.parse(r.summary).result).toBe('blocked'); noLeak(r) }
+  })
+  it('summarizer stdout/stderr never reach the parent even when it crashes on a hostile --out', () => {
+    const r = spawnSync('bash', ['scripts/run-credentialed-e2e.sh'], { env: { PATH: process.env.PATH, TRUSTED_DIR: ROOT, WORKDIR: ROOT, OUT_DIR: out, RUNNER_TEMP: runnerTmp, E2E_CMD: emit(report()), SUMMARY_ARGS: '--bogus' }, encoding: 'utf8' })
+    expect(r.stdout + r.stderr).not.toContain(CANARY); expect(readdirSync(runnerTmp)).toEqual([])
   })
 })
 describe('runWithTeardown', () => {

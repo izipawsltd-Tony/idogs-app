@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, chownSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -124,6 +124,11 @@ describe('consumer (worker): reads an existing trusted state only', () => {
     const other = makeState()
     rmSync(real.file); symlinkSync(other.file, real.file)
     await consumeFails(real.file, /redirected through a link/)
+  })
+
+  it.skipIf(!POSIX || typeof process.getuid !== 'function' || process.getuid() !== 0)('rejects a state owned by another user (runs when the test process is root and can chown)', async () => {
+    const s = makeState(); chownSync(s.dir, 65534, 65534); chownSync(s.file, 65534, 65534)
+    await consumeFails(s.file, /not owned by the current user/)
   })
 
   it.skipIf(!POSIX)('accepts a correctly private pre-existing state (owner-only, real paths)', async () => {

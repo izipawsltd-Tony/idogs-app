@@ -21,11 +21,15 @@ cmd="${E2E_CMD:-npx playwright test --reporter=json,$TRUSTED_DIR/e2e/support/sil
 ( cd "$WORKDIR" && bash -c "$cmd" ) >"$scratch/stdout.log" 2>"$scratch/stderr.log" </dev/null
 code=$?
 
+# The summarizer's own stdout/stderr are captured privately too; only the fixed summary file is published.
+rm -f "$OUT_DIR/summary.json"
 # shellcheck disable=SC2086
-node "$TRUSTED_DIR/scripts/summarize-e2e-report.mjs" --raw "$scratch/raw.json" --exit "$code" --out "$OUT_DIR/summary.json" ${SUMMARY_ARGS:-}
+node "$TRUSTED_DIR/scripts/summarize-e2e-report.mjs" --raw "$scratch/raw.json" --exit "$code" --out "$OUT_DIR/summary.json" ${SUMMARY_ARGS:-} >"$scratch/sum.out" 2>"$scratch/sum.err" </dev/null
 status=$?
-if [ ! -s "$OUT_DIR/summary.json" ]; then
-  echo '{"result":"blocked","reason":"summarizer_failed"}' > "$OUT_DIR/summary.json"
+# Fail closed: a missing/empty summary, an unexpected summarizer exit code, or a summary that is not exactly
+# a pass while the exit code is 0, all publish only the fixed BLOCKED summary.
+if [ ! -s "$OUT_DIR/summary.json" ] || { [ "$status" -ne 0 ] && [ "$status" -ne 1 ]; }; then
+  echo '{"result":"blocked","reason":"internal_error"}' > "$OUT_DIR/summary.json"
   status=1
 fi
 exit "$status"

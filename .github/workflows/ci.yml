@@ -46,6 +46,9 @@ jobs:
           node scripts/test-showcase-public-page.mjs
           node scripts/test-litter-showcase-public.mjs
 
+      - name: Cookie-state POSIX controls (Linux UID/mode/symlink; no skips allowed)
+        run: node scripts/verify-state-path-posix.mjs
+
       - name: Production build
         run: npm run build
 

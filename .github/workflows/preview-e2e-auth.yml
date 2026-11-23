@@ -9,10 +9,13 @@ name: Preview E2E authenticated (reviewer-gated)
 #   Codex's review of that exact commit and its dependency diff) must equal the dispatched SHA.
 # - All verification and result handling runs from TRUSTED scripts checked out from `master` (trusted/); the
 #   candidate SHA (candidate/) supplies only the application and Playwright specs under review.
-# - The same verifier runs twice (verify job, and again in the gated job after the reviewer wait, right before
-#   credentials are used); the immutable tuple id (sha|url|github deployment|vercel deployment) must match.
+# - Trusted code is pinned to the immutable commit of THIS workflow run (github.sha), never a mutable branch.
+# - The `verify` job is a GitHub-only PREFLIGHT (no Vercel credential; not a binding). The AUTHORITATIVE binding is
+#   ONE Vercel API record fetched by hostname (project id, deployment id, host, target Preview, READY, exact SHA),
+#   run in the gated job twice (before install and again immediately before the credentialed step); the tuple
+#   must match. Needs Environment secret VERCEL_READONLY_TOKEN (read-only; Owner-created); absent => fail closed.
 # - Synthetic QA accounts only (docs/growth-v1/QA_SYNTH_FIXTURES.md).
-# Environment secrets: VERCEL_AUTOMATION_BYPASS_SECRET (staging project only), E2E_STAGING_EMAIL,
+# Environment secrets: VERCEL_READONLY_TOKEN (read-only, deployments), VERCEL_AUTOMATION_BYPASS_SECRET (staging project only), E2E_STAGING_EMAIL,
 # E2E_STAGING_PASSWORD, E2E_STAGING_EMAIL_2, E2E_STAGING_PASSWORD_2.
 
 run-name: "Authenticated E2E ${{ inputs.sha }}"
@@ -52,14 +55,15 @@ jobs:
       url: ${{ steps.v.outputs.url }}
       tuple_id: ${{ steps.v.outputs.tuple_id }}
     steps:
-      - name: Checkout trusted scripts (master)
+      - name: Checkout trusted scripts (this workflow run's immutable commit)
         uses: actions/checkout@v4
         with:
-          ref: master
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Verify target (trusted script)
+      - name: Preflight (GitHub-only; not a binding)
         id: v
         env:
+          MODE: preflight
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.sha }}
           PREVIEW_URL: ${{ inputs.preview_url }}
@@ -80,10 +84,10 @@ jobs:
       actions: read
       statuses: read
     steps:
-      - name: Checkout trusted scripts (master)
+      - name: Checkout trusted scripts (this workflow run's immutable commit)
         uses: actions/checkout@v4
         with:
-          ref: master
+          ref: ${{ github.sha }}
           path: trusted
           persist-credentials: false
       - name: Checkout the verified candidate SHA
@@ -92,6 +96,22 @@ jobs:
           ref: ${{ needs.verify.outputs.sha }}
           path: candidate
           persist-credentials: false
+      - name: Authoritative binding #1 (single Vercel record; no E2E credentials in this step)
+        id: bind1
+        working-directory: trusted
+        env:
+          MODE: bind
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.verify.outputs.sha }}
+          PREVIEW_URL: ${{ needs.verify.outputs.url }}
+          APPROVED_SHA: ${{ vars.E2E_APPROVED_SHA }}
+          REPO: ${{ github.repository }}
+          PROD_BASELINE: 04f0f60eedb9e6fb07273d89c190c9d770ff3e9b
+          VERCEL_READONLY_TOKEN: ${{ secrets.VERCEL_READONLY_TOKEN }}
+        run: |
+          set -euo pipefail
+          bash scripts/verify-e2e-target.sh | tee "$RUNNER_TEMP/bind1.txt"
+          echo "tuple=$(grep -o '^TUPLE_ID=.*' "$RUNNER_TEMP/bind1.txt" | cut -d= -f2)" >> "$GITHUB_OUTPUT"
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -103,21 +123,23 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Re-verify target after the reviewer wait (TOCTOU) with the trusted script
+      - name: Authoritative binding #2 immediately before credentials (TOCTOU)
         working-directory: trusted
         env:
+          MODE: bind
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.verify.outputs.sha }}
           PREVIEW_URL: ${{ needs.verify.outputs.url }}
           APPROVED_SHA: ${{ vars.E2E_APPROVED_SHA }}
           REPO: ${{ github.repository }}
           PROD_BASELINE: 04f0f60eedb9e6fb07273d89c190c9d770ff3e9b
-          EXPECTED_TUPLE: ${{ needs.verify.outputs.tuple_id }}
+          VERCEL_READONLY_TOKEN: ${{ secrets.VERCEL_READONLY_TOKEN }}
+          EXPECTED_TUPLE: ${{ steps.bind1.outputs.tuple }}
         run: |
           set -euo pipefail
-          bash scripts/verify-e2e-target.sh | tee "$RUNNER_TEMP/recheck.txt"
-          now=$(grep -o '^TUPLE_ID=.*' "$RUNNER_TEMP/recheck.txt" | cut -d= -f2)
-          [ "$now" = "$EXPECTED_TUPLE" ] || { echo "::error::deployment tuple changed between verification and run"; exit 1; }
+          bash scripts/verify-e2e-target.sh | tee "$RUNNER_TEMP/bind2.txt"
+          now=$(grep -o '^TUPLE_ID=.*' "$RUNNER_TEMP/bind2.txt" | cut -d= -f2)
+          [ -n "$EXPECTED_TUPLE" ] && [ "$now" = "$EXPECTED_TUPLE" ] || { echo "::error::deployment binding changed between checks"; exit 1; }
       - name: Run Playwright via trusted wrapper (all raw output stays in a private scratch dir)
         working-directory: trusted
         env:

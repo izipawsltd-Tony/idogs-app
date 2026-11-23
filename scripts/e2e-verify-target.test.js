@@ -19,6 +19,7 @@ const base = () => ({
     { context: 'Vercel – idogs-app-staging', state: 'pending', creator: BOT, created_at: '2026-11-23T04:11:50Z', target_url: DASH('DPL1') },
     { context: 'Vercel – idogs-app', state: 'success', creator: BOT, created_at: '2026-11-23T04:11:52Z', target_url: 'https://vercel.com/izipawsltd-tonys-projects/idogs-app/OTHER' },
   ],
+  vercel: { id: 'dpl_DPL1', projectId: 'prj_UGKaWkdtHrXpLovxDyoP4Tm8wN5o', url: 'idogs-app-staging-abc123-izipawsltd-tonys-projects.vercel.app', target: null, readyState: 'READY', meta: { githubCommitSha: SHA } },
   runs: { workflow_runs: [{ path: '.github/workflows/ci.yml', event: 'push', head_sha: SHA, conclusion: 'success', name: 'iDogs CI' }] },
 })
 
@@ -38,13 +39,23 @@ case "$ep" in
 esac
 `)
   chmodSync(join(dir, 'gh'), 0o755)
+  // fake curl: serves $FIX/vercel.json with the status in $FIX/vercel.code; records that no token was echoed
+  writeFileSync(join(dir, 'curl'), `#!/usr/bin/env bash
+out=""; while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; *) shift;; esac; done
+[ -f "$FIX/vercel.code" ] || exit 7
+cat "$FIX/vercel.json" > "$out" 2>/dev/null
+printf '%s' "$(cat "$FIX/vercel.code")"
+`)
+  chmodSync(join(dir, 'curl'), 0o755)
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 function run(fx, env = {}) {
   for (const [k, v] of Object.entries(fx)) writeFileSync(join(dir, `${k}.json`), JSON.stringify(v))
+  if (env.NO_VCODE) rmSync(join(dir, 'vercel.code'), { force: true })
+  else writeFileSync(join(dir, 'vercel.code'), String(env.VCODE ?? 200))
   const r = spawnSync('bash', ['scripts/verify-e2e-target.sh'], {
-    env: { PATH: `${dir}:${process.env.PATH}`, FIX: dir, GH_TOKEN: 'x', REPO: 'o/r', PROD_BASELINE: '04f0f60eedb9e6fb07273d89c190c9d770ff3e9b', SHA, PREVIEW_URL: URL_OK, APPROVED_SHA: SHA, ...env },
+    env: { PATH: `${dir}:${process.env.PATH}`, FIX: dir, GH_TOKEN: 'x', REPO: 'o/r', PROD_BASELINE: '04f0f60eedb9e6fb07273d89c190c9d770ff3e9b', SHA, PREVIEW_URL: URL_OK, APPROVED_SHA: SHA, VERCEL_READONLY_TOKEN: 'tok-SECRET', ...env },
     encoding: 'utf8',
   })
   return { code: r.status, out: r.stdout + r.stderr }
@@ -58,13 +69,44 @@ describe('verify-e2e-target.sh', () => {
     expect(a.out).toBe(b.out)
   })
 
-  it('REGRESSION (Codex P1): two incompatible records — URL from the bot deployment, dashboard id from an unrelated, much later status — fail closed', () => {
+  it('REGRESSION (Codex round 2): unrelated dashboard id + independently supplied bot URL, within 10 s, is REJECTED because no single Vercel record binds them', () => {
     const fx = base()
-    fx.commitStatuses = [
-      { context: 'Vercel – idogs-app-staging', state: 'success', creator: BOT, created_at: '2026-11-23T09:00:00Z', target_url: DASH('UNRELATED') },
-    ]
+    fx.commitStatuses[0].target_url = DASH('UNRELATED'); fx.commitStatuses[1].target_url = DASH('UNRELATED')
+    fx.commitStatuses[0].created_at = '2026-11-23T04:15:20Z' // 4 s from the deployment status: time proves nothing
     const r = run(fx)
-    expect(r.code).toBe(1); expect(r.out).toMatch(/not bound to each other/)
+    expect(r.code).toBe(1); expect(r.out).toMatch(/does not equal the Vercel deployment id/)
+  })
+
+  it('REGRESSION: a Vercel record that is for another host is rejected even if id/project/SHA look right', () => {
+    const fx = base(); fx.vercel.url = 'idogs-app-staging-other-izipawsltd-tonys-projects.vercel.app'
+    expect(run(fx).out).toMatch(/host does not match/)
+  })
+
+  it('binding rejects: wrong project, production target, not READY, wrong SHA, missing meta', () => {
+    const p = base(); p.vercel.projectId = 'prj_OTHER'; expect(run(p).out).toMatch(/different project/)
+    const t = base(); t.vercel.target = 'production'; expect(run(t).out).toMatch(/not Preview/)
+    const r = base(); r.vercel.readyState = 'BUILDING'; expect(run(r).out).toMatch(/not READY/)
+    const s = base(); s.vercel.meta.githubCommitSha = 'b'.repeat(40); expect(run(s).out).toMatch(/commit SHA does not match/)
+    const m = base(); delete m.vercel.meta; expect(run(m).out).toMatch(/commit SHA does not match/)
+  })
+
+  it('binding fails closed on HTTP errors, malformed bodies, an unreachable API and a missing token; never prints the token', () => {
+    for (const code of [401, 403, 404, 500]) { const r = run(base(), { VCODE: code }); expect(r.code).toBe(1); expect(r.out).toMatch(/HTTP/) ; expect(r.out).not.toContain('tok-SECRET') }
+    const arr = base(); arr.vercel = [1]; expect(run(arr).out).toMatch(/not a JSON object/)
+    expect(run(base(), { NO_VCODE: '1' }).out).toMatch(/unreachable/)
+    const none = run(base(), { VERCEL_READONLY_TOKEN: '' }); expect(none.code).toBe(1); expect(none.out).toMatch(/VERCEL_READONLY_TOKEN is not available/)
+  })
+
+  it('preflight mode needs no Vercel credential but is explicitly NOT a binding', () => {
+    const r = run(base(), { MODE: 'preflight', VERCEL_READONLY_TOKEN: '' })
+    expect(r.code).toBe(0); expect(r.out).toMatch(/MODE=preflight/)
+    expect(run(base(), { MODE: 'weird' }).code).toBe(1)
+  })
+
+  it('tuple id changes when the bound Vercel project or deployment id changes', () => {
+    const a = run(base()).out.match(/TUPLE_ID=(\w+)/)[1]
+    const fx = base(); fx.commitStatuses.forEach((c, i) => { if (i < 2) c.target_url = DASH('DPL9') }); fx.vercel.id = 'dpl_DPL9'
+    expect(run(fx).out.match(/TUPLE_ID=(\w+)/)[1]).not.toBe(a)
   })
 
   it('rejects commit statuses that carry two different dashboard ids', () => {
